@@ -287,7 +287,7 @@ export default function EditInvoicePage() {
     if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
     setExpenses(expenses.filter((_, i) => i !== index))
   }
-  function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
+  function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }); setOpenReceiptsIndex(null) }
   async function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const exp = expenses[editingExpenseIndex!]
@@ -679,14 +679,14 @@ export default function EditInvoicePage() {
             <button onClick={updateIntuitiveExpenses} className="w-full bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">↻ UPDATE INTUITIVE EXPENSES</button>
 
             {expenses.length > 0 && (
-              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+              <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
                 {expenses.map((exp, index) => {
                   const isPaid = isValidDate(exp.payment_date)
                   const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
                   return (
-                    <div key={index}>
+                    <div key={index} className={index < expenses.length - 1 ? 'border-b border-gray-700' : ''}>
                       {editingExpenseIndex === index ? (
-                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
                           <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                             <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
                           </div>
@@ -722,7 +722,7 @@ export default function EditInvoicePage() {
                           </div>
                         </div>
                       ) : (
-                        <div className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <div className="px-4 py-3">
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex-1 min-w-0">
                               <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
@@ -736,9 +736,9 @@ export default function EditInvoicePage() {
                                     RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
                                   </button>
                                   {openReceiptsIndex === index && (
-                                    <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
+                                    <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
                                       {exp.receipt_urls.map((url, ui) => (
-                                        <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                        <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm py-1 truncate">File {ui + 1}</a>
                                       ))}
                                     </div>
                                   )}
