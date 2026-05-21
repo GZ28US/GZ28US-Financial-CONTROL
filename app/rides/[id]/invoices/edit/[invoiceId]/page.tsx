@@ -55,7 +55,9 @@ export default function EditInvoicePage() {
   const [projectCode, setProjectCode] = useState('')
   const [projectName, setProjectName] = useState('')
   const [invoiceCode, setInvoiceCode] = useState('')
+  const [hiringDate, setHiringDate] = useState('')
   const [entryDate, setEntryDate] = useState('')
+  const [conclusionDate, setConclusionDate] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
@@ -94,7 +96,9 @@ export default function EditInvoicePage() {
     if (error || !data) { alert('Invoice not found'); router.push(`/rides/${rideId}/invoices`); return }
 
     setInvoiceCode(data.invoice_code || '')
+    setHiringDate(data.hiring_date || '')
     setEntryDate(data.entry_date || '')
+    setConclusionDate(data.conclusion_date || '')
     setDeliveryDate(data.delivery_date || '')
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
@@ -314,14 +318,16 @@ export default function EditInvoicePage() {
   const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
-  const currentProfitPct = totalPaid > 0 ? (currentProfit / totalPaid) * 100 : 0
+  const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
   const finalProfit = grandTotal - expensesTotalGlobal
-  const finalProfitPct = grandTotal > 0 ? (finalProfit / grandTotal) * 100 : 0
+  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
   async function saveInvoice() {
     const { error } = await supabase.from('invoices').update({
+      hiring_date: isValidDate(hiringDate) ? hiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,
+      conclusion_date: isValidDate(conclusionDate) ? conclusionDate : null,
       delivery_date: isValidDate(deliveryDate) ? deliveryDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
@@ -381,8 +387,8 @@ export default function EditInvoicePage() {
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
+        <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
         <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />
-        <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
 
         <div>
           <label className="block mb-2 text-lg font-bold">MILEAGE</label>
@@ -651,6 +657,10 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
+        {/* CONCLUSION + DELIVERY DATES */}
+        <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />
+        <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
+
         {/* EXPENSES SECTION */}
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
@@ -668,10 +678,8 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
-
             <button onClick={updateIntuitiveExpenses} className="w-full bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">↻ UPDATE INTUITIVE EXPENSES</button>
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
-
             {expenses.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {expenses.map((exp, index) => {
@@ -703,10 +711,7 @@ export default function EditInvoicePage() {
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                            <p className={`text-sm ${rowColor}`}>
-                              {formatUSD(parseFloat(exp.amount))}
-                              {isValidDate(exp.expense_date) ? ` — ${formatDate(exp.expense_date)}` : ''}
-                            </p>
+                            <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}{isValidDate(exp.expense_date) ? ` — ${formatDate(exp.expense_date)}` : ''}</p>
                             <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                           </div>
                           <div className="flex gap-2 shrink-0">
@@ -720,7 +725,6 @@ export default function EditInvoicePage() {
                 })}
               </div>
             )}
-
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
               <span className="text-gray-400 font-bold">TOTAL GLOBAL</span>
               <span className="text-xl font-bold">{formatUSD(expensesTotalGlobal)}</span>
