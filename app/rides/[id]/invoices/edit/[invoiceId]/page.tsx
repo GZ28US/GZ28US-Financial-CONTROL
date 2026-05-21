@@ -40,10 +40,16 @@ type Expense = {
   payment_date: string
 }
 
-const paymentSources = ['CASH', 'ACH', 'ZELLE', 'CHECK']
+const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+
+function isTodayOrPast(dateStr: string) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  return new Date(dateStr + 'T00:00:00') <= today
+}
 
 export default function EditInvoicePage() {
   const params = useParams()
@@ -73,9 +79,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: 'CASH' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: 'CASH' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '' })
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState('')
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
@@ -113,7 +119,7 @@ export default function EditInvoicePage() {
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
 
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (paymentsData) setPayments(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || 'CASH' })))
+    if (paymentsData) setPayments(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '' })))
 
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
@@ -152,7 +158,7 @@ export default function EditInvoicePage() {
   const globalDiscountPct = parseFloat(globalDiscount) || 0
   const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
   const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
   const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
@@ -163,7 +169,7 @@ export default function EditInvoicePage() {
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
-  function calculateLabor() {
+  async function calculateLabor() {
     const target = parseFloat(targetGrandTotal.replace(/,/g, ''))
     if (!target || target <= 0) { alert('Please enter a valid Target Grand Total'); return }
     const discountFactor = 1 - (globalDiscountPct / 100)
@@ -172,43 +178,30 @@ export default function EditInvoicePage() {
     const updated = [...services]
     if (laborIndex >= 0) {
       updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
+      setServices(updated)
+      // Save immediately to Supabase if row has an id
+      const laborSvc = updated[laborIndex]
+      if (laborSvc.id) {
+        await supabase.from('invoice_services').update({ price: labor }).eq('id', laborSvc.id)
+      }
     }
-    setServices(updated)
   }
 
   function updateIntuitiveExpenses() {
     const existingFlorida = expenses.find(e => e.supplier === 'Florida State' && e.item === 'Taxes')
     const existingPartExpenses: Record<string, Expense> = {}
     expenses.forEach(e => {
-      if (!(e.supplier === 'Florida State' && e.item === 'Taxes')) {
-        existingPartExpenses[e.item] = e
-      }
+      if (!(e.supplier === 'Florida State' && e.item === 'Taxes')) existingPartExpenses[e.item] = e
     })
-
     const intuitiveExpenses: Expense[] = [
-      {
-        supplier: 'Florida State',
-        item: 'Taxes',
-        amount: floridaTaxesAmount.toFixed(2),
-        payment_date: existingFlorida?.payment_date || '',
-      },
+      { supplier: 'Florida State', item: 'Taxes', amount: floridaTaxesAmount.toFixed(2), payment_date: existingFlorida?.payment_date || '' },
       ...parts.map(p => {
         const existing = existingPartExpenses[p.description]
-        return {
-          supplier: existing?.supplier || '',
-          item: p.description,
-          amount: getPartTotal(p).toFixed(2),
-          payment_date: existing?.payment_date || '',
-        }
+        return { supplier: existing?.supplier || '', item: p.description, amount: getPartTotal(p).toFixed(2), payment_date: existing?.payment_date || '' }
       }),
     ]
-
     const partDescriptions = parts.map(p => p.description)
-    const userExpenses = expenses.filter(e =>
-      !(e.supplier === 'Florida State' && e.item === 'Taxes') &&
-      !partDescriptions.includes(e.item)
-    )
-
+    const userExpenses = expenses.filter(e => !(e.supplier === 'Florida State' && e.item === 'Taxes') && !partDescriptions.includes(e.item))
     setExpenses([...intuitiveExpenses, ...userExpenses])
   }
 
@@ -261,7 +254,7 @@ export default function EditInvoicePage() {
   // Payments
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: 'CASH' })
+    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '' })
   }
   async function removePayment(index: number) {
     const payment = payments[index]
@@ -273,13 +266,13 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(updated)
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: 'CASH' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: 'CASH' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' }) }
 
   // Notes
   function addNote() {
@@ -319,13 +312,7 @@ export default function EditInvoicePage() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const exp = expenses[editingExpenseIndex!]
     if (exp.id) {
-      const { error } = await supabase.from('invoice_expenses').update({
-        expense_date: null,
-        supplier: editingExpense.supplier || null,
-        item: editingExpense.item,
-        price: parseFloat(editingExpense.amount),
-        payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
-      }).eq('id', exp.id)
+      const { error } = await supabase.from('invoice_expenses').update({ expense_date: null, supplier: editingExpense.supplier || null, item: editingExpense.item, price: parseFloat(editingExpense.amount), payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
@@ -359,7 +346,7 @@ export default function EditInvoicePage() {
     }
     const newPayments = payments.filter(p => !p.id)
     if (newPayments.length > 0) {
-      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source })))
+      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null })))
       if (e) { alert(e.message); return }
     }
     const newNotes = notes.filter(n => !n.id)
@@ -493,24 +480,21 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">SERVICES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-
-            {/* TARGET GRAND TOTAL + ADD SERVICE on same row */}
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className="block mb-1 text-sm text-gray-400">TARGET GRAND TOTAL</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${smallInputClass} w-full pl-8`} />
-                </div>
-              </div>
-              <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg shrink-0">+ ADD SERVICE</button>
-            </div>
-
             <input type="text" placeholder="Description" value={newService.description} onChange={(e) => setNewService({ ...newService, description: e.target.value })} className={inputClass} />
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                 <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newService.price} onChange={(e) => { if (isNumeric(e.target.value)) setNewService({ ...newService, price: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-end gap-3">
+              <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg shrink-0">+ ADD SERVICE</button>
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">TARGET GRAND TOTAL</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${smallInputClass} w-full pl-8`} />
                 </div>
               </div>
             </div>
@@ -600,42 +584,45 @@ export default function EditInvoicePage() {
             <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PAYMENT</button>
             {payments.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
-                {payments.map((payment, index) => (
-                  <div key={index}>
-                    {editingPaymentIndex === index ? (
-                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                        <div className="flex gap-3">
-                          <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
-                            <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                              <input type="text" inputMode="decimal" value={editingPayment.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingPayment({ ...editingPayment, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
+                {payments.map((payment, index) => {
+                  const isPaid = isTodayOrPast(payment.payment_date)
+                  return (
+                    <div key={index}>
+                      {editingPaymentIndex === index ? (
+                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                          <div className="flex gap-3">
+                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                              <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                <input type="text" inputMode="decimal" value={editingPayment.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingPayment({ ...editingPayment, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
+                              </div>
+                            </div>
+                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                              <select value={editingPayment.source} onChange={(e) => setEditingPayment({ ...editingPayment, source: e.target.value })} className={`${selectClass} w-full`}>
+                                {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
                             </div>
                           </div>
-                          <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">SOURCE</label>
-                            <select value={editingPayment.source} onChange={(e) => setEditingPayment({ ...editingPayment, source: e.target.value })} className={`${selectClass} w-full`}>
-                              {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                          <DatePicker label="DATE" value={editingPayment.payment_date} onChange={(v) => setEditingPayment({ ...editingPayment, payment_date: v })} />
+                          <div className="flex gap-3">
+                            <button onClick={saveEditPayment} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                            <button onClick={cancelEditPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
                           </div>
                         </div>
-                        <DatePicker label="DATE" value={editingPayment.payment_date} onChange={(v) => setEditingPayment({ ...editingPayment, payment_date: v })} />
-                        <div className="flex gap-3">
-                          <button onClick={saveEditPayment} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
-                          <button onClick={cancelEditPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                      ) : (
+                        <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-base font-bold ${isPaid ? '' : 'text-yellow-400'}`}>{formatUSD(parseFloat(payment.amount))}{!isPaid ? ' — PENDING' : ''}</p>
+                            <p className="text-sm text-gray-400">{payment.source}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => startEditPayment(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removePayment(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold">{formatUSD(parseFloat(payment.amount))}</p>
-                          <p className="text-sm text-gray-400">{payment.source}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
-                        </div>
-                        <div className="flex gap-2 shrink-0">
-                          <button onClick={() => startEditPayment(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                          <button onClick={() => removePayment(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
