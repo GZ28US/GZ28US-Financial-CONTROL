@@ -33,6 +33,7 @@ type Expense = {
   item: string
   amount: string
   payment_date: string
+  receipt_url: string
 }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
@@ -80,9 +81,10 @@ export default function NewInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
+  const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
 
   useEffect(() => { loadRide() }, [])
 
@@ -121,6 +123,19 @@ export default function NewInvoicePage() {
   }
 
   function getPartTotal(part: Part) { return (parseFloat(part.unit_price) || 0) * (parseFloat(part.quantity) || 0) }
+
+  async function uploadReceipt(file: File, index: number) {
+    setUploadingIndex(index)
+    const ext = file.name.split('.').pop()
+    const path = `${rideId}/${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+    if (error) { alert(error.message); setUploadingIndex(null); return }
+    const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+    const updated = [...expenses]
+    updated[index] = { ...updated[index], receipt_url: urlData.publicUrl }
+    setExpenses(updated)
+    setUploadingIndex(null)
+  }
 
   // Calculations
   const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
@@ -163,10 +178,10 @@ export default function NewInvoicePage() {
       if (!(e.supplier === 'Florida State' && e.item === 'Taxes')) existingPartExpenses[e.item] = e
     })
     const intuitiveExpenses: Expense[] = [
-      { supplier: 'Florida State', item: 'Taxes', amount: floridaTaxesAmount.toFixed(2), payment_date: existingFlorida?.payment_date || '' },
+      { supplier: 'Florida State', item: 'Taxes', amount: floridaTaxesAmount.toFixed(2), payment_date: existingFlorida?.payment_date || '', receipt_url: existingFlorida?.receipt_url || '' },
       ...parts.map(p => {
         const existing = existingPartExpenses[p.description]
-        return { supplier: existing?.supplier || '', item: p.description, amount: getPartTotal(p).toFixed(2), payment_date: existing?.payment_date || '' }
+        return { supplier: existing?.supplier || '', item: p.description, amount: getPartTotal(p).toFixed(2), payment_date: existing?.payment_date || '', receipt_url: existing?.receipt_url || '' }
       }),
     ]
     const partDescriptions = parts.map(p => p.description)
@@ -233,16 +248,16 @@ export default function NewInvoicePage() {
   // Expenses
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
   }
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
   function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
   function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' }) }
 
   async function saveInvoice() {
     const { data: invoice, error } = await supabase.from('invoices').insert([{
@@ -276,7 +291,15 @@ export default function NewInvoicePage() {
       if (e) { alert(e.message); return }
     }
     if (expenses.length > 0) {
-      const { error: e } = await supabase.from('invoice_expenses').insert(expenses.map(ex => ({ invoice_id: invoice.id, expense_date: null, supplier: ex.supplier || null, item: ex.item, price: parseFloat(ex.amount) || 0, payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null })))
+      const { error: e } = await supabase.from('invoice_expenses').insert(expenses.map(ex => ({
+        invoice_id: invoice.id,
+        expense_date: null,
+        supplier: ex.supplier || null,
+        item: ex.item,
+        price: parseFloat(ex.amount) || 0,
+        payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
+        receipt_url: ex.receipt_url || null,
+      })))
       if (e) { alert(e.message); return }
     }
 
@@ -414,7 +437,6 @@ export default function NewInvoicePage() {
                 </div>
               </div>
             </div>
-
             {services.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {services.map((svc, index) => (
@@ -642,6 +664,13 @@ export default function NewInvoicePage() {
                             <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                           </div>
                           <div className="flex gap-2 shrink-0">
+                            {exp.receipt_url && (
+                              <a href={exp.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>
+                            )}
+                            <label className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm cursor-pointer">
+                              {uploadingIndex === index ? '...' : '📎'}
+                              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) uploadReceipt(e.target.files[0], index) }} />
+                            </label>
                             <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                             <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                           </div>

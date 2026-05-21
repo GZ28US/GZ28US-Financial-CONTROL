@@ -34,7 +34,7 @@ type Part = { id: string; description: string; unit_price: number; quantity: num
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; payment_date: string | null; source: string | null }
 type Note = { id: string; note: string }
-type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; payment_date: string | null }
+type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; payment_date: string | null; receipt_url: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
@@ -127,7 +127,6 @@ export default function ViewInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Invoice not found.</p></main>
   )
 
-  // Calculations
   const partsSubTotal = parts.reduce((s, p) => s + p.unit_price * p.quantity, 0)
   const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
   const partsTotal = partsSubTotal + floridaTaxesAmount
@@ -517,10 +516,15 @@ export default function ViewInvoicePage() {
                   const isPaid = isValidDate(exp.payment_date)
                   const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
                   return (
-                    <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                      <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                      <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}</p>
-                      <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                    <div key={exp.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                        <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}</p>
+                        <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                      </div>
+                      {exp.receipt_url && (
+                        <a href={exp.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">RECEIPT</a>
+                      )}
                     </div>
                   )
                 })}
