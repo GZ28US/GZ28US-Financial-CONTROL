@@ -109,11 +109,11 @@ export default function ViewInvoicePage() {
 
   function handlePrint() {
     if (!invoice) return
-    const code = invoice.invoice_code.replace(/\./g, '_')
-    const project = (ride?.project_name || '').replace(/\s+/g, '_')
-    const svc = (invoice.service || '').replace(/\s+/g, '_')
-    const parts = [code, project, svc].filter(Boolean).join('_')
-    const filename = `GZ28_V8_SpeedShop_-_INVOICE_${parts}`
+    const code = invoice.invoice_code
+    const project = ride?.project_name || ''
+    const svc = invoice.service || ''
+    const parts = [code, project, svc].filter(Boolean).join(' - ')
+    const filename = `GZ28 V8 SpeedShop - INVOICE - ${parts}`
     const prev = document.title
     document.title = filename
     window.print()
@@ -393,7 +393,7 @@ export default function ViewInvoicePage() {
             {invoice.service && <div className={rowClass}><span className={labelClass}>SERVICE</span><span className="font-bold">{invoice.service}</span></div>}
           </div>
 
-          {/* CAR */}
+          {/* VEHICLE */}
           {ride && (
             <div>
               <label className="block mb-3 text-lg font-bold">VEHICLE</label>
