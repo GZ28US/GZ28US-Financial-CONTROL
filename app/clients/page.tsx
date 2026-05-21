@@ -22,43 +22,38 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadClients()
-  }, [])
+  useEffect(() => { loadClients() }, [])
 
   async function loadClients() {
     const { data } = await supabase
       .from('clients')
       .select('*')
       .order('name', { ascending: true })
-
     setClients(data || [])
     setLoading(false)
   }
 
   async function removeClient(id: string) {
-    const { error } = await supabase
-      .from('clients')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      alert(error.message)
-      return
-    }
-
+    const { error } = await supabase.from('clients').delete().eq('id', id)
+    if (error) { alert(error.message); return }
     setConfirmId(null)
     loadClients()
   }
 
   function formatPhone(phone: string | null) {
     if (!phone) return '-'
+    // Strip everything except digits
     const digits = phone.replace(/\D/g, '')
-    if (digits.length === 11) {
-      return `(${digits.slice(0,2)})${digits.slice(2,7)}.${digits.slice(7)}`
-    } else if (digits.length === 10) {
-      return `(${digits.slice(0,2)})${digits.slice(2,6)}.${digits.slice(6)}`
+    // Handle country code +55 (Brazil)
+    const local = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits
+    if (local.length === 11) {
+      // Mobile: (XX)XXXXX.XXXX
+      return `(${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
+    } else if (local.length === 10) {
+      // Landline: (XX)XXXX.XXXX
+      return `(${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
     }
+    // Fallback: return as-is
     return phone
   }
 
@@ -72,18 +67,8 @@ export default function ClientsPage() {
             <h2 className="text-2xl font-bold mb-2">Remove Client</h2>
             <p className="text-gray-400 text-lg mb-8">Are you sure you want to remove this client? This action cannot be undone.</p>
             <div className="flex gap-4">
-              <button
-                onClick={() => setConfirmId(null)}
-                className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl"
-              >
-                CANCEL
-              </button>
-              <button
-                onClick={() => removeClient(confirmId)}
-                className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl"
-              >
-                REMOVE
-              </button>
+              <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => removeClient(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
             </div>
           </div>
         </div>
@@ -91,9 +76,7 @@ export default function ClientsPage() {
 
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-4xl font-bold">CLIENTS ({clients.length})</h1>
-        <Link href="/clients/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">
-          ADD A NEW CLIENT
-        </Link>
+        <Link href="/clients/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>
       </div>
 
       {loading ? (
@@ -103,10 +86,7 @@ export default function ClientsPage() {
       ) : (
         <div className="space-y-5">
           {clients.map((client) => (
-            <div
-              key={client.id}
-              className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between"
-            >
+            <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold">{client.name}</h2>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
@@ -114,26 +94,10 @@ export default function ClientsPage() {
                 <p className="text-lg text-gray-400">{[client.city, client.state, client.zip].filter(Boolean).join(', ')}</p>
                 {client.country && <p className="text-lg text-gray-400">{client.country}</p>}
               </div>
-
               <div className="flex gap-3 flex-wrap">
-                <Link
-                  href={`/clients/${client.id}`}
-                  className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold"
-                >
-                  VIEW
-                </Link>
-                <Link
-                  href={`/clients/edit/${client.id}`}
-                  className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold"
-                >
-                  EDIT
-                </Link>
-                <button
-                  onClick={() => setConfirmId(client.id)}
-                  className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold"
-                >
-                  REMOVE
-                </button>
+                <Link href={`/clients/${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                <Link href={`/clients/edit/${client.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                <button onClick={() => setConfirmId(client.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
               </div>
             </div>
           ))}
