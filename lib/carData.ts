@@ -158,7 +158,6 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
 }
 
 export const specialEditions: Record<string, string[]> = {
-  // Gen 5 Camaro
   '2010-CAMARO-SS 6.2': ['None', 'Synergy Green Edition', 'Transformers Edition', 'Indy Pace Car Edition'],
   '2010-CAMARO-SS 1LE 6.2': ['None', 'Synergy Green Edition', 'Transformers Edition', 'Indy Pace Car Edition'],
   '2011-CAMARO-SS 6.2': ['None', 'Neiman Marcus Edition', 'Synergy Series'],
@@ -171,14 +170,11 @@ export const specialEditions: Record<string, string[]> = {
   '2014-CAMARO-SS 6.2': ['None', 'Spring Edition'],
   '2015-CAMARO-SS 6.2': ['None', 'Green Flash Edition', 'Commemorative Edition'],
   '2015-CAMARO-SS 1LE 6.2': ['None', 'Green Flash Edition'],
-  // Gen 6 Camaro
   '2024-CAMARO-LT1 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-SS 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-ZL1 6.2': ['None', 'Panther Collector Edition'],
-  // Corvette C7
   '2023-CORVETTE-Stingray 6.2': ['None', '70th Anniversary'],
   '2023-CORVETTE-Z06 5.5': ['None', '70th Anniversary'],
-  // Challenger
   '2019-CHALLENGER-R/T ScatPack 6.4': ['None', '1320'],
   '2023-CHALLENGER-R/T ScatPack 6.4': ['None', 'Swinger', 'Shakedown', 'Mopar Edition', 'T/A', 'Shaker'],
   '2023-CHALLENGER-R/T ScatPack WideBody 6.4': ['None', 'Swinger', 'Shakedown', 'Mopar Edition', 'T/A', 'Shaker'],
@@ -186,12 +182,10 @@ export const specialEditions: Record<string, string[]> = {
   '2023-CHALLENGER-SRT HellCat WideBody 6.2': ['None', 'Black Ghost', 'JailBreak'],
   '2023-CHALLENGER-SRT HellCat RedEye 6.2': ['None', 'JailBreak'],
   '2023-CHALLENGER-SRT HellCat RedEye WideBody 6.2': ['None', 'JailBreak'],
-  // Charger
   '2023-CHARGER-ScatPack 6.4': ['None', 'Super Bee'],
   '2023-CHARGER-ScatPack WideBody 6.4': ['None', 'Super Bee'],
   '2023-CHARGER-SRT HellCat RedEye 6.2': ['None', 'King Daytona', 'Daytona', 'JailBreak'],
   '2023-CHARGER-SRT HellCat RedEye WideBody 6.2': ['None', 'King Daytona', 'Daytona', 'JailBreak'],
-  // Durango
   '2025-DURANGO-SRT HellCat 6.2': ['None', 'Silver Bullet', 'Hammerhead', 'Brass Monkey'],
   '2026-DURANGO-SRT HellCat 6.2': ['None', 'JailBreak'],
 }
@@ -255,7 +249,6 @@ const corvetteColorsByYear: Record<number, string[]> = {
 }
 
 const colorsByConfiguration: Record<string, string[]> = {
-  // Gen 5 Camaro special edition colors
   '2010-CAMARO-SS 6.2-Synergy Green Edition': ['Synergy Green'],
   '2010-CAMARO-SS 1LE 6.2-Synergy Green Edition': ['Synergy Green'],
   '2010-CAMARO-SS 6.2-Transformers Edition': ['Rally Yellow'],
@@ -276,25 +269,20 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2015-CAMARO-SS 6.2-Green Flash Edition': ['Emerald Green'],
   '2015-CAMARO-SS 1LE 6.2-Green Flash Edition': ['Emerald Green'],
   '2015-CAMARO-SS 6.2-Commemorative Edition': ['Rally Yellow', 'Black'],
-  // Gen 6 Camaro Panther Collector Edition
   '2024-CAMARO-LT1 6.2-Panther Collector Edition': ['Panther Matte Black'],
   '2024-CAMARO-SS 6.2-Panther Collector Edition': ['Panther Matte Black'],
   '2024-CAMARO-ZL1 6.2-Panther Collector Edition': ['Panther Matte Black'],
-  // Corvette 70th Anniversary
   '2023-CORVETTE-Stingray 6.2-70th Anniversary': ['White Pearl', 'Carbon Flash'],
   '2023-CORVETTE-Z06 5.5-70th Anniversary': ['White Pearl', 'Carbon Flash'],
-  // Challenger
   '2023-CHALLENGER-R/T ScatPack 6.4-Swinger': ['Sublime', 'F8 Green', 'White Knuckle'],
   '2023-CHALLENGER-R/T ScatPack WideBody 6.4-Swinger': ['Sublime', 'F8 Green', 'White Knuckle'],
   '2023-CHARGER-SRT HellCat RedEye 6.2-King Daytona': ['Go Mango'],
   '2023-CHARGER-SRT HellCat RedEye WideBody 6.2-King Daytona': ['Go Mango'],
-  // Durango
   '2025-DURANGO-SRT HellCat 6.2-Silver Bullet': ['Triple Nickel'],
   '2025-DURANGO-SRT HellCat 6.2-Hammerhead': ['Hammerhead Gray'],
   '2025-DURANGO-SRT HellCat 6.2-Brass Monkey': ['Red Oxide'],
   '2026-DURANGO-SRT HellCat 6.2-None': durangoColors2026,
   '2026-DURANGO-SRT HellCat 6.2-JailBreak': durangoColors2026JailBreak,
-  // F150 Raptor R
   '2023-F150-5.2L SC V8 Raptor R-None': raptorRColors,
   '2024-F150-5.2L SC V8 Raptor R-None': raptorRColors,
   '2025-F150-5.2L SC V8 Raptor R-None': raptorRColors,
@@ -314,4 +302,30 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (brand === 'RAM') return ramColors
   if (brand === 'FORD') return fordColors
   return moparColors
+}
+
+// carData export for compatibility with new/edit ride pages
+export const carData: Record<string, Record<string, Record<string, string[]>>> = {
+  MOPAR: {
+    DODGE: {
+      CHARGER: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
+      CHALLENGER: ['R/T 5.7', 'R/T ScatPack 6.4', 'R/T ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT Demon 170 6.2'],
+      VIPER: ['RT/10 8.0 V10'],
+      DURANGO: ['SRT HellCat 6.2'],
+    },
+    RAM: {
+      '1500': ['1500 5.7', '1500 Rebel 5.7'],
+    },
+  },
+  GM: {
+    CHEVROLET: {
+      CAMARO: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
+      CORVETTE: ['Stingray 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
+    },
+  },
+  FORD: {
+    FORD: {
+      F150: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
+    },
+  },
 }
