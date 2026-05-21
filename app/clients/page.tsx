@@ -42,18 +42,18 @@ export default function ClientsPage() {
 
   function formatPhone(phone: string | null) {
     if (!phone) return '-'
-    // Strip everything except digits
     const digits = phone.replace(/\D/g, '')
-    // Handle country code +55 (Brazil)
-    const local = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits
-    if (local.length === 11) {
-      // Mobile: (XX)XXXXX.XXXX
-      return `(${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
-    } else if (local.length === 10) {
-      // Landline: (XX)XXXX.XXXX
-      return `(${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
+    let countryCode = ''
+    let local = digits
+    if (digits.startsWith('55') && digits.length > 11) {
+      countryCode = '+55 '
+      local = digits.slice(2)
+    } else if (digits.startsWith('1') && digits.length > 10) {
+      countryCode = '+1 '
+      local = digits.slice(1)
     }
-    // Fallback: return as-is
+    if (local.length === 11) return `${countryCode}(${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
+    if (local.length === 10) return `${countryCode}(${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
     return phone
   }
 

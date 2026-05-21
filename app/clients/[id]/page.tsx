@@ -53,9 +53,17 @@ export default function ViewClientPage() {
   function formatPhone(phone: string | null) {
     if (!phone) return '-'
     const digits = phone.replace(/\D/g, '')
-    const local = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits
-    if (local.length === 11) return `(${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
-    if (local.length === 10) return `(${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
+    let countryCode = ''
+    let local = digits
+    if (digits.startsWith('55') && digits.length > 11) {
+      countryCode = '+55 '
+      local = digits.slice(2)
+    } else if (digits.startsWith('1') && digits.length > 10) {
+      countryCode = '+1 '
+      local = digits.slice(1)
+    }
+    if (local.length === 11) return `${countryCode}(${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
+    if (local.length === 10) return `${countryCode}(${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
     return phone
   }
 
@@ -85,7 +93,7 @@ export default function ViewClientPage() {
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
-        {/* Contact Info */}
+        {/* Contact */}
         <div>
           <label className="block mb-3 text-lg font-bold">CONTACT</label>
           <div className={sectionClass}>
@@ -107,9 +115,11 @@ export default function ViewClientPage() {
         )}
 
         {/* Rides */}
-        {rides.length > 0 && (
-          <div>
-            <label className="block mb-3 text-lg font-bold">RIDES ({rides.length})</label>
+        <div>
+          <label className="block mb-3 text-lg font-bold">RIDES ({rides.length})</label>
+          {rides.length === 0 ? (
+            <p className="text-gray-400 text-xl">No rides linked to this client yet.</p>
+          ) : (
             <div className={sectionClass}>
               {rides.map((ride, index) => (
                 <Link
@@ -129,12 +139,8 @@ export default function ViewClientPage() {
                 </Link>
               ))}
             </div>
-          </div>
-        )}
-
-        {rides.length === 0 && (
-          <p className="text-gray-400 text-xl">No rides linked to this client yet.</p>
-        )}
+          )}
+        </div>
 
       </div>
     </main>
