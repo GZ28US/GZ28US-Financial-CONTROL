@@ -119,6 +119,19 @@ export default function NewInvoicePage() {
     setUploadingIndex(null)
   }
 
+  async function uploadReceiptsToEditing(files: FileList) {
+    const urls: string[] = [...editingExpense.receipt_urls]
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const path = `${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+      if (error) { alert(error.message); continue }
+      const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+      urls.push(urlData.publicUrl)
+    }
+    setEditingExpense({ ...editingExpense, receipt_urls: urls })
+  }
+
   // Calculations
   const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
   const floridaTaxesPct = parseFloat(floridaTaxes) || 0
@@ -169,7 +182,6 @@ export default function NewInvoicePage() {
     setExpenses([...intuitiveExpenses, ...userExpenses])
   }
 
-  // Parts
   function addPart() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all part fields'); return }
     setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
@@ -183,7 +195,6 @@ export default function NewInvoicePage() {
   }
   function cancelEditPart() { setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' }) }
 
-  // Services
   function addService() {
     if (!newService.description) { alert('Please enter a description'); return }
     setServices([...services, newService]); setNewService({ description: '', price: '' })
@@ -197,7 +208,6 @@ export default function NewInvoicePage() {
   }
   function cancelEditService() { setEditingServiceIndex(null); setEditingService({ description: '', price: '' }) }
 
-  // Payments
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
     setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '' })
@@ -211,7 +221,6 @@ export default function NewInvoicePage() {
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' }) }
 
-  // Notes
   function addNote() {
     if (!newNote.trim()) { alert('Please enter a note'); return }
     setNotes([...notes, { note: newNote.trim() }]); setNewNote('')
@@ -225,7 +234,6 @@ export default function NewInvoicePage() {
   }
   function cancelEditNote() { setEditingNoteIndex(null); setEditingNote('') }
 
-  // Expenses
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
     setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
@@ -238,10 +246,8 @@ export default function NewInvoicePage() {
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] }) }
-  function removeReceiptUrl(expIndex: number, urlIndex: number) {
-    const updated = [...expenses]
-    updated[expIndex].receipt_urls = updated[expIndex].receipt_urls.filter((_, i) => i !== urlIndex)
-    setExpenses(updated)
+  function removeReceiptFromEditing(urlIndex: number) {
+    setEditingExpense({ ...editingExpense, receipt_urls: editingExpense.receipt_urls.filter((_, i) => i !== urlIndex) })
   }
 
   async function saveInvoice() {
@@ -629,6 +635,23 @@ export default function NewInvoicePage() {
                             </div>
                           </div>
                           <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
+                          <div>
+                            <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
+                            <label className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
+                              📎 ADD FILES
+                              <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceiptsToEditing(e.target.files) }} />
+                            </label>
+                            {editingExpense.receipt_urls.length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {editingExpense.receipt_urls.map((url, ui) => (
+                                  <div key={ui} className="flex items-center gap-2">
+                                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                    <button onClick={() => removeReceiptFromEditing(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                           <div className="flex gap-3">
                             <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                             <button onClick={cancelEditExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -646,24 +669,17 @@ export default function NewInvoicePage() {
                               {exp.receipt_urls.length > 0 && (
                                 <div className="relative">
                                   <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
-                                    RECEIPTS {exp.receipt_urls.length > 1 ? `(${exp.receipt_urls.length})` : ''}
+                                    RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
                                   </button>
                                   {openReceiptsIndex === index && (
                                     <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
                                       {exp.receipt_urls.map((url, ui) => (
-                                        <div key={ui} className="flex items-center gap-2">
-                                          <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
-                                          <button onClick={() => removeReceiptUrl(index, ui)} className="text-red-400 hover:text-red-300 text-xs font-bold">✕</button>
-                                        </div>
+                                        <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
                                       ))}
                                     </div>
                                   )}
                                 </div>
                               )}
-                              <label className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm cursor-pointer">
-                                {uploadingIndex === index ? '...' : '📎'}
-                                <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceipts(e.target.files, index) }} />
-                              </label>
                               <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </div>

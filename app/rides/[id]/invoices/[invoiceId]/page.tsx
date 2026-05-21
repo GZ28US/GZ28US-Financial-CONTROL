@@ -78,25 +78,18 @@ export default function ViewInvoicePage() {
         if (clientData) setClient(clientData)
       }
     }
-
     const { data: inv } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
     if (inv) setInvoice(inv)
-
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (partsData) setParts(partsData)
-
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData)
-
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (paymentsData) setPayments(paymentsData)
-
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData)
-
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData)
-
     setLoading(false)
   }
 
@@ -104,7 +97,6 @@ export default function ViewInvoicePage() {
     if (!d) return '—'
     return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
   }
-
   function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
   function getStatus() {
@@ -371,7 +363,6 @@ export default function ViewInvoicePage() {
 
         <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
-          {/* DATES */}
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>HIRING DATE</span><span className="font-bold">{formatDate(invoice.hiring_date)}</span></div>
             <div className={rowClass}><span className={labelClass}>ENTRY DATE</span><span className="font-bold">{formatDate(invoice.entry_date)}</span></div>
@@ -379,7 +370,6 @@ export default function ViewInvoicePage() {
             {invoice.service && <div className={rowClass}><span className={labelClass}>SERVICE</span><span className="font-bold">{invoice.service}</span></div>}
           </div>
 
-          {/* VEHICLE */}
           {ride && (
             <div>
               <label className="block mb-3 text-lg font-bold">VEHICLE</label>
@@ -395,7 +385,6 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {/* CLIENT */}
           {client && (
             <div>
               <label className="block mb-3 text-lg font-bold">CLIENT</label>
@@ -409,7 +398,6 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {/* PARTS */}
           {parts.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">PARTS</label>
@@ -429,7 +417,6 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {/* SERVICES */}
           {services.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">SERVICES</label>
@@ -445,14 +432,12 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {/* TOTALS */}
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>PARTS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
             {hasDiscount && <div className={rowClass}><span className={labelClass}>GLOBAL DISCOUNT ({invoice.global_discount}%)</span><span className="font-bold text-red-400">- {formatUSD(globalDiscountAmount)}</span></div>}
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>
 
-          {/* PAYMENTS */}
           {payments.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">PAYMENTS</label>
@@ -474,7 +459,6 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {/* NOTES */}
           {notes.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">NOTES</label>
@@ -488,13 +472,11 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {/* CONCLUSION + DELIVERY */}
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>CONCLUSION DATE</span><span className="font-bold">{formatDate(invoice.conclusion_date)}</span></div>
             <div className={rowClass}><span className={labelClass}>DELIVERY DATE</span><span className="font-bold">{formatDate(invoice.delivery_date)}</span></div>
           </div>
 
-          {/* EXPENSES */}
           {expenses.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">EXPENSES</label>
