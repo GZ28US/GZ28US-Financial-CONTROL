@@ -41,6 +41,7 @@ type Expense = {
 }
 
 const paymentSources = ['CASH', 'ACH', 'ZELLE', 'CHECK']
+const FULL_PROJECT_LABOR = 'Full Project Labor'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 
@@ -62,6 +63,7 @@ export default function EditInvoicePage() {
   const [service, setService] = useState('')
   const [floridaTaxes, setFloridaTaxes] = useState('')
   const [globalDiscount, setGlobalDiscount] = useState('')
+  const [targetGrandTotal, setTargetGrandTotal] = useState('')
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
   const [editingPartIndex, setEditingPartIndex] = useState<number | null>(null)
@@ -138,11 +140,43 @@ export default function EditInvoicePage() {
 
   function getPartTotal(part: Part) { return (parseFloat(part.unit_price) || 0) * (parseFloat(part.quantity) || 0) }
 
-  function updateIntuitiveExpenses() {
-    const floridaTaxesPct = parseFloat(floridaTaxes) || 0
-    const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
-    const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
+  // Calculations
+  const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
+  const floridaTaxesPct = parseFloat(floridaTaxes) || 0
+  const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
+  const partsTotal = partsSubTotal + floridaTaxesAmount
+  const laborIndex = services.findIndex(s => s.description === FULL_PROJECT_LABOR)
+  const otherServicesTotal = services.reduce((sum, s, i) => i === laborIndex ? sum : sum + (parseFloat(s.price) || 0), 0)
+  const servicesTotal = services.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
+  const partsAndServicesTotal = partsTotal + servicesTotal
+  const globalDiscountPct = parseFloat(globalDiscount) || 0
+  const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
+  const grandTotal = partsAndServicesTotal - globalDiscountAmount
+  const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  const balance = totalPaid - grandTotal
+  const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+  const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+  const expensesBalance = expensesTotalPaid - expensesTotalGlobal
+  const currentProfit = totalPaid - expensesTotalPaid
+  const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
+  const finalProfit = grandTotal - expensesTotalGlobal
+  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
+  const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
+  function calculateLabor() {
+    const target = parseFloat(targetGrandTotal.replace(/,/g, ''))
+    if (!target || target <= 0) { alert('Please enter a valid Target Grand Total'); return }
+    const discountFactor = 1 - (globalDiscountPct / 100)
+    const labor = discountFactor > 0 ? (target / discountFactor) - partsTotal - otherServicesTotal : 0
+    if (labor < 0) { alert('Target is lower than parts + other services already. Cannot calculate labor.'); return }
+    const updated = [...services]
+    if (laborIndex >= 0) {
+      updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
+    }
+    setServices(updated)
+  }
+
+  function updateIntuitiveExpenses() {
     const existingFlorida = expenses.find(e => e.supplier === 'Florida State' && e.item === 'Taxes')
     const existingPartExpenses: Record<string, Expense> = {}
     expenses.forEach(e => {
@@ -298,27 +332,6 @@ export default function EditInvoicePage() {
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' })
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' }) }
-
-  // Calculations
-  const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
-  const floridaTaxesPct = parseFloat(floridaTaxes) || 0
-  const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
-  const partsTotal = partsSubTotal + floridaTaxesAmount
-  const servicesTotal = services.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
-  const partsAndServicesTotal = partsTotal + servicesTotal
-  const globalDiscountPct = parseFloat(globalDiscount) || 0
-  const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
-  const balance = totalPaid - grandTotal
-  const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
-  const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
-  const expensesBalance = expensesTotalPaid - expensesTotalGlobal
-  const currentProfit = totalPaid - expensesTotalPaid
-  const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
-  const finalProfit = grandTotal - expensesTotalGlobal
-  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
-  const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
   async function saveInvoice() {
     const { error } = await supabase.from('invoices').update({
@@ -480,6 +493,19 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">SERVICES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+
+            {/* TARGET GRAND TOTAL + ADD SERVICE on same row */}
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">TARGET GRAND TOTAL</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${smallInputClass} w-full pl-8`} />
+                </div>
+              </div>
+              <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg shrink-0">+ ADD SERVICE</button>
+            </div>
+
             <input type="text" placeholder="Description" value={newService.description} onChange={(e) => setNewService({ ...newService, description: e.target.value })} className={inputClass} />
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
@@ -488,7 +514,7 @@ export default function EditInvoicePage() {
                 </div>
               </div>
             </div>
-            <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD SERVICE</button>
+
             {services.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {services.map((svc, index) => (
@@ -515,6 +541,9 @@ export default function EditInvoicePage() {
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
+                          {svc.description === FULL_PROJECT_LABOR && (
+                            <button onClick={calculateLabor} className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded-xl font-bold text-sm">CALCULATE</button>
+                          )}
                           <button onClick={() => startEditService(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => removeService(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </div>
