@@ -7,11 +7,11 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
 
-type Part = { description: string; unit_price: string; quantity: string }
-type Service = { description: string; price: string }
-type Payment = { amount: string; payment_date: string; source: string }
-type Note = { note: string }
-type Expense = { supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[] }
+type Part = { id?: string; description: string; unit_price: string; quantity: string }
+type Service = { id?: string; description: string; price: string }
+type Payment = { id?: string; amount: string; payment_date: string; source: string }
+type Note = { id?: string; note: string }
+type Expense = { id?: string; supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[] }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -27,11 +27,13 @@ function parseReceiptUrls(raw: string | null): string[] {
   try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
 }
 
-export default function NewInvoicePage() {
+export default function EditInvoicePage() {
   const params = useParams()
   const router = useRouter()
   const rideId = String(params.id)
+  const invoiceId = String(params.invoiceId)
 
+  const [loading, setLoading] = useState(true)
   const [projectCode, setProjectCode] = useState('')
   const [projectName, setProjectName] = useState('')
   const [invoiceCode, setInvoiceCode] = useState('')
@@ -48,7 +50,7 @@ export default function NewInvoicePage() {
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
   const [editingPartIndex, setEditingPartIndex] = useState<number | null>(null)
   const [editingPart, setEditingPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
-  const [services, setServices] = useState<Service[]>([{ description: FULL_PROJECT_LABOR, price: '' }])
+  const [services, setServices] = useState<Service[]>([])
   const [newService, setNewService] = useState<Service>({ description: '', price: '' })
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
@@ -64,29 +66,44 @@ export default function NewInvoicePage() {
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
-  const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
-  useEffect(() => { loadRide() }, [])
+  useEffect(() => { loadRide(); loadInvoice() }, [])
 
   async function loadRide() {
-    const { data: ride } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
-    if (ride) {
-      setProjectCode(ride.project_code || '')
-      setProjectName(ride.project_name || '')
-      await loadNextInvoiceCode(ride.project_code)
-    }
+    const { data } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
+    if (data) { setProjectCode(data.project_code || ''); setProjectName(data.project_name || '') }
   }
 
-  async function loadNextInvoiceCode(code: string) {
-    const { data } = await supabase.from('invoices').select('invoice_code').eq('ride_id', rideId)
-    const usedNumbers = data?.map((item) => {
-      const match = item.invoice_code?.match(/\.(\d+)$/)
-      return match ? Number(match[1]) : null
-    }) || []
-    let nextNumber = 1
-    while (usedNumbers.includes(nextNumber)) nextNumber++
-    setInvoiceCode(`${code}.${nextNumber}`)
+  async function loadInvoice() {
+    const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
+    if (error || !data) { alert('Invoice not found'); router.push(`/rides/${rideId}/invoices`); return }
+    setInvoiceCode(data.invoice_code || '')
+    setHiringDate(data.hiring_date || '')
+    setEntryDate(data.entry_date || '')
+    setConclusionDate(data.conclusion_date || '')
+    setDeliveryDate(data.delivery_date || '')
+    setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
+    setService(data.service || '')
+    setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
+    setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
+
+    const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity) })))
+
+    const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
+
+    const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    if (paymentsData) setPayments(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '' })))
+
+    const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
+
+    const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    if (expensesData) setExpenses(expensesData.map(e => ({ id: e.id, supplier: e.supplier || '', item: e.item, amount: String(e.price), payment_date: e.payment_date || '', receipt_urls: parseReceiptUrls(e.receipt_url) })))
+
+    setLoading(false)
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -102,34 +119,21 @@ export default function NewInvoicePage() {
   }
   function getPartTotal(part: Part) { return (parseFloat(part.unit_price) || 0) * (parseFloat(part.quantity) || 0) }
 
-  async function uploadReceipts(files: FileList, index: number) {
-    setUploadingIndex(index)
-    const urls: string[] = [...expenses[index].receipt_urls]
-    for (const file of Array.from(files)) {
-      const ext = file.name.split('.').pop()
-      const path = `${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-      const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
-      if (error) { alert(error.message); continue }
-      const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
-      urls.push(urlData.publicUrl)
-    }
-    const updated = [...expenses]
-    updated[index] = { ...updated[index], receipt_urls: urls }
-    setExpenses(updated)
-    setUploadingIndex(null)
-  }
-
   async function uploadReceiptsToEditing(files: FileList) {
     const urls: string[] = [...editingExpense.receipt_urls]
     for (const file of Array.from(files)) {
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${rideId}/${invoiceId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (error) { alert(error.message); continue }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
       urls.push(urlData.publicUrl)
     }
     setEditingExpense({ ...editingExpense, receipt_urls: urls })
+  }
+
+  function removeReceiptFromEditing(urlIndex: number) {
+    setEditingExpense({ ...editingExpense, receipt_urls: editingExpense.receipt_urls.filter((_, i) => i !== urlIndex) })
   }
 
   // Calculations
@@ -155,15 +159,19 @@ export default function NewInvoicePage() {
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
-  function calculateLabor() {
+  async function calculateLabor() {
     const target = parseFloat(targetGrandTotal.replace(/,/g, ''))
     if (!target || target <= 0) { alert('Please enter a valid Target Grand Total'); return }
     const discountFactor = 1 - (globalDiscountPct / 100)
     const labor = discountFactor > 0 ? (target / discountFactor) - partsTotal - otherServicesTotal : 0
     if (labor < 0) { alert('Target is lower than parts + other services already.'); return }
     const updated = [...services]
-    if (laborIndex >= 0) updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
-    setServices(updated)
+    if (laborIndex >= 0) {
+      updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
+      setServices(updated)
+      const laborSvc = updated[laborIndex]
+      if (laborSvc.id) await supabase.from('invoice_services').update({ price: labor }).eq('id', laborSvc.id)
+    }
   }
 
   function updateIntuitiveExpenses() {
@@ -186,11 +194,20 @@ export default function NewInvoicePage() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all part fields'); return }
     setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
   }
-  function removePart(index: number) { setParts(parts.filter((_, i) => i !== index)) }
+  async function removePart(index: number) {
+    const part = parts[index]
+    if (part.id) await supabase.from('invoice_parts').delete().eq('id', part.id)
+    setParts(parts.filter((_, i) => i !== index))
+  }
   function startEditPart(index: number) { setEditingPartIndex(index); setEditingPart({ ...parts[index] }) }
-  function saveEditPart() {
+  async function saveEditPart() {
     if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all part fields'); return }
-    const updated = [...parts]; updated[editingPartIndex!] = editingPart; setParts(updated)
+    const part = parts[editingPartIndex!]
+    if (part.id) {
+      const { error } = await supabase.from('invoice_parts').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity) }).eq('id', part.id)
+      if (error) { alert(error.message); return }
+    }
+    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id }; setParts(updated)
     setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
   }
   function cancelEditPart() { setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' }) }
@@ -199,11 +216,20 @@ export default function NewInvoicePage() {
     if (!newService.description) { alert('Please enter a description'); return }
     setServices([...services, newService]); setNewService({ description: '', price: '' })
   }
-  function removeService(index: number) { setServices(services.filter((_, i) => i !== index)) }
+  async function removeService(index: number) {
+    const svc = services[index]
+    if (svc.id) await supabase.from('invoice_services').delete().eq('id', svc.id)
+    setServices(services.filter((_, i) => i !== index))
+  }
   function startEditService(index: number) { setEditingServiceIndex(index); setEditingService({ ...services[index] }) }
-  function saveEditService() {
+  async function saveEditService() {
     if (!editingService.description) { alert('Please enter a description'); return }
-    const updated = [...services]; updated[editingServiceIndex!] = editingService; setServices(updated)
+    const svc = services[editingServiceIndex!]
+    if (svc.id) {
+      const { error } = await supabase.from('invoice_services').update({ description: editingService.description, price: parseFloat(editingService.price) || 0 }).eq('id', svc.id)
+      if (error) { alert(error.message); return }
+    }
+    const updated = [...services]; updated[editingServiceIndex!] = { ...editingService, id: svc.id }; setServices(updated)
     setEditingServiceIndex(null); setEditingService({ description: '', price: '' })
   }
   function cancelEditService() { setEditingServiceIndex(null); setEditingService({ description: '', price: '' }) }
@@ -212,11 +238,20 @@ export default function NewInvoicePage() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
     setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '' })
   }
-  function removePayment(index: number) { setPayments(payments.filter((_, i) => i !== index)) }
+  async function removePayment(index: number) {
+    const payment = payments[index]
+    if (payment.id) await supabase.from('invoice_payments').delete().eq('id', payment.id)
+    setPayments(payments.filter((_, i) => i !== index))
+  }
   function startEditPayment(index: number) { setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }) }
-  function saveEditPayment() {
+  async function saveEditPayment() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
-    const updated = [...payments]; updated[editingPaymentIndex!] = editingPayment; setPayments(updated)
+    const payment = payments[editingPaymentIndex!]
+    if (payment.id) {
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null }).eq('id', payment.id)
+      if (error) { alert(error.message); return }
+    }
+    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(updated)
     setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' })
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' }) }
@@ -225,11 +260,20 @@ export default function NewInvoicePage() {
     if (!newNote.trim()) { alert('Please enter a note'); return }
     setNotes([...notes, { note: newNote.trim() }]); setNewNote('')
   }
-  function removeNote(index: number) { setNotes(notes.filter((_, i) => i !== index)) }
+  async function removeNote(index: number) {
+    const n = notes[index]
+    if (n.id) await supabase.from('invoice_notes').delete().eq('id', n.id)
+    setNotes(notes.filter((_, i) => i !== index))
+  }
   function startEditNote(index: number) { setEditingNoteIndex(index); setEditingNote(notes[index].note) }
-  function saveEditNote() {
+  async function saveEditNote() {
     if (!editingNote.trim()) { alert('Please enter a note'); return }
-    const updated = [...notes]; updated[editingNoteIndex!] = { note: editingNote.trim() }; setNotes(updated)
+    const n = notes[editingNoteIndex!]
+    if (n.id) {
+      const { error } = await supabase.from('invoice_notes').update({ note: editingNote.trim() }).eq('id', n.id)
+      if (error) { alert(error.message); return }
+    }
+    const updated = [...notes]; updated[editingNoteIndex!] = { ...n, note: editingNote.trim() }; setNotes(updated)
     setEditingNoteIndex(null); setEditingNote('')
   }
   function cancelEditNote() { setEditingNoteIndex(null); setEditingNote('') }
@@ -238,21 +282,31 @@ export default function NewInvoicePage() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
     setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   }
-  function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
+  async function removeExpense(index: number) {
+    const exp = expenses[index]
+    if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
+    setExpenses(expenses.filter((_, i) => i !== index))
+  }
   function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
-  function saveEditExpense() {
+  async function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
-    const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
+    const exp = expenses[editingExpenseIndex!]
+    if (exp.id) {
+      const { error } = await supabase.from('invoice_expenses').update({
+        expense_date: null, supplier: editingExpense.supplier || null,
+        item: editingExpense.item, price: parseFloat(editingExpense.amount),
+        payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
+        receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
+      }).eq('id', exp.id)
+      if (error) { alert(error.message); return }
+    }
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] }) }
-  function removeReceiptFromEditing(urlIndex: number) {
-    setEditingExpense({ ...editingExpense, receipt_urls: editingExpense.receipt_urls.filter((_, i) => i !== urlIndex) })
-  }
 
   async function saveInvoice() {
-    const { data: invoice, error } = await supabase.from('invoices').insert([{
-      invoice_code: invoiceCode, ride_id: rideId,
+    const { error } = await supabase.from('invoices').update({
       hiring_date: isValidDate(hiringDate) ? hiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,
       conclusion_date: isValidDate(conclusionDate) ? conclusionDate : null,
@@ -261,30 +315,36 @@ export default function NewInvoicePage() {
       service: service || null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
-    }]).select().single()
-    if (error || !invoice) { alert(error?.message || 'Error saving invoice'); return }
+      updated_at: new Date().toISOString(),
+    }).eq('id', invoiceId)
+    if (error) { alert(error.message); return }
 
-    if (parts.length > 0) {
-      const { error: e } = await supabase.from('invoice_parts').insert(parts.map(p => ({ invoice_id: invoice.id, description: p.description, unit_price: parseFloat(p.unit_price), quantity: parseFloat(p.quantity) })))
+    const newParts = parts.filter(p => !p.id)
+    if (newParts.length > 0) {
+      const { error: e } = await supabase.from('invoice_parts').insert(newParts.map(p => ({ invoice_id: invoiceId, description: p.description, unit_price: parseFloat(p.unit_price), quantity: parseFloat(p.quantity) })))
       if (e) { alert(e.message); return }
     }
-    if (services.length > 0) {
-      const { error: e } = await supabase.from('invoice_services').insert(services.map(s => ({ invoice_id: invoice.id, description: s.description, price: parseFloat(s.price) || 0 })))
+    const newServices = services.filter(s => !s.id)
+    if (newServices.length > 0) {
+      const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0 })))
       if (e) { alert(e.message); return }
     }
-    if (payments.length > 0) {
-      const { error: e } = await supabase.from('invoice_payments').insert(payments.map(p => ({ invoice_id: invoice.id, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null })))
+    const newPayments = payments.filter(p => !p.id)
+    if (newPayments.length > 0) {
+      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null })))
       if (e) { alert(e.message); return }
     }
-    if (notes.length > 0) {
-      const { error: e } = await supabase.from('invoice_notes').insert(notes.map(n => ({ invoice_id: invoice.id, note: n.note })))
+    const newNotes = notes.filter(n => !n.id)
+    if (newNotes.length > 0) {
+      const { error: e } = await supabase.from('invoice_notes').insert(newNotes.map(n => ({ invoice_id: invoiceId, note: n.note })))
       if (e) { alert(e.message); return }
     }
-    if (expenses.length > 0) {
-      const { error: e } = await supabase.from('invoice_expenses').insert(expenses.map(ex => ({
-        invoice_id: invoice.id, expense_date: null,
+    const newExpenses = expenses.filter(e => !e.id)
+    if (newExpenses.length > 0) {
+      const { error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({
+        invoice_id: invoiceId, expense_date: null,
         supplier: ex.supplier || null, item: ex.item,
-        price: parseFloat(ex.amount) || 0,
+        price: parseFloat(ex.amount),
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
@@ -297,10 +357,14 @@ export default function NewInvoicePage() {
   const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
   const selectClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
 
+  if (loading) return (
+    <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
+  )
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-2">ADD A NEW INVOICE</h1>
+      <h1 className="text-4xl font-bold mb-2">EDIT INVOICE</h1>
       <p className="text-gray-400 text-xl mb-8">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
@@ -717,7 +781,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        <button onClick={saveInvoice} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE INVOICE</button>
+        <button onClick={saveInvoice} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         <a href={`/rides/${rideId}/invoices`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
