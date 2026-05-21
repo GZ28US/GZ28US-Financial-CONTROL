@@ -29,7 +29,6 @@ type Note = {
 }
 
 type Expense = {
-  expense_date: string
   supplier: string
   item: string
   amount: string
@@ -60,7 +59,7 @@ export default function NewInvoicePage() {
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
   const [editingPartIndex, setEditingPartIndex] = useState<number | null>(null)
   const [editingPart, setEditingPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
-  const [services, setServices] = useState<Service[]>([])
+  const [services, setServices] = useState<Service[]>([{ description: 'Full Project Labor', price: '' }])
   const [newService, setNewService] = useState<Service>({ description: '', price: '' })
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
@@ -73,9 +72,9 @@ export default function NewInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '' })
 
   useEffect(() => { loadRide() }, [])
 
@@ -130,7 +129,6 @@ export default function NewInvoicePage() {
 
     const intuitiveExpenses: Expense[] = [
       {
-        expense_date: '',
         supplier: 'Florida State',
         item: 'Taxes',
         amount: floridaTaxesAmount.toFixed(2),
@@ -139,7 +137,6 @@ export default function NewInvoicePage() {
       ...parts.map(p => {
         const existing = existingPartExpenses[p.description]
         return {
-          expense_date: '',
           supplier: existing?.supplier || '',
           item: p.description,
           amount: getPartTotal(p).toFixed(2),
@@ -216,16 +213,16 @@ export default function NewInvoicePage() {
   // Expenses
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '' })
   }
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
   function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
   function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' }) }
 
   // Calculations
   const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
@@ -439,7 +436,7 @@ export default function NewInvoicePage() {
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
                           <p className="text-base font-bold truncate">{svc.description}</p>
-                          <p className="text-sm text-gray-400">{parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
+                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
                           <button onClick={() => startEditService(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -601,8 +598,8 @@ export default function NewInvoicePage() {
               </div>
             </div>
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
-            <button onClick={updateIntuitiveExpenses} className="w-full bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">↻ UPDATE INTUITIVE EXPENSES</button>
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
+            <button onClick={updateIntuitiveExpenses} className="w-full bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">↻ UPDATE INTUITIVE EXPENSES</button>
             {expenses.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {expenses.map((exp, index) => {
