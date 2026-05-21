@@ -10,7 +10,9 @@ import { formatUSD } from '@/lib/utils'
 type Invoice = {
   id: string
   invoice_code: string
+  hiring_date: string | null
   entry_date: string | null
+  conclusion_date: string | null
   delivery_date: string | null
   mileage: number | null
   service: string | null
@@ -30,9 +32,15 @@ type Client = {
 
 type Part = { id: string; description: string; unit_price: number; quantity: number }
 type Service = { id: string; description: string; price: number }
-type Payment = { id: string; amount: number; payment_date: string | null; source: string }
+type Payment = { id: string; amount: number; payment_date: string | null; source: string | null }
 type Note = { id: string; note: string }
 type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; payment_date: string | null }
+
+function isTodayOrPast(dateStr: string | null) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  return new Date(dateStr + 'T00:00:00') <= today
+}
 
 export default function ViewInvoicePage() {
   const params = useParams()
@@ -119,6 +127,7 @@ export default function ViewInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Invoice not found.</p></main>
   )
 
+  // Calculations
   const partsSubTotal = parts.reduce((s, p) => s + p.unit_price * p.quantity, 0)
   const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
   const partsTotal = partsSubTotal + floridaTaxesAmount
@@ -127,7 +136,7 @@ export default function ViewInvoicePage() {
   const hasDiscount = (invoice.global_discount || 0) > 0
   const globalDiscountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+  const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
   const expensesTotalGlobal = expenses.reduce((s, e) => s + e.price, 0)
   const expensesTotalPaid = expenses.filter(e => e.payment_date).reduce((s, e) => s + e.price, 0)
@@ -159,25 +168,17 @@ export default function ViewInvoicePage() {
         .pi { background: white; color: #111; font-size: 9px; position: relative; }
 
         .pi-watermark {
-          position: fixed;
-          top: 50%;
-          left: 50%;
+          position: fixed; top: 50%; left: 50%;
           transform: translate(-50%, -50%);
-          opacity: 0.055;
-          width: 500px;
-          pointer-events: none;
-          z-index: 0;
+          opacity: 0.055; width: 500px;
+          pointer-events: none; z-index: 0;
         }
         .pi-content { position: relative; z-index: 1; }
 
         .pi-header {
-          display: grid;
-          grid-template-columns: 156px 1fr 156px;
-          align-items: center;
-          border-bottom: 2px solid #111;
-          padding-bottom: 8px;
-          margin-bottom: 8px;
-          gap: 10px;
+          display: grid; grid-template-columns: 156px 1fr 156px;
+          align-items: center; border-bottom: 2px solid #111;
+          padding-bottom: 8px; margin-bottom: 8px; gap: 10px;
         }
         .pi-logo { width: 156px; height: auto; display: block; }
         .pi-company { text-align: center; }
@@ -225,16 +226,7 @@ export default function ViewInvoicePage() {
         .pi-notes-title { font-weight: 700; text-transform: uppercase; font-size: 7px; letter-spacing: 0.5px; color: #888; margin-bottom: 4px; }
         .pi-notes p { font-size: 8px; margin-bottom: 1px; }
 
-        .pi-sig {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 40px;
-          margin-top: 10px;
-          border-top: 1px solid #ccc;
-          padding-top: 8px;
-          page-break-inside: avoid;
-          break-inside: avoid;
-        }
+        .pi-sig { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 10px; border-top: 1px solid #ccc; padding-top: 8px; page-break-inside: avoid; break-inside: avoid; }
         .pi-sig-block { text-align: center; }
         .pi-sig-line { border-bottom: 1px solid #333; height: 24px; margin-bottom: 3px; }
         .pi-sig-label { font-size: 7px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -245,8 +237,6 @@ export default function ViewInvoicePage() {
         <div className="pi">
           <img src="/logo_gz28.jpg" className="pi-watermark" alt="" aria-hidden="true" />
           <div className="pi-content">
-
-            {/* Header */}
             <div className="pi-header">
               <img src="/logo_gz28.jpg" className="pi-logo" alt="GZ28 Logo" />
               <div className="pi-company">
@@ -258,12 +248,12 @@ export default function ViewInvoicePage() {
               <div className="pi-inv-box">
                 <div className="pi-inv-label">Invoice #</div>
                 <div className="pi-inv-num">{invoice.invoice_code}</div>
+                <div className="pi-inv-date">Hiring: {formatDate(invoice.hiring_date)}</div>
                 <div className="pi-inv-date">Entry: {formatDate(invoice.entry_date)}</div>
                 {invoice.delivery_date && <div className="pi-inv-date">Delivery: {formatDate(invoice.delivery_date)}</div>}
               </div>
             </div>
 
-            {/* Client + Vehicle */}
             <div className="pi-two-col">
               <div className="pi-info-block">
                 <div className="pi-info-title">Client</div>
@@ -276,9 +266,7 @@ export default function ViewInvoicePage() {
                 </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>No client linked</div>}
               </div>
               <div className="pi-info-block">
-                <div className="pi-info-title">
-                  Vehicle{ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}
-                </div>
+                <div className="pi-info-title">Vehicle{ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}</div>
                 {(ride?.manufacturer || ride?.brand) && <div className="pi-info-row"><span className="pi-info-label">Make / Brand:</span><span className="pi-info-value">{[ride?.manufacturer, ride?.brand].filter(Boolean).join(' / ')}</span></div>}
                 {ride?.model && <div className="pi-info-row"><span className="pi-info-label">Model:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
                 {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">Year / VIN:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
@@ -287,7 +275,6 @@ export default function ViewInvoicePage() {
               </div>
             </div>
 
-            {/* Parts */}
             {parts.length > 0 && <div className="pi-sec">
               <div className="pi-sec-title">Parts</div>
               <table className="pi-table">
@@ -313,7 +300,6 @@ export default function ViewInvoicePage() {
               </table>
             </div>}
 
-            {/* Services */}
             {services.length > 0 && <div className="pi-sec">
               <div className="pi-sec-title">Services</div>
               <table className="pi-table">
@@ -333,7 +319,6 @@ export default function ViewInvoicePage() {
               </table>
             </div>}
 
-            {/* Totals */}
             <div className="pi-totals-wrap">
               <table className="pi-totals-tbl">
                 <tbody>
@@ -344,7 +329,6 @@ export default function ViewInvoicePage() {
               </table>
             </div>
 
-            {/* Payments */}
             {payments.length > 0 && <div className="pi-sec">
               <div className="pi-sec-title">Payments</div>
               <table className="pi-table">
@@ -357,7 +341,7 @@ export default function ViewInvoicePage() {
                   {payments.map(p => (
                     <tr key={p.id}>
                       <td>{formatDate(p.payment_date)}</td>
-                      <td>{p.source}</td>
+                      <td>{p.source || '—'}</td>
                       <td className="r">{formatUSD(p.amount)}</td>
                     </tr>
                   ))}
@@ -367,24 +351,15 @@ export default function ViewInvoicePage() {
               </table>
             </div>}
 
-            {/* Notes */}
             {notes.length > 0 && <div className="pi-notes">
               <div className="pi-notes-title">Notes</div>
               {notes.map(n => <p key={n.id}>{n.note}</p>)}
             </div>}
 
-            {/* Signature */}
             <div className="pi-sig">
-              <div className="pi-sig-block">
-                <div className="pi-sig-line"></div>
-                <div className="pi-sig-label">Delivery Date</div>
-              </div>
-              <div className="pi-sig-block">
-                <div className="pi-sig-line"></div>
-                <div className="pi-sig-label">Client — Printed Name</div>
-              </div>
+              <div className="pi-sig-block"><div className="pi-sig-line"></div><div className="pi-sig-label">Delivery Date</div></div>
+              <div className="pi-sig-block"><div className="pi-sig-line"></div><div className="pi-sig-label">Client — Printed Name</div></div>
             </div>
-
           </div>
         </div>
       </div>
@@ -410,13 +385,31 @@ export default function ViewInvoicePage() {
 
         <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
+          {/* DATES */}
           <div className={sectionClass}>
+            <div className={rowClass}><span className={labelClass}>HIRING DATE</span><span className="font-bold">{formatDate(invoice.hiring_date)}</span></div>
             <div className={rowClass}><span className={labelClass}>ENTRY DATE</span><span className="font-bold">{formatDate(invoice.entry_date)}</span></div>
-            <div className={rowClass}><span className={labelClass}>DELIVERY DATE</span><span className="font-bold">{formatDate(invoice.delivery_date)}</span></div>
             {invoice.mileage && <div className={rowClass}><span className={labelClass}>MILEAGE</span><span className="font-bold">{Number(invoice.mileage).toLocaleString('en-US')} mi</span></div>}
             {invoice.service && <div className={rowClass}><span className={labelClass}>SERVICE</span><span className="font-bold">{invoice.service}</span></div>}
           </div>
 
+          {/* CAR */}
+          {ride && (
+            <div>
+              <label className="block mb-3 text-lg font-bold">VEHICLE</label>
+              <div className={sectionClass}>
+                {(ride.manufacturer || ride.brand) && <div className={rowClass}><span className={labelClass}>MAKE / BRAND</span><span className="font-bold">{[ride.manufacturer, ride.brand].filter(Boolean).join(' / ')}</span></div>}
+                {ride.model && <div className={rowClass}><span className={labelClass}>MODEL</span><span className="font-bold">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
+                {ride.year && <div className={rowClass}><span className={labelClass}>YEAR</span><span className="font-bold">{ride.year}</span></div>}
+                {ride.color && <div className={rowClass}><span className={labelClass}>COLOR</span><span className="font-bold">{ride.color}</span></div>}
+                {ride.vin && <div className={rowClass}><span className={labelClass}>VIN</span><span className="font-bold">{ride.vin}</span></div>}
+                {ride.plate && <div className={rowClass}><span className={labelClass}>PLATE</span><span className="font-bold">{ride.plate}</span></div>}
+                {ride.special_edition && <div className={rowClass}><span className={labelClass}>PACK</span><span className="font-bold">{ride.special_edition}</span></div>}
+              </div>
+            </div>
+          )}
+
+          {/* CLIENT */}
           {client && (
             <div>
               <label className="block mb-3 text-lg font-bold">CLIENT</label>
@@ -430,6 +423,7 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
+          {/* PARTS */}
           {parts.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">PARTS</label>
@@ -449,6 +443,7 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
+          {/* SERVICES */}
           {services.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">SERVICES</label>
@@ -464,30 +459,36 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
+          {/* TOTALS */}
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>PARTS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
             {hasDiscount && <div className={rowClass}><span className={labelClass}>GLOBAL DISCOUNT ({invoice.global_discount}%)</span><span className="font-bold text-red-400">- {formatUSD(globalDiscountAmount)}</span></div>}
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>
 
+          {/* PAYMENTS */}
           {payments.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">PAYMENTS</label>
               <div className={sectionClass}>
-                {payments.map((payment, index) => (
-                  <div key={payment.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                    <div>
-                      <p className="text-base font-bold">{formatUSD(payment.amount)}</p>
-                      <p className="text-sm text-gray-400">{payment.source}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                {payments.map((payment, index) => {
+                  const isPaid = isTodayOrPast(payment.payment_date)
+                  return (
+                    <div key={payment.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                      <div>
+                        <p className={`text-base font-bold ${isPaid ? '' : 'text-yellow-400'}`}>{formatUSD(payment.amount)}{!isPaid ? ' — PENDING' : ''}</p>
+                        <p className="text-sm text-gray-400">{payment.source || ''}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>TOTAL PAID</span><span className="font-bold">{formatUSD(totalPaid)}</span></div>
                 <div className="px-4 py-3 flex justify-between"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${balance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(balance)}</span></div>
               </div>
             </div>
           )}
 
+          {/* NOTES */}
           {notes.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">NOTES</label>
@@ -501,6 +502,13 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
+          {/* CONCLUSION + DELIVERY */}
+          <div className={sectionClass}>
+            <div className={rowClass}><span className={labelClass}>CONCLUSION DATE</span><span className="font-bold">{formatDate(invoice.conclusion_date)}</span></div>
+            <div className={rowClass}><span className={labelClass}>DELIVERY DATE</span><span className="font-bold">{formatDate(invoice.delivery_date)}</span></div>
+          </div>
+
+          {/* EXPENSES */}
           {expenses.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">EXPENSES</label>
@@ -511,7 +519,7 @@ export default function ViewInvoicePage() {
                   return (
                     <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                      <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}{exp.expense_date ? ` — ${formatDate(exp.expense_date)}` : ''}</p>
+                      <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}</p>
                       <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                     </div>
                   )
