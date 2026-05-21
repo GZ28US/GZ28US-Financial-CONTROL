@@ -14,6 +14,7 @@ type Ride = {
   special_edition: string | null
   color: string | null
   updated_at: string | null
+  created_at: string | null
 }
 
 export default function RidesPage() {
@@ -29,9 +30,12 @@ export default function RidesPage() {
 
     const ridesData = data || []
 
-    // For each ride, find the most recent activity timestamp across all related tables
     const ridesWithActivity = await Promise.all(ridesData.map(async (ride) => {
-      // Get all invoices for this ride
+      const timestamps: string[] = []
+
+      if (ride.updated_at) timestamps.push(ride.updated_at)
+      if (ride.created_at) timestamps.push(ride.created_at)
+
       const { data: invoices } = await supabase
         .from('invoices')
         .select('id, updated_at, created_at')
@@ -39,71 +43,29 @@ export default function RidesPage() {
 
       const invoiceIds = (invoices || []).map(i => i.id)
 
-      let latestTimestamp = ride.updated_at || ride.created_at || ''
-
-      // Check invoice timestamps
       for (const inv of invoices || []) {
-        const t = inv.updated_at || inv.created_at || ''
-        if (t > latestTimestamp) latestTimestamp = t
+        if (inv.updated_at) timestamps.push(inv.updated_at)
+        if (inv.created_at) timestamps.push(inv.created_at)
       }
 
       if (invoiceIds.length > 0) {
-        // Check payments
-        const { data: payments } = await supabase
-          .from('invoice_payments')
-          .select('created_at')
-          .in('invoice_id', invoiceIds)
-          .order('created_at', { ascending: false })
-          .limit(1)
-        if (payments?.[0]?.created_at > latestTimestamp) latestTimestamp = payments[0].created_at
-
-        // Check expenses
-        const { data: expenses } = await supabase
-          .from('invoice_expenses')
-          .select('created_at')
-          .in('invoice_id', invoiceIds)
-          .order('created_at', { ascending: false })
-          .limit(1)
-        if (expenses?.[0]?.created_at > latestTimestamp) latestTimestamp = expenses[0].created_at
-
-        // Check parts
-        const { data: parts } = await supabase
-          .from('invoice_parts')
-          .select('created_at')
-          .in('invoice_id', invoiceIds)
-          .order('created_at', { ascending: false })
-          .limit(1)
-        if (parts?.[0]?.created_at > latestTimestamp) latestTimestamp = parts[0].created_at
-
-        // Check services
-        const { data: services } = await supabase
-          .from('invoice_services')
-          .select('created_at')
-          .in('invoice_id', invoiceIds)
-          .order('created_at', { ascending: false })
-          .limit(1)
-        if (services?.[0]?.created_at > latestTimestamp) latestTimestamp = services[0].created_at
-
-        // Check notes
-        const { data: notes } = await supabase
-          .from('invoice_notes')
-          .select('created_at')
-          .in('invoice_id', invoiceIds)
-          .order('created_at', { ascending: false })
-          .limit(1)
-        if (notes?.[0]?.created_at > latestTimestamp) latestTimestamp = notes[0].created_at
+        const tables = ['invoice_payments', 'invoice_expenses', 'invoice_parts', 'invoice_services', 'invoice_notes']
+        for (const table of tables) {
+          const { data: rows } = await supabase
+            .from(table)
+            .select('created_at')
+            .in('invoice_id', invoiceIds)
+            .order('created_at', { ascending: false })
+            .limit(1)
+          if (rows?.[0]?.created_at) timestamps.push(rows[0].created_at)
+        }
       }
 
-      return { ...ride, _latestActivity: latestTimestamp }
+      const latest = timestamps.filter(Boolean).sort().reverse()[0] || ''
+      return { ...ride, _latestActivity: latest }
     }))
 
-    // Sort by most recent activity
-    ridesWithActivity.sort((a, b) => {
-      if (a._latestActivity > b._latestActivity) return -1
-      if (a._latestActivity < b._latestActivity) return 1
-      return 0
-    })
-
+    ridesWithActivity.sort((a, b) => b._latestActivity.localeCompare(a._latestActivity))
     setRides(ridesWithActivity)
     setLoading(false)
   }
