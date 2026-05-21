@@ -51,11 +51,21 @@ export default function ClientsPage() {
     loadClients()
   }
 
+  function formatPhone(phone: string | null) {
+    if (!phone) return '-'
+    const digits = phone.replace(/\D/g, '')
+    if (digits.length === 11) {
+      return `(${digits.slice(0,2)})${digits.slice(2,7)}.${digits.slice(7)}`
+    } else if (digits.length === 10) {
+      return `(${digits.slice(0,2)})${digits.slice(2,6)}.${digits.slice(6)}`
+    }
+    return phone
+  }
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      {/* Custom confirm modal */}
       {confirmId && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
@@ -80,14 +90,8 @@ export default function ClientsPage() {
       )}
 
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">
-          CLIENTS ({clients.length})
-        </h1>
-
-        <Link
-          href="/clients/new"
-          className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold"
-        >
+        <h1 className="text-4xl font-bold">CLIENTS ({clients.length})</h1>
+        <Link href="/clients/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">
           ADD A NEW CLIENT
         </Link>
       </div>
@@ -104,37 +108,26 @@ export default function ClientsPage() {
               className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between"
             >
               <div>
-                <h2 className="text-2xl font-bold">
-                  {client.name}
-                </h2>
-
-                <p className="text-lg text-gray-400">
-                  {client.email || '-'}
-                </p>
-
-                <p className="text-lg text-gray-400">
-                  {client.phone || '-'}
-                </p>
-
-                <p className="text-lg text-gray-400">
-                  {[client.city, client.state, client.zip].filter(Boolean).join(', ')}
-                </p>
-
-                {client.country && (
-                  <p className="text-lg text-gray-400">
-                    {client.country}
-                  </p>
-                )}
+                <h2 className="text-2xl font-bold">{client.name}</h2>
+                <p className="text-lg text-gray-400">{client.email || '-'}</p>
+                <p className="text-lg text-gray-400">{formatPhone(client.phone)}</p>
+                <p className="text-lg text-gray-400">{[client.city, client.state, client.zip].filter(Boolean).join(', ')}</p>
+                {client.country && <p className="text-lg text-gray-400">{client.country}</p>}
               </div>
 
               <div className="flex gap-3 flex-wrap">
+                <Link
+                  href={`/clients/${client.id}`}
+                  className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold"
+                >
+                  VIEW
+                </Link>
                 <Link
                   href={`/clients/edit/${client.id}`}
                   className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold"
                 >
                   EDIT
                 </Link>
-
                 <button
                   onClick={() => setConfirmId(client.id)}
                   className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold"
