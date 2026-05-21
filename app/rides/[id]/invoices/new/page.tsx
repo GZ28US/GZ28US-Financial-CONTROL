@@ -7,44 +7,24 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
 
-type Part = {
-  description: string
-  unit_price: string
-  quantity: string
-}
-
-type Service = {
-  description: string
-  price: string
-}
-
-type Payment = {
-  amount: string
-  payment_date: string
-  source: string
-}
-
-type Note = {
-  note: string
-}
-
-type Expense = {
-  supplier: string
-  item: string
-  amount: string
-  payment_date: string
-  receipt_url: string
-}
+type Part = { description: string; unit_price: string; quantity: string }
+type Service = { description: string; price: string }
+type Payment = { amount: string; payment_date: string; source: string }
+type Note = { note: string }
+type Expense = { supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[] }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
-
 function isTodayOrPast(dateStr: string) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
   const today = new Date(); today.setHours(0, 0, 0, 0)
   return new Date(dateStr + 'T00:00:00') <= today
+}
+function parseReceiptUrls(raw: string | null): string[] {
+  if (!raw) return []
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
 }
 
 export default function NewInvoicePage() {
@@ -81,10 +61,11 @@ export default function NewInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
+  const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
   useEffect(() => { loadRide() }, [])
 
@@ -108,31 +89,32 @@ export default function NewInvoicePage() {
     setInvoiceCode(`${code}.${nextNumber}`)
   }
 
-  function isValidDate(d: string) { return !!d && d.match(/^\d{4}-\d{2}-\d{2}$/) !== null }
-
+  function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
   function formatMileage(value: string) {
     const clean = value.replace(/[^0-9.]/g, '')
     const partsArr = clean.split('.')
     const intPart = partsArr[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
     return partsArr.length > 1 ? `${intPart}.${partsArr[1]}` : intPart
   }
-
   function formatDate(d: string) {
     if (!isValidDate(d)) return '-'
     return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   }
-
   function getPartTotal(part: Part) { return (parseFloat(part.unit_price) || 0) * (parseFloat(part.quantity) || 0) }
 
-  async function uploadReceipt(file: File, index: number) {
+  async function uploadReceipts(files: FileList, index: number) {
     setUploadingIndex(index)
-    const ext = file.name.split('.').pop()
-    const path = `${rideId}/${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
-    if (error) { alert(error.message); setUploadingIndex(null); return }
-    const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+    const urls: string[] = [...expenses[index].receipt_urls]
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const path = `${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+      if (error) { alert(error.message); continue }
+      const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+      urls.push(urlData.publicUrl)
+    }
     const updated = [...expenses]
-    updated[index] = { ...updated[index], receipt_url: urlData.publicUrl }
+    updated[index] = { ...updated[index], receipt_urls: urls }
     setExpenses(updated)
     setUploadingIndex(null)
   }
@@ -165,7 +147,7 @@ export default function NewInvoicePage() {
     if (!target || target <= 0) { alert('Please enter a valid Target Grand Total'); return }
     const discountFactor = 1 - (globalDiscountPct / 100)
     const labor = discountFactor > 0 ? (target / discountFactor) - partsTotal - otherServicesTotal : 0
-    if (labor < 0) { alert('Target is lower than parts + other services already. Cannot calculate labor.'); return }
+    if (labor < 0) { alert('Target is lower than parts + other services already.'); return }
     const updated = [...services]
     if (laborIndex >= 0) updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
     setServices(updated)
@@ -174,14 +156,12 @@ export default function NewInvoicePage() {
   function updateIntuitiveExpenses() {
     const existingFlorida = expenses.find(e => e.supplier === 'Florida State' && e.item === 'Taxes')
     const existingPartExpenses: Record<string, Expense> = {}
-    expenses.forEach(e => {
-      if (!(e.supplier === 'Florida State' && e.item === 'Taxes')) existingPartExpenses[e.item] = e
-    })
+    expenses.forEach(e => { if (!(e.supplier === 'Florida State' && e.item === 'Taxes')) existingPartExpenses[e.item] = e })
     const intuitiveExpenses: Expense[] = [
-      { supplier: 'Florida State', item: 'Taxes', amount: floridaTaxesAmount.toFixed(2), payment_date: existingFlorida?.payment_date || '', receipt_url: existingFlorida?.receipt_url || '' },
+      { supplier: 'Florida State', item: 'Taxes', amount: floridaTaxesAmount.toFixed(2), payment_date: existingFlorida?.payment_date || '', receipt_urls: existingFlorida?.receipt_urls || [] },
       ...parts.map(p => {
         const existing = existingPartExpenses[p.description]
-        return { supplier: existing?.supplier || '', item: p.description, amount: getPartTotal(p).toFixed(2), payment_date: existing?.payment_date || '', receipt_url: existing?.receipt_url || '' }
+        return { supplier: existing?.supplier || '', item: p.description, amount: getPartTotal(p).toFixed(2), payment_date: existing?.payment_date || '', receipt_urls: existing?.receipt_urls || [] }
       }),
     ]
     const partDescriptions = parts.map(p => p.description)
@@ -248,16 +228,21 @@ export default function NewInvoicePage() {
   // Expenses
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   }
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
   function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
   function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_url: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] }) }
+  function removeReceiptUrl(expIndex: number, urlIndex: number) {
+    const updated = [...expenses]
+    updated[expIndex].receipt_urls = updated[expIndex].receipt_urls.filter((_, i) => i !== urlIndex)
+    setExpenses(updated)
+  }
 
   async function saveInvoice() {
     const { data: invoice, error } = await supabase.from('invoices').insert([{
@@ -271,7 +256,6 @@ export default function NewInvoicePage() {
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
     }]).select().single()
-
     if (error || !invoice) { alert(error?.message || 'Error saving invoice'); return }
 
     if (parts.length > 0) {
@@ -292,17 +276,14 @@ export default function NewInvoicePage() {
     }
     if (expenses.length > 0) {
       const { error: e } = await supabase.from('invoice_expenses').insert(expenses.map(ex => ({
-        invoice_id: invoice.id,
-        expense_date: null,
-        supplier: ex.supplier || null,
-        item: ex.item,
+        invoice_id: invoice.id, expense_date: null,
+        supplier: ex.supplier || null, item: ex.item,
         price: parseFloat(ex.amount) || 0,
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
-        receipt_url: ex.receipt_url || null,
+        receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
       if (e) { alert(e.message); return }
     }
-
     router.push(`/rides/${rideId}/invoices`)
   }
 
@@ -336,7 +317,7 @@ export default function NewInvoicePage() {
           <input type="text" value={service} onChange={(e) => setService(e.target.value)} className={inputClass} placeholder="Service description" />
         </div>
 
-        {/* PARTS SECTION */}
+        {/* PARTS */}
         <div>
           <label className="block mb-3 text-lg font-bold">PARTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -361,7 +342,7 @@ export default function NewInvoicePage() {
                   <div key={index}>
                     {editingPartIndex === index ? (
                       <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                        <input type="text" placeholder="Description" value={editingPart.description} onChange={(e) => setEditingPart({ ...editingPart, description: e.target.value })} className={inputClass} />
+                        <input type="text" value={editingPart.description} onChange={(e) => setEditingPart({ ...editingPart, description: e.target.value })} className={inputClass} />
                         <div className="flex gap-3">
                           <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
                             <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
@@ -415,7 +396,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {/* SERVICES SECTION */}
+        {/* SERVICES */}
         <div>
           <label className="block mb-3 text-lg font-bold">SERVICES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -431,8 +412,7 @@ export default function NewInvoicePage() {
               <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg shrink-0">+ ADD SERVICE</button>
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">TARGET GRAND TOTAL</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                   <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${smallInputClass} w-full pl-8`} />
                 </div>
               </div>
@@ -443,7 +423,7 @@ export default function NewInvoicePage() {
                   <div key={index}>
                     {editingServiceIndex === index ? (
                       <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                        <input type="text" placeholder="Description" value={editingService.description} onChange={(e) => setEditingService({ ...editingService, description: e.target.value })} className={inputClass} />
+                        <input type="text" value={editingService.description} onChange={(e) => setEditingService({ ...editingService, description: e.target.value })} className={inputClass} />
                         <div className="flex gap-3">
                           <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                             <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
@@ -463,9 +443,7 @@ export default function NewInvoicePage() {
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
-                          {svc.description === FULL_PROJECT_LABOR && (
-                            <button onClick={calculateLabor} className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded-xl font-bold text-sm">CALCULATE</button>
-                          )}
+                          {svc.description === FULL_PROJECT_LABOR && <button onClick={calculateLabor} className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded-xl font-bold text-sm">CALCULATE</button>}
                           <button onClick={() => startEditService(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => removeService(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </div>
@@ -482,7 +460,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {/* TOTALS BOX */}
+        {/* TOTALS */}
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
           <div className="flex justify-between items-center">
             <span className="text-gray-400 font-bold">PARTS + SERVICES TOTAL</span>
@@ -502,7 +480,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {/* PAYMENTS SECTION */}
+        {/* PAYMENTS */}
         <div>
           <label className="block mb-3 text-lg font-bold">PAYMENTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -574,7 +552,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {/* NOTES SECTION */}
+        {/* NOTES */}
         <div>
           <label className="block mb-3 text-lg font-bold">NOTES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -608,11 +586,10 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {/* CONCLUSION + DELIVERY DATES */}
         <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />
         <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
 
-        {/* EXPENSES SECTION */}
+        {/* EXPENSES */}
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -630,6 +607,7 @@ export default function NewInvoicePage() {
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
             <button onClick={updateIntuitiveExpenses} className="w-full bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">↻ UPDATE INTUITIVE EXPENSES</button>
+
             {expenses.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {expenses.map((exp, index) => {
@@ -657,22 +635,38 @@ export default function NewInvoicePage() {
                           </div>
                         </div>
                       ) : (
-                        <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                            <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
-                            <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
-                          </div>
-                          <div className="flex gap-2 shrink-0">
-                            {exp.receipt_url && (
-                              <a href={exp.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>
-                            )}
-                            <label className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm cursor-pointer">
-                              {uploadingIndex === index ? '...' : '📎'}
-                              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) uploadReceipt(e.target.files[0], index) }} />
-                            </label>
-                            <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                            <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                        <div className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                              <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
+                              <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                            </div>
+                            <div className="flex gap-2 shrink-0">
+                              {exp.receipt_urls.length > 0 && (
+                                <div className="relative">
+                                  <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
+                                    RECEIPTS {exp.receipt_urls.length > 1 ? `(${exp.receipt_urls.length})` : ''}
+                                  </button>
+                                  {openReceiptsIndex === index && (
+                                    <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
+                                      {exp.receipt_urls.map((url, ui) => (
+                                        <div key={ui} className="flex items-center gap-2">
+                                          <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                          <button onClick={() => removeReceiptUrl(index, ui)} className="text-red-400 hover:text-red-300 text-xs font-bold">✕</button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <label className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm cursor-pointer">
+                                {uploadingIndex === index ? '...' : '📎'}
+                                <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceipts(e.target.files, index) }} />
+                              </label>
+                              <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -681,6 +675,7 @@ export default function NewInvoicePage() {
                 })}
               </div>
             )}
+
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
               <span className="text-gray-400 font-bold">TOTAL GLOBAL</span>
               <span className="text-xl font-bold">{formatUSD(expensesTotalGlobal)}</span>

@@ -42,6 +42,11 @@ function isTodayOrPast(dateStr: string | null) {
   return new Date(dateStr + 'T00:00:00') <= today
 }
 
+function parseReceiptUrls(raw: string | null): string[] {
+  if (!raw) return []
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
+}
+
 export default function ViewInvoicePage() {
   const params = useParams()
   const rideId = String(params.id)
@@ -58,6 +63,7 @@ export default function ViewInvoicePage() {
   const [payments, setPayments] = useState<Payment[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
   useEffect(() => { loadAll() }, [])
 
@@ -162,23 +168,11 @@ export default function ViewInvoicePage() {
           @page { margin: 0.25in; size: letter; }
         }
         .print-page { display: none; }
-
         .pi * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
         .pi { background: white; color: #111; font-size: 9px; position: relative; }
-
-        .pi-watermark {
-          position: fixed; top: 50%; left: 50%;
-          transform: translate(-50%, -50%);
-          opacity: 0.055; width: 500px;
-          pointer-events: none; z-index: 0;
-        }
+        .pi-watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.055; width: 500px; pointer-events: none; z-index: 0; }
         .pi-content { position: relative; z-index: 1; }
-
-        .pi-header {
-          display: grid; grid-template-columns: 156px 1fr 156px;
-          align-items: center; border-bottom: 2px solid #111;
-          padding-bottom: 8px; margin-bottom: 8px; gap: 10px;
-        }
+        .pi-header { display: grid; grid-template-columns: 156px 1fr 156px; align-items: center; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 8px; gap: 10px; }
         .pi-logo { width: 156px; height: auto; display: block; }
         .pi-company { text-align: center; }
         .pi-company-name { font-size: 13px; font-weight: 900; letter-spacing: 0.5px; margin-bottom: 2px; }
@@ -187,17 +181,14 @@ export default function ViewInvoicePage() {
         .pi-inv-label { font-size: 7px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
         .pi-inv-num { font-size: 20px; font-weight: 900; color: #cc0000; letter-spacing: 1px; line-height: 1; }
         .pi-inv-date { font-size: 8px; color: #555; margin-top: 2px; }
-
         .pi-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
         .pi-info-block { border: 0.5px solid #ccc; border-radius: 3px; padding: 5px 8px; }
         .pi-info-title { font-size: 7px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #888; border-bottom: 0.5px solid #eee; padding-bottom: 2px; margin-bottom: 3px; }
         .pi-info-row { display: flex; gap: 3px; margin-bottom: 1px; }
         .pi-info-label { font-weight: 700; color: #666; min-width: 80px; font-size: 8px; flex-shrink: 0; }
         .pi-info-value { color: #111; font-size: 8px; }
-
         .pi-sec { margin-bottom: 7px; }
         .pi-sec-title { background: #111; color: white; font-weight: 700; font-size: 8px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; }
-
         .pi-table { width: 100%; border-collapse: collapse; font-size: 8px; }
         .pi-table thead tr { background: #e0e0e0; }
         .pi-table thead th { padding: 2px 6px; text-align: left; font-weight: 700; font-size: 7px; text-transform: uppercase; border: 0.5px solid #bbb; }
@@ -209,7 +200,6 @@ export default function ViewInvoicePage() {
         .pi-taxes td { background: #cc0000 !important; color: white !important; font-weight: 700; padding: 2px 6px; }
         .pi-ptotal td { background: #111 !important; color: white !important; font-weight: 900; font-size: 9px; padding: 3px 6px; }
         .pi-stotal td { background: #111 !important; color: white !important; font-weight: 900; font-size: 9px; padding: 3px 6px; }
-
         .pi-totals-wrap { display: flex; justify-content: flex-end; margin-bottom: 7px; }
         .pi-totals-tbl { width: 250px; border-collapse: collapse; font-size: 8px; }
         .pi-totals-tbl td { padding: 2px 6px; }
@@ -217,21 +207,18 @@ export default function ViewInvoicePage() {
         .pi-psrow td { background: #f0f0f0; font-weight: 700; }
         .pi-discrow td { background: #f0f0f0; font-weight: 700; color: #cc0000; }
         .pi-grandrow td { background: #1a1a2e !important; color: #f0c040 !important; font-weight: 900; font-size: 11px; padding: 5px 6px; border-top: 2px solid #f0c040 !important; }
-
         .pi-pay-subtotal td { background: #efefef !important; font-weight: 700; padding: 2px 6px; border-top: 1px solid #bbb !important; }
         .pi-balance td { background: #1a1a2e !important; color: #4ade80 !important; font-weight: 900; font-size: 10px; padding: 4px 6px; }
-
         .pi-notes { border: 0.5px solid #ccc; border-radius: 3px; padding: 6px 12px; margin-bottom: 8px; text-align: center; }
         .pi-notes-title { font-weight: 700; text-transform: uppercase; font-size: 7px; letter-spacing: 0.5px; color: #888; margin-bottom: 4px; }
         .pi-notes p { font-size: 8px; margin-bottom: 1px; }
-
         .pi-sig { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 10px; border-top: 1px solid #ccc; padding-top: 8px; page-break-inside: avoid; break-inside: avoid; }
         .pi-sig-block { text-align: center; }
         .pi-sig-line { border-bottom: 1px solid #333; height: 24px; margin-bottom: 3px; }
         .pi-sig-label { font-size: 7px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
       `}</style>
 
-      {/* ── PRINT PAGE ── */}
+      {/* PRINT PAGE */}
       <div className="print-page">
         <div className="pi">
           <img src="/logo_gz28.jpg" className="pi-watermark" alt="" aria-hidden="true" />
@@ -363,7 +350,7 @@ export default function ViewInvoicePage() {
         </div>
       </div>
 
-      {/* ── SCREEN UI ── */}
+      {/* SCREEN UI */}
       <main className="min-h-screen bg-black text-white p-8 no-print">
         <Header />
 
@@ -515,16 +502,30 @@ export default function ViewInvoicePage() {
                 {expenses.map((exp, index) => {
                   const isPaid = isValidDate(exp.payment_date)
                   const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
+                  const receiptUrls = parseReceiptUrls(exp.receipt_url)
                   return (
-                    <div key={exp.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                        <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}</p>
-                        <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                    <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                          <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}</p>
+                          <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                        </div>
+                        {receiptUrls.length > 0 && (
+                          <div className="relative shrink-0">
+                            <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
+                              RECEIPTS{receiptUrls.length > 1 ? ` (${receiptUrls.length})` : ''}
+                            </button>
+                            {openReceiptsIndex === index && (
+                              <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
+                                {receiptUrls.map((url, ui) => (
+                                  <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {exp.receipt_url && (
-                        <a href={exp.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">RECEIPT</a>
-                      )}
                     </div>
                   )
                 })}
