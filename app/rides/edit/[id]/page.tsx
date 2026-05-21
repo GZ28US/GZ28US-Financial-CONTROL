@@ -188,13 +188,6 @@ export default function EditRidePage() {
           </div>
         )}
 
-        {availableSpecialEditions.length === 0 && (
-          <div>
-            <label className="block mb-2 text-lg font-bold">SPECIAL EDITION / PACKAGE</label>
-            <input type="text" value={specialEdition} onChange={(e) => setSpecialEdition(e.target.value)} className={inputClass} placeholder="e.g. Nismo, AMG Black Series" />
-          </div>
-        )}
-
         {availableColors.length > 0 ? (
           <div>
             <label className="block mb-2 text-lg font-bold">COLOR</label>
