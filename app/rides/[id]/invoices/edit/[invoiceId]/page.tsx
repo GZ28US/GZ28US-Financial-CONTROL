@@ -34,7 +34,6 @@ type Note = {
 
 type Expense = {
   id?: string
-  expense_date: string
   supplier: string
   item: string
   amount: string
@@ -80,9 +79,9 @@ export default function EditInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '' })
 
   useEffect(() => { loadRide(); loadInvoice() }, [])
 
@@ -118,7 +117,7 @@ export default function EditInvoicePage() {
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (expensesData) setExpenses(expensesData.map(e => ({ id: e.id, expense_date: e.expense_date || '', supplier: e.supplier || '', item: e.item, amount: String(e.price), payment_date: e.payment_date || '' })))
+    if (expensesData) setExpenses(expensesData.map(e => ({ id: e.id, supplier: e.supplier || '', item: e.item, amount: String(e.price), payment_date: e.payment_date || '' })))
 
     setLoading(false)
   }
@@ -154,7 +153,6 @@ export default function EditInvoicePage() {
 
     const intuitiveExpenses: Expense[] = [
       {
-        expense_date: isValidDate(entryDate) ? entryDate : '',
         supplier: 'Florida State',
         item: 'Taxes',
         amount: floridaTaxesAmount.toFixed(2),
@@ -163,7 +161,6 @@ export default function EditInvoicePage() {
       ...parts.map(p => {
         const existing = existingPartExpenses[p.description]
         return {
-          expense_date: isValidDate(entryDate) ? entryDate : existing?.expense_date || '',
           supplier: existing?.supplier || '',
           item: p.description,
           amount: getPartTotal(p).toFixed(2),
@@ -276,7 +273,7 @@ export default function EditInvoicePage() {
   // Expenses
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '' })
   }
   async function removeExpense(index: number) {
     const exp = expenses[index]
@@ -289,7 +286,7 @@ export default function EditInvoicePage() {
     const exp = expenses[editingExpenseIndex!]
     if (exp.id) {
       const { error } = await supabase.from('invoice_expenses').update({
-        expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
+        expense_date: null,
         supplier: editingExpense.supplier || null,
         item: editingExpense.item,
         price: parseFloat(editingExpense.amount),
@@ -298,9 +295,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ expense_date: '', supplier: '', item: '', amount: '', payment_date: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '' }) }
 
   // Calculations
   const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
@@ -359,7 +356,7 @@ export default function EditInvoicePage() {
     }
     const newExpenses = expenses.filter(e => !e.id)
     if (newExpenses.length > 0) {
-      const { error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({ invoice_id: invoiceId, expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null, supplier: ex.supplier || null, item: ex.item, price: parseFloat(ex.amount), payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null })))
+      const { error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({ invoice_id: invoiceId, expense_date: null, supplier: ex.supplier || null, item: ex.item, price: parseFloat(ex.amount), payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null })))
       if (e) { alert(e.message); return }
     }
 
@@ -665,7 +662,6 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <DatePicker label="DATE" value={newExpense.expense_date} onChange={(v) => setNewExpense({ ...newExpense, expense_date: v })} />
             <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
               <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
             </div>
@@ -689,7 +685,6 @@ export default function EditInvoicePage() {
                     <div key={index}>
                       {editingExpenseIndex === index ? (
                         <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                          <DatePicker label="DATE" value={editingExpense.expense_date} onChange={(v) => setEditingExpense({ ...editingExpense, expense_date: v })} />
                           <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                             <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
                           </div>
@@ -711,7 +706,7 @@ export default function EditInvoicePage() {
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                            <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}{isValidDate(exp.expense_date) ? ` — ${formatDate(exp.expense_date)}` : ''}</p>
+                            <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
                             <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                           </div>
                           <div className="flex gap-2 shrink-0">

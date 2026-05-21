@@ -130,7 +130,7 @@ export default function NewInvoicePage() {
 
     const intuitiveExpenses: Expense[] = [
       {
-        expense_date: isValidDate(entryDate) ? entryDate : '',
+        expense_date: '',
         supplier: 'Florida State',
         item: 'Taxes',
         amount: floridaTaxesAmount.toFixed(2),
@@ -139,7 +139,7 @@ export default function NewInvoicePage() {
       ...parts.map(p => {
         const existing = existingPartExpenses[p.description]
         return {
-          expense_date: isValidDate(entryDate) ? entryDate : existing?.expense_date || '',
+          expense_date: '',
           supplier: existing?.supplier || '',
           item: p.description,
           amount: getPartTotal(p).toFixed(2),
@@ -282,7 +282,7 @@ export default function NewInvoicePage() {
     if (expenses.length > 0) {
       const { error: e } = await supabase.from('invoice_expenses').insert(expenses.map(ex => ({
         invoice_id: invoice.id,
-        expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
+        expense_date: null,
         supplier: ex.supplier || null,
         item: ex.item,
         price: parseFloat(ex.amount) || 0,
@@ -589,7 +589,6 @@ export default function NewInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <DatePicker label="DATE" value={newExpense.expense_date} onChange={(v) => setNewExpense({ ...newExpense, expense_date: v })} />
             <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
               <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
             </div>
@@ -613,7 +612,6 @@ export default function NewInvoicePage() {
                     <div key={index}>
                       {editingExpenseIndex === index ? (
                         <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                          <DatePicker label="DATE" value={editingExpense.expense_date} onChange={(v) => setEditingExpense({ ...editingExpense, expense_date: v })} />
                           <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                             <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
                           </div>
@@ -635,7 +633,7 @@ export default function NewInvoicePage() {
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                            <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}{isValidDate(exp.expense_date) ? ` — ${formatDate(exp.expense_date)}` : ''}</p>
+                            <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
                             <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                           </div>
                           <div className="flex gap-2 shrink-0">
