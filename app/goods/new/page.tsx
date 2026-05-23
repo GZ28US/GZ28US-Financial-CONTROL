@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
@@ -10,61 +10,172 @@ type Expense = {
   description: string
   amount: string
   expense_date: string
+  supplier: string
+  receipt_urls: string[]
 }
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
-
-function formatUSD(v: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
-}
-
+function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function formatDate(d: string) {
   if (!isValidDate(d)) return '—'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+const NEW_SUPPLIER = '+ NEW SUPPLIER'
+
+function SupplierField({ suppliers, value, onChange }: { suppliers: string[], value: string, onChange: (v: string) => void }) {
+  const [showNew, setShowNew] = useState(suppliers.length === 0)
+  const [newValue, setNewValue] = useState('')
+
+  useEffect(() => {
+    if (suppliers.length === 0) { setShowNew(true) }
+  }, [suppliers])
+
+  function handleSelect(v: string) {
+    if (v === NEW_SUPPLIER) { setShowNew(true); setNewValue(''); onChange('') }
+    else { setShowNew(false); onChange(v) }
+  }
+
+  function handleNewChange(v: string) {
+    setNewValue(v)
+    onChange(v)
+  }
+
+  const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
+  const selectClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
+
+  if (showNew) return (
+    <div className="space-y-2">
+      <input type="text" placeholder="Type supplier name" value={newValue} onChange={(e) => handleNewChange(e.target.value)} className={inputClass} />
+      {suppliers.length > 0 && (
+        <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>
+      )}
+    </div>
+  )
+
+  return (
+    <select value={value} onChange={(e) => handleSelect(e.target.value)} className={selectClass}>
+      <option value="">— Select supplier —</option>
+      {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+      <option value={NEW_SUPPLIER}>{NEW_SUPPLIER}</option>
+    </select>
+  )
+}
+
 export default function NewGoodPage() {
   const router = useRouter()
 
+  const [suppliers, setSuppliers] = useState<string[]>([])
   const [description, setDescription] = useState('')
   const [quantity, setQuantity] = useState('1')
   const [unitPrice, setUnitPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
+  const [supplier, setSupplier] = useState('')
+  const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
+  const [uploadingGood, setUploadingGood] = useState(false)
+  const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
+  const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
+  const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
+
+  useEffect(() => { loadSuppliers() }, [])
+
+  async function loadSuppliers() {
+    const { data } = await supabase.from('suppliers').select('name').order('name')
+    if (data) setSuppliers(data.map(s => s.name))
+  }
+
+  async function ensureSupplier(name: string) {
+    if (!name.trim()) return
+    if (suppliers.includes(name.trim())) return
+    await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
+    setSuppliers(prev => [...prev, name.trim()].sort())
+  }
 
   const totalCost = (parseFloat(quantity) || 0) * (parseFloat(unitPrice) || 0)
   const expensesTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
   const grandTotal = totalCost + expensesTotal
 
+  async function uploadGoodReceipts(files: FileList) {
+    setUploadingGood(true)
+    const urls = [...goodReceiptUrls]
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const path = `goods/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('good-receipts').upload(path, file, { upsert: true })
+      if (error) { alert(error.message); continue }
+      const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
+      urls.push(urlData.publicUrl)
+    }
+    setGoodReceiptUrls(urls)
+    setUploadingGood(false)
+  }
+
+  function removeGoodReceiptUrl(index: number) {
+    setGoodReceiptUrls(goodReceiptUrls.filter((_, i) => i !== index))
+  }
+
+  async function uploadExpenseReceipts(files: FileList, index: number) {
+    setUploadingExpenseIndex(index)
+    const urls = [...expenses[index].receipt_urls]
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const path = `expenses/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('good-receipts').upload(path, file, { upsert: true })
+      if (error) { alert(error.message); continue }
+      const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
+      urls.push(urlData.publicUrl)
+    }
+    const updated = [...expenses]
+    updated[index] = { ...updated[index], receipt_urls: urls }
+    setExpenses(updated)
+    setUploadingExpenseIndex(null)
+  }
+
+  async function uploadEditingExpenseReceipts(files: FileList) {
+    const urls = [...editingExpense.receipt_urls]
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const path = `expenses/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('good-receipts').upload(path, file, { upsert: true })
+      if (error) { alert(error.message); continue }
+      const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
+      urls.push(urlData.publicUrl)
+    }
+    setEditingExpense({ ...editingExpense, receipt_urls: urls })
+  }
+
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '' })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
   }
 
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
-
-  function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
-
+  function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }); setOpenReceiptsIndex(null) }
   function saveEditExpense() {
     if (!editingExpense.description || !editingExpense.amount) { alert('Please enter description and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
   }
-
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
+    await ensureSupplier(supplier)
+    for (const exp of expenses) { await ensureSupplier(exp.supplier) }
+
     const { data: good, error } = await supabase.from('goods').insert([{
       description,
       quantity: parseFloat(quantity) || 1,
       unit_price: parseFloat(unitPrice) || 0,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
+      supplier: supplier.trim() || null,
+      receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
     }]).select().single()
     if (error || !good) { alert(error?.message || 'Error saving good'); return }
 
@@ -74,6 +185,8 @@ export default function NewGoodPage() {
         description: ex.description,
         amount: parseFloat(ex.amount) || 0,
         expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
+        supplier: ex.supplier.trim() || null,
+        receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
       if (e) { alert(e.message); return }
     }
@@ -82,7 +195,6 @@ export default function NewGoodPage() {
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
-  const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -94,6 +206,11 @@ export default function NewGoodPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">DESCRIPTION</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="e.g. Milwaukee Impact Wrench" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
+          <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
         </div>
 
         <div className="flex gap-4">
@@ -119,6 +236,34 @@ export default function NewGoodPage() {
 
         <DatePicker label="DATE OF PURCHASE" value={purchaseDate} onChange={setPurchaseDate} />
 
+        {/* GOOD RECEIPT */}
+        <div>
+          <label className="block mb-2 text-lg font-bold">RECEIPT</label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
+              {uploadingGood ? '...' : '📎 ADD FILES'}
+              <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadGoodReceipts(e.target.files) }} />
+            </label>
+            {goodReceiptUrls.length > 0 && (
+              <div className="relative">
+                <button onClick={() => setOpenGoodReceipts(!openGoodReceipts)} className="bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded-xl font-bold text-sm">
+                  RECEIPTS{goodReceiptUrls.length > 1 ? ` (${goodReceiptUrls.length})` : ''}
+                </button>
+                {openGoodReceipts && (
+                  <div className="absolute left-0 top-10 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-48 space-y-1">
+                    {goodReceiptUrls.map((url, ui) => (
+                      <div key={ui} className="flex items-center gap-2">
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                        <button onClick={() => removeGoodReceiptUrl(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-1">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* EXPENSES */}
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
@@ -126,6 +271,10 @@ export default function NewGoodPage() {
             <div>
               <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
               <input type="text" placeholder="Expense description" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} className={inputClass} />
+            </div>
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+              <SupplierField suppliers={suppliers} value={newExpense.supplier} onChange={(v) => setNewExpense({ ...newExpense, supplier: v })} />
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
@@ -138,14 +287,18 @@ export default function NewGoodPage() {
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
 
             {expenses.length > 0 && (
-              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+              <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
                 {expenses.map((exp, index) => (
-                  <div key={index}>
+                  <div key={index} className={index < expenses.length - 1 ? 'border-b border-gray-700' : ''}>
                     {editingExpenseIndex === index ? (
-                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
                           <input type="text" value={editingExpense.description} onChange={(e) => setEditingExpense({ ...editingExpense, description: e.target.value })} className={inputClass} />
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                          <SupplierField suppliers={suppliers} value={editingExpense.supplier} onChange={(v) => setEditingExpense({ ...editingExpense, supplier: v })} />
                         </div>
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
@@ -155,20 +308,58 @@ export default function NewGoodPage() {
                           </div>
                         </div>
                         <DatePicker label="DATE" value={editingExpense.expense_date} onChange={(v) => setEditingExpense({ ...editingExpense, expense_date: v })} />
+                        <div>
+                          <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
+                          <label className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
+                            📎 ADD FILES
+                            <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadEditingExpenseReceipts(e.target.files) }} />
+                          </label>
+                          {editingExpense.receipt_urls.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {editingExpense.receipt_urls.map((url, ui) => (
+                                <div key={ui} className="flex items-center gap-2">
+                                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                  <button onClick={() => setEditingExpense({ ...editingExpense, receipt_urls: editingExpense.receipt_urls.filter((_, i) => i !== ui) })} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         <div className="flex gap-3">
                           <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                           <button onClick={cancelEditExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
                         </div>
                       </div>
                     ) : (
-                      <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate">{exp.description}</p>
-                          <p className="text-sm text-gray-400">{formatUSD(parseFloat(exp.amount))}{exp.expense_date ? ` — ${formatDate(exp.expense_date)}` : ''}</p>
-                        </div>
-                        <div className="flex gap-2 shrink-0">
-                          <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                          <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                      <div className="px-4 py-3">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-base font-bold truncate">{exp.description}</p>
+                            {exp.supplier && <p className="text-sm text-gray-400">{exp.supplier}</p>}
+                            <p className="text-sm text-gray-400">{formatUSD(parseFloat(exp.amount))}{exp.expense_date ? ` — ${formatDate(exp.expense_date)}` : ''}</p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            {exp.receipt_urls.length > 0 && (
+                              <div className="relative">
+                                <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
+                                  RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
+                                </button>
+                                {openReceiptsIndex === index && (
+                                  <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
+                                    {exp.receipt_urls.map((url, ui) => (
+                                      <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <label className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm cursor-pointer">
+                              {uploadingExpenseIndex === index ? '...' : '📎'}
+                              <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadExpenseReceipts(e.target.files, index) }} />
+                            </label>
+                            <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                          </div>
                         </div>
                       </div>
                     )}

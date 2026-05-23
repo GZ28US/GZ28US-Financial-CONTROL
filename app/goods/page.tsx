@@ -11,7 +11,7 @@ type Good = {
   quantity: number
   unit_price: number
   purchase_date: string | null
-  created_at: string
+  supplier: string | null
 }
 
 type GoodWithStats = Good & {
@@ -87,11 +87,10 @@ export default function GoodsPage() {
             <div key={good.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
               <div className="flex-1 min-w-0">
                 <h2 className="text-2xl font-bold mb-1">{good.description}</h2>
+                {good.supplier && <p className="text-lg text-gray-400">Supplier: {good.supplier}</p>}
                 <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
                 <p className="text-lg text-gray-400">Purchased: {formatDate(good.purchase_date)}</p>
-                {good.expensesTotal > 0 && (
-                  <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>
-                )}
+                {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                 <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
               </div>
               <div className="flex gap-3 flex-wrap shrink-0">
