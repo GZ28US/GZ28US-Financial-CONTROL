@@ -15,6 +15,7 @@ type Expense = {
   source: string | null
   origin: string | null
   expense_date: string | null
+  receipt_url: string | null
 }
 
 type Season = {
@@ -63,6 +64,11 @@ function formatRunningLabel(expense: Expense, season: Season): string {
   return ''
 }
 
+function parseReceiptUrls(raw: string | null): string[] {
+  if (!raw) return []
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
+}
+
 export default function ExpensesPage() {
   const params = useParams()
   const staffId = String(params.id)
@@ -73,6 +79,7 @@ export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [openReceiptsId, setOpenReceiptsId] = useState<string | null>(null)
 
   useEffect(() => { loadInfo(); loadExpenses() }, [])
 
@@ -95,10 +102,7 @@ export default function ExpensesPage() {
   }
 
   async function loadExpenses() {
-    const { data } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('season_id', seasonID)
+    const { data } = await supabase.from('expenses').select('*').eq('season_id', seasonID)
 
     if (data) {
       const ongoing = data.filter(e => e.type !== 'SINGLE')
@@ -194,36 +198,53 @@ export default function ExpensesPage() {
         <p className="text-2xl text-gray-400">No expenses yet.</p>
       ) : (
         <div className="space-y-5">
-          {expenses.map((expense) => (
-            <div key={expense.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between">
-              <div>
-                {expense.type === 'SINGLE' ? (
-                  <h2 className="text-2xl font-bold">{formatUSD(Number(expense.amount))}</h2>
-                ) : (
-                  <>
-                    <h2 className="text-2xl font-bold">
-                      {season ? formatUSD(calculateRunningTotal(expense, season)) : 'USD 0.00'}
-                    </h2>
-                    <p className="text-lg text-gray-400">
-                      {formatUSD(Number(expense.amount))} / {expense.type.toLowerCase()} × {season ? formatRunningLabel(expense, season) : ''}
-                    </p>
-                  </>
-                )}
-                {expense.description && <p className="text-lg text-white">{expense.description}</p>}
-                <p className="text-lg text-gray-400">{expense.type}</p>
-                {expense.origin && expense.origin === 'PERSONAL' && (
-                  <span className="inline-block bg-orange-600 text-white text-sm font-bold px-3 py-1 rounded-full mt-1">PERSONAL</span>
-                )}
-                {expense.source && <p className="text-lg text-gray-400">{expense.source}</p>}
-                {expense.type === 'SINGLE' && <p className="text-lg text-gray-400">{formatDate(expense.expense_date)}</p>}
-              </div>
+          {expenses.map((expense) => {
+            const receiptUrls = parseReceiptUrls(expense.receipt_url)
+            return (
+              <div key={expense.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  {expense.type === 'SINGLE' ? (
+                    <h2 className="text-2xl font-bold">{formatUSD(Number(expense.amount))}</h2>
+                  ) : (
+                    <>
+                      <h2 className="text-2xl font-bold">
+                        {season ? formatUSD(calculateRunningTotal(expense, season)) : 'USD 0.00'}
+                      </h2>
+                      <p className="text-lg text-gray-400">
+                        {formatUSD(Number(expense.amount))} / {expense.type.toLowerCase()} × {season ? formatRunningLabel(expense, season) : ''}
+                      </p>
+                    </>
+                  )}
+                  {expense.description && <p className="text-lg text-white">{expense.description}</p>}
+                  <p className="text-lg text-gray-400">{expense.type}</p>
+                  {expense.origin === 'PERSONAL' && (
+                    <span className="inline-block bg-orange-600 text-white text-sm font-bold px-3 py-1 rounded-full mt-1">PERSONAL</span>
+                  )}
+                  {expense.source && <p className="text-lg text-gray-400">{expense.source}</p>}
+                  {expense.type === 'SINGLE' && <p className="text-lg text-gray-400">{formatDate(expense.expense_date)}</p>}
+                </div>
 
-              <div className="flex gap-3 flex-wrap">
-                <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                <div className="flex gap-3 flex-wrap shrink-0 items-center">
+                  {receiptUrls.length > 0 && (
+                    <div className="relative">
+                      <button onClick={() => setOpenReceiptsId(openReceiptsId === expense.id ? null : expense.id)} className="bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded-xl font-bold text-sm">
+                        RECEIPTS{receiptUrls.length > 1 ? ` (${receiptUrls.length})` : ''}
+                      </button>
+                      {openReceiptsId === expense.id && (
+                        <div className="absolute right-0 top-10 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
+                          {receiptUrls.map((url, ui) => (
+                            <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                  <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </main>
