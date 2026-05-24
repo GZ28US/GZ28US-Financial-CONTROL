@@ -13,6 +13,7 @@ type Expense = {
   description: string | null
   amount: number
   source: string | null
+  origin: string | null
   expense_date: string | null
 }
 
@@ -73,10 +74,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadInfo()
-    loadExpenses()
-  }, [])
+  useEffect(() => { loadInfo(); loadExpenses() }, [])
 
   async function loadInfo() {
     const { data: seasonData } = await supabase
@@ -87,13 +85,11 @@ export default function ExpensesPage() {
 
     if (seasonData) {
       setSeason(seasonData)
-
       const { data: staff } = await supabase
         .from('staff')
         .select('name')
         .eq('id', seasonData.staff_id)
         .single()
-
       setStaffName(staff?.name || '')
     }
   }
@@ -122,16 +118,8 @@ export default function ExpensesPage() {
   }
 
   async function removeExpense(id: string) {
-    const { error } = await supabase
-      .from('expenses')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      alert(error.message)
-      return
-    }
-
+    const { error } = await supabase.from('expenses').delete().eq('id', id)
+    if (error) { alert(error.message); return }
     setConfirmId(null)
     loadExpenses()
   }
@@ -143,12 +131,17 @@ export default function ExpensesPage() {
     })
   }
 
-  const grandTotal = season
-    ? expenses.reduce((sum, e) => sum + calculateRunningTotal(e, season), 0)
+  const gz28Total = season
+    ? expenses.filter(e => !e.origin || e.origin === 'GZ28US').reduce((sum, e) => sum + calculateRunningTotal(e, season), 0)
+    : 0
+
+  const personalTotal = season
+    ? expenses.filter(e => e.origin === 'PERSONAL').reduce((sum, e) => sum + calculateRunningTotal(e, season), 0)
     : 0
 
   const isConcluded = !!season?.date_conclusion
-  const totalLabel = isConcluded ? 'FINAL EXPENSES TOTAL' : 'ACTUAL EXPENSES TOTAL'
+  const totalLabel = isConcluded ? 'FINAL GZ28US EXPENSES' : 'ACTUAL GZ28US EXPENSES'
+  const personalLabel = isConcluded ? 'FINAL PERSONAL EXPENSES' : 'ACTUAL PERSONAL EXPENSES'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -160,18 +153,8 @@ export default function ExpensesPage() {
             <h2 className="text-2xl font-bold mb-2">Remove Expense</h2>
             <p className="text-gray-400 text-lg mb-8">Are you sure you want to remove this expense? This action cannot be undone.</p>
             <div className="flex gap-4">
-              <button
-                onClick={() => setConfirmId(null)}
-                className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl"
-              >
-                CANCEL
-              </button>
-              <button
-                onClick={() => removeExpense(confirmId)}
-                className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl"
-              >
-                REMOVE
-              </button>
+              <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => removeExpense(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
             </div>
           </div>
         </div>
@@ -179,34 +162,28 @@ export default function ExpensesPage() {
 
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-4xl font-bold">
-            {staffName} — {season?.season_code}
-          </h1>
+          <h1 className="text-4xl font-bold">{staffName} — {season?.season_code}</h1>
           <p className="text-xl text-gray-400 mt-1">EXPENSES ({expenses.length})</p>
         </div>
-
         <div className="flex gap-4">
-          <Link
-            href={`/staff/${staffId}/seasons`}
-            className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold"
-          >
-            BACK
-          </Link>
-          <Link
-            href={`/staff/${staffId}/seasons/${seasonID}/expenses/new`}
-            className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold"
-          >
-            ADD NEW EXPENSE
-          </Link>
+          <Link href={`/staff/${staffId}/seasons`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+          <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD NEW EXPENSE</Link>
         </div>
       </div>
 
       {expenses.length > 0 && (
-        <div className="bg-red-700 rounded-3xl p-6 mb-8 max-w-sm">
-          <p className="text-xl font-bold">{totalLabel}</p>
-          <p className="text-5xl font-bold">{formatUSD(grandTotal)}</p>
-          {!isConcluded && (
-            <p className="text-sm mt-2 opacity-80">Running — updated daily until conclusion</p>
+        <div className="flex gap-4 mb-8 flex-wrap">
+          <div className="bg-red-700 rounded-3xl p-6 flex-1 min-w-64">
+            <p className="text-xl font-bold">{totalLabel}</p>
+            <p className="text-5xl font-bold">{formatUSD(gz28Total)}</p>
+            {!isConcluded && <p className="text-sm mt-2 opacity-80">Running — updated daily until conclusion</p>}
+          </div>
+          {personalTotal > 0 && (
+            <div className="bg-orange-600 rounded-3xl p-6 flex-1 min-w-64">
+              <p className="text-xl font-bold">{personalLabel}</p>
+              <p className="text-5xl font-bold">{formatUSD(personalTotal)}</p>
+              {!isConcluded && <p className="text-sm mt-2 opacity-80">Running — updated daily until conclusion</p>}
+            </div>
           )}
         </div>
       )}
@@ -218,10 +195,7 @@ export default function ExpensesPage() {
       ) : (
         <div className="space-y-5">
           {expenses.map((expense) => (
-            <div
-              key={expense.id}
-              className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between"
-            >
+            <div key={expense.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between">
               <div>
                 {expense.type === 'SINGLE' ? (
                   <h2 className="text-2xl font-bold">{formatUSD(Number(expense.amount))}</h2>
@@ -235,32 +209,18 @@ export default function ExpensesPage() {
                     </p>
                   </>
                 )}
-                {expense.description && (
-                  <p className="text-lg text-white">{expense.description}</p>
-                )}
+                {expense.description && <p className="text-lg text-white">{expense.description}</p>}
                 <p className="text-lg text-gray-400">{expense.type}</p>
-                {expense.source && (
-                  <p className="text-lg text-gray-400">{expense.source}</p>
+                {expense.origin && expense.origin === 'PERSONAL' && (
+                  <span className="inline-block bg-orange-600 text-white text-sm font-bold px-3 py-1 rounded-full mt-1">PERSONAL</span>
                 )}
-                {expense.type === 'SINGLE' && (
-                  <p className="text-lg text-gray-400">{formatDate(expense.expense_date)}</p>
-                )}
+                {expense.source && <p className="text-lg text-gray-400">{expense.source}</p>}
+                {expense.type === 'SINGLE' && <p className="text-lg text-gray-400">{formatDate(expense.expense_date)}</p>}
               </div>
 
               <div className="flex gap-3 flex-wrap">
-                <Link
-                  href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`}
-                  className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold"
-                >
-                  EDIT
-                </Link>
-
-                <button
-                  onClick={() => setConfirmId(expense.id)}
-                  className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold"
-                >
-                  REMOVE
-                </button>
+                <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
               </div>
             </div>
           ))}
