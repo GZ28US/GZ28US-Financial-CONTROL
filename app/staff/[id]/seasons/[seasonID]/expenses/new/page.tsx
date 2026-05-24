@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 
 const expenseTypes = ['DAILY', 'WEEKLY', 'MONTHLY', 'SINGLE']
 const expenseSources = ['Regions', 'Cash', 'GZ28BR', 'Humberto']
+const expenseOrigins = ['GZ28US', 'PERSONAL']
 
 function getTodayString() {
   const today = new Date()
@@ -28,12 +29,11 @@ export default function NewExpensePage() {
   const [type, setType] = useState('SINGLE')
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
+  const [origin, setOrigin] = useState('GZ28US')
   const [source, setSource] = useState('Regions')
   const [expenseDate, setExpenseDate] = useState(getTodayString())
 
-  useEffect(() => {
-    loadInfo()
-  }, [])
+  useEffect(() => { loadInfo() }, [])
 
   async function loadInfo() {
     const { data: season } = await supabase
@@ -44,39 +44,29 @@ export default function NewExpensePage() {
 
     if (season) {
       setSeasonCode(season.season_code)
-
       const { data: staff } = await supabase
         .from('staff')
         .select('name')
         .eq('id', season.staff_id)
         .single()
-
       setStaffName(staff?.name || '')
     }
   }
 
   async function saveExpense() {
-    if (!amount) {
-      alert('Please enter an amount')
-      return
-    }
+    if (!amount) { alert('Please enter an amount'); return }
 
-    const { error } = await supabase
-      .from('expenses')
-      .insert([{
-        season_id: seasonID,
-        type,
-        description: description || null,
-        amount: parseFloat(amount),
-        source,
-        expense_date: type === 'SINGLE' ? expenseDate : null,
-      }])
+    const { error } = await supabase.from('expenses').insert([{
+      season_id: seasonID,
+      type,
+      description: description || null,
+      amount: parseFloat(amount),
+      origin,
+      source,
+      expense_date: type === 'SINGLE' ? expenseDate : null,
+    }])
 
-    if (error) {
-      alert(error.message)
-      return
-    }
-
+    if (error) { alert(error.message); return }
     router.push(`/staff/${staffId}/seasons/${seasonID}/expenses`)
   }
 
@@ -94,69 +84,43 @@ export default function NewExpensePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">TYPE</label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className={selectClass}
-          >
-            {expenseTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
+          <select value={type} onChange={(e) => setType(e.target.value)} className={selectClass}>
+            {expenseTypes.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
 
         {type === 'SINGLE' && (
-          <DatePicker
-            label="DATE"
-            value={expenseDate}
-            onChange={setExpenseDate}
-          />
+          <DatePicker label="DATE" value={expenseDate} onChange={setExpenseDate} />
         )}
 
         <div>
           <label className="block mb-2 text-lg font-bold">DESCRIPTION</label>
-          <input
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className={inputClass}
-            placeholder="Optional description"
-          />
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="Optional description" />
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">AMOUNT (USD)</label>
           <div className="relative">
             <span className="absolute left-5 top-1/2 -translate-y-1/2 text-xl text-gray-400">$</span>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className={`${inputClass} pl-10`}
-              placeholder="0.00"
-            />
+            <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${inputClass} pl-10`} placeholder="0.00" />
           </div>
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">SOURCE</label>
-          <select
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            className={selectClass}
-          >
-            {expenseSources.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+          <label className="block mb-2 text-lg font-bold">ORIGIN</label>
+          <select value={origin} onChange={(e) => setOrigin(e.target.value)} className={selectClass}>
+            {expenseOrigins.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         </div>
 
-        <button
-          onClick={saveExpense}
-          className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold"
-        >
+        <div>
+          <label className="block mb-2 text-lg font-bold">SOURCE</label>
+          <select value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
+            {expenseSources.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <button onClick={saveExpense} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">
           SAVE EXPENSE
         </button>
 
