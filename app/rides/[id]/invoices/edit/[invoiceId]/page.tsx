@@ -75,7 +75,6 @@ export default function EditInvoicePage() {
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-
   const [showStockModal, setShowStockModal] = useState(false)
   const [stockItems, setStockItems] = useState<StockItem[]>([])
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
@@ -186,7 +185,16 @@ export default function EditInvoicePage() {
       })
 
       const data = await response.json()
+      console.log('scan-receipt response:', JSON.stringify(data))
+
+      if (data.error) {
+        alert(`Scan error: ${data.error}\n${data.detail || ''}`)
+        setScanningPurchase(false)
+        return
+      }
+
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
+      console.log('Claude text:', text)
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
 
@@ -197,7 +205,7 @@ export default function EditInvoicePage() {
         receiptUrl,
       })
     } catch (err) {
-      console.error(err)
+      console.error('handleAddPurchase error:', err)
       alert('Failed to scan receipt. Please try again or add items manually.')
     }
     setScanningPurchase(false)
@@ -908,9 +916,7 @@ export default function EditInvoicePage() {
                             <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
                           </div>
                           <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
-                            {receiptUrl && (
-                              <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>
-                            )}
+                            {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
                             <button onClick={() => { groupItems.forEach(({ index }) => removeExpense(index)) }} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE ALL</button>
                           </div>
                         </div>

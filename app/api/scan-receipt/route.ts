@@ -5,9 +5,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const { base64, mediaType } = body
 
+    if (!base64 || !mediaType) {
+      return NextResponse.json({ error: 'Missing base64 or mediaType' }, { status: 400 })
+    }
+
     const isPDF = mediaType === 'application/pdf'
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -44,10 +48,18 @@ Extract ALL line items from the receipt. For each item include the full descript
       })
     })
 
-    const data = await response.json()
+    if (!anthropicRes.ok) {
+      const errText = await anthropicRes.text()
+      console.error('Anthropic API error:', anthropicRes.status, errText)
+      return NextResponse.json({ error: `Anthropic API error: ${anthropicRes.status}`, detail: errText }, { status: 500 })
+    }
+
+    const data = await anthropicRes.json()
+    console.log('Anthropic response:', JSON.stringify(data))
     return NextResponse.json(data)
+
   } catch (err) {
-    console.error(err)
-    return NextResponse.json({ error: 'Failed to scan receipt' }, { status: 500 })
+    console.error('scan-receipt error:', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
