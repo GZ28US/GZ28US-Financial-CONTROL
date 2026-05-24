@@ -11,8 +11,8 @@ type Part = { description: string; unit_price: string; quantity: string }
 type Service = { description: string; price: string }
 type Payment = { amount: string; payment_date: string; source: string }
 type Note = { note: string }
-type Expense = { supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[] }
-type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null }
+type Expense = { supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
+type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -22,6 +22,12 @@ function isTodayOrPast(dateStr: string) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
   const today = new Date(); today.setHours(0, 0, 0, 0)
   return new Date(dateStr + 'T00:00:00') <= today
+}
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
 }
 
 export default function NewInvoicePage() {
@@ -63,12 +69,17 @@ export default function NewInvoicePage() {
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   // Stock modal
   const [showStockModal, setShowStockModal] = useState(false)
   const [stockItems, setStockItems] = useState<StockItem[]>([])
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
-  const [stockTarget, setStockTarget] = useState<'new' | number>('new') // 'new' or editing index
+  const [stockTarget, setStockTarget] = useState<'new' | number>('new')
+
+  // Purchase scan
+  const [scanningPurchase, setScanningPurchase] = useState(false)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string }[]; receiptUrl: string } | null>(null)
 
   useEffect(() => { loadRide() }, [])
 
@@ -96,7 +107,7 @@ export default function NewInvoicePage() {
     setStockTarget(target)
     const { data } = await supabase
       .from('inputs')
-      .select('id, description, quantity, unit_price, supplier')
+      .select('id, description, quantity, unit_price, supplier, purchase_date')
       .eq('category', 'STOCK')
       .gt('quantity', 0)
       .order('description')
@@ -108,40 +119,118 @@ export default function NewInvoicePage() {
   async function applyStockItem(item: StockItem) {
     const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
-
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const amount = (item.unit_price * qty).toFixed(2)
-    const expense: Expense = {
-      supplier: item.supplier || '',
-      item: item.description,
-      amount,
-      payment_date: '',
-      receipt_urls: [],
-    }
-
+    const expense: Expense = { supplier: 'STOCK', item: item.description, amount, payment_date: item.purchase_date || '', receipt_urls: [] }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
     } else {
-      const updated = [...expenses]
-      updated[stockTarget as number] = expense
-      setExpenses(updated)
+      const updated = [...expenses]; updated[stockTarget as number] = expense; setExpenses(updated)
     }
-
-    // Subtract quantity from stock
-    const newQty = item.quantity - qty
-    const existingNotes = item.quantity > 0 ? '' : ''
     const { data: inputData } = await supabase.from('inputs').select('notes').eq('id', item.id).single()
     const existingNote = inputData?.notes || ''
     const usageNote = `Used ${qty} in ${rideName}`
     const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
-
-    await supabase.from('inputs').update({
-      quantity: newQty,
-      notes: updatedNotes,
-      updated_at: new Date().toISOString(),
-    }).eq('id', item.id)
-
+    await supabase.from('inputs').update({ quantity: item.quantity - qty, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', item.id)
     setShowStockModal(false)
+  }
+
+  async function handleAddPurchase(file: File) {
+    setScanningPurchase(true)
+    try {
+      // Upload receipt
+      const ext = file.name.split('.').pop()
+      const path = `${rideId}/purchases/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+      if (uploadError) { alert(uploadError.message); setScanningPurchase(false); return }
+      const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+      const receiptUrl = urlData.publicUrl
+
+      // Convert file to base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      const isPDF = file.type === 'application/pdf'
+
+      // Call Claude API
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [{
+            role: 'user',
+            content: [
+              ...(isPDF ? [{
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: base64 }
+              }] : [{
+                type: 'image',
+                source: { type: 'base64', media_type: file.type, data: base64 }
+              }]),
+              {
+                type: 'text',
+                text: `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
+{
+  "supplier": "store/supplier name",
+  "date": "YYYY-MM-DD format, or empty string if not found",
+  "items": [
+    { "description": "item name", "amount": "price as number string like 12.99" }
+  ]
+}
+Extract ALL line items from the receipt. For each item include the full description and its price. If you cannot determine a value, use an empty string. Do not include tax as a line item — skip it. Return only the JSON object.`
+              }
+            ]
+          }]
+        })
+      })
+
+      const data = await response.json()
+      const text = data.content?.map((c: any) => c.text || '').join('') || ''
+      const clean = text.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(clean)
+
+      setScannedPurchase({
+        supplier: parsed.supplier || '',
+        date: parsed.date || '',
+        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0') })),
+        receiptUrl,
+      })
+    } catch (err) {
+      console.error(err)
+      alert('Failed to scan receipt. Please try again or add items manually.')
+    }
+    setScanningPurchase(false)
+  }
+
+  function confirmScannedPurchase() {
+    if (!scannedPurchase) return
+    const groupId = generateUUID()
+    const newItems: Expense[] = scannedPurchase.items.map(item => ({
+      supplier: scannedPurchase.supplier,
+      item: item.description,
+      amount: item.amount,
+      payment_date: scannedPurchase.date,
+      receipt_urls: [scannedPurchase.receiptUrl],
+      purchase_group: groupId,
+    }))
+    setExpenses(prev => [...prev, ...newItems])
+    setExpandedGroups(prev => new Set([...prev, groupId]))
+    setScannedPurchase(null)
+  }
+
+  function toggleGroup(groupId: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -168,9 +257,7 @@ export default function NewInvoicePage() {
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
       urls.push(urlData.publicUrl)
     }
-    const updated = [...expenses]
-    updated[index] = { ...updated[index], receipt_urls: urls }
-    setExpenses(updated)
+    const updated = [...expenses]; updated[index] = { ...updated[index], receipt_urls: urls }; setExpenses(updated)
     setUploadingIndex(null)
   }
 
@@ -218,22 +305,6 @@ export default function NewInvoicePage() {
     const updated = [...services]
     if (laborIndex >= 0) updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
     setServices(updated)
-  }
-
-  function updateIntuitiveExpenses() {
-    const existingFlorida = expenses.find(e => e.supplier === 'Florida State' && e.item === 'Taxes')
-    const existingPartExpenses: Record<string, Expense> = {}
-    expenses.forEach(e => { if (!(e.supplier === 'Florida State' && e.item === 'Taxes')) existingPartExpenses[e.item] = e })
-    const intuitiveExpenses: Expense[] = [
-      { supplier: 'Florida State', item: 'Taxes', amount: floridaTaxesAmount.toFixed(2), payment_date: existingFlorida?.payment_date || '', receipt_urls: existingFlorida?.receipt_urls || [] },
-      ...parts.map(p => {
-        const existing = existingPartExpenses[p.description]
-        return { supplier: existing?.supplier || '', item: p.description, amount: getPartTotal(p).toFixed(2), payment_date: existing?.payment_date || '', receipt_urls: existing?.receipt_urls || [] }
-      }),
-    ]
-    const partDescriptions = parts.map(p => p.description)
-    const userExpenses = expenses.filter(e => !(e.supplier === 'Florida State' && e.item === 'Taxes') && !partDescriptions.includes(e.item))
-    setExpenses([...intuitiveExpenses, ...userExpenses])
   }
 
   function addPart() {
@@ -341,11 +412,27 @@ export default function NewInvoicePage() {
         price: parseFloat(ex.amount) || 0,
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
+        purchase_group: ex.purchase_group || null,
       })))
       if (e) { alert(e.message); return }
     }
     router.push(`/rides/${rideId}/invoices`)
   }
+
+  // Group expenses for display
+  const expenseRows: { type: 'single' | 'group'; index?: number; groupId?: string; groupExpenses?: { index: number; expense: Expense }[]; expense?: Expense }[] = []
+  const seenGroups = new Set<string>()
+  expenses.forEach((exp, index) => {
+    if (exp.purchase_group) {
+      if (!seenGroups.has(exp.purchase_group)) {
+        seenGroups.add(exp.purchase_group)
+        const groupExpenses = expenses.map((e, i) => ({ index: i, expense: e })).filter(({ expense: e }) => e.purchase_group === exp.purchase_group)
+        expenseRows.push({ type: 'group', groupId: exp.purchase_group, groupExpenses })
+      }
+    } else {
+      expenseRows.push({ type: 'single', index, expense: exp })
+    }
+  })
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
@@ -375,25 +462,64 @@ export default function NewInvoicePage() {
                       <p className="text-sm text-gray-400">Available: {item.quantity} — {formatUSD(item.unit_price)} each</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="Qty"
-                        value={stockQtyInput[item.id] || ''}
-                        onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.id]: e.target.value }))}
-                        className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center"
-                      />
-                      <button
-                        onClick={() => applyStockItem(item)}
-                        className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm"
-                      >
-                        USE
-                      </button>
+                      <input type="text" inputMode="decimal" placeholder="Qty" value={stockQtyInput[item.id] || ''} onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.id]: e.target.value }))} className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center" />
+                      <button onClick={() => applyStockItem(item)} className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm">USE</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* SCANNED PURCHASE REVIEW MODAL */}
+      {scannedPurchase && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REVIEW PURCHASE</h2>
+              <button onClick={() => setScannedPurchase(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
+              </div>
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">DATE</label>
+                <input type="text" value={scannedPurchase.date} onChange={(e) => setScannedPurchase({ ...scannedPurchase, date: e.target.value })} className={inputClass} placeholder="YYYY-MM-DD" />
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1 space-y-2">
+              {scannedPurchase.items.map((item, i) => (
+                <div key={i} className="flex gap-3 items-center">
+                  <input type="text" value={item.description} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], description: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${inputClass} flex-1`} placeholder="Description" />
+                  <div className="relative w-32">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                    <input type="text" value={item.amount} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], amount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${inputClass} pl-8`} placeholder="0.00" />
+                  </div>
+                  <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2">✕</button>
+                </div>
+              ))}
+              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-right text-gray-400 font-bold self-center">
+                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}
+              </div>
+              <button onClick={confirmScannedPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SCANNING OVERLAY */}
+      {scanningPurchase && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
+            <p className="text-2xl font-bold mb-2">Scanning Receipt...</p>
+            <p className="text-gray-400">Claude is reading your receipt</p>
           </div>
         </div>
       )}
@@ -697,6 +823,13 @@ export default function NewInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+
+            {/* ADD PURCHASE button */}
+            <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
+              🧾 ADD PURCHASE
+              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
+            </label>
+
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
@@ -714,86 +847,131 @@ export default function NewInvoicePage() {
             </div>
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
-            <button onClick={updateIntuitiveExpenses} className="w-full bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">↻ UPDATE INTUITIVE EXPENSES</button>
 
-            {expenses.length > 0 && (
-              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
-                {expenses.map((exp, index) => {
-                  const isPaid = isValidDate(exp.payment_date)
-                  const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
-                  return (
-                    <div key={index}>
-                      {editingExpenseIndex === index ? (
-                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                          <div className="flex gap-3 items-end">
-                            <div className="flex-1">
-                              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                              <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+            {expenseRows.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
+                {expenseRows.map((row, rowIdx) => {
+                  if (row.type === 'group' && row.groupExpenses && row.groupId) {
+                    const groupId = row.groupId
+                    const groupItems = row.groupExpenses
+                    const firstItem = groupItems[0].expense
+                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0), 0)
+                    const isExpanded = expandedGroups.has(groupId)
+                    const receiptUrl = firstItem.receipt_urls[0]
+                    return (
+                      <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
+                        {/* Group header */}
+                        <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
+                              <p className="text-base font-bold text-blue-400">{firstItem.supplier} — {groupItems.length} items</p>
                             </div>
-                            <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
+                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
                           </div>
-                          <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
-                            <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
-                          </div>
-                          <div><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
-                            <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                              <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
-                            </div>
-                          </div>
-                          <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
-                          <div>
-                            <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
-                            <label className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
-                              📎 ADD FILES
-                              <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceiptsToEditing(e.target.files) }} />
-                            </label>
-                            {editingExpense.receipt_urls.length > 0 && (
-                              <div className="mt-2 space-y-1">
-                                {editingExpense.receipt_urls.map((url, ui) => (
-                                  <div key={ui} className="flex items-center gap-2">
-                                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
-                                    <button onClick={() => removeReceiptFromEditing(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
-                                  </div>
-                                ))}
-                              </div>
+                          <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                            {receiptUrl && (
+                              <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>
                             )}
-                          </div>
-                          <div className="flex gap-3">
-                            <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
-                            <button onClick={cancelEditExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                            <button onClick={() => { groupItems.forEach(({ index }) => removeExpense(index)) }} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE ALL</button>
                           </div>
                         </div>
-                      ) : (
-                        <div className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex-1 min-w-0">
-                              <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                              <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
-                              <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                        {/* Group items */}
+                        {isExpanded && (
+                          <div className="border-t border-gray-700">
+                            {groupItems.map(({ index, expense: exp }, gi) => (
+                              <div key={index} className={`flex items-center justify-between gap-4 px-4 py-2 pl-10 ${gi < groupItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
+                                  <p className="text-sm text-blue-300">{formatUSD(parseFloat(exp.amount))}</p>
+                                </div>
+                                <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  } else if (row.type === 'single' && row.index !== undefined && row.expense) {
+                    const index = row.index
+                    const exp = row.expense
+                    const isPaid = isValidDate(exp.payment_date)
+                    const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
+                    return (
+                      <div key={index} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
+                        {editingExpenseIndex === index ? (
+                          <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                            <div className="flex gap-3 items-end">
+                              <div className="flex-1">
+                                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                                <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                              </div>
+                              <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
                             </div>
-                            <div className="flex gap-2 shrink-0">
-                              {exp.receipt_urls.length > 0 && (
-                                <div className="relative">
-                                  <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
-                                    RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
-                                  </button>
-                                  {openReceiptsIndex === index && (
-                                    <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
-                                      {exp.receipt_urls.map((url, ui) => (
-                                        <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
-                                      ))}
+                            <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
+                              <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
+                            </div>
+                            <div><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                              <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                              </div>
+                            </div>
+                            <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
+                            <div>
+                              <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
+                              <label className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
+                                📎 ADD FILES
+                                <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceiptsToEditing(e.target.files) }} />
+                              </label>
+                              {editingExpense.receipt_urls.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {editingExpense.receipt_urls.map((url, ui) => (
+                                    <div key={ui} className="flex items-center gap-2">
+                                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                      <button onClick={() => removeReceiptFromEditing(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
                                     </div>
-                                  )}
+                                  ))}
                                 </div>
                               )}
-                              <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                              <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                            </div>
+                            <div className="flex gap-3">
+                              <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                              <button onClick={cancelEditExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
                             </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  )
+                        ) : (
+                          <div className="px-4 py-3">
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                                <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
+                                <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                              </div>
+                              <div className="flex gap-2 shrink-0">
+                                {exp.receipt_urls.length > 0 && (
+                                  <div className="relative">
+                                    <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
+                                      RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
+                                    </button>
+                                    {openReceiptsIndex === index && (
+                                      <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
+                                        {exp.receipt_urls.map((url, ui) => (
+                                          <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                                <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+                  return null
                 })}
               </div>
             )}
