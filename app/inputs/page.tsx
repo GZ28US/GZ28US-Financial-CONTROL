@@ -13,6 +13,7 @@ type Input = {
   unit_price: number
   purchase_date: string | null
   supplier: string | null
+  notes: string | null
 }
 
 function formatUSD(v: number) {
@@ -46,9 +47,11 @@ export default function InputsPage() {
     loadInputs()
   }
 
-  const filtered = filter === 'ALL' ? inputs : inputs.filter(i => i.category === filter)
-  const consumptionTotal = inputs.filter(i => i.category === 'CONSUMPTION').reduce((s, i) => s + i.quantity * i.unit_price, 0)
-  const stockTotal = inputs.filter(i => i.category === 'STOCK').reduce((s, i) => s + i.quantity * i.unit_price, 0)
+  // Hide stock items with 0 quantity
+  const visibleInputs = inputs.filter(i => !(i.category === 'STOCK' && i.quantity <= 0))
+  const filtered = filter === 'ALL' ? visibleInputs : visibleInputs.filter(i => i.category === filter)
+  const consumptionTotal = visibleInputs.filter(i => i.category === 'CONSUMPTION').reduce((s, i) => s + i.quantity * i.unit_price, 0)
+  const stockTotal = visibleInputs.filter(i => i.category === 'STOCK').reduce((s, i) => s + i.quantity * i.unit_price, 0)
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -68,12 +71,11 @@ export default function InputsPage() {
       )}
 
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-4xl font-bold">INPUTS ({inputs.length})</h1>
+        <h1 className="text-4xl font-bold">INPUTS ({visibleInputs.length})</h1>
         <Link href="/inputs/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INPUT</Link>
       </div>
 
-      {/* TOTALS */}
-      {inputs.length > 0 && (
+      {visibleInputs.length > 0 && (
         <div className="flex gap-4 mb-6 flex-wrap">
           <div className="bg-blue-900 rounded-2xl px-6 py-4">
             <p className="text-sm font-bold text-blue-300">CONSUMPTION TOTAL</p>
@@ -86,7 +88,6 @@ export default function InputsPage() {
         </div>
       )}
 
-      {/* FILTER */}
       <div className="flex gap-3 mb-8">
         {(['ALL', 'CONSUMPTION', 'STOCK'] as const).map(f => (
           <button key={f} onClick={() => setFilter(f)} className={`px-5 py-2 rounded-2xl font-bold text-lg ${filter === f ? 'bg-white text-black' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>{f}</button>
@@ -111,6 +112,13 @@ export default function InputsPage() {
                 {input.supplier && <p className="text-lg text-gray-400">Supplier: {input.supplier}</p>}
                 <p className="text-lg text-gray-400">Qty: {input.quantity} × {formatUSD(input.unit_price)} = {formatUSD(input.quantity * input.unit_price)}</p>
                 <p className="text-lg text-gray-400">Purchased: {formatDate(input.purchase_date)}</p>
+                {input.notes && (
+                  <div className="mt-2 space-y-1">
+                    {input.notes.split('\n').map((note, i) => (
+                      <p key={i} className="text-sm text-yellow-400">📦 {note}</p>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/inputs/${input.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>

@@ -12,6 +12,7 @@ type Service = { description: string; price: string }
 type Payment = { amount: string; payment_date: string; source: string }
 type Note = { note: string }
 type Expense = { supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[] }
+type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -21,10 +22,6 @@ function isTodayOrPast(dateStr: string) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
   const today = new Date(); today.setHours(0, 0, 0, 0)
   return new Date(dateStr + 'T00:00:00') <= today
-}
-function parseReceiptUrls(raw: string | null): string[] {
-  if (!raw) return []
-  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
 }
 
 export default function NewInvoicePage() {
@@ -67,6 +64,12 @@ export default function NewInvoicePage() {
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
+  // Stock modal
+  const [showStockModal, setShowStockModal] = useState(false)
+  const [stockItems, setStockItems] = useState<StockItem[]>([])
+  const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
+  const [stockTarget, setStockTarget] = useState<'new' | number>('new') // 'new' or editing index
+
   useEffect(() => { loadRide() }, [])
 
   async function loadRide() {
@@ -87,6 +90,58 @@ export default function NewInvoicePage() {
     let nextNumber = 1
     while (usedNumbers.includes(nextNumber)) nextNumber++
     setInvoiceCode(`${code}.${nextNumber}`)
+  }
+
+  async function openStockModal(target: 'new' | number) {
+    setStockTarget(target)
+    const { data } = await supabase
+      .from('inputs')
+      .select('id, description, quantity, unit_price, supplier')
+      .eq('category', 'STOCK')
+      .gt('quantity', 0)
+      .order('description')
+    setStockItems(data || [])
+    setStockQtyInput({})
+    setShowStockModal(true)
+  }
+
+  async function applyStockItem(item: StockItem) {
+    const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
+    if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
+
+    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+    const amount = (item.unit_price * qty).toFixed(2)
+    const expense: Expense = {
+      supplier: item.supplier || '',
+      item: item.description,
+      amount,
+      payment_date: '',
+      receipt_urls: [],
+    }
+
+    if (stockTarget === 'new') {
+      setExpenses(prev => [...prev, expense])
+    } else {
+      const updated = [...expenses]
+      updated[stockTarget as number] = expense
+      setExpenses(updated)
+    }
+
+    // Subtract quantity from stock
+    const newQty = item.quantity - qty
+    const existingNotes = item.quantity > 0 ? '' : ''
+    const { data: inputData } = await supabase.from('inputs').select('notes').eq('id', item.id).single()
+    const existingNote = inputData?.notes || ''
+    const usageNote = `Used ${qty} in ${rideName}`
+    const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
+
+    await supabase.from('inputs').update({
+      quantity: newQty,
+      notes: updatedNotes,
+      updated_at: new Date().toISOString(),
+    }).eq('id', item.id)
+
+    setShowStockModal(false)
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -132,7 +187,6 @@ export default function NewInvoicePage() {
     setEditingExpense({ ...editingExpense, receipt_urls: urls })
   }
 
-  // Calculations
   const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
   const floridaTaxesPct = parseFloat(floridaTaxes) || 0
   const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
@@ -300,6 +354,50 @@ export default function NewInvoicePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+
+      {/* STOCK MODAL */}
+      {showStockModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold">FROM STOCK</h2>
+              <button onClick={() => setShowStockModal(false)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            {stockItems.length === 0 ? (
+              <p className="text-gray-400 text-lg">No stock items available.</p>
+            ) : (
+              <div className="overflow-y-auto space-y-3 flex-1">
+                {stockItems.map(item => (
+                  <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold truncate">{item.description}</p>
+                      {item.supplier && <p className="text-sm text-gray-400">{item.supplier}</p>}
+                      <p className="text-sm text-gray-400">Available: {item.quantity} — {formatUSD(item.unit_price)} each</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Qty"
+                        value={stockQtyInput[item.id] || ''}
+                        onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.id]: e.target.value }))}
+                        className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center"
+                      />
+                      <button
+                        onClick={() => applyStockItem(item)}
+                        className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm"
+                      >
+                        USE
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <h1 className="text-4xl font-bold mb-2">ADD A NEW INVOICE</h1>
       <p className="text-gray-400 text-xl mb-8">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
 
@@ -599,8 +697,12 @@ export default function NewInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-              <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+              </div>
+              <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
             </div>
             <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
               <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={inputClass} />
@@ -623,8 +725,12 @@ export default function NewInvoicePage() {
                     <div key={index}>
                       {editingExpenseIndex === index ? (
                         <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                          <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                            <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                          <div className="flex gap-3 items-end">
+                            <div className="flex-1">
+                              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                              <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                            </div>
+                            <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
                           </div>
                           <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
                             <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />

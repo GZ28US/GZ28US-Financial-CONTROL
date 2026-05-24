@@ -12,6 +12,7 @@ type Service = { id?: string; description: string; price: string }
 type Payment = { id?: string; amount: string; payment_date: string; source: string }
 type Note = { id?: string; note: string }
 type Expense = { id?: string; supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[] }
+type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -68,6 +69,12 @@ export default function EditInvoicePage() {
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
+  // Stock modal
+  const [showStockModal, setShowStockModal] = useState(false)
+  const [stockItems, setStockItems] = useState<StockItem[]>([])
+  const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
+  const [stockTarget, setStockTarget] = useState<'new' | number>('new')
+
   useEffect(() => { loadRide(); loadInvoice() }, [])
 
   async function loadRide() {
@@ -104,6 +111,50 @@ export default function EditInvoicePage() {
     if (expensesData) setExpenses(expensesData.map(e => ({ id: e.id, supplier: e.supplier || '', item: e.item, amount: String(e.price), payment_date: e.payment_date || '', receipt_urls: parseReceiptUrls(e.receipt_url) })))
 
     setLoading(false)
+  }
+
+  async function openStockModal(target: 'new' | number) {
+    setStockTarget(target)
+    const { data } = await supabase
+      .from('inputs')
+      .select('id, description, quantity, unit_price, supplier')
+      .eq('category', 'STOCK')
+      .gt('quantity', 0)
+      .order('description')
+    setStockItems(data || [])
+    setStockQtyInput({})
+    setShowStockModal(true)
+  }
+
+  async function applyStockItem(item: StockItem) {
+    const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
+    if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
+
+    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+    const amount = (item.unit_price * qty).toFixed(2)
+    const expense = { supplier: item.supplier || '', item: item.description, amount, payment_date: '', receipt_urls: [] }
+
+    if (stockTarget === 'new') {
+      setExpenses(prev => [...prev, expense])
+    } else {
+      const updated = [...expenses]
+      updated[stockTarget as number] = { ...updated[stockTarget as number], ...expense }
+      setExpenses(updated)
+    }
+
+    const { data: inputData } = await supabase.from('inputs').select('notes').eq('id', item.id).single()
+    const existingNote = inputData?.notes || ''
+    const usageNote = `Used ${qty} in ${rideName}`
+    const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
+    const newQty = item.quantity - qty
+
+    await supabase.from('inputs').update({
+      quantity: newQty,
+      notes: updatedNotes,
+      updated_at: new Date().toISOString(),
+    }).eq('id', item.id)
+
+    setShowStockModal(false)
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -364,6 +415,45 @@ export default function EditInvoicePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+
+      {/* STOCK MODAL */}
+      {showStockModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold">FROM STOCK</h2>
+              <button onClick={() => setShowStockModal(false)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            {stockItems.length === 0 ? (
+              <p className="text-gray-400 text-lg">No stock items available.</p>
+            ) : (
+              <div className="overflow-y-auto space-y-3 flex-1">
+                {stockItems.map(item => (
+                  <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold truncate">{item.description}</p>
+                      {item.supplier && <p className="text-sm text-gray-400">{item.supplier}</p>}
+                      <p className="text-sm text-gray-400">Available: {item.quantity} — {formatUSD(item.unit_price)} each</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Qty"
+                        value={stockQtyInput[item.id] || ''}
+                        onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.id]: e.target.value }))}
+                        className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center"
+                      />
+                      <button onClick={() => applyStockItem(item)} className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm">USE</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <h1 className="text-4xl font-bold mb-2">EDIT INVOICE</h1>
       <p className="text-gray-400 text-xl mb-8">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
 
@@ -663,8 +753,12 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-              <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+              </div>
+              <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
             </div>
             <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
               <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={inputClass} />
@@ -687,8 +781,12 @@ export default function EditInvoicePage() {
                     <div key={index} className={index < expenses.length - 1 ? 'border-b border-gray-700' : ''}>
                       {editingExpenseIndex === index ? (
                         <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
-                          <div><label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                            <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                          <div className="flex gap-3 items-end">
+                            <div className="flex-1">
+                              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                              <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                            </div>
+                            <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
                           </div>
                           <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
                             <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
@@ -738,7 +836,7 @@ export default function EditInvoicePage() {
                                   {openReceiptsIndex === index && (
                                     <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
                                       {exp.receipt_urls.map((url, ui) => (
-                                        <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm py-1 truncate">File {ui + 1}</a>
+                                        <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
                                       ))}
                                     </div>
                                   )}
