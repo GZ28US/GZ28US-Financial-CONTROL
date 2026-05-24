@@ -71,13 +71,10 @@ export default function NewInvoicePage() {
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
-  // Stock modal
   const [showStockModal, setShowStockModal] = useState(false)
   const [stockItems, setStockItems] = useState<StockItem[]>([])
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
-
-  // Purchase scan
   const [scanningPurchase, setScanningPurchase] = useState(false)
   const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string }[]; receiptUrl: string } | null>(null)
 
@@ -105,12 +102,7 @@ export default function NewInvoicePage() {
 
   async function openStockModal(target: 'new' | number) {
     setStockTarget(target)
-    const { data } = await supabase
-      .from('inputs')
-      .select('id, description, quantity, unit_price, supplier, purchase_date')
-      .eq('category', 'STOCK')
-      .gt('quantity', 0)
-      .order('description')
+    const { data } = await supabase.from('inputs').select('id, description, quantity, unit_price, supplier, purchase_date').eq('category', 'STOCK').gt('quantity', 0).order('description')
     setStockItems(data || [])
     setStockQtyInput({})
     setShowStockModal(true)
@@ -138,7 +130,6 @@ export default function NewInvoicePage() {
   async function handleAddPurchase(file: File) {
     setScanningPurchase(true)
     try {
-      // Upload receipt
       const ext = file.name.split('.').pop()
       const path = `${rideId}/purchases/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
@@ -146,7 +137,6 @@ export default function NewInvoicePage() {
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
       const receiptUrl = urlData.publicUrl
 
-      // Convert file to base64
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve((reader.result as string).split(',')[1])
@@ -154,40 +144,10 @@ export default function NewInvoicePage() {
         reader.readAsDataURL(file)
       })
 
-      const isPDF = file.type === 'application/pdf'
-
-      // Call Claude API
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/scan-receipt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [{
-            role: 'user',
-            content: [
-              ...(isPDF ? [{
-                type: 'document',
-                source: { type: 'base64', media_type: 'application/pdf', data: base64 }
-              }] : [{
-                type: 'image',
-                source: { type: 'base64', media_type: file.type, data: base64 }
-              }]),
-              {
-                type: 'text',
-                text: `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
-{
-  "supplier": "store/supplier name",
-  "date": "YYYY-MM-DD format, or empty string if not found",
-  "items": [
-    { "description": "item name", "amount": "price as number string like 12.99" }
-  ]
-}
-Extract ALL line items from the receipt. For each item include the full description and its price. If you cannot determine a value, use an empty string. Do not include tax as a line item — skip it. Return only the JSON object.`
-              }
-            ]
-          }]
-        })
+        body: JSON.stringify({ base64, mediaType: file.type }),
       })
 
       const data = await response.json()
@@ -419,7 +379,6 @@ Extract ALL line items from the receipt. For each item include the full descript
     router.push(`/rides/${rideId}/invoices`)
   }
 
-  // Group expenses for display
   const expenseRows: { type: 'single' | 'group'; index?: number; groupId?: string; groupExpenses?: { index: number; expense: Expense }[]; expense?: Expense }[] = []
   const seenGroups = new Set<string>()
   expenses.forEach((exp, index) => {
@@ -442,7 +401,6 @@ Extract ALL line items from the receipt. For each item include the full descript
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      {/* STOCK MODAL */}
       {showStockModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
@@ -473,7 +431,6 @@ Extract ALL line items from the receipt. For each item include the full descript
         </div>
       )}
 
-      {/* SCANNED PURCHASE REVIEW MODAL */}
       {scannedPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[85vh] flex flex-col gap-4">
@@ -514,7 +471,6 @@ Extract ALL line items from the receipt. For each item include the full descript
         </div>
       )}
 
-      {/* SCANNING OVERLAY */}
       {scanningPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
@@ -824,7 +780,6 @@ Extract ALL line items from the receipt. For each item include the full descript
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
 
-            {/* ADD PURCHASE button */}
             <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
               🧾 ADD PURCHASE
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
@@ -860,7 +815,6 @@ Extract ALL line items from the receipt. For each item include the full descript
                     const receiptUrl = firstItem.receipt_urls[0]
                     return (
                       <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
-                        {/* Group header */}
                         <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
@@ -873,10 +827,9 @@ Extract ALL line items from the receipt. For each item include the full descript
                             {receiptUrl && (
                               <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>
                             )}
-                            <button onClick={() => { groupItems.forEach(({ index }) => removeExpense(index)) }} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE ALL</button>
+                            <button onClick={() => { groupItems.forEach(({ index }) => removeExpense(index as number)) }} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE ALL</button>
                           </div>
                         </div>
-                        {/* Group items */}
                         {isExpanded && (
                           <div className="border-t border-gray-700">
                             {groupItems.map(({ index, expense: exp }, gi) => (
@@ -885,7 +838,7 @@ Extract ALL line items from the receipt. For each item include the full descript
                                   <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
                                   <p className="text-sm text-blue-300">{formatUSD(parseFloat(exp.amount))}</p>
                                 </div>
-                                <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
+                                <button onClick={() => removeExpense(index as number)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
                               </div>
                             ))}
                           </div>
