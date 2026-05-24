@@ -266,9 +266,9 @@ export default function ViewInvoicePage() {
                   {parts.map(p => (
                     <tr key={p.id}>
                       <td>{p.description}</td>
-                      <td className="r">{p.unit_price === 0 ? '—' : formatUSD(p.unit_price)}</td>
+                      <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price)}</td>
                       <td className="r">{p.quantity}</td>
-                      <td className="r">{p.unit_price === 0 ? '—' : formatUSD(p.unit_price * p.quantity)}</td>
+                      <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price * p.quantity)}</td>
                     </tr>
                   ))}
                   <tr className="pi-subtotal"><td colSpan={3} className="r">Sub-Total</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
@@ -406,7 +406,9 @@ export default function ViewInvoicePage() {
                   <div key={part.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold truncate">{part.description}</p>
-                      <p className="text-sm text-gray-400">{part.unit_price === 0 ? 'INCLUDED' : formatUSD(part.unit_price)} × {part.quantity} = {part.unit_price === 0 ? '—' : formatUSD(part.unit_price * part.quantity)}</p>
+                      <p className="text-sm text-gray-400">
+                        {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
+                      </p>
                     </div>
                   </div>
                 ))}

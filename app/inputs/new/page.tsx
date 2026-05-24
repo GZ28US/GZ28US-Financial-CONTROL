@@ -17,9 +17,7 @@ function SupplierField({ suppliers, value, onChange }: { suppliers: string[], va
   const [showNew, setShowNew] = useState(suppliers.length === 0)
   const [newValue, setNewValue] = useState('')
 
-  useEffect(() => {
-    if (suppliers.length === 0) setShowNew(true)
-  }, [suppliers])
+  useEffect(() => { if (suppliers.length === 0) setShowNew(true) }, [suppliers])
 
   function handleSelect(v: string) {
     if (v === NEW_SUPPLIER) { setShowNew(true); setNewValue(''); onChange('') }
@@ -34,9 +32,7 @@ function SupplierField({ suppliers, value, onChange }: { suppliers: string[], va
   if (showNew) return (
     <div className="space-y-2">
       <input type="text" placeholder="Type supplier name" value={newValue} onChange={(e) => handleNewChange(e.target.value)} className={inputClass} />
-      {suppliers.length > 0 && (
-        <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>
-      )}
+      {suppliers.length > 0 && <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>}
     </div>
   )
 
@@ -56,7 +52,7 @@ export default function NewInputPage() {
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('STOCK')
   const [quantity, setQuantity] = useState('1')
-  const [unitPrice, setUnitPrice] = useState('')
+  const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
@@ -76,7 +72,9 @@ export default function NewInputPage() {
     setSuppliers(prev => [...prev, name.trim()].sort())
   }
 
-  const totalCost = (parseFloat(quantity) || 0) * (parseFloat(unitPrice) || 0)
+  const qty = parseFloat(quantity) || 0
+  const total = parseFloat(totalPrice) || 0
+  const unitPrice = qty > 0 ? total / qty : 0
 
   async function uploadReceipts(files: FileList) {
     setUploading(true)
@@ -93,19 +91,16 @@ export default function NewInputPage() {
     setUploading(false)
   }
 
-  function removeReceiptUrl(index: number) {
-    setReceiptUrls(receiptUrls.filter((_, i) => i !== index))
-  }
+  function removeReceiptUrl(index: number) { setReceiptUrls(receiptUrls.filter((_, i) => i !== index)) }
 
   async function saveInput() {
     if (!description) { alert('Please enter a description'); return }
     await ensureSupplier(supplier)
 
     const { error } = await supabase.from('inputs').insert([{
-      description,
-      category,
-      quantity: parseFloat(quantity) || 1,
-      unit_price: parseFloat(unitPrice) || 0,
+      description, category,
+      quantity: qty || 1,
+      unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
@@ -147,18 +142,22 @@ export default function NewInputPage() {
             <input type="text" inputMode="decimal" value={quantity} onChange={(e) => { if (isNumeric(e.target.value)) setQuantity(e.target.value) }} className={inputClass} placeholder="1" />
           </div>
           <div className="flex-1">
-            <label className="block mb-2 text-lg font-bold">UNIT PRICE</label>
+            <label className="block mb-2 text-lg font-bold">TOTAL PRICE</label>
             <div className="relative">
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-              <input type="text" inputMode="decimal" value={unitPrice} onChange={(e) => { if (isNumeric(e.target.value)) setUnitPrice(e.target.value) }} className={`${inputClass} pl-10`} placeholder="0.00" />
+              <input type="text" inputMode="decimal" value={totalPrice} onChange={(e) => { if (isNumeric(e.target.value)) setTotalPrice(e.target.value) }} className={`${inputClass} pl-10`} placeholder="0.00" />
             </div>
           </div>
         </div>
 
-        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4">
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 space-y-2">
           <div className="flex justify-between items-center">
+            <span className="text-gray-400 font-bold">UNIT PRICE</span>
+            <span className="text-lg font-bold text-gray-300">{formatUSD(unitPrice)}</span>
+          </div>
+          <div className="flex justify-between items-center border-t border-gray-700 pt-2">
             <span className="text-gray-400 font-bold">TOTAL COST</span>
-            <span className="text-xl font-bold">{formatUSD(totalCost)}</span>
+            <span className="text-xl font-bold">{formatUSD(total)}</span>
           </div>
         </div>
 

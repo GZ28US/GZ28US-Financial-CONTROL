@@ -51,9 +51,7 @@ function SupplierField({ suppliers, value, onChange }: { suppliers: string[], va
   if (showNew) return (
     <div className="space-y-2">
       <input type="text" placeholder="Type supplier name" value={newValue} onChange={(e) => handleNewChange(e.target.value)} className={inputClass} />
-      {suppliers.length > 0 && (
-        <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>
-      )}
+      {suppliers.length > 0 && <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>}
     </div>
   )
 
@@ -75,7 +73,7 @@ export default function EditGoodPage() {
   const [suppliers, setSuppliers] = useState<string[]>([])
   const [description, setDescription] = useState('')
   const [quantity, setQuantity] = useState('1')
-  const [unitPrice, setUnitPrice] = useState('')
+  const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
@@ -100,18 +98,17 @@ export default function EditGoodPage() {
     if (error || !data) { alert('Good not found'); router.push('/goods'); return }
     setDescription(data.description || '')
     setQuantity(String(data.quantity || 1))
-    setUnitPrice(String(data.unit_price || ''))
+    // Reconstruct total price from unit_price * quantity
+    const computedTotal = (parseFloat(data.unit_price) || 0) * (parseFloat(data.quantity) || 1)
+    setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
     setGoodReceiptUrls(parseReceiptUrls(data.receipt_url))
 
     const { data: expensesData } = await supabase.from('good_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData.map(e => ({
-      id: e.id,
-      description: e.description,
-      amount: String(e.amount),
-      expense_date: e.expense_date || '',
-      supplier: e.supplier || '',
+      id: e.id, description: e.description, amount: String(e.amount),
+      expense_date: e.expense_date || '', supplier: e.supplier || '',
       receipt_urls: parseReceiptUrls(e.receipt_url),
     })))
 
@@ -119,15 +116,16 @@ export default function EditGoodPage() {
   }
 
   async function ensureSupplier(name: string) {
-    if (!name.trim()) return
-    if (suppliers.includes(name.trim())) return
+    if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
     setSuppliers(prev => [...prev, name.trim()].sort())
   }
 
-  const totalCost = (parseFloat(quantity) || 0) * (parseFloat(unitPrice) || 0)
+  const qty = parseFloat(quantity) || 0
+  const total = parseFloat(totalPrice) || 0
+  const unitPrice = qty > 0 ? total / qty : 0
   const expensesTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
-  const grandTotal = totalCost + expensesTotal
+  const grandTotal = total + expensesTotal
 
   async function uploadGoodReceipts(files: FileList) {
     setUploadingGood(true)
@@ -162,9 +160,7 @@ export default function EditGoodPage() {
       const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
       urls.push(urlData.publicUrl)
     }
-    const updated = [...expenses]
-    updated[index] = { ...updated[index], receipt_urls: urls }
-    setExpenses(updated)
+    const updated = [...expenses]; updated[index] = { ...updated[index], receipt_urls: urls }; setExpenses(updated)
     const exp = updated[index]
     if (exp.id) await supabase.from('good_expenses').update({ receipt_url: JSON.stringify(urls) }).eq('id', exp.id)
     setUploadingExpenseIndex(null)
@@ -203,8 +199,7 @@ export default function EditGoodPage() {
     const exp = expenses[editingExpenseIndex!]
     if (exp.id) {
       const { error } = await supabase.from('good_expenses').update({
-        description: editingExpense.description,
-        amount: parseFloat(editingExpense.amount),
+        description: editingExpense.description, amount: parseFloat(editingExpense.amount),
         expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
         supplier: editingExpense.supplier.trim() || null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
@@ -223,9 +218,7 @@ export default function EditGoodPage() {
     for (const exp of expenses) { await ensureSupplier(exp.supplier) }
 
     const { error } = await supabase.from('goods').update({
-      description,
-      quantity: parseFloat(quantity) || 1,
-      unit_price: parseFloat(unitPrice) || 0,
+      description, quantity: qty || 1, unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
@@ -236,9 +229,7 @@ export default function EditGoodPage() {
     const newExpenses = expenses.filter(e => !e.id)
     if (newExpenses.length > 0) {
       const { error: e } = await supabase.from('good_expenses').insert(newExpenses.map(ex => ({
-        good_id: goodId,
-        description: ex.description,
-        amount: parseFloat(ex.amount) || 0,
+        good_id: goodId, description: ex.description, amount: parseFloat(ex.amount) || 0,
         expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
         supplier: ex.supplier.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
@@ -278,18 +269,22 @@ export default function EditGoodPage() {
             <input type="text" inputMode="decimal" value={quantity} onChange={(e) => { if (isNumeric(e.target.value)) setQuantity(e.target.value) }} className={inputClass} />
           </div>
           <div className="flex-1">
-            <label className="block mb-2 text-lg font-bold">UNIT PRICE</label>
+            <label className="block mb-2 text-lg font-bold">TOTAL PRICE</label>
             <div className="relative">
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-              <input type="text" inputMode="decimal" value={unitPrice} onChange={(e) => { if (isNumeric(e.target.value)) setUnitPrice(e.target.value) }} className={`${inputClass} pl-10`} />
+              <input type="text" inputMode="decimal" value={totalPrice} onChange={(e) => { if (isNumeric(e.target.value)) setTotalPrice(e.target.value) }} className={`${inputClass} pl-10`} />
             </div>
           </div>
         </div>
 
-        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4">
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 space-y-2">
           <div className="flex justify-between items-center">
+            <span className="text-gray-400 font-bold">UNIT PRICE</span>
+            <span className="text-lg font-bold text-gray-300">{formatUSD(unitPrice)}</span>
+          </div>
+          <div className="flex justify-between items-center border-t border-gray-700 pt-2">
             <span className="text-gray-400 font-bold">TOTAL COST</span>
-            <span className="text-xl font-bold">{formatUSD(totalCost)}</span>
+            <span className="text-xl font-bold">{formatUSD(total)}</span>
           </div>
         </div>
 
@@ -436,7 +431,6 @@ export default function EditGoodPage() {
           </div>
         </div>
 
-        {/* GRAND TOTAL */}
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4">
           <div className="flex justify-between items-center">
             <span className="font-bold text-xl">GRAND TOTAL</span>

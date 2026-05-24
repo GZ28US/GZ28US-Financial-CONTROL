@@ -28,19 +28,14 @@ function SupplierField({ suppliers, value, onChange }: { suppliers: string[], va
   const [showNew, setShowNew] = useState(suppliers.length === 0)
   const [newValue, setNewValue] = useState('')
 
-  useEffect(() => {
-    if (suppliers.length === 0) { setShowNew(true) }
-  }, [suppliers])
+  useEffect(() => { if (suppliers.length === 0) setShowNew(true) }, [suppliers])
 
   function handleSelect(v: string) {
     if (v === NEW_SUPPLIER) { setShowNew(true); setNewValue(''); onChange('') }
     else { setShowNew(false); onChange(v) }
   }
 
-  function handleNewChange(v: string) {
-    setNewValue(v)
-    onChange(v)
-  }
+  function handleNewChange(v: string) { setNewValue(v); onChange(v) }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const selectClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -48,9 +43,7 @@ function SupplierField({ suppliers, value, onChange }: { suppliers: string[], va
   if (showNew) return (
     <div className="space-y-2">
       <input type="text" placeholder="Type supplier name" value={newValue} onChange={(e) => handleNewChange(e.target.value)} className={inputClass} />
-      {suppliers.length > 0 && (
-        <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>
-      )}
+      {suppliers.length > 0 && <button onClick={() => { setShowNew(false); onChange('') }} className="text-gray-400 text-sm hover:text-white">← Back to list</button>}
     </div>
   )
 
@@ -69,7 +62,7 @@ export default function NewGoodPage() {
   const [suppliers, setSuppliers] = useState<string[]>([])
   const [description, setDescription] = useState('')
   const [quantity, setQuantity] = useState('1')
-  const [unitPrice, setUnitPrice] = useState('')
+  const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
@@ -90,15 +83,16 @@ export default function NewGoodPage() {
   }
 
   async function ensureSupplier(name: string) {
-    if (!name.trim()) return
-    if (suppliers.includes(name.trim())) return
+    if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
     setSuppliers(prev => [...prev, name.trim()].sort())
   }
 
-  const totalCost = (parseFloat(quantity) || 0) * (parseFloat(unitPrice) || 0)
+  const qty = parseFloat(quantity) || 0
+  const total = parseFloat(totalPrice) || 0
+  const unitPrice = qty > 0 ? total / qty : 0
   const expensesTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
-  const grandTotal = totalCost + expensesTotal
+  const grandTotal = total + expensesTotal
 
   async function uploadGoodReceipts(files: FileList) {
     setUploadingGood(true)
@@ -115,9 +109,7 @@ export default function NewGoodPage() {
     setUploadingGood(false)
   }
 
-  function removeGoodReceiptUrl(index: number) {
-    setGoodReceiptUrls(goodReceiptUrls.filter((_, i) => i !== index))
-  }
+  function removeGoodReceiptUrl(index: number) { setGoodReceiptUrls(goodReceiptUrls.filter((_, i) => i !== index)) }
 
   async function uploadExpenseReceipts(files: FileList, index: number) {
     setUploadingExpenseIndex(index)
@@ -130,9 +122,7 @@ export default function NewGoodPage() {
       const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
       urls.push(urlData.publicUrl)
     }
-    const updated = [...expenses]
-    updated[index] = { ...updated[index], receipt_urls: urls }
-    setExpenses(updated)
+    const updated = [...expenses]; updated[index] = { ...updated[index], receipt_urls: urls }; setExpenses(updated)
     setUploadingExpenseIndex(null)
   }
 
@@ -171,8 +161,8 @@ export default function NewGoodPage() {
 
     const { data: good, error } = await supabase.from('goods').insert([{
       description,
-      quantity: parseFloat(quantity) || 1,
-      unit_price: parseFloat(unitPrice) || 0,
+      quantity: qty || 1,
+      unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
@@ -219,18 +209,22 @@ export default function NewGoodPage() {
             <input type="text" inputMode="decimal" value={quantity} onChange={(e) => { if (isNumeric(e.target.value)) setQuantity(e.target.value) }} className={inputClass} placeholder="1" />
           </div>
           <div className="flex-1">
-            <label className="block mb-2 text-lg font-bold">UNIT PRICE</label>
+            <label className="block mb-2 text-lg font-bold">TOTAL PRICE</label>
             <div className="relative">
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-              <input type="text" inputMode="decimal" value={unitPrice} onChange={(e) => { if (isNumeric(e.target.value)) setUnitPrice(e.target.value) }} className={`${inputClass} pl-10`} placeholder="0.00" />
+              <input type="text" inputMode="decimal" value={totalPrice} onChange={(e) => { if (isNumeric(e.target.value)) setTotalPrice(e.target.value) }} className={`${inputClass} pl-10`} placeholder="0.00" />
             </div>
           </div>
         </div>
 
-        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4">
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 space-y-2">
           <div className="flex justify-between items-center">
+            <span className="text-gray-400 font-bold">UNIT PRICE</span>
+            <span className="text-lg font-bold text-gray-300">{formatUSD(unitPrice)}</span>
+          </div>
+          <div className="flex justify-between items-center border-t border-gray-700 pt-2">
             <span className="text-gray-400 font-bold">TOTAL COST</span>
-            <span className="text-xl font-bold">{formatUSD(totalCost)}</span>
+            <span className="text-xl font-bold">{formatUSD(total)}</span>
           </div>
         </div>
 
@@ -377,7 +371,6 @@ export default function NewGoodPage() {
           </div>
         </div>
 
-        {/* GRAND TOTAL */}
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4">
           <div className="flex justify-between items-center">
             <span className="font-bold text-xl">GRAND TOTAL</span>
