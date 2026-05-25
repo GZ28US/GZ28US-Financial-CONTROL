@@ -63,3 +63,4 @@ Extract ALL line items from the receipt. For each item include the full descript
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
