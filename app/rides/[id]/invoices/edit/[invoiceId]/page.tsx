@@ -13,6 +13,7 @@ type Payment = { id?: string; amount: string; payment_date: string; source: stri
 type Note = { id?: string; note: string }
 type Expense = { id?: string; supplier: string; item: string; amount: string; quantity: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
 type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
+type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -32,6 +33,9 @@ function generateUUID() {
     const r = Math.random() * 16 | 0
     return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
   })
+}
+function todayStr() {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export default function EditInvoicePage() {
@@ -86,6 +90,11 @@ export default function EditInvoicePage() {
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string }>({ description: '', amount: '', quantity: '1' })
+  const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense } | null>(null)
+
+  // PARTS TO STOCK
+  const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
+  const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
 
   useEffect(() => { loadRide(); loadInvoice() }, [])
 
@@ -132,7 +141,6 @@ export default function EditInvoicePage() {
         purchase_group: e.purchase_group || undefined,
       }))
       setExpenses(mapped)
-      // Purchases start closed on edit page
       setExpandedGroups(new Set())
     }
 
@@ -251,7 +259,6 @@ export default function EditInvoicePage() {
         ? { ...e, supplier: editingPurchaseSupplier, payment_date: editingPurchaseDate }
         : e
     ))
-    // Update in DB
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
     for (const exp of groupExpenses) {
       if (exp.id) {
@@ -276,12 +283,43 @@ export default function EditInvoicePage() {
       await supabase.from('invoice_expenses').update({
         item: editingGroupItem.description,
         price: parseFloat(editingGroupItem.amount) || 0,
+        quantity: parseFloat(editingGroupItem.quantity) || 1,
       }).eq('id', exp.id)
     }
     const updated = [...expenses]
     updated[editingGroupItemIndex] = { ...updated[editingGroupItemIndex], item: editingGroupItem.description, amount: editingGroupItem.amount, quantity: editingGroupItem.quantity }
     setExpenses(updated)
     setEditingGroupItemIndex(null)
+  }
+
+  async function confirmSendToStock(item: { index: number; expense: Expense }) {
+    const exp = item.expense
+    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+    const note = `From ${invoiceCode} — ${rideName}`
+    const receiptUrl = exp.receipt_urls.length > 0 ? JSON.stringify(exp.receipt_urls) : null
+    await supabase.from('inputs').insert([{
+      description: exp.item,
+      category: 'STOCK',
+      quantity: parseFloat(exp.quantity) || 1,
+      unit_price: parseFloat(exp.amount) || 0,
+      purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
+      supplier: exp.supplier || null,
+      notes: note,
+      receipt_url: receiptUrl,
+    }])
+    if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
+    setExpenses(prev => prev.filter((_, i) => i !== item.index))
+    setSendToStockConfirm(null)
+  }
+
+  function addPartToStock() {
+    if (!newPartToStock.description || !newPartToStock.unit_price || !newPartToStock.quantity) { alert('Please fill in all fields'); return }
+    setPartsToStock(prev => [...prev, newPartToStock])
+    setNewPartToStock({ description: '', quantity: '1', unit_price: '', date: todayStr() })
+  }
+
+  function removePartToStock(index: number) {
+    setPartsToStock(prev => prev.filter((_, i) => i !== index))
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -456,6 +494,7 @@ export default function EditInvoicePage() {
       const { error } = await supabase.from('invoice_expenses').update({
         expense_date: null, supplier: editingExpense.supplier || null,
         item: editingExpense.item, price: parseFloat(editingExpense.amount),
+        quantity: parseFloat(editingExpense.quantity) || 1,
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
       }).eq('id', exp.id)
@@ -506,9 +545,24 @@ export default function EditInvoicePage() {
         invoice_id: invoiceId, expense_date: null,
         supplier: ex.supplier || null, item: ex.item,
         price: parseFloat(ex.amount),
+        quantity: parseFloat(ex.quantity) || 1,
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
         purchase_group: ex.purchase_group || null,
+      })))
+      if (e) { alert(e.message); return }
+    }
+    // Save parts to stock
+    if (partsToStock.length > 0) {
+      const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+      const { error: e } = await supabase.from('inputs').insert(partsToStock.map(p => ({
+        description: p.description,
+        category: 'STOCK',
+        quantity: parseFloat(p.quantity) || 1,
+        unit_price: parseFloat(p.unit_price) || 0,
+        purchase_date: isValidDate(p.date) ? p.date : null,
+        supplier: rideName,
+        notes: `From ${invoiceCode} — ${rideName}`,
       })))
       if (e) { alert(e.message); return }
     }
@@ -629,6 +683,21 @@ export default function EditInvoicePage() {
             </div>
             <DatePicker label="DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
             <button onClick={confirmEditPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+          </div>
+        </div>
+      )}
+
+      {/* SEND TO STOCK CONFIRM */}
+      {sendToStockConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
+            <h2 className="text-2xl font-bold mb-2">Send to Stock</h2>
+            <p className="text-gray-400 text-lg mb-2">This will remove <span className="text-white font-bold">{sendToStockConfirm.expense.item}</span> from expenses and add it to STOCK inventory.</p>
+            <p className="text-gray-400 text-lg mb-8">Are you sure?</p>
+            <div className="flex gap-4">
+              <button onClick={() => setSendToStockConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => confirmSendToStock(sendToStockConfirm)} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">CONFIRM</button>
+            </div>
           </div>
         </div>
       )}
@@ -938,6 +1007,40 @@ export default function EditInvoicePage() {
         <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />
         <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
 
+        {/* PARTS TO STOCK */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">PARTS TO STOCK</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <p className="text-sm text-gray-400">Parts removed from this car that go into our stock inventory.</p>
+            <input type="text" placeholder="Description" value={newPartToStock.description} onChange={(e) => setNewPartToStock({ ...newPartToStock, description: e.target.value })} className={inputClass} />
+            <div className="flex gap-3">
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
+                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newPartToStock.unit_price} onChange={(e) => { if (isNumeric(e.target.value)) setNewPartToStock({ ...newPartToStock, unit_price: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
+                </div>
+              </div>
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">QUANTITY</label>
+                <input type="text" inputMode="decimal" placeholder="1" value={newPartToStock.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewPartToStock({ ...newPartToStock, quantity: e.target.value }) }} className={`${smallInputClass} w-full`} />
+              </div>
+            </div>
+            <DatePicker label="DATE" value={newPartToStock.date} onChange={(v) => setNewPartToStock({ ...newPartToStock, date: v })} />
+            <button onClick={addPartToStock} className="bg-orange-700 hover:bg-orange-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD TO STOCK</button>
+            {partsToStock.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {partsToStock.map((p, index) => (
+                  <div key={index} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < partsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold truncate text-orange-400">{p.description}</p>
+                      <p className="text-sm text-orange-400">Qty: {p.quantity} × {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
+                    </div>
+                    <button onClick={() => removePartToStock(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* EXPENSES */}
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
@@ -1020,6 +1123,7 @@ export default function EditInvoicePage() {
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                                      <button onClick={() => setSendToStockConfirm({ index, expense: exp })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
                                       <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                                     </div>
                                   </div>
@@ -1106,6 +1210,7 @@ export default function EditInvoicePage() {
                                   </div>
                                 )}
                                 <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                                <button onClick={() => setSendToStockConfirm({ index, expense: exp })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
                                 <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                               </div>
                             </div>
