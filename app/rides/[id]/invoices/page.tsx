@@ -16,19 +16,24 @@ type Invoice = {
   service: string | null
   florida_taxes: number | null
   global_discount: number | null
+  fl_tax_expense_date: string | null
 }
 
 type InvoiceStats = {
-  totalPaid: number
-  expensesTotalPaid: number
-  expensesTotalGlobal: number
-  grandTotal: number
+  paymentsBalance: number
+  expensesBalance: number
+  currentProfit: number
+  currentProfitPct: number
+  finalProfit: number
+  finalProfitPct: number
 }
 
 type Ride = {
   project_code: string
   project_name: string | null
 }
+
+function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
 export default function InvoicesPage() {
   const params = useParams()
@@ -68,7 +73,7 @@ export default function InvoicesPage() {
     await Promise.all(invoiceList.map(async (invoice) => {
       const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
         supabase.from('invoice_payments').select('amount, payment_date').eq('invoice_id', invoice.id),
-        supabase.from('invoice_expenses').select('price, payment_date').eq('invoice_id', invoice.id),
+        supabase.from('invoice_expenses').select('price, quantity, payment_date').eq('invoice_id', invoice.id),
         supabase.from('invoice_parts').select('unit_price, quantity').eq('invoice_id', invoice.id),
         supabase.from('invoice_services').select('price').eq('invoice_id', invoice.id),
       ])
@@ -76,10 +81,7 @@ export default function InvoicesPage() {
       const today = new Date(); today.setHours(0, 0, 0, 0)
       const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
 
-      const totalPaid = (paymentsRes.data || []).filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-      const expensesTotalPaid = (expensesRes.data || []).filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
-      const expensesTotalGlobal = (expensesRes.data || []).reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
-
+      // Revenue side (matches edit page)
       const partsSubTotal = (partsRes.data || []).reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
       const partsTotal = partsSubTotal + floridaTaxesAmount
@@ -88,7 +90,23 @@ export default function InvoicesPage() {
       const discountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
       const grandTotal = partsAndServicesTotal - discountAmount
 
-      statsMap[invoice.id] = { totalPaid, expensesTotalPaid, expensesTotalGlobal, grandTotal }
+      const totalPaid = (paymentsRes.data || []).filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+
+      // Expense side (Option A: price × quantity) + Florida State Taxes row (matches edit page)
+      const flTaxAmount = floridaTaxesAmount
+      const flTaxPaid = isValidDate(invoice.fl_tax_expense_date)
+      const expensesTotalGlobal = flTaxAmount + (expensesRes.data || []).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+      const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + (expensesRes.data || []).filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+
+      // Balloon metrics (signs match edit page: negative = owed)
+      const paymentsBalance = totalPaid - grandTotal
+      const expensesBalance = expensesTotalPaid - expensesTotalGlobal
+      const currentProfit = totalPaid - expensesTotalPaid
+      const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
+      const finalProfit = grandTotal - expensesTotalGlobal
+      const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
+
+      statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct }
     }))
 
     setStats(statsMap)
@@ -151,8 +169,6 @@ export default function InvoicesPage() {
           {invoices.map((invoice) => {
             const s = stats[invoice.id]
             const status = getStatus(invoice.delivery_date)
-            const currentIncome = s ? s.totalPaid - s.expensesTotalPaid : 0
-            const currentDebt = s ? s.expensesTotalGlobal - s.expensesTotalPaid : 0
 
             return (
               <div key={invoice.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
@@ -169,11 +185,17 @@ export default function InvoicesPage() {
 
                   {s && (
                     <div className="flex gap-3 mt-3 flex-wrap">
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${currentIncome >= 0 ? 'bg-blue-900 text-blue-300' : 'bg-red-900 text-red-300'}`}>
-                        CURRENT INCOME: {formatUSD(currentIncome)}
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                        CURRENT PROFIT: {formatUSD(s.currentProfit)} / {s.currentProfitPct.toFixed(1)}%
                       </span>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${currentDebt <= 0 ? 'bg-gray-700 text-gray-300' : 'bg-red-900 text-red-300'}`}>
-                        CURRENT DEBT: {formatUSD(currentDebt)}
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                        FINAL PROFIT: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
+                      </span>
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                        PENDING PAYMENTS: {formatUSD(s.paymentsBalance)}
+                      </span>
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                        CURRENT DEBTS: {formatUSD(s.expensesBalance)}
                       </span>
                     </div>
                   )}
