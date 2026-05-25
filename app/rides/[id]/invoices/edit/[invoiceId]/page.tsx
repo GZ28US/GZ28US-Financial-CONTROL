@@ -142,7 +142,6 @@ export default function EditInvoicePage() {
       setExpandedGroups(new Set())
     }
 
-    // Load parts-to-stock history
     const iCode = data.invoice_code || ''
     const rName = pCode + (pName ? ` — ${pName}` : '')
     const prefix = `From ${iCode} — ${rName}`
@@ -585,7 +584,6 @@ export default function EditInvoicePage() {
       if (e) { alert(e.message); return }
     }
 
-    // Parts to stock: delete existing then re-insert fresh
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const prefix = `From ${invoiceCode} — ${rideName}`
     await supabase.from('inputs').delete().eq('supplier', rideName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
@@ -1175,7 +1173,7 @@ export default function EditInvoicePage() {
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                                      <button onClick={() => setSendToStockConfirm({ index, expense: exp })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
+                                      <button onClick={() => setSendToStockConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
                                       <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                                     </div>
                                   </div>
@@ -1262,7 +1260,7 @@ export default function EditInvoicePage() {
                                   </div>
                                 )}
                                 <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                                <button onClick={() => setSendToStockConfirm({ index, expense: exp })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
+                                <button onClick={() => setSendToStockConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
                                 <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                               </div>
                             </div>
