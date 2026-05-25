@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     { "description": "item name", "amount": "price as number string like 12.99" }
   ]
 }
-Extract ALL line items from the receipt. For each item include the full description and its price. Do not include tax, shipping, or handling as line items — skip them. Return only the JSON object.`
+Extract ALL line items from the receipt including shipping, handling, and tax as separate line items. Do not skip anything. Return only the JSON object.`
             }
           ]
         }]
@@ -63,4 +63,3 @@ Extract ALL line items from the receipt. For each item include the full descript
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
-
