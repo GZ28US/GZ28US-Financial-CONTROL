@@ -141,6 +141,7 @@ export default function EditInvoicePage() {
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
+  const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
 
   useEffect(() => { loadData() }, [])
 
@@ -162,6 +163,7 @@ export default function EditInvoicePage() {
     setService(data.service || '')
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
+    setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity) })))
@@ -485,8 +487,10 @@ export default function EditInvoicePage() {
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
   const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
-  const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
-  const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
+  const flTaxExpenseAmount = floridaTaxesAmount
+  const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
+  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -635,6 +639,7 @@ export default function EditInvoicePage() {
       service: service || null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
+      fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
       updated_at: new Date().toISOString(),
     }).eq('id', invoiceId)
     if (error) { alert(error.message); return }
@@ -1212,6 +1217,21 @@ export default function EditInvoicePage() {
             </div>
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
+
+            <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
+              <div className="px-4 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
+                    <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
+                    <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>
+                  </div>
+                  <div className="shrink-0 w-44">
+                    <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {expenseRows.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">

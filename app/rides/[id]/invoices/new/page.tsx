@@ -86,6 +86,7 @@ export default function NewInvoicePage() {
   const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense } | null>(null)
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
+  const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
 
   useEffect(() => { loadRide() }, [])
 
@@ -121,7 +122,7 @@ export default function NewInvoicePage() {
     const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
-    const amount = (item.unit_price * qty).toFixed(2)
+    const amount = item.unit_price.toFixed(2)
     const expense: Expense = { supplier: 'STOCK', item: item.description, amount, quantity: String(qty), payment_date: item.purchase_date || '', receipt_urls: [] }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -164,7 +165,7 @@ export default function NewInvoicePage() {
       setScannedPurchase({
         supplier: parsed.supplier || '',
         date: parsed.date || '',
-        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: '1' })),
+        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1') })),
         receiptUrl,
       })
     } catch (err) {
@@ -254,11 +255,36 @@ export default function NewInvoicePage() {
   }
 
   function importIntuitiveParts() {
-    const imported = expenses
+    // Group eligible expenses by description + unit price, summing quantities.
+    const sourceMap = new Map<string, { description: string; unit_price: string; quantity: number }>()
+    expenses
       .filter(e => !SKIP_WORDS.test(e.item))
-      .map(e => ({ description: e.item, unit_price: e.amount, quantity: e.quantity || '1' }))
-    if (imported.length === 0) { alert('No parts found in expenses to import.'); return }
-    setParts(prev => [...prev, ...imported])
+      .forEach(e => {
+        const desc = (e.item || '').trim()
+        if (!desc) return
+        const price = parseFloat(e.amount) || 0
+        const qty = parseFloat(e.quantity) || 1
+        const key = `${desc.toLowerCase()}|${price.toFixed(2)}`
+        const existing = sourceMap.get(key)
+        if (existing) existing.quantity += qty
+        else sourceMap.set(key, { description: desc, unit_price: e.amount, quantity: qty })
+      })
+    if (sourceMap.size === 0) { alert('No parts found in expenses to import.'); return }
+    const existingQty = new Map<string, number>()
+    parts.forEach(p => {
+      const desc = (p.description || '').trim()
+      const price = parseFloat(p.unit_price) || 0
+      const key = `${desc.toLowerCase()}|${price.toFixed(2)}`
+      existingQty.set(key, (existingQty.get(key) || 0) + (parseFloat(p.quantity) || 0))
+    })
+    const toAdd: Part[] = []
+    sourceMap.forEach((src, key) => {
+      const alreadyHave = existingQty.get(key) || 0
+      const missing = src.quantity - alreadyHave
+      if (missing > 0) toAdd.push({ description: src.description, unit_price: src.unit_price, quantity: String(missing) })
+    })
+    if (toAdd.length === 0) { alert('All parts are already imported — nothing new to add.'); return }
+    setParts(prev => [...prev, ...toAdd])
   }
 
   function addPartToStock() {
@@ -310,8 +336,10 @@ export default function NewInvoicePage() {
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
   const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
-  const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
-  const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+  const flTaxExpenseAmount = floridaTaxesAmount
+  const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
+  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -409,6 +437,7 @@ export default function NewInvoicePage() {
       service: service || null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
+      fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
     }]).select().single()
     if (error || !invoice) { alert(error?.message || 'Error saving invoice'); return }
     if (parts.length > 0) {
@@ -541,7 +570,7 @@ export default function NewInvoicePage() {
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
-                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}
+                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0))}
               </div>
               <button onClick={confirmScannedPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
             </div>
@@ -952,6 +981,21 @@ export default function NewInvoicePage() {
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
 
+            <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
+              <div className="px-4 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
+                    <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
+                    <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>
+                  </div>
+                  <div className="shrink-0 w-44">
+                    <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {expenseRows.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
                 {expenseRows.map((row, rowIdx) => {
@@ -959,7 +1003,7 @@ export default function NewInvoicePage() {
                     const groupId = row.groupId
                     const groupItems = row.groupExpenses
                     const firstItem = groupItems[0].expense
-                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0), 0)
+                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
                     const isExpanded = expandedGroups.has(groupId)
                     const receiptUrl = firstItem.receipt_urls[0]
                     return (
@@ -997,7 +1041,7 @@ export default function NewInvoicePage() {
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
-                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} — {formatUSD(parseFloat(exp.amount))}</p>
+                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}</p>
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -1069,7 +1113,7 @@ export default function NewInvoicePage() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} — {formatUSD(parseFloat(exp.amount))}</p>
+                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                               </div>
                               <div className="flex gap-2 shrink-0">
