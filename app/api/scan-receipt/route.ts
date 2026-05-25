@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 Rules:
 1. items: list ONLY physical product/part line items. No shipping, insurance, handling, fees, discounts, or coupons.
 2. quantity: read exactly from the Qty column.
-3. line_total: the item subtotal AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
+3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
 4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, fees. Do NOT include discounts here.
 5. grand_total: the final total of the invoice.
 6. Return only the JSON object, no other text.`
@@ -67,26 +67,28 @@ Rules:
     const clean = text.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(clean)
 
-    // Do proportional math in code
     const items = parsed.items || []
     const extraCharges = parseFloat(parsed.extra_charges) || 0
     const itemsSubtotal = items.reduce((sum: number, item: any) => sum + (parseFloat(item.line_total) || 0), 0)
 
-    const processedItems = items.map((item: any) => {
+    // Expand items by quantity and distribute extras proportionally per unit
+    const processedItems: { description: string; quantity: string; amount: string }[] = []
+    items.forEach((item: any) => {
       const lineTotal = parseFloat(item.line_total) || 0
       const quantity = parseInt(item.quantity) || 1
       const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : 1 / items.length
       const allocatedExtra = extraCharges * proportion
       const unitPrice = (lineTotal + allocatedExtra) / quantity
-      return {
-        description: item.description,
-        quantity: String(quantity),
-        amount: unitPrice.toFixed(2),
+      for (let i = 0; i < quantity; i++) {
+        processedItems.push({
+          description: item.description,
+          quantity: '1',
+          amount: unitPrice.toFixed(2),
+        })
       }
     })
 
-    // Return in the same format the client expects
-    const responseData = {
+    return NextResponse.json({
       content: [{
         type: 'text',
         text: JSON.stringify({
@@ -95,9 +97,7 @@ Rules:
           items: processedItems,
         })
       }]
-    }
-
-    return NextResponse.json(responseData)
+    })
 
   } catch (err) {
     console.error('scan-receipt error:', err)
