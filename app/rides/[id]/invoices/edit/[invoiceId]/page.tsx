@@ -11,7 +11,7 @@ type Part = { id?: string; description: string; unit_price: string; quantity: st
 type Service = { id?: string; description: string; price: string }
 type Payment = { id?: string; amount: string; payment_date: string; source: string }
 type Note = { id?: string; note: string }
-type Expense = { id?: string; supplier: string; item: string; amount: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
+type Expense = { id?: string; supplier: string; item: string; amount: string; quantity: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
 type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
@@ -70,9 +70,9 @@ export default function EditInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -80,7 +80,12 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string }[]; receiptUrl: string } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string; quantity: string }[]; receiptUrl: string } | null>(null)
+  const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
+  const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
+  const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
+  const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
+  const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string }>({ description: '', amount: '', quantity: '1' })
 
   useEffect(() => { loadRide(); loadInvoice() }, [])
 
@@ -121,14 +126,14 @@ export default function EditInvoicePage() {
         supplier: e.supplier || '',
         item: e.item,
         amount: String(e.price),
+        quantity: String(e.quantity || 1),
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
         purchase_group: e.purchase_group || undefined,
       }))
       setExpenses(mapped)
-      const groups = new Set<string>()
-      mapped.forEach(e => { if (e.purchase_group) groups.add(e.purchase_group) })
-      setExpandedGroups(groups)
+      // Purchases start closed on edit page
+      setExpandedGroups(new Set())
     }
 
     setLoading(false)
@@ -147,7 +152,7 @@ export default function EditInvoicePage() {
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const amount = (item.unit_price * qty).toFixed(2)
-    const expense: Expense = { supplier: 'STOCK', item: item.description, amount, payment_date: item.purchase_date || '', receipt_urls: [] }
+    const expense: Expense = { supplier: 'STOCK', item: item.description, amount, quantity: String(qty), payment_date: item.purchase_date || '', receipt_urls: [] }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
     } else {
@@ -170,42 +175,30 @@ export default function EditInvoicePage() {
       if (uploadError) { alert(uploadError.message); setScanningPurchase(false); return }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
       const receiptUrl = urlData.publicUrl
-
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve((reader.result as string).split(',')[1])
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-
       const response = await fetch('/api/scan-receipt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType: file.type }),
       })
-
       const data = await response.json()
-      console.log('scan-receipt response:', JSON.stringify(data))
-
-      if (data.error) {
-        alert(`Scan error: ${data.error}\n${data.detail || ''}`)
-        setScanningPurchase(false)
-        return
-      }
-
+      if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanningPurchase(false); return }
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
-      console.log('Claude text:', text)
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
-
       setScannedPurchase({
         supplier: parsed.supplier || '',
         date: parsed.date || '',
-        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0') })),
+        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: '1' })),
         receiptUrl,
       })
     } catch (err) {
-      console.error('handleAddPurchase error:', err)
+      console.error(err)
       alert('Failed to scan receipt. Please try again or add items manually.')
     }
     setScanningPurchase(false)
@@ -218,6 +211,7 @@ export default function EditInvoicePage() {
       supplier: scannedPurchase.supplier,
       item: item.description,
       amount: item.amount,
+      quantity: item.quantity || '1',
       payment_date: scannedPurchase.date,
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
@@ -234,6 +228,60 @@ export default function EditInvoicePage() {
       else next.add(groupId)
       return next
     })
+  }
+
+  async function removePurchaseGroup(groupItems: { index: number; expense: Expense }[]) {
+    const indicesToRemove = new Set(groupItems.map(({ index }) => index))
+    for (const { expense: exp } of groupItems) {
+      if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
+    }
+    setExpenses(prev => prev.filter((_, i) => !indicesToRemove.has(i)))
+  }
+
+  function startEditPurchase(groupId: string, groupItems: { expense: Expense }[]) {
+    const first = groupItems[0].expense
+    setEditingPurchaseGroupId(groupId)
+    setEditingPurchaseSupplier(first.supplier)
+    setEditingPurchaseDate(first.payment_date)
+  }
+
+  async function confirmEditPurchase() {
+    setExpenses(prev => prev.map(e =>
+      e.purchase_group === editingPurchaseGroupId
+        ? { ...e, supplier: editingPurchaseSupplier, payment_date: editingPurchaseDate }
+        : e
+    ))
+    // Update in DB
+    const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
+    for (const exp of groupExpenses) {
+      if (exp.id) {
+        await supabase.from('invoice_expenses').update({
+          supplier: editingPurchaseSupplier || null,
+          payment_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
+        }).eq('id', exp.id)
+      }
+    }
+    setEditingPurchaseGroupId(null)
+  }
+
+  function startEditGroupItem(expenseIndex: number, exp: Expense) {
+    setEditingGroupItemIndex(expenseIndex)
+    setEditingGroupItem({ description: exp.item, amount: exp.amount, quantity: exp.quantity || '1' })
+  }
+
+  async function saveEditGroupItem() {
+    if (editingGroupItemIndex === null) return
+    const exp = expenses[editingGroupItemIndex]
+    if (exp.id) {
+      await supabase.from('invoice_expenses').update({
+        item: editingGroupItem.description,
+        price: parseFloat(editingGroupItem.amount) || 0,
+      }).eq('id', exp.id)
+    }
+    const updated = [...expenses]
+    updated[editingGroupItemIndex] = { ...updated[editingGroupItemIndex], item: editingGroupItem.description, amount: editingGroupItem.amount, quantity: editingGroupItem.quantity }
+    setExpenses(updated)
+    setEditingGroupItemIndex(null)
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -393,7 +441,7 @@ export default function EditInvoicePage() {
 
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] })
   }
   async function removeExpense(index: number) {
     const exp = expenses[index]
@@ -414,9 +462,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', payment_date: '', receipt_urls: [] }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] }) }
 
   async function saveInvoice() {
     const { error } = await supabase.from('invoices').update({
@@ -493,6 +541,7 @@ export default function EditInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
+      {/* STOCK MODAL */}
       {showStockModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
@@ -523,9 +572,10 @@ export default function EditInvoicePage() {
         </div>
       )}
 
+      {/* REVIEW PURCHASE MODAL */}
       {scannedPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[85vh] flex flex-col gap-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">REVIEW PURCHASE</h2>
               <button onClick={() => setScannedPurchase(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
@@ -536,14 +586,16 @@ export default function EditInvoicePage() {
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
               </div>
               <div className="flex-1">
-                <label className="block mb-1 text-sm text-gray-400">DATE</label>
-                <input type="text" value={scannedPurchase.date} onChange={(e) => setScannedPurchase({ ...scannedPurchase, date: e.target.value })} className={inputClass} placeholder="YYYY-MM-DD" />
+                <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
               </div>
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
               {scannedPurchase.items.map((item, i) => (
                 <div key={i} className="flex gap-3 items-center">
                   <input type="text" value={item.description} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], description: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${inputClass} flex-1`} placeholder="Description" />
+                  <div className="w-20">
+                    <input type="text" inputMode="decimal" value={item.quantity} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} w-full text-center`} placeholder="Qty" />
+                  </div>
                   <div className="relative w-32">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                     <input type="text" value={item.amount} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], amount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${inputClass} pl-8`} placeholder="0.00" />
@@ -551,7 +603,7 @@ export default function EditInvoicePage() {
                   <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
@@ -563,6 +615,25 @@ export default function EditInvoicePage() {
         </div>
       )}
 
+      {/* EDIT PURCHASE MODAL */}
+      {editingPurchaseGroupId && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">EDIT PURCHASE</h2>
+              <button onClick={() => setEditingPurchaseGroupId(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+              <input type="text" value={editingPurchaseSupplier} onChange={(e) => setEditingPurchaseSupplier(e.target.value)} className={inputClass} />
+            </div>
+            <DatePicker label="DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
+            <button onClick={confirmEditPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+          </div>
+        </div>
+      )}
+
+      {/* SCANNING OVERLAY */}
       {scanningPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
@@ -887,9 +958,14 @@ export default function EditInvoicePage() {
             <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
               <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={inputClass} />
             </div>
-            <div><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
-              <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+            <div className="flex gap-3">
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                </div>
+              </div>
+              <div className="w-28"><label className="block mb-1 text-sm text-gray-400">QTY</label>
+                <input type="text" inputMode="decimal" placeholder="1" value={newExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, quantity: e.target.value }) }} className={inputClass} />
               </div>
             </div>
             <DatePicker label="PAYMENT DATE" value={newExpense.payment_date} onChange={(v) => setNewExpense({ ...newExpense, payment_date: v })} />
@@ -917,18 +993,37 @@ export default function EditInvoicePage() {
                           </div>
                           <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                             {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
-                            <button onClick={() => { groupItems.forEach(({ index }) => removeExpense(index)) }} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE ALL</button>
+                            <button onClick={() => startEditPurchase(groupId, groupItems)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removePurchaseGroup(groupItems)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE PURCHASE</button>
                           </div>
                         </div>
                         {isExpanded && (
                           <div className="border-t border-gray-700">
                             {groupItems.map(({ index, expense: exp }, gi) => (
-                              <div key={index} className={`flex items-center justify-between gap-4 px-4 py-2 pl-10 ${gi < groupItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
-                                  <p className="text-sm text-blue-300">{formatUSD(parseFloat(exp.amount))}</p>
-                                </div>
-                                <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
+                              <div key={index} className={`px-4 py-2 pl-10 ${gi < groupItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                                {editingGroupItemIndex === index ? (
+                                  <div className="flex gap-2 items-center">
+                                    <input type="text" value={editingGroupItem.description} onChange={(e) => setEditingGroupItem({ ...editingGroupItem, description: e.target.value })} className={`${smallInputClass} flex-1`} placeholder="Description" />
+                                    <input type="text" inputMode="decimal" value={editingGroupItem.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, quantity: e.target.value }) }} className={`${smallInputClass} w-16 text-center`} placeholder="Qty" />
+                                    <div className="relative w-28">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-7`} placeholder="0.00" />
+                                    </div>
+                                    <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-3 py-2 rounded-xl font-bold text-sm">SAVE</button>
+                                    <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between gap-4">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
+                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} — {formatUSD(parseFloat(exp.amount))}</p>
+                                    </div>
+                                    <div className="flex gap-2 shrink-0">
+                                      <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                                      <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -954,9 +1049,14 @@ export default function EditInvoicePage() {
                             <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
                               <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
                             </div>
-                            <div><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
-                              <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                            <div className="flex gap-3">
+                              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                  <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                                </div>
+                              </div>
+                              <div className="w-28"><label className="block mb-1 text-sm text-gray-400">QTY</label>
+                                <input type="text" inputMode="decimal" value={editingExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, quantity: e.target.value }) }} className={inputClass} />
                               </div>
                             </div>
                             <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
@@ -987,7 +1087,7 @@ export default function EditInvoicePage() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                                <p className={`text-sm ${rowColor}`}>{formatUSD(parseFloat(exp.amount))}</p>
+                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} — {formatUSD(parseFloat(exp.amount))}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                               </div>
                               <div className="flex gap-2 shrink-0">
