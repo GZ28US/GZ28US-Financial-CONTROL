@@ -220,7 +220,7 @@ export default function EditInvoicePage() {
     const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
-    const amount = (item.unit_price * qty).toFixed(2)
+    const amount = item.unit_price.toFixed(2)
     const expense: Expense = { supplier: 'STOCK', item: item.description, amount, quantity: String(qty), payment_date: item.purchase_date || '', receipt_urls: [] }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -485,8 +485,8 @@ export default function EditInvoicePage() {
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
   const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
-  const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
-  const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+  const expensesTotalGlobal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
+  const expensesTotalPaid = expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -782,7 +782,7 @@ export default function EditInvoicePage() {
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
-                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}
+                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0))}
               </div>
               <button onClick={confirmScannedPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
             </div>
@@ -1220,7 +1220,7 @@ export default function EditInvoicePage() {
                     const groupId = row.groupId
                     const groupItems = row.groupExpenses
                     const firstItem = groupItems[0].expense
-                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0), 0)
+                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1), 0)
                     const isExpanded = expandedGroups.has(groupId)
                     const receiptUrl = firstItem.receipt_urls[0]
                     return (
@@ -1258,7 +1258,7 @@ export default function EditInvoicePage() {
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
-                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} — {formatUSD(parseFloat(exp.amount))}</p>
+                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}</p>
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -1330,7 +1330,7 @@ export default function EditInvoicePage() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} — {formatUSD(parseFloat(exp.amount))}</p>
+                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                               </div>
                               <div className="flex gap-2 shrink-0">
