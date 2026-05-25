@@ -38,10 +38,16 @@ export async function POST(req: NextRequest) {
   "supplier": "store/supplier name",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "items": [
-    { "description": "item name", "amount": "final allocated price as number string like 12.99" }
+    { "description": "item name", "amount": "allocated amount as number string like 12.99" }
   ]
 }
-Extract only the product/part line items. Calculate each item's final price after its proportional share of all discounts, coupons, promotions, shipping, handling, insurance, and any other charges or fees — so that the sum of all item amounts equals the invoice grand total. Do NOT include any separate lines for discounts, shipping, handling, insurance, tax, or fees. Return only the JSON object.`
+Rules:
+1. List ONLY physical product/part line items. No shipping, insurance, handling, fees, discounts, coupons, or adjustment lines.
+2. For each item, start with its listed unit price multiplied by quantity.
+3. Apply any discounts that are directly associated with that item (e.g. a discount line immediately below it).
+4. Then distribute ALL remaining charges (shipping, insurance, fees, etc.) proportionally across items based on their discounted value.
+5. The sum of all item amounts MUST equal the invoice grand total exactly.
+6. Return only the JSON object, no other text.`
             }
           ]
         }]
