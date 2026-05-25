@@ -18,6 +18,8 @@ type Ride = {
   created_at: string | null
 }
 
+function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+
 export default function RidesPage() {
   const [rides, setRides] = useState<Ride[]>([])
   const [loading, setLoading] = useState(true)
@@ -38,19 +40,24 @@ export default function RidesPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, updated_at, created_at')
+        .select('id, florida_taxes, global_discount, fl_tax_expense_date, updated_at, created_at')
         .eq('ride_id', ride.id)
 
-      const invoiceIds = (invoices || []).map(i => i.id)
+      const invoiceList = invoices || []
+      const invoiceIds = invoiceList.map(i => i.id)
 
-      for (const inv of invoices || []) {
+      for (const inv of invoiceList) {
         if (inv.updated_at) timestamps.push(inv.updated_at)
         if (inv.created_at) timestamps.push(inv.created_at)
       }
 
-      // Fetch financial stats
-      let currentIncome = 0
-      let currentDebt = 0
+      // Aggregated financial stats (summed across all the ride's invoices)
+      let currentProfit = 0
+      let finalProfit = 0
+      let paymentsBalance = 0
+      let expensesBalance = 0
+      let sumExpensesPaid = 0
+      let sumExpensesGlobal = 0
 
       if (invoiceIds.length > 0) {
         const tables = ['invoice_payments', 'invoice_expenses', 'invoice_parts', 'invoice_services', 'invoice_notes']
@@ -67,33 +74,71 @@ export default function RidesPage() {
         const today = new Date(); today.setHours(0, 0, 0, 0)
         const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
 
-        // Payments
-        const { data: payments } = await supabase
-          .from('invoice_payments')
-          .select('amount, payment_date')
-          .in('invoice_id', invoiceIds)
-        const totalPaid = (payments || [])
-          .filter(p => isTodayOrPast(p.payment_date))
-          .reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+        // Pull all rows once, then group by invoice (florida_taxes/discount are per-invoice)
+        const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
+          supabase.from('invoice_payments').select('invoice_id, amount, payment_date').in('invoice_id', invoiceIds),
+          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date').in('invoice_id', invoiceIds),
+          supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
+          supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
+        ])
 
-        // Expenses
-        const { data: expenses } = await supabase
-          .from('invoice_expenses')
-          .select('price, payment_date')
-          .in('invoice_id', invoiceIds)
-        const expensesTotalPaid = (expenses || [])
-          .filter(e => e.payment_date)
-          .reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
-        const expensesUnpaid = (expenses || [])
-          .filter(e => !e.payment_date)
-          .reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
+        const byInvoice = <T extends { invoice_id: string }>(rows: T[] | null) => {
+          const m = new Map<string, T[]>()
+          for (const r of rows || []) {
+            const arr = m.get(r.invoice_id) || []
+            arr.push(r); m.set(r.invoice_id, arr)
+          }
+          return m
+        }
+        const paymentsBy = byInvoice(paymentsRes.data)
+        const expensesBy = byInvoice(expensesRes.data)
+        const partsBy = byInvoice(partsRes.data)
+        const servicesBy = byInvoice(servicesRes.data)
 
-        currentIncome = totalPaid - expensesTotalPaid
-        currentDebt = expensesUnpaid
+        for (const inv of invoiceList) {
+          const parts = partsBy.get(inv.id) || []
+          const services = servicesBy.get(inv.id) || []
+          const payments = paymentsBy.get(inv.id) || []
+          const expenses = expensesBy.get(inv.id) || []
+
+          const partsSubTotal = parts.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
+          const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
+          const partsTotal = partsSubTotal + floridaTaxesAmount
+          const servicesTotal = services.reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
+          const partsAndServicesTotal = partsTotal + servicesTotal
+          const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
+          const grandTotal = partsAndServicesTotal - discountAmount
+
+          const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+
+          const flTaxAmount = floridaTaxesAmount
+          const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
+          const expensesTotalGlobal = flTaxAmount + expenses.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+          const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+
+          currentProfit += totalPaid - expensesTotalPaid
+          finalProfit += grandTotal - expensesTotalGlobal
+          paymentsBalance += totalPaid - grandTotal
+          expensesBalance += expensesTotalPaid - expensesTotalGlobal
+          sumExpensesPaid += expensesTotalPaid
+          sumExpensesGlobal += expensesTotalGlobal
+        }
       }
 
+      const currentProfitPct = sumExpensesPaid > 0 ? (currentProfit / sumExpensesPaid) * 100 : 0
+      const finalProfitPct = sumExpensesGlobal > 0 ? (finalProfit / sumExpensesGlobal) * 100 : 0
+
       const latest = timestamps.filter(Boolean).sort().reverse()[0] || ''
-      return { ...ride, _latestActivity: latest, _currentIncome: currentIncome, _currentDebt: currentDebt }
+      return {
+        ...ride,
+        _latestActivity: latest,
+        _currentProfit: currentProfit,
+        _currentProfitPct: currentProfitPct,
+        _finalProfit: finalProfit,
+        _finalProfitPct: finalProfitPct,
+        _paymentsBalance: paymentsBalance,
+        _expensesBalance: expensesBalance,
+      }
     }))
 
     ridesWithActivity.sort((a, b) => b._latestActivity.localeCompare(a._latestActivity))
@@ -161,11 +206,17 @@ export default function RidesPage() {
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}
                   <p className="text-lg text-gray-400">{ride.color}</p>
                   <div className="flex gap-3 mt-3 flex-wrap">
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._currentIncome >= 0 ? 'bg-blue-900 text-blue-300' : 'bg-red-900 text-red-300'}`}>
-                      CURRENT INCOME: {formatUSD(ride._currentIncome)}
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                      CURRENT PROFIT: {formatUSD(ride._currentProfit)} / {ride._currentProfitPct.toFixed(1)}%
                     </span>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._currentDebt <= 0 ? 'bg-gray-700 text-gray-300' : 'bg-red-900 text-red-300'}`}>
-                      CURRENT DEBT: {formatUSD(ride._currentDebt)}
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                      FINAL PROFIT: {formatUSD(ride._finalProfit)} / {ride._finalProfitPct.toFixed(1)}%
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                      PENDING PAYMENTS: {formatUSD(ride._paymentsBalance)}
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                      CURRENT DEBTS: {formatUSD(ride._expensesBalance)}
                     </span>
                   </div>
                 </div>
