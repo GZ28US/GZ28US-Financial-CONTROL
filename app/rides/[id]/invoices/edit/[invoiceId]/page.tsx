@@ -148,12 +148,14 @@ export default function EditInvoicePage() {
     const prefix = `From ${iCode} — ${rName}`
     const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (stockHistory) {
-      setSavedPartsToStock(stockHistory.map(s => ({
+      const mapped = stockHistory.map(s => ({
         description: s.description,
         quantity: String(s.quantity),
         unit_price: String(s.unit_price),
         date: s.purchase_date || '',
-      })))
+      }))
+      setSavedPartsToStock(mapped)
+      setPartsToStock(mapped)
     }
 
     setLoading(false)
