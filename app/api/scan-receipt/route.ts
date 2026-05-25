@@ -38,10 +38,10 @@ export async function POST(req: NextRequest) {
   "supplier": "store/supplier name",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "items": [
-    { "description": "item name", "amount": "price as number string like 12.99" }
+    { "description": "item name", "amount": "final allocated price as number string like 12.99" }
   ]
 }
-Extract ALL line items from the receipt including shipping, handling, and tax as separate line items. Do not skip anything. Return only the JSON object.`
+Extract only the product/part line items. Calculate each item's final price after its proportional share of all discounts, coupons, promotions, shipping, handling, insurance, and any other charges or fees — so that the sum of all item amounts equals the invoice grand total. Do NOT include any separate lines for discounts, shipping, handling, insurance, tax, or fees. Return only the JSON object.`
             }
           ]
         }]
