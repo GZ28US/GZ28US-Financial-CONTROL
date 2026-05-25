@@ -38,15 +38,15 @@ export async function POST(req: NextRequest) {
   "supplier": "store/supplier name",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "items": [
-    { "description": "item name", "amount": "allocated amount as number string like 12.99" }
+    { "description": "item name", "quantity": "quantity as integer string like 2", "amount": "unit price after discount and proportional charges as number string like 12.99" }
   ]
 }
 Rules:
 1. List ONLY physical product/part line items. No shipping, insurance, handling, fees, discounts, coupons, or adjustment lines.
-2. For each item, start with its listed unit price multiplied by quantity.
-3. Apply any discounts that are directly associated with that item (e.g. a discount line immediately below it).
-4. Then distribute ALL remaining charges (shipping, insurance, fees, etc.) proportionally across items based on their discounted value.
-5. The sum of all item amounts MUST equal the invoice grand total exactly.
+2. For each item, read the quantity from the Qty column. Use that as the quantity field.
+3. Calculate the unit price: (line total after discount) / quantity.
+4. Then distribute ALL remaining charges (shipping, insurance, fees, etc.) proportionally across items, adding to each unit price.
+5. The sum of (quantity × unit amount) for all items MUST equal the invoice grand total exactly.
 6. Return only the JSON object, no other text.`
             }
           ]
