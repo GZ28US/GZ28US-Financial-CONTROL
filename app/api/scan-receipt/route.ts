@@ -86,7 +86,8 @@ Rules:
       0
     )
 
-    // Expand items by quantity and distribute extras proportionally per unit
+    // Keep ONE row per item. Report its quantity and per-unit amount
+    // (extras distributed proportionally across the whole line).
     const processedItems: { description: string; quantity: string; amount: string }[] = []
     items.forEach((item: any) => {
       const lineTotal = parseFloat(item.line_total) || 0
@@ -94,13 +95,11 @@ Rules:
       const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
       const allocatedExtra = extraCharges * proportion
       const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
-      for (let i = 0; i < quantity; i++) {
-        processedItems.push({
-          description: item.description || '',
-          quantity: '1',
-          amount: unitPrice.toFixed(2),
-        })
-      }
+      processedItems.push({
+        description: item.description || '',
+        quantity: String(quantity),
+        amount: unitPrice.toFixed(2),
+      })
     })
 
     return NextResponse.json({

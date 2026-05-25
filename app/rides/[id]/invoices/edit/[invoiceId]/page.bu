@@ -37,54 +37,6 @@ function generateUUID() {
 }
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 
-// Sort key for a date string: valid dates sort ascending (oldest first),
-// blank/invalid dates sort to the very bottom.
-function dateSortKey(d: string): number {
-  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return Number.POSITIVE_INFINITY
-  return new Date(d + 'T00:00:00').getTime()
-}
-
-// Sort an array of rows oldest-to-newest by a date field, blanks last.
-// Stable: ties keep their original relative order.
-function sortByDateAsc<T>(rows: T[], getDate: (row: T) => string): T[] {
-  return rows
-    .map((row, i) => ({ row, i }))
-    .sort((a, b) => {
-      const ka = dateSortKey(getDate(a.row))
-      const kb = dateSortKey(getDate(b.row))
-      return ka === kb ? a.i - b.i : ka - kb
-    })
-    .map(({ row }) => row)
-}
-
-// Sort expenses oldest-to-newest while keeping each purchase_group's items
-// contiguous. A group is ordered by its earliest dated item; ungrouped rows
-// sort by their own date. Blanks (no valid date) fall to the bottom.
-function sortExpensesByDate(rows: Expense[]): Expense[] {
-  type Block = { key: number; order: number; items: Expense[] }
-  const groups = new Map<string, Block>()
-  const blocks: Block[] = []
-  rows.forEach((exp, i) => {
-    const k = dateSortKey(exp.payment_date)
-    if (exp.purchase_group) {
-      let g = groups.get(exp.purchase_group)
-      if (!g) {
-        g = { key: k, order: i, items: [] }
-        groups.set(exp.purchase_group, g)
-        blocks.push(g)
-      } else if (k < g.key) {
-        g.key = k // group takes its earliest date
-      }
-      g.items.push(exp)
-    } else {
-      blocks.push({ key: k, order: i, items: [exp] })
-    }
-  })
-  return blocks
-    .sort((a, b) => (a.key === b.key ? a.order - b.order : a.key - b.key))
-    .flatMap(b => b.items)
-}
-
 export default function EditInvoicePage() {
   const params = useParams()
   const router = useRouter()
@@ -170,14 +122,14 @@ export default function EditInvoicePage() {
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
 
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '' })), p => p.payment_date))
+    if (paymentsData) setPayments(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '' })))
 
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) {
-      setExpenses(sortExpensesByDate(expensesData.map(e => ({
+      setExpenses(expensesData.map(e => ({
         id: e.id,
         supplier: e.supplier || '',
         item: e.item,
@@ -186,7 +138,7 @@ export default function EditInvoicePage() {
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
         purchase_group: e.purchase_group || undefined,
-      }))))
+      })))
       setExpandedGroups(new Set())
     }
 
@@ -195,12 +147,12 @@ export default function EditInvoicePage() {
     const prefix = `From ${iCode} — ${rName}`
     const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (stockHistory) {
-      const mapped = sortByDateAsc(stockHistory.map(s => ({
+      const mapped = stockHistory.map(s => ({
         description: s.description,
         quantity: String(s.quantity),
         unit_price: String(s.unit_price),
         date: s.purchase_date || '',
-      })), p => p.date)
+      }))
       setSavedPartsToStock(mapped)
       setPartsToStock(mapped)
     }
@@ -263,7 +215,7 @@ export default function EditInvoicePage() {
       setScannedPurchase({
         supplier: parsed.supplier || '',
         date: parsed.date || '',
-        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1') })),
+        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: '1' })),
         receiptUrl,
       })
     } catch (err) {
