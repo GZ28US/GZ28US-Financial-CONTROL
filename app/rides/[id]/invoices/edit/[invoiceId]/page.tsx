@@ -336,11 +336,52 @@ export default function EditInvoicePage() {
   }
 
   function importIntuitiveParts() {
-    const imported = expenses
+    // Group eligible expenses by description + unit price, summing quantities.
+    // Same description at a different price counts as a separate line.
+    const sourceMap = new Map<string, { description: string; unit_price: string; quantity: number }>()
+    expenses
       .filter(e => !SKIP_WORDS.test(e.item))
-      .map(e => ({ description: e.item, unit_price: e.amount, quantity: e.quantity || '1' }))
-    if (imported.length === 0) { alert('No parts found in expenses to import.'); return }
-    setParts(prev => [...prev, ...imported])
+      .forEach(e => {
+        const desc = (e.item || '').trim()
+        if (!desc) return
+        const price = parseFloat(e.amount) || 0
+        const qty = parseFloat(e.quantity) || 1
+        const key = `${desc.toLowerCase()}|${price.toFixed(2)}`
+        const existing = sourceMap.get(key)
+        if (existing) {
+          existing.quantity += qty
+        } else {
+          sourceMap.set(key, { description: desc, unit_price: e.amount, quantity: qty })
+        }
+      })
+
+    if (sourceMap.size === 0) { alert('No parts found in expenses to import.'); return }
+
+    // Tally what's already in parts, keyed the same way, so re-imports only
+    // add the missing difference instead of duplicating.
+    const existingQty = new Map<string, number>()
+    parts.forEach(p => {
+      const desc = (p.description || '').trim()
+      const price = parseFloat(p.unit_price) || 0
+      const key = `${desc.toLowerCase()}|${price.toFixed(2)}`
+      existingQty.set(key, (existingQty.get(key) || 0) + (parseFloat(p.quantity) || 0))
+    })
+
+    const toAdd: Part[] = []
+    sourceMap.forEach((src, key) => {
+      const alreadyHave = existingQty.get(key) || 0
+      const missing = src.quantity - alreadyHave
+      if (missing > 0) {
+        toAdd.push({
+          description: src.description,
+          unit_price: src.unit_price,
+          quantity: String(missing),
+        })
+      }
+    })
+
+    if (toAdd.length === 0) { alert('All parts are already imported — nothing new to add.'); return }
+    setParts(prev => [...prev, ...toAdd])
   }
 
   function addPartToStock() {
