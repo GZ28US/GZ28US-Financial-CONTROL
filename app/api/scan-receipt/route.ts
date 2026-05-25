@@ -38,16 +38,16 @@ export async function POST(req: NextRequest) {
   "supplier": "store/supplier name",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "grand_total": "invoice grand total as number string like 11138.67",
-  "extra_charges": "total of all shipping, insurance, handling, and fee lines as number string like 117.20",
+  "extra_charges": "total of all shipping, insurance, handling, tax, and any other fee lines as number string like 117.20",
   "items": [
     { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92" }
   ]
 }
 Rules:
-1. items: list ONLY physical product/part line items. No shipping, insurance, handling, fees, discounts, or coupons.
+1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons.
 2. quantity: read exactly from the Qty column.
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
-4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, fees. Do NOT include discounts here.
+4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, tax, and any other fees. Do NOT include discounts here.
 5. grand_total: the final total of the invoice.
 6. Return only the JSON object, no other text.`
             }
