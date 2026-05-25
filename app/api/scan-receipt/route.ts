@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 1000,
+        max_tokens: 8000,
         messages: [{
           role: 'user',
           content: [
@@ -49,7 +49,8 @@ Rules:
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
 4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, tax, and any other fees. Do NOT include discounts here.
 5. grand_total: the final total of the invoice.
-6. Return only the JSON object, no other text.`
+6. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
+7. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
             }
           ]
         }]
@@ -63,25 +64,39 @@ Rules:
     }
 
     const rawData = await anthropicRes.json()
-    const text = rawData.content?.map((c: any) => c.text || '').join('') || ''
-    const clean = text.replace(/```json|```/g, '').trim()
-    const parsed = JSON.parse(clean)
 
-    const items = parsed.items || []
+    // Surface a clear error if the model hit the token ceiling
+    const stopReason = rawData.stop_reason
+    const text = rawData.content?.map((c: any) => c.text || '').join('') || ''
+
+    const parsed = parseModelJson(text)
+    if (!parsed) {
+      console.error('Failed to parse model output. stop_reason:', stopReason, 'raw:', text.slice(0, 500))
+      return NextResponse.json({
+        error: stopReason === 'max_tokens'
+          ? 'The receipt was too long for one scan and the response was cut off. Try a smaller image/PDF or contact support to raise the limit.'
+          : 'Could not read the receipt. The scan returned data that was not valid JSON.',
+      }, { status: 422 })
+    }
+
+    const items = Array.isArray(parsed.items) ? parsed.items : []
     const extraCharges = parseFloat(parsed.extra_charges) || 0
-    const itemsSubtotal = items.reduce((sum: number, item: any) => sum + (parseFloat(item.line_total) || 0), 0)
+    const itemsSubtotal = items.reduce(
+      (sum: number, item: any) => sum + (parseFloat(item.line_total) || 0),
+      0
+    )
 
     // Expand items by quantity and distribute extras proportionally per unit
     const processedItems: { description: string; quantity: string; amount: string }[] = []
     items.forEach((item: any) => {
       const lineTotal = parseFloat(item.line_total) || 0
       const quantity = parseInt(item.quantity) || 1
-      const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : 1 / items.length
+      const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
       const allocatedExtra = extraCharges * proportion
-      const unitPrice = (lineTotal + allocatedExtra) / quantity
+      const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
       for (let i = 0; i < quantity; i++) {
         processedItems.push({
-          description: item.description,
+          description: item.description || '',
           quantity: '1',
           amount: unitPrice.toFixed(2),
         })
@@ -103,4 +118,129 @@ Rules:
     console.error('scan-receipt error:', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
+}
+
+/**
+ * Robustly extract a JSON object from a model response.
+ * Handles markdown fences, leading/trailing prose, and truncated output.
+ * Returns null if nothing usable can be recovered.
+ */
+function parseModelJson(raw: string): any | null {
+  if (!raw) return null
+
+  // Strip markdown code fences if present
+  let text = raw.replace(/```json/gi, '').replace(/```/g, '').trim()
+
+  // Narrow to the outermost JSON object
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  text = text.slice(start)
+
+  // 1. Try a straight parse first (the happy path)
+  try {
+    return JSON.parse(text)
+  } catch {
+    // fall through to repair
+  }
+
+  // 2. Attempt to repair a truncated response (e.g. hit max_tokens mid-string)
+  const repaired = repairTruncatedJson(text)
+  if (repaired) {
+    try {
+      return JSON.parse(repaired)
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+/**
+ * Best-effort repair of JSON that was cut off mid-stream.
+ * Drops any trailing incomplete token, closes open strings, and balances
+ * brackets/braces so a partial item list can still be salvaged.
+ */
+function repairTruncatedJson(text: string): string | null {
+  let s = text
+
+  // Walk the string tracking structure so we can close it cleanly.
+  let inString = false
+  let escaped = false
+  const stack: string[] = []
+  let lastSafeIndex = -1 // index after the last complete value (closed string, }, ], or end of number)
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+        lastSafeIndex = i
+      }
+      continue
+    }
+
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{' || ch === '[') {
+      stack.push(ch)
+    } else if (ch === '}' || ch === ']') {
+      stack.pop()
+      lastSafeIndex = i
+    } else if (/[\d}\]eE.+-]/.test(ch)) {
+      lastSafeIndex = i
+    }
+  }
+
+  // If we ended inside a string, cut back to the last complete value.
+  if (inString) {
+    if (lastSafeIndex === -1) return null
+    s = s.slice(0, lastSafeIndex + 1)
+    // Recompute the open-bracket stack for the trimmed string.
+    return rebalance(s)
+  }
+
+  // Trim any dangling comma or partial token after the last safe value.
+  if (lastSafeIndex !== -1 && lastSafeIndex < s.length - 1) {
+    s = s.slice(0, lastSafeIndex + 1)
+  }
+
+  return rebalance(s)
+}
+
+function rebalance(s: string): string | null {
+  // Remove a trailing comma if present.
+  s = s.replace(/,\s*$/, '')
+
+  const stack: string[] = []
+  let inString = false
+  let escaped = false
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') stack.push('}')
+    else if (ch === '[') stack.push(']')
+    else if (ch === '}' || ch === ']') stack.pop()
+  }
+
+  if (inString) return null // could not safely close
+
+  // Close any still-open brackets/braces in reverse order.
+  while (stack.length) {
+    s += stack.pop()
+  }
+
+  return s
 }
