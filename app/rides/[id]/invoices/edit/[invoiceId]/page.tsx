@@ -89,7 +89,7 @@ export default function EditInvoicePage() {
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string }>({ description: '', amount: '', quantity: '1' })
-  const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense } | null>(null)
+  const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense; qtyToSend: string } | null>(null)
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
@@ -306,23 +306,33 @@ export default function EditInvoicePage() {
     setEditingGroupItemIndex(null)
   }
 
-  async function confirmSendToStock(item: { index: number; expense: Expense }) {
+  async function confirmSendToStock(item: { index: number; expense: Expense; qtyToSend: string }) {
     const exp = item.expense
+    const qtyToSend = parseFloat(item.qtyToSend) || 1
+    const totalQty = parseFloat(exp.quantity) || 1
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const note = `From ${invoiceCode} — ${rideName}`
     const receiptUrl = exp.receipt_urls.length > 0 ? JSON.stringify(exp.receipt_urls) : null
     await supabase.from('inputs').insert([{
       description: exp.item,
       category: 'STOCK',
-      quantity: parseFloat(exp.quantity) || 1,
+      quantity: qtyToSend,
       unit_price: parseFloat(exp.amount) || 0,
       purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
       supplier: exp.supplier || null,
       notes: note,
       receipt_url: receiptUrl,
     }])
-    if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
-    setExpenses(prev => prev.filter((_, i) => i !== item.index))
+    const remainingQty = totalQty - qtyToSend
+    if (remainingQty <= 0) {
+      if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
+      setExpenses(prev => prev.filter((_, i) => i !== item.index))
+    } else {
+      if (exp.id) await supabase.from('invoice_expenses').update({ quantity: remainingQty }).eq('id', exp.id)
+      const updated = [...expenses]
+      updated[item.index] = { ...updated[item.index], quantity: String(remainingQty) }
+      setExpenses(updated)
+    }
     setSendToStockConfirm(null)
   }
 
@@ -714,8 +724,11 @@ export default function EditInvoicePage() {
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
             <h2 className="text-2xl font-bold mb-2">Send to Stock</h2>
-            <p className="text-gray-400 text-lg mb-2">This will remove <span className="text-white font-bold">{sendToStockConfirm.expense.item}</span> from expenses and add it to STOCK inventory.</p>
-            <p className="text-gray-400 text-lg mb-8">Are you sure?</p>
+            <p className="text-gray-400 text-lg mb-4"><span className="text-white font-bold">{sendToStockConfirm.expense.item}</span><br />Available qty: {sendToStockConfirm.expense.quantity}</p>
+            <div className="mb-6">
+              <label className="block mb-1 text-sm text-gray-400">QTY TO SEND TO STOCK</label>
+              <input type="text" inputMode="decimal" value={sendToStockConfirm.qtyToSend} onChange={(e) => { if (isNumeric(e.target.value)) setSendToStockConfirm({ ...sendToStockConfirm, qtyToSend: e.target.value }) }} className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-5 py-4 text-xl text-center" />
+            </div>
             <div className="flex gap-4">
               <button onClick={() => setSendToStockConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => confirmSendToStock(sendToStockConfirm)} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">CONFIRM</button>
