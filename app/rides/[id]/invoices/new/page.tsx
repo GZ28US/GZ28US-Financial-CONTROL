@@ -17,6 +17,7 @@ type PartsToStock = { description: string; quantity: string; unit_price: string;
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
+const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge/i
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isTodayOrPast(dateStr: string) {
@@ -30,9 +31,7 @@ function generateUUID() {
     return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
   })
 }
-function todayStr() {
-  return new Date().toISOString().slice(0, 10)
-}
+function todayStr() { return new Date().toISOString().slice(0, 10) }
 
 export default function NewInvoicePage() {
   const params = useParams()
@@ -71,7 +70,6 @@ export default function NewInvoicePage() {
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', quantity: '1', payment_date: '', receipt_urls: [] })
-  const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -86,8 +84,6 @@ export default function NewInvoicePage() {
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string }>({ description: '', amount: '', quantity: '1' })
   const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense } | null>(null)
-
-  // PARTS TO STOCK
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
 
@@ -257,6 +253,14 @@ export default function NewInvoicePage() {
     setSendToStockConfirm(null)
   }
 
+  function importIntuitiveParts() {
+    const imported = expenses
+      .filter(e => !SKIP_WORDS.test(e.item))
+      .map(e => ({ description: e.item, unit_price: e.amount, quantity: e.quantity || '1' }))
+    if (imported.length === 0) { alert('No parts found in expenses to import.'); return }
+    setParts(prev => [...prev, ...imported])
+  }
+
   function addPartToStock() {
     if (!newPartToStock.description || !newPartToStock.unit_price || !newPartToStock.quantity) { alert('Please fill in all fields'); return }
     setPartsToStock(prev => [...prev, newPartToStock])
@@ -407,7 +411,6 @@ export default function NewInvoicePage() {
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
     }]).select().single()
     if (error || !invoice) { alert(error?.message || 'Error saving invoice'); return }
-
     if (parts.length > 0) {
       const { error: e } = await supabase.from('invoice_parts').insert(parts.map(p => ({ invoice_id: invoice.id, description: p.description, unit_price: parseFloat(p.unit_price), quantity: parseFloat(p.quantity) })))
       if (e) { alert(e.message); return }
@@ -436,7 +439,6 @@ export default function NewInvoicePage() {
       })))
       if (e) { alert(e.message); return }
     }
-    // Save parts to stock
     if (partsToStock.length > 0) {
       const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
       const { error: e } = await supabase.from('inputs').insert(partsToStock.map(p => ({
@@ -475,7 +477,6 @@ export default function NewInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      {/* STOCK MODAL */}
       {showStockModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
@@ -506,7 +507,6 @@ export default function NewInvoicePage() {
         </div>
       )}
 
-      {/* REVIEW PURCHASE MODAL */}
       {scannedPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
@@ -549,7 +549,6 @@ export default function NewInvoicePage() {
         </div>
       )}
 
-      {/* EDIT PURCHASE MODAL */}
       {editingPurchaseGroupId && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
@@ -567,7 +566,6 @@ export default function NewInvoicePage() {
         </div>
       )}
 
-      {/* SEND TO STOCK CONFIRM */}
       {sendToStockConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
@@ -582,7 +580,6 @@ export default function NewInvoicePage() {
         </div>
       )}
 
-      {/* SCANNING OVERLAY */}
       {scanningPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
@@ -633,7 +630,10 @@ export default function NewInvoicePage() {
                 <div className={`${smallInputClass} w-full opacity-50`}>{newPart.unit_price && newPart.quantity ? formatUSD(parseFloat(newPart.unit_price || '0') * parseFloat(newPart.quantity || '0')) : '$0.00'}</div>
               </div>
             </div>
-            <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PART</button>
+            <div className="flex gap-3">
+              <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PART</button>
+              <button onClick={importIntuitiveParts} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold text-lg">⬆ IMPORT INTUITIVE PARTS</button>
+            </div>
             {parts.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {parts.map((part, index) => (
@@ -925,12 +925,10 @@ export default function NewInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-
             <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
               🧾 ADD PURCHASE
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
             </label>
-
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>

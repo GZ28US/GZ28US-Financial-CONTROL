@@ -17,6 +17,7 @@ type PartsToStock = { description: string; quantity: string; unit_price: string;
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
+const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge/i
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isTodayOrPast(dateStr: string) {
@@ -34,9 +35,7 @@ function generateUUID() {
     return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
   })
 }
-function todayStr() {
-  return new Date().toISOString().slice(0, 10)
-}
+function todayStr() { return new Date().toISOString().slice(0, 10) }
 
 export default function EditInvoicePage() {
   const params = useParams()
@@ -91,19 +90,19 @@ export default function EditInvoicePage() {
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string }>({ description: '', amount: '', quantity: '1' })
   const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense } | null>(null)
-
-  // PARTS TO STOCK
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
+  const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
 
-  useEffect(() => { loadRide(); loadInvoice() }, [])
+  useEffect(() => { loadData() }, [])
 
-  async function loadRide() {
-    const { data } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
-    if (data) { setProjectCode(data.project_code || ''); setProjectName(data.project_name || '') }
-  }
+  async function loadData() {
+    const { data: rideData } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
+    const pCode = rideData?.project_code || ''
+    const pName = rideData?.project_name || ''
+    setProjectCode(pCode)
+    setProjectName(pName)
 
-  async function loadInvoice() {
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
     if (error || !data) { alert('Invoice not found'); router.push(`/rides/${rideId}/invoices`); return }
     setInvoiceCode(data.invoice_code || '')
@@ -130,7 +129,7 @@ export default function EditInvoicePage() {
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) {
-      const mapped = expensesData.map(e => ({
+      setExpenses(expensesData.map(e => ({
         id: e.id,
         supplier: e.supplier || '',
         item: e.item,
@@ -139,9 +138,22 @@ export default function EditInvoicePage() {
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
         purchase_group: e.purchase_group || undefined,
-      }))
-      setExpenses(mapped)
+      })))
       setExpandedGroups(new Set())
+    }
+
+    // Load parts-to-stock history
+    const iCode = data.invoice_code || ''
+    const rName = pCode + (pName ? ` — ${pName}` : '')
+    const prefix = `From ${iCode} — ${rName}`
+    const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
+    if (stockHistory) {
+      setSavedPartsToStock(stockHistory.map(s => ({
+        description: s.description,
+        quantity: String(s.quantity),
+        unit_price: String(s.unit_price),
+        date: s.purchase_date || '',
+      })))
     }
 
     setLoading(false)
@@ -310,6 +322,14 @@ export default function EditInvoicePage() {
     if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
     setExpenses(prev => prev.filter((_, i) => i !== item.index))
     setSendToStockConfirm(null)
+  }
+
+  function importIntuitiveParts() {
+    const imported = expenses
+      .filter(e => !SKIP_WORDS.test(e.item))
+      .map(e => ({ description: e.item, unit_price: e.amount, quantity: e.quantity || '1' }))
+    if (imported.length === 0) { alert('No parts found in expenses to import.'); return }
+    setParts(prev => [...prev, ...imported])
   }
 
   function addPartToStock() {
@@ -552,9 +572,12 @@ export default function EditInvoicePage() {
       })))
       if (e) { alert(e.message); return }
     }
-    // Save parts to stock
+
+    // Parts to stock: delete existing then re-insert fresh
+    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+    const prefix = `From ${invoiceCode} — ${rideName}`
+    await supabase.from('inputs').delete().eq('supplier', rideName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (partsToStock.length > 0) {
-      const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
       const { error: e } = await supabase.from('inputs').insert(partsToStock.map(p => ({
         description: p.description,
         category: 'STOCK',
@@ -566,6 +589,7 @@ export default function EditInvoicePage() {
       })))
       if (e) { alert(e.message); return }
     }
+
     router.push(`/rides/${rideId}/invoices`)
   }
 
@@ -595,7 +619,6 @@ export default function EditInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      {/* STOCK MODAL */}
       {showStockModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
@@ -626,7 +649,6 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {/* REVIEW PURCHASE MODAL */}
       {scannedPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
@@ -669,7 +691,6 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {/* EDIT PURCHASE MODAL */}
       {editingPurchaseGroupId && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
@@ -687,7 +708,6 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {/* SEND TO STOCK CONFIRM */}
       {sendToStockConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
@@ -702,7 +722,6 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {/* SCANNING OVERLAY */}
       {scanningPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
@@ -753,7 +772,10 @@ export default function EditInvoicePage() {
                 <div className={`${smallInputClass} w-full opacity-50`}>{newPart.unit_price && newPart.quantity ? formatUSD(parseFloat(newPart.unit_price || '0') * parseFloat(newPart.quantity || '0')) : '$0.00'}</div>
               </div>
             </div>
-            <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PART</button>
+            <div className="flex gap-3">
+              <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PART</button>
+              <button onClick={importIntuitiveParts} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold text-lg">⬆ IMPORT INTUITIVE PARTS</button>
+            </div>
             {parts.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {parts.map((part, index) => (
@@ -1025,6 +1047,7 @@ export default function EditInvoicePage() {
             </div>
             <DatePicker label="DATE" value={newPartToStock.date} onChange={(v) => setNewPartToStock({ ...newPartToStock, date: v })} />
             <button onClick={addPartToStock} className="bg-orange-700 hover:bg-orange-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD TO STOCK</button>
+
             {partsToStock.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {partsToStock.map((p, index) => (
@@ -1038,6 +1061,22 @@ export default function EditInvoicePage() {
                 ))}
               </div>
             )}
+
+            {savedPartsToStock.length > 0 && (
+              <div className="border-t border-gray-700 pt-3">
+                <p className="text-sm text-gray-500 mb-2">ALREADY IN STOCK FROM THIS INVOICE</p>
+                <div className="border border-gray-700 rounded-2xl overflow-hidden">
+                  {savedPartsToStock.map((p, index) => (
+                    <div key={index} className={`flex items-center gap-4 px-4 py-3 ${index < savedPartsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-base font-bold truncate text-orange-300">{p.description}</p>
+                        <p className="text-sm text-orange-300">Qty: {p.quantity} × {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1045,12 +1084,10 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-
             <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
               🧾 ADD PURCHASE
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
             </label>
-
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
