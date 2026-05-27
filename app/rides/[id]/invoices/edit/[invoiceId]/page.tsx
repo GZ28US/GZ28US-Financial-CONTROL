@@ -9,12 +9,13 @@ import { formatUSD } from '@/lib/utils'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string }
 type Service = { id?: string; description: string; price: string }
-type Payment = { id?: string; amount: string; payment_date: string; source: string }
+type Payment = { id?: string; amount: string; payment_date: string; source: string; receipt_url: string }
 type Note = { id?: string; note: string }
 type Expense = { id?: string; supplier: string; item: string; amount: string; quantity: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
 type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
-type ScannedPayment = { amount: string; source: string; date: string }
+type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string }
+type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; report: boolean }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -108,9 +109,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '' })
   const [scanningPayment, setScanningPayment] = useState(false)
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
@@ -139,6 +140,8 @@ export default function EditInvoicePage() {
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
+  const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
+  const [sendingReports, setSendingReports] = useState(false)
 
   useEffect(() => { loadData() }, [])
 
@@ -170,7 +173,7 @@ export default function EditInvoicePage() {
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
 
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '' })), p => p.payment_date))
+    if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '', receipt_url: p.receipt_url || '' })), p => p.payment_date))
 
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
@@ -276,6 +279,13 @@ export default function EditInvoicePage() {
   async function handleScanPayment(file: File) {
     setScanningPayment(true)
     try {
+      // Store the scanned income document so it can be attached to the WhatsApp report.
+      const ext = file.name.split('.').pop()
+      const path = `${rideId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+      if (uploadError) { alert(uploadError.message); setScanningPayment(false); return }
+      const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+      const receiptUrl = urlData.publicUrl
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve((reader.result as string).split(',')[1])
@@ -296,12 +306,13 @@ export default function EditInvoicePage() {
         amount: String(p.amount || ''),
         source: String(p.source || ''),
         date: String(p.date || ''),
+        receipt_url: receiptUrl,
       }))
-      if (list.length === 0) list.push({ amount: '', source: '', date: '' })
+      if (list.length === 0) list.push({ amount: '', source: '', date: '', receipt_url: receiptUrl })
       setScannedPayments(list)
     } catch (err) {
       console.error(err)
-      alert('Failed to scan payment. Please try again or add it manually.')
+      alert('Failed to scan income. Please try again or add it manually.')
     }
     setScanningPayment(false)
   }
@@ -310,7 +321,7 @@ export default function EditInvoicePage() {
     if (!scannedPayments) return
     const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
     if (valid.length === 0) { setScannedPayments(null); return }
-    const newRows: Payment[] = valid.map(p => ({ amount: p.amount, payment_date: p.date, source: p.source }))
+    const newRows: Payment[] = valid.map(p => ({ amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '' }))
     setPayments(prev => [...prev, ...newRows])
     setScannedPayments(null)
   }
@@ -595,7 +606,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '' })
+    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '', receipt_url: '' })
   }
   async function removePayment(index: number) {
     const payment = payments[index]
@@ -611,9 +622,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(updated)
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '' }) }
 
   function addNote() {
     if (!newNote.trim()) { alert('Please enter a note'); return }
@@ -691,9 +702,10 @@ export default function EditInvoicePage() {
       const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0 })))
       if (e) { alert(e.message); return }
     }
+    // New incomes (payments) — insert them and remember which ones are new for the WhatsApp report step.
     const newPayments = payments.filter(p => !p.id)
     if (newPayments.length > 0) {
-      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null })))
+      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null, receipt_url: p.receipt_url || null })))
       if (e) { alert(e.message); return }
     }
     const newNotes = notes.filter(n => !n.id)
@@ -731,6 +743,54 @@ export default function EditInvoicePage() {
       if (e) { alert(e.message); return }
     }
 
+    // If new incomes were added, ask which to report on WhatsApp before leaving.
+    if (newPayments.length > 0) {
+      setIncomeReports(newPayments.map(p => ({
+        amount: p.amount,
+        source: p.source,
+        date: p.payment_date,
+        receipt_url: p.receipt_url || '',
+        report: true,
+      })))
+      return
+    }
+
+    router.push(`/rides/${rideId}/invoices`)
+  }
+
+  function buildIncomeCaption(inc: IncomeReport) {
+    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+    const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
+    const amountStr = formatUSD(parseFloat(inc.amount) || 0)
+    // Layout: INCOME (bold) / RIDE — INVOICE / DATE — AMOUNT (bold)
+    return `*INCOME*\n${rideName} — ${invoiceCode}\n${dateStr} — *${amountStr}*`
+  }
+
+  async function sendIncomeReports() {
+    if (!incomeReports) { router.push(`/rides/${rideId}/invoices`); return }
+    const chosen = incomeReports.filter(r => r.report)
+    if (chosen.length === 0) { router.push(`/rides/${rideId}/invoices`); return }
+    setSendingReports(true)
+    let failures = 0
+    for (const inc of chosen) {
+      const caption = buildIncomeCaption(inc)
+      const payload: any = { body: caption }
+      if (inc.receipt_url) { payload.documentUrl = inc.receipt_url; payload.filename = `income-${invoiceCode}.${inc.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}` }
+      try {
+        const res = await fetch('/api/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} report(s) failed to send. The income was still saved.`)
+    setIncomeReports(null)
     router.push(`/rides/${rideId}/invoices`)
   }
 
@@ -794,7 +854,7 @@ export default function EditInvoicePage() {
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold">REVIEW PAYMENT</h2>
+              <h2 className="text-2xl font-bold">REVIEW INCOME</h2>
               <button onClick={() => setScannedPayments(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
             </div>
             <div className="overflow-y-auto flex-1 space-y-3">
@@ -818,13 +878,49 @@ export default function EditInvoicePage() {
                   <DatePicker label="DATE" value={p.date} onChange={(v) => { const a = [...scannedPayments]; a[i] = { ...a[i], date: v }; setScannedPayments(a) }} />
                 </div>
               ))}
-              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', date: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD PAYMENT</button>
+              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', date: '', receipt_url: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
                 TOTAL: {formatUSD(scannedPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0))}
               </div>
               <button onClick={confirmScannedPayments} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {incomeReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose which new incomes to report to the WhatsApp group.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {incomeReports.map((inc, i) => (
+                <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-bold">INCOME — {formatUSD(parseFloat(inc.amount) || 0)}</p>
+                    <p className="text-sm text-gray-400">{inc.source ? `${inc.source} — ` : ''}{isValidDate(inc.date) ? formatDate(inc.date) : 'No date'}</p>
+                    <p className="text-sm text-gray-500">{inc.receipt_url ? '📎 Document attached' : 'No document (text only)'}</p>
+                  </div>
+                  <button
+                    onClick={() => { const a = [...incomeReports]; a[i] = { ...a[i], report: !a[i].report }; setIncomeReports(a) }}
+                    className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${inc.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                  >
+                    {inc.report ? 'REPORT: YES' : 'REPORT: NO'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {incomeReports.filter(r => r.report).length} of {incomeReports.length} will be reported
+              </div>
+              <button onClick={sendIncomeReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : 'DONE'}
+              </button>
             </div>
           </div>
         </div>
@@ -909,8 +1005,8 @@ export default function EditInvoicePage() {
       {(scanningPurchase || scanningPayment) && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
-            <p className="text-2xl font-bold mb-2">{scanningPayment ? 'Scanning Payment...' : 'Scanning Receipt...'}</p>
-            <p className="text-gray-400">Claude is reading your {scanningPayment ? 'payment' : 'receipt'}</p>
+            <p className="text-2xl font-bold mb-2">{scanningPayment ? 'Scanning Income...' : 'Scanning Receipt...'}</p>
+            <p className="text-gray-400">Claude is reading your {scanningPayment ? 'income' : 'receipt'}</p>
           </div>
         </div>
       )}
@@ -1118,12 +1214,12 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        {/* PAYMENTS */}
+        {/* INCOME */}
         <div>
-          <label className="block mb-3 text-lg font-bold">PAYMENTS</label>
+          <label className="block mb-3 text-lg font-bold">INCOME</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
-              🧾 SCAN PAYMENT
+              🧾 SCAN INCOME
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScanPayment(e.target.files[0]) }} />
             </label>
             <div className="flex gap-3">
@@ -1139,7 +1235,7 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <DatePicker label="DATE" value={newPayment.payment_date} onChange={(v) => setNewPayment({ ...newPayment, payment_date: v })} />
-            <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PAYMENT</button>
+            <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD INCOME</button>
             {payments.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {payments.map((payment, index) => {
@@ -1173,6 +1269,7 @@ export default function EditInvoicePage() {
                             <p className="text-sm text-gray-400">{payment.source}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
                           </div>
                           <div className="flex gap-2 shrink-0">
+                            {payment.receipt_url && <a href={payment.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">DOC</a>}
                             <button onClick={() => startEditPayment(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                             <button onClick={() => removePayment(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                           </div>

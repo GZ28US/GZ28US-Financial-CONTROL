@@ -458,7 +458,7 @@ export default function ViewInvoicePage() {
 
           {payments.length > 0 && (
             <div>
-              <label className="block mb-3 text-lg font-bold">PAYMENTS</label>
+              <label className="block mb-3 text-lg font-bold">INCOME</label>
               <div className={sectionClass}>
                 {payments.map((payment, index) => {
                   const isPaid = isTodayOrPast(payment.payment_date)
