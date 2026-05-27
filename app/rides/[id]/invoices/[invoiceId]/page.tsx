@@ -18,6 +18,7 @@ type Invoice = {
   service: string | null
   florida_taxes: number | null
   global_discount: number | null
+  feed_status: string | null
 }
 
 type Client = {
@@ -45,6 +46,25 @@ function isTodayOrPast(dateStr: string | null) {
 function parseReceiptUrls(raw: string | null): string[] {
   if (!raw) return []
   try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
+}
+
+// Status ladder (first match wins):
+//   no entry_date            -> AWAITING CAR (gray)
+//   entry but no conclusion  -> ON DUTY (blue)
+//   conclusion but no delivery -> DONE (green)
+//   delivery                 -> DELIVERED (white)
+function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null }) {
+  const valid = (d: string | null) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d)
+  if (!valid(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
+  if (!valid(inv.conclusion_date)) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
+  if (!valid(inv.delivery_date)) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
+  return { label: 'DELIVERED', cls: 'bg-white text-black' }
+}
+
+function getFeedBadge(feedStatus: string | null) {
+  return feedStatus === 'REAL_TIME'
+    ? { label: 'REAL-TIME FEED', cls: 'bg-green-800 text-green-300' }
+    : { label: 'INCOMPLETE', cls: 'bg-red-800 text-red-200' }
 }
 
 export default function ViewInvoicePage() {
@@ -99,12 +119,6 @@ export default function ViewInvoicePage() {
   }
   function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
-  function getStatus() {
-    if (!invoice?.delivery_date) return 'OPEN'
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    return new Date(invoice.delivery_date + 'T00:00:00') <= today ? 'CLOSED' : 'OPEN'
-  }
-
   function handlePrint() {
     if (!invoice) return
     const code = invoice.invoice_code
@@ -143,7 +157,8 @@ export default function ViewInvoicePage() {
   const finalProfit = grandTotal - expensesTotalGlobal
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
-  const status = getStatus()
+  const statusBadge = getStatusBadge(invoice)
+  const feedBadge = getFeedBadge(invoice.feed_status)
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
   const labelClass = 'text-gray-400 font-bold'
@@ -348,9 +363,10 @@ export default function ViewInvoicePage() {
 
         <div className="flex items-center justify-between mb-8">
           <div>
-            <div className="flex items-center gap-3 mb-1">
+            <div className="flex items-center gap-3 mb-1 flex-wrap">
               <h1 className="text-4xl font-bold">{invoice.invoice_code}</h1>
-              <span className={`px-3 py-1 rounded-full text-sm font-bold ${status === 'CLOSED' ? 'bg-gray-700 text-gray-300' : 'bg-green-800 text-green-300'}`}>{status}</span>
+              <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
+              <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
             </div>
             <p className="text-gray-400 text-xl">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
           </div>
@@ -364,8 +380,8 @@ export default function ViewInvoicePage() {
         <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
           <div className={sectionClass}>
-            <div className={rowClass}><span className={labelClass}>HIRING DATE</span><span className="font-bold">{formatDate(invoice.hiring_date)}</span></div>
-            <div className={rowClass}><span className={labelClass}>ENTRY DATE</span><span className="font-bold">{formatDate(invoice.entry_date)}</span></div>
+            {isValidDate(invoice.hiring_date) && <div className={rowClass}><span className={labelClass}>HIRING DATE</span><span className="font-bold">{formatDate(invoice.hiring_date)}</span></div>}
+            {isValidDate(invoice.entry_date) && <div className={rowClass}><span className={labelClass}>ENTRY DATE</span><span className="font-bold">{formatDate(invoice.entry_date)}</span></div>}
             {invoice.mileage && <div className={rowClass}><span className={labelClass}>MILEAGE</span><span className="font-bold">{Number(invoice.mileage).toLocaleString('en-US')} mi</span></div>}
             {invoice.service && <div className={rowClass}><span className={labelClass}>SERVICE</span><span className="font-bold">{invoice.service}</span></div>}
           </div>
@@ -474,10 +490,12 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          <div className={sectionClass}>
-            <div className={rowClass}><span className={labelClass}>CONCLUSION DATE</span><span className="font-bold">{formatDate(invoice.conclusion_date)}</span></div>
-            <div className={rowClass}><span className={labelClass}>DELIVERY DATE</span><span className="font-bold">{formatDate(invoice.delivery_date)}</span></div>
-          </div>
+          {(isValidDate(invoice.conclusion_date) || isValidDate(invoice.delivery_date)) && (
+            <div className={sectionClass}>
+              {isValidDate(invoice.conclusion_date) && <div className={rowClass}><span className={labelClass}>CONCLUSION DATE</span><span className="font-bold">{formatDate(invoice.conclusion_date)}</span></div>}
+              {isValidDate(invoice.delivery_date) && <div className={rowClass}><span className={labelClass}>DELIVERY DATE</span><span className="font-bold">{formatDate(invoice.delivery_date)}</span></div>}
+            </div>
+          )}
 
           {expenses.length > 0 && (
             <div>

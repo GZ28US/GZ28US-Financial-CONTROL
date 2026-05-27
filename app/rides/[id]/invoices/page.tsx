@@ -11,12 +11,14 @@ type Invoice = {
   id: string
   invoice_code: string
   entry_date: string | null
+  conclusion_date: string | null
   delivery_date: string | null
   mileage: number | null
   service: string | null
   florida_taxes: number | null
   global_discount: number | null
   fl_tax_expense_date: string | null
+  feed_status: string | null
 }
 
 type InvoiceStats = {
@@ -34,6 +36,20 @@ type Ride = {
 }
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+
+// Status ladder (first match wins)
+function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null }) {
+  if (!isValidDate(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
+  if (!isValidDate(inv.conclusion_date)) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
+  if (!isValidDate(inv.delivery_date)) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
+  return { label: 'DELIVERED', cls: 'bg-white text-black' }
+}
+
+function getFeedBadge(feedStatus: string | null) {
+  return feedStatus === 'REAL_TIME'
+    ? { label: 'REAL-TIME FEED', cls: 'bg-green-800 text-green-300' }
+    : { label: 'INCOMPLETE', cls: 'bg-red-800 text-red-200' }
+}
 
 export default function InvoicesPage() {
   const params = useParams()
@@ -81,7 +97,6 @@ export default function InvoicesPage() {
       const today = new Date(); today.setHours(0, 0, 0, 0)
       const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
 
-      // Revenue side (matches edit page)
       const partsSubTotal = (partsRes.data || []).reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
       const partsTotal = partsSubTotal + floridaTaxesAmount
@@ -92,13 +107,11 @@ export default function InvoicesPage() {
 
       const totalPaid = (paymentsRes.data || []).filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
 
-      // Expense side (Option A: price × quantity) + Florida State Taxes row (matches edit page)
       const flTaxAmount = floridaTaxesAmount
       const flTaxPaid = isValidDate(invoice.fl_tax_expense_date)
       const expensesTotalGlobal = flTaxAmount + (expensesRes.data || []).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + (expensesRes.data || []).filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
 
-      // Balloon metrics (signs match edit page: negative = owed)
       const paymentsBalance = totalPaid - grandTotal
       const expensesBalance = expensesTotalPaid - expensesTotalGlobal
       const currentProfit = totalPaid - expensesTotalPaid
@@ -123,13 +136,6 @@ export default function InvoicesPage() {
   function formatDate(date: string | null) {
     if (!date) return '—'
     return new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-  }
-
-  function getStatus(deliveryDate: string | null) {
-    if (!deliveryDate) return 'OPEN'
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const d = new Date(deliveryDate + 'T00:00:00')
-    return d <= today ? 'CLOSED' : 'OPEN'
   }
 
   return (
@@ -168,16 +174,16 @@ export default function InvoicesPage() {
         <div className="space-y-5">
           {invoices.map((invoice) => {
             const s = stats[invoice.id]
-            const status = getStatus(invoice.delivery_date)
+            const statusBadge = getStatusBadge(invoice)
+            const feedBadge = getFeedBadge(invoice.feed_status)
 
             return (
               <div key={invoice.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{invoice.invoice_code}</h2>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${status === 'CLOSED' ? 'bg-gray-700 text-gray-300' : 'bg-green-800 text-green-300'}`}>
-                      {status}
-                    </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
                   </div>
                   <p className="text-lg text-gray-400">Entry: {formatDate(invoice.entry_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
                   {invoice.service && <p className="text-lg text-gray-400">{invoice.service}</p>}

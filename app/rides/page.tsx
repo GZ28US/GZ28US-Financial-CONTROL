@@ -20,6 +20,21 @@ type Ride = {
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
+// Status ladder (first match wins)
+function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null } | null) {
+  if (!inv) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
+  if (!isValidDate(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
+  if (!isValidDate(inv.conclusion_date)) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
+  if (!isValidDate(inv.delivery_date)) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
+  return { label: 'DELIVERED', cls: 'bg-white text-black' }
+}
+
+function getFeedBadge(feedStatus: string | null) {
+  return feedStatus === 'REAL_TIME'
+    ? { label: 'REAL-TIME FEED', cls: 'bg-green-800 text-green-300' }
+    : { label: 'INCOMPLETE', cls: 'bg-red-800 text-red-200' }
+}
+
 export default function RidesPage() {
   const [rides, setRides] = useState<Ride[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,7 +55,7 @@ export default function RidesPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, florida_taxes, global_discount, fl_tax_expense_date, updated_at, created_at')
+        .select('id, florida_taxes, global_discount, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, updated_at, created_at')
         .eq('ride_id', ride.id)
 
       const invoiceList = invoices || []
@@ -50,6 +65,11 @@ export default function RidesPage() {
         if (inv.updated_at) timestamps.push(inv.updated_at)
         if (inv.created_at) timestamps.push(inv.created_at)
       }
+
+      // Most recent invoice (by created_at) drives the status + feed balloons
+      const latestInvoice = invoiceList.slice().sort((a, b) =>
+        String(b.created_at || '').localeCompare(String(a.created_at || ''))
+      )[0] || null
 
       // Aggregated financial stats (summed across all the ride's invoices)
       let currentProfit = 0
@@ -74,7 +94,6 @@ export default function RidesPage() {
         const today = new Date(); today.setHours(0, 0, 0, 0)
         const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
 
-        // Pull all rows once, then group by invoice (florida_taxes/discount are per-invoice)
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_payments').select('invoice_id, amount, payment_date').in('invoice_id', invoiceIds),
           supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date').in('invoice_id', invoiceIds),
@@ -132,6 +151,7 @@ export default function RidesPage() {
       return {
         ...ride,
         _latestActivity: latest,
+        _latestInvoice: latestInvoice,
         _currentProfit: currentProfit,
         _currentProfitPct: currentProfitPct,
         _finalProfit: finalProfit,
@@ -185,7 +205,10 @@ export default function RidesPage() {
         <p className="text-2xl text-gray-400">No rides found.</p>
       ) : (
         <div className="space-y-5">
-          {(rides as any[]).map((ride) => (
+          {(rides as any[]).map((ride) => {
+            const statusBadge = getStatusBadge(ride._latestInvoice)
+            const feedBadge = getFeedBadge(ride._latestInvoice?.feed_status ?? null)
+            return (
             <div key={ride.id} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden flex items-stretch">
               {/* PHOTO */}
               {ride.photo_url ? (
@@ -201,7 +224,11 @@ export default function RidesPage() {
               {/* CONTENT */}
               <div className="flex flex-1 items-center justify-between p-6 gap-6">
                 <div>
-                  <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
+                  <div className="flex items-center gap-3 mb-1 flex-wrap">
+                    <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
+                  </div>
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}
                   <p className="text-lg text-gray-400">{ride.color}</p>
@@ -228,7 +255,8 @@ export default function RidesPage() {
                 </div>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </main>

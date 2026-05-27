@@ -14,6 +14,7 @@ type Note = { id?: string; note: string }
 type Expense = { id?: string; supplier: string; item: string; amount: string; quantity: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
 type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
+type ScannedPayment = { amount: string; source: string; date: string }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -37,15 +38,11 @@ function generateUUID() {
 }
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 
-// Sort key for a date string: valid dates sort ascending (oldest first),
-// blank/invalid dates sort to the very bottom.
 function dateSortKey(d: string): number {
   if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return Number.POSITIVE_INFINITY
   return new Date(d + 'T00:00:00').getTime()
 }
 
-// Sort an array of rows oldest-to-newest by a date field, blanks last.
-// Stable: ties keep their original relative order.
 function sortByDateAsc<T>(rows: T[], getDate: (row: T) => string): T[] {
   return rows
     .map((row, i) => ({ row, i }))
@@ -57,9 +54,6 @@ function sortByDateAsc<T>(rows: T[], getDate: (row: T) => string): T[] {
     .map(({ row }) => row)
 }
 
-// Sort expenses oldest-to-newest while keeping each purchase_group's items
-// contiguous. A group is ordered by its earliest dated item; ungrouped rows
-// sort by their own date. Blanks (no valid date) fall to the bottom.
 function sortExpensesByDate(rows: Expense[]): Expense[] {
   type Block = { key: number; order: number; items: Expense[] }
   const groups = new Map<string, Block>()
@@ -73,7 +67,7 @@ function sortExpensesByDate(rows: Expense[]): Expense[] {
         groups.set(exp.purchase_group, g)
         blocks.push(g)
       } else if (k < g.key) {
-        g.key = k // group takes its earliest date
+        g.key = k
       }
       g.items.push(exp)
     } else {
@@ -101,6 +95,7 @@ export default function EditInvoicePage() {
   const [deliveryDate, setDeliveryDate] = useState('')
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
+  const [feedStatus, setFeedStatus] = useState('INCOMPLETE')
   const [floridaTaxes, setFloridaTaxes] = useState('')
   const [globalDiscount, setGlobalDiscount] = useState('')
   const [targetGrandTotal, setTargetGrandTotal] = useState('')
@@ -116,6 +111,8 @@ export default function EditInvoicePage() {
   const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
   const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '' })
+  const [scanningPayment, setScanningPayment] = useState(false)
+  const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState('')
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
@@ -161,6 +158,7 @@ export default function EditInvoicePage() {
     setDeliveryDate(data.delivery_date || '')
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
+    setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
@@ -275,6 +273,48 @@ export default function EditInvoicePage() {
     setScanningPurchase(false)
   }
 
+  async function handleScanPayment(file: File) {
+    setScanningPayment(true)
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      const response = await fetch('/api/scan-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, mediaType: file.type, mode: 'payment' }),
+      })
+      const data = await response.json()
+      if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanningPayment(false); return }
+      const text = data.content?.map((c: any) => c.text || '').join('') || ''
+      const clean = text.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(clean)
+      const list: ScannedPayment[] = (parsed.payments || []).map((p: any) => ({
+        amount: String(p.amount || ''),
+        source: String(p.source || ''),
+        date: String(p.date || ''),
+      }))
+      if (list.length === 0) list.push({ amount: '', source: '', date: '' })
+      setScannedPayments(list)
+    } catch (err) {
+      console.error(err)
+      alert('Failed to scan payment. Please try again or add it manually.')
+    }
+    setScanningPayment(false)
+  }
+
+  function confirmScannedPayments() {
+    if (!scannedPayments) return
+    const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
+    if (valid.length === 0) { setScannedPayments(null); return }
+    const newRows: Payment[] = valid.map(p => ({ amount: p.amount, payment_date: p.date, source: p.source }))
+    setPayments(prev => [...prev, ...newRows])
+    setScannedPayments(null)
+  }
+
   function confirmScannedPurchase() {
     if (!scannedPurchase) return
     const groupId = generateUUID()
@@ -386,8 +426,6 @@ export default function EditInvoicePage() {
   }
 
   function importIntuitiveParts() {
-    // Group eligible expenses by description + unit price, summing quantities.
-    // Same description at a different price counts as a separate line.
     const sourceMap = new Map<string, { description: string; unit_price: string; quantity: number }>()
     expenses
       .filter(e => !SKIP_WORDS.test(e.item))
@@ -407,8 +445,6 @@ export default function EditInvoicePage() {
 
     if (sourceMap.size === 0) { alert('No parts found in expenses to import.'); return }
 
-    // Tally what's already in parts, keyed the same way, so re-imports only
-    // add the missing difference instead of duplicating.
     const existingQty = new Map<string, number>()
     parts.forEach(p => {
       const desc = (p.description || '').trim()
@@ -637,6 +673,7 @@ export default function EditInvoicePage() {
       delivery_date: isValidDate(deliveryDate) ? deliveryDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
+      feed_status: feedStatus === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE',
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
@@ -753,6 +790,46 @@ export default function EditInvoicePage() {
         </div>
       )}
 
+      {scannedPayments && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REVIEW PAYMENT</h2>
+              <button onClick={() => setScannedPayments(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {scannedPayments.map((p, i) => (
+                <div key={i} className="border border-gray-700 rounded-2xl p-3 space-y-2">
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                      <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                        <input type="text" inputMode="decimal" value={p.amount} onChange={(e) => { if (isNumeric(e.target.value)) { const a = [...scannedPayments]; a[i] = { ...a[i], amount: e.target.value }; setScannedPayments(a) } }} className={`${smallInputClass} w-full pl-8`} placeholder="0.00" />
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                      <select value={p.source} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], source: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
+                        {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <button onClick={() => setScannedPayments(scannedPayments.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-300 font-bold text-lg px-2 self-end pb-3">✕</button>
+                  </div>
+                  <DatePicker label="DATE" value={p.date} onChange={(v) => { const a = [...scannedPayments]; a[i] = { ...a[i], date: v }; setScannedPayments(a) }} />
+                </div>
+              ))}
+              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', date: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD PAYMENT</button>
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-right text-gray-400 font-bold self-center">
+                TOTAL: {formatUSD(scannedPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0))}
+              </div>
+              <button onClick={confirmScannedPayments} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {scannedPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
@@ -829,11 +906,11 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {scanningPurchase && (
+      {(scanningPurchase || scanningPayment) && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
-            <p className="text-2xl font-bold mb-2">Scanning Receipt...</p>
-            <p className="text-gray-400">Claude is reading your receipt</p>
+            <p className="text-2xl font-bold mb-2">{scanningPayment ? 'Scanning Payment...' : 'Scanning Receipt...'}</p>
+            <p className="text-gray-400">Claude is reading your {scanningPayment ? 'payment' : 'receipt'}</p>
           </div>
         </div>
       )}
@@ -848,8 +925,22 @@ export default function EditInvoicePage() {
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
+        {/* FEED STATUS SWITCH */}
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-lg font-bold">FEED STATUS</p>
+            <p className="text-sm text-gray-400">Mark this invoice as a real-time feed once it is fully up to date.</p>
+          </div>
+          <button
+            onClick={() => setFeedStatus(feedStatus === 'REAL_TIME' ? 'INCOMPLETE' : 'REAL_TIME')}
+            className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedStatus === 'REAL_TIME' ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'}`}
+          >
+            {feedStatus === 'REAL_TIME' ? 'REAL-TIME FEED' : 'INCOMPLETE'}
+          </button>
+        </div>
+
         <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
-        <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />
+        {isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
 
         <div>
           <label className="block mb-2 text-lg font-bold">MILEAGE</label>
@@ -1031,6 +1122,10 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">PAYMENTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
+              🧾 SCAN PAYMENT
+              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScanPayment(e.target.files[0]) }} />
+            </label>
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                 <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
@@ -1133,8 +1228,8 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />
-        <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
+        {isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
+        {isValidDate(conclusionDate) && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
         {/* PARTS TO STOCK */}
         <div>
@@ -1192,7 +1287,7 @@ export default function EditInvoicePage() {
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
-              🧾 ADD PURCHASE
+              🧾 SCAN EXPENSE
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
             </label>
             <div className="flex gap-3 items-end">

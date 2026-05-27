@@ -3,13 +3,46 @@ import { NextRequest, NextResponse } from 'next/server'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { base64, mediaType } = body
+    const { base64, mediaType, mode } = body
 
     if (!base64 || !mediaType) {
       return NextResponse.json({ error: 'Missing base64 or mediaType' }, { status: 400 })
     }
 
     const isPDF = mediaType === 'application/pdf'
+    const isPayment = mode === 'payment'
+
+    const purchasePrompt = `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
+{
+  "supplier": "store/supplier name",
+  "date": "YYYY-MM-DD format, or empty string if not found",
+  "grand_total": "invoice grand total as number string like 11138.67",
+  "extra_charges": "total of all shipping, insurance, handling, tax, and any other fee lines as number string like 117.20",
+  "items": [
+    { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92" }
+  ]
+}
+Rules:
+1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons.
+2. quantity: read exactly from the Qty column.
+3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
+4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, tax, and any other fees. Do NOT include discounts here.
+5. grand_total: the final total of the invoice.
+6. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
+7. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+
+    const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
+{
+  "payments": [
+    { "amount": "payment amount as number string like 1500.00", "source": "one of CASH, ACH, ZELLE, CHECK, or empty string if not clearly identifiable", "date": "YYYY-MM-DD format, or empty string if not found" }
+  ]
+}
+Rules:
+1. amount: the money amount of the payment, digits only as a number string (no $ or commas).
+2. source: map to exactly one of CASH, ACH, ZELLE, CHECK based on clear evidence in the document (e.g. the word "Zelle", "ACH", a check number, "cash"). If you cannot tell, use an empty string — do NOT guess.
+3. date: the date the payment was made/settled, YYYY-MM-DD. Empty string if not found.
+4. If the document shows multiple payments, include one object per payment. If only one, return a single-element array.
+5. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -33,24 +66,7 @@ export async function POST(req: NextRequest) {
             }]),
             {
               type: 'text',
-              text: `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
-{
-  "supplier": "store/supplier name",
-  "date": "YYYY-MM-DD format, or empty string if not found",
-  "grand_total": "invoice grand total as number string like 11138.67",
-  "extra_charges": "total of all shipping, insurance, handling, tax, and any other fee lines as number string like 117.20",
-  "items": [
-    { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92" }
-  ]
-}
-Rules:
-1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons.
-2. quantity: read exactly from the Qty column.
-3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
-4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, tax, and any other fees. Do NOT include discounts here.
-5. grand_total: the final total of the invoice.
-6. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
-7. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+              text: isPayment ? paymentPrompt : purchasePrompt
             }
           ]
         }]
@@ -74,11 +90,34 @@ Rules:
       console.error('Failed to parse model output. stop_reason:', stopReason, 'raw:', text.slice(0, 500))
       return NextResponse.json({
         error: stopReason === 'max_tokens'
-          ? 'The receipt was too long for one scan and the response was cut off. Try a smaller image/PDF or contact support to raise the limit.'
-          : 'Could not read the receipt. The scan returned data that was not valid JSON.',
+          ? 'The document was too long for one scan and the response was cut off. Try a smaller image/PDF or contact support to raise the limit.'
+          : 'Could not read the document. The scan returned data that was not valid JSON.',
       }, { status: 422 })
     }
 
+    // ---- PAYMENT MODE ----
+    if (isPayment) {
+      const rawPayments = Array.isArray(parsed.payments) ? parsed.payments : []
+      const allowedSources = ['CASH', 'ACH', 'ZELLE', 'CHECK']
+      const payments = rawPayments.map((p: any) => {
+        const amt = parseFloat(p.amount)
+        const src = String(p.source || '').toUpperCase().trim()
+        return {
+          amount: Number.isFinite(amt) ? amt.toFixed(2) : '',
+          source: allowedSources.includes(src) ? src : '',
+          date: typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '',
+        }
+      }).filter((p: any) => p.amount !== '')
+
+      return NextResponse.json({
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ payments })
+        }]
+      })
+    }
+
+    // ---- PURCHASE MODE (default) ----
     const items = Array.isArray(parsed.items) ? parsed.items : []
     const extraCharges = parseFloat(parsed.extra_charges) || 0
     const itemsSubtotal = items.reduce(
