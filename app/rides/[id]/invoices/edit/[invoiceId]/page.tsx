@@ -9,13 +9,13 @@ import { formatUSD } from '@/lib/utils'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string }
 type Service = { id?: string; description: string; price: string }
-type Payment = { id?: string; amount: string; payment_date: string; source: string; receipt_url: string }
+type Payment = { id?: string; amount: string; payment_date: string; source: string; receipt_url: string; description: string }
 type Note = { id?: string; note: string }
 type Expense = { id?: string; supplier: string; item: string; amount: string; quantity: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
 type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
-type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string }
-type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; report: boolean }
+type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string; description: string }
+type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -109,9 +109,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '', description: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '', description: '' })
   const [scanningPayment, setScanningPayment] = useState(false)
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
@@ -173,7 +173,7 @@ export default function EditInvoicePage() {
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
 
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '', receipt_url: p.receipt_url || '' })), p => p.payment_date))
+    if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({ id: p.id, amount: String(p.amount), payment_date: p.payment_date || '', source: p.source || '', receipt_url: p.receipt_url || '', description: p.description || '' })), p => p.payment_date))
 
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
@@ -307,8 +307,9 @@ export default function EditInvoicePage() {
         source: String(p.source || ''),
         date: String(p.date || ''),
         receipt_url: receiptUrl,
+        description: '',
       }))
-      if (list.length === 0) list.push({ amount: '', source: '', date: '', receipt_url: receiptUrl })
+      if (list.length === 0) list.push({ amount: '', source: '', date: '', receipt_url: receiptUrl, description: '' })
       setScannedPayments(list)
     } catch (err) {
       console.error(err)
@@ -321,7 +322,7 @@ export default function EditInvoicePage() {
     if (!scannedPayments) return
     const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
     if (valid.length === 0) { setScannedPayments(null); return }
-    const newRows: Payment[] = valid.map(p => ({ amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '' }))
+    const newRows: Payment[] = valid.map(p => ({ amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '', description: p.description || '' }))
     setPayments(prev => [...prev, ...newRows])
     setScannedPayments(null)
   }
@@ -606,7 +607,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '', receipt_url: '' })
+    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '' })
   }
   async function removePayment(index: number) {
     const payment = payments[index]
@@ -618,13 +619,13 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, description: editingPayment.description || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(updated)
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '' }) }
 
   function addNote() {
     if (!newNote.trim()) { alert('Please enter a note'); return }
@@ -705,7 +706,7 @@ export default function EditInvoicePage() {
     // New incomes (payments) — insert them and remember which ones are new for the WhatsApp report step.
     const newPayments = payments.filter(p => !p.id)
     if (newPayments.length > 0) {
-      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null, receipt_url: p.receipt_url || null })))
+      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({ invoice_id: invoiceId, amount: parseFloat(p.amount), payment_date: isValidDate(p.payment_date) ? p.payment_date : null, source: p.source || null, receipt_url: p.receipt_url || null, description: p.description || null })))
       if (e) { alert(e.message); return }
     }
     const newNotes = notes.filter(n => !n.id)
@@ -750,6 +751,7 @@ export default function EditInvoicePage() {
         source: p.source,
         date: p.payment_date,
         receipt_url: p.receipt_url || '',
+        description: p.description || '',
         report: true,
       })))
       return
@@ -759,11 +761,25 @@ export default function EditInvoicePage() {
   }
 
   function buildIncomeCaption(inc: IncomeReport) {
-    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
     const amountStr = formatUSD(parseFloat(inc.amount) || 0)
-    // Layout: INCOME (bold) / RIDE — INVOICE / DATE — AMOUNT (bold)
-    return `*INCOME*\n${rideName} — ${invoiceCode}\n${dateStr} — *${amountStr}*`
+    // First block: INCOME (bold) / INVOICE — PROJECT / DATE — AMOUNT (bold) / DESCRIPTION (omitted if empty)
+    const lines: string[] = [
+      '*INCOME*',
+      `${invoiceCode}${projectName ? ` — ${projectName}` : ''}`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (inc.description && inc.description.trim()) lines.push(inc.description.trim())
+
+    // Second block (only when this invoice is a REAL-TIME FEED): blank line, then DUE / CURRENT / FINAL.
+    if (feedStatus === 'REAL_TIME') {
+      const due = balance < 0 ? -balance : 0
+      lines.push('')
+      lines.push(`DUE: ${formatUSD(due)}`)
+      lines.push(`*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
+      lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
+    }
+    return lines.join('\n')
   }
 
   async function sendIncomeReports() {
@@ -876,9 +892,13 @@ export default function EditInvoicePage() {
                     <button onClick={() => setScannedPayments(scannedPayments.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-300 font-bold text-lg px-2 self-end pb-3">✕</button>
                   </div>
                   <DatePicker label="DATE" value={p.date} onChange={(v) => { const a = [...scannedPayments]; a[i] = { ...a[i], date: v }; setScannedPayments(a) }} />
+                  <div>
+                    <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
+                    <input type="text" value={p.description} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], description: e.target.value }; setScannedPayments(a) }} className={`${smallInputClass} w-full`} placeholder="Optional note" />
+                  </div>
                 </div>
               ))}
-              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', date: '', receipt_url: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
+              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
@@ -903,6 +923,7 @@ export default function EditInvoicePage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-base font-bold">INCOME — {formatUSD(parseFloat(inc.amount) || 0)}</p>
                     <p className="text-sm text-gray-400">{inc.source ? `${inc.source} — ` : ''}{isValidDate(inc.date) ? formatDate(inc.date) : 'No date'}</p>
+                    {inc.description && <p className="text-sm text-gray-400 truncate">{inc.description}</p>}
                     <p className="text-sm text-gray-500">{inc.receipt_url ? '📎 Document attached' : 'No document (text only)'}</p>
                   </div>
                   <button
@@ -1235,6 +1256,10 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <DatePicker label="DATE" value={newPayment.payment_date} onChange={(v) => setNewPayment({ ...newPayment, payment_date: v })} />
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
+              <input type="text" value={newPayment.description} onChange={(e) => setNewPayment({ ...newPayment, description: e.target.value })} className={inputClass} placeholder="Optional note" />
+            </div>
             <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD INCOME</button>
             {payments.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
@@ -1257,6 +1282,10 @@ export default function EditInvoicePage() {
                             </div>
                           </div>
                           <DatePicker label="DATE" value={editingPayment.payment_date} onChange={(v) => setEditingPayment({ ...editingPayment, payment_date: v })} />
+                          <div>
+                            <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
+                            <input type="text" value={editingPayment.description} onChange={(e) => setEditingPayment({ ...editingPayment, description: e.target.value })} className={`${smallInputClass} w-full`} placeholder="Optional note" />
+                          </div>
                           <div className="flex gap-3">
                             <button onClick={saveEditPayment} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                             <button onClick={cancelEditPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -1267,6 +1296,7 @@ export default function EditInvoicePage() {
                           <div className="flex-1 min-w-0">
                             <p className={`text-base font-bold ${isPaid ? '' : 'text-yellow-400'}`}>{formatUSD(parseFloat(payment.amount))}{!isPaid ? ' — PENDING' : ''}</p>
                             <p className="text-sm text-gray-400">{payment.source}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                            {payment.description && <p className="text-sm text-gray-500 truncate">{payment.description}</p>}
                           </div>
                           <div className="flex gap-2 shrink-0">
                             {payment.receipt_url && <a href={payment.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">DOC</a>}

@@ -33,7 +33,7 @@ type Client = {
 
 type Part = { id: string; description: string; unit_price: number; quantity: number }
 type Service = { id: string; description: string; price: number }
-type Payment = { id: string; amount: number; payment_date: string | null; source: string | null }
+type Payment = { id: string; amount: number; payment_date: string | null; source: string | null; description: string | null }
 type Note = { id: string; note: string }
 type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; payment_date: string | null; receipt_url: string | null }
 
@@ -326,8 +326,9 @@ export default function ViewInvoicePage() {
               <div className="pi-sec-title">Payments</div>
               <table className="pi-table">
                 <thead><tr>
-                  <th style={{width:'18%'}}>Date</th>
-                  <th style={{width:'62%'}}>Source</th>
+                  <th style={{width:'16%'}}>Date</th>
+                  <th style={{width:'22%'}}>Source</th>
+                  <th style={{width:'42%'}}>Description</th>
                   <th className="r" style={{width:'20%'}}>Amount</th>
                 </tr></thead>
                 <tbody>
@@ -335,11 +336,12 @@ export default function ViewInvoicePage() {
                     <tr key={p.id}>
                       <td>{formatDate(p.payment_date)}</td>
                       <td>{p.source || '—'}</td>
+                      <td>{p.description || '—'}</td>
                       <td className="r">{formatUSD(p.amount)}</td>
                     </tr>
                   ))}
-                  <tr className="pi-pay-subtotal"><td colSpan={2} className="r">Total Paid</td><td className="r">{formatUSD(totalPaid)}</td></tr>
-                  <tr className="pi-balance"><td colSpan={2} className="r">Balance</td><td className="r">{balance === 0 ? '$ —' : formatUSD(balance)}</td></tr>
+                  <tr className="pi-pay-subtotal"><td colSpan={3} className="r">Total Paid</td><td className="r">{formatUSD(totalPaid)}</td></tr>
+                  <tr className="pi-balance"><td colSpan={3} className="r">Balance</td><td className="r">{balance === 0 ? '$ —' : formatUSD(balance)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -467,6 +469,7 @@ export default function ViewInvoicePage() {
                       <div>
                         <p className={`text-base font-bold ${isPaid ? '' : 'text-yellow-400'}`}>{formatUSD(payment.amount)}{!isPaid ? ' — PENDING' : ''}</p>
                         <p className="text-sm text-gray-400">{payment.source || ''}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                        {payment.description && <p className="text-sm text-gray-500">{payment.description}</p>}
                       </div>
                     </div>
                   )
