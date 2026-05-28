@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
@@ -30,11 +30,6 @@ type InvoiceStats = {
   finalProfitPct: number
 }
 
-type Ride = {
-  project_code: string
-  project_name: string | null
-}
-
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
 // Status ladder (first match wins)
@@ -53,33 +48,55 @@ function getFeedBadge(feedStatus: string | null) {
 
 export default function InvoicesPage() {
   const params = useParams()
-  const rideId = String(params.id)
+  const pathname = usePathname()
+  const ownerId = String(params.id)
+  // Context: client invoices when the URL is /clients/..., otherwise ride invoices.
+  const isClient = (pathname || '').includes('/clients/')
+  const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
+  const backPath = isClient ? '/clients' : '/rides'
 
-  const [ride, setRide] = useState<Ride | null>(null)
+  const [headerTitle, setHeaderTitle] = useState('')
+  const [headerSubtitle, setHeaderSubtitle] = useState<string | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [stats, setStats] = useState<Record<string, InvoiceStats>>({})
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
   useEffect(() => {
-    loadRide()
+    loadOwner()
     loadInvoices()
   }, [])
 
-  async function loadRide() {
-    const { data } = await supabase
-      .from('rides')
-      .select('project_code, project_name')
-      .eq('id', rideId)
-      .single()
-    setRide(data || null)
+  async function loadOwner() {
+    if (isClient) {
+      const { data } = await supabase
+        .from('clients')
+        .select('name, client_number')
+        .eq('id', ownerId)
+        .single()
+      if (data) {
+        setHeaderTitle(data.client_number != null ? `${data.client_number}` : (data.name || ''))
+        setHeaderSubtitle(data.name || null)
+      }
+    } else {
+      const { data } = await supabase
+        .from('rides')
+        .select('project_code, project_name')
+        .eq('id', ownerId)
+        .single()
+      if (data) {
+        setHeaderTitle(data.project_code || '')
+        setHeaderSubtitle(data.project_name || null)
+      }
+    }
   }
 
   async function loadInvoices() {
+    const column = isClient ? 'client_id' : 'ride_id'
     const { data } = await supabase
       .from('invoices')
       .select('*')
-      .eq('ride_id', rideId)
+      .eq(column, ownerId)
       .order('invoice_code', { ascending: true })
 
     const invoiceList = data || []
@@ -138,6 +155,8 @@ export default function InvoicesPage() {
     return new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
+  const invoicesLabel = isClient ? 'PERSONAL INVOICES' : 'INVOICES'
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
@@ -157,12 +176,12 @@ export default function InvoicesPage() {
 
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-4xl font-bold">{ride?.project_code} — INVOICES ({invoices.length})</h1>
-          {ride?.project_name && <p className="text-xl text-gray-400 mt-1">{ride.project_name}</p>}
+          <h1 className="text-4xl font-bold">{headerTitle} — {invoicesLabel} ({invoices.length})</h1>
+          {headerSubtitle && <p className="text-xl text-gray-400 mt-1">{headerSubtitle}</p>}
         </div>
         <div className="flex gap-4">
-          <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
-          <Link href={`/rides/${rideId}/invoices/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
+          <Link href={backPath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+          <Link href={`${basePath}/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
         </div>
       </div>
 
@@ -208,8 +227,8 @@ export default function InvoicesPage() {
                 </div>
 
                 <div className="flex gap-3 flex-wrap shrink-0">
-                  <Link href={`/rides/${rideId}/invoices/${invoice.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
-                  <Link href={`/rides/${rideId}/invoices/edit/${invoice.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                  <Link href={`${basePath}/${invoice.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                  <Link href={`${basePath}/edit/${invoice.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                   <button onClick={() => setConfirmId(invoice.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                 </div>
               </div>
