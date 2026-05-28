@@ -41,7 +41,7 @@ export default function ClientsPage() {
 
     const withStats = await Promise.all(clientList.map(async (client) => {
       // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
-      const { data: ridesOwned } = await supabase.from('rides').select('id').eq('client_id', client.id)
+      const { data: ridesOwned } = await supabase.from('rides').select('id, created_at, updated_at').eq('client_id', client.id)
       const rideIds = (ridesOwned || []).map(r => r.id)
 
       const orParts: string[] = [`client_id.eq.${client.id}`]
@@ -49,7 +49,7 @@ export default function ClientsPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, florida_taxes, global_discount, fl_tax_expense_date')
+        .select('id, florida_taxes, global_discount, fl_tax_expense_date, created_at, updated_at')
         .or(orParts.join(','))
 
       const invoiceList = invoices || []
@@ -119,9 +119,18 @@ export default function ClientsPage() {
       const currentProfitPct = sumExpensesPaid > 0 ? (currentProfit / sumExpensesPaid) * 100 : 0
       const finalProfitPct = sumExpensesGlobal > 0 ? (finalProfit / sumExpensesGlobal) * 100 : 0
 
+      // Activity = newest of: client created, any ride created/edited, any invoice created/edited.
+      const times: number[] = []
+      const pushTime = (v: any) => { if (v) { const t = new Date(v).getTime(); if (!isNaN(t)) times.push(t) } }
+      pushTime(client.created_at)
+      for (const r of (ridesOwned || [])) { pushTime(r.created_at); pushTime(r.updated_at) }
+      for (const inv of invoiceList) { pushTime((inv as any).created_at); pushTime((inv as any).updated_at) }
+      const activityTime = times.length > 0 ? Math.max(...times) : 0
+
       return {
         ...client,
         _hasInvoices: invoiceIds.length > 0,
+        _activityTime: activityTime,
         _currentProfit: currentProfit,
         _currentProfitPct: currentProfitPct,
         _finalProfit: finalProfit,
@@ -130,6 +139,9 @@ export default function ClientsPage() {
         _expensesBalance: expensesBalance,
       }
     }))
+
+    // Most recently active clients first.
+    withStats.sort((a, b) => b._activityTime - a._activityTime)
 
     setClients(withStats)
     setLoading(false)
