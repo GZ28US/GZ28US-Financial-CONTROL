@@ -15,10 +15,17 @@ type Client = {
   city: string | null
   state: string | null
   zip: string | null
+  client_number: number | null
+}
+
+function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+
+function formatUSD(v: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
 }
 
 export default function ClientsPage() {
-  const [clients, setClients] = useState<Client[]>([])
+  const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
@@ -29,7 +36,102 @@ export default function ClientsPage() {
       .from('clients')
       .select('*')
       .order('name', { ascending: true })
-    setClients(data || [])
+
+    const clientList = data || []
+
+    const withStats = await Promise.all(clientList.map(async (client) => {
+      // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
+      const { data: ridesOwned } = await supabase.from('rides').select('id').eq('client_id', client.id)
+      const rideIds = (ridesOwned || []).map(r => r.id)
+
+      const orParts: string[] = [`client_id.eq.${client.id}`]
+      if (rideIds.length > 0) orParts.push(`ride_id.in.(${rideIds.join(',')})`)
+
+      const { data: invoices } = await supabase
+        .from('invoices')
+        .select('id, florida_taxes, global_discount, fl_tax_expense_date')
+        .or(orParts.join(','))
+
+      const invoiceList = invoices || []
+      const invoiceIds = invoiceList.map(i => i.id)
+
+      let currentProfit = 0
+      let finalProfit = 0
+      let paymentsBalance = 0
+      let expensesBalance = 0
+      let sumExpensesPaid = 0
+      let sumExpensesGlobal = 0
+
+      if (invoiceIds.length > 0) {
+        const today = new Date(); today.setHours(0, 0, 0, 0)
+        const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
+
+        const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
+          supabase.from('invoice_payments').select('invoice_id, amount, payment_date').in('invoice_id', invoiceIds),
+          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date').in('invoice_id', invoiceIds),
+          supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
+          supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
+        ])
+
+        const byInvoice = <T extends { invoice_id: string }>(rows: T[] | null) => {
+          const m = new Map<string, T[]>()
+          for (const r of rows || []) {
+            const arr = m.get(r.invoice_id) || []
+            arr.push(r); m.set(r.invoice_id, arr)
+          }
+          return m
+        }
+        const paymentsBy = byInvoice(paymentsRes.data)
+        const expensesBy = byInvoice(expensesRes.data)
+        const partsBy = byInvoice(partsRes.data)
+        const servicesBy = byInvoice(servicesRes.data)
+
+        for (const inv of invoiceList) {
+          const parts = partsBy.get(inv.id) || []
+          const services = servicesBy.get(inv.id) || []
+          const payments = paymentsBy.get(inv.id) || []
+          const expenses = expensesBy.get(inv.id) || []
+
+          const partsSubTotal = parts.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
+          const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
+          const partsTotal = partsSubTotal + floridaTaxesAmount
+          const servicesTotal = services.reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
+          const partsAndServicesTotal = partsTotal + servicesTotal
+          const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
+          const grandTotal = partsAndServicesTotal - discountAmount
+
+          const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+
+          const flTaxAmount = floridaTaxesAmount
+          const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
+          const expensesTotalGlobal = flTaxAmount + expenses.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+          const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+
+          currentProfit += totalPaid - expensesTotalPaid
+          finalProfit += grandTotal - expensesTotalGlobal
+          paymentsBalance += totalPaid - grandTotal
+          expensesBalance += expensesTotalPaid - expensesTotalGlobal
+          sumExpensesPaid += expensesTotalPaid
+          sumExpensesGlobal += expensesTotalGlobal
+        }
+      }
+
+      const currentProfitPct = sumExpensesPaid > 0 ? (currentProfit / sumExpensesPaid) * 100 : 0
+      const finalProfitPct = sumExpensesGlobal > 0 ? (finalProfit / sumExpensesGlobal) * 100 : 0
+
+      return {
+        ...client,
+        _hasInvoices: invoiceIds.length > 0,
+        _currentProfit: currentProfit,
+        _currentProfitPct: currentProfitPct,
+        _finalProfit: finalProfit,
+        _finalProfitPct: finalProfitPct,
+        _paymentsBalance: paymentsBalance,
+        _expensesBalance: expensesBalance,
+      }
+    }))
+
+    setClients(withStats)
     setLoading(false)
   }
 
@@ -86,17 +188,37 @@ export default function ClientsPage() {
       ) : (
         <div className="space-y-5">
           {clients.map((client) => (
-            <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold">{client.name}</h2>
+            <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 mb-1 flex-wrap">
+                  <h2 className="text-2xl font-bold">{client.client_number != null ? `${client.client_number} — ` : ''}{client.name}</h2>
+                </div>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
                 <p className="text-lg text-gray-400">{formatPhone(client.phone)}</p>
                 <p className="text-lg text-gray-400">{[client.city, client.state, client.zip].filter(Boolean).join(', ')}</p>
                 {client.country && <p className="text-lg text-gray-400">{client.country}</p>}
+
+                {client._hasInvoices && (
+                  <div className="flex gap-3 mt-3 flex-wrap">
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                      CURRENT PROFIT: {formatUSD(client._currentProfit)} / {client._currentProfitPct.toFixed(1)}%
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                      FINAL PROFIT: {formatUSD(client._finalProfit)} / {client._finalProfitPct.toFixed(1)}%
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                      PENDING PAYMENTS: {formatUSD(client._paymentsBalance)}
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                      CURRENT DEBTS: {formatUSD(client._expensesBalance)}
+                    </span>
+                  </div>
+                )}
               </div>
-              <div className="flex gap-3 flex-wrap">
+              <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/clients/${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                 <Link href={`/clients/edit/${client.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">PERSONAL INVOICES</Link>
                 <button onClick={() => setConfirmId(client.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
               </div>
             </div>
