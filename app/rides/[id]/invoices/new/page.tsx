@@ -10,6 +10,12 @@ const FULL_PROJECT_LABOR = 'Full Project Labor'
 
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
+// Client numbers display/store zero-padded to 3 digits (e.g. 9 -> "009").
+function pad3(n: number | string) {
+  const num = typeof n === 'number' ? n : parseInt(String(n), 10)
+  return isNaN(num) ? String(n) : String(num).padStart(3, '0')
+}
+
 export default function NewInvoicePage() {
   const params = useParams()
   const router = useRouter()
@@ -34,7 +40,7 @@ export default function NewInvoicePage() {
     if (isClient) {
       const { data: client } = await supabase.from('clients').select('name, client_number').eq('id', ownerId).single()
       if (client) {
-        const numStr = client.client_number != null ? String(client.client_number) : ''
+        const numStr = client.client_number != null ? pad3(client.client_number) : ''
         setOwnerLabel(numStr)
         setOwnerSubtitle(client.name || '')
         await loadNextClientInvoiceCode(numStr)

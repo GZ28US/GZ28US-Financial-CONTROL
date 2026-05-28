@@ -254,7 +254,7 @@ export default function InputsPage() {
         <h1 className="text-4xl font-bold">INPUTS ({visibleInputs.length})</h1>
         <div className="flex gap-3">
           <label className="bg-indigo-700 hover:bg-indigo-600 px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer">
-            🧾 ADD A NEW PURCHASE
+            🧾 SCAN A NEW INPUT
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
           </label>
           <Link href="/inputs/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INPUT</Link>
