@@ -30,6 +30,13 @@ type Ride = {
   plate: string | null
 }
 
+type PersonalInvoice = {
+  id: string
+  invoice_code: string
+  service: string | null
+  entry_date: string | null
+}
+
 export default function ViewClientPage() {
   const params = useParams()
   const clientId = String(params.id)
@@ -37,6 +44,7 @@ export default function ViewClientPage() {
   const [loading, setLoading] = useState(true)
   const [client, setClient] = useState<Client | null>(null)
   const [rides, setRides] = useState<Ride[]>([])
+  const [personalInvoices, setPersonalInvoices] = useState<PersonalInvoice[]>([])
 
   useEffect(() => { loadAll() }, [])
 
@@ -46,6 +54,9 @@ export default function ViewClientPage() {
 
     const { data: ridesData } = await supabase.from('rides').select('*').eq('client_id', clientId).order('project_code', { ascending: true })
     if (ridesData) setRides(ridesData)
+
+    const { data: invoicesData } = await supabase.from('invoices').select('id, invoice_code, service, entry_date').eq('client_id', clientId).order('invoice_code', { ascending: true })
+    if (invoicesData) setPersonalInvoices(invoicesData)
 
     setLoading(false)
   }
@@ -136,6 +147,33 @@ export default function ViewClientPage() {
                     </p>
                   </div>
                   <span className="text-gray-400 font-bold text-sm shrink-0">INVOICES →</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Personal Invoices */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-lg font-bold">PERSONAL INVOICES ({personalInvoices.length})</label>
+            <Link href={`/clients/${clientId}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold text-sm">OPEN</Link>
+          </div>
+          {personalInvoices.length === 0 ? (
+            <p className="text-gray-400 text-xl">No personal invoices yet.</p>
+          ) : (
+            <div className={sectionClass}>
+              {personalInvoices.map((inv, index) => (
+                <Link
+                  key={inv.id}
+                  href={`/clients/${clientId}/invoices/${inv.id}`}
+                  className={`flex items-center justify-between gap-4 px-4 py-3 hover:bg-gray-800 transition-colors ${index < personalInvoices.length - 1 ? 'border-b border-gray-700' : ''}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-bold">{inv.invoice_code}</p>
+                    {inv.service && <p className="text-sm text-gray-400">{inv.service}</p>}
+                  </div>
+                  <span className="text-gray-400 font-bold text-sm shrink-0">VIEW →</span>
                 </Link>
               ))}
             </div>
