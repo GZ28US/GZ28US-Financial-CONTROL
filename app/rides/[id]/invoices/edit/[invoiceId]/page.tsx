@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useState, useRef } from 'react'
+import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
@@ -83,12 +83,18 @@ function sortExpensesByDate(rows: Expense[]): Expense[] {
 export default function EditInvoicePage() {
   const params = useParams()
   const router = useRouter()
-  const rideId = String(params.id)
+  const pathname = usePathname()
+  const ownerId = String(params.id)
   const invoiceId = String(params.invoiceId)
+  // Context: client personal invoice when URL is /clients/..., otherwise ride invoice.
+  const isClient = (pathname || '').includes('/clients/')
+  const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
 
   const [loading, setLoading] = useState(true)
   const [projectCode, setProjectCode] = useState('')
   const [projectName, setProjectName] = useState('')
+  const [clientName, setClientName] = useState('')
+  const [clientNumber, setClientNumber] = useState<number | null>(null)
   const [invoiceCode, setInvoiceCode] = useState('')
   const [hiringDate, setHiringDate] = useState('')
   const [entryDate, setEntryDate] = useState('')
@@ -142,18 +148,27 @@ export default function EditInvoicePage() {
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
+  // Holds "PROJECT_CODE — Project Name" for ride context; used for stock inventory tagging.
+  const rideNameRef = useRef('')
 
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
-    const { data: rideData } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
-    const pCode = rideData?.project_code || ''
-    const pName = rideData?.project_name || ''
-    setProjectCode(pCode)
-    setProjectName(pName)
+    if (isClient) {
+      const { data: clientData } = await supabase.from('clients').select('name, client_number').eq('id', ownerId).single()
+      setClientName(clientData?.name || '')
+      setClientNumber(clientData?.client_number ?? null)
+    } else {
+      const { data: rideData } = await supabase.from('rides').select('project_code, project_name').eq('id', ownerId).single()
+      const pCode = rideData?.project_code || ''
+      const pName = rideData?.project_name || ''
+      setProjectCode(pCode)
+      setProjectName(pName)
+      rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
+    }
 
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
-    if (error || !data) { alert('Invoice not found'); router.push(`/rides/${rideId}/invoices`); return }
+    if (error || !data) { alert('Invoice not found'); router.push(basePath); return }
     setInvoiceCode(data.invoice_code || '')
     setHiringDate(data.hiring_date || '')
     setEntryDate(data.entry_date || '')
@@ -194,7 +209,7 @@ export default function EditInvoicePage() {
     }
 
     const iCode = data.invoice_code || ''
-    const rName = pCode + (pName ? ` — ${pName}` : '')
+    const rName = isClient ? iCode : rideNameRef.current
     const prefix = `From ${iCode} — ${rName}`
     const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (stockHistory) {
@@ -242,7 +257,7 @@ export default function EditInvoicePage() {
     setScanningPurchase(true)
     try {
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/purchases/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${ownerId}/purchases/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (uploadError) { alert(uploadError.message); setScanningPurchase(false); return }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
@@ -281,7 +296,7 @@ export default function EditInvoicePage() {
     try {
       // Store the scanned income document so it can be attached to the WhatsApp report.
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${ownerId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (uploadError) { alert(uploadError.message); setScanningPayment(false); return }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
@@ -509,7 +524,7 @@ export default function EditInvoicePage() {
     const urls: string[] = [...editingExpense.receipt_urls]
     for (const file of Array.from(files)) {
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/${invoiceId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${ownerId}/${invoiceId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (error) { alert(error.message); continue }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
@@ -757,16 +772,17 @@ export default function EditInvoicePage() {
       return
     }
 
-    router.push(`/rides/${rideId}/invoices`)
+    router.push(basePath)
   }
 
   function buildIncomeCaption(inc: IncomeReport) {
     const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
     const amountStr = formatUSD(parseFloat(inc.amount) || 0)
-    // First block: INCOME (bold) / INVOICE — PROJECT / DATE — AMOUNT (bold) / DESCRIPTION (omitted if empty)
+    const ownerLabel = isClient ? clientName : projectName
+    // First block: INCOME (bold) / INVOICE — OWNER / DATE — AMOUNT (bold) / DESCRIPTION (omitted if empty)
     const lines: string[] = [
       '*INCOME*',
-      `${invoiceCode}${projectName ? ` — ${projectName}` : ''}`,
+      `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
       `${dateStr} — *${amountStr}*`,
     ]
     if (inc.description && inc.description.trim()) lines.push(inc.description.trim())
@@ -783,9 +799,9 @@ export default function EditInvoicePage() {
   }
 
   async function sendIncomeReports() {
-    if (!incomeReports) { router.push(`/rides/${rideId}/invoices`); return }
+    if (!incomeReports) { router.push(basePath); return }
     const chosen = incomeReports.filter(r => r.report)
-    if (chosen.length === 0) { router.push(`/rides/${rideId}/invoices`); return }
+    if (chosen.length === 0) { router.push(basePath); return }
     setSendingReports(true)
     let failures = 0
     for (const inc of chosen) {
@@ -807,7 +823,7 @@ export default function EditInvoicePage() {
     setSendingReports(false)
     if (failures > 0) alert(`${failures} report(s) failed to send. The income was still saved.`)
     setIncomeReports(null)
-    router.push(`/rides/${rideId}/invoices`)
+    router.push(basePath)
   }
 
   const expenseRows: { type: 'single' | 'group'; index?: number; groupId?: string; groupExpenses?: { index: number; expense: Expense }[]; expense?: Expense }[] = []
@@ -1033,7 +1049,7 @@ export default function EditInvoicePage() {
       )}
 
       <h1 className="text-4xl font-bold mb-2">EDIT INVOICE</h1>
-      <p className="text-gray-400 text-xl mb-8">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
+      <p className="text-gray-400 text-xl mb-8">{isClient ? `${clientNumber ?? ''}${clientName ? ` — ${clientName}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
@@ -1059,10 +1075,12 @@ export default function EditInvoicePage() {
         <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
         {isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
 
-        <div>
-          <label className="block mb-2 text-lg font-bold">MILEAGE</label>
-          <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
-        </div>
+        {!isClient && (
+          <div>
+            <label className="block mb-2 text-lg font-bold">MILEAGE</label>
+            <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
+          </div>
+        )}
 
         <div>
           <label className="block mb-2 text-lg font-bold">SERVICE</label>
@@ -1359,6 +1377,7 @@ export default function EditInvoicePage() {
         {isValidDate(conclusionDate) && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
         {/* PARTS TO STOCK */}
+        {!isClient && (
         <div>
           <label className="block mb-3 text-lg font-bold">PARTS TO STOCK</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1408,6 +1427,7 @@ export default function EditInvoicePage() {
             )}
           </div>
         </div>
+        )}
 
         {/* EXPENSES */}
         <div>
@@ -1627,7 +1647,7 @@ export default function EditInvoicePage() {
         </div>
 
         <button onClick={saveInvoice} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
-        <a href={`/rides/${rideId}/invoices`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
@@ -29,6 +29,7 @@ type Client = {
   city: string | null
   state: string | null
   zip: string | null
+  client_number: number | null
 }
 
 type Part = { id: string; description: string; unit_price: number; quantity: number }
@@ -69,8 +70,11 @@ function getFeedBadge(feedStatus: string | null) {
 
 export default function ViewInvoicePage() {
   const params = useParams()
-  const rideId = String(params.id)
+  const pathname = usePathname()
+  const ownerId = String(params.id)
   const invoiceId = String(params.invoiceId)
+  const isClient = (pathname || '').includes('/clients/')
+  const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
 
   const [loading, setLoading] = useState(true)
   const [projectCode, setProjectCode] = useState('')
@@ -88,14 +92,22 @@ export default function ViewInvoicePage() {
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
-    const { data: rideData } = await supabase.from('rides').select('*').eq('id', rideId).single()
-    if (rideData) {
-      setRide(rideData)
-      setProjectCode(rideData.project_code || '')
-      setProjectName(rideData.project_name || '')
-      if (rideData.client_id) {
-        const { data: clientData } = await supabase.from('clients').select('*').eq('id', rideData.client_id).single()
-        if (clientData) setClient(clientData)
+    if (isClient) {
+      const { data: clientData } = await supabase.from('clients').select('*').eq('id', ownerId).single()
+      if (clientData) {
+        setClient(clientData)
+        setProjectName(clientData.name || '')
+      }
+    } else {
+      const { data: rideData } = await supabase.from('rides').select('*').eq('id', ownerId).single()
+      if (rideData) {
+        setRide(rideData)
+        setProjectCode(rideData.project_code || '')
+        setProjectName(rideData.project_name || '')
+        if (rideData.client_id) {
+          const { data: clientData } = await supabase.from('clients').select('*').eq('id', rideData.client_id).single()
+          if (clientData) setClient(clientData)
+        }
       }
     }
     const { data: inv } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
@@ -258,14 +270,14 @@ export default function ViewInvoicePage() {
                   {client.email && <div className="pi-info-row"><span className="pi-info-label">E-Mail:</span><span className="pi-info-value">{client.email}</span></div>}
                 </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>No client linked</div>}
               </div>
-              <div className="pi-info-block">
+              {!isClient && <div className="pi-info-block">
                 <div className="pi-info-title">Vehicle{ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}</div>
                 {(ride?.manufacturer || ride?.brand) && <div className="pi-info-row"><span className="pi-info-label">Make / Brand:</span><span className="pi-info-value">{[ride?.manufacturer, ride?.brand].filter(Boolean).join(' / ')}</span></div>}
                 {ride?.model && <div className="pi-info-row"><span className="pi-info-label">Model:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
                 {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">Year / VIN:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
                 {(ride?.color || ride?.plate || invoice.mileage) && <div className="pi-info-row"><span className="pi-info-label">Color / Plate / Mi:</span><span className="pi-info-value">{[ride?.color, ride?.plate, invoice.mileage ? Number(invoice.mileage).toLocaleString('en-US') : null].filter(Boolean).join(' — ')}</span></div>}
                 {(ride?.special_edition || invoice.service) && <div className="pi-info-row"><span className="pi-info-label">Pack / Service:</span><span className="pi-info-value">{[ride?.special_edition, invoice.service].filter(Boolean).join(' — ')}</span></div>}
-              </div>
+              </div>}
             </div>
 
             {parts.length > 0 && <div className="pi-sec">
@@ -370,12 +382,12 @@ export default function ViewInvoicePage() {
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
             </div>
-            <p className="text-gray-400 text-xl">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
+            <p className="text-gray-400 text-xl">{isClient ? `${client?.client_number ?? ''}${client?.name ? ` — ${client.name}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
           </div>
           <div className="flex gap-3">
             <button onClick={handlePrint} className="bg-white text-black hover:bg-gray-200 px-6 py-4 rounded-2xl text-xl font-bold">🖨 PRINT</button>
-            <Link href={`/rides/${rideId}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
-            <Link href={`/rides/${rideId}/invoices/edit/${invoiceId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
+            <Link href={basePath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+            <Link href={`${basePath}/edit/${invoiceId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
           </div>
         </div>
 
