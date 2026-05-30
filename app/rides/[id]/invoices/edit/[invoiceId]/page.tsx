@@ -857,16 +857,14 @@ export default function EditInvoicePage() {
     ]
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
 
-    // Grouped purchase (more than 1 item): blank line then each item as a bullet.
-    if (exp.items.length > 1) {
-      lines.push('')
-      exp.items.forEach(it => {
-        const qty = parseFloat(it.quantity) || 1
-        const price = parseFloat(it.amount) || 0
-        const itemTotal = price * qty
-        lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
-      })
-    }
+    // Item list (one bullet per item) — shown for single and grouped purchases alike.
+    lines.push('')
+    exp.items.forEach(it => {
+      const qty = parseFloat(it.quantity) || 1
+      const price = parseFloat(it.amount) || 0
+      const itemTotal = price * qty
+      lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
+    })
 
     // Only on a REAL-TIME ride invoice: blank line, then DUE / CURRENT / FINAL (same as income).
     if (!isClient && feedStatus === 'REAL_TIME') {
