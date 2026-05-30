@@ -16,6 +16,7 @@ type StockItem = { id: string; description: string; quantity: number; unit_price
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string; description: string }
 type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
+type ExpenseReport = { item: string; supplier: string; amount: string; quantity: string; date: string; receipt_url: string; report: boolean }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -147,6 +148,7 @@ export default function EditInvoicePage() {
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
   // Holds "PROJECT_CODE — Project Name" for ride context; used for stock inventory tagging.
   const rideNameRef = useRef('')
@@ -759,16 +761,33 @@ export default function EditInvoicePage() {
       if (e) { alert(e.message); return }
     }
 
-    // If new incomes were added, ask which to report on WhatsApp before leaving.
-    if (newPayments.length > 0) {
-      setIncomeReports(newPayments.map(p => ({
-        amount: p.amount,
-        source: p.source,
-        date: p.payment_date,
-        receipt_url: p.receipt_url || '',
-        description: p.description || '',
-        report: true,
-      })))
+    // Build the WhatsApp report queues for any newly-added incomes and expenses.
+    const pendingIncomes: IncomeReport[] = newPayments.map(p => ({
+      amount: p.amount,
+      source: p.source,
+      date: p.payment_date,
+      receipt_url: p.receipt_url || '',
+      description: p.description || '',
+      report: true,
+    }))
+    const pendingExpenses: ExpenseReport[] = newExpenses.map(ex => ({
+      item: ex.item,
+      supplier: ex.supplier,
+      amount: ex.amount,
+      quantity: ex.quantity || '1',
+      date: ex.payment_date,
+      receipt_url: ex.receipt_urls[0] || '',
+      report: true,
+    }))
+
+    // Ask about incomes first (if any), then expenses. If neither, just leave.
+    if (pendingIncomes.length > 0) {
+      if (pendingExpenses.length > 0) setExpenseReports(pendingExpenses)
+      setIncomeReports(pendingIncomes)
+      return
+    }
+    if (pendingExpenses.length > 0) {
+      setExpenseReports(pendingExpenses)
       return
     }
 
@@ -798,10 +817,32 @@ export default function EditInvoicePage() {
     return lines.join('\n')
   }
 
+  function buildExpenseCaption(exp: ExpenseReport) {
+    const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
+    const lineTotal = (parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1)
+    const amountStr = formatUSD(lineTotal)
+    const ownerLabel = isClient ? clientName : projectName
+    // EXPENSE (bold) / INVOICE — OWNER / DATE — AMOUNT (bold) / SUPPLIER
+    const lines: string[] = [
+      '*EXPENSE*',
+      `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+
+    // Only on a REAL-TIME ride invoice: blank line, then DUE / CURRENT / FINAL (same as income).
+    if (!isClient && feedStatus === 'REAL_TIME') {
+      const due = balance < 0 ? -balance : 0
+      lines.push('')
+      lines.push(`DUE: ${formatUSD(due)}`)
+      lines.push(`*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
+      lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
+    }
+    return lines.join('\n')
+  }
+
   async function sendIncomeReports() {
-    if (!incomeReports) { router.push(basePath); return }
-    const chosen = incomeReports.filter(r => r.report)
-    if (chosen.length === 0) { router.push(basePath); return }
+    const chosen = (incomeReports || []).filter(r => r.report)
     setSendingReports(true)
     let failures = 0
     for (const inc of chosen) {
@@ -821,8 +862,35 @@ export default function EditInvoicePage() {
       }
     }
     setSendingReports(false)
-    if (failures > 0) alert(`${failures} report(s) failed to send. The income was still saved.`)
+    if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.`)
     setIncomeReports(null)
+    // If expenses are also queued, the expense modal is already set and will now show.
+    if (!expenseReports) router.push(basePath)
+  }
+
+  async function sendExpenseReports() {
+    const chosen = (expenseReports || []).filter(r => r.report)
+    setSendingReports(true)
+    let failures = 0
+    for (const exp of chosen) {
+      const caption = buildExpenseCaption(exp)
+      const payload: any = { body: caption }
+      if (exp.receipt_url) { payload.documentUrl = exp.receipt_url; payload.filename = `expense-${invoiceCode}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}` }
+      try {
+        const res = await fetch('/api/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.`)
+    setExpenseReports(null)
     router.push(basePath)
   }
 
@@ -956,6 +1024,46 @@ export default function EditInvoicePage() {
                 {incomeReports.filter(r => r.report).length} of {incomeReports.length} will be reported
               </div>
               <button onClick={sendIncomeReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : (expenseReports ? 'NEXT' : 'DONE')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!incomeReports && expenseReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose which new expenses to report to the WhatsApp group.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {expenseReports.map((exp, i) => {
+                const lineTotal = (parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1)
+                return (
+                  <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold">EXPENSE — {formatUSD(lineTotal)}</p>
+                      <p className="text-sm text-gray-400 truncate">{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                      <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
+                      <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
+                    </div>
+                    <button
+                      onClick={() => { const a = [...expenseReports]; a[i] = { ...a[i], report: !a[i].report }; setExpenseReports(a) }}
+                      className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${exp.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                    >
+                      {exp.report ? 'REPORT: YES' : 'REPORT: NO'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {expenseReports.filter(r => r.report).length} of {expenseReports.length} will be reported
+              </div>
+              <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
                 {sendingReports ? 'SENDING...' : 'DONE'}
               </button>
             </div>
