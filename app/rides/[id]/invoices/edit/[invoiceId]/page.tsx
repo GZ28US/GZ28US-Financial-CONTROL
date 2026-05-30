@@ -20,6 +20,10 @@ type IncomeReport = { amount: string; source: string; date: string; receipt_url:
 // (multiple items sharing the same purchase_group). Either way it sends ONE WhatsApp message.
 type ExpenseReportItem = { item: string; amount: string; quantity: string }
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
+// When a scan looks like a previously-registered document we surface this object
+// to the duplicate warning modal. The caller passes a `proceed` callback that's
+// invoked if the user clicks REGISTER ANYWAY.
+type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -153,6 +157,7 @@ export default function EditInvoicePage() {
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
   // Holds "PROJECT_CODE — Project Name" for ride context; used for stock inventory tagging.
   const rideNameRef = useRef('')
 
@@ -283,12 +288,44 @@ export default function EditInvoicePage() {
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
-      setScannedPurchase({
-        supplier: parsed.supplier || '',
-        date: parsed.date || '',
-        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1') })),
-        receiptUrl,
-      })
+
+      const supplier = String(parsed.supplier || '').trim()
+      const date = String(parsed.date || '')
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1') }))
+      const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+
+      const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
+
+      // Duplicate check: any existing purchase (anywhere in invoice_expenses) with
+      // the same supplier + date + total is treated as a possible re-scan.
+      if (supplier && date && total > 0) {
+        const { data: existing } = await supabase
+          .from('invoice_expenses')
+          .select('id, supplier, payment_date, price, quantity, purchase_group')
+          .ilike('supplier', supplier)
+          .eq('payment_date', date)
+
+        if (existing && existing.length > 0) {
+          const groupTotals = new Map<string, number>()
+          existing.forEach(e => {
+            const key = e.purchase_group || e.id
+            const lineT = (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1)
+            groupTotals.set(key, (groupTotals.get(key) || 0) + lineT)
+          })
+          const matches = Array.from(groupTotals.values()).some(t => Math.abs(t - total) < 0.01)
+          if (matches) {
+            setScanningPurchase(false)
+            setDuplicateWarning({
+              title: 'POSSIBLE DUPLICATE PURCHASE',
+              details: `A purchase from "${supplier}" on ${formatDate(date)} for ${formatUSD(total)} already exists.\n\nIs this the same receipt being scanned again?`,
+              proceed: openReview,
+            })
+            return
+          }
+        }
+      }
+
+      openReview()
     } catch (err) {
       console.error(err)
       alert('Failed to scan receipt. Please try again or add items manually.')
@@ -330,7 +367,39 @@ export default function EditInvoicePage() {
         description: '',
       }))
       if (list.length === 0) list.push({ amount: '', source: '', date: '', receipt_url: receiptUrl, description: '' })
-      setScannedPayments(list)
+
+      const openReview = () => setScannedPayments(list)
+
+      // Duplicate check: any scanned payment that matches an existing invoice_payments
+      // row with the same amount + date + source is flagged.
+      const matchedRows: string[] = []
+      for (const p of list) {
+        const amount = parseFloat(p.amount) || 0
+        if (amount <= 0 || !p.date) continue
+        const { data: existing } = await supabase
+          .from('invoice_payments')
+          .select('amount, payment_date, source')
+          .eq('payment_date', p.date)
+        const match = (existing || []).find(e =>
+          Math.abs((parseFloat(e.amount) || 0) - amount) < 0.01 &&
+          (e.source || '') === (p.source || '')
+        )
+        if (match) {
+          matchedRows.push(`${formatUSD(amount)}${p.source ? ` (${p.source})` : ''} on ${formatDate(p.date)}`)
+        }
+      }
+
+      if (matchedRows.length > 0) {
+        setScanningPayment(false)
+        setDuplicateWarning({
+          title: 'POSSIBLE DUPLICATE INCOME',
+          details: `The following income(s) appear to already exist:\n\n${matchedRows.map(s => `• ${s}`).join('\n')}\n\nIs this the same document being scanned again?`,
+          proceed: openReview,
+        })
+        return
+      }
+
+      openReview()
     } catch (err) {
       console.error(err)
       alert('Failed to scan income. Please try again or add it manually.')
@@ -1182,6 +1251,19 @@ export default function EditInvoicePage() {
             <div className="flex gap-4">
               <button onClick={() => setSendToStockConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => confirmSendToStock(sendToStockConfirm)} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">CONFIRM</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {duplicateWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-yellow-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <h2 className="text-2xl font-bold text-yellow-400">⚠ {duplicateWarning.title}</h2>
+            <p className="text-gray-300 whitespace-pre-wrap text-base">{duplicateWarning.details}</p>
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => setDuplicateWarning(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={() => { const p = duplicateWarning.proceed; setDuplicateWarning(null); p() }} className="flex-1 bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">REGISTER ANYWAY</button>
             </div>
           </div>
         </div>
