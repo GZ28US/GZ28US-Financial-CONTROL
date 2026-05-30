@@ -16,7 +16,10 @@ type StockItem = { id: string; description: string; quantity: number; unit_price
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string; description: string }
 type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
-type ExpenseReport = { item: string; supplier: string; amount: string; quantity: string; date: string; receipt_url: string; report: boolean }
+// An ExpenseReport now represents EITHER a single expense OR a whole grouped purchase
+// (multiple items sharing the same purchase_group). Either way it sends ONE WhatsApp message.
+type ExpenseReportItem = { item: string; amount: string; quantity: string }
+type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -770,15 +773,39 @@ export default function EditInvoicePage() {
       description: p.description || '',
       report: true,
     }))
-    const pendingExpenses: ExpenseReport[] = newExpenses.map(ex => ({
-      item: ex.item,
-      supplier: ex.supplier,
-      amount: ex.amount,
-      quantity: ex.quantity || '1',
-      date: ex.payment_date,
-      receipt_url: ex.receipt_urls[0] || '',
-      report: true,
-    }))
+
+    // For expenses, group by purchase_group: a single scanned receipt with multiple
+    // items becomes ONE WhatsApp report (listing each item beneath the supplier),
+    // not one report per item. Standalone expenses each become their own report.
+    const groupMap = new Map<string, ExpenseReport>()
+    const pendingExpenses: ExpenseReport[] = []
+    newExpenses.forEach(ex => {
+      const item: ExpenseReportItem = { item: ex.item, amount: ex.amount, quantity: ex.quantity || '1' }
+      if (ex.purchase_group) {
+        const existing = groupMap.get(ex.purchase_group)
+        if (existing) {
+          existing.items.push(item)
+        } else {
+          const rep: ExpenseReport = {
+            supplier: ex.supplier,
+            date: ex.payment_date,
+            receipt_url: ex.receipt_urls[0] || '',
+            items: [item],
+            report: true,
+          }
+          groupMap.set(ex.purchase_group, rep)
+          pendingExpenses.push(rep)
+        }
+      } else {
+        pendingExpenses.push({
+          supplier: ex.supplier,
+          date: ex.payment_date,
+          receipt_url: ex.receipt_urls[0] || '',
+          items: [item],
+          report: true,
+        })
+      }
+    })
 
     // Ask about incomes first (if any), then expenses. If neither, just leave.
     if (pendingIncomes.length > 0) {
@@ -819,16 +846,27 @@ export default function EditInvoicePage() {
 
   function buildExpenseCaption(exp: ExpenseReport) {
     const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
-    const lineTotal = (parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1)
-    const amountStr = formatUSD(lineTotal)
+    const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+    const amountStr = formatUSD(total)
     const ownerLabel = isClient ? clientName : projectName
-    // EXPENSE (bold) / INVOICE — OWNER / DATE — AMOUNT (bold) / SUPPLIER
+    // EXPENSE (bold) / INVOICE — OWNER / DATE — TOTAL (bold) / SUPPLIER
     const lines: string[] = [
       '*EXPENSE*',
       `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
       `${dateStr} — *${amountStr}*`,
     ]
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+
+    // Grouped purchase (more than 1 item): blank line then each item as a bullet.
+    if (exp.items.length > 1) {
+      lines.push('')
+      exp.items.forEach(it => {
+        const qty = parseFloat(it.quantity) || 1
+        const price = parseFloat(it.amount) || 0
+        const itemTotal = price * qty
+        lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
+      })
+    }
 
     // Only on a REAL-TIME ride invoice: blank line, then DUE / CURRENT / FINAL (same as income).
     if (!isClient && feedStatus === 'REAL_TIME') {
@@ -1037,15 +1075,19 @@ export default function EditInvoicePage() {
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
             </div>
-            <p className="text-gray-400 text-base">Choose which new expenses to report to the WhatsApp group.</p>
+            <p className="text-gray-400 text-base">Choose which new expenses to report to the WhatsApp group. Grouped purchases (scanned receipts) are reported as a single message listing all items.</p>
             <div className="overflow-y-auto flex-1 space-y-3">
               {expenseReports.map((exp, i) => {
-                const lineTotal = (parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1)
+                const total = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+                const isGroup = exp.items.length > 1
+                const titleText = isGroup
+                  ? `${exp.supplier || 'Purchase'} — ${exp.items.length} items`
+                  : `${exp.items[0].item}${exp.supplier ? ` — ${exp.supplier}` : ''}`
                 return (
                   <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <p className="text-base font-bold">EXPENSE — {formatUSD(lineTotal)}</p>
-                      <p className="text-sm text-gray-400 truncate">{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                      <p className="text-base font-bold">EXPENSE — {formatUSD(total)}</p>
+                      <p className="text-sm text-gray-400 truncate">{titleText}</p>
                       <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
                       <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
                     </div>
