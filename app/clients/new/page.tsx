@@ -45,6 +45,16 @@ export default function NewClientPage() {
       return
     }
 
+    // Auto-assign the next client_number = current MAX + 1. A first-ever client
+    // (no rows yet) starts at 1.
+    const { data: maxRow } = await supabase
+      .from('clients')
+      .select('client_number')
+      .order('client_number', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle()
+    const nextNumber = (maxRow?.client_number ?? 0) + 1
+
     const { error } = await supabase
       .from('clients')
       .insert({
@@ -56,6 +66,7 @@ export default function NewClientPage() {
         city: form.city,
         state: form.state,
         zip: form.zip,
+        client_number: nextNumber,
       })
 
     if (error) {
