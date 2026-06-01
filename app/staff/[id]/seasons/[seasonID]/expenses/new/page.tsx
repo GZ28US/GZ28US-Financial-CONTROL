@@ -10,12 +10,31 @@ const expenseTypes = ['DAILY', 'WEEKLY', 'MONTHLY', 'SINGLE']
 const expenseSources = ['Regions', 'Cash', 'GZ28BR', 'Humberto']
 const expenseOrigins = ['GZ28US', 'PERSONAL']
 
+// Single report queued after a successful SAVE, drives the WhatsApp modal.
+type ExpenseReport = {
+  supplier: string
+  date: string
+  receipt_url: string
+  description: string
+  type: string
+  origin: string
+  amount: string
+  report: boolean
+}
+
 function getTodayString() {
   const today = new Date()
   const year = today.getFullYear()
   const month = String(today.getMonth() + 1).padStart(2, '0')
   const day = String(today.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
+function formatDate(d: string) {
+  if (!isValidDate(d)) return '—'
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 function parseReceiptUrls(raw: string | null): string[] {
@@ -40,6 +59,10 @@ export default function NewExpensePage() {
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
+
+  // WhatsApp report state — set after a successful SAVE, drives the modal.
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
+  const [sendingReports, setSendingReports] = useState(false)
 
   useEffect(() => { loadInfo() }, [])
 
@@ -95,6 +118,63 @@ export default function NewExpensePage() {
     }])
 
     if (error) { alert(error.message); return }
+
+    // Queue the optional WhatsApp report for this expense.
+    const report: ExpenseReport = {
+      supplier: source,
+      date: type === 'SINGLE' ? expenseDate : '',
+      receipt_url: receiptUrls[0] || '',
+      description,
+      type,
+      origin,
+      amount,
+      report: true,
+    }
+    setExpenseReports([report])
+  }
+
+  function buildExpenseCaption(exp: ExpenseReport) {
+    const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
+    const amt = parseFloat(exp.amount) || 0
+    const amountStr = formatUSD(amt)
+    const lines: string[] = [
+      `*EXPENSE — STAFF*`,
+      `${seasonCode}${staffName ? ` — ${staffName}` : ''}`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (exp.description && exp.description.trim()) lines.push(exp.description.trim())
+    const typeAndOrigin = [exp.type, exp.origin === 'PERSONAL' ? 'PERSONAL' : null].filter(Boolean).join(' — ')
+    if (typeAndOrigin) lines.push(typeAndOrigin)
+    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+    return lines.join('\n')
+  }
+
+  async function sendExpenseReports() {
+    const chosen = (expenseReports || []).filter(r => r.report)
+    setSendingReports(true)
+    let failures = 0
+    for (const exp of chosen) {
+      const caption = buildExpenseCaption(exp)
+      const payload: any = { body: caption }
+      if (exp.receipt_url) {
+        payload.documentUrl = exp.receipt_url
+        payload.filename = `staff-${exp.supplier || 'expense'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
+      }
+      try {
+        const res = await fetch('/api/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.`)
+    setExpenseReports(null)
     router.push(`/staff/${staffId}/seasons/${seasonID}/expenses`)
   }
 
@@ -104,6 +184,47 @@ export default function NewExpensePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+
+      {/* REPORT ON WHATSAPP? */}
+      {expenseReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose whether to report this expense to the WhatsApp group.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {expenseReports.map((exp, i) => {
+                const t = parseFloat(exp.amount) || 0
+                return (
+                  <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold">EXPENSE — STAFF — {formatUSD(t)}</p>
+                      <p className="text-sm text-gray-400 truncate">{exp.description || exp.supplier || 'Expense'}</p>
+                      <p className="text-sm text-gray-400">{exp.type}{exp.origin === 'PERSONAL' ? ' — PERSONAL' : ''}{isValidDate(exp.date) ? ` — ${formatDate(exp.date)}` : ''}</p>
+                      <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
+                    </div>
+                    <button
+                      onClick={() => { const a = [...expenseReports]; a[i] = { ...a[i], report: !a[i].report }; setExpenseReports(a) }}
+                      className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${exp.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                    >
+                      {exp.report ? 'REPORT: YES' : 'REPORT: NO'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {expenseReports.filter(r => r.report).length} of {expenseReports.length} will be reported
+              </div>
+              <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : 'DONE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <h1 className="text-4xl font-bold mb-2">ADD NEW EXPENSE</h1>
       <p className="text-gray-400 text-xl mb-8">{staffName} — {seasonCode}</p>
