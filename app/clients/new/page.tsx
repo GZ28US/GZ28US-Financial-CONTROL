@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Header from '@/components/Header'
 
@@ -24,11 +24,12 @@ export default function NewClientPage() {
     email: '',
     country: 'USA',
     phone: '+1 ',
+    zip: '',
     address: '',
     city: '',
     state: 'FL',
-    zip: '',
   })
+  const [zipLookup, setZipLookup] = useState(false)
 
   function changeCountry(country: string) {
     setForm({
@@ -36,7 +37,58 @@ export default function NewClientPage() {
       country,
       phone: country === 'USA' ? '+1 ' : '+55 ',
       state: country === 'USA' ? 'FL' : 'SP',
+      zip: '',
+      address: '',
+      city: '',
     })
+  }
+
+  // ZIP -> address autofill. USA uses zippopotam.us (city + state). Brazil uses
+  // viacep.com.br (street + city + state). All fields stay editable; failures
+  // are silently ignored so the user can just type manually.
+  useEffect(() => {
+    const digits = form.zip.replace(/\D/g, '')
+    if (form.country === 'USA' && digits.length === 5) lookupUSA(digits)
+    else if (form.country === 'BRAZIL' && digits.length === 8) lookupBrazil(digits)
+  }, [form.zip, form.country])
+
+  async function lookupUSA(zip: string) {
+    setZipLookup(true)
+    try {
+      const res = await fetch(`https://api.zippopotam.us/us/${zip}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const place = data?.places?.[0]
+      if (!place) return
+      const city = place['place name'] || ''
+      const stateAbbr = place['state abbreviation'] || ''
+      setForm(prev => ({
+        ...prev,
+        city: prev.city || city,
+        state: usaStates.includes(stateAbbr) ? stateAbbr : prev.state,
+      }))
+    } catch {}
+    setZipLookup(false)
+  }
+
+  async function lookupBrazil(cep: string) {
+    setZipLookup(true)
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (data?.erro) return
+      const street = data?.logradouro || ''
+      const city = data?.localidade || ''
+      const uf = data?.uf || ''
+      setForm(prev => ({
+        ...prev,
+        address: prev.address || street,
+        city: prev.city || city,
+        state: brazilStates.includes(uf) ? uf : prev.state,
+      }))
+    } catch {}
+    setZipLookup(false)
   }
 
   async function saveClient() {
@@ -77,121 +129,103 @@ export default function NewClientPage() {
     window.location.href = '/clients'
   }
 
-  const stateOptions =
-    form.country === 'USA'
-      ? usaStates
-      : brazilStates
+  const stateOptions = form.country === 'USA' ? usaStates : brazilStates
+  const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      <h2 className="text-4xl font-bold mb-8">
-        ADD A NEW CLIENT
-      </h2>
+      <h2 className="text-4xl font-bold mb-8">ADD A NEW CLIENT</h2>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
-        <input
-          placeholder="NAME"
-          value={form.name}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              name: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        />
 
-        <input
-          placeholder="EMAIL"
-          value={form.email}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              email: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        />
+        <div>
+          <label className="block mb-2 text-lg font-bold">NAME</label>
+          <input
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder="Full name"
+          />
+        </div>
 
-        <select
-          value={form.country}
-          onChange={(e) => changeCountry(e.target.value)}
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        >
-          <option value="USA">USA</option>
-          <option value="BRAZIL">BRAZIL</option>
-        </select>
+        <div>
+          <label className="block mb-2 text-lg font-bold">EMAIL</label>
+          <input
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder="name@example.com"
+          />
+        </div>
 
-        <input
-          placeholder={
-            form.country === 'USA'
-              ? '+1 (407) 123-4567'
-              : '+55 (62) 99999-9999'
-          }
-          value={form.phone}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              phone: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        />
+        <div>
+          <label className="block mb-2 text-lg font-bold">COUNTRY</label>
+          <select
+            value={form.country}
+            onChange={(e) => changeCountry(e.target.value)}
+            className={`${inputClass} w-full`}
+          >
+            <option value="USA">USA</option>
+            <option value="BRAZIL">BRAZIL</option>
+          </select>
+        </div>
 
-        <input
-          placeholder="ADDRESS"
-          value={form.address}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              address: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        />
+        <div>
+          <label className="block mb-2 text-lg font-bold">PHONE</label>
+          <input
+            value={form.phone}
+            onChange={(e) => setForm({ ...form, phone: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder={form.country === 'USA' ? '+1 (407) 123-4567' : '+55 (62) 99999-9999'}
+          />
+        </div>
 
-        <input
-          placeholder="CITY"
-          value={form.city}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              city: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        />
+        <div>
+          <label className="block mb-2 text-lg font-bold">
+            ZIP {zipLookup && <span className="text-sm text-gray-400 font-normal">— looking up...</span>}
+          </label>
+          <input
+            value={form.zip}
+            onChange={(e) => setForm({ ...form, zip: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder={form.country === 'USA' ? '32837' : '74000-000'}
+          />
+        </div>
 
-        <select
-          value={form.state}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              state: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        >
-          {stateOptions.map((state) => (
-            <option key={state} value={state}>
-              {state}
-            </option>
-          ))}
-        </select>
+        <div>
+          <label className="block mb-2 text-lg font-bold">ADDRESS</label>
+          <input
+            value={form.address}
+            onChange={(e) => setForm({ ...form, address: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder="Street, number, complement"
+          />
+        </div>
 
-        <input
-          placeholder="ZIP"
-          value={form.zip}
-          onChange={(e) =>
-            setForm({
-              ...form,
-              zip: e.target.value,
-            })
-          }
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
-        />
+        <div>
+          <label className="block mb-2 text-lg font-bold">CITY</label>
+          <input
+            value={form.city}
+            onChange={(e) => setForm({ ...form, city: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder="City"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">STATE</label>
+          <select
+            value={form.state}
+            onChange={(e) => setForm({ ...form, state: e.target.value })}
+            className={`${inputClass} w-full`}
+          >
+            {stateOptions.map((state) => (
+              <option key={state} value={state}>{state}</option>
+            ))}
+          </select>
+        </div>
 
         <button
           onClick={saveClient}
@@ -200,12 +234,7 @@ export default function NewClientPage() {
           SAVE CLIENT
         </button>
 
-        <a
-          href="/clients"
-          className="text-gray-400 text-xl"
-        >
-          Cancel
-        </a>
+        <a href="/clients" className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )
