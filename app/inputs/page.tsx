@@ -18,6 +18,20 @@ type Input = {
   purchase_group?: string | null
 }
 
+// After confirming a scanned purchase we queue an ExpenseReport for the optional
+// WhatsApp share. One scan = one report (which can list multiple items).
+type ExpenseReportItem = { item: string; amount: string; quantity: string }
+type ExpenseReport = {
+  category: string // STOCK or CONSUMPTION
+  supplier: string
+  date: string
+  receipt_url: string
+  items: ExpenseReportItem[]
+  report: boolean
+}
+// Surfaced when a scan looks like a previously-registered purchase.
+type DuplicateInfo = { title: string; details: string; proceed: () => void }
+
 function formatUSD(v: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
 }
@@ -52,6 +66,11 @@ export default function InputsPage() {
     items: { description: string; amount: string; quantity: string }[]
     receiptUrl: string
   } | null>(null)
+
+  // WhatsApp + duplicate-warning state
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
+  const [sendingReports, setSendingReports] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
 
   useEffect(() => { loadInputs() }, [])
 
@@ -110,17 +129,47 @@ export default function InputsPage() {
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
 
-      setScannedPurchase({
-        supplier: parsed.supplier || '',
-        date: parsed.date || '',
-        category: 'STOCK',
-        items: (parsed.items || []).map((i: any) => ({
-          description: String(i.description || ''),
-          amount: String(i.amount || '0'),
-          quantity: '1',
-        })),
-        receiptUrl,
-      })
+      const supplier = String(parsed.supplier || '').trim()
+      const date = String(parsed.date || '')
+      const items = (parsed.items || []).map((i: any) => ({
+        description: String(i.description || ''),
+        amount: String(i.amount || '0'),
+        quantity: '1',
+      }))
+      const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+
+      const openReview = () => setScannedPurchase({ supplier, date, category: 'STOCK', items, receiptUrl })
+
+      // Duplicate check: any existing inputs row with the same supplier+date+total
+      // (summed per purchase_group) is treated as a possible re-scan.
+      if (supplier && date && total > 0) {
+        const { data: existing } = await supabase
+          .from('inputs')
+          .select('id, supplier, purchase_date, unit_price, quantity, purchase_group')
+          .ilike('supplier', supplier)
+          .eq('purchase_date', date)
+
+        if (existing && existing.length > 0) {
+          const groupTotals = new Map<string, number>()
+          existing.forEach(e => {
+            const key = e.purchase_group || e.id
+            const lineT = (parseFloat(e.unit_price) || 0) * (parseFloat(e.quantity) || 1)
+            groupTotals.set(key, (groupTotals.get(key) || 0) + lineT)
+          })
+          const matches = Array.from(groupTotals.values()).some(t => Math.abs(t - total) < 0.01)
+          if (matches) {
+            setScanningPurchase(false)
+            setDuplicateWarning({
+              title: 'POSSIBLE DUPLICATE PURCHASE',
+              details: `A purchase from "${supplier}" on ${formatDate(date)} for ${formatUSD(total)} already exists in inputs.\n\nIs this the same receipt being scanned again?`,
+              proceed: openReview,
+            })
+            return
+          }
+        }
+      }
+
+      openReview()
     } catch (err) {
       console.error(err)
       alert('Failed to scan receipt. Please try again.')
@@ -144,8 +193,70 @@ export default function InputsPage() {
       }))
     )
     if (error) { alert(error.message); return }
+
+    // Queue the optional WhatsApp report for this purchase.
+    const report: ExpenseReport = {
+      category: scannedPurchase.category,
+      supplier: scannedPurchase.supplier,
+      date: scannedPurchase.date,
+      receipt_url: scannedPurchase.receiptUrl,
+      items: scannedPurchase.items.map(it => ({ item: it.description, amount: it.amount, quantity: it.quantity })),
+      report: true,
+    }
+
     setScannedPurchase(null)
+    setExpenseReports([report])
     loadInputs()
+  }
+
+  function buildExpenseCaption(exp: ExpenseReport) {
+    const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
+    const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+    const amountStr = formatUSD(total)
+    const lines: string[] = [
+      `*EXPENSE — ${exp.category}*`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+
+    // Item bullets — always shown, single or multiple.
+    lines.push('')
+    exp.items.forEach(it => {
+      const qty = parseFloat(it.quantity) || 1
+      const price = parseFloat(it.amount) || 0
+      const itemTotal = price * qty
+      lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
+    })
+
+    return lines.join('\n')
+  }
+
+  async function sendExpenseReports() {
+    const chosen = (expenseReports || []).filter(r => r.report)
+    setSendingReports(true)
+    let failures = 0
+    for (const exp of chosen) {
+      const caption = buildExpenseCaption(exp)
+      const payload: any = { body: caption }
+      if (exp.receipt_url) {
+        payload.documentUrl = exp.receipt_url
+        payload.filename = `expense-${exp.supplier || 'purchase'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
+      }
+      try {
+        const res = await fetch('/api/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The purchase was still saved.`)
+    setExpenseReports(null)
   }
 
   // Hide stock items with 0 quantity
@@ -185,6 +296,20 @@ export default function InputsPage() {
             <div className="flex gap-4">
               <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => removeInput(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DUPLICATE WARNING */}
+      {duplicateWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-yellow-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <h2 className="text-2xl font-bold text-yellow-400">⚠ {duplicateWarning.title}</h2>
+            <p className="text-gray-300 whitespace-pre-wrap text-base">{duplicateWarning.details}</p>
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => setDuplicateWarning(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={() => { const p = duplicateWarning.proceed; setDuplicateWarning(null); p() }} className="flex-1 bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">REGISTER ANYWAY</button>
             </div>
           </div>
         </div>
@@ -240,6 +365,48 @@ export default function InputsPage() {
         </div>
       )}
 
+      {/* REPORT ON WHATSAPP? */}
+      {expenseReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose whether to report this purchase to the WhatsApp group.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {expenseReports.map((exp, i) => {
+                const total = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+                const titleText = `${exp.supplier || 'Purchase'} — ${exp.items.length} item${exp.items.length === 1 ? '' : 's'}`
+                return (
+                  <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold">EXPENSE — {exp.category} — {formatUSD(total)}</p>
+                      <p className="text-sm text-gray-400 truncate">{titleText}</p>
+                      <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
+                      <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
+                    </div>
+                    <button
+                      onClick={() => { const a = [...expenseReports]; a[i] = { ...a[i], report: !a[i].report }; setExpenseReports(a) }}
+                      className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${exp.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                    >
+                      {exp.report ? 'REPORT: YES' : 'REPORT: NO'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {expenseReports.filter(r => r.report).length} of {expenseReports.length} will be reported
+              </div>
+              <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : 'DONE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SCANNING OVERLAY */}
       {scanningPurchase && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
@@ -254,7 +421,7 @@ export default function InputsPage() {
         <h1 className="text-4xl font-bold">INPUTS ({visibleInputs.length})</h1>
         <div className="flex gap-3">
           <label className="bg-indigo-700 hover:bg-indigo-600 px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer">
-            🧾 ADD A NEW PURCHASE
+            🧾 SCAN A NEW INPUT
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
           </label>
           <Link href="/inputs/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INPUT</Link>

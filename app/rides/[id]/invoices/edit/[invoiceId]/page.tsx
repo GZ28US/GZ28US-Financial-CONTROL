@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useState, useRef } from 'react'
+import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
@@ -16,6 +16,14 @@ type StockItem = { id: string; description: string; quantity: number; unit_price
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string; description: string }
 type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
+// An ExpenseReport now represents EITHER a single expense OR a whole grouped purchase
+// (multiple items sharing the same purchase_group). Either way it sends ONE WhatsApp message.
+type ExpenseReportItem = { item: string; amount: string; quantity: string }
+type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
+// When a scan looks like a previously-registered document we surface this object
+// to the duplicate warning modal. The caller passes a `proceed` callback that's
+// invoked if the user clicks REGISTER ANYWAY.
+type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
@@ -83,12 +91,18 @@ function sortExpensesByDate(rows: Expense[]): Expense[] {
 export default function EditInvoicePage() {
   const params = useParams()
   const router = useRouter()
-  const rideId = String(params.id)
+  const pathname = usePathname()
+  const ownerId = String(params.id)
   const invoiceId = String(params.invoiceId)
+  // Context: client personal invoice when URL is /clients/..., otherwise ride invoice.
+  const isClient = (pathname || '').includes('/clients/')
+  const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
 
   const [loading, setLoading] = useState(true)
   const [projectCode, setProjectCode] = useState('')
   const [projectName, setProjectName] = useState('')
+  const [clientName, setClientName] = useState('')
+  const [clientNumber, setClientNumber] = useState<number | null>(null)
   const [invoiceCode, setInvoiceCode] = useState('')
   const [hiringDate, setHiringDate] = useState('')
   const [entryDate, setEntryDate] = useState('')
@@ -141,19 +155,30 @@ export default function EditInvoicePage() {
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
+  // Holds "PROJECT_CODE — Project Name" for ride context; used for stock inventory tagging.
+  const rideNameRef = useRef('')
 
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
-    const { data: rideData } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
-    const pCode = rideData?.project_code || ''
-    const pName = rideData?.project_name || ''
-    setProjectCode(pCode)
-    setProjectName(pName)
+    if (isClient) {
+      const { data: clientData } = await supabase.from('clients').select('name, client_number').eq('id', ownerId).single()
+      setClientName(clientData?.name || '')
+      setClientNumber(clientData?.client_number ?? null)
+    } else {
+      const { data: rideData } = await supabase.from('rides').select('project_code, project_name').eq('id', ownerId).single()
+      const pCode = rideData?.project_code || ''
+      const pName = rideData?.project_name || ''
+      setProjectCode(pCode)
+      setProjectName(pName)
+      rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
+    }
 
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
-    if (error || !data) { alert('Invoice not found'); router.push(`/rides/${rideId}/invoices`); return }
+    if (error || !data) { alert('Invoice not found'); router.push(basePath); return }
     setInvoiceCode(data.invoice_code || '')
     setHiringDate(data.hiring_date || '')
     setEntryDate(data.entry_date || '')
@@ -194,7 +219,7 @@ export default function EditInvoicePage() {
     }
 
     const iCode = data.invoice_code || ''
-    const rName = pCode + (pName ? ` — ${pName}` : '')
+    const rName = isClient ? iCode : rideNameRef.current
     const prefix = `From ${iCode} — ${rName}`
     const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (stockHistory) {
@@ -242,7 +267,7 @@ export default function EditInvoicePage() {
     setScanningPurchase(true)
     try {
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/purchases/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${ownerId}/purchases/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (uploadError) { alert(uploadError.message); setScanningPurchase(false); return }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
@@ -263,12 +288,44 @@ export default function EditInvoicePage() {
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
-      setScannedPurchase({
-        supplier: parsed.supplier || '',
-        date: parsed.date || '',
-        items: (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1') })),
-        receiptUrl,
-      })
+
+      const supplier = String(parsed.supplier || '').trim()
+      const date = String(parsed.date || '')
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1') }))
+      const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+
+      const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
+
+      // Duplicate check: any existing purchase (anywhere in invoice_expenses) with
+      // the same supplier + date + total is treated as a possible re-scan.
+      if (supplier && date && total > 0) {
+        const { data: existing } = await supabase
+          .from('invoice_expenses')
+          .select('id, supplier, payment_date, price, quantity, purchase_group')
+          .ilike('supplier', supplier)
+          .eq('payment_date', date)
+
+        if (existing && existing.length > 0) {
+          const groupTotals = new Map<string, number>()
+          existing.forEach(e => {
+            const key = e.purchase_group || e.id
+            const lineT = (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1)
+            groupTotals.set(key, (groupTotals.get(key) || 0) + lineT)
+          })
+          const matches = Array.from(groupTotals.values()).some(t => Math.abs(t - total) < 0.01)
+          if (matches) {
+            setScanningPurchase(false)
+            setDuplicateWarning({
+              title: 'POSSIBLE DUPLICATE PURCHASE',
+              details: `A purchase from "${supplier}" on ${formatDate(date)} for ${formatUSD(total)} already exists.\n\nIs this the same receipt being scanned again?`,
+              proceed: openReview,
+            })
+            return
+          }
+        }
+      }
+
+      openReview()
     } catch (err) {
       console.error(err)
       alert('Failed to scan receipt. Please try again or add items manually.')
@@ -281,7 +338,7 @@ export default function EditInvoicePage() {
     try {
       // Store the scanned income document so it can be attached to the WhatsApp report.
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${ownerId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (uploadError) { alert(uploadError.message); setScanningPayment(false); return }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
@@ -310,7 +367,39 @@ export default function EditInvoicePage() {
         description: '',
       }))
       if (list.length === 0) list.push({ amount: '', source: '', date: '', receipt_url: receiptUrl, description: '' })
-      setScannedPayments(list)
+
+      const openReview = () => setScannedPayments(list)
+
+      // Duplicate check: any scanned payment that matches an existing invoice_payments
+      // row with the same amount + date + source is flagged.
+      const matchedRows: string[] = []
+      for (const p of list) {
+        const amount = parseFloat(p.amount) || 0
+        if (amount <= 0 || !p.date) continue
+        const { data: existing } = await supabase
+          .from('invoice_payments')
+          .select('amount, payment_date, source')
+          .eq('payment_date', p.date)
+        const match = (existing || []).find(e =>
+          Math.abs((parseFloat(e.amount) || 0) - amount) < 0.01 &&
+          (e.source || '') === (p.source || '')
+        )
+        if (match) {
+          matchedRows.push(`${formatUSD(amount)}${p.source ? ` (${p.source})` : ''} on ${formatDate(p.date)}`)
+        }
+      }
+
+      if (matchedRows.length > 0) {
+        setScanningPayment(false)
+        setDuplicateWarning({
+          title: 'POSSIBLE DUPLICATE INCOME',
+          details: `The following income(s) appear to already exist:\n\n${matchedRows.map(s => `• ${s}`).join('\n')}\n\nIs this the same document being scanned again?`,
+          proceed: openReview,
+        })
+        return
+      }
+
+      openReview()
     } catch (err) {
       console.error(err)
       alert('Failed to scan income. Please try again or add it manually.')
@@ -509,7 +598,7 @@ export default function EditInvoicePage() {
     const urls: string[] = [...editingExpense.receipt_urls]
     for (const file of Array.from(files)) {
       const ext = file.name.split('.').pop()
-      const path = `${rideId}/${invoiceId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `${ownerId}/${invoiceId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (error) { alert(error.message); continue }
       const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
@@ -744,29 +833,71 @@ export default function EditInvoicePage() {
       if (e) { alert(e.message); return }
     }
 
-    // If new incomes were added, ask which to report on WhatsApp before leaving.
-    if (newPayments.length > 0) {
-      setIncomeReports(newPayments.map(p => ({
-        amount: p.amount,
-        source: p.source,
-        date: p.payment_date,
-        receipt_url: p.receipt_url || '',
-        description: p.description || '',
-        report: true,
-      })))
+    // Build the WhatsApp report queues for any newly-added incomes and expenses.
+    const pendingIncomes: IncomeReport[] = newPayments.map(p => ({
+      amount: p.amount,
+      source: p.source,
+      date: p.payment_date,
+      receipt_url: p.receipt_url || '',
+      description: p.description || '',
+      report: true,
+    }))
+
+    // For expenses, group by purchase_group: a single scanned receipt with multiple
+    // items becomes ONE WhatsApp report (listing each item beneath the supplier),
+    // not one report per item. Standalone expenses each become their own report.
+    const groupMap = new Map<string, ExpenseReport>()
+    const pendingExpenses: ExpenseReport[] = []
+    newExpenses.forEach(ex => {
+      const item: ExpenseReportItem = { item: ex.item, amount: ex.amount, quantity: ex.quantity || '1' }
+      if (ex.purchase_group) {
+        const existing = groupMap.get(ex.purchase_group)
+        if (existing) {
+          existing.items.push(item)
+        } else {
+          const rep: ExpenseReport = {
+            supplier: ex.supplier,
+            date: ex.payment_date,
+            receipt_url: ex.receipt_urls[0] || '',
+            items: [item],
+            report: true,
+          }
+          groupMap.set(ex.purchase_group, rep)
+          pendingExpenses.push(rep)
+        }
+      } else {
+        pendingExpenses.push({
+          supplier: ex.supplier,
+          date: ex.payment_date,
+          receipt_url: ex.receipt_urls[0] || '',
+          items: [item],
+          report: true,
+        })
+      }
+    })
+
+    // Ask about incomes first (if any), then expenses. If neither, just leave.
+    if (pendingIncomes.length > 0) {
+      if (pendingExpenses.length > 0) setExpenseReports(pendingExpenses)
+      setIncomeReports(pendingIncomes)
+      return
+    }
+    if (pendingExpenses.length > 0) {
+      setExpenseReports(pendingExpenses)
       return
     }
 
-    router.push(`/rides/${rideId}/invoices`)
+    router.push(basePath)
   }
 
   function buildIncomeCaption(inc: IncomeReport) {
     const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
     const amountStr = formatUSD(parseFloat(inc.amount) || 0)
-    // First block: INCOME (bold) / INVOICE — PROJECT / DATE — AMOUNT (bold) / DESCRIPTION (omitted if empty)
+    const ownerLabel = isClient ? clientName : projectName
+    // First block: INCOME (bold) / INVOICE — OWNER / DATE — AMOUNT (bold) / DESCRIPTION (omitted if empty)
     const lines: string[] = [
       '*INCOME*',
-      `${invoiceCode}${projectName ? ` — ${projectName}` : ''}`,
+      `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
       `${dateStr} — *${amountStr}*`,
     ]
     if (inc.description && inc.description.trim()) lines.push(inc.description.trim())
@@ -782,10 +913,41 @@ export default function EditInvoicePage() {
     return lines.join('\n')
   }
 
+  function buildExpenseCaption(exp: ExpenseReport) {
+    const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
+    const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+    const amountStr = formatUSD(total)
+    const ownerLabel = isClient ? clientName : projectName
+    // EXPENSE (bold) / INVOICE — OWNER / DATE — TOTAL (bold) / SUPPLIER
+    const lines: string[] = [
+      '*EXPENSE*',
+      `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+
+    // Item list (one bullet per item) — shown for single and grouped purchases alike.
+    lines.push('')
+    exp.items.forEach(it => {
+      const qty = parseFloat(it.quantity) || 1
+      const price = parseFloat(it.amount) || 0
+      const itemTotal = price * qty
+      lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
+    })
+
+    // Only on a REAL-TIME ride invoice: blank line, then DUE / CURRENT / FINAL (same as income).
+    if (!isClient && feedStatus === 'REAL_TIME') {
+      const due = balance < 0 ? -balance : 0
+      lines.push('')
+      lines.push(`DUE: ${formatUSD(due)}`)
+      lines.push(`*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
+      lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
+    }
+    return lines.join('\n')
+  }
+
   async function sendIncomeReports() {
-    if (!incomeReports) { router.push(`/rides/${rideId}/invoices`); return }
-    const chosen = incomeReports.filter(r => r.report)
-    if (chosen.length === 0) { router.push(`/rides/${rideId}/invoices`); return }
+    const chosen = (incomeReports || []).filter(r => r.report)
     setSendingReports(true)
     let failures = 0
     for (const inc of chosen) {
@@ -805,9 +967,36 @@ export default function EditInvoicePage() {
       }
     }
     setSendingReports(false)
-    if (failures > 0) alert(`${failures} report(s) failed to send. The income was still saved.`)
+    if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.`)
     setIncomeReports(null)
-    router.push(`/rides/${rideId}/invoices`)
+    // If expenses are also queued, the expense modal is already set and will now show.
+    if (!expenseReports) router.push(basePath)
+  }
+
+  async function sendExpenseReports() {
+    const chosen = (expenseReports || []).filter(r => r.report)
+    setSendingReports(true)
+    let failures = 0
+    for (const exp of chosen) {
+      const caption = buildExpenseCaption(exp)
+      const payload: any = { body: caption }
+      if (exp.receipt_url) { payload.documentUrl = exp.receipt_url; payload.filename = `expense-${invoiceCode}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}` }
+      try {
+        const res = await fetch('/api/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.`)
+    setExpenseReports(null)
+    router.push(basePath)
   }
 
   const expenseRows: { type: 'single' | 'group'; index?: number; groupId?: string; groupExpenses?: { index: number; expense: Expense }[]; expense?: Expense }[] = []
@@ -940,6 +1129,50 @@ export default function EditInvoicePage() {
                 {incomeReports.filter(r => r.report).length} of {incomeReports.length} will be reported
               </div>
               <button onClick={sendIncomeReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : (expenseReports ? 'NEXT' : 'DONE')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!incomeReports && expenseReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose which new expenses to report to the WhatsApp group. Grouped purchases (scanned receipts) are reported as a single message listing all items.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {expenseReports.map((exp, i) => {
+                const total = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+                const isGroup = exp.items.length > 1
+                const titleText = isGroup
+                  ? `${exp.supplier || 'Purchase'} — ${exp.items.length} items`
+                  : `${exp.items[0].item}${exp.supplier ? ` — ${exp.supplier}` : ''}`
+                return (
+                  <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold">EXPENSE — {formatUSD(total)}</p>
+                      <p className="text-sm text-gray-400 truncate">{titleText}</p>
+                      <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
+                      <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
+                    </div>
+                    <button
+                      onClick={() => { const a = [...expenseReports]; a[i] = { ...a[i], report: !a[i].report }; setExpenseReports(a) }}
+                      className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${exp.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                    >
+                      {exp.report ? 'REPORT: YES' : 'REPORT: NO'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {expenseReports.filter(r => r.report).length} of {expenseReports.length} will be reported
+              </div>
+              <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
                 {sendingReports ? 'SENDING...' : 'DONE'}
               </button>
             </div>
@@ -1023,6 +1256,19 @@ export default function EditInvoicePage() {
         </div>
       )}
 
+      {duplicateWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-yellow-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <h2 className="text-2xl font-bold text-yellow-400">⚠ {duplicateWarning.title}</h2>
+            <p className="text-gray-300 whitespace-pre-wrap text-base">{duplicateWarning.details}</p>
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => setDuplicateWarning(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={() => { const p = duplicateWarning.proceed; setDuplicateWarning(null); p() }} className="flex-1 bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">REGISTER ANYWAY</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {(scanningPurchase || scanningPayment) && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
@@ -1033,7 +1279,7 @@ export default function EditInvoicePage() {
       )}
 
       <h1 className="text-4xl font-bold mb-2">EDIT INVOICE</h1>
-      <p className="text-gray-400 text-xl mb-8">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
+      <p className="text-gray-400 text-xl mb-8">{isClient ? `${clientNumber ?? ''}${clientName ? ` — ${clientName}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
@@ -1059,10 +1305,12 @@ export default function EditInvoicePage() {
         <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
         {isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
 
-        <div>
-          <label className="block mb-2 text-lg font-bold">MILEAGE</label>
-          <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
-        </div>
+        {!isClient && (
+          <div>
+            <label className="block mb-2 text-lg font-bold">MILEAGE</label>
+            <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
+          </div>
+        )}
 
         <div>
           <label className="block mb-2 text-lg font-bold">SERVICE</label>
@@ -1359,6 +1607,7 @@ export default function EditInvoicePage() {
         {isValidDate(conclusionDate) && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
         {/* PARTS TO STOCK */}
+        {!isClient && (
         <div>
           <label className="block mb-3 text-lg font-bold">PARTS TO STOCK</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1408,6 +1657,7 @@ export default function EditInvoicePage() {
             )}
           </div>
         </div>
+        )}
 
         {/* EXPENSES */}
         <div>
@@ -1627,7 +1877,7 @@ export default function EditInvoicePage() {
         </div>
 
         <button onClick={saveInvoice} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
-        <a href={`/rides/${rideId}/invoices`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

@@ -6,9 +6,24 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 
+// Single report queued after a successful SAVE INPUT, drives the WhatsApp modal.
+type ExpenseReportItem = { item: string; amount: string; quantity: string }
+type ExpenseReport = {
+  category: string // STOCK or CONSUMPTION
+  supplier: string
+  date: string
+  receipt_url: string
+  items: ExpenseReportItem[]
+  report: boolean
+}
+
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
+function formatDate(d: string) {
+  if (!isValidDate(d)) return '—'
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
 
 const NEW_SUPPLIER = '+ NEW SUPPLIER'
 const categories = ['CONSUMPTION', 'STOCK']
@@ -59,6 +74,10 @@ export default function NewInputPage() {
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
 
+  // WhatsApp report state — set after a successful SAVE, drives the modal.
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
+  const [sendingReports, setSendingReports] = useState(false)
+
   useEffect(() => { loadSuppliers() }, [])
 
   async function loadSuppliers() {
@@ -106,6 +125,72 @@ export default function NewInputPage() {
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
     }])
     if (error) { alert(error.message); return }
+
+    // Queue the optional WhatsApp report for this input.
+    if (total > 0) {
+      const report: ExpenseReport = {
+        category,
+        supplier: supplier.trim(),
+        date: purchaseDate,
+        receipt_url: receiptUrls[0] || '',
+        items: [{ item: description, amount: String(unitPrice), quantity: String(qty || 1) }],
+        report: true,
+      }
+      setExpenseReports([report])
+      return
+    }
+
+    router.push('/inputs')
+  }
+
+  function buildExpenseCaption(exp: ExpenseReport) {
+    const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
+    const t = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+    const amountStr = formatUSD(t)
+    const lines: string[] = [
+      `*EXPENSE — ${exp.category}*`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+
+    // Item bullets — always shown.
+    lines.push('')
+    exp.items.forEach(it => {
+      const qtyN = parseFloat(it.quantity) || 1
+      const price = parseFloat(it.amount) || 0
+      const itemTotal = price * qtyN
+      lines.push(`• ${it.item} — ${qtyN} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
+    })
+
+    return lines.join('\n')
+  }
+
+  async function sendExpenseReports() {
+    const chosen = (expenseReports || []).filter(r => r.report)
+    setSendingReports(true)
+    let failures = 0
+    for (const exp of chosen) {
+      const caption = buildExpenseCaption(exp)
+      const payload: any = { body: caption }
+      if (exp.receipt_url) {
+        payload.documentUrl = exp.receipt_url
+        payload.filename = `expense-${exp.supplier || 'purchase'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
+      }
+      try {
+        const res = await fetch('/api/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The input was still saved.`)
+    setExpenseReports(null)
     router.push('/inputs')
   }
 
@@ -115,6 +200,49 @@ export default function NewInputPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+
+      {/* REPORT ON WHATSAPP? */}
+      {expenseReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose whether to report this input to the WhatsApp group.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {expenseReports.map((exp, i) => {
+                const t = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+                const titleText = exp.items.map(it => it.item).filter(Boolean).join(', ')
+                return (
+                  <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold">EXPENSE — {exp.category} — {formatUSD(t)}</p>
+                      <p className="text-sm text-gray-400 truncate">{titleText || 'Input'}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                      <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
+                      <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
+                    </div>
+                    <button
+                      onClick={() => { const a = [...expenseReports]; a[i] = { ...a[i], report: !a[i].report }; setExpenseReports(a) }}
+                      className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${exp.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                    >
+                      {exp.report ? 'REPORT: YES' : 'REPORT: NO'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {expenseReports.filter(r => r.report).length} of {expenseReports.length} will be reported
+              </div>
+              <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : 'DONE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <h1 className="text-4xl font-bold mb-8">ADD A NEW INPUT</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">

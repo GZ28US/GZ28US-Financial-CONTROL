@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
@@ -10,13 +10,23 @@ const FULL_PROJECT_LABOR = 'Full Project Labor'
 
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
+// Client numbers display/store zero-padded to 3 digits (e.g. 9 -> "009").
+function pad3(n: number | string) {
+  const num = typeof n === 'number' ? n : parseInt(String(n), 10)
+  return isNaN(num) ? String(n) : String(num).padStart(3, '0')
+}
+
 export default function NewInvoicePage() {
   const params = useParams()
   const router = useRouter()
-  const rideId = String(params.id)
+  const pathname = usePathname()
+  const ownerId = String(params.id)
+  // Context: client personal invoice when URL is /clients/..., otherwise ride invoice.
+  const isClient = (pathname || '').includes('/clients/')
+  const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
 
-  const [projectCode, setProjectCode] = useState('')
-  const [projectName, setProjectName] = useState('')
+  const [ownerLabel, setOwnerLabel] = useState('')
+  const [ownerSubtitle, setOwnerSubtitle] = useState('')
   const [invoiceCode, setInvoiceCode] = useState('')
   const [hiringDate, setHiringDate] = useState('')
   const [entryDate, setEntryDate] = useState('')
@@ -24,19 +34,29 @@ export default function NewInvoicePage() {
   const [service, setService] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { loadRide() }, [])
+  useEffect(() => { loadOwner() }, [])
 
-  async function loadRide() {
-    const { data: ride } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
-    if (ride) {
-      setProjectCode(ride.project_code || '')
-      setProjectName(ride.project_name || '')
-      await loadNextInvoiceCode(ride.project_code)
+  async function loadOwner() {
+    if (isClient) {
+      const { data: client } = await supabase.from('clients').select('name, client_number').eq('id', ownerId).single()
+      if (client) {
+        const numStr = client.client_number != null ? pad3(client.client_number) : ''
+        setOwnerLabel(numStr)
+        setOwnerSubtitle(client.name || '')
+        await loadNextClientInvoiceCode(numStr)
+      }
+    } else {
+      const { data: ride } = await supabase.from('rides').select('project_code, project_name').eq('id', ownerId).single()
+      if (ride) {
+        setOwnerLabel(ride.project_code || '')
+        setOwnerSubtitle(ride.project_name || '')
+        await loadNextRideInvoiceCode(ride.project_code)
+      }
     }
   }
 
-  async function loadNextInvoiceCode(code: string) {
-    const { data } = await supabase.from('invoices').select('invoice_code').eq('ride_id', rideId)
+  async function loadNextRideInvoiceCode(code: string) {
+    const { data } = await supabase.from('invoices').select('invoice_code').eq('ride_id', ownerId)
     const usedNumbers = data?.map((item) => {
       const match = item.invoice_code?.match(/\.(\d+)$/)
       return match ? Number(match[1]) : null
@@ -44,6 +64,17 @@ export default function NewInvoicePage() {
     let nextNumber = 1
     while (usedNumbers.includes(nextNumber)) nextNumber++
     setInvoiceCode(`${code}.${nextNumber}`)
+  }
+
+  async function loadNextClientInvoiceCode(numStr: string) {
+    const { data } = await supabase.from('invoices').select('invoice_code').eq('client_id', ownerId)
+    const usedNumbers = data?.map((item) => {
+      const match = item.invoice_code?.match(/\.(\d+)$/)
+      return match ? Number(match[1]) : null
+    }) || []
+    let nextNumber = 1
+    while (usedNumbers.includes(nextNumber)) nextNumber++
+    setInvoiceCode(`${numStr}.${nextNumber}`)
   }
 
   function formatMileage(value: string) {
@@ -56,19 +87,23 @@ export default function NewInvoicePage() {
   async function createInvoice() {
     if (saving) return
     setSaving(true)
-    const { data: invoice, error } = await supabase.from('invoices').insert([{
-      invoice_code: invoiceCode, ride_id: rideId,
+    const row: any = {
+      invoice_code: invoiceCode,
       hiring_date: isValidDate(hiringDate) ? hiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
-    }]).select().single()
+    }
+    if (isClient) row.client_id = ownerId
+    else row.ride_id = ownerId
+
+    const { data: invoice, error } = await supabase.from('invoices').insert([row]).select().single()
     if (error || !invoice) { alert(error?.message || 'Error creating invoice'); setSaving(false); return }
 
     // Seed the default Full Project Labor service so EDIT opens ready to fill.
     await supabase.from('invoice_services').insert([{ invoice_id: invoice.id, description: FULL_PROJECT_LABOR, price: 0 }])
 
-    router.push(`/rides/${rideId}/invoices/edit/${invoice.id}`)
+    router.push(`${basePath}/edit/${invoice.id}`)
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -78,7 +113,7 @@ export default function NewInvoicePage() {
       <Header />
 
       <h1 className="text-4xl font-bold mb-2">ADD A NEW INVOICE</h1>
-      <p className="text-gray-400 text-xl mb-8">{projectCode}{projectName ? ` — ${projectName}` : ''}</p>
+      <p className="text-gray-400 text-xl mb-8">{ownerLabel}{ownerSubtitle ? ` — ${ownerSubtitle}` : ''}</p>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
@@ -90,10 +125,12 @@ export default function NewInvoicePage() {
         <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
         <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />
 
-        <div>
-          <label className="block mb-2 text-lg font-bold">MILEAGE</label>
-          <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
-        </div>
+        {!isClient && (
+          <div>
+            <label className="block mb-2 text-lg font-bold">MILEAGE</label>
+            <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
+          </div>
+        )}
 
         <div>
           <label className="block mb-2 text-lg font-bold">SERVICE</label>
@@ -103,7 +140,7 @@ export default function NewInvoicePage() {
         <button onClick={createInvoice} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">
           {saving ? 'CREATING...' : 'CREATE INVOICE'}
         </button>
-        <a href={`/rides/${rideId}/invoices`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

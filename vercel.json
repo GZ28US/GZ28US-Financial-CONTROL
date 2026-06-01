@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/whatsapp-poll",
-      "schedule": "* * * * *"
+      "path": "/api/cron/recurring-expense-reports",
+      "schedule": "0 15 * * *"
     }
   ]
 }
