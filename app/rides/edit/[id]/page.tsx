@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import {
@@ -14,16 +14,20 @@ import {
   getAvailableColors,
 } from '@/lib/carData'
 
-export default function EditRidePage() {
-  const params = useParams()
-  const router = useRouter()
-  const rideId = String(params.id)
+type Client = { id: string; name: string; client_number: number | null }
 
-  const [loading, setLoading] = useState(true)
+function pad3(n: number) { return String(n).padStart(3, '0') }
+
+export default function NewRidePage() {
+  const router = useRouter()
+
+  // Identification fields.
   const [projectCode, setProjectCode] = useState('')
   const [projectName, setProjectName] = useState('')
   const [clientId, setClientId] = useState('')
-  const [clients, setClients] = useState<any[]>([])
+  const [clients, setClients] = useState<Client[]>([])
+
+  // Year-driven cascading vehicle fields.
   const [year, setYear] = useState('')
   const [manufacturer, setManufacturer] = useState('')
   const [brand, setBrand] = useState('')
@@ -31,41 +35,90 @@ export default function EditRidePage() {
   const [version, setVersion] = useState('')
   const [specialEdition, setSpecialEdition] = useState('')
   const [color, setColor] = useState('')
+
   const [vin, setVin] = useState('')
   const [plate, setPlate] = useState('')
   const [photoUrl, setPhotoUrl] = useState('')
   const [uploading, setUploading] = useState(false)
 
-  useEffect(() => { loadClients(); loadRide() }, [])
+  useEffect(() => { loadInitialData() }, [])
 
-  async function loadClients() {
-    const { data } = await supabase.from('clients').select('id, name').order('name')
-    if (data) setClients(data)
+  async function loadInitialData() {
+    // Clients ordered by client_number so the dropdown is predictable.
+    const { data: clientData } = await supabase
+      .from('clients')
+      .select('id, name, client_number')
+      .order('client_number', { ascending: true, nullsFirst: false })
+    if (clientData) setClients(clientData as Client[])
+
+    // Auto-suggest the next project code by parsing existing rides for the
+    // PREFIX.NUMBER pattern (e.g. "US.012"). Take the prefix from the highest-
+    // numbered code and increment, padded to 3 digits. Defaults to US.001.
+    const { data: rideData } = await supabase
+      .from('rides')
+      .select('project_code')
+      .not('project_code', 'is', null)
+
+    let suggested = 'US.001'
+    if (rideData && rideData.length > 0) {
+      let maxNum = 0
+      let prefix = 'US'
+      for (const r of rideData) {
+        const m = r.project_code?.match(/^(.+?)\.(\d+)$/)
+        if (m) {
+          const n = parseInt(m[2], 10)
+          if (n > maxNum) { maxNum = n; prefix = m[1] }
+        }
+      }
+      if (maxNum > 0) suggested = `${prefix}.${pad3(maxNum + 1)}`
+    }
+    setProjectCode(suggested)
   }
 
-  async function loadRide() {
-    const { data, error } = await supabase.from('rides').select('*').eq('id', rideId).single()
-    if (error || !data) { alert('Ride not found'); router.push('/rides'); return }
-    setProjectCode(data.project_code || '')
-    setProjectName(data.project_name || '')
-    setClientId(data.client_id || '')
-    setYear(data.year ? String(data.year) : '')
-    setManufacturer(data.manufacturer || '')
-    setBrand(data.brand || '')
-    setModel(data.model || '')
-    setVersion(data.version || '')
-    setSpecialEdition(data.special_edition || '')
-    setColor(data.color || '')
-    setVin(data.vin || '')
-    setPlate(data.plate || '')
-    setPhotoUrl(data.photo_url || '')
-    setLoading(false)
+  // Derived dropdown options based on the year-aware carData maps.
+  const yearNum = year ? parseInt(year, 10) : 0
+  const availableManufacturers = yearNum ? (manufacturersByYear[yearNum] || []) : []
+  const availableBrands = (yearNum && manufacturer)
+    ? (brandsByManufacturerAndYear[manufacturer]?.[yearNum] || []) : []
+  const availableModels = (yearNum && brand)
+    ? (modelsByBrandAndYear[brand]?.[yearNum] || []) : []
+  const availableVersions = (yearNum && model)
+    ? (versionsByModelAndYear[model]?.[yearNum] || []) : []
+
+  // SPECIAL EDITION is only shown when the catalog has one defined for this
+  // year+model+version combination.
+  const specialEditionKey = `${yearNum}-${model}-${version}`
+  const availableSpecialEditions = specialEditions[specialEditionKey] || null
+
+  const availableColors = (yearNum && brand && model && version)
+    ? getAvailableColors(yearNum, brand, model, version, specialEdition || 'None')
+    : []
+
+  // Cascading resets: changing any level wipes everything below it so the
+  // user can't end up with an impossible combination.
+  function changeYear(v: string) {
+    setYear(v); setManufacturer(''); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setColor('')
+  }
+  function changeManufacturer(v: string) {
+    setManufacturer(v); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setColor('')
+  }
+  function changeBrand(v: string) {
+    setBrand(v); setModel(''); setVersion(''); setSpecialEdition(''); setColor('')
+  }
+  function changeModel(v: string) {
+    setModel(v); setVersion(''); setSpecialEdition(''); setColor('')
+  }
+  function changeVersion(v: string) {
+    setVersion(v); setSpecialEdition(''); setColor('')
+  }
+  function changeSpecialEdition(v: string) {
+    setSpecialEdition(v); setColor('')
   }
 
   async function uploadPhoto(file: File) {
     setUploading(true)
     const ext = file.name.split('.').pop()
-    const path = `${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
     const { error } = await supabase.storage.from('ride-photos').upload(path, file, { upsert: true })
     if (error) { alert(error.message); setUploading(false); return }
     const { data: urlData } = supabase.storage.from('ride-photos').getPublicUrl(path)
@@ -74,81 +127,74 @@ export default function EditRidePage() {
   }
 
   async function saveRide() {
-    if (!projectCode) { alert('Please enter a project code'); return }
-    const { error } = await supabase.from('rides').update({
-      project_code: projectCode,
+    if (!projectCode.trim()) { alert('Please enter a project code'); return }
+
+    // Store "None" special edition as null so reports don't print "None".
+    const seValue = specialEdition && specialEdition !== 'None' ? specialEdition : null
+
+    const { error } = await supabase.from('rides').insert([{
+      project_code: projectCode.trim(),
       project_name: projectName || null,
       client_id: clientId || null,
-      year: year ? parseInt(year) : null,
+      year: yearNum || null,
       manufacturer: manufacturer || null,
       brand: brand || null,
       model: model || null,
       version: version || null,
-      special_edition: specialEdition || null,
+      special_edition: seValue,
       color: color || null,
       vin: vin || null,
       plate: plate || null,
       photo_url: photoUrl || null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', rideId)
+    }])
     if (error) { alert(error.message); return }
     router.push('/rides')
   }
 
-  const yearNum = parseInt(year) || 0
-  const availableManufacturers = year ? (manufacturersByYear[yearNum] || []) : []
-  const availableBrands = manufacturer && year ? (brandsByManufacturerAndYear[manufacturer]?.[yearNum] || []) : []
-  const availableModels = brand && year ? (modelsByBrandAndYear[brand]?.[yearNum] || []) : []
-  const availableVersions = model && year ? (versionsByModelAndYear[model]?.[yearNum] || []) : []
-  const specialEditionKey = `${year}-${model}-${version}`
-  const availableSpecialEditions = specialEditions[specialEditionKey] || []
-  const availableColors = year && brand && model && version
-    ? getAvailableColors(yearNum, brand, model, version, specialEdition)
-    : []
-
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const selectClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
-
-  if (loading) return (
-    <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
-  )
+  const disabledClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl opacity-50 cursor-not-allowed'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">EDIT RIDE</h1>
+      <h1 className="text-4xl font-bold mb-8">ADD A NEW RIDE</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
         <div>
           <label className="block mb-2 text-lg font-bold">PROJECT CODE</label>
-          <input type="text" value={projectCode} onChange={(e) => setProjectCode(e.target.value)} className={inputClass} />
+          <input type="text" value={projectCode} onChange={(e) => setProjectCode(e.target.value)} className={inputClass} placeholder="e.g. US.001" />
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">PROJECT NAME</label>
-          <input type="text" value={projectName} onChange={(e) => setProjectName(e.target.value)} className={inputClass} />
+          <input type="text" value={projectName} onChange={(e) => setProjectName(e.target.value)} className={inputClass} placeholder="e.g. Black Beast" />
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">CLIENT</label>
           <select value={clientId} onChange={(e) => setClientId(e.target.value)} className={selectClass}>
             <option value="">— No client —</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clients.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.client_number != null ? `${pad3(c.client_number)} — ` : ''}{c.name}
+              </option>
+            ))}
           </select>
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">YEAR</label>
-          <select value={year} onChange={(e) => { setYear(e.target.value); setManufacturer(''); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setColor('') }} className={selectClass}>
-            <option value="">— Select —</option>
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          <select value={year} onChange={(e) => changeYear(e.target.value)} className={selectClass}>
+            <option value="">— Select year —</option>
+            {[...years].sort((a, b) => b - a).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">MANUFACTURER</label>
-          <select value={manufacturer} onChange={(e) => { setManufacturer(e.target.value); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setColor('') }} className={selectClass} disabled={!year}>
+          <select value={manufacturer} onChange={(e) => changeManufacturer(e.target.value)} className={!year ? disabledClass : selectClass} disabled={!year}>
             <option value="">— Select —</option>
             {availableManufacturers.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
@@ -156,7 +202,7 @@ export default function EditRidePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">BRAND</label>
-          <select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(''); setVersion(''); setSpecialEdition(''); setColor('') }} className={selectClass} disabled={!manufacturer}>
+          <select value={brand} onChange={(e) => changeBrand(e.target.value)} className={!manufacturer ? disabledClass : selectClass} disabled={!manufacturer}>
             <option value="">— Select —</option>
             {availableBrands.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
@@ -164,7 +210,7 @@ export default function EditRidePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">MODEL</label>
-          <select value={model} onChange={(e) => { setModel(e.target.value); setVersion(''); setSpecialEdition(''); setColor('') }} className={selectClass} disabled={!brand}>
+          <select value={model} onChange={(e) => changeModel(e.target.value)} className={!brand ? disabledClass : selectClass} disabled={!brand}>
             <option value="">— Select —</option>
             {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
@@ -172,48 +218,41 @@ export default function EditRidePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">VERSION</label>
-          <select value={version} onChange={(e) => { setVersion(e.target.value); setSpecialEdition(''); setColor('') }} className={selectClass} disabled={!model}>
+          <select value={version} onChange={(e) => changeVersion(e.target.value)} className={!model ? disabledClass : selectClass} disabled={!model}>
             <option value="">— Select —</option>
             {availableVersions.map(v => <option key={v} value={v}>{v}</option>)}
           </select>
         </div>
 
-        {availableSpecialEditions.length > 0 && (
+        {/* SPECIAL EDITION renders only when the catalog has one for this version. */}
+        {availableSpecialEditions && (
           <div>
-            <label className="block mb-2 text-lg font-bold">SPECIAL EDITION / PACKAGE</label>
-            <select value={specialEdition} onChange={(e) => { setSpecialEdition(e.target.value); setColor('') }} className={selectClass}>
+            <label className="block mb-2 text-lg font-bold">SPECIAL EDITION</label>
+            <select value={specialEdition} onChange={(e) => changeSpecialEdition(e.target.value)} className={selectClass}>
               <option value="">— Select —</option>
               {availableSpecialEditions.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         )}
 
-        {availableColors.length > 0 ? (
-          <div>
-            <label className="block mb-2 text-lg font-bold">COLOR</label>
-            <select value={color} onChange={(e) => setColor(e.target.value)} className={selectClass}>
-              <option value="">— Select —</option>
-              {availableColors.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-        ) : (
-          <div>
-            <label className="block mb-2 text-lg font-bold">COLOR</label>
-            <input type="text" value={color} onChange={(e) => setColor(e.target.value)} className={inputClass} placeholder="e.g. Midnight Black" />
-          </div>
-        )}
+        <div>
+          <label className="block mb-2 text-lg font-bold">COLOR</label>
+          <select value={color} onChange={(e) => setColor(e.target.value)} className={!version ? disabledClass : selectClass} disabled={!version}>
+            <option value="">— Select —</option>
+            {availableColors.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">VIN</label>
-          <input type="text" value={vin} onChange={(e) => setVin(e.target.value)} className={inputClass} />
+          <input type="text" value={vin} onChange={(e) => setVin(e.target.value)} className={inputClass} placeholder="Vehicle Identification Number" />
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">PLATE</label>
-          <input type="text" value={plate} onChange={(e) => setPlate(e.target.value)} className={inputClass} />
+          <input type="text" value={plate} onChange={(e) => setPlate(e.target.value)} className={inputClass} placeholder="License plate" />
         </div>
 
-        {/* PHOTO */}
         <div>
           <label className="block mb-2 text-lg font-bold">PHOTO</label>
           {photoUrl && (
@@ -230,7 +269,7 @@ export default function EditRidePage() {
           )}
         </div>
 
-        <button onClick={saveRide} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
+        <button onClick={saveRide} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE RIDE</button>
         <a href="/rides" className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
