@@ -32,6 +32,20 @@ type InvoiceStats = {
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
+// Status ladder (first match wins). PRE-DELIVERED fires when the delivery date is
+// filled but the conclusion date isn't — the car was handed back before the work
+// was officially closed out.
+function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null } | null) {
+  if (!inv) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
+  if (!isValidDate(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
+  const hasConclusion = isValidDate(inv.conclusion_date)
+  const hasDelivery = isValidDate(inv.delivery_date)
+  if (!hasConclusion && !hasDelivery) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
+  if (!hasConclusion && hasDelivery) return { label: 'PRE-DELIVERED', cls: 'bg-purple-800 text-purple-200' }
+  if (hasConclusion && !hasDelivery) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
+  return { label: 'DELIVERED', cls: 'bg-white text-black' }
+}
+
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
     ? { label: 'REAL-TIME FEED', cls: 'bg-green-800 text-green-300' }
@@ -185,6 +199,7 @@ export default function InvoicesPage() {
         <div className="space-y-5">
           {invoices.map((invoice) => {
             const s = stats[invoice.id]
+            const statusBadge = getStatusBadge(invoice)
             const feedBadge = getFeedBadge(invoice.feed_status)
 
             return (
@@ -192,6 +207,7 @@ export default function InvoicesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{invoice.invoice_code}</h2>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
                   </div>
                   <p className="text-lg text-gray-400">Entry: {formatDate(invoice.entry_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>

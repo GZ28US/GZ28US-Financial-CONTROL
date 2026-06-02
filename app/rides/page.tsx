@@ -20,12 +20,17 @@ type Ride = {
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
-// Status ladder (first match wins)
+// Status ladder (first match wins). PRE-DELIVERED fires when the delivery date is
+// filled but the conclusion date isn't — the car was handed back before the work
+// was officially closed out.
 function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null } | null) {
   if (!inv) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
   if (!isValidDate(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
-  if (!isValidDate(inv.conclusion_date)) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
-  if (!isValidDate(inv.delivery_date)) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
+  const hasConclusion = isValidDate(inv.conclusion_date)
+  const hasDelivery = isValidDate(inv.delivery_date)
+  if (!hasConclusion && !hasDelivery) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
+  if (!hasConclusion && hasDelivery) return { label: 'PRE-DELIVERED', cls: 'bg-purple-800 text-purple-200' }
+  if (hasConclusion && !hasDelivery) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 

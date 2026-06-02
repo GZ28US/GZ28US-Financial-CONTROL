@@ -1676,7 +1676,7 @@ export default function EditInvoicePage() {
         </div>
 
         {isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
-        {isValidDate(conclusionDate) && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
+        <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
 
         {/* PARTS TO STOCK */}
         {!isClient && (
