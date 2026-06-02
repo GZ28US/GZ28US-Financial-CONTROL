@@ -437,8 +437,16 @@ export default function EditInvoicePage() {
     if (!scannedPayments) return
     const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
     if (valid.length === 0) { setScannedPayments(null); return }
-    // Scanned incomes default to UNPAID (paid_at = ''). User clicks the toggle to mark each PAID.
-    const newRows: Payment[] = valid.map(p => ({ amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '', description: p.description || '', paid_at: '' }))
+    // Scanned incomes default to PAID, using the document's date as paid_at (falls
+    // back to now() if the scanned date is missing or invalid). The user can toggle
+    // back to UNPAID after the scan if they want. Defaulting to PAID also lets the
+    // WhatsApp income report fire on SAVE CHANGES (which only reports PAID rows).
+    const newRows: Payment[] = valid.map(p => {
+      const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
+        ? new Date(p.date + 'T12:00:00Z').toISOString()
+        : new Date().toISOString()
+      return { amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '', description: p.description || '', paid_at: paidAt }
+    })
     setPayments(prev => [...prev, ...newRows])
     setScannedPayments(null)
   }
