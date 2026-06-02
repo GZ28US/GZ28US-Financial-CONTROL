@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import {
@@ -18,8 +18,17 @@ type Client = { id: string; name: string; client_number: number | null }
 
 function pad3(n: number) { return String(n).padStart(3, '0') }
 
-export default function NewRidePage() {
+// Add the saved value into the dropdown list if it isn't already there.
+// Keeps legacy ride data editable even when it doesn't fit the year-aware catalog.
+function ensureIncluded(list: string[], value: string): string[] {
+  if (!value || list.includes(value)) return list
+  return [value, ...list]
+}
+
+export default function EditRidePage() {
   const router = useRouter()
+  const params = useParams()
+  const rideId = String(params.id)
 
   // Identification fields.
   const [projectCode, setProjectCode] = useState('')
@@ -41,58 +50,73 @@ export default function NewRidePage() {
   const [photoUrl, setPhotoUrl] = useState('')
   const [uploading, setUploading] = useState(false)
 
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
   useEffect(() => { loadInitialData() }, [])
 
   async function loadInitialData() {
-    // Clients ordered by client_number so the dropdown is predictable.
-    const { data: clientData } = await supabase
-      .from('clients')
-      .select('id, name, client_number')
-      .order('client_number', { ascending: true, nullsFirst: false })
-    if (clientData) setClients(clientData as Client[])
+    // Load clients in parallel with the ride record.
+    const [clientsRes, rideRes] = await Promise.all([
+      supabase.from('clients').select('id, name, client_number').order('client_number', { ascending: true, nullsFirst: false }),
+      supabase.from('rides').select('*').eq('id', rideId).single(),
+    ])
+    if (clientsRes.data) setClients(clientsRes.data as Client[])
 
-    // Auto-suggest the next project code by parsing existing rides for the
-    // PREFIX.NUMBER pattern (e.g. "US.012"). Take the prefix from the highest-
-    // numbered code and increment, padded to 3 digits. Defaults to US.001.
-    const { data: rideData } = await supabase
-      .from('rides')
-      .select('project_code')
-      .not('project_code', 'is', null)
-
-    let suggested = 'US.001'
-    if (rideData && rideData.length > 0) {
-      let maxNum = 0
-      let prefix = 'US'
-      for (const r of rideData) {
-        const m = r.project_code?.match(/^(.+?)\.(\d+)$/)
-        if (m) {
-          const n = parseInt(m[2], 10)
-          if (n > maxNum) { maxNum = n; prefix = m[1] }
-        }
-      }
-      if (maxNum > 0) suggested = `${prefix}.${pad3(maxNum + 1)}`
+    if (rideRes.error || !rideRes.data) {
+      alert(rideRes.error?.message || 'Ride not found')
+      router.push('/rides')
+      return
     }
-    setProjectCode(suggested)
+    const r = rideRes.data
+    setProjectCode(r.project_code || '')
+    setProjectName(r.project_name || '')
+    setClientId(r.client_id || '')
+    setYear(r.year ? String(r.year) : '')
+    setManufacturer(r.manufacturer || '')
+    setBrand(r.brand || '')
+    setModel(r.model || '')
+    setVersion(r.version || '')
+    setSpecialEdition(r.special_edition || '')
+    setColor(r.color || '')
+    setVin(r.vin || '')
+    setPlate(r.plate || '')
+    setPhotoUrl(r.photo_url || '')
+    setLoading(false)
   }
 
-  // Derived dropdown options based on the year-aware carData maps.
+  // Derived dropdown options based on the year-aware carData maps. Any saved
+  // value not in the catalog is still surfaced so legacy data stays editable.
   const yearNum = year ? parseInt(year, 10) : 0
-  const availableManufacturers = yearNum ? (manufacturersByYear[yearNum] || []) : []
-  const availableBrands = (yearNum && manufacturer)
-    ? (brandsByManufacturerAndYear[manufacturer]?.[yearNum] || []) : []
-  const availableModels = (yearNum && brand)
-    ? (modelsByBrandAndYear[brand]?.[yearNum] || []) : []
-  const availableVersions = (yearNum && model)
-    ? (versionsByModelAndYear[model]?.[yearNum] || []) : []
+  const availableManufacturers = ensureIncluded(
+    yearNum ? (manufacturersByYear[yearNum] || []) : [],
+    manufacturer,
+  )
+  const availableBrands = ensureIncluded(
+    (yearNum && manufacturer) ? (brandsByManufacturerAndYear[manufacturer]?.[yearNum] || []) : [],
+    brand,
+  )
+  const availableModels = ensureIncluded(
+    (yearNum && brand) ? (modelsByBrandAndYear[brand]?.[yearNum] || []) : [],
+    model,
+  )
+  const availableVersions = ensureIncluded(
+    (yearNum && model) ? (versionsByModelAndYear[model]?.[yearNum] || []) : [],
+    version,
+  )
 
-  // SPECIAL EDITION is only shown when the catalog has one defined for this
-  // year+model+version combination.
+  // SPECIAL EDITION renders only when the catalog has one defined for this
+  // year+model+version, OR when the ride already has one saved (legacy data).
   const specialEditionKey = `${yearNum}-${model}-${version}`
-  const availableSpecialEditions = specialEditions[specialEditionKey] || null
+  const catalogSpecialEditions = specialEditions[specialEditionKey] || null
+  const availableSpecialEditions = catalogSpecialEditions
+    ? ensureIncluded(catalogSpecialEditions, specialEdition)
+    : (specialEdition ? [specialEdition] : null)
 
-  const availableColors = (yearNum && brand && model && version)
+  const baseColors = (yearNum && brand && model && version)
     ? getAvailableColors(yearNum, brand, model, version, specialEdition || 'None')
     : []
+  const availableColors = ensureIncluded(baseColors, color)
 
   // Cascading resets: changing any level wipes everything below it so the
   // user can't end up with an impossible combination.
@@ -126,13 +150,14 @@ export default function NewRidePage() {
     setUploading(false)
   }
 
-  async function saveRide() {
+  async function saveChanges() {
     if (!projectCode.trim()) { alert('Please enter a project code'); return }
+    setSaving(true)
 
     // Store "None" special edition as null so reports don't print "None".
     const seValue = specialEdition && specialEdition !== 'None' ? specialEdition : null
 
-    const { error } = await supabase.from('rides').insert([{
+    const { error } = await supabase.from('rides').update({
       project_code: projectCode.trim(),
       project_name: projectName || null,
       client_id: clientId || null,
@@ -146,19 +171,30 @@ export default function NewRidePage() {
       vin: vin || null,
       plate: plate || null,
       photo_url: photoUrl || null,
-    }])
+    }).eq('id', rideId)
+
+    setSaving(false)
     if (error) { alert(error.message); return }
-    router.push('/rides')
+    router.push(`/rides/${rideId}`)
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const selectClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const disabledClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl opacity-50 cursor-not-allowed'
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-black text-white p-8">
+        <Header />
+        <p className="text-2xl text-gray-400">Loading...</p>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">ADD A NEW RIDE</h1>
+      <h1 className="text-4xl font-bold mb-8">EDIT RIDE</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
@@ -224,7 +260,7 @@ export default function NewRidePage() {
           </select>
         </div>
 
-        {/* SPECIAL EDITION renders only when the catalog has one for this version. */}
+        {/* SPECIAL EDITION renders only when the catalog has one for this version, or when one is already saved. */}
         {availableSpecialEditions && (
           <div>
             <label className="block mb-2 text-lg font-bold">SPECIAL EDITION</label>
@@ -269,8 +305,10 @@ export default function NewRidePage() {
           )}
         </div>
 
-        <button onClick={saveRide} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE RIDE</button>
-        <a href="/rides" className="text-gray-400 text-xl">Cancel</a>
+        <button onClick={saveChanges} disabled={saving} className={`px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+          {saving ? 'SAVING...' : 'SAVE CHANGES'}
+        </button>
+        <a href={`/rides/${rideId}`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )
