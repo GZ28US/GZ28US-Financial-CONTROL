@@ -34,7 +34,8 @@ function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.tes
 
 // Status ladder (first match wins). PRE-DELIVERED fires when the delivery date is
 // filled but the conclusion date isn't — the car was handed back before the work
-// was officially closed out.
+// was officially closed out. The status badge is only meaningful for ride invoices
+// (cars going through the shop); client GOODS invoices skip it entirely.
 function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null } | null) {
   if (!inv) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
   if (!isValidDate(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
@@ -161,7 +162,7 @@ export default function InvoicesPage() {
     return new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
-  const invoicesLabel = isClient ? 'PERSONAL INVOICES' : 'INVOICES'
+  const invoicesLabel = isClient ? 'GOODS INVOICES' : 'INVOICES'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -207,7 +208,7 @@ export default function InvoicesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{invoice.invoice_code}</h2>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
+                    {!isClient && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
                   </div>
                   <p className="text-lg text-gray-400">Entry: {formatDate(invoice.entry_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>

@@ -1366,7 +1366,7 @@ export default function EditInvoicePage() {
         </div>
 
         <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
-        {isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
+        {!isClient && isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
 
         {!isClient && (
           <div>
@@ -1675,8 +1675,8 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        {isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
-        <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />
+        {!isClient && isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
+        {!isClient && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
         {/* PARTS TO STOCK */}
         {!isClient && (

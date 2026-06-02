@@ -230,7 +230,7 @@ export default function ClientsPage() {
               <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/clients/${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                 <Link href={`/clients/edit/${client.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">PERSONAL INVOICES</Link>
+                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">GOODS INVOICES</Link>
                 <button onClick={() => setConfirmId(client.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
               </div>
             </div>
