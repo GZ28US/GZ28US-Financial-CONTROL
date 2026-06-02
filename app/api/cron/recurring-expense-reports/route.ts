@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
 // Vercel cron hits this route once a day (see vercel.json). Authenticates via
-// the CRON_SECRET env var; iterates active staff seasons; sends a WhatsApp
-// report for each DAILY / WEEKLY / MONTHLY expense whose next period has just
-// completed; records each send in expense_reports_sent so we never duplicate.
+// the CRON_SECRET env var. Two passes:
+//   1) Active staff seasons → fire DAILY / WEEKLY / MONTHLY expense reports;
+//      records each send in expense_reports_sent so we never duplicate.
+//   2) invoice_payments rows that are past-due (payment_date <= today) AND
+//      still UNPAID (paid_at IS NULL) AND not yet alerted (delayed_alert_sent_at
+//      IS NULL) → fire one ⚠ DELAYED PAYMENT WhatsApp alert each, then stamp
+//      delayed_alert_sent_at so the alert never repeats.
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 function formatDate(d: string) {
@@ -45,7 +49,9 @@ export async function GET(req: NextRequest) {
   const today = todayStr()
   const todayDate = new Date(today + 'T00:00:00')
 
-  // Active seasons: started on or before today, not concluded (or concluded today/later).
+  // ============================================================
+  // PASS 1 — DAILY / WEEKLY / MONTHLY STAFF EXPENSE REPORTS
+  // ============================================================
   const { data: seasons, error: seasonsErr } = await supabase
     .from('seasons')
     .select('id, season_code, staff_id, date_entry, date_conclusion')
@@ -61,10 +67,10 @@ export async function GET(req: NextRequest) {
     return s.date_conclusion >= today
   })
 
-  let sent = 0
-  let skipped = 0
-  let failed = 0
-  const log: any[] = []
+  let staffSent = 0
+  let staffSkipped = 0
+  let staffFailed = 0
+  const staffLog: any[] = []
 
   for (const season of activeSeasons) {
     const { data: expenses } = await supabase
@@ -89,25 +95,22 @@ export async function GET(req: NextRequest) {
       let multiplier = 0
 
       if (exp.type === 'DAILY') {
-        // Fires every day. Period = day number since start.
         shouldFire = true
         periodLabel = `Day ${diffDays}`
         multiplier = diffDays
       } else if (exp.type === 'WEEKLY' && diffDays % 7 === 0) {
-        // Fires when a full week completes (day 7, 14, 21...).
         const w = diffDays / 7
         shouldFire = true
         periodLabel = `Week ${w}`
         multiplier = w
       } else if (exp.type === 'MONTHLY' && diffDays % 30 === 0) {
-        // Fires when a full 30-day month completes (matches the running-total calc).
         const m = diffDays / 30
         shouldFire = true
         periodLabel = `Month ${m}`
         multiplier = m
       }
 
-      if (!shouldFire) { skipped++; continue }
+      if (!shouldFire) { staffSkipped++; continue }
 
       // Skip if we already sent a report for this expense today.
       const { data: existing } = await supabase
@@ -116,7 +119,7 @@ export async function GET(req: NextRequest) {
         .eq('expense_id', exp.id)
         .eq('report_date', today)
         .maybeSingle()
-      if (existing) { skipped++; continue }
+      if (existing) { staffSkipped++; continue }
 
       const amount = Number(exp.amount) || 0
       const runningTotal = amount * multiplier
@@ -140,20 +143,125 @@ export async function GET(req: NextRequest) {
           expense_id: exp.id,
           report_date: today,
         }])
-        sent++
+        staffSent++
       } else {
-        failed++
-        log.push({ expense_id: exp.id, error: detail })
+        staffFailed++
+        staffLog.push({ expense_id: exp.id, error: detail })
+      }
+    }
+  }
+
+  // ============================================================
+  // PASS 2 — DELAYED INVOICE PAYMENTS
+  // ============================================================
+  // Find all payments that are past their scheduled payment_date, still UNPAID,
+  // and haven't been alerted yet. One ⚠ alert per row, then stamp
+  // delayed_alert_sent_at so it never repeats.
+  const { data: delayed, error: delayedErr } = await supabase
+    .from('invoice_payments')
+    .select('id, invoice_id, amount, payment_date, source, description')
+    .is('paid_at', null)
+    .is('delayed_alert_sent_at', null)
+    .not('payment_date', 'is', null)
+    .lte('payment_date', today)
+
+  let delayedSent = 0
+  let delayedFailed = 0
+  const delayedLog: any[] = []
+
+  if (delayedErr) {
+    delayedLog.push({ error: 'Failed to load delayed payments', detail: delayedErr.message })
+  } else if (delayed && delayed.length > 0) {
+    // Cache invoices, rides, and clients to avoid refetching for batches that
+    // share an invoice or owner.
+    const invoiceCache = new Map<string, any>()
+    const rideCache = new Map<string, any>()
+    const clientCache = new Map<string, any>()
+
+    for (const p of delayed) {
+      if (!p.invoice_id) continue
+
+      let invoice = invoiceCache.get(p.invoice_id)
+      if (!invoice) {
+        const { data: inv } = await supabase
+          .from('invoices')
+          .select('id, invoice_code, ride_id, client_id')
+          .eq('id', p.invoice_id)
+          .single()
+        if (!inv) { delayedFailed++; delayedLog.push({ payment_id: p.id, error: 'invoice not found' }); continue }
+        invoice = inv
+        invoiceCache.set(p.invoice_id, inv)
+      }
+
+      // Build the owner label: project name for a ride invoice, client name for
+      // a personal-client invoice. Falls back to just the invoice_code if
+      // neither side is set.
+      let ownerLabel = ''
+      if (invoice.ride_id) {
+        let ride = rideCache.get(invoice.ride_id)
+        if (!ride) {
+          const { data: r } = await supabase
+            .from('rides')
+            .select('project_code, project_name')
+            .eq('id', invoice.ride_id)
+            .single()
+          ride = r || {}
+          rideCache.set(invoice.ride_id, ride)
+        }
+        ownerLabel = ride.project_name || ride.project_code || ''
+      } else if (invoice.client_id) {
+        let client = clientCache.get(invoice.client_id)
+        if (!client) {
+          const { data: c } = await supabase
+            .from('clients')
+            .select('name')
+            .eq('id', invoice.client_id)
+            .single()
+          client = c || {}
+          clientCache.set(invoice.client_id, client)
+        }
+        ownerLabel = client.name || ''
+      }
+
+      const amount = Number(p.amount) || 0
+      const lines: string[] = [
+        '*⚠ DELAYED PAYMENT*',
+        `${invoice.invoice_code || '—'}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
+        `Due: ${formatDate(p.payment_date)} — *${formatUSD(amount)}*`,
+      ]
+      if (p.description) lines.push(p.description)
+      if (p.source) lines.push(p.source)
+
+      const caption = lines.join('\n')
+
+      const { ok, detail } = await sendWhatsApp(caption)
+      if (ok) {
+        await supabase
+          .from('invoice_payments')
+          .update({ delayed_alert_sent_at: new Date().toISOString() })
+          .eq('id', p.id)
+        delayedSent++
+      } else {
+        delayedFailed++
+        delayedLog.push({ payment_id: p.id, error: detail })
       }
     }
   }
 
   return NextResponse.json({
     today,
-    activeSeasons: activeSeasons.length,
-    sent,
-    skipped,
-    failed,
-    log,
+    staff: {
+      activeSeasons: activeSeasons.length,
+      sent: staffSent,
+      skipped: staffSkipped,
+      failed: staffFailed,
+      log: staffLog,
+    },
+    delayedPayments: {
+      candidates: delayed?.length || 0,
+      sent: delayedSent,
+      failed: delayedFailed,
+      log: delayedLog,
+    },
   })
 }
