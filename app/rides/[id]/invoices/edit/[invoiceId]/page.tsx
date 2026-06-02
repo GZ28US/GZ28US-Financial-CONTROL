@@ -447,7 +447,7 @@ export default function EditInvoicePage() {
         : new Date().toISOString()
       return { amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '', description: p.description || '', paid_at: paidAt }
     })
-    setPayments(prev => [...prev, ...newRows])
+    setPayments(prev => sortByDateAsc([...prev, ...newRows], p => p.payment_date))
     setScannedPayments(null)
   }
 
@@ -732,7 +732,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments([...payments, newPayment]); setNewPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
+    setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
   }
   async function removePayment(index: number) {
     const payment = payments[index]
@@ -747,7 +747,7 @@ export default function EditInvoicePage() {
       const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, description: editingPayment.description || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(updated)
+    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, p => p.payment_date))
     setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' }) }
