@@ -13,14 +13,31 @@ import { NextRequest, NextResponse } from 'next/server'
 //   { body: string, imageUrl: string }     -> sends an image with caption
 //
 // Optionally override the destination with { to: "...@g.us" }.
+//
+// All logs are prefixed with [whatsapp] so they're easy to grep in Vercel
+// function logs. We log env-var presence (not the actual values), the chosen
+// endpoint, destination, upstream HTTP status, and the upstream response body
+// — enough to diagnose mis-configured env vars, group ID changes, token
+// rejections, and stalled networks without exposing the token in logs.
 
 export async function POST(req: NextRequest) {
+  const t0 = Date.now()
   try {
     const instance = process.env.ULTRAMSG_INSTANCE
     const token = process.env.ULTRAMSG_TOKEN
     const defaultTo = process.env.ULTRAMSG_GROUP_ID
 
+    console.log('[whatsapp] called', {
+      hasInstance: !!instance,
+      instanceLen: instance?.length || 0,
+      hasToken: !!token,
+      tokenLen: token?.length || 0,
+      hasGroup: !!defaultTo,
+      groupLen: defaultTo?.length || 0,
+    })
+
     if (!instance || !token) {
+      console.error('[whatsapp] missing env vars', { hasInstance: !!instance, hasToken: !!token })
       return NextResponse.json({ error: 'WhatsApp not configured (missing instance or token).' }, { status: 500 })
     }
 
@@ -31,7 +48,16 @@ export async function POST(req: NextRequest) {
     const imageUrl = payload.imageUrl as string | undefined
     const filename = (payload.filename as string | undefined) || 'document'
 
+    console.log('[whatsapp] payload', {
+      to,
+      bodyLen: body.length,
+      hasDocument: !!documentUrl,
+      hasImage: !!imageUrl,
+      filename: documentUrl ? filename : undefined,
+    })
+
     if (!to) {
+      console.error('[whatsapp] no destination')
       return NextResponse.json({ error: 'No destination group configured.' }, { status: 400 })
     }
 
@@ -55,23 +81,41 @@ export async function POST(req: NextRequest) {
     const form = new URLSearchParams()
     Object.entries(fields).forEach(([k, v]) => form.append(k, v ?? ''))
 
+    console.log('[whatsapp] -> ultramsg', { endpoint, to })
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
     })
 
-    const data = await res.json().catch(() => ({}))
+    // Capture raw text first so we can log it even when it isn't valid JSON.
+    const rawText = await res.text()
+    let data: any = {}
+    try { data = JSON.parse(rawText) } catch { /* not JSON */ }
+
+    console.log('[whatsapp] <- ultramsg', {
+      status: res.status,
+      ok: res.ok,
+      sent: data?.sent,
+      error: data?.error,
+      messageId: data?.id,
+      rawLen: rawText.length,
+      rawPreview: rawText.slice(0, 300),
+      elapsedMs: Date.now() - t0,
+    })
 
     // UltraMsg returns { sent: "true", ... } on success, or { error: ... }.
     const ok = res.ok && (data.sent === 'true' || data.sent === true || !data.error)
     if (!ok) {
-      return NextResponse.json({ error: 'UltraMsg send failed', detail: data }, { status: 502 })
+      console.error('[whatsapp] send failed', { status: res.status, rawPreview: rawText.slice(0, 500) })
+      return NextResponse.json({ error: 'UltraMsg send failed', status: res.status, detail: data, raw: rawText }, { status: 502 })
     }
 
+    console.log('[whatsapp] success', { messageId: data?.id, elapsedMs: Date.now() - t0 })
     return NextResponse.json({ ok: true, result: data })
   } catch (err) {
-    console.error('whatsapp route error:', err)
+    console.error('[whatsapp] route exception', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
