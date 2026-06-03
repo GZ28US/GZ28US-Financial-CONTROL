@@ -253,6 +253,7 @@ export default function EditInvoicePage() {
     setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
+    setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
@@ -946,6 +947,7 @@ export default function EditInvoicePage() {
       feed_status: feedStatus === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE',
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
+      target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
       updated_at: new Date().toISOString(),
     }).eq('id', invoiceId)
