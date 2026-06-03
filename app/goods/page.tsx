@@ -81,7 +81,14 @@ export default function GoodsPage() {
   useEffect(() => { loadGoods() }, [])
 
   async function loadGoods() {
-    const { data, error } = await supabase.from('goods').select('*').order('created_at', { ascending: false })
+    // Order by the actual purchase_date (newest first), with created_at as a
+    // tiebreaker so rows entered later for the same day still float to the top.
+    // nullsFirst:false pushes goods with no purchase_date to the bottom.
+    const { data, error } = await supabase
+      .from('goods')
+      .select('*')
+      .order('purchase_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
     if (error) { console.error(error); setLoading(false); return }
 
     const goodsWithStats = await Promise.all((data || []).map(async (good) => {
