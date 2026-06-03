@@ -84,6 +84,23 @@ function sortByDateAsc<T>(rows: T[], getDate: (row: T) => string): T[] {
     .map(({ row }) => row)
 }
 
+// Same as sortByDateAsc but newest first. Empty/invalid dates still go LAST so
+// they don't bubble to the top of a "most recent first" list.
+function sortByDateDesc<T>(rows: T[], getDate: (row: T) => string): T[] {
+  return rows
+    .map((row, i) => ({ row, i }))
+    .sort((a, b) => {
+      const ka = dateSortKey(getDate(a.row))
+      const kb = dateSortKey(getDate(b.row))
+      const aMissing = !isFinite(ka)
+      const bMissing = !isFinite(kb)
+      if (aMissing && !bMissing) return 1
+      if (!aMissing && bMissing) return -1
+      return ka === kb ? a.i - b.i : kb - ka
+    })
+    .map(({ row }) => row)
+}
+
 function sortExpensesByDate(rows: Expense[]): Expense[] {
   type Block = { key: number; order: number; items: Expense[] }
   const groups = new Map<string, Block>()
@@ -269,7 +286,9 @@ export default function EditInvoicePage() {
     const prefix = `From ${iCode} — ${rName}`
     const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (stockHistory) {
-      const mapped = sortByDateAsc(stockHistory.map(s => ({
+      // Newest first — both for the editable PARTS TO STOCK list and the
+      // "already in stock from this invoice" recap below it.
+      const mapped = sortByDateDesc(stockHistory.map(s => ({
         description: s.description,
         quantity: String(s.quantity),
         unit_price: String(s.unit_price),
