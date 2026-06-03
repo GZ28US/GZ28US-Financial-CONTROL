@@ -177,6 +177,10 @@ export default function EditInvoicePage() {
   const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
   const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
+  // paidInConfirm: clicking UNPAID (to mark PAID) opens a "PAID IN?" date box,
+  // defaulting to today. The chosen date sets paid_at; payment_date is untouched.
+  // Going PAID -> UNPAID just clears paid_at with no box.
+  const [paidInConfirm, setPaidInConfirm] = useState<{ index: number; date: string } | null>(null)
   const [scanningPayment, setScanningPayment] = useState(false)
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
@@ -849,14 +853,36 @@ export default function EditInvoicePage() {
 
   async function togglePaid(index: number) {
     const p = payments[index]
-    const nextPaidAt = p.paid_at ? '' : new Date().toISOString()
+    if (p.paid_at) {
+      // Unmark — clear paid_at, no box.
+      if (p.id) {
+        const { error } = await supabase.from('invoice_payments').update({ paid_at: null }).eq('id', p.id)
+        if (error) { alert(error.message); return }
+      }
+      const updated = [...payments]
+      updated[index] = { ...updated[index], paid_at: '' }
+      setPayments(updated)
+    } else {
+      // Mark paid — ask for the paid date (PAID IN?), default today.
+      setPaidInConfirm({ index, date: todayStr() })
+    }
+  }
+
+  async function confirmPaidIn() {
+    if (!paidInConfirm) return
+    const { index, date } = paidInConfirm
+    const p = payments[index]
+    const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(date)
+      ? new Date(date + 'T12:00:00Z').toISOString()
+      : new Date().toISOString()
     if (p.id) {
-      const { error } = await supabase.from('invoice_payments').update({ paid_at: nextPaidAt || null }).eq('id', p.id)
+      const { error } = await supabase.from('invoice_payments').update({ paid_at: paidAt }).eq('id', p.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]
-    updated[index] = { ...updated[index], paid_at: nextPaidAt }
+    updated[index] = { ...updated[index], paid_at: paidAt }
     setPayments(updated)
+    setPaidInConfirm(null)
   }
 
   function addNote() {
@@ -1461,6 +1487,20 @@ export default function EditInvoicePage() {
                 const groupItems = expenses.map((e, i) => ({ index: i, expense: e })).filter(({ expense: e }) => e.purchase_group === gid)
                 removePurchaseGroup(groupItems)
               }} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {paidInConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
+            <h2 className="text-2xl font-bold mb-2">PAID IN?</h2>
+            <p className="text-gray-400 text-base mb-4">Enter the date this payment was received.</p>
+            <DatePicker label="PAID DATE" value={paidInConfirm.date} onChange={(v) => setPaidInConfirm({ ...paidInConfirm, date: v })} />
+            <div className="flex gap-3 pt-4">
+              <button onClick={() => setPaidInConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={confirmPaidIn} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
             </div>
           </div>
         </div>
