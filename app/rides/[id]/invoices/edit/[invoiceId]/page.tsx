@@ -12,18 +12,38 @@ type Service = { id?: string; description: string; price: string }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 type Payment = { id?: string; amount: string; payment_date: string; source: string; receipt_url: string; description: string; paid_at: string }
 type Note = { id?: string; note: string }
-type Expense = { id?: string; supplier: string; item: string; amount: string; quantity: string; payment_date: string; receipt_urls: string[]; purchase_group?: string }
-type StockItem = { id: string; description: string; quantity: number; unit_price: number; supplier: string | null; purchase_date: string | null }
+// stock_source_type / stock_donor are the lineage carriers: when an item is
+// pulled FROM STOCK into this expense list, we copy the stock row's source_type
+// and donor here so that if it gets sent back via SEND TO -> STOCK later, it
+// returns to stock with its original origin intact (never re-labeled by the
+// intermediate car).
+type Expense = {
+  id?: string
+  supplier: string
+  item: string
+  amount: string
+  quantity: string
+  payment_date: string
+  receipt_urls: string[]
+  purchase_group?: string
+  stock_source_type?: string
+  stock_donor?: string
+}
+type StockItem = {
+  id: string
+  description: string
+  quantity: number
+  unit_price: number
+  supplier: string | null
+  purchase_date: string | null
+  source_type: string | null
+  donor: string | null
+}
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string; description: string }
 type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
-// An ExpenseReport now represents EITHER a single expense OR a whole grouped purchase
-// (multiple items sharing the same purchase_group). Either way it sends ONE WhatsApp message.
 type ExpenseReportItem = { item: string; amount: string; quantity: string }
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
-// When a scan looks like a previously-registered document we surface this object
-// to the duplicate warning modal. The caller passes a `proceed` callback that's
-// invoked if the user clicks REGISTER ANYWAY.
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
@@ -89,16 +109,12 @@ function sortExpensesByDate(rows: Expense[]): Expense[] {
     .flatMap(b => b.items)
 }
 
-// Status of a payment row. PAID = user clicked PAID. DELAYED = unpaid AND scheduled
-// payment_date has arrived (today or earlier). PENDING = unpaid AND date in future
-// (or no date set yet).
 function paymentStatus(p: Payment): 'PAID' | 'DELAYED' | 'PENDING' {
   if (p.paid_at) return 'PAID'
   if (p.payment_date && /^\d{4}-\d{2}-\d{2}$/.test(p.payment_date) && isTodayOrPast(p.payment_date)) return 'DELAYED'
   return 'PENDING'
 }
 
-// Render a timestamptz string as a short date in the user's locale.
 function formatTsDate(ts: string) {
   if (!ts) return '-'
   const d = new Date(ts)
@@ -112,7 +128,6 @@ export default function EditInvoicePage() {
   const pathname = usePathname()
   const ownerId = String(params.id)
   const invoiceId = String(params.invoiceId)
-  // Context: client personal invoice when URL is /clients/..., otherwise ride invoice.
   const isClient = (pathname || '').includes('/clients/')
   const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
 
@@ -167,7 +182,11 @@ export default function EditInvoicePage() {
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string }>({ description: '', amount: '', quantity: '1' })
-  const [sendToStockConfirm, setSendToStockConfirm] = useState<{ index: number; expense: Expense; qtyToSend: string } | null>(null)
+  // sendToConfirm: the SEND TO button on an expense row opens this modal. The user
+  // enters a quantity and chooses STOCK or GOODS as the destination. STOCK applies
+  // the DONATED/PURCHASED lineage rules; GOODS inserts a fresh row into the goods
+  // table without lineage tracking (goods are always purchased).
+  const [sendToConfirm, setSendToConfirm] = useState<{ index: number; expense: Expense; qtyToSend: string } | null>(null)
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
@@ -176,7 +195,6 @@ export default function EditInvoicePage() {
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
-  // Holds "PROJECT_CODE — Project Name" for ride context; used for stock inventory tagging.
   const rideNameRef = useRef('')
 
   useEffect(() => { loadData() }, [])
@@ -240,6 +258,8 @@ export default function EditInvoicePage() {
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
         purchase_group: e.purchase_group || undefined,
+        stock_source_type: e.stock_source_type || undefined,
+        stock_donor: e.stock_donor || undefined,
       }))))
       setExpandedGroups(new Set())
     }
@@ -262,10 +282,26 @@ export default function EditInvoicePage() {
     setLoading(false)
   }
 
+  // Returns the canonical "owner label" string used as the donor identifier.
+  // For ride invoices: "PROJECT_CODE — Project Name". For client goods invoices:
+  // "CLIENT_NUMBER — Client Name". Empty parts are stripped.
+  function ownerLabel(): string {
+    if (isClient) {
+      const num = clientNumber != null ? String(clientNumber) : ''
+      return [num, clientName].filter(Boolean).join(' — ')
+    }
+    return projectCode + (projectName ? ` — ${projectName}` : '')
+  }
+
   async function openStockModal(target: 'new' | number) {
     setStockTarget(target)
-    const { data } = await supabase.from('inputs').select('id, description, quantity, unit_price, supplier, purchase_date').eq('category', 'STOCK').gt('quantity', 0).order('description')
-    setStockItems(data || [])
+    const { data } = await supabase
+      .from('inputs')
+      .select('id, description, quantity, unit_price, supplier, purchase_date, source_type, donor')
+      .eq('category', 'STOCK')
+      .gt('quantity', 0)
+      .order('description')
+    setStockItems((data || []) as StockItem[])
     setStockQtyInput({})
     setShowStockModal(true)
   }
@@ -275,7 +311,18 @@ export default function EditInvoicePage() {
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const amount = item.unit_price.toFixed(2)
-    const expense: Expense = { supplier: 'STOCK', item: item.description, amount, quantity: String(qty), payment_date: item.purchase_date || '', receipt_urls: [] }
+    // Carry the stock row's origin onto the expense so a future SEND TO -> STOCK
+    // restores it instead of falsely re-labeling.
+    const expense: Expense = {
+      supplier: 'STOCK',
+      item: item.description,
+      amount,
+      quantity: String(qty),
+      payment_date: item.purchase_date || '',
+      receipt_urls: [],
+      stock_source_type: item.source_type || undefined,
+      stock_donor: item.donor || undefined,
+    }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
     } else {
@@ -283,7 +330,7 @@ export default function EditInvoicePage() {
     }
     const { data: inputData } = await supabase.from('inputs').select('notes').eq('id', item.id).single()
     const existingNote = inputData?.notes || ''
-    const usageNote = `Used ${qty} in ${rideName}`
+    const usageNote = `Used ${qty} in ${rideName || ownerLabel()}`
     const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
     await supabase.from('inputs').update({ quantity: item.quantity - qty, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', item.id)
     setShowStockModal(false)
@@ -322,8 +369,6 @@ export default function EditInvoicePage() {
 
       const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
 
-      // Duplicate check: any existing purchase (anywhere in invoice_expenses) with
-      // the same supplier + date + total is treated as a possible re-scan.
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
           .from('invoice_expenses')
@@ -362,7 +407,6 @@ export default function EditInvoicePage() {
   async function handleScanPayment(file: File) {
     setScanningPayment(true)
     try {
-      // Store the scanned income document so it can be attached to the WhatsApp report.
       const ext = file.name.split('.').pop()
       const path = `${ownerId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error: uploadError } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
@@ -396,8 +440,6 @@ export default function EditInvoicePage() {
 
       const openReview = () => setScannedPayments(list)
 
-      // Duplicate check: any scanned payment that matches an existing invoice_payments
-      // row with the same amount + date + source is flagged.
       const matchedRows: string[] = []
       for (const p of list) {
         const amount = parseFloat(p.amount) || 0
@@ -437,10 +479,6 @@ export default function EditInvoicePage() {
     if (!scannedPayments) return
     const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
     if (valid.length === 0) { setScannedPayments(null); return }
-    // Scanned incomes default to PAID, using the document's date as paid_at (falls
-    // back to now() if the scanned date is missing or invalid). The user can toggle
-    // back to UNPAID after the scan if they want. Defaulting to PAID also lets the
-    // WhatsApp income report fire on SAVE CHANGES (which only reports PAID rows).
     const newRows: Payment[] = valid.map(p => {
       const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
         ? new Date(p.date + 'T12:00:00Z').toISOString()
@@ -531,23 +569,53 @@ export default function EditInvoicePage() {
     setEditingGroupItemIndex(null)
   }
 
-  async function confirmSendToStock(item: { index: number; expense: Expense; qtyToSend: string }) {
+  // SEND TO confirmation handler. The destination is STOCK or GOODS.
+  //  - STOCK: insert into the inputs table with DONATED/PURCHASED lineage. If
+  //    the expense carried stock_source_type='DONATED' (i.e. it was pulled from
+  //    stock as DONATED via FROM STOCK), we restore DONATED and the original
+  //    stock_donor. Otherwise the item is recorded as PURCHASED.
+  //  - GOODS: insert into the goods table (goods are always purchased, no
+  //    lineage to track). Fields mirror what a manual goods entry looks like.
+  // The original expense row is then reduced by qtyToSend (or removed if zero).
+  async function confirmSendTo(item: { index: number; expense: Expense; qtyToSend: string }, target: 'STOCK' | 'GOODS') {
     const exp = item.expense
     const qtyToSend = parseFloat(item.qtyToSend) || 1
     const totalQty = parseFloat(exp.quantity) || 1
-    const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
-    const note = `From ${invoiceCode} — ${rideName}`
-    const receiptUrl = exp.receipt_urls.length > 0 ? JSON.stringify(exp.receipt_urls) : null
-    await supabase.from('inputs').insert([{
-      description: exp.item,
-      category: 'STOCK',
-      quantity: qtyToSend,
-      unit_price: parseFloat(exp.amount) || 0,
-      purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
-      supplier: exp.supplier || null,
-      notes: note,
-      receipt_url: receiptUrl,
-    }])
+    if (qtyToSend <= 0) { alert('Quantity must be greater than zero.'); return }
+    if (qtyToSend > totalQty) { alert(`Only ${totalQty} available.`); return }
+
+    const receiptUrlsJson = exp.receipt_urls.length > 0 ? JSON.stringify(exp.receipt_urls) : null
+
+    if (target === 'STOCK') {
+      const camFromDonated = exp.stock_source_type === 'DONATED'
+      const sourceType = camFromDonated ? 'DONATED' : 'PURCHASED'
+      const donor = camFromDonated ? (exp.stock_donor || null) : null
+      const note = `From ${invoiceCode} — ${ownerLabel()}`
+      const { error } = await supabase.from('inputs').insert([{
+        description: exp.item,
+        category: 'STOCK',
+        quantity: qtyToSend,
+        unit_price: parseFloat(exp.amount) || 0,
+        purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
+        supplier: exp.supplier || null,
+        notes: note,
+        receipt_url: receiptUrlsJson,
+        source_type: sourceType,
+        donor: donor,
+      }])
+      if (error) { alert(error.message); return }
+    } else {
+      const { error } = await supabase.from('goods').insert([{
+        description: exp.item,
+        quantity: qtyToSend,
+        unit_price: parseFloat(exp.amount) || 0,
+        purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
+        supplier: exp.supplier || null,
+        receipt_url: receiptUrlsJson,
+      }])
+      if (error) { alert(error.message); return }
+    }
+
     const remainingQty = totalQty - qtyToSend
     if (remainingQty <= 0) {
       if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
@@ -558,7 +626,7 @@ export default function EditInvoicePage() {
       updated[item.index] = { ...updated[item.index], quantity: String(remainingQty) }
       setExpenses(updated)
     }
-    setSendToStockConfirm(null)
+    setSendToConfirm(null)
   }
 
   function importIntuitiveParts() {
@@ -657,7 +725,6 @@ export default function EditInvoicePage() {
   const globalDiscountPct = parseFloat(globalDiscount) || 0
   const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  // TOTAL PAID now counts only payments the user explicitly marked PAID via the toggle button.
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
   const flTaxExpenseAmount = floridaTaxesAmount
@@ -752,8 +819,6 @@ export default function EditInvoicePage() {
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' }) }
 
-  // Toggle a payment row between PAID and UNPAID. Stores now() as paid_at on activation;
-  // clears paid_at on deactivation. For already-saved rows the DB is updated immediately.
   async function togglePaid(index: number) {
     const p = payments[index]
     const nextPaidAt = p.paid_at ? '' : new Date().toISOString()
@@ -842,8 +907,6 @@ export default function EditInvoicePage() {
       const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0 })))
       if (e) { alert(e.message); return }
     }
-    // New incomes (payments) — insert them and remember which ones are new for the WhatsApp report step.
-    // paid_at is included so a row marked PAID before saving is persisted as PAID.
     const newPayments = payments.filter(p => !p.id)
     if (newPayments.length > 0) {
       const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({
@@ -872,11 +935,18 @@ export default function EditInvoicePage() {
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
         purchase_group: ex.purchase_group || null,
+        stock_source_type: ex.stock_source_type || null,
+        stock_donor: ex.stock_donor || null,
       })))
       if (e) { alert(e.message); return }
     }
 
+    // PARTS TO STOCK: these are always DONATED. The donor is the current
+    // owner (ride or, if this section ever opens up to clients, the client).
+    // Delete-then-reinsert is fine because partsToStock is the full intended
+    // state of the "from this invoice" stock rows.
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
+    const donorLabel = ownerLabel()
     const prefix = `From ${invoiceCode} — ${rideName}`
     await supabase.from('inputs').delete().eq('supplier', rideName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (partsToStock.length > 0) {
@@ -888,13 +958,12 @@ export default function EditInvoicePage() {
         purchase_date: isValidDate(p.date) ? p.date : null,
         supplier: rideName,
         notes: `From ${invoiceCode} — ${rideName}`,
+        source_type: 'DONATED',
+        donor: donorLabel,
       })))
       if (e) { alert(e.message); return }
     }
 
-    // Build the WhatsApp report queues for any newly-added incomes and expenses.
-    // INCOMES: only PAID new payments get reported. UNPAID ones (PENDING/DELAYED) stay quiet
-    // until the user clicks PAID — the WhatsApp INCOME report reflects actually received money.
     const pendingIncomes: IncomeReport[] = newPayments
       .filter(p => !!p.paid_at)
       .map(p => ({
@@ -906,9 +975,6 @@ export default function EditInvoicePage() {
         report: true,
       }))
 
-    // For expenses, group by purchase_group: a single scanned receipt with multiple
-    // items becomes ONE WhatsApp report (listing each item beneath the supplier),
-    // not one report per item. Standalone expenses each become their own report.
     const groupMap = new Map<string, ExpenseReport>()
     const pendingExpenses: ExpenseReport[] = []
     newExpenses.forEach(ex => {
@@ -939,7 +1005,6 @@ export default function EditInvoicePage() {
       }
     })
 
-    // Ask about incomes first (if any), then expenses. If neither, just leave.
     if (pendingIncomes.length > 0) {
       if (pendingExpenses.length > 0) setExpenseReports(pendingExpenses)
       setIncomeReports(pendingIncomes)
@@ -956,16 +1021,14 @@ export default function EditInvoicePage() {
   function buildIncomeCaption(inc: IncomeReport) {
     const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
     const amountStr = formatUSD(parseFloat(inc.amount) || 0)
-    const ownerLabel = isClient ? clientName : projectName
-    // First block: INCOME (bold) / INVOICE — OWNER / DATE — AMOUNT (bold) / DESCRIPTION (omitted if empty)
+    const ownerLbl = isClient ? clientName : projectName
     const lines: string[] = [
       '*INCOME*',
-      `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
+      `${invoiceCode}${ownerLbl ? ` — ${ownerLbl}` : ''}`,
       `${dateStr} — *${amountStr}*`,
     ]
     if (inc.description && inc.description.trim()) lines.push(inc.description.trim())
 
-    // Second block (only when this invoice is a REAL-TIME FEED): blank line, then DUE / CURRENT / FINAL.
     if (feedStatus === 'REAL_TIME') {
       const due = balance < 0 ? -balance : 0
       lines.push('')
@@ -980,16 +1043,14 @@ export default function EditInvoicePage() {
     const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
     const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
     const amountStr = formatUSD(total)
-    const ownerLabel = isClient ? clientName : projectName
-    // EXPENSE (bold) / INVOICE — OWNER / DATE — TOTAL (bold) / SUPPLIER
+    const ownerLbl = isClient ? clientName : projectName
     const lines: string[] = [
       '*EXPENSE*',
-      `${invoiceCode}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
+      `${invoiceCode}${ownerLbl ? ` — ${ownerLbl}` : ''}`,
       `${dateStr} — *${amountStr}*`,
     ]
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
 
-    // Item list (one bullet per item) — shown for single and grouped purchases alike.
     lines.push('')
     exp.items.forEach(it => {
       const qty = parseFloat(it.quantity) || 1
@@ -998,7 +1059,6 @@ export default function EditInvoicePage() {
       lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
     })
 
-    // Only on a REAL-TIME ride invoice: blank line, then DUE / CURRENT / FINAL (same as income).
     if (!isClient && feedStatus === 'REAL_TIME') {
       const due = balance < 0 ? -balance : 0
       lines.push('')
@@ -1032,7 +1092,6 @@ export default function EditInvoicePage() {
     setSendingReports(false)
     if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.`)
     setIncomeReports(null)
-    // If expenses are also queued, the expense modal is already set and will now show.
     if (!expenseReports) router.push(basePath)
   }
 
@@ -1103,7 +1162,8 @@ export default function EditInvoicePage() {
                   <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold truncate">{item.description}</p>
-                      {item.supplier && <p className="text-sm text-gray-400">{item.supplier}</p>}
+                      {item.source_type === 'DONATED' && item.donor && <p className="text-sm text-orange-400">DONATED by {item.donor}</p>}
+                      {item.supplier && item.source_type !== 'DONATED' && <p className="text-sm text-gray-400">{item.supplier}</p>}
                       <p className="text-sm text-gray-400">Available: {item.quantity} — {formatUSD(item.unit_price)} each</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -1302,18 +1362,30 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {sendToStockConfirm && (
+      {/* SEND TO modal: one qty input, three actions. STOCK applies DONATED/PURCHASED
+          lineage, GOODS just inserts a fresh row into the goods table. */}
+      {sendToConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
-            <h2 className="text-2xl font-bold mb-2">Send to Stock</h2>
-            <p className="text-gray-400 text-lg mb-4"><span className="text-white font-bold">{sendToStockConfirm.expense.item}</span><br />Available qty: {sendToStockConfirm.expense.quantity}</p>
+            <h2 className="text-2xl font-bold mb-2">Send To</h2>
+            <p className="text-gray-400 text-lg mb-4">
+              <span className="text-white font-bold">{sendToConfirm.expense.item}</span><br />
+              Available qty: {sendToConfirm.expense.quantity}
+            </p>
             <div className="mb-6">
-              <label className="block mb-1 text-sm text-gray-400">QTY TO SEND TO STOCK</label>
-              <input type="text" inputMode="decimal" value={sendToStockConfirm.qtyToSend} onChange={(e) => { if (isNumeric(e.target.value)) setSendToStockConfirm({ ...sendToStockConfirm, qtyToSend: e.target.value }) }} className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-5 py-4 text-xl text-center" />
+              <label className="block mb-1 text-sm text-gray-400">QTY TO SEND</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={sendToConfirm.qtyToSend}
+                onChange={(e) => { if (isNumeric(e.target.value)) setSendToConfirm({ ...sendToConfirm, qtyToSend: e.target.value }) }}
+                className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-5 py-4 text-xl text-center"
+              />
             </div>
-            <div className="flex gap-4">
-              <button onClick={() => setSendToStockConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
-              <button onClick={() => confirmSendToStock(sendToStockConfirm)} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">CONFIRM</button>
+            <div className="grid grid-cols-3 gap-3">
+              <button onClick={() => setSendToConfirm(null)} className="bg-gray-700 hover:bg-gray-600 px-4 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={() => confirmSendTo(sendToConfirm, 'GOODS')} className="bg-blue-700 hover:bg-blue-600 px-4 py-4 rounded-2xl font-bold text-lg">GOODS</button>
+              <button onClick={() => confirmSendTo(sendToConfirm, 'STOCK')} className="bg-orange-700 hover:bg-orange-600 px-4 py-4 rounded-2xl font-bold text-lg">STOCK</button>
             </div>
           </div>
         </div>
@@ -1351,7 +1423,6 @@ export default function EditInvoicePage() {
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
-        {/* FEED STATUS SWITCH */}
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">FEED STATUS</p>
@@ -1380,7 +1451,6 @@ export default function EditInvoicePage() {
           <input type="text" value={service} onChange={(e) => setService(e.target.value)} className={inputClass} placeholder="Service description" />
         </div>
 
-        {/* PARTS */}
         <div>
           <label className="block mb-3 text-lg font-bold">PARTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1462,7 +1532,6 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        {/* SERVICES */}
         <div>
           <label className="block mb-3 text-lg font-bold">SERVICES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1526,7 +1595,6 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        {/* TOTALS */}
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
           <div className="flex justify-between items-center">
             <span className="text-gray-400 font-bold">PARTS + SERVICES TOTAL</span>
@@ -1546,7 +1614,6 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        {/* INCOME */}
         <div>
           <label className="block mb-3 text-lg font-bold">INCOME</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1641,7 +1708,6 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        {/* NOTES */}
         <div>
           <label className="block mb-3 text-lg font-bold">NOTES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1678,12 +1744,11 @@ export default function EditInvoicePage() {
         {!isClient && isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
         {!isClient && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
-        {/* PARTS TO STOCK */}
         {!isClient && (
         <div>
           <label className="block mb-3 text-lg font-bold">PARTS TO STOCK</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <p className="text-sm text-gray-400">Parts removed from this car that go into our stock inventory.</p>
+            <p className="text-sm text-gray-400">Parts removed from this car that go into our stock inventory as DONATED.</p>
             <input type="text" placeholder="Description" value={newPartToStock.description} onChange={(e) => setNewPartToStock({ ...newPartToStock, description: e.target.value })} className={inputClass} />
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
@@ -1731,7 +1796,6 @@ export default function EditInvoicePage() {
         </div>
         )}
 
-        {/* EXPENSES */}
         <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -1822,7 +1886,7 @@ export default function EditInvoicePage() {
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                                      <button onClick={() => setSendToStockConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
+                                      <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
                                       <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                                     </div>
                                   </div>
@@ -1892,6 +1956,7 @@ export default function EditInvoicePage() {
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                                {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
                               </div>
                               <div className="flex gap-2 shrink-0">
                                 {exp.receipt_urls.length > 0 && (
@@ -1909,7 +1974,7 @@ export default function EditInvoicePage() {
                                   </div>
                                 )}
                                 <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                                <button onClick={() => setSendToStockConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO STOCK</button>
+                                <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
                                 <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                               </div>
                             </div>

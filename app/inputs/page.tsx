@@ -16,6 +16,14 @@ type Input = {
   supplier: string | null
   notes: string | null
   purchase_group?: string | null
+  // STOCK rows carry an origin:
+  //   PURCHASED = entered via EXPENSES -> SEND TO STOCK, or via this inputs page
+  //               (manual add / scanned purchase with category=STOCK).
+  //   DONATED   = entered via PARTS TO STOCK box on a ride invoice. The donor
+  //               column then holds the original donor (e.g. "GZ28-005 — Mustang").
+  // The migration backfilled all pre-existing STOCK rows as PURCHASED.
+  source_type?: string | null
+  donor?: string | null
 }
 
 // After confirming a scanned purchase we queue an ExpenseReport for the optional
@@ -180,6 +188,9 @@ export default function InputsPage() {
   async function confirmScannedPurchase() {
     if (!scannedPurchase) return
     const groupId = generateUUID()
+    // STOCK purchases entered via this page are always PURCHASED (donor stays null).
+    // CONSUMPTION rows don't use source_type at all.
+    const isStock = scannedPurchase.category === 'STOCK'
     const { error } = await supabase.from('inputs').insert(
       scannedPurchase.items.map(item => ({
         description: item.description,
@@ -190,6 +201,8 @@ export default function InputsPage() {
         supplier: scannedPurchase.supplier || null,
         receipt_url: JSON.stringify([scannedPurchase.receiptUrl]),
         purchase_group: groupId,
+        source_type: isStock ? 'PURCHASED' : null,
+        donor: null,
       }))
     )
     if (error) { alert(error.message); return }
@@ -279,6 +292,19 @@ export default function InputsPage() {
       rows.push({ type: 'single', input })
     }
   })
+
+  // Returns the source-type badge JSX for a STOCK row. DONATED rows get an orange
+  // badge plus a donor line; PURCHASED (or legacy/null) rows get a small gray badge.
+  // Returns null for non-STOCK rows.
+  function sourceBadge(input: Input) {
+    if (input.category !== 'STOCK') return null
+    const isDonated = input.source_type === 'DONATED'
+    return (
+      <span className={`px-3 py-1 rounded-full text-sm font-bold ${isDonated ? 'bg-orange-900 text-orange-300' : 'bg-gray-700 text-gray-300'}`}>
+        {isDonated ? 'DONATED' : 'PURCHASED'}
+      </span>
+    )
+  }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
@@ -464,10 +490,11 @@ export default function InputsPage() {
                 <div key={groupId} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
                   <div className="p-6 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
                         <h2 className="text-2xl font-bold">{first.supplier || 'Unknown Supplier'}</h2>
                         <span className={`px-3 py-1 rounded-full text-sm font-bold ${first.category === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`}>{first.category}</span>
+                        {sourceBadge(first)}
                       </div>
                       <p className="text-lg text-gray-400 ml-7">{groupInputs.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
                     </div>
@@ -500,6 +527,7 @@ export default function InputsPage() {
               )
             } else if (row.type === 'single' && row.input) {
               const input = row.input
+              const isDonated = input.category === 'STOCK' && input.source_type === 'DONATED'
               return (
                 <div key={input.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
                   <div className="flex-1 min-w-0">
@@ -508,8 +536,10 @@ export default function InputsPage() {
                       <span className={`px-3 py-1 rounded-full text-sm font-bold ${input.category === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`}>
                         {input.category}
                       </span>
+                      {sourceBadge(input)}
                     </div>
-                    {input.supplier && <p className="text-lg text-gray-400">Supplier: {input.supplier}</p>}
+                    {isDonated && input.donor && <p className="text-lg text-orange-400">Donor: {input.donor}</p>}
+                    {input.supplier && !isDonated && <p className="text-lg text-gray-400">Supplier: {input.supplier}</p>}
                     <p className="text-lg text-gray-400">Qty: {input.quantity} × {formatUSD(input.unit_price)} = {formatUSD(input.quantity * input.unit_price)}</p>
                     <p className="text-lg text-gray-400">Purchased: {formatDate(input.purchase_date)}</p>
                     {input.notes && (
