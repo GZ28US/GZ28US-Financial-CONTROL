@@ -14,6 +14,8 @@ type Good = {
   purchase_date: string | null
   supplier: string | null
   purchase_group?: string | null
+  // Stored as a JSON-stringified array of URLs (scanned purchases set one URL).
+  receipt_url?: string | null
 }
 
 type GoodWithStats = Good & {
@@ -49,6 +51,13 @@ function generateUUID() {
 }
 
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+
+// receipt_url is stored as a JSON-stringified array of URLs. Tolerant of older
+// rows that may have a plain string instead of a JSON array.
+function parseReceiptUrls(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
+}
 
 export default function GoodsPage() {
   const [goods, setGoods] = useState<GoodWithStats[]>([])
@@ -99,11 +108,7 @@ export default function GoodsPage() {
 
     setGoods(goodsWithStats)
     setLoading(false)
-    // Expand all groups by default so the page looks the same as before for users
-    // who don't want to manually open every purchase.
-    const groups = new Set<string>()
-    goodsWithStats.forEach(g => { if (g.purchase_group) groups.add(g.purchase_group) })
-    setExpandedGroups(groups)
+    // Groups start collapsed — the user opens the ones they want to inspect.
   }
 
   async function removeGood(id: string) {
@@ -521,6 +526,15 @@ export default function GoodsPage() {
                       <p className="text-lg text-gray-400 ml-7">{groupGoods.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
                     </div>
                     <div className="flex gap-3 flex-wrap shrink-0">
+                      {(() => {
+                        // VIEW at the purchase level opens the scanned receipt in
+                        // a new tab. Only rendered when there's a URL to open.
+                        const urls = parseReceiptUrls(first.receipt_url)
+                        const url = urls[0]
+                        return url ? (
+                          <a href={url} target="_blank" rel="noopener noreferrer" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</a>
+                        ) : null
+                      })()}
                       <button onClick={() => startEditPurchase(groupId, groupGoods)} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>
                       <button onClick={() => setConfirmGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                     </div>
