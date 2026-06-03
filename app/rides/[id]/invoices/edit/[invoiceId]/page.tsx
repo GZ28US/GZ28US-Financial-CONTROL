@@ -771,20 +771,28 @@ export default function EditInvoicePage() {
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
-  async function calculateLabor() {
-    const target = parseFloat(targetGrandTotal.replace(/,/g, ''))
-    if (!target || target <= 0) { alert('Please enter a valid Target Grand Total'); return }
+  // Auto-CALCULATE: keep Full Project Labor solved so the grand total hits the
+  // saved TARGET GRAND TOTAL. Recomputes whenever any non-labor input that feeds
+  // the grand total changes (parts, other services, discount, target). The labor
+  // row is excluded from otherServicesTotal, so setting it here can't feed back
+  // into this effect's inputs — no loop. Persisted on SAVE CHANGES.
+  useEffect(() => {
+    if (loading) return
+    if (laborIndex < 0) return
+    const target = parseFloat((targetGrandTotal || '').replace(/,/g, ''))
+    if (!target || target <= 0) return
     const discountFactor = 1 - (globalDiscountPct / 100)
-    const labor = discountFactor > 0 ? (target / discountFactor) - partsTotal - otherServicesTotal : 0
-    if (labor < 0) { alert('Target is lower than parts + other services already.'); return }
-    const updated = [...services]
-    if (laborIndex >= 0) {
-      updated[laborIndex] = { ...updated[laborIndex], price: labor.toFixed(2) }
-      setServices(updated)
-      const laborSvc = updated[laborIndex]
-      if (laborSvc.id) await supabase.from('invoice_services').update({ price: labor }).eq('id', laborSvc.id)
-    }
-  }
+    if (discountFactor <= 0) return
+    const labor = (target / discountFactor) - partsTotal - otherServicesTotal
+    const laborStr = (labor < 0 ? 0 : labor).toFixed(2)
+    setServices(prev => {
+      const li = prev.findIndex(s => s.description === FULL_PROJECT_LABOR)
+      if (li < 0 || prev[li].price === laborStr) return prev
+      const updated = [...prev]
+      updated[li] = { ...updated[li], price: laborStr }
+      return updated
+    })
+  }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading])
 
   function addPart() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all part fields'); return }
@@ -961,6 +969,13 @@ export default function EditInvoicePage() {
     const newServices = services.filter(s => !s.id)
     if (newServices.length > 0) {
       const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0 })))
+      if (e) { alert(e.message); return }
+    }
+    // Persist the auto-calculated Full Project Labor on an existing row (the
+    // CALCULATE button that used to write inline is gone).
+    const laborSvc = services.find(s => s.id && s.description === FULL_PROJECT_LABOR)
+    if (laborSvc) {
+      const { error: e } = await supabase.from('invoice_services').update({ price: parseFloat(laborSvc.price) || 0 }).eq('id', laborSvc.id)
       if (e) { alert(e.message); return }
     }
     const newPayments = payments.filter(p => !p.id)
@@ -1696,7 +1711,6 @@ export default function EditInvoicePage() {
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
-                          {svc.description === FULL_PROJECT_LABOR && <button onClick={calculateLabor} className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded-xl font-bold text-sm">CALCULATE</button>}
                           <button onClick={() => startEditService(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => removeService(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </div>
