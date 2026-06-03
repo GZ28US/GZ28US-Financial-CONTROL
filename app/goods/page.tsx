@@ -13,6 +13,7 @@ type Good = {
   unit_price: number
   purchase_date: string | null
   supplier: string | null
+  purchase_group?: string | null
 }
 
 type GoodWithStats = Good & {
@@ -53,6 +54,15 @@ export default function GoodsPage() {
   const [goods, setGoods] = useState<GoodWithStats[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Group-level removal confirmation
+  const [confirmGroupId, setConfirmGroupId] = useState<string | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  // Group-level EDIT modal state. Editing a purchase updates supplier + date on
+  // every good that shares the same purchase_group (mirrors inputs page).
+  const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
+  const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
+  const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
 
   // SCAN PURCHASE state
   const [scanningPurchase, setScanningPurchase] = useState(false)
@@ -82,6 +92,11 @@ export default function GoodsPage() {
 
     setGoods(goodsWithStats)
     setLoading(false)
+    // Expand all groups by default so the page looks the same as before for users
+    // who don't want to manually open every purchase.
+    const groups = new Set<string>()
+    goodsWithStats.forEach(g => { if (g.purchase_group) groups.add(g.purchase_group) })
+    setExpandedGroups(groups)
   }
 
   async function removeGood(id: string) {
@@ -89,6 +104,41 @@ export default function GoodsPage() {
     if (error) { alert(error.message); return }
     setConfirmId(null)
     loadGoods()
+  }
+
+  // Group-level operations.
+  function startEditPurchase(groupId: string, groupGoods: GoodWithStats[]) {
+    const first = groupGoods[0]
+    setEditingPurchaseGroupId(groupId)
+    setEditingPurchaseSupplier(first.supplier || '')
+    setEditingPurchaseDate(first.purchase_date || '')
+  }
+
+  async function confirmEditPurchase() {
+    if (!editingPurchaseGroupId) return
+    const { error } = await supabase.from('goods').update({
+      supplier: editingPurchaseSupplier || null,
+      purchase_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
+    }).eq('purchase_group', editingPurchaseGroupId)
+    if (error) { alert(error.message); return }
+    setEditingPurchaseGroupId(null)
+    loadGoods()
+  }
+
+  async function removePurchaseGroup(groupId: string) {
+    const { error } = await supabase.from('goods').delete().eq('purchase_group', groupId)
+    if (error) { alert(error.message); return }
+    setConfirmGroupId(null)
+    loadGoods()
+  }
+
+  function toggleGroup(groupId: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
   }
 
   async function handleScanGood(file: File) {
@@ -247,6 +297,25 @@ export default function GoodsPage() {
     setExpenseReports(null)
   }
 
+  // Build rows: group purchases together. Goods are already sorted by created_at
+  // desc from the query; we walk them in order, and the FIRST time we see a
+  // purchase_group we emit the whole group as a single row. Standalone goods
+  // (no purchase_group) keep their own row. Net effect: most recent group/single
+  // first, each group at the position of its newest item.
+  const rows: { type: 'single' | 'group'; good?: GoodWithStats; groupId?: string; groupGoods?: GoodWithStats[] }[] = []
+  const seenGroups = new Set<string>()
+  goods.forEach(good => {
+    if (good.purchase_group) {
+      if (!seenGroups.has(good.purchase_group)) {
+        seenGroups.add(good.purchase_group)
+        const groupGoods = goods.filter(g => g.purchase_group === good.purchase_group)
+        rows.push({ type: 'group', groupId: good.purchase_group, groupGoods })
+      }
+    } else {
+      rows.push({ type: 'single', good })
+    }
+  })
+
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
 
@@ -263,6 +332,36 @@ export default function GoodsPage() {
               <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => removeGood(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {confirmGroupId && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">Remove Purchase</h2>
+            <p className="text-gray-400 text-lg mb-8">This will remove ALL goods in this purchase. This action cannot be undone.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setConfirmGroupId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => removePurchaseGroup(confirmGroupId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingPurchaseGroupId && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">EDIT PURCHASE</h2>
+              <button onClick={() => setEditingPurchaseGroupId(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+              <input type="text" value={editingPurchaseSupplier} onChange={(e) => setEditingPurchaseSupplier(e.target.value)} className={inputClass} />
+            </div>
+            <DatePicker label="DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
+            <button onClick={confirmEditPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SAVE</button>
           </div>
         </div>
       )}
@@ -393,23 +492,75 @@ export default function GoodsPage() {
         <p className="text-2xl text-gray-400">No goods found.</p>
       ) : (
         <div className="space-y-5">
-          {goods.map((good) => (
-            <div key={good.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
-              <div className="flex-1 min-w-0">
-                <h2 className="text-2xl font-bold mb-1">{good.description}</h2>
-                {good.supplier && <p className="text-lg text-gray-400">Supplier: {good.supplier}</p>}
-                <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
-                <p className="text-lg text-gray-400">Purchased: {formatDate(good.purchase_date)}</p>
-                {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
-                <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
-              </div>
-              <div className="flex gap-3 flex-wrap shrink-0">
-                <Link href={`/goods/${good.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
-                <Link href={`/goods/edit/${good.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                <button onClick={() => setConfirmId(good.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
-              </div>
-            </div>
-          ))}
+          {rows.map((row) => {
+            if (row.type === 'group' && row.groupId && row.groupGoods) {
+              const groupId = row.groupId
+              const groupGoods = row.groupGoods
+              const first = groupGoods[0]
+              const groupItemsTotal = groupGoods.reduce((s, g) => s + g.quantity * g.unit_price, 0)
+              const groupExpensesTotal = groupGoods.reduce((s, g) => s + g.expensesTotal, 0)
+              const groupTotal = groupItemsTotal + groupExpensesTotal
+              const isExpanded = expandedGroups.has(groupId)
+              return (
+                <div key={groupId} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
+                  {/* Group header: text area toggles expand/collapse; buttons live in
+                      their own flex section so clicks don't bubble to the toggle. */}
+                  <div className="p-6 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleGroup(groupId)}>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
+                        <h2 className="text-2xl font-bold">{first.supplier || 'Unknown Supplier'}</h2>
+                      </div>
+                      <p className="text-lg text-gray-400 ml-7">{groupGoods.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
+                    </div>
+                    <div className="flex gap-3 flex-wrap shrink-0">
+                      <button onClick={() => startEditPurchase(groupId, groupGoods)} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>
+                      <button onClick={() => setConfirmGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="border-t border-gray-800">
+                      {groupGoods.map((good, gi) => (
+                        <div key={good.id} className={`flex items-center justify-between gap-6 px-6 py-4 ${gi < groupGoods.length - 1 ? 'border-b border-gray-800' : ''}`}>
+                          <div className="flex-1 min-w-0 pl-5">
+                            <h3 className="text-xl font-bold">{good.description}</h3>
+                            <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
+                            {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
+                            <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
+                          </div>
+                          <div className="flex gap-3 shrink-0">
+                            <Link href={`/goods/${good.id}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
+                            <Link href={`/goods/edit/${good.id}`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
+                            <button onClick={() => setConfirmId(good.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            } else if (row.type === 'single' && row.good) {
+              const good = row.good
+              return (
+                <div key={good.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-2xl font-bold mb-1">{good.description}</h2>
+                    {good.supplier && <p className="text-lg text-gray-400">Supplier: {good.supplier}</p>}
+                    <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
+                    <p className="text-lg text-gray-400">Purchased: {formatDate(good.purchase_date)}</p>
+                    {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
+                    <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
+                  </div>
+                  <div className="flex gap-3 flex-wrap shrink-0">
+                    <Link href={`/goods/${good.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                    <Link href={`/goods/edit/${good.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                    <button onClick={() => setConfirmId(good.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })}
         </div>
       )}
     </main>
