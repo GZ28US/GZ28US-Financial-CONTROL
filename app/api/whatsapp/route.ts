@@ -19,6 +19,13 @@ import { NextRequest, NextResponse } from 'next/server'
 // endpoint, destination, upstream HTTP status, and the upstream response body
 // — enough to diagnose mis-configured env vars, group ID changes, token
 // rejections, and stalled networks without exposing the token in logs.
+//
+// IMPORTANT — UltraMsg API field naming: all three endpoints (chat, image,
+// document) take the caption/message text in a field called `body`, NOT
+// `caption`. Sending `caption` to /messages/image or /messages/document
+// makes UltraMsg respond with `{"error":[{"body":"is required"}]}` and the
+// message is dropped — which is why receipt-attached reports stopped firing
+// while text-only chat reports continued working.
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now()
@@ -64,15 +71,16 @@ export async function POST(req: NextRequest) {
     const base = `https://api.ultramsg.com/${instance}`
 
     // Decide which UltraMsg endpoint to use based on what was passed.
+    // All three endpoints take the caption/message text in `body`.
     let endpoint: string
     let fields: Record<string, string>
 
     if (imageUrl) {
       endpoint = `${base}/messages/image`
-      fields = { token, to, image: imageUrl, caption: body }
+      fields = { token, to, image: imageUrl, body }
     } else if (documentUrl) {
       endpoint = `${base}/messages/document`
-      fields = { token, to, document: documentUrl, filename, caption: body }
+      fields = { token, to, document: documentUrl, filename, body }
     } else {
       endpoint = `${base}/messages/chat`
       fields = { token, to, body }
