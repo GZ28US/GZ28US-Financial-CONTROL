@@ -21,7 +21,6 @@ type Input = {
   //               (manual add / scanned purchase with category=STOCK).
   //   DONATED   = entered via PARTS TO STOCK box on a ride invoice. The donor
   //               column then holds the original donor (e.g. "GZ28-005 — Mustang").
-  // The migration backfilled all pre-existing STOCK rows as PURCHASED.
   source_type?: string | null
   donor?: string | null
 }
@@ -62,8 +61,17 @@ export default function InputsPage() {
   const [inputs, setInputs] = useState<Input[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Group-level removal confirmation: stores the purchase_group UUID to delete.
+  const [confirmGroupId, setConfirmGroupId] = useState<string | null>(null)
   const [filter, setFilter] = useState<'ALL' | 'CONSUMPTION' | 'STOCK'>('ALL')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  // Group-level EDIT modal state. Editing a purchase updates supplier + date on
+  // every item that shares the same purchase_group (mirroring the edit-invoice
+  // page behavior). Per-item description/qty/price are still edited individually.
+  const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
+  const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
+  const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
 
   // ADD PURCHASE state
   const [scanningPurchase, setScanningPurchase] = useState(false)
@@ -97,6 +105,32 @@ export default function InputsPage() {
     const { error } = await supabase.from('inputs').delete().eq('id', id)
     if (error) { alert(error.message); return }
     setConfirmId(null)
+    loadInputs()
+  }
+
+  // Group-level operations.
+  function startEditPurchase(groupId: string, groupInputs: Input[]) {
+    const first = groupInputs[0]
+    setEditingPurchaseGroupId(groupId)
+    setEditingPurchaseSupplier(first.supplier || '')
+    setEditingPurchaseDate(first.purchase_date || '')
+  }
+
+  async function confirmEditPurchase() {
+    if (!editingPurchaseGroupId) return
+    const { error } = await supabase.from('inputs').update({
+      supplier: editingPurchaseSupplier || null,
+      purchase_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
+    }).eq('purchase_group', editingPurchaseGroupId)
+    if (error) { alert(error.message); return }
+    setEditingPurchaseGroupId(null)
+    loadInputs()
+  }
+
+  async function removePurchaseGroup(groupId: string) {
+    const { error } = await supabase.from('inputs').delete().eq('purchase_group', groupId)
+    if (error) { alert(error.message); return }
+    setConfirmGroupId(null)
     loadInputs()
   }
 
@@ -313,7 +347,7 @@ export default function InputsPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      {/* CONFIRM DELETE */}
+      {/* CONFIRM DELETE SINGLE INPUT */}
       {confirmId && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
@@ -323,6 +357,38 @@ export default function InputsPage() {
               <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => removeInput(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE PURCHASE GROUP */}
+      {confirmGroupId && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">Remove Purchase</h2>
+            <p className="text-gray-400 text-lg mb-8">This will remove ALL items in this purchase. This action cannot be undone.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setConfirmGroupId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => removePurchaseGroup(confirmGroupId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT PURCHASE MODAL */}
+      {editingPurchaseGroupId && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">EDIT PURCHASE</h2>
+              <button onClick={() => setEditingPurchaseGroupId(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+              <input type="text" value={editingPurchaseSupplier} onChange={(e) => setEditingPurchaseSupplier(e.target.value)} className={inputClass} />
+            </div>
+            <DatePicker label="DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
+            <button onClick={confirmEditPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SAVE</button>
           </div>
         </div>
       )}
@@ -488,8 +554,10 @@ export default function InputsPage() {
               const isExpanded = expandedGroups.has(groupId)
               return (
                 <div key={groupId} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
-                  <div className="p-6 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
-                    <div className="flex-1 min-w-0">
+                  {/* Group header: text area is the toggle target; buttons live in their own
+                      flex section so clicking EDIT or REMOVE doesn't expand/collapse. */}
+                  <div className="p-6 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleGroup(groupId)}>
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
                         <h2 className="text-2xl font-bold">{first.supplier || 'Unknown Supplier'}</h2>
@@ -497,6 +565,10 @@ export default function InputsPage() {
                         {sourceBadge(first)}
                       </div>
                       <p className="text-lg text-gray-400 ml-7">{groupInputs.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
+                    </div>
+                    <div className="flex gap-3 flex-wrap shrink-0">
+                      <button onClick={() => startEditPurchase(groupId, groupInputs)} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>
+                      <button onClick={() => setConfirmGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                     </div>
                   </div>
                   {isExpanded && (
