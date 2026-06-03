@@ -10,7 +10,7 @@ import { formatUSD } from '@/lib/utils'
 type Part = { id?: string; description: string; unit_price: string; quantity: string }
 type Service = { id?: string; description: string; price: string }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
-type Payment = { id?: string; amount: string; payment_date: string; source: string; receipt_url: string; description: string; paid_at: string }
+type Payment = { id?: string; amount: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
 type Note = { id?: string; note: string }
 // stock_source_type / stock_donor are the lineage carriers: when an item is
 // pulled FROM STOCK into this expense list, we copy the stock row's source_type
@@ -40,13 +40,14 @@ type StockItem = {
   donor: string | null
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
-type ScannedPayment = { amount: string; source: string; date: string; receipt_url: string; description: string }
+type ScannedPayment = { amount: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
 type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
 type ExpenseReportItem = { item: string; amount: string; quantity: string }
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
 const paymentSources = ['', 'CASH', 'ACH', 'ZELLE', 'CHECK']
+const paidToOptions = ['GZ28US', 'GZ28BR']
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge/i
 
@@ -173,9 +174,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   const [scanningPayment, setScanningPayment] = useState(false)
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
@@ -262,6 +263,7 @@ export default function EditInvoicePage() {
       amount: String(p.amount),
       payment_date: p.payment_date || '',
       source: p.source || '',
+      paid_to: p.paid_to || 'GZ28US',
       receipt_url: p.receipt_url || '',
       description: p.description || '',
       paid_at: p.paid_at || '',
@@ -457,11 +459,12 @@ export default function EditInvoicePage() {
       const list: ScannedPayment[] = (parsed.payments || []).map((p: any) => ({
         amount: String(p.amount || ''),
         source: String(p.source || ''),
+        paid_to: 'GZ28US',
         date: String(p.date || ''),
         receipt_url: receiptUrl,
         description: '',
       }))
-      if (list.length === 0) list.push({ amount: '', source: '', date: '', receipt_url: receiptUrl, description: '' })
+      if (list.length === 0) list.push({ amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
 
       const openReview = () => setScannedPayments(list)
 
@@ -508,7 +511,7 @@ export default function EditInvoicePage() {
       const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
         ? new Date(p.date + 'T12:00:00Z').toISOString()
         : new Date().toISOString()
-      return { amount: p.amount, payment_date: p.date, source: p.source, receipt_url: p.receipt_url || '', description: p.description || '', paid_at: paidAt }
+      return { amount: p.amount, payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', paid_at: paidAt }
     })
     setPayments(prev => sortByDateAsc([...prev, ...newRows], p => p.payment_date))
     setScannedPayments(null)
@@ -824,7 +827,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
+    setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   }
   async function removePayment(index: number) {
     const payment = payments[index]
@@ -836,13 +839,13 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, description: editingPayment.description || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', description: editingPayment.description || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, p => p.payment_date))
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', receipt_url: '', description: '', paid_at: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' }) }
 
   async function togglePaid(index: number) {
     const p = payments[index]
@@ -939,6 +942,7 @@ export default function EditInvoicePage() {
         amount: parseFloat(p.amount),
         payment_date: isValidDate(p.payment_date) ? p.payment_date : null,
         source: p.source || null,
+        paid_to: p.paid_to || 'GZ28US',
         receipt_url: p.receipt_url || null,
         description: p.description || null,
         paid_at: p.paid_at || null,
@@ -1220,13 +1224,21 @@ export default function EditInvoicePage() {
                         <input type="text" inputMode="decimal" value={p.amount} onChange={(e) => { if (isNumeric(e.target.value)) { const a = [...scannedPayments]; a[i] = { ...a[i], amount: e.target.value }; setScannedPayments(a) } }} className={`${smallInputClass} w-full pl-8`} placeholder="0.00" />
                       </div>
                     </div>
+                    <button onClick={() => setScannedPayments(scannedPayments.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-300 font-bold text-lg px-2 self-end pb-3">✕</button>
+                  </div>
+                  <div className="flex gap-3">
                     <div className="flex-1">
-                      <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                      <label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                       <select value={p.source} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], source: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
                         {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
-                    <button onClick={() => setScannedPayments(scannedPayments.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-300 font-bold text-lg px-2 self-end pb-3">✕</button>
+                    <div className="flex-1">
+                      <label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                      <select value={p.paid_to} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], paid_to: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
+                        {paidToOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
                   </div>
                   <DatePicker label="DATE" value={p.date} onChange={(v) => { const a = [...scannedPayments]; a[i] = { ...a[i], date: v }; setScannedPayments(a) }} />
                   <div>
@@ -1235,7 +1247,7 @@ export default function EditInvoicePage() {
                   </div>
                 </div>
               ))}
-              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
+              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
@@ -1690,9 +1702,16 @@ export default function EditInvoicePage() {
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newPayment.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewPayment({ ...newPayment, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
                 </div>
               </div>
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                 <select value={newPayment.source} onChange={(e) => setNewPayment({ ...newPayment, source: e.target.value })} className={`${selectClass} w-full`}>
                   {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                <select value={newPayment.paid_to} onChange={(e) => setNewPayment({ ...newPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
+                  {paidToOptions.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
             </div>
@@ -1718,9 +1737,16 @@ export default function EditInvoicePage() {
                                 <input type="text" inputMode="decimal" value={editingPayment.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingPayment({ ...editingPayment, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
                               </div>
                             </div>
-                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                          </div>
+                          <div className="flex gap-3">
+                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                               <select value={editingPayment.source} onChange={(e) => setEditingPayment({ ...editingPayment, source: e.target.value })} className={`${selectClass} w-full`}>
                                 {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                              <select value={editingPayment.paid_to} onChange={(e) => setEditingPayment({ ...editingPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
+                                {paidToOptions.map(s => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </div>
                           </div>
