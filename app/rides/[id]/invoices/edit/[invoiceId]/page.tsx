@@ -1567,6 +1567,13 @@ export default function EditInvoicePage() {
         </div>
 
         <div>
+          <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
+          <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
+          </div>
+        </div>
+
+        <div>
           <label className="block mb-3 text-lg font-bold">PARTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <input type="text" placeholder="Description" value={newPart.description} onChange={(e) => setNewPart({ ...newPart, description: e.target.value })} className={inputClass} />
@@ -1660,12 +1667,6 @@ export default function EditInvoicePage() {
             </div>
             <div className="flex items-end gap-3">
               <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg shrink-0">+ ADD SERVICE</button>
-              <div className="flex-1">
-                <label className="block mb-1 text-sm text-gray-400">TARGET GRAND TOTAL</label>
-                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${smallInputClass} w-full pl-8`} />
-                </div>
-              </div>
             </div>
             {services.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
