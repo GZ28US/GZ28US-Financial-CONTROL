@@ -204,6 +204,12 @@ export default function EditInvoicePage() {
   // the DONATED/PURCHASED lineage rules; GOODS inserts a fresh row into the goods
   // table without lineage tracking (goods are always purchased).
   const [sendToConfirm, setSendToConfirm] = useState<{ index: number; expense: Expense; qtyToSend: string } | null>(null)
+  // Confirmation gates for expense removal. confirmRemoveExpenseIndex covers both
+  // standalone expense rows and individual items inside an expanded group;
+  // confirmRemovePurchaseGroupId covers the REMOVE PURCHASE button that wipes
+  // every item in a scanned group at once.
+  const [confirmRemoveExpenseIndex, setConfirmRemoveExpenseIndex] = useState<number | null>(null)
+  const [confirmRemovePurchaseGroupId, setConfirmRemovePurchaseGroupId] = useState<string | null>(null)
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
@@ -1163,7 +1169,7 @@ export default function EditInvoicePage() {
   )
 
   return (
-    <main className="min-h-screen bg-black text-white p-8">
+    <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
 
       {showStockModal && (
@@ -1405,6 +1411,44 @@ export default function EditInvoicePage() {
               <button onClick={() => setSendToConfirm(null)} className="bg-gray-700 hover:bg-gray-600 px-4 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
               <button onClick={() => confirmSendTo(sendToConfirm, 'GOODS')} className="bg-blue-700 hover:bg-blue-600 px-4 py-4 rounded-2xl font-bold text-lg">GOODS</button>
               <button onClick={() => confirmSendTo(sendToConfirm, 'STOCK')} className="bg-orange-700 hover:bg-orange-600 px-4 py-4 rounded-2xl font-bold text-lg">STOCK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation gate for removing a single expense row OR an individual
+          item inside an expanded grouped purchase. Both call removeExpense by
+          index; the only difference is the click site that set the state. */}
+      {confirmRemoveExpenseIndex !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
+            <h2 className="text-2xl font-bold mb-2">Remove Expense</h2>
+            <p className="text-gray-400 text-lg mb-8">Are you sure you want to remove this expense? This action cannot be undone.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setConfirmRemoveExpenseIndex(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => { const i = confirmRemoveExpenseIndex; setConfirmRemoveExpenseIndex(null); if (i !== null) removeExpense(i) }} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation gate for the REMOVE PURCHASE button — wipes every item in
+          a scanned group at once. We recompute the groupItems from the current
+          expenses at confirm time so the index references are still accurate. */}
+      {confirmRemovePurchaseGroupId && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
+            <h2 className="text-2xl font-bold mb-2">Remove Purchase</h2>
+            <p className="text-gray-400 text-lg mb-8">This will remove ALL items in this purchase. This action cannot be undone.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setConfirmRemovePurchaseGroupId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => {
+                const gid = confirmRemovePurchaseGroupId
+                setConfirmRemovePurchaseGroupId(null)
+                if (!gid) return
+                const groupItems = expenses.map((e, i) => ({ index: i, expense: e })).filter(({ expense: e }) => e.purchase_group === gid)
+                removePurchaseGroup(groupItems)
+              }} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
             </div>
           </div>
         </div>
@@ -1879,7 +1923,7 @@ export default function EditInvoicePage() {
                           <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                             {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
                             <button onClick={() => startEditPurchase(groupId, groupItems)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                            <button onClick={() => removePurchaseGroup(groupItems)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE PURCHASE</button>
+                            <button onClick={() => setConfirmRemovePurchaseGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE PURCHASE</button>
                           </div>
                         </div>
                         {isExpanded && (
@@ -1906,7 +1950,7 @@ export default function EditInvoicePage() {
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                                       <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
-                                      <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                                      <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                                     </div>
                                   </div>
                                 )}
@@ -1994,7 +2038,7 @@ export default function EditInvoicePage() {
                                 )}
                                 <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                                 <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
-                                <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                                <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                               </div>
                             </div>
                           </div>
@@ -2032,8 +2076,17 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
-        <button onClick={saveInvoice} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
-        <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
+      </div>
+
+      {/* Fixed action bar — keeps SAVE CHANGES reachable without scrolling the
+          whole invoice. z-40 is below the modal layer (z-50) so dialogs cover
+          it when open. The page itself uses pb-32 so the last visible section
+          doesn't slip under this bar. */}
+      <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
+        <div className="max-w-2xl mx-auto px-8 flex items-center gap-6">
+          <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
+          <button onClick={saveInvoice} className="flex-1 bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
+        </div>
       </div>
     </main>
   )
