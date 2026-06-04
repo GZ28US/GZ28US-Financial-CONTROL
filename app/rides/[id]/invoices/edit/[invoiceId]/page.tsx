@@ -168,6 +168,7 @@ export default function EditInvoicePage() {
   const [targetGrandTotal, setTargetGrandTotal] = useState('')
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
+  const [importMargin, setImportMargin] = useState('')
   const [editingPartIndex, setEditingPartIndex] = useState<number | null>(null)
   const [editingPart, setEditingPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
   const [services, setServices] = useState<Service[]>([])
@@ -220,7 +221,6 @@ export default function EditInvoicePage() {
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
-  const [flTaxRefundDate, setFlTaxRefundDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
@@ -257,7 +257,6 @@ export default function EditInvoicePage() {
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
-    setFlTaxRefundDate(data.fl_tax_refund_date || '')
 
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity) })))
@@ -670,20 +669,27 @@ export default function EditInvoicePage() {
   }
 
   function importIntuitiveParts() {
+    // Import each expense row at its TOTAL INCLUDING TAX, then add the MARGIN %.
+    // unit price = ((amount * qty) + tax) / qty, scaled by (1 + margin/100).
+    const margin = parseFloat(importMargin) || 0
+    const factor = 1 + margin / 100
     const sourceMap = new Map<string, { description: string; unit_price: string; quantity: number }>()
     expenses
       .filter(e => !SKIP_WORDS.test(e.item))
       .forEach(e => {
         const desc = (e.item || '').trim()
         if (!desc) return
-        const price = parseFloat(e.amount) || 0
+        const amount = parseFloat(e.amount) || 0
         const qty = parseFloat(e.quantity) || 1
-        const key = `${desc.toLowerCase()}|${price.toFixed(2)}`
+        const tax = parseFloat(e.tax) || 0
+        const unitInclTax = qty > 0 ? (amount * qty + tax) / qty : amount
+        const unitFinal = (unitInclTax * factor).toFixed(2)
+        const key = `${desc.toLowerCase()}|${unitFinal}`
         const existing = sourceMap.get(key)
         if (existing) {
           existing.quantity += qty
         } else {
-          sourceMap.set(key, { description: desc, unit_price: e.amount, quantity: qty })
+          sourceMap.set(key, { description: desc, unit_price: unitFinal, quantity: qty })
         }
       })
 
@@ -769,14 +775,8 @@ export default function EditInvoicePage() {
   const balance = totalPaid - grandTotal
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
-  // Florida State Taxes REFUND: the total sales tax paid across all expense
-  // lines comes back to us, so it counts as a NEGATIVE expense. It always
-  // applies to the global total (owed back regardless of receipt); it applies
-  // to the PAID total only once the refund has actually been received (date set).
-  const flTaxRefundAmount = expenses.reduce((sum, e) => sum + (parseFloat(e.tax) || 0), 0)
-  const flTaxRefundReceived = isValidDate(flTaxRefundDate)
-  const expensesTotalGlobal = flTaxExpenseAmount - flTaxRefundAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
-  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) - (flTaxRefundReceived ? flTaxRefundAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
+  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -971,7 +971,6 @@ export default function EditInvoicePage() {
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
-      fl_tax_refund_date: isValidDate(flTaxRefundDate) ? flTaxRefundDate : null,
       updated_at: new Date().toISOString(),
     }).eq('id', invoiceId)
     if (error) { alert(error.message); return }
@@ -1632,9 +1631,16 @@ export default function EditInvoicePage() {
                 <div className={`${smallInputClass} w-full opacity-50`}>{newPart.unit_price && newPart.quantity ? formatUSD(parseFloat(newPart.unit_price || '0') * parseFloat(newPart.quantity || '0')) : '$0.00'}</div>
               </div>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center flex-wrap">
               <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PART</button>
               <button onClick={importIntuitiveParts} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold text-lg">⬆ IMPORT INTUITIVE PARTS</button>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 font-bold text-sm">MARGIN</span>
+                <div className="relative w-24">
+                  <input type="text" inputMode="decimal" value={importMargin} onChange={(e) => { if (isNumeric(e.target.value)) setImportMargin(e.target.value) }} className={`${smallInputClass} w-full pr-7`} placeholder="0" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+                </div>
+              </div>
             </div>
             {parts.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
@@ -2009,17 +2015,6 @@ export default function EditInvoicePage() {
                   <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>
                 </div>
                 <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />
-              </div>
-            </div>
-
-            <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
-              <div className="px-4 py-3 space-y-2">
-                <div className="min-w-0">
-                  <p className={`text-base font-bold truncate ${flTaxRefundReceived ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes REFUND</p>
-                  <p className={`text-sm ${flTaxRefundReceived ? 'text-blue-400' : 'text-red-400'}`}>- {formatUSD(flTaxRefundAmount)}</p>
-                  <p className="text-sm text-gray-500">{flTaxRefundReceived ? `Received: ${formatDate(flTaxRefundDate)}` : 'Not received yet'}</p>
-                </div>
-                <DatePicker label="PAYMENT DATE" value={flTaxRefundDate} onChange={setFlTaxRefundDate} />
               </div>
             </div>
 
