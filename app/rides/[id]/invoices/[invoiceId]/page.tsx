@@ -36,7 +36,7 @@ type Part = { id: string; description: string; unit_price: number; quantity: num
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; payment_date: string | null; source: string | null; description: string | null }
 type Note = { id: string; note: string }
-type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; payment_date: string | null; receipt_url: string | null }
+type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; quantity: number; payment_date: string | null; receipt_url: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
@@ -161,8 +161,8 @@ export default function ViewInvoicePage() {
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
   const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
-  const expensesTotalGlobal = expenses.reduce((s, e) => s + e.price, 0)
-  const expensesTotalPaid = expenses.filter(e => e.payment_date).reduce((s, e) => s + e.price, 0)
+  const expensesTotalGlobal = expenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0), 0)
+  const expensesTotalPaid = expenses.filter(e => e.payment_date).reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -525,7 +525,7 @@ export default function ViewInvoicePage() {
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                          <p className={`text-sm ${rowColor}`}>{formatUSD(exp.price)}</p>
+                          <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}</p>
                           <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                         </div>
                         {receiptUrls.length > 0 && (

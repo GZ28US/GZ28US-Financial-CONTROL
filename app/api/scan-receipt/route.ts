@@ -4,6 +4,12 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { base64, mediaType, mode } = body
+    // separateExtras: when true (invoice expense scan), tax is returned per-item
+    // (split across products) in a `tax` field and every other non-product
+    // charge (shipping, handling, insurance, fees) is returned as its own row.
+    // When false/absent (legacy goods & inputs scans), tax + extras are summed
+    // and distributed into the item unit prices exactly as before.
+    const separateExtras = body.separateExtras === true
 
     if (!base64 || !mediaType) {
       return NextResponse.json({ error: 'Missing base64 or mediaType' }, { status: 400 })
@@ -16,8 +22,11 @@ export async function POST(req: NextRequest) {
 {
   "supplier": "store/supplier name",
   "date": "YYYY-MM-DD format, or empty string if not found",
-  "grand_total": "invoice grand total as number string like 11138.67",
-  "extra_charges": "total of all shipping, insurance, handling, tax, and any other fee lines as number string like 117.20",
+  "grand_total": "invoice grand total as number string like 291.13",
+  "tax": "total sales tax as a number string like 17.77, or 0 if there is no tax",
+  "extras": [
+    { "description": "the receipt's own label for the charge, e.g. Shipping, Handling, Insurance, Freight, Surcharge", "amount": "number string like 12.50" }
+  ],
   "items": [
     { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92" }
   ]
@@ -26,10 +35,11 @@ Rules:
 1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons.
 2. quantity: read exactly from the Qty column.
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
-4. extra_charges: sum of ALL non-product lines: shipping, insurance, handling, tax, and any other fees. Do NOT include discounts here.
-5. grand_total: the final total of the invoice.
-6. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
-7. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+4. tax: the SALES TAX total only, as a single number string. Sum all tax lines into this one value. Use 0 if there is no tax. Do NOT put tax in "extras".
+5. extras: every OTHER non-product charge line — shipping, handling, insurance, freight, surcharges, and any other fee — as its own entry, using the label printed on the receipt. Do NOT include tax here, and do NOT include discounts or coupons. Only include entries whose amount is greater than 0 (skip "Free" or $0.00 lines). If there are none, return an empty array.
+6. grand_total: the final total of the invoice.
+7. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
+8. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -119,27 +129,70 @@ Rules:
 
     // ---- PURCHASE MODE (default) ----
     const items = Array.isArray(parsed.items) ? parsed.items : []
-    const extraCharges = parseFloat(parsed.extra_charges) || 0
+    const tax = parseFloat(parsed.tax) || 0
+    const rawExtras = Array.isArray(parsed.extras) ? parsed.extras : []
+    const extras = rawExtras
+      .map((x: any) => ({ description: String(x.description || '').trim(), amount: parseFloat(x.amount) || 0 }))
+      .filter((x: any) => x.amount > 0)
+    const extrasTotal = extras.reduce((sum: number, x: any) => sum + x.amount, 0)
     const itemsSubtotal = items.reduce(
       (sum: number, item: any) => sum + (parseFloat(item.line_total) || 0),
       0
     )
 
-    // Keep ONE row per item. Report its quantity and per-unit amount
-    // (extras distributed proportionally across the whole line).
-    const processedItems: { description: string; quantity: string; amount: string }[] = []
-    items.forEach((item: any) => {
-      const lineTotal = parseFloat(item.line_total) || 0
-      const quantity = parseInt(item.quantity) || 1
-      const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
-      const allocatedExtra = extraCharges * proportion
-      const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
-      processedItems.push({
-        description: item.description || '',
-        quantity: String(quantity),
-        amount: unitPrice.toFixed(2),
+    const processedItems: { description: string; quantity: string; amount: string; tax: string }[] = []
+
+    if (separateExtras) {
+      // Tax is split across products proportionally to line total and reported
+      // per row in `tax`; the item `amount` is the tax-free unit price. Each
+      // extra (shipping, handling, ...) becomes its own row with tax 0.
+      let taxAllocated = 0
+      items.forEach((item: any, idx: number) => {
+        const lineTotal = parseFloat(item.line_total) || 0
+        const quantity = parseInt(item.quantity) || 1
+        const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
+        // Last product absorbs the rounding remainder so the tax sums exactly.
+        let lineTax: number
+        if (idx === items.length - 1) {
+          lineTax = Math.max(0, tax - taxAllocated)
+        } else {
+          lineTax = Math.round(tax * proportion * 100) / 100
+          taxAllocated += lineTax
+        }
+        const unitPrice = quantity > 0 ? lineTotal / quantity : 0
+        processedItems.push({
+          description: item.description || '',
+          quantity: String(quantity),
+          amount: unitPrice.toFixed(2),
+          tax: lineTax.toFixed(2),
+        })
       })
-    })
+      extras.forEach((x: any) => {
+        processedItems.push({
+          description: x.description || 'Extra',
+          quantity: '1',
+          amount: x.amount.toFixed(2),
+          tax: '0.00',
+        })
+      })
+    } else {
+      // Legacy behavior: fold tax + all extras into the item unit prices,
+      // distributed proportionally. One row per item, no separate tax.
+      const extraCharges = tax + extrasTotal
+      items.forEach((item: any) => {
+        const lineTotal = parseFloat(item.line_total) || 0
+        const quantity = parseInt(item.quantity) || 1
+        const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
+        const allocatedExtra = extraCharges * proportion
+        const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
+        processedItems.push({
+          description: item.description || '',
+          quantity: String(quantity),
+          amount: unitPrice.toFixed(2),
+          tax: '0.00',
+        })
+      })
+    }
 
     return NextResponse.json({
       content: [{
