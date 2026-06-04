@@ -128,17 +128,35 @@ Rules:
     }
 
     // ---- PURCHASE MODE (default) ----
+    // Robust numeric parse: strip $, commas, spaces and stray currency text so
+    // a model value like "$176.39" or "1,234.56" doesn't silently become 0.
+    const num = (v: any): number => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+      const cleaned = String(v ?? '').replace(/[^0-9.\-]/g, '')
+      const n = parseFloat(cleaned)
+      return Number.isFinite(n) ? n : 0
+    }
+
     const items = Array.isArray(parsed.items) ? parsed.items : []
-    const tax = parseFloat(parsed.tax) || 0
+    let tax = num(parsed.tax)
+    const grandTotal = num(parsed.grand_total)
     const rawExtras = Array.isArray(parsed.extras) ? parsed.extras : []
     const extras = rawExtras
-      .map((x: any) => ({ description: String(x.description || '').trim(), amount: parseFloat(x.amount) || 0 }))
+      .map((x: any) => ({ description: String(x.description || '').trim(), amount: num(x.amount) }))
       .filter((x: any) => x.amount > 0)
     const extrasTotal = extras.reduce((sum: number, x: any) => sum + x.amount, 0)
     const itemsSubtotal = items.reduce(
-      (sum: number, item: any) => sum + (parseFloat(item.line_total) || 0),
+      (sum: number, item: any) => sum + num(item.line_total),
       0
     )
+
+    // Fallback: if the model didn't return a usable tax but did give a grand
+    // total, recover the tax as grand_total - items - extras. Guards against
+    // the model omitting/mis-formatting the tax line.
+    if (tax <= 0 && grandTotal > 0 && itemsSubtotal > 0) {
+      const derived = grandTotal - itemsSubtotal - extrasTotal
+      if (derived > 0.01) tax = Math.round(derived * 100) / 100
+    }
 
     const processedItems: { description: string; quantity: string; amount: string; tax: string }[] = []
 
@@ -148,7 +166,7 @@ Rules:
       // extra (shipping, handling, ...) becomes its own row with tax 0.
       let taxAllocated = 0
       items.forEach((item: any, idx: number) => {
-        const lineTotal = parseFloat(item.line_total) || 0
+        const lineTotal = num(item.line_total)
         const quantity = parseInt(item.quantity) || 1
         const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
         // Last product absorbs the rounding remainder so the tax sums exactly.
@@ -180,7 +198,7 @@ Rules:
       // distributed proportionally. One row per item, no separate tax.
       const extraCharges = tax + extrasTotal
       items.forEach((item: any) => {
-        const lineTotal = parseFloat(item.line_total) || 0
+        const lineTotal = num(item.line_total)
         const quantity = parseInt(item.quantity) || 1
         const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
         const allocatedExtra = extraCharges * proportion
