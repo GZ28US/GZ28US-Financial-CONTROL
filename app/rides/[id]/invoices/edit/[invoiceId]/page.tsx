@@ -24,6 +24,8 @@ type Expense = {
   amount: string
   tax: string
   quantity: string
+  payment_date: string
+  receipt_urls: string[]
   purchase_group?: string
   stock_source_type?: string
   stock_donor?: string
