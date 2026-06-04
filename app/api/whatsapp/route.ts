@@ -20,12 +20,15 @@ import { NextRequest, NextResponse } from 'next/server'
 // — enough to diagnose mis-configured env vars, group ID changes, token
 // rejections, and stalled networks without exposing the token in logs.
 //
-// IMPORTANT — UltraMsg API field naming: all three endpoints (chat, image,
-// document) take the caption/message text in a field called `body`, NOT
-// `caption`. Sending `caption` to /messages/image or /messages/document
-// makes UltraMsg respond with `{"error":[{"body":"is required"}]}` and the
-// message is dropped — which is why receipt-attached reports stopped firing
-// while text-only chat reports continued working.
+// IMPORTANT — UltraMsg API field naming (per https://docs.ultramsg.com):
+//   - /messages/chat      -> the message text goes in `body`
+//   - /messages/image     -> the caption text goes in `caption`
+//   - /messages/document  -> the caption text goes in `caption`
+// So image/document captions must be sent as `caption`, NOT `body`. Sending the
+// text only in `body` to those endpoints makes UltraMsg deliver the file with
+// no caption (the file arrives "bare") — which is why receipt-attached reports
+// lost their text. We send `caption` for media and, for safety against older
+// validation, also include `body` with the same text.
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now()
@@ -71,16 +74,16 @@ export async function POST(req: NextRequest) {
     const base = `https://api.ultramsg.com/${instance}`
 
     // Decide which UltraMsg endpoint to use based on what was passed.
-    // All three endpoints take the caption/message text in `body`.
+    // chat -> text in `body`; image/document -> text in `caption`.
     let endpoint: string
     let fields: Record<string, string>
 
     if (imageUrl) {
       endpoint = `${base}/messages/image`
-      fields = { token, to, image: imageUrl, body }
+      fields = { token, to, image: imageUrl, caption: body, body }
     } else if (documentUrl) {
       endpoint = `${base}/messages/document`
-      fields = { token, to, document: documentUrl, filename, body }
+      fields = { token, to, document: documentUrl, filename, caption: body, body }
     } else {
       endpoint = `${base}/messages/chat`
       fields = { token, to, body }
