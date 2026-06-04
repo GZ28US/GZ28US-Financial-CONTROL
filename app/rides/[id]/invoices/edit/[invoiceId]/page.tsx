@@ -1131,7 +1131,10 @@ export default function EditInvoicePage() {
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
 
     lines.push('')
-    exp.items.forEach(it => {
+    const orderedReportItems = [...exp.items].sort((a, b) =>
+      (SKIP_WORDS.test(a.item) ? 1 : 0) - (SKIP_WORDS.test(b.item) ? 1 : 0)
+    )
+    orderedReportItems.forEach(it => {
       const qty = parseFloat(it.quantity) || 1
       const price = parseFloat(it.amount) || 0
       const itemTax = parseFloat(it.tax) || 0
@@ -2006,6 +2009,12 @@ export default function EditInvoicePage() {
                   if (row.type === 'group' && row.groupExpenses && row.groupId) {
                     const groupId = row.groupId
                     const groupItems = row.groupExpenses
+                    // Extras (shipping, handling, insurance, tax, etc.) always render
+                    // AFTER all parts, regardless of stored order. Stable sort keeps
+                    // parts in their existing order and pushes extras to the bottom.
+                    const orderedItems = [...groupItems].sort((a, b) =>
+                      (SKIP_WORDS.test(a.expense.item) ? 1 : 0) - (SKIP_WORDS.test(b.expense.item) ? 1 : 0)
+                    )
                     const firstItem = groupItems[0].expense
                     const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
                     const isExpanded = expandedGroups.has(groupId)
@@ -2028,8 +2037,8 @@ export default function EditInvoicePage() {
                         </div>
                         {isExpanded && (
                           <div className="border-t border-gray-700">
-                            {groupItems.map(({ index, expense: exp }, gi) => (
-                              <div key={index} className={`px-4 py-2 pl-10 ${gi < groupItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                            {orderedItems.map(({ index, expense: exp }, gi) => (
+                              <div key={index} className={`px-4 py-2 pl-10 ${gi < orderedItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
                                 {editingGroupItemIndex === index ? (
                                   <div className="flex gap-2 items-center">
                                     <input type="text" value={editingGroupItem.description} onChange={(e) => setEditingGroupItem({ ...editingGroupItem, description: e.target.value })} className={`${smallInputClass} flex-1`} placeholder="Description" />
