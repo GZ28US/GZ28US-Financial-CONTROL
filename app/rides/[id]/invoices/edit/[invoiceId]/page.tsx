@@ -235,7 +235,7 @@ export default function EditInvoicePage() {
   // packPrompt: after a successful save, asks whether to snapshot this invoice's
   // content as a reusable pack for the car. proceed() resumes the normal post-save
   // flow. rideMatch carries the car spec (manufacturer+model+year) used to scope packs.
-  const [packPrompt, setPackPrompt] = useState<{ proceed: () => void } | null>(null)
+  const [packPrompt, setPackPrompt] = useState<{ mode: 'create' | 'update'; packId?: string; proceed: () => void } | null>(null)
   const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string }>({ manufacturer: '', model: '', year: '' })
   const rideNameRef = useRef('')
 
@@ -1206,32 +1206,30 @@ export default function EditInvoicePage() {
     const proceed = () => finishSave(newPayments, newExpenses)
     const name = service.trim()
     const hasContent = parts.length > 0 || services.length > 0 || expenses.length > 0 || notes.length > 0 || !!targetGrandTotal
-    if (!isClient && name && hasContent && !(await packExistsForCar(name))) {
-      setPackPrompt({ proceed })
-      return
+    if (!isClient && name && hasContent) {
+      const existing = await findPackForCar(name)
+      if (!existing) { setPackPrompt({ mode: 'create', proceed }); return }
+      // Pack (matrix) exists: if the considered data changed, offer to update it.
+      if (!sameAsPack(existing)) { setPackPrompt({ mode: 'update', packId: existing.id, proceed }); return }
     }
     proceed()
   }
 
-  // True if a pack with this name already exists for the current car spec.
-  async function packExistsForCar(name: string): Promise<boolean> {
-    const { data } = await supabase.from('packs').select('name, manufacturer, model, year')
+  // The matching pack for the current car spec + service name, or null.
+  async function findPackForCar(name: string): Promise<any | null> {
+    const { data } = await supabase.from('packs').select('*')
     const norm = (s: any) => String(s ?? '').trim().toLowerCase()
-    return (data || []).some((p: any) =>
+    return (data || []).find((p: any) =>
       norm(p.manufacturer) === norm(rideMatch.manufacturer) &&
       norm(p.model) === norm(rideMatch.model) &&
       norm(p.year) === norm(rideMatch.year) &&
-      norm(p.name) === norm(name))
+      norm(p.name) === norm(name)) || null
   }
 
-  // Insert the current invoice content as a pack template. No dates / payments are
-  // stored — those are applied fresh and unpaid when the pack is later chosen.
-  async function savePackFromCurrent() {
-    const { error } = await supabase.from('packs').insert([{
-      name: service.trim(),
-      manufacturer: rideMatch.manufacturer || null,
-      model: rideMatch.model || null,
-      year: rideMatch.year || null,
+  // The pack-relevant content of the current invoice (no dates / payments). Used
+  // both to write a pack and to detect changes against an existing one.
+  function currentPackContent() {
+    return {
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
@@ -1240,15 +1238,56 @@ export default function EditInvoicePage() {
       services: services.map(s => ({ description: s.description, price: parseFloat(s.price) || 0 })),
       expenses: expenses.map(e => ({ supplier: e.supplier || '', item: e.item, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount || '0') || 0 })),
       notes: notes.map(n => ({ note: n.note })),
+    }
+  }
+
+  // The same shape rebuilt from a stored pack row, so the two can be compared.
+  function packRowContent(pk: any) {
+    return {
+      target_grand_total: pk.target_grand_total ?? null,
+      florida_taxes: pk.florida_taxes ?? null,
+      global_discount: pk.global_discount ?? null,
+      import_margin: pk.import_margin ?? 0,
+      parts: (pk.parts || []).map((p: any) => ({ description: p.description, unit_price: Number(p.unit_price) || 0, quantity: Number(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? Number(p.base_cost) : null })),
+      services: (pk.services || []).map((s: any) => ({ description: s.description, price: Number(s.price) || 0 })),
+      expenses: (pk.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item, amount: Number(e.amount) || 0, tax: Number(e.tax) || 0, extra: Number(e.extra) || 0, quantity: Number(e.quantity) || 1, item_discount: Number(e.item_discount) || 0 })),
+      notes: (pk.notes || []).map((n: any) => ({ note: n.note })),
+    }
+  }
+
+  function sameAsPack(pk: any): boolean {
+    return JSON.stringify(currentPackContent()) === JSON.stringify(packRowContent(pk))
+  }
+
+  // Insert the current invoice content as a new pack template.
+  async function savePackFromCurrent() {
+    const { error } = await supabase.from('packs').insert([{
+      name: service.trim(),
+      manufacturer: rideMatch.manufacturer || null,
+      model: rideMatch.model || null,
+      year: rideMatch.year || null,
+      ...currentPackContent(),
     }])
     if (error) alert('Could not save pack: ' + error.message)
+  }
+
+  // Overwrite an existing pack (the "matrix") with the current content.
+  async function updatePackContent(packId: string) {
+    const { error } = await supabase.from('packs').update({
+      ...currentPackContent(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', packId)
+    if (error) alert('Could not update pack: ' + error.message)
   }
 
   // Pack prompt YES/NO; either way continue the normal post-save flow.
   async function resolvePackPrompt(save: boolean) {
     const prompt = packPrompt
     setPackPrompt(null)
-    if (save) await savePackFromCurrent()
+    if (save && prompt) {
+      if (prompt.mode === 'update' && prompt.packId) await updatePackContent(prompt.packId)
+      else await savePackFromCurrent()
+    }
     prompt?.proceed()
   }
 
@@ -1797,13 +1836,15 @@ export default function EditInvoicePage() {
       {packPrompt && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-amber-600 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
-            <h2 className="text-2xl font-bold text-amber-400">SAVE AS PACK?</h2>
+            <h2 className="text-2xl font-bold text-amber-400">{packPrompt.mode === 'update' ? 'UPDATE THE MATRIX?' : 'SAVE AS PACK?'}</h2>
             <p className="text-gray-300 text-base">
-              Save “{service.trim()}” as a reusable pack{[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).length > 0 ? ` for ${[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).join(' ')}` : ' for this car'}? Its PARTS, SERVICES, EXPENSES, NOTES and totals can then pre-fill future quotes/invoices for the same car.
+              {packPrompt.mode === 'update'
+                ? <>The pack “{service.trim()}”{[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).length > 0 ? ` for ${[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).join(' ')}` : ''} already exists and the considered data changed. Update the matrix (PARTS, SERVICES, EXPENSES, NOTES and totals) with the current values? Other invoices keep their own data — only the pack template changes.</>
+                : <>Save “{service.trim()}” as a reusable pack{[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).length > 0 ? ` for ${[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).join(' ')}` : ' for this car'}? Its PARTS, SERVICES, EXPENSES, NOTES and totals can then pre-fill future quotes/invoices for the same car.</>}
             </p>
             <div className="flex gap-3 pt-2">
               <button onClick={() => resolvePackPrompt(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">NO, JUST SAVE</button>
-              <button onClick={() => resolvePackPrompt(true)} className="flex-1 bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold text-lg">YES, SAVE PACK</button>
+              <button onClick={() => resolvePackPrompt(true)} className="flex-1 bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold text-lg">{packPrompt.mode === 'update' ? 'YES, UPDATE MATRIX' : 'YES, SAVE PACK'}</button>
             </div>
           </div>
         </div>
