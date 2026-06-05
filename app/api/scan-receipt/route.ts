@@ -28,18 +28,19 @@ export async function POST(req: NextRequest) {
     { "description": "the receipt's own label for the charge, e.g. Shipping, Handling, Insurance, Freight, Surcharge", "amount": "number string like 12.50" }
   ],
   "items": [
-    { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92" }
+    { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0" }
   ]
 }
 Rules:
 1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons.
 2. quantity: read exactly from the Qty column.
-3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92.
-4. tax: the SALES TAX total only, as a single number string. Sum all tax lines into this one value. Use 0 if there is no tax. Do NOT put tax in "extras".
-5. extras: every OTHER non-product charge line — shipping, handling, insurance, freight, surcharges, and any other fee — as its own entry, using the label printed on the receipt. Do NOT include tax here, and do NOT include discounts or coupons. Only include entries whose amount is greater than 0 (skip "Free" or $0.00 lines). If there are none, return an empty array.
-6. grand_total: the final total of the invoice.
-7. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
-8. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92. When the receipt has separate "List" and "Cost" (or "Price"/"Your Price") columns, use the COST/actual-paid column for line_total — never the List/retail column.
+4. list_price: ONLY when the receipt shows a per-unit retail/list/MSRP price that is HIGHER than the actual unit price paid (e.g. an AutoZone-style "List" column next to a "Cost" column). Report that higher per-unit price here. If the receipt shows only one price, set this to 0.
+5. tax: the SALES TAX total only, as a single number string. Sum all tax lines into this one value. Use 0 if there is no tax. Do NOT put tax in "extras".
+6. extras: every OTHER non-product charge line — shipping, handling, insurance, freight, surcharges, and any other fee — as its own entry, using the label printed on the receipt. Do NOT include tax here, and do NOT include discounts or coupons. Only include entries whose amount is greater than 0 (skip "Free" or $0.00 lines). If there are none, return an empty array.
+7. grand_total: the final total of the invoice.
+8. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
+9. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -171,7 +172,7 @@ Rules:
     }
     const scaledSubtotal = itemsSubtotal * itemScale
 
-    const processedItems: { description: string; quantity: string; amount: string; tax: string; extra: string }[] = []
+    const processedItems: { description: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string }[] = []
 
     if (separateExtras) {
       // Tax AND extra costs (shipping, handling, insurance, ...) are each split
@@ -201,12 +202,20 @@ Rules:
           extraAllocated += lineExtra
         }
         const unitPrice = quantity > 0 ? lineTotal / quantity : 0
+        // If the receipt carried a higher per-unit list/retail price, derive the
+        // per-item discount % (1 - paid/list). Used to pre-fill the Disc % field
+        // for VARIABLE-discount suppliers. 0 when no list price was present.
+        const listPrice = num(item.list_price)
+        const itemDiscount = (listPrice > unitPrice && unitPrice > 0)
+          ? Math.round((1 - unitPrice / listPrice) * 1000) / 10
+          : 0
         processedItems.push({
           description: item.description || '',
           quantity: String(quantity),
           amount: unitPrice.toFixed(2),
           tax: lineTax.toFixed(2),
           extra: lineExtra.toFixed(2),
+          item_discount: String(itemDiscount),
         })
       })
     } else {
@@ -225,6 +234,7 @@ Rules:
           amount: unitPrice.toFixed(2),
           tax: '0.00',
           extra: '0.00',
+          item_discount: '0',
         })
       })
     }

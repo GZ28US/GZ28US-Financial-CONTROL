@@ -414,7 +414,7 @@ export default function EditInvoicePage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: '0' }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
