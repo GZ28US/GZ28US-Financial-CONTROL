@@ -155,14 +155,14 @@ export default function ViewClientPage() {
           )}
         </div>
 
-        {/* Personal Invoices */}
+        {/* Shopping Invoices */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <label className="text-lg font-bold">PERSONAL INVOICES ({personalInvoices.length})</label>
+            <label className="text-lg font-bold">SHOPPING INVOICES ({personalInvoices.length})</label>
             <Link href={`/clients/${clientId}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold text-sm">OPEN</Link>
           </div>
           {personalInvoices.length === 0 ? (
-            <p className="text-gray-400 text-xl">No personal invoices yet.</p>
+            <p className="text-gray-400 text-xl">No shopping invoices yet.</p>
           ) : (
             <div className={sectionClass}>
               {personalInvoices.map((inv, index) => (

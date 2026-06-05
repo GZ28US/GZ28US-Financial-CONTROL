@@ -163,7 +163,7 @@ export default function InvoicesPage() {
     return new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
-  const invoicesLabel = isClient ? 'GOODS INVOICES' : 'INVOICES'
+  const invoicesLabel = isClient ? 'SHOPPING INVOICES' : 'INVOICES'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
