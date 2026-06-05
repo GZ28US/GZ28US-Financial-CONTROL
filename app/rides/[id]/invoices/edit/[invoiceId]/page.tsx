@@ -7,7 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
 
-type Part = { id?: string; description: string; unit_price: string; quantity: string }
+type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string }
 type Service = { id?: string; description: string; price: string }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 type Payment = { id?: string; amount: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
@@ -259,10 +259,11 @@ export default function EditInvoicePage() {
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
+    setImportMargin(data.import_margin ? String(data.import_margin) : '')
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity) })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
@@ -710,13 +711,14 @@ export default function EditInvoicePage() {
   }
 
   function importIntuitiveParts() {
-    // Import each FRESH expense row at its TOTAL landed cost (amount*qty + tax +
-    // extra), per unit, scaled by (1 + MARGIN/100). Only FRESH items are imported;
-    // each imported item is then flipped to EXPORTED so it won't import again
-    // unless the user RESETs it back to FRESH.
+    // Import each FRESH expense row at its pre-margin landed cost per unit
+    // (amount*qty + tax + extra)/qty, stored as base_cost. The displayed unit_price
+    // is base_cost * (1 + MARGIN/100) and is kept live by the effect below, so
+    // changing MARGIN later re-prices every imported part without re-importing.
+    // Only FRESH items import; each imported item flips to EXPORTED.
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; unit_price: string; quantity: number }>()
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (SKIP_WORDS.test(e.item)) return
@@ -727,12 +729,11 @@ export default function EditInvoicePage() {
       const qty = parseFloat(e.quantity) || 1
       const tax = parseFloat(e.tax) || 0
       const extra = parseFloat(e.extra) || 0
-      const unitInclTax = qty > 0 ? (amount * qty + tax + extra) / qty : amount
-      const unitFinal = (unitInclTax * factor).toFixed(2)
-      const key = `${desc.toLowerCase()}|${unitFinal}`
+      const unitBase = qty > 0 ? (amount * qty + tax + extra) / qty : amount
+      const key = `${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
-      else sourceMap.set(key, { description: desc, unit_price: unitFinal, quantity: qty })
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty })
       importedIndices.push(idx)
     })
 
@@ -740,7 +741,12 @@ export default function EditInvoicePage() {
 
     const toAdd: Part[] = []
     sourceMap.forEach(src => {
-      toAdd.push({ description: src.description, unit_price: src.unit_price, quantity: String(src.quantity) })
+      toAdd.push({
+        description: src.description,
+        unit_price: (src.base * factor).toFixed(2),
+        quantity: String(src.quantity),
+        base_cost: String(src.base),
+      })
     })
     setParts(prev => [...prev, ...toAdd])
     markExportStatus(importedIndices, 'EXPORTED')
@@ -820,6 +826,28 @@ export default function EditInvoicePage() {
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
+  // Live IMPORT MARGIN: whenever the margin changes, re-price every imported part
+  // (those carrying a base_cost) as base_cost * (1 + margin/100). Manually-added
+  // parts (no base_cost) are untouched. Depends only on importMargin, so it can't
+  // loop. Persisted on SAVE CHANGES.
+  useEffect(() => {
+    if (loading) return
+    const margin = parseFloat(importMargin) || 0
+    const factor = 1 + margin / 100
+    setParts(prev => {
+      let changed = false
+      const next = prev.map(p => {
+        if (p.base_cost == null || p.base_cost === '') return p
+        const base = parseFloat(p.base_cost) || 0
+        const newPrice = (base * factor).toFixed(2)
+        if (newPrice === p.unit_price) return p
+        changed = true
+        return { ...p, unit_price: newPrice }
+      })
+      return changed ? next : prev
+    })
+  }, [importMargin, loading])
+
   // Auto-CALCULATE: keep Full Project Labor solved so the grand total hits the
   // saved TARGET GRAND TOTAL. Recomputes whenever any non-labor input that feeds
   // the grand total changes (parts, other services, discount, target). The labor
@@ -870,10 +898,12 @@ export default function EditInvoicePage() {
     if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all part fields'); return }
     const part = parts[editingPartIndex!]
     if (part.id) {
-      const { error } = await supabase.from('invoice_parts').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity) }).eq('id', part.id)
+      // A manual edit detaches the part from the live margin (base_cost -> null),
+      // so the entered price sticks and won't be re-priced by margin changes.
+      const { error } = await supabase.from('invoice_parts').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: null }).eq('id', part.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id }; setParts(updated)
+    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id, base_cost: undefined }; setParts(updated)
     setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
   }
   function cancelEditPart() { setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' }) }
@@ -1020,6 +1050,7 @@ export default function EditInvoicePage() {
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
+      import_margin: parseFloat(importMargin) || 0,
       fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
       updated_at: new Date().toISOString(),
     }).eq('id', invoiceId)
@@ -1027,8 +1058,14 @@ export default function EditInvoicePage() {
 
     const newParts = parts.filter(p => !p.id)
     if (newParts.length > 0) {
-      const { error: e } = await supabase.from('invoice_parts').insert(newParts.map(p => ({ invoice_id: invoiceId, description: p.description, unit_price: parseFloat(p.unit_price), quantity: parseFloat(p.quantity) })))
+      const { error: e } = await supabase.from('invoice_parts').insert(newParts.map(p => ({ invoice_id: invoiceId, description: p.description, unit_price: parseFloat(p.unit_price), quantity: parseFloat(p.quantity), base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })))
       if (e) { alert(e.message); return }
+    }
+    // Re-persist margin-managed existing parts whose unit_price may have shifted
+    // because the live IMPORT MARGIN changed since they were last saved.
+    const existingMarginParts = parts.filter(p => p.id && p.base_cost != null && p.base_cost !== '')
+    for (const p of existingMarginParts) {
+      await supabase.from('invoice_parts').update({ unit_price: parseFloat(p.unit_price) || 0, base_cost: parseFloat(p.base_cost!) || 0 }).eq('id', p.id)
     }
     const newServices = services.filter(s => !s.id)
     if (newServices.length > 0) {
