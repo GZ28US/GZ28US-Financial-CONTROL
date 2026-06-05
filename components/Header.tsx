@@ -26,6 +26,9 @@ export default function Header() {
         <a href="/inputs" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
           INPUTS
         </a>
+        <a href="/suppliers" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
+          SUPPLIERS
+        </a>
       </div>
     </div>
   )

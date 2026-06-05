@@ -1,0 +1,79 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import Header from '@/components/Header'
+import { supabase } from '@/lib/supabase'
+
+function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+
+export default function EditSupplierPage() {
+  const router = useRouter()
+  const params = useParams()
+  const supplierId = String(params.id)
+
+  const [loading, setLoading] = useState(true)
+  const [name, setName] = useState('')
+  const [discount, setDiscount] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
+
+  useEffect(() => { loadSupplier() }, [])
+
+  async function loadSupplier() {
+    const { data, error } = await supabase.from('suppliers').select('*').eq('id', supplierId).single()
+    if (error || !data) { alert('Supplier not found'); router.push('/suppliers'); return }
+    setName(data.name || '')
+    setDiscount(data.discount != null ? String(data.discount) : '')
+    setLoading(false)
+  }
+
+  async function save() {
+    if (!name.trim()) { alert('Please enter a supplier name'); return }
+    setSaving(true)
+    const { error } = await supabase.from('suppliers').update({
+      name: name.trim(),
+      discount: discount ? parseFloat(discount) : 0,
+      updated_at: new Date().toISOString(),
+    }).eq('id', supplierId)
+    if (error) { alert(error.message); setSaving(false); return }
+    router.push('/suppliers')
+  }
+
+  if (loading) return (
+    <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
+  )
+
+  return (
+    <main className="min-h-screen bg-black text-white p-8 pb-32">
+      <Header />
+
+      <h1 className="text-4xl font-bold mb-8">EDIT SUPPLIER</h1>
+
+      <div className="grid grid-cols-1 gap-5 max-w-2xl">
+        <div>
+          <label className="block mb-2 text-lg font-bold">SUPPLIER NAME</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="Supplier name" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">DISCOUNT</label>
+          <div className="relative">
+            <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
+            <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
+        <div className="max-w-2xl mx-auto px-8 flex items-center gap-6">
+          <a href="/suppliers" className="text-gray-400 text-xl">Cancel</a>
+          <button onClick={save} disabled={saving} className={`flex-1 px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+            {saving ? 'SAVING...' : 'SAVE CHANGES'}
+          </button>
+        </div>
+      </div>
+    </main>
+  )
+}
