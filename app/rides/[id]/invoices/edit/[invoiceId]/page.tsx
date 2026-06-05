@@ -791,7 +791,6 @@ export default function EditInvoicePage() {
   // into this effect's inputs — no loop. Persisted on SAVE CHANGES.
   useEffect(() => {
     if (loading) return
-    if (laborIndex < 0) return
     const target = parseFloat((targetGrandTotal || '').replace(/,/g, ''))
     if (!target || target <= 0) return
     const discountFactor = 1 - (globalDiscountPct / 100)
@@ -800,7 +799,11 @@ export default function EditInvoicePage() {
     const laborStr = (labor < 0 ? 0 : labor).toFixed(2)
     setServices(prev => {
       const li = prev.findIndex(s => s.description === FULL_PROJECT_LABOR)
-      if (li < 0 || prev[li].price === laborStr) return prev
+      if (li < 0) {
+        // No labor line on this invoice yet — create one so the target is met.
+        return [...prev, { description: FULL_PROJECT_LABOR, price: laborStr }]
+      }
+      if (prev[li].price === laborStr) return prev
       const updated = [...prev]
       updated[li] = { ...updated[li], price: laborStr }
       return updated
@@ -1165,6 +1168,7 @@ export default function EditInvoicePage() {
     const chosen = (incomeReports || []).filter(r => r.report)
     setSendingReports(true)
     let failures = 0
+    const errors: string[] = []
     for (const inc of chosen) {
       const caption = buildIncomeCaption(inc)
       const payload: any = { body: caption }
@@ -1176,13 +1180,18 @@ export default function EditInvoicePage() {
           body: JSON.stringify(payload),
         })
         const data = await res.json()
-        if (!data.ok) failures++
-      } catch {
+        if (!data.ok) {
+          failures++
+          const detailErr = data?.detail?.error
+          errors.push(typeof detailErr === 'object' ? JSON.stringify(detailErr) : String(detailErr || data?.error || data?.raw || `HTTP ${res.status}`))
+        }
+      } catch (err) {
         failures++
+        errors.push(String(err))
       }
     }
     setSendingReports(false)
-    if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.`)
+    if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.\n\nReason: ${errors.join(' | ')}`)
     setIncomeReports(null)
     if (!expenseReports) router.push(basePath)
   }
@@ -1191,6 +1200,7 @@ export default function EditInvoicePage() {
     const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
     let failures = 0
+    const errors: string[] = []
     for (const exp of chosen) {
       const caption = buildExpenseCaption(exp)
       const payload: any = { body: caption }
@@ -1202,13 +1212,18 @@ export default function EditInvoicePage() {
           body: JSON.stringify(payload),
         })
         const data = await res.json()
-        if (!data.ok) failures++
-      } catch {
+        if (!data.ok) {
+          failures++
+          const detailErr = data?.detail?.error
+          errors.push(typeof detailErr === 'object' ? JSON.stringify(detailErr) : String(detailErr || data?.error || data?.raw || `HTTP ${res.status}`))
+        }
+      } catch (err) {
         failures++
+        errors.push(String(err))
       }
     }
     setSendingReports(false)
-    if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.`)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.\n\nReason: ${errors.join(' | ')}`)
     setExpenseReports(null)
     router.push(basePath)
   }
