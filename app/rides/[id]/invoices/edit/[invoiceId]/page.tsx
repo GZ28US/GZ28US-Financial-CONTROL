@@ -810,6 +810,10 @@ export default function EditInvoicePage() {
     return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   }
   function getPartTotal(part: Part) { return (parseFloat(part.unit_price) || 0) * (parseFloat(part.quantity) || 0) }
+  // Display-only: shopping (client) invoices show the Full Project Labor row as
+  // "HANDLING". The stored description stays FULL_PROJECT_LABOR so the auto-CALCULATE
+  // lookup, labor index, and save logic keep matching on the real key.
+  function serviceDisplayName(desc: string) { return isClient && desc === FULL_PROJECT_LABOR ? 'HANDLING' : desc }
 
   async function uploadReceiptsToEditing(files: FileList) {
     const urls: string[] = [...editingExpense.receipt_urls]
@@ -1749,7 +1753,7 @@ export default function EditInvoicePage() {
           </button>
         </div>
 
-        <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
+        <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
         {!isClient && isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
 
         {!isClient && (
@@ -2168,7 +2172,7 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate">{svc.description}</p>
+                          <p className="text-base font-bold truncate">{serviceDisplayName(svc.description)}</p>
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">

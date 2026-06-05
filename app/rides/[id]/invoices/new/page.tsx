@@ -122,8 +122,13 @@ export default function NewInvoicePage() {
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
-        <DatePicker label="HIRING DATE" value={hiringDate} onChange={setHiringDate} />
-        <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />
+        {/* Shopping invoices use REQUEST DATE; ride invoices keep HIRING DATE. */}
+        <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
+
+        {/* ENTRY DATE is ride-only (a car physically entering the shop). */}
+        {!isClient && (
+          <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />
+        )}
 
         {!isClient && (
           <div>
@@ -133,8 +138,8 @@ export default function NewInvoicePage() {
         )}
 
         <div>
-          <label className="block mb-2 text-lg font-bold">SERVICE</label>
-          <input type="text" value={service} onChange={(e) => setService(e.target.value)} className={inputClass} placeholder="Service description" />
+          <label className="block mb-2 text-lg font-bold">{isClient ? 'PURCHASE' : 'SERVICE'}</label>
+          <input type="text" value={service} onChange={(e) => setService(e.target.value)} className={inputClass} placeholder={isClient ? 'Purchase description' : 'Service description'} />
         </div>
 
         <button onClick={createInvoice} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">

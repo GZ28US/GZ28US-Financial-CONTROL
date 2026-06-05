@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -31,6 +31,7 @@ type Client = {
   state: string | null
   zip: string | null
   client_number: number | null
+  preferred_message_method: string | null
 }
 
 type Part = { id: string; description: string; unit_price: number; quantity: number }
@@ -69,6 +70,18 @@ function getFeedBadge(feedStatus: string | null) {
     : { label: 'INCOMPLETE', cls: 'bg-red-800 text-red-200' }
 }
 
+// Normalize a stored phone string into the digits-only form UltraMsg expects as
+// `to` for an individual WhatsApp chat. US default: a bare 10-digit number gets
+// a leading 1. Numbers that already include a country code are passed through.
+function toWaNumber(phone: string | null | undefined): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) return '1' + digits
+  return digits
+}
+
+function pad3(n: number) { return String(n).padStart(3, '0') }
+
 export default function ViewInvoicePage() {
   const params = useParams()
   const pathname = usePathname()
@@ -89,6 +102,10 @@ export default function ViewInvoicePage() {
   const [notes, setNotes] = useState<Note[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
+  const [sending, setSending] = useState(false)
+  // Ref to the hidden .print-page container. SEND temporarily un-hides it
+  // off-screen so html2canvas can capture the exact print layout to a PDF.
+  const printPageRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { loadAll() }, [])
 
@@ -145,6 +162,145 @@ export default function ViewInvoicePage() {
     setTimeout(() => { document.title = prev }, 1000)
   }
 
+  // The exact name the recipient sees on the delivered file. Storage keys are
+  // sanitized separately (see handleSend) — this human name is only used as the
+  // WhatsApp document filename and the email subject.
+  function deliveredFilename(): string {
+    const code = invoice?.invoice_code || ''
+    if (isClient) {
+      const cc = client?.client_number != null ? pad3(client.client_number) : ''
+      const cn = client?.name || ''
+      return `GZ28 V8 SpeedShop ${cc}.${cn} - Shopping INVOICE ${code}.pdf`
+    }
+    const rn = projectName || ''
+    return `GZ28 V8 SpeedShop ${projectCode}.${rn} - INVOICE ${code}.pdf`
+  }
+
+  // Render the hidden print layout to a one-or-more-page letter PDF, entirely in
+  // the browser. html2canvas can't capture a display:none node, so we briefly
+  // reveal .print-page off-screen, rasterize the .pi block, then restore it.
+  async function generatePdfBlob(): Promise<Blob> {
+    const html2canvas = (await import('html2canvas')).default
+    const jsPDFmod: any = await import('jspdf')
+    const JsPDF = jsPDFmod.jsPDF || jsPDFmod.default
+    const page = printPageRef.current
+    if (!page) throw new Error('Print layout not available')
+    const target = page.querySelector('.pi') as HTMLElement | null
+    if (!target) throw new Error('Print content not found')
+    const wm = page.querySelector('.pi-watermark') as HTMLElement | null
+
+    // Reveal off-screen at letter width (8.5in * 96dpi = 816px) for capture.
+    page.style.display = 'block'
+    page.style.position = 'fixed'
+    page.style.left = '-10000px'
+    page.style.top = '0'
+    page.style.width = '816px'
+    page.style.background = '#ffffff'
+    page.style.zIndex = '-1'
+    if (wm) wm.style.position = 'absolute'  // keep watermark inside the captured node
+
+    try {
+      const canvas = await html2canvas(target, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        windowWidth: 816,
+      })
+      const imgData = canvas.toDataURL('image/jpeg', 0.92)
+      const pdf = new JsPDF({ unit: 'pt', format: 'letter' })
+      const pageW = pdf.internal.pageSize.getWidth()
+      const pageH = pdf.internal.pageSize.getHeight()
+      const margin = 18  // ~0.25in, matching the print @page margin
+      const usableW = pageW - margin * 2
+      const imgH = (canvas.height / canvas.width) * usableW
+      const pageContentH = pageH - margin * 2
+      let heightLeft = imgH
+      let position = 0
+      pdf.addImage(imgData, 'JPEG', margin, margin + position, usableW, imgH)
+      heightLeft -= pageContentH
+      while (heightLeft > 0) {
+        position -= pageContentH
+        pdf.addPage()
+        pdf.addImage(imgData, 'JPEG', margin, margin + position, usableW, imgH)
+        heightLeft -= pageContentH
+      }
+      return pdf.output('blob')
+    } finally {
+      page.style.display = ''
+      page.style.position = ''
+      page.style.left = ''
+      page.style.top = ''
+      page.style.width = ''
+      page.style.background = ''
+      page.style.zIndex = ''
+      if (wm) wm.style.position = ''
+    }
+  }
+
+  // SEND: build the PDF, upload it to the public invoice-pdfs bucket, then deliver
+  // by the client's preferred method:
+  //   WhatsApp -> automatic UltraMsg document send to the client's number
+  //   SMS      -> open the SMS composer prefilled with a link to the PDF
+  //   E-Mail   -> open the mail composer prefilled with a link to the PDF
+  async function handleSend() {
+    if (!invoice) return
+    const method = client?.preferred_message_method || 'WhatsApp'
+    setSending(true)
+    try {
+      const blob = await generatePdfBlob()
+      // Sanitized storage key (no spaces/slashes/quotes); the human name rides
+      // along as the WhatsApp document filename / email subject instead.
+      const key = `${invoiceId}-${Date.now()}.pdf`
+      const { error: upErr } = await supabase.storage.from('invoice-pdfs').upload(key, blob, { contentType: 'application/pdf', upsert: true })
+      if (upErr) { alert('Could not upload the PDF:\n' + upErr.message); setSending(false); return }
+      const { data: urlData } = supabase.storage.from('invoice-pdfs').getPublicUrl(key)
+      const pdfUrl = urlData.publicUrl
+      const fname = deliveredFilename()
+
+      const ownerLbl = isClient ? (client?.name || '') : `${projectCode}${projectName ? ` — ${projectName}` : ''}`
+      const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}Invoice ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*`
+
+      if (method === 'SMS') {
+        const text = `${caption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
+        window.location.href = `sms:${client?.phone || ''}?&body=${encodeURIComponent(text)}`
+        setSending(false)
+        return
+      }
+
+      if (method === 'E-Mail') {
+        const subject = fname.replace(/\.pdf$/, '')
+        const body = `Hello${client?.name ? ` ${client.name}` : ''},\n\nPlease find your invoice ${invoice.invoice_code} at the link below:\n${pdfUrl}\n\nThank you,\nGZ28 V8 SpeedShop`
+        window.location.href = `mailto:${client?.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+        setSending(false)
+        return
+      }
+
+      // WhatsApp (default) — automatic via UltraMsg through the existing route.
+      const to = toWaNumber(client?.phone)
+      if (!to) {
+        alert('This client has no phone number for WhatsApp.\nAdd a phone on the client page, or change their preferred method to SMS / E-Mail.')
+        setSending(false)
+        return
+      }
+      const res = await fetch('/api/whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body: caption, documentUrl: pdfUrl, filename: fname }),
+      })
+      const data = await res.json()
+      if (!data.ok) {
+        const detailErr = data?.detail?.error
+        alert('WhatsApp send failed:\n' + (typeof detailErr === 'object' ? JSON.stringify(detailErr) : String(detailErr || data?.error || data?.raw || `HTTP ${res.status}`)))
+        setSending(false)
+        return
+      }
+      alert('Invoice sent on WhatsApp ✓')
+    } catch (err) {
+      alert('Could not generate or send the PDF:\n' + String(err))
+    }
+    setSending(false)
+  }
+
   if (loading) return (
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   )
@@ -177,6 +333,7 @@ export default function ViewInvoicePage() {
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
   const statusBadge = getStatusBadge(invoice)
   const feedBadge = getFeedBadge(invoice.feed_status)
+  const sendMethod = client?.preferred_message_method || 'WhatsApp'
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
   const labelClass = 'text-gray-400 font-bold'
@@ -244,7 +401,7 @@ export default function ViewInvoicePage() {
       `}</style>
 
       {/* PRINT PAGE */}
-      <div className="print-page">
+      <div className="print-page" ref={printPageRef}>
         <div className="pi">
           <img src="/logo_gz28.jpg" className="pi-watermark" alt="" aria-hidden="true" />
           <div className="pi-content">
@@ -391,6 +548,11 @@ export default function ViewInvoicePage() {
             <p className="text-gray-400 text-xl">{isClient ? `${client?.client_number ?? ''}${client?.name ? ` — ${client.name}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
           </div>
           <div className="flex gap-3">
+            {client && (
+              <button onClick={handleSend} disabled={sending} className={`px-6 py-4 rounded-2xl text-xl font-bold ${sending ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sending ? 'SENDING…' : `📤 SEND · ${sendMethod}`}
+              </button>
+            )}
             <button onClick={handlePrint} className="bg-white text-black hover:bg-gray-200 px-6 py-4 rounded-2xl text-xl font-bold">🖨 PRINT</button>
             <Link href={basePath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
             <Link href={`${basePath}/edit/${invoiceId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
@@ -400,8 +562,8 @@ export default function ViewInvoicePage() {
         <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
           <div className={sectionClass}>
-            {isValidDate(invoice.hiring_date) && <div className={rowClass}><span className={labelClass}>HIRING DATE</span><span className="font-bold">{formatDate(invoice.hiring_date)}</span></div>}
-            {isValidDate(invoice.entry_date) && <div className={rowClass}><span className={labelClass}>ENTRY DATE</span><span className="font-bold">{formatDate(invoice.entry_date)}</span></div>}
+            {isValidDate(invoice.hiring_date) && <div className={rowClass}><span className={labelClass}>{isClient ? 'REQUEST DATE' : 'HIRING DATE'}</span><span className="font-bold">{formatDate(invoice.hiring_date)}</span></div>}
+            {!isClient && isValidDate(invoice.entry_date) && <div className={rowClass}><span className={labelClass}>ENTRY DATE</span><span className="font-bold">{formatDate(invoice.entry_date)}</span></div>}
             {invoice.mileage && <div className={rowClass}><span className={labelClass}>MILEAGE</span><span className="font-bold">{Number(invoice.mileage).toLocaleString('en-US')} mi</span></div>}
             {invoice.service && <div className={rowClass}><span className={labelClass}>SERVICE</span><span className="font-bold">{invoice.service}</span></div>}
           </div>
