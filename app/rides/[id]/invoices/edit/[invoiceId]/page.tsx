@@ -1563,31 +1563,35 @@ export default function EditInvoicePage() {
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
               {scannedPurchase.items.map((item, i) => (
-                <div key={i} className="flex gap-3 items-center">
-                  <input type="text" value={item.description} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], description: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${inputClass} flex-1`} placeholder="Description" />
-                  <div className="w-20">
-                    <input type="text" inputMode="decimal" value={item.quantity} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} w-full text-center`} placeholder="Qty" />
+                <div key={i} className="border border-gray-700 rounded-2xl p-2 space-y-2">
+                  <div className="flex gap-2 items-center">
+                    <input type="text" value={item.description} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], description: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} flex-1 min-w-0`} placeholder="Description" />
+                    <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2 shrink-0">✕</button>
                   </div>
-                  <div className="relative w-32">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                    <input type="text" value={item.amount} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], amount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${inputClass} pl-8`} placeholder="0.00" />
-                  </div>
-                  <div className="relative w-28">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Tax $</span>
-                    <input type="text" inputMode="decimal" value={item.tax} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-12`} placeholder="0.00" />
-                  </div>
-                  <div className="relative w-32">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Extra $</span>
-                    <input type="text" inputMode="decimal" value={item.extra} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-14`} placeholder="0.00" />
-                  </div>
-                  {supplierIsVariable(scannedPurchase.supplier) && (
-                    <div className="relative w-24">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-300 text-sm">Disc</span>
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
-                      <input type="text" inputMode="decimal" value={item.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], item_discount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-11 pr-6`} placeholder="0" />
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <div className="w-16">
+                      <input type="text" inputMode="decimal" value={item.quantity} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} w-full text-center`} placeholder="Qty" />
                     </div>
-                  )}
-                  <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2">✕</button>
+                    <div className="relative w-28">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                      <input type="text" value={item.amount} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], amount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} w-full pl-8`} placeholder="0.00" />
+                    </div>
+                    <div className="relative w-28">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Tax $</span>
+                      <input type="text" inputMode="decimal" value={item.tax} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-12`} placeholder="0.00" />
+                    </div>
+                    <div className="relative w-32">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Extra $</span>
+                      <input type="text" inputMode="decimal" value={item.extra} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-14`} placeholder="0.00" />
+                    </div>
+                    {supplierIsVariable(scannedPurchase.supplier) && (
+                      <div className="relative w-24">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-300 text-sm">Disc</span>
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+                        <input type="text" inputMode="decimal" value={item.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], item_discount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-11 pr-6`} placeholder="0" />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
               <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
