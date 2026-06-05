@@ -1738,6 +1738,252 @@ export default function EditInvoicePage() {
         </div>
 
         <div>
+          <label className="block mb-3 text-lg font-bold">EXPENSES</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
+              🧾 SCAN EXPENSE
+              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
+            </label>
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+              </div>
+              <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
+            </div>
+            <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
+              <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={inputClass} />
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                </div>
+              </div>
+              <div className="w-24"><label className="block mb-1 text-sm text-gray-400">QTY</label>
+                <input type="text" inputMode="decimal" placeholder="1" value={newExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, quantity: e.target.value }) }} className={inputClass} />
+              </div>
+              <div className="w-32"><label className="block mb-1 text-sm text-gray-400">TAX</label>
+                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, tax: e.target.value }) }} className={`${inputClass} pl-10`} />
+                </div>
+              </div>
+              <div className="w-36"><label className="block mb-1 text-sm text-gray-400">EXTRA COSTS</label>
+                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
+                </div>
+              </div>
+            </div>
+            <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
+
+            <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
+              <div className="px-4 py-3 space-y-2">
+                <div className="min-w-0">
+                  <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
+                  <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
+                  <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>
+                </div>
+                <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />
+              </div>
+            </div>
+
+            {expenseRows.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
+                {expenseRows.map((row, rowIdx) => {
+                  if (row.type === 'group' && row.groupExpenses && row.groupId) {
+                    const groupId = row.groupId
+                    const groupItems = row.groupExpenses
+                    // Extras (shipping, handling, insurance, tax, etc.) always render
+                    // AFTER all parts, regardless of stored order. Stable sort keeps
+                    // parts in their existing order and pushes extras to the bottom.
+                    const orderedItems = [...groupItems].sort((a, b) =>
+                      (SKIP_WORDS.test(a.expense.item) ? 1 : 0) - (SKIP_WORDS.test(b.expense.item) ? 1 : 0)
+                    )
+                    const firstItem = groupItems[0].expense
+                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
+                    const isExpanded = expandedGroups.has(groupId)
+                    const receiptUrl = firstItem.receipt_urls[0]
+                    return (
+                      <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
+                        <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
+                              <p className="text-base font-bold text-blue-400">{firstItem.supplier} — {groupItems.length} items</p>
+                            </div>
+                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
+                            {supplierDiscount(firstItem.supplier) != null && (
+                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: {supplierDiscount(firstItem.supplier)}%</p>
+                            )}
+                          </div>
+                          <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                            {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
+                            <button onClick={() => startEditPurchase(groupId, groupItems)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => setConfirmRemovePurchaseGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE PURCHASE</button>
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div className="border-t border-gray-700">
+                            {orderedItems.map(({ index, expense: exp }, gi) => (
+                              <div key={index} className={`px-4 py-2 pl-10 ${gi < orderedItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                                {editingGroupItemIndex === index ? (
+                                  <div className="flex gap-2 items-center">
+                                    <input type="text" value={editingGroupItem.description} onChange={(e) => setEditingGroupItem({ ...editingGroupItem, description: e.target.value })} className={`${smallInputClass} flex-1`} placeholder="Description" />
+                                    <input type="text" inputMode="decimal" value={editingGroupItem.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, quantity: e.target.value }) }} className={`${smallInputClass} w-14 text-center`} placeholder="Qty" />
+                                    <div className="relative w-24">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-7`} placeholder="0.00" />
+                                    </div>
+                                    <div className="relative w-24">
+                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Tax$</span>
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, tax: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} placeholder="0.00" />
+                                    </div>
+                                    <div className="relative w-28">
+                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
+                                    </div>
+                                    <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-3 py-2 rounded-xl font-bold text-sm">SAVE</button>
+                                    <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between gap-4">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
+                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                      {exportStatusLine(exp, index)}
+                                    </div>
+                                    <div className="flex gap-2 shrink-0">
+                                      <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                                      <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
+                                      <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  } else if (row.type === 'single' && row.index !== undefined && row.expense) {
+                    const index = row.index
+                    const exp = row.expense
+                    const isPaid = isValidDate(exp.payment_date)
+                    const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
+                    return (
+                      <div key={index} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
+                        {editingExpenseIndex === index ? (
+                          <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
+                            <div className="flex gap-3 items-end">
+                              <div className="flex-1">
+                                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                                <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                              </div>
+                              <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
+                            </div>
+                            <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
+                              <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
+                            </div>
+                            <div className="flex gap-3">
+                              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                  <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                                </div>
+                              </div>
+                              <div className="w-24"><label className="block mb-1 text-sm text-gray-400">QTY</label>
+                                <input type="text" inputMode="decimal" value={editingExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, quantity: e.target.value }) }} className={inputClass} />
+                              </div>
+                              <div className="w-32"><label className="block mb-1 text-sm text-gray-400">TAX</label>
+                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                  <input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, tax: e.target.value }) }} className={`${inputClass} pl-10`} />
+                                </div>
+                              </div>
+                              <div className="w-36"><label className="block mb-1 text-sm text-gray-400">EXTRA COSTS</label>
+                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                  <input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
+                                </div>
+                              </div>
+                            </div>
+                            <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
+                            <div>
+                              <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
+                              <label className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
+                                📎 ADD FILES
+                                <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceiptsToEditing(e.target.files) }} />
+                              </label>
+                              {editingExpense.receipt_urls.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {editingExpense.receipt_urls.map((url, ui) => (
+                                    <div key={ui} className="flex items-center gap-2">
+                                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                      <button onClick={() => removeReceiptFromEditing(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-3">
+                              <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                              <button onClick={cancelEditExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="px-4 py-3">
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                                {exportStatusLine(exp, index)}
+                                {supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
+                                {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
+                              </div>
+                              <div className="flex gap-2 shrink-0">
+                                {exp.receipt_urls.length > 0 && (
+                                  <div className="relative">
+                                    <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
+                                      RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
+                                    </button>
+                                    {openReceiptsIndex === index && (
+                                      <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
+                                        {exp.receipt_urls.map((url, ui) => (
+                                          <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                                <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
+                                <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+                  return null
+                })}
+              </div>
+            )}
+
+            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+              <span className="text-gray-400 font-bold">TOTAL GLOBAL</span>
+              <span className="text-xl font-bold">{formatUSD(expensesTotalGlobal)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400 font-bold">TOTAL PAID</span>
+              <span className="text-xl font-bold">{formatUSD(expensesTotalPaid)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-bold text-lg">BALANCE</span>
+              <span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
           <label className="block mb-3 text-lg font-bold">PARTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <input type="text" placeholder="Description" value={newPart.description} onChange={(e) => setNewPart({ ...newPart, description: e.target.value })} className={inputClass} />
@@ -2096,262 +2342,6 @@ export default function EditInvoicePage() {
         </div>
         )}
 
-        <div>
-          <label className="block mb-3 text-lg font-bold">EXPENSES</label>
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
-              🧾 SCAN EXPENSE
-              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
-            </label>
-            <div className="flex gap-3 items-end">
-              <div className="flex-1">
-                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
-              </div>
-              <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
-            </div>
-            <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
-              <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={inputClass} />
-            </div>
-            <div className="flex gap-3">
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
-                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
-                </div>
-              </div>
-              <div className="w-24"><label className="block mb-1 text-sm text-gray-400">QTY</label>
-                <input type="text" inputMode="decimal" placeholder="1" value={newExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, quantity: e.target.value }) }} className={inputClass} />
-              </div>
-              <div className="w-32"><label className="block mb-1 text-sm text-gray-400">TAX</label>
-                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, tax: e.target.value }) }} className={`${inputClass} pl-10`} />
-                </div>
-              </div>
-              <div className="w-36"><label className="block mb-1 text-sm text-gray-400">EXTRA COSTS</label>
-                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
-                </div>
-              </div>
-            </div>
-            <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
-
-            <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
-              <div className="px-4 py-3 space-y-2">
-                <div className="min-w-0">
-                  <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
-                  <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
-                  <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>
-                </div>
-                <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />
-              </div>
-            </div>
-
-            {expenseRows.length > 0 && (
-              <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
-                {expenseRows.map((row, rowIdx) => {
-                  if (row.type === 'group' && row.groupExpenses && row.groupId) {
-                    const groupId = row.groupId
-                    const groupItems = row.groupExpenses
-                    // Extras (shipping, handling, insurance, tax, etc.) always render
-                    // AFTER all parts, regardless of stored order. Stable sort keeps
-                    // parts in their existing order and pushes extras to the bottom.
-                    const orderedItems = [...groupItems].sort((a, b) =>
-                      (SKIP_WORDS.test(a.expense.item) ? 1 : 0) - (SKIP_WORDS.test(b.expense.item) ? 1 : 0)
-                    )
-                    const firstItem = groupItems[0].expense
-                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
-                    const isExpanded = expandedGroups.has(groupId)
-                    const receiptUrl = firstItem.receipt_urls[0]
-                    return (
-                      <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
-                        <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
-                              <p className="text-base font-bold text-blue-400">{firstItem.supplier} — {groupItems.length} items</p>
-                            </div>
-                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
-                            {supplierDiscount(firstItem.supplier) != null && (
-                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: {supplierDiscount(firstItem.supplier)}%</p>
-                            )}
-                          </div>
-                          <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
-                            {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
-                            <button onClick={() => startEditPurchase(groupId, groupItems)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                            <button onClick={() => setConfirmRemovePurchaseGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE PURCHASE</button>
-                          </div>
-                        </div>
-                        {isExpanded && (
-                          <div className="border-t border-gray-700">
-                            {orderedItems.map(({ index, expense: exp }, gi) => (
-                              <div key={index} className={`px-4 py-2 pl-10 ${gi < orderedItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                                {editingGroupItemIndex === index ? (
-                                  <div className="flex gap-2 items-center">
-                                    <input type="text" value={editingGroupItem.description} onChange={(e) => setEditingGroupItem({ ...editingGroupItem, description: e.target.value })} className={`${smallInputClass} flex-1`} placeholder="Description" />
-                                    <input type="text" inputMode="decimal" value={editingGroupItem.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, quantity: e.target.value }) }} className={`${smallInputClass} w-14 text-center`} placeholder="Qty" />
-                                    <div className="relative w-24">
-                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-7`} placeholder="0.00" />
-                                    </div>
-                                    <div className="relative w-24">
-                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Tax$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, tax: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} placeholder="0.00" />
-                                    </div>
-                                    <div className="relative w-28">
-                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
-                                    </div>
-                                    <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-3 py-2 rounded-xl font-bold text-sm">SAVE</button>
-                                    <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center justify-between gap-4">
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
-                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
-                                      {exportStatusLine(exp, index)}
-                                    </div>
-                                    <div className="flex gap-2 shrink-0">
-                                      <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                                      <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
-                                      <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  } else if (row.type === 'single' && row.index !== undefined && row.expense) {
-                    const index = row.index
-                    const exp = row.expense
-                    const isPaid = isValidDate(exp.payment_date)
-                    const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
-                    return (
-                      <div key={index} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
-                        {editingExpenseIndex === index ? (
-                          <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
-                            <div className="flex gap-3 items-end">
-                              <div className="flex-1">
-                                <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                                <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
-                              </div>
-                              <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
-                            </div>
-                            <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
-                              <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
-                            </div>
-                            <div className="flex gap-3">
-                              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
-                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                  <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
-                                </div>
-                              </div>
-                              <div className="w-24"><label className="block mb-1 text-sm text-gray-400">QTY</label>
-                                <input type="text" inputMode="decimal" value={editingExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, quantity: e.target.value }) }} className={inputClass} />
-                              </div>
-                              <div className="w-32"><label className="block mb-1 text-sm text-gray-400">TAX</label>
-                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                  <input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, tax: e.target.value }) }} className={`${inputClass} pl-10`} />
-                                </div>
-                              </div>
-                              <div className="w-36"><label className="block mb-1 text-sm text-gray-400">EXTRA COSTS</label>
-                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                  <input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
-                                </div>
-                              </div>
-                            </div>
-                            <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
-                            <div>
-                              <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
-                              <label className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer">
-                                📎 ADD FILES
-                                <input type="file" accept="image/*,.pdf" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadReceiptsToEditing(e.target.files) }} />
-                              </label>
-                              {editingExpense.receipt_urls.length > 0 && (
-                                <div className="mt-2 space-y-1">
-                                  {editingExpense.receipt_urls.map((url, ui) => (
-                                    <div key={ui} className="flex items-center gap-2">
-                                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
-                                      <button onClick={() => removeReceiptFromEditing(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex gap-3">
-                              <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
-                              <button onClick={cancelEditExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="px-4 py-3">
-                            <div className="flex items-center justify-between gap-4">
-                              <div className="flex-1 min-w-0">
-                                <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
-                                <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
-                                {exportStatusLine(exp, index)}
-                                {supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
-                                {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
-                              </div>
-                              <div className="flex gap-2 shrink-0">
-                                {exp.receipt_urls.length > 0 && (
-                                  <div className="relative">
-                                    <button onClick={() => setOpenReceiptsIndex(openReceiptsIndex === index ? null : index)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">
-                                      RECEIPTS{exp.receipt_urls.length > 1 ? ` (${exp.receipt_urls.length})` : ''}
-                                    </button>
-                                    {openReceiptsIndex === index && (
-                                      <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
-                                        {exp.receipt_urls.map((url, ui) => (
-                                          <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                                <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
-                                <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  }
-                  return null
-                })}
-              </div>
-            )}
-
-            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
-              <span className="text-gray-400 font-bold">TOTAL GLOBAL</span>
-              <span className="text-xl font-bold">{formatUSD(expensesTotalGlobal)}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400 font-bold">TOTAL PAID</span>
-              <span className="text-xl font-bold">{formatUSD(expensesTotalPaid)}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-lg">BALANCE</span>
-              <span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span>
-            </div>
-            <div className="border-t border-gray-700 pt-3 space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400 font-bold">CURRENT PROFIT</span>
-                <span className={`text-xl font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="font-bold text-lg">FINAL PROFIT</span>
-                <span className={`text-2xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
       </div>
 
       {/* Fixed action bar — keeps SAVE CHANGES reachable without scrolling the
@@ -2359,7 +2349,11 @@ export default function EditInvoicePage() {
           it when open. The page itself uses pb-32 so the last visible section
           doesn't slip under this bar. */}
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
-        <div className="max-w-2xl mx-auto px-8 flex items-center gap-6">
+        <div className="max-w-2xl mx-auto px-8 flex items-center gap-4">
+          <div className="shrink-0 text-xs leading-tight">
+            <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">CURRENT</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
+            <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">FINAL</span><span className={`font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+          </div>
           <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
           <button onClick={saveInvoice} className="flex-1 bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         </div>
