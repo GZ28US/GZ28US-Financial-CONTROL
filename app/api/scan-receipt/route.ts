@@ -158,6 +158,19 @@ Rules:
       if (derived > 0.01) tax = Math.round(derived * 100) / 100
     }
 
+    // Order-level discount reconciliation: if items + tax + extras come out HIGHER
+    // than the grand total, the receipt carried a discount the model didn't fold
+    // into the line items (the output has no discount field). Scale every item line
+    // down proportionally so the parts reconcile exactly to the grand total.
+    let itemScale = 1
+    if (grandTotal > 0 && itemsSubtotal > 0) {
+      const netItemsTarget = grandTotal - tax - extrasTotal
+      if (netItemsTarget > 0 && netItemsTarget < itemsSubtotal - 0.01) {
+        itemScale = netItemsTarget / itemsSubtotal
+      }
+    }
+    const scaledSubtotal = itemsSubtotal * itemScale
+
     const processedItems: { description: string; quantity: string; amount: string; tax: string; extra: string }[] = []
 
     if (separateExtras) {
@@ -168,9 +181,9 @@ Rules:
       let taxAllocated = 0
       let extraAllocated = 0
       items.forEach((item: any, idx: number) => {
-        const lineTotal = num(item.line_total)
+        const lineTotal = num(item.line_total) * itemScale
         const quantity = parseInt(item.quantity) || 1
-        const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
+        const proportion = scaledSubtotal > 0 ? lineTotal / scaledSubtotal : (items.length ? 1 / items.length : 0)
         const isLast = idx === items.length - 1
         // Last product absorbs the rounding remainder so each total sums exactly.
         let lineTax: number
@@ -201,9 +214,9 @@ Rules:
       // distributed proportionally. One row per item, no separate tax.
       const extraCharges = tax + extrasTotal
       items.forEach((item: any) => {
-        const lineTotal = num(item.line_total)
+        const lineTotal = num(item.line_total) * itemScale
         const quantity = parseInt(item.quantity) || 1
-        const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
+        const proportion = scaledSubtotal > 0 ? lineTotal / scaledSubtotal : (items.length ? 1 / items.length : 0)
         const allocatedExtra = extraCharges * proportion
         const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
         processedItems.push({
