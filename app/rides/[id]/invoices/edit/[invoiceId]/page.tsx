@@ -190,6 +190,7 @@ export default function EditInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number }[]>([])
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] })
@@ -296,6 +297,9 @@ export default function EditInvoicePage() {
       }))))
       setExpandedGroups(new Set())
     }
+
+    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount')
+    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0 })))
 
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
@@ -731,6 +735,16 @@ export default function EditInvoicePage() {
   }
 
   function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+  // Returns the registered discount (%) for a supplier name if it exists in the
+  // suppliers database (case-insensitive match), otherwise null. Display only —
+  // no math is applied to the prices.
+  function supplierDiscount(name: string | undefined | null): number | null {
+    if (!name) return null
+    const n = name.trim().toLowerCase()
+    if (!n) return null
+    const m = suppliers.find(s => s.name.trim().toLowerCase() === n)
+    return m ? m.discount : null
+  }
   function formatMileage(value: string) {
     const clean = value.replace(/[^0-9.]/g, '')
     const partsArr = clean.split('.')
@@ -1429,6 +1443,7 @@ export default function EditInvoicePage() {
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
+                {supplierDiscount(scannedPurchase.supplier) != null && <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: {supplierDiscount(scannedPurchase.supplier)}%</p>}
               </div>
               <div className="flex-1">
                 <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
@@ -2058,6 +2073,9 @@ export default function EditInvoicePage() {
                               <p className="text-base font-bold text-blue-400">{firstItem.supplier} — {groupItems.length} items</p>
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
+                            {supplierDiscount(firstItem.supplier) != null && (
+                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: {supplierDiscount(firstItem.supplier)}%</p>
+                            )}
                           </div>
                           <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                             {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
@@ -2167,6 +2185,7 @@ export default function EditInvoicePage() {
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                                {supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
                               </div>
                               <div className="flex gap-2 shrink-0">
