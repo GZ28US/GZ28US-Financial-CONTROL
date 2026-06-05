@@ -63,12 +63,9 @@ export default function ClientsPage() {
       let sumExpensesGlobal = 0
 
       if (invoiceIds.length > 0) {
-        const today = new Date(); today.setHours(0, 0, 0, 0)
-        const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
-
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-          supabase.from('invoice_payments').select('invoice_id, amount, payment_date').in('invoice_id', invoiceIds),
-          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date').in('invoice_id', invoiceIds),
+          supabase.from('invoice_payments').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
+          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', invoiceIds),
           supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
           supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
         ])
@@ -86,6 +83,9 @@ export default function ClientsPage() {
         const partsBy = byInvoice(partsRes.data)
         const servicesBy = byInvoice(servicesRes.data)
 
+        // Per-item expense line including Tax + Extra Costs, matching the edit page.
+        const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+
         for (const inv of invoiceList) {
           const parts = partsBy.get(inv.id) || []
           const services = servicesBy.get(inv.id) || []
@@ -100,12 +100,13 @@ export default function ClientsPage() {
           const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
           const grandTotal = partsAndServicesTotal - discountAmount
 
-          const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+          // Income counts only payments explicitly marked PAID (paid_at).
+          const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
 
           const flTaxAmount = floridaTaxesAmount
           const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
-          const expensesTotalGlobal = flTaxAmount + expenses.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
-          const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+          const expensesTotalGlobal = flTaxAmount + expenses.reduce((s, e) => s + expenseLine(e), 0)
+          const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
 
           currentProfit += totalPaid - expensesTotalPaid
           finalProfit += grandTotal - expensesTotalGlobal
@@ -213,16 +214,16 @@ export default function ClientsPage() {
                 {client._hasInvoices && (
                   <div className="flex gap-3 mt-3 flex-wrap">
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-                      CURRENT PROFIT: {formatUSD(client._currentProfit)} / {client._currentProfitPct.toFixed(1)}%
+                      CURRENT CASH FLOW: {formatUSD(client._currentProfit)} / {client._currentProfitPct.toFixed(1)}%
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-                      FINAL PROFIT: {formatUSD(client._finalProfit)} / {client._finalProfitPct.toFixed(1)}%
+                      FINAL PROFIT RESULT: {formatUSD(client._finalProfit)} / {client._finalProfitPct.toFixed(1)}%
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      PENDING PAYMENTS: {formatUSD(client._paymentsBalance)}
+                      DUE by CLIENT: {formatUSD(client._paymentsBalance)}
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      CURRENT DEBTS: {formatUSD(client._expensesBalance)}
+                      DUE by GZ28: {formatUSD(client._expensesBalance)}
                     </span>
                   </div>
                 )}
@@ -230,7 +231,7 @@ export default function ClientsPage() {
               <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/clients/${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                 <Link href={`/clients/edit/${client.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">GOODS INVOICES</Link>
+                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">SHOPPING INVOICES</Link>
                 <button onClick={() => setConfirmId(client.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
               </div>
             </div>
