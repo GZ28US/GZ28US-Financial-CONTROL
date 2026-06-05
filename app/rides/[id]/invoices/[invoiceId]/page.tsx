@@ -20,6 +20,7 @@ type Invoice = {
   global_discount: number | null
   feed_status: string | null
   fl_tax_expense_date: string | null
+  is_quote: boolean | null
 }
 
 type Client = {
@@ -155,7 +156,8 @@ export default function ViewInvoicePage() {
     const project = ride?.project_name || ''
     const svc = invoice.service || ''
     const parts = [code, project, svc].filter(Boolean).join(' - ')
-    const filename = `GZ28 V8 SpeedShop - INVOICE - ${parts}`
+    const noun = invoice.is_quote ? 'QUOTE' : 'INVOICE'
+    const filename = `GZ28 V8 SpeedShop - ${noun} - ${parts}`
     const prev = document.title
     document.title = filename
     window.print()
@@ -167,13 +169,14 @@ export default function ViewInvoicePage() {
   // WhatsApp document filename and the email subject.
   function deliveredFilename(): string {
     const code = invoice?.invoice_code || ''
+    const noun = invoice?.is_quote ? 'QUOTE' : 'INVOICE'
     if (isClient) {
       const cc = client?.client_number != null ? pad3(client.client_number) : ''
       const cn = client?.name || ''
-      return `GZ28 V8 SpeedShop ${cc}.${cn} - Shopping INVOICE ${code}.pdf`
+      return `GZ28 V8 SpeedShop ${cc}.${cn} - Shopping ${noun} ${code}.pdf`
     }
     const rn = projectName || ''
-    return `GZ28 V8 SpeedShop ${projectCode}.${rn} - INVOICE ${code}.pdf`
+    return `GZ28 V8 SpeedShop ${projectCode}.${rn} - ${noun} ${code}.pdf`
   }
 
   // Render the hidden print layout to a one-or-more-page letter PDF, entirely in
@@ -258,7 +261,8 @@ export default function ViewInvoicePage() {
       const fname = deliveredFilename()
 
       const ownerLbl = isClient ? (client?.name || '') : `${projectCode}${projectName ? ` — ${projectName}` : ''}`
-      const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}Invoice ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*`
+      const docNoun = invoice.is_quote ? 'Quote' : 'Invoice'
+      const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*`
 
       if (method === 'SMS') {
         const text = `${caption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
@@ -269,7 +273,7 @@ export default function ViewInvoicePage() {
 
       if (method === 'E-Mail') {
         const subject = fname.replace(/\.pdf$/, '')
-        const body = `Hello${client?.name ? ` ${client.name}` : ''},\n\nPlease find your invoice ${invoice.invoice_code} at the link below:\n${pdfUrl}\n\nThank you,\nGZ28 V8 SpeedShop`
+        const body = `Hello${client?.name ? ` ${client.name}` : ''},\n\nPlease find your ${invoice.is_quote ? 'quote' : 'invoice'} ${invoice.invoice_code} at the link below:\n${pdfUrl}\n\nThank you,\nGZ28 V8 SpeedShop`
         window.location.href = `mailto:${client?.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
         setSending(false)
         return
@@ -294,7 +298,7 @@ export default function ViewInvoicePage() {
         setSending(false)
         return
       }
-      alert('Invoice sent on WhatsApp ✓')
+      alert(`${invoice.is_quote ? 'Quote' : 'Invoice'} sent on WhatsApp ✓`)
     } catch (err) {
       alert('Could not generate or send the PDF:\n' + String(err))
     }
@@ -414,7 +418,7 @@ export default function ViewInvoicePage() {
                 <div className="pi-company-sub">IG: @gz28us / @gz28br · FB: Dema De Maria</div>
               </div>
               <div className="pi-inv-box">
-                <div className="pi-inv-label">Invoice #</div>
+                <div className="pi-inv-label">{invoice.is_quote ? 'Quote #' : 'Invoice #'}</div>
                 <div className="pi-inv-num">{invoice.invoice_code}</div>
                 <div className="pi-inv-date">Hiring: {formatDate(invoice.hiring_date)}</div>
                 <div className="pi-inv-date">Entry: {formatDate(invoice.entry_date)}</div>
@@ -542,6 +546,7 @@ export default function ViewInvoicePage() {
           <div>
             <div className="flex items-center gap-3 mb-1 flex-wrap">
               <h1 className="text-4xl font-bold">{invoice.invoice_code}</h1>
+              {invoice.is_quote && <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-600 text-black">QUOTE</span>}
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
             </div>

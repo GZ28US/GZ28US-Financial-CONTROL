@@ -19,6 +19,7 @@ type Invoice = {
   global_discount: number | null
   fl_tax_expense_date: string | null
   feed_status: string | null
+  is_quote: boolean | null
 }
 
 type InvoiceStats = {
@@ -190,6 +191,7 @@ export default function InvoicesPage() {
         <div className="flex gap-4">
           <Link href={backPath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           <Link href={`${basePath}/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
+          <Link href={`${basePath}/new?mode=quote`} className="bg-amber-600 hover:bg-amber-500 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
         </div>
       </div>
 
@@ -209,6 +211,7 @@ export default function InvoicesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{invoice.invoice_code}</h2>
+                    {invoice.is_quote && <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-600 text-black">QUOTE</span>}
                     {!isClient && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
                   </div>

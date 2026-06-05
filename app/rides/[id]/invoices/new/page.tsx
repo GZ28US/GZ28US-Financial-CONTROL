@@ -33,8 +33,17 @@ export default function NewInvoicePage() {
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
   const [saving, setSaving] = useState(false)
+  // Quote mode arrives via ?mode=quote (the ADD A NEW QUOTE button on the list).
+  // Read from window rather than useSearchParams to avoid the Suspense build
+  // requirement on this client page.
+  const [isQuote, setIsQuote] = useState(false)
 
-  useEffect(() => { loadOwner() }, [])
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsQuote(new URLSearchParams(window.location.search).get('mode') === 'quote')
+    }
+    loadOwner()
+  }, [])
 
   async function loadOwner() {
     if (isClient) {
@@ -93,12 +102,14 @@ export default function NewInvoicePage() {
       entry_date: isValidDate(entryDate) ? entryDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
+      // Quote until a HIRING DATE is set; filling it at creation makes it an invoice immediately.
+      is_quote: isQuote && !isValidDate(hiringDate),
     }
     if (isClient) row.client_id = ownerId
     else row.ride_id = ownerId
 
     const { data: invoice, error } = await supabase.from('invoices').insert([row]).select().single()
-    if (error || !invoice) { alert(error?.message || 'Error creating invoice'); setSaving(false); return }
+    if (error || !invoice) { alert(error?.message || `Error creating ${isQuote ? 'quote' : 'invoice'}`); setSaving(false); return }
 
     // Seed the default Full Project Labor service so EDIT opens ready to fill.
     await supabase.from('invoice_services').insert([{ invoice_id: invoice.id, description: FULL_PROJECT_LABOR, price: 0 }])
@@ -107,18 +118,19 @@ export default function NewInvoicePage() {
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
+  const noun = isQuote ? 'QUOTE' : 'INVOICE'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      <h1 className="text-4xl font-bold mb-2">ADD A NEW INVOICE</h1>
+      <h1 className="text-4xl font-bold mb-2">ADD A NEW {noun}</h1>
       <p className="text-gray-400 text-xl mb-8">{ownerLabel}{ownerSubtitle ? ` — ${ownerSubtitle}` : ''}</p>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
         <div>
-          <label className="block mb-2 text-lg font-bold">INVOICE CODE</label>
+          <label className="block mb-2 text-lg font-bold">{noun} CODE</label>
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
@@ -143,7 +155,7 @@ export default function NewInvoicePage() {
         </div>
 
         <button onClick={createInvoice} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">
-          {saving ? 'CREATING...' : 'CREATE INVOICE'}
+          {saving ? 'CREATING...' : `CREATE ${noun}`}
         </button>
         <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
       </div>

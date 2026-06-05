@@ -159,6 +159,9 @@ export default function EditInvoicePage() {
   const [clientName, setClientName] = useState('')
   const [clientNumber, setClientNumber] = useState<number | null>(null)
   const [invoiceCode, setInvoiceCode] = useState('')
+  // is_quote is the stored quote/invoice flag. A quote flips to an invoice on
+  // SAVE once a valid HIRING DATE is present (handled in saveInvoice).
+  const [isQuote, setIsQuote] = useState(false)
   const [hiringDate, setHiringDate] = useState('')
   const [entryDate, setEntryDate] = useState('')
   const [conclusionDate, setConclusionDate] = useState('')
@@ -250,6 +253,7 @@ export default function EditInvoicePage() {
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
     if (error || !data) { alert('Invoice not found'); router.push(basePath); return }
     setInvoiceCode(data.invoice_code || '')
+    setIsQuote(!!data.is_quote)
     setHiringDate(data.hiring_date || '')
     setEntryDate(data.entry_date || '')
     setConclusionDate(data.conclusion_date || '')
@@ -1070,6 +1074,9 @@ export default function EditInvoicePage() {
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' }) }
 
   async function saveInvoice() {
+    // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
+    // invoice (one-way; an invoice never reverts to a quote).
+    const nextIsQuote = isQuote && !isValidDate(hiringDate)
     const { error } = await supabase.from('invoices').update({
       hiring_date: isValidDate(hiringDate) ? hiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,
@@ -1083,9 +1090,11 @@ export default function EditInvoicePage() {
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       import_margin: parseFloat(importMargin) || 0,
       fl_tax_expense_date: isValidDate(flTaxExpenseDate) ? flTaxExpenseDate : null,
+      is_quote: nextIsQuote,
       updated_at: new Date().toISOString(),
     }).eq('id', invoiceId)
     if (error) { alert(error.message); return }
+    setIsQuote(nextIsQuote)
 
     const newParts = parts.filter(p => !p.id)
     if (newParts.length > 0) {
@@ -1730,20 +1739,20 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      <h1 className="text-4xl font-bold mb-2">EDIT INVOICE</h1>
+      <h1 className="text-4xl font-bold mb-2">EDIT {isQuote ? 'QUOTE' : 'INVOICE'}</h1>
       <p className="text-gray-400 text-xl mb-8">{isClient ? `${clientNumber ?? ''}${clientName ? ` — ${clientName}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
         <div>
-          <label className="block mb-2 text-lg font-bold">INVOICE CODE</label>
+          <label className="block mb-2 text-lg font-bold">{isQuote ? 'QUOTE' : 'INVOICE'} CODE</label>
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">FEED STATUS</p>
-            <p className="text-sm text-gray-400">Mark this invoice as a real-time feed once it is fully up to date.</p>
+            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as a real-time feed once it is fully up to date.</p>
           </div>
           <button
             onClick={() => setFeedStatus(feedStatus === 'REAL_TIME' ? 'INCOMPLETE' : 'REAL_TIME')}
@@ -2390,7 +2399,7 @@ export default function EditInvoicePage() {
 
             {savedPartsToStock.length > 0 && (
               <div className="border-t border-gray-700 pt-3">
-                <p className="text-sm text-gray-500 mb-2">ALREADY IN STOCK FROM THIS INVOICE</p>
+                <p className="text-sm text-gray-500 mb-2">ALREADY IN STOCK FROM THIS {isQuote ? 'QUOTE' : 'INVOICE'}</p>
                 <div className="border border-gray-700 rounded-2xl overflow-hidden">
                   {savedPartsToStock.map((p, index) => (
                     <div key={index} className={`flex items-center gap-4 px-4 py-3 ${index < savedPartsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
