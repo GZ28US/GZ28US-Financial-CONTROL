@@ -30,6 +30,7 @@ type Expense = {
   purchase_group?: string
   stock_source_type?: string
   stock_donor?: string
+  export_status?: string
 }
 type StockItem = {
   id: string
@@ -192,9 +193,9 @@ export default function EditInvoicePage() {
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number }[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -296,6 +297,7 @@ export default function EditInvoicePage() {
         purchase_group: e.purchase_group || undefined,
         stock_source_type: e.stock_source_type || undefined,
         stock_donor: e.stock_donor || undefined,
+        export_status: e.export_status || 'FRESH',
       }))))
       setExpandedGroups(new Set())
     }
@@ -365,6 +367,7 @@ export default function EditInvoicePage() {
       receipt_urls: [],
       stock_source_type: item.source_type || undefined,
       stock_donor: item.donor || undefined,
+      export_status: 'FRESH',
     }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -546,6 +549,7 @@ export default function EditInvoicePage() {
       payment_date: scannedPurchase.date,
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
+      export_status: 'FRESH',
     }))
     setExpenses(prev => [...prev, ...newItems])
     setExpandedGroups(prev => new Set([...prev, groupId]))
@@ -677,57 +681,73 @@ export default function EditInvoicePage() {
     setSendToConfirm(null)
   }
 
+  // Writes an export_status onto the given expense indices: updates local state
+  // and, for rows already persisted (have an id), writes through to the DB so the
+  // status survives a reload without needing SAVE CHANGES.
+  async function markExportStatus(indices: number[], status: string) {
+    if (indices.length === 0) return
+    const idxSet = new Set(indices)
+    const rows = indices.map(i => expenses[i]).filter(Boolean)
+    setExpenses(prev => prev.map((e, i) => idxSet.has(i) ? { ...e, export_status: status } : e))
+    for (const e of rows) {
+      if (e.id) await supabase.from('invoice_expenses').update({ export_status: status }).eq('id', e.id)
+    }
+  }
+
+  function resetExportStatus(index: number) {
+    markExportStatus([index], 'FRESH')
+  }
+
+  // Small status line shown on every expense item: FRESH (gray), EXPORTED
+  // (green), or REMOVED (red), with a RESET link (back to FRESH) when not FRESH.
+  function exportStatusLine(exp: Expense, index: number) {
+    const st = exp.export_status || 'FRESH'
+    const color = st === 'EXPORTED' ? 'text-green-400' : st === 'REMOVED' ? 'text-red-400' : 'text-gray-400'
+    return (
+      <p className="text-xs mt-0.5">
+        <span className={`font-bold ${color}`}>{st}</span>
+        {st !== 'FRESH' && (
+          <button onClick={() => resetExportStatus(index)} className="ml-2 text-gray-400 underline hover:text-white">RESET</button>
+        )}
+      </p>
+    )
+  }
+
   function importIntuitiveParts() {
-    // Import each expense row at its TOTAL INCLUDING TAX, then add the MARGIN %.
-    // unit price = ((amount * qty) + tax) / qty, scaled by (1 + margin/100).
+    // Import each FRESH expense row at its TOTAL landed cost (amount*qty + tax +
+    // extra), per unit, scaled by (1 + MARGIN/100). Only FRESH items are imported;
+    // each imported item is then flipped to EXPORTED so it won't import again
+    // unless the user RESETs it back to FRESH.
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
     const sourceMap = new Map<string, { description: string; unit_price: string; quantity: number }>()
-    expenses
-      .filter(e => !SKIP_WORDS.test(e.item))
-      .forEach(e => {
-        const desc = (e.item || '').trim()
-        if (!desc) return
-        const amount = parseFloat(e.amount) || 0
-        const qty = parseFloat(e.quantity) || 1
-        const tax = parseFloat(e.tax) || 0
-        const extra = parseFloat(e.extra) || 0
-        const unitInclTax = qty > 0 ? (amount * qty + tax + extra) / qty : amount
-        const unitFinal = (unitInclTax * factor).toFixed(2)
-        const key = `${desc.toLowerCase()}|${unitFinal}`
-        const existing = sourceMap.get(key)
-        if (existing) {
-          existing.quantity += qty
-        } else {
-          sourceMap.set(key, { description: desc, unit_price: unitFinal, quantity: qty })
-        }
-      })
-
-    if (sourceMap.size === 0) { alert('No parts found in expenses to import.'); return }
-
-    const existingQty = new Map<string, number>()
-    parts.forEach(p => {
-      const desc = (p.description || '').trim()
-      const price = parseFloat(p.unit_price) || 0
-      const key = `${desc.toLowerCase()}|${price.toFixed(2)}`
-      existingQty.set(key, (existingQty.get(key) || 0) + (parseFloat(p.quantity) || 0))
+    const importedIndices: number[] = []
+    expenses.forEach((e, idx) => {
+      if (SKIP_WORDS.test(e.item)) return
+      if ((e.export_status || 'FRESH') !== 'FRESH') return
+      const desc = (e.item || '').trim()
+      if (!desc) return
+      const amount = parseFloat(e.amount) || 0
+      const qty = parseFloat(e.quantity) || 1
+      const tax = parseFloat(e.tax) || 0
+      const extra = parseFloat(e.extra) || 0
+      const unitInclTax = qty > 0 ? (amount * qty + tax + extra) / qty : amount
+      const unitFinal = (unitInclTax * factor).toFixed(2)
+      const key = `${desc.toLowerCase()}|${unitFinal}`
+      const existing = sourceMap.get(key)
+      if (existing) existing.quantity += qty
+      else sourceMap.set(key, { description: desc, unit_price: unitFinal, quantity: qty })
+      importedIndices.push(idx)
     })
+
+    if (importedIndices.length === 0) { alert('No FRESH parts to import.'); return }
 
     const toAdd: Part[] = []
-    sourceMap.forEach((src, key) => {
-      const alreadyHave = existingQty.get(key) || 0
-      const missing = src.quantity - alreadyHave
-      if (missing > 0) {
-        toAdd.push({
-          description: src.description,
-          unit_price: src.unit_price,
-          quantity: String(missing),
-        })
-      }
+    sourceMap.forEach(src => {
+      toAdd.push({ description: src.description, unit_price: src.unit_price, quantity: String(src.quantity) })
     })
-
-    if (toAdd.length === 0) { alert('All parts are already imported — nothing new to add.'); return }
     setParts(prev => [...prev, ...toAdd])
+    markExportStatus(importedIndices, 'EXPORTED')
   }
 
   function addPartToStock() {
@@ -838,6 +858,16 @@ export default function EditInvoicePage() {
     const part = parts[index]
     if (part.id) await supabase.from('invoice_parts').delete().eq('id', part.id)
     setParts(parts.filter((_, i) => i !== index))
+    // Any EXPORTED expense item that produced this part (matched by description)
+    // flips to REMOVED so the user can see it was exported then pulled from PARTS.
+    const desc = (part.description || '').trim().toLowerCase()
+    if (desc) {
+      const matchIdx: number[] = []
+      expenses.forEach((e, i) => {
+        if ((e.export_status || 'FRESH') === 'EXPORTED' && (e.item || '').trim().toLowerCase() === desc) matchIdx.push(i)
+      })
+      if (matchIdx.length) markExportStatus(matchIdx, 'REMOVED')
+    }
   }
   function startEditPart(index: number) { setEditingPartIndex(index); setEditingPart({ ...parts[index] }) }
   async function saveEditPart() {
@@ -954,7 +984,7 @@ export default function EditInvoicePage() {
 
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
   }
   async function removeExpense(index: number) {
     const exp = expenses[index]
@@ -978,9 +1008,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' }) }
 
   async function saveInvoice() {
     const { error } = await supabase.from('invoices').update({
@@ -1049,6 +1079,7 @@ export default function EditInvoicePage() {
         purchase_group: ex.purchase_group || null,
         stock_source_type: ex.stock_source_type || null,
         stock_donor: ex.stock_donor || null,
+        export_status: ex.export_status || 'FRESH',
       })))
       if (e) { alert(e.message); return }
     }
@@ -2130,6 +2161,7 @@ export default function EditInvoicePage() {
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                      {exportStatusLine(exp, index)}
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -2213,6 +2245,7 @@ export default function EditInvoicePage() {
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                                {exportStatusLine(exp, index)}
                                 {supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
                               </div>
