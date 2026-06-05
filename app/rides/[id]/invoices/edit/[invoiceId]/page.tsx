@@ -232,6 +232,11 @@ export default function EditInvoicePage() {
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
+  // packPrompt: after a successful save, asks whether to snapshot this invoice's
+  // content as a reusable pack for the car. proceed() resumes the normal post-save
+  // flow. rideMatch carries the car spec (manufacturer+model+year) used to scope packs.
+  const [packPrompt, setPackPrompt] = useState<{ proceed: () => void } | null>(null)
+  const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string }>({ manufacturer: '', model: '', year: '' })
   const rideNameRef = useRef('')
 
   useEffect(() => { loadData() }, [])
@@ -242,11 +247,12 @@ export default function EditInvoicePage() {
       setClientName(clientData?.name || '')
       setClientNumber(clientData?.client_number ?? null)
     } else {
-      const { data: rideData } = await supabase.from('rides').select('project_code, project_name').eq('id', ownerId).single()
+      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, model, year').eq('id', ownerId).single()
       const pCode = rideData?.project_code || ''
       const pName = rideData?.project_name || ''
       setProjectCode(pCode)
       setProjectName(pName)
+      setRideMatch({ manufacturer: rideData?.manufacturer || '', model: rideData?.model || '', year: rideData?.year != null ? String(rideData.year) : '' })
       rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
     }
 
@@ -1189,6 +1195,64 @@ export default function EditInvoicePage() {
       if (e) { alert(e.message); return }
     }
 
+    await maybePromptPackThenFinish(newPayments, newExpenses)
+  }
+
+  // After a successful save, offer to snapshot this ride invoice's content as a
+  // reusable pack for the car's spec (manufacturer + model + year) when its
+  // SERVICE name isn't already a saved pack. The normal post-save flow (income /
+  // expense report prompts, then redirect) runs afterward via `proceed`.
+  async function maybePromptPackThenFinish(newPayments: Payment[], newExpenses: Expense[]) {
+    const proceed = () => finishSave(newPayments, newExpenses)
+    const name = service.trim()
+    const hasContent = parts.length > 0 || services.length > 0 || expenses.length > 0 || notes.length > 0 || !!targetGrandTotal
+    if (!isClient && name && hasContent && !(await packExistsForCar(name))) {
+      setPackPrompt({ proceed })
+      return
+    }
+    proceed()
+  }
+
+  // True if a pack with this name already exists for the current car spec.
+  async function packExistsForCar(name: string): Promise<boolean> {
+    const { data } = await supabase.from('packs').select('name, manufacturer, model, year')
+    const norm = (s: any) => String(s ?? '').trim().toLowerCase()
+    return (data || []).some((p: any) =>
+      norm(p.manufacturer) === norm(rideMatch.manufacturer) &&
+      norm(p.model) === norm(rideMatch.model) &&
+      norm(p.year) === norm(rideMatch.year) &&
+      norm(p.name) === norm(name))
+  }
+
+  // Insert the current invoice content as a pack template. No dates / payments are
+  // stored — those are applied fresh and unpaid when the pack is later chosen.
+  async function savePackFromCurrent() {
+    const { error } = await supabase.from('packs').insert([{
+      name: service.trim(),
+      manufacturer: rideMatch.manufacturer || null,
+      model: rideMatch.model || null,
+      year: rideMatch.year || null,
+      target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
+      florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
+      global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
+      import_margin: parseFloat(importMargin) || 0,
+      parts: parts.map(p => ({ description: p.description, unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })),
+      services: services.map(s => ({ description: s.description, price: parseFloat(s.price) || 0 })),
+      expenses: expenses.map(e => ({ supplier: e.supplier || '', item: e.item, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount || '0') || 0 })),
+      notes: notes.map(n => ({ note: n.note })),
+    }])
+    if (error) alert('Could not save pack: ' + error.message)
+  }
+
+  // Pack prompt YES/NO; either way continue the normal post-save flow.
+  async function resolvePackPrompt(save: boolean) {
+    const prompt = packPrompt
+    setPackPrompt(null)
+    if (save) await savePackFromCurrent()
+    prompt?.proceed()
+  }
+
+  function finishSave(newPayments: Payment[], newExpenses: Expense[]) {
     const pendingIncomes: IncomeReport[] = newPayments
       .filter(p => !!p.paid_at)
       .map(p => ({
@@ -1725,6 +1789,21 @@ export default function EditInvoicePage() {
             <div className="flex gap-3 pt-2">
               <button onClick={() => setDuplicateWarning(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
               <button onClick={() => { const p = duplicateWarning.proceed; setDuplicateWarning(null); p() }} className="flex-1 bg-yellow-700 hover:bg-yellow-600 px-5 py-3 rounded-2xl font-bold text-lg">REGISTER ANYWAY</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {packPrompt && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-amber-600 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
+            <h2 className="text-2xl font-bold text-amber-400">SAVE AS PACK?</h2>
+            <p className="text-gray-300 text-base">
+              Save “{service.trim()}” as a reusable pack{[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).length > 0 ? ` for ${[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).join(' ')}` : ' for this car'}? Its PARTS, SERVICES, EXPENSES, NOTES and totals can then pre-fill future quotes/invoices for the same car.
+            </p>
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => resolvePackPrompt(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">NO, JUST SAVE</button>
+              <button onClick={() => resolvePackPrompt(true)} className="flex-1 bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold text-lg">YES, SAVE PACK</button>
             </div>
           </div>
         </div>
