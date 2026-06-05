@@ -256,7 +256,7 @@ export default function EditInvoicePage() {
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
     setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
-    setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
+    setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '6.5')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
     setImportMargin(data.import_margin ? String(data.import_margin) : '')
@@ -729,7 +729,14 @@ export default function EditInvoicePage() {
       const qty = parseFloat(e.quantity) || 1
       const tax = parseFloat(e.tax) || 0
       const extra = parseFloat(e.extra) || 0
-      const unitBase = qty > 0 ? (amount * qty + tax + extra) / qty : amount
+      // If the supplier has a registered discount, gross the ITEM PRICE back up to
+      // its market (pre-discount) value: market = amount / (1 - discount%). Tax and
+      // extra are real costs and are NOT grossed up. The market price becomes the
+      // part's base cost, on top of which the live MARGIN is then applied.
+      const disc = supplierDiscount(e.supplier)
+      const discFactor = (disc != null && disc > 0 && disc < 100) ? (1 - disc / 100) : 1
+      const marketAmount = amount / discFactor
+      const unitBase = qty > 0 ? (marketAmount * qty + tax + extra) / qty : marketAmount
       const key = `${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
