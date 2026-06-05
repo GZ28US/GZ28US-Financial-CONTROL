@@ -14,6 +14,7 @@ export default function EditSupplierPage() {
 
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')
+  const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>('FIXED')
   const [discount, setDiscount] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -25,6 +26,7 @@ export default function EditSupplierPage() {
     const { data, error } = await supabase.from('suppliers').select('*').eq('id', supplierId).single()
     if (error || !data) { alert('Supplier not found'); router.push('/suppliers'); return }
     setName(data.name || '')
+    setDiscountType(data.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED')
     setDiscount(data.discount != null ? String(data.discount) : '')
     setLoading(false)
   }
@@ -34,7 +36,8 @@ export default function EditSupplierPage() {
     setSaving(true)
     const { error } = await supabase.from('suppliers').update({
       name: name.trim(),
-      discount: discount ? parseFloat(discount) : 0,
+      discount_type: discountType,
+      discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
       updated_at: new Date().toISOString(),
     }).eq('id', supplierId)
     if (error) { alert(error.message); setSaving(false); return }
@@ -59,10 +62,18 @@ export default function EditSupplierPage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">DISCOUNT</label>
-          <div className="relative">
-            <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
-            <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+          <div className="flex gap-3 mb-3">
+            <button type="button" onClick={() => setDiscountType('FIXED')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'FIXED' ? 'bg-yellow-600' : 'bg-gray-800 text-gray-400'}`}>FIXED %</button>
+            <button type="button" onClick={() => setDiscountType('VARIABLE')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'VARIABLE' ? 'bg-yellow-600' : 'bg-gray-800 text-gray-400'}`}>VARIABLE</button>
           </div>
+          {discountType === 'FIXED' ? (
+            <div className="relative">
+              <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
+              <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-base">Discount is entered per item on each purchase from this supplier.</p>
+          )}
         </div>
       </div>
 

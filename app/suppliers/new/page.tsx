@@ -10,6 +10,7 @@ function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 export default function NewSupplierPage() {
   const router = useRouter()
   const [name, setName] = useState('')
+  const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>('FIXED')
   const [discount, setDiscount] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -20,7 +21,8 @@ export default function NewSupplierPage() {
     setSaving(true)
     const { error } = await supabase.from('suppliers').insert([{
       name: name.trim(),
-      discount: discount ? parseFloat(discount) : 0,
+      discount_type: discountType,
+      discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
     }])
     if (error) { alert(error.message); setSaving(false); return }
     router.push('/suppliers')
@@ -40,10 +42,18 @@ export default function NewSupplierPage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">DISCOUNT</label>
-          <div className="relative">
-            <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
-            <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+          <div className="flex gap-3 mb-3">
+            <button type="button" onClick={() => setDiscountType('FIXED')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'FIXED' ? 'bg-yellow-600' : 'bg-gray-800 text-gray-400'}`}>FIXED %</button>
+            <button type="button" onClick={() => setDiscountType('VARIABLE')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'VARIABLE' ? 'bg-yellow-600' : 'bg-gray-800 text-gray-400'}`}>VARIABLE</button>
           </div>
+          {discountType === 'FIXED' ? (
+            <div className="relative">
+              <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
+              <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-base">Discount is entered per item on each purchase from this supplier.</p>
+          )}
         </div>
       </div>
 

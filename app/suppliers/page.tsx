@@ -9,6 +9,7 @@ type Supplier = {
   id: string
   name: string
   discount: number | null
+  discount_type: string | null
 }
 
 export default function SuppliersPage() {
@@ -66,7 +67,7 @@ export default function SuppliersPage() {
             <div key={supplier.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
               <div className="flex-1 min-w-0">
                 <h2 className="text-2xl font-bold">{supplier.name}</h2>
-                <p className="text-lg text-gray-400">Discount: {(supplier.discount || 0)}%</p>
+                <p className="text-lg text-gray-400">Discount: {supplier.discount_type === 'VARIABLE' ? 'VARIABLE (per item)' : `${supplier.discount || 0}%`}</p>
               </div>
               <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/suppliers/edit/${supplier.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>

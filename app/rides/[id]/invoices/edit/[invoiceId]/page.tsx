@@ -31,6 +31,7 @@ type Expense = {
   stock_source_type?: string
   stock_donor?: string
   export_status?: string
+  item_discount?: string
 }
 type StockItem = {
   id: string
@@ -192,10 +193,10 @@ export default function EditInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [suppliers, setSuppliers] = useState<{ name: string; discount: number }[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string }[]>([])
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -203,12 +204,12 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string; quantity: string; tax: string; extra: string }[]; receiptUrl: string } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string } | null>(null)
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
-  const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string; extra: string }>({ description: '', amount: '', quantity: '1', tax: '0', extra: '0' })
+  const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }>({ description: '', amount: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' })
   // sendToConfirm: the SEND TO button on an expense row opens this modal. The user
   // enters a quantity and chooses STOCK or GOODS as the destination. STOCK applies
   // the DONATED/PURCHASED lineage rules; GOODS inserts a fresh row into the goods
@@ -292,6 +293,7 @@ export default function EditInvoicePage() {
         amount: String(e.price),
         tax: String(e.tax ?? 0),
         extra: String(e.extra ?? 0),
+        item_discount: String(e.item_discount ?? 0),
         quantity: String(e.quantity || 1),
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
@@ -303,8 +305,8 @@ export default function EditInvoicePage() {
       setExpandedGroups(new Set())
     }
 
-    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount')
-    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0 })))
+    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount, discount_type')
+    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' })))
 
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
@@ -369,6 +371,7 @@ export default function EditInvoicePage() {
       stock_source_type: item.source_type || undefined,
       stock_donor: item.donor || undefined,
       export_status: 'FRESH',
+      item_discount: '0',
     }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -411,7 +414,7 @@ export default function EditInvoicePage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0') }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: '0' }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
@@ -551,6 +554,7 @@ export default function EditInvoicePage() {
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
       export_status: 'FRESH',
+      item_discount: item.item_discount || '0',
     }))
     setExpenses(prev => [...prev, ...newItems])
     setExpandedGroups(prev => new Set([...prev, groupId]))
@@ -601,7 +605,7 @@ export default function EditInvoicePage() {
 
   function startEditGroupItem(expenseIndex: number, exp: Expense) {
     setEditingGroupItemIndex(expenseIndex)
-    setEditingGroupItem({ description: exp.item, amount: exp.amount, quantity: exp.quantity || '1', tax: exp.tax || '0', extra: exp.extra || '0' })
+    setEditingGroupItem({ description: exp.item, amount: exp.amount, quantity: exp.quantity || '1', tax: exp.tax || '0', extra: exp.extra || '0', item_discount: exp.item_discount || '0' })
   }
 
   async function saveEditGroupItem() {
@@ -614,10 +618,11 @@ export default function EditInvoicePage() {
         tax: parseFloat(editingGroupItem.tax) || 0,
         extra: parseFloat(editingGroupItem.extra) || 0,
         quantity: parseFloat(editingGroupItem.quantity) || 1,
+        item_discount: parseFloat(editingGroupItem.item_discount) || 0,
       }).eq('id', exp.id)
     }
     const updated = [...expenses]
-    updated[editingGroupItemIndex] = { ...updated[editingGroupItemIndex], item: editingGroupItem.description, amount: editingGroupItem.amount, tax: editingGroupItem.tax, extra: editingGroupItem.extra, quantity: editingGroupItem.quantity }
+    updated[editingGroupItemIndex] = { ...updated[editingGroupItemIndex], item: editingGroupItem.description, amount: editingGroupItem.amount, tax: editingGroupItem.tax, extra: editingGroupItem.extra, quantity: editingGroupItem.quantity, item_discount: editingGroupItem.item_discount }
     setExpenses(updated)
     setEditingGroupItemIndex(null)
   }
@@ -729,12 +734,15 @@ export default function EditInvoicePage() {
       const qty = parseFloat(e.quantity) || 1
       const tax = parseFloat(e.tax) || 0
       const extra = parseFloat(e.extra) || 0
-      // If the supplier has a registered discount, gross the ITEM PRICE back up to
-      // its market (pre-discount) value: market = amount / (1 - discount%). Tax and
-      // extra are real costs and are NOT grossed up. The market price becomes the
-      // part's base cost, on top of which the live MARGIN is then applied.
-      const disc = supplierDiscount(e.supplier)
-      const discFactor = (disc != null && disc > 0 && disc < 100) ? (1 - disc / 100) : 1
+      // Gross the ITEM PRICE back up to its market (pre-discount) value:
+      // market = amount / (1 - discount%). For a FIXED supplier the discount is the
+      // supplier's single %; for a VARIABLE supplier it's this item's own % (e.item_discount);
+      // unregistered suppliers get no gross-up. Tax and extra are real costs and are
+      // NOT grossed up. The market price becomes the part's base cost, on top of
+      // which the live MARGIN is then applied.
+      const info = supplierInfo(e.supplier)
+      const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
+      const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
       const marketAmount = amount / discFactor
       const unitBase = qty > 0 ? (marketAmount * qty + tax + extra) / qty : marketAmount
       const key = `${desc.toLowerCase()}|${unitBase.toFixed(4)}`
@@ -773,12 +781,23 @@ export default function EditInvoicePage() {
   // Returns the registered discount (%) for a supplier name if it exists in the
   // suppliers database (case-insensitive match), otherwise null. Display only —
   // no math is applied to the prices.
-  function supplierDiscount(name: string | undefined | null): number | null {
+  // Returns the registered supplier's discount config, or null if unregistered.
+  function supplierInfo(name: string | undefined | null): { discount: number; type: 'FIXED' | 'VARIABLE' } | null {
     if (!name) return null
     const n = name.trim().toLowerCase()
     if (!n) return null
     const m = suppliers.find(s => s.name.trim().toLowerCase() === n)
-    return m ? m.discount : null
+    if (!m) return null
+    return { discount: m.discount, type: m.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' }
+  }
+  // The fixed % for a FIXED-type supplier (null for VARIABLE or unregistered).
+  function supplierDiscount(name: string | undefined | null): number | null {
+    const i = supplierInfo(name)
+    return i && i.type === 'FIXED' ? i.discount : null
+  }
+  function supplierIsVariable(name: string | undefined | null): boolean {
+    const i = supplierInfo(name)
+    return !!i && i.type === 'VARIABLE'
   }
   function formatMileage(value: string) {
     const clean = value.replace(/[^0-9.]/g, '')
@@ -1017,7 +1036,7 @@ export default function EditInvoicePage() {
 
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   }
   async function removeExpense(index: number) {
     const exp = expenses[index]
@@ -1035,15 +1054,16 @@ export default function EditInvoicePage() {
         tax: parseFloat(editingExpense.tax) || 0,
         extra: parseFloat(editingExpense.extra) || 0,
         quantity: parseFloat(editingExpense.quantity) || 1,
+        item_discount: parseFloat(editingExpense.item_discount || '0') || 0,
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' }) }
 
   async function saveInvoice() {
     const { error } = await supabase.from('invoices').update({
@@ -1114,6 +1134,7 @@ export default function EditInvoicePage() {
         tax: parseFloat(ex.tax) || 0,
         extra: parseFloat(ex.extra) || 0,
         quantity: parseFloat(ex.quantity) || 1,
+        item_discount: parseFloat(ex.item_discount || '0') || 0,
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
         purchase_group: ex.purchase_group || null,
@@ -1532,7 +1553,9 @@ export default function EditInvoicePage() {
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
-                {supplierDiscount(scannedPurchase.supplier) != null && <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: {supplierDiscount(scannedPurchase.supplier)}%</p>}
+                {supplierIsVariable(scannedPurchase.supplier)
+                  ? <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: VARIABLE (enter % per item)</p>
+                  : supplierDiscount(scannedPurchase.supplier) != null && <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: {supplierDiscount(scannedPurchase.supplier)}%</p>}
               </div>
               <div className="flex-1">
                 <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
@@ -1557,10 +1580,17 @@ export default function EditInvoicePage() {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Extra $</span>
                     <input type="text" inputMode="decimal" value={item.extra} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-14`} placeholder="0.00" />
                   </div>
+                  {supplierIsVariable(scannedPurchase.supplier) && (
+                    <div className="relative w-24">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-300 text-sm">Disc</span>
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+                      <input type="text" inputMode="decimal" value={item.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], item_discount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-11 pr-6`} placeholder="0" />
+                    </div>
+                  )}
                   <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1', tax: '0', extra: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
@@ -1773,6 +1803,14 @@ export default function EditInvoicePage() {
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
                 </div>
               </div>
+              {supplierIsVariable(newExpense.supplier) && (
+                <div className="w-32"><label className="block mb-1 text-sm text-yellow-300">DISCOUNT</label>
+                  <div className="relative">
+                    <input type="text" inputMode="decimal" placeholder="0" value={newExpense.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, item_discount: e.target.value }) }} className={`${inputClass} pr-9`} />
+                    <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+                  </div>
+                </div>
+              )}
             </div>
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
 
@@ -1812,7 +1850,9 @@ export default function EditInvoicePage() {
                               <p className="text-base font-bold text-blue-400">{firstItem.supplier} — {groupItems.length} items</p>
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
-                            {supplierDiscount(firstItem.supplier) != null && (
+                            {supplierIsVariable(firstItem.supplier) ? (
+                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: VARIABLE (per item)</p>
+                            ) : supplierDiscount(firstItem.supplier) != null && (
                               <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: {supplierDiscount(firstItem.supplier)}%</p>
                             )}
                           </div>
@@ -1842,6 +1882,13 @@ export default function EditInvoicePage() {
                                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
                                       <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
                                     </div>
+                                    {supplierIsVariable(exp.supplier) && (
+                                      <div className="relative w-20">
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-yellow-300 text-xs">Disc</span>
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">%</span>
+                                        <input type="text" inputMode="decimal" value={editingGroupItem.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, item_discount: e.target.value }) }} className={`${smallInputClass} w-full pl-9 pr-5`} placeholder="0" />
+                                      </div>
+                                    )}
                                     <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-3 py-2 rounded-xl font-bold text-sm">SAVE</button>
                                     <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
                                   </div>
@@ -1849,7 +1896,7 @@ export default function EditInvoicePage() {
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
-                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}{supplierIsVariable(exp.supplier) ? ` · Disc: ${parseFloat(exp.item_discount || '0') || 0}%` : ''}</p>
                                       {exportStatusLine(exp, index)}
                                     </div>
                                     <div className="flex gap-2 shrink-0">
@@ -1903,6 +1950,14 @@ export default function EditInvoicePage() {
                                   <input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
                                 </div>
                               </div>
+                              {supplierIsVariable(editingExpense.supplier) && (
+                                <div className="w-32"><label className="block mb-1 text-sm text-yellow-300">DISCOUNT</label>
+                                  <div className="relative">
+                                    <input type="text" inputMode="decimal" value={editingExpense.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, item_discount: e.target.value }) }} className={`${inputClass} pr-9`} placeholder="0" />
+                                    <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                             <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
                             <div>
@@ -1935,7 +1990,9 @@ export default function EditInvoicePage() {
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                                 {exportStatusLine(exp, index)}
-                                {supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
+                                {supplierIsVariable(exp.supplier)
+                                  ? <p className="text-sm font-bold text-yellow-300">★ Supplier discount: VARIABLE — item {parseFloat(exp.item_discount || '0') || 0}%</p>
+                                  : supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
                               </div>
                               <div className="flex gap-2 shrink-0">
