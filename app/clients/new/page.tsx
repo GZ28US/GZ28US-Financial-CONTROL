@@ -18,6 +18,8 @@ const brazilStates = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
 
+const messageMethods = ['WhatsApp', 'SMS', 'E-Mail']
+
 export default function NewClientPage() {
   const [form, setForm] = useState({
     name: '',
@@ -28,6 +30,7 @@ export default function NewClientPage() {
     address: '',
     city: '',
     state: 'FL',
+    preferred_message_method: 'WhatsApp',
   })
   const [zipLookup, setZipLookup] = useState(false)
 
@@ -119,6 +122,7 @@ export default function NewClientPage() {
         state: form.state,
         zip: form.zip,
         client_number: nextNumber,
+        preferred_message_method: form.preferred_message_method,
       })
 
     if (error) {
@@ -223,6 +227,19 @@ export default function NewClientPage() {
           >
             {stateOptions.map((state) => (
               <option key={state} value={state}>{state}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">PREFERRED MESSAGE METHOD</label>
+          <select
+            value={form.preferred_message_method}
+            onChange={(e) => setForm({ ...form, preferred_message_method: e.target.value })}
+            className={`${inputClass} w-full`}
+          >
+            {messageMethods.map((m) => (
+              <option key={m} value={m}>{m}</option>
             ))}
           </select>
         </div>

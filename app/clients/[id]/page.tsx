@@ -16,6 +16,7 @@ type Client = {
   state: string | null
   zip: string | null
   country: string | null
+  preferred_message_method: string | null
 }
 
 type Ride = {
@@ -110,6 +111,7 @@ export default function ViewClientPage() {
           <div className={sectionClass}>
             {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone)}</span></div>}
             {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
+            {client.preferred_message_method && <div className={rowClass}><span className={labelClass}>PREFERRED MESSAGE METHOD</span><span className="font-bold">{client.preferred_message_method}</span></div>}
           </div>
         </div>
 

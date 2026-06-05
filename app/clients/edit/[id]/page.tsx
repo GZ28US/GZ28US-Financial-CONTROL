@@ -19,6 +19,8 @@ const brazilStates = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
 
+const messageMethods = ['WhatsApp', 'SMS', 'E-Mail']
+
 export default function EditClientPage() {
   const params = useParams()
   const id = String(params.id || '')
@@ -35,6 +37,7 @@ export default function EditClientPage() {
     city: '',
     state: 'FL',
     zip: '',
+    preferred_message_method: 'WhatsApp',
   })
 
   useEffect(() => {
@@ -73,6 +76,7 @@ export default function EditClientPage() {
       city: data.city || '',
       state: data.state || '',
       zip: data.zip || '',
+      preferred_message_method: data.preferred_message_method || 'WhatsApp',
     })
 
     setLoading(false)
@@ -99,6 +103,7 @@ export default function EditClientPage() {
         city: form.city,
         state: form.state,
         zip: form.zip,
+        preferred_message_method: form.preferred_message_method,
       })
       .eq('id', id)
 
@@ -253,6 +258,26 @@ export default function EditClientPage() {
           }
           className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
         />
+
+        <div>
+          <label className="block mb-2 text-sm text-gray-400 font-bold">PREFERRED MESSAGE METHOD</label>
+          <select
+            value={form.preferred_message_method}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                preferred_message_method: e.target.value,
+              })
+            }
+            className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
+          >
+            {messageMethods.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <button
           onClick={updateClient}
