@@ -76,7 +76,7 @@ export default function RidesPage() {
         String(b.created_at || '').localeCompare(String(a.created_at || ''))
       )[0] || null
 
-      // Aggregated financial stats (summed across all the ride's invoices)
+      // Aggregated financial stats (summed across ALL of the ride's invoices)
       let currentProfit = 0
       let finalProfit = 0
       let paymentsBalance = 0
@@ -96,12 +96,9 @@ export default function RidesPage() {
           if (rows?.[0]?.created_at) timestamps.push(rows[0].created_at)
         }
 
-        const today = new Date(); today.setHours(0, 0, 0, 0)
-        const isTodayOrPast = (d: string | null) => !!d && new Date(d + 'T00:00:00') <= today
-
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-          supabase.from('invoice_payments').select('invoice_id, amount, payment_date').in('invoice_id', invoiceIds),
-          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date').in('invoice_id', invoiceIds),
+          supabase.from('invoice_payments').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
+          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', invoiceIds),
           supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
           supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
         ])
@@ -119,6 +116,9 @@ export default function RidesPage() {
         const partsBy = byInvoice(partsRes.data)
         const servicesBy = byInvoice(servicesRes.data)
 
+        // Per-item expense line including Tax + Extra Costs, matching the edit page.
+        const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+
         for (const inv of invoiceList) {
           const parts = partsBy.get(inv.id) || []
           const services = servicesBy.get(inv.id) || []
@@ -133,12 +133,13 @@ export default function RidesPage() {
           const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
           const grandTotal = partsAndServicesTotal - discountAmount
 
-          const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+          // Income counts only payments explicitly marked PAID (paid_at).
+          const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
 
           const flTaxAmount = floridaTaxesAmount
           const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
-          const expensesTotalGlobal = flTaxAmount + expenses.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
-          const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1), 0)
+          const expensesTotalGlobal = flTaxAmount + expenses.reduce((s, e) => s + expenseLine(e), 0)
+          const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
 
           currentProfit += totalPaid - expensesTotalPaid
           finalProfit += grandTotal - expensesTotalGlobal
@@ -239,16 +240,16 @@ export default function RidesPage() {
                   <p className="text-lg text-gray-400">{ride.color}</p>
                   <div className="flex gap-3 mt-3 flex-wrap">
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-                      CURRENT PROFIT: {formatUSD(ride._currentProfit)} / {ride._currentProfitPct.toFixed(1)}%
+                      CURRENT CASH FLOW: {formatUSD(ride._currentProfit)} / {ride._currentProfitPct.toFixed(1)}%
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-                      FINAL PROFIT: {formatUSD(ride._finalProfit)} / {ride._finalProfitPct.toFixed(1)}%
+                      FINAL PROFIT RESULT: {formatUSD(ride._finalProfit)} / {ride._finalProfitPct.toFixed(1)}%
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      PENDING PAYMENTS: {formatUSD(ride._paymentsBalance)}
+                      DUE by CLIENT: {formatUSD(ride._paymentsBalance)}
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      CURRENT DEBTS: {formatUSD(ride._expensesBalance)}
+                      DUE by GZ28: {formatUSD(ride._expensesBalance)}
                     </span>
                   </div>
                 </div>

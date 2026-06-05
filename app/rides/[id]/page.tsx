@@ -44,6 +44,18 @@ type Invoice = {
   mileage: number | null
   florida_taxes: number | null
   global_discount: number | null
+  fl_tax_expense_date: string | null
+}
+
+type Stats = {
+  currentProfit: number
+  currentProfitPct: number
+  finalProfit: number
+  finalProfitPct: number
+  paymentsBalance: number
+  expensesBalance: number
+  expensesTotalPaid: number
+  expensesTotalGlobal: number
 }
 
 function formatUSD(v: number) {
@@ -55,11 +67,7 @@ function formatDate(d: string | null) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-function isTodayOrPast(dateStr: string | null) {
-  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  return new Date(dateStr + 'T00:00:00') <= today
-}
+function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
 export default function ViewRidePage() {
   const params = useParams()
@@ -69,7 +77,7 @@ export default function ViewRidePage() {
   const [ride, setRide] = useState<Ride | null>(null)
   const [client, setClient] = useState<Client | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
-  const [invoiceStats, setInvoiceStats] = useState<Record<string, { totalPaid: number; grandTotal: number; currentIncome: number; currentDebt: number }>>({})
+  const [invoiceStats, setInvoiceStats] = useState<Record<string, Stats>>({})
 
   useEffect(() => { loadAll() }, [])
 
@@ -88,18 +96,14 @@ export default function ViewRidePage() {
     if (invoicesData) {
       setInvoices(invoicesData)
 
-      const stats: Record<string, any> = {}
+      const stats: Record<string, Stats> = {}
       await Promise.all(invoicesData.map(async (inv) => {
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-          supabase.from('invoice_payments').select('amount, payment_date').eq('invoice_id', inv.id),
-          supabase.from('invoice_expenses').select('price, payment_date').eq('invoice_id', inv.id),
+          supabase.from('invoice_payments').select('amount, payment_date, paid_at').eq('invoice_id', inv.id),
+          supabase.from('invoice_expenses').select('price, quantity, payment_date, tax, extra').eq('invoice_id', inv.id),
           supabase.from('invoice_parts').select('unit_price, quantity').eq('invoice_id', inv.id),
           supabase.from('invoice_services').select('price').eq('invoice_id', inv.id),
         ])
-
-        const totalPaid = (paymentsRes.data || []).filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-        const expensesTotalPaid = (expensesRes.data || []).filter(e => e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
-        const expensesUnpaid = (expensesRes.data || []).filter(e => !e.payment_date).reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
 
         const partsSubTotal = (partsRes.data || []).reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
         const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
@@ -109,11 +113,27 @@ export default function ViewRidePage() {
         const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
         const grandTotal = partsAndServicesTotal - discountAmount
 
+        // Edit-page math: income counts only payments marked PAID (paid_at);
+        // expenses include each item's qty, Tax and Extra Costs, plus the
+        // Florida parts tax GZ28 owes.
+        const totalPaid = (paymentsRes.data || []).filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+        const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+        const flTaxAmount = floridaTaxesAmount
+        const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
+        const expensesTotalGlobal = flTaxAmount + (expensesRes.data || []).reduce((s, e) => s + expenseLine(e), 0)
+        const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + (expensesRes.data || []).filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
+
+        const currentProfit = totalPaid - expensesTotalPaid
+        const finalProfit = grandTotal - expensesTotalGlobal
         stats[inv.id] = {
-          totalPaid,
-          grandTotal,
-          currentIncome: totalPaid - expensesTotalPaid,
-          currentDebt: expensesUnpaid,
+          currentProfit,
+          currentProfitPct: expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0,
+          finalProfit,
+          finalProfitPct: expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0,
+          paymentsBalance: totalPaid - grandTotal,
+          expensesBalance: expensesTotalPaid - expensesTotalGlobal,
+          expensesTotalPaid,
+          expensesTotalGlobal,
         }
       }))
       setInvoiceStats(stats)
@@ -135,8 +155,17 @@ export default function ViewRidePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Ride not found.</p></main>
   )
 
-  const totalIncome = Object.values(invoiceStats).reduce((s, v) => s + v.currentIncome, 0)
-  const totalDebt = Object.values(invoiceStats).reduce((s, v) => s + v.currentDebt, 0)
+  // Consolidated across ALL of the ride's invoices.
+  const agg = Object.values(invoiceStats).reduce((a, v) => ({
+    currentProfit: a.currentProfit + v.currentProfit,
+    finalProfit: a.finalProfit + v.finalProfit,
+    paymentsBalance: a.paymentsBalance + v.paymentsBalance,
+    expensesBalance: a.expensesBalance + v.expensesBalance,
+    sumExpensesPaid: a.sumExpensesPaid + v.expensesTotalPaid,
+    sumExpensesGlobal: a.sumExpensesGlobal + v.expensesTotalGlobal,
+  }), { currentProfit: 0, finalProfit: 0, paymentsBalance: 0, expensesBalance: 0, sumExpensesPaid: 0, sumExpensesGlobal: 0 })
+  const aggCurrentPct = agg.sumExpensesPaid > 0 ? (agg.currentProfit / agg.sumExpensesPaid) * 100 : 0
+  const aggFinalPct = agg.sumExpensesGlobal > 0 ? (agg.finalProfit / agg.sumExpensesGlobal) * 100 : 0
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
   const labelClass = 'text-gray-400 font-bold'
@@ -150,11 +179,17 @@ export default function ViewRidePage() {
         <div>
           <h1 className="text-4xl font-bold">{ride.project_code}{ride.project_name ? ` — ${ride.project_name}` : ''}</h1>
           <div className="flex gap-3 mt-2 flex-wrap">
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${totalIncome >= 0 ? 'bg-blue-900 text-blue-300' : 'bg-red-900 text-red-300'}`}>
-              CURRENT INCOME: {formatUSD(totalIncome)}
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+              CURRENT CASH FLOW: {formatUSD(agg.currentProfit)} / {aggCurrentPct.toFixed(1)}%
             </span>
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${totalDebt <= 0 ? 'bg-gray-700 text-gray-300' : 'bg-red-900 text-red-300'}`}>
-              CURRENT DEBT: {formatUSD(totalDebt)}
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+              FINAL PROFIT RESULT: {formatUSD(agg.finalProfit)} / {aggFinalPct.toFixed(1)}%
+            </span>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+              DUE by CLIENT: {formatUSD(agg.paymentsBalance)}
+            </span>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+              DUE by GZ28: {formatUSD(agg.expensesBalance)}
             </span>
           </div>
         </div>
@@ -221,14 +256,17 @@ export default function ViewRidePage() {
                       {invoice.service && <p className="text-gray-400">{invoice.service}</p>}
                       {s && (
                         <div className="flex gap-2 mt-2 flex-wrap">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.currentIncome >= 0 ? 'bg-blue-900 text-blue-300' : 'bg-red-900 text-red-300'}`}>
-                            INCOME: {formatUSD(s.currentIncome)}
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                            CURRENT CASH FLOW: {formatUSD(s.currentProfit)} / {s.currentProfitPct.toFixed(1)}%
                           </span>
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.currentDebt <= 0 ? 'bg-gray-700 text-gray-300' : 'bg-red-900 text-red-300'}`}>
-                            DEBT: {formatUSD(s.currentDebt)}
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                            FINAL PROFIT RESULT: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
                           </span>
-                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-700 text-gray-300">
-                            BALANCE: {formatUSD(s.totalPaid - s.grandTotal)}
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                            DUE by CLIENT: {formatUSD(s.paymentsBalance)}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                            DUE by GZ28: {formatUSD(s.expensesBalance)}
                           </span>
                         </div>
                       )}

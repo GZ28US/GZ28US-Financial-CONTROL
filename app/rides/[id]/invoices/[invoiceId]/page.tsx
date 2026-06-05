@@ -19,6 +19,7 @@ type Invoice = {
   florida_taxes: number | null
   global_discount: number | null
   feed_status: string | null
+  fl_tax_expense_date: string | null
 }
 
 type Client = {
@@ -34,7 +35,7 @@ type Client = {
 
 type Part = { id: string; description: string; unit_price: number; quantity: number }
 type Service = { id: string; description: string; price: number }
-type Payment = { id: string; amount: number; payment_date: string | null; source: string | null; description: string | null }
+type Payment = { id: string; amount: number; payment_date: string | null; source: string | null; description: string | null; paid_at: string | null }
 type Note = { id: string; note: string }
 type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null }
 
@@ -159,10 +160,15 @@ export default function ViewInvoicePage() {
   const hasDiscount = (invoice.global_discount || 0) > 0
   const globalDiscountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  const totalPaid = payments.filter(p => isTodayOrPast(p.payment_date)).reduce((s, p) => s + p.amount, 0)
+  // Match the edit page exactly: income counts only payments explicitly marked
+  // PAID (paid_at), and the Florida parts tax is itself an expense GZ28 owes —
+  // included in both the global and paid expense totals.
+  const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
-  const expensesTotalGlobal = expenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
-  const expensesTotalPaid = expenses.filter(e => e.payment_date).reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+  const flTaxExpenseAmount = floridaTaxesAmount
+  const flTaxExpensePaid = isValidDate(invoice.fl_tax_expense_date)
+  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -475,7 +481,7 @@ export default function ViewInvoicePage() {
               <label className="block mb-3 text-lg font-bold">INCOME</label>
               <div className={sectionClass}>
                 {payments.map((payment, index) => {
-                  const isPaid = isTodayOrPast(payment.payment_date)
+                  const isPaid = !!payment.paid_at
                   return (
                     <div key={payment.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <div>
@@ -546,11 +552,18 @@ export default function ViewInvoicePage() {
                     </div>
                   )
                 })}
+                {flTaxExpenseAmount > 0 && (
+                  <div className="px-4 py-3 border-b border-gray-700">
+                    <p className={`text-base font-bold ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
+                    <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
+                    <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(invoice.fl_tax_expense_date)}` : 'Not paid yet'}</p>
+                  </div>
+                )}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>TOTAL GLOBAL</span><span className="font-bold">{formatUSD(expensesTotalGlobal)}</span></div>
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className={labelClass}>TOTAL PAID</span><span className="font-bold">{formatUSD(expensesTotalPaid)}</span></div>
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span></div>
-                <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>CURRENT PROFIT</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
-                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">FINAL PROFIT</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+                <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
+                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">FINAL PROFIT RESULT</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
               </div>
             </div>
           )}
