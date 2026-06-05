@@ -1195,15 +1195,15 @@ export default function EditInvoicePage() {
       if (e) { alert(e.message); return }
     }
 
-    await maybePromptPackThenFinish(newPayments, newExpenses)
+    await maybePromptPackThenFinish(newPayments, newExpenses, nextIsQuote)
   }
 
   // After a successful save, offer to snapshot this ride invoice's content as a
   // reusable pack for the car's spec (manufacturer + model + year) when its
   // SERVICE name isn't already a saved pack. The normal post-save flow (income /
   // expense report prompts, then redirect) runs afterward via `proceed`.
-  async function maybePromptPackThenFinish(newPayments: Payment[], newExpenses: Expense[]) {
-    const proceed = () => finishSave(newPayments, newExpenses)
+  async function maybePromptPackThenFinish(newPayments: Payment[], newExpenses: Expense[], stillQuote: boolean) {
+    const proceed = () => finishSave(newPayments, newExpenses, stillQuote)
     const name = service.trim()
     const hasContent = parts.length > 0 || services.length > 0 || expenses.length > 0 || notes.length > 0 || !!targetGrandTotal
     if (!isClient && name && hasContent) {
@@ -1291,7 +1291,9 @@ export default function EditInvoicePage() {
     prompt?.proceed()
   }
 
-  function finishSave(newPayments: Payment[], newExpenses: Expense[]) {
+  function finishSave(newPayments: Payment[], newExpenses: Expense[], stillQuote: boolean) {
+    // Quotes don't generate WhatsApp income/expense reports — just save & return.
+    if (stillQuote) { router.push(basePath); return }
     const pendingIncomes: IncomeReport[] = newPayments
       .filter(p => !!p.paid_at)
       .map(p => ({
