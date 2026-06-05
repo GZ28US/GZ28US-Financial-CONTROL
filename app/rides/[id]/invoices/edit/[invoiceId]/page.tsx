@@ -681,17 +681,13 @@ export default function EditInvoicePage() {
     setSendToConfirm(null)
   }
 
-  // Writes an export_status onto the given expense indices: updates local state
-  // and, for rows already persisted (have an id), writes through to the DB so the
-  // status survives a reload without needing SAVE CHANGES.
-  async function markExportStatus(indices: number[], status: string) {
+  // Sets export_status on the given expense indices in LOCAL state only. The
+  // change is persisted on SAVE CHANGES (see saveInvoice) — never written to the
+  // DB immediately, so importing without saving leaves nothing behind on reload.
+  function markExportStatus(indices: number[], status: string) {
     if (indices.length === 0) return
     const idxSet = new Set(indices)
-    const rows = indices.map(i => expenses[i]).filter(Boolean)
     setExpenses(prev => prev.map((e, i) => idxSet.has(i) ? { ...e, export_status: status } : e))
-    for (const e of rows) {
-      if (e.id) await supabase.from('invoice_expenses').update({ export_status: status }).eq('id', e.id)
-    }
   }
 
   function resetExportStatus(index: number) {
@@ -1082,6 +1078,14 @@ export default function EditInvoicePage() {
         export_status: ex.export_status || 'FRESH',
       })))
       if (e) { alert(e.message); return }
+    }
+
+    // Persist export_status changes (IMPORT -> EXPORTED, part removal -> REMOVED,
+    // RESET -> FRESH) for already-saved expense rows. These are intentionally NOT
+    // written until SAVE CHANGES, so importing without saving leaves no trace.
+    const existingExpenses = expenses.filter(e => e.id)
+    for (const ex of existingExpenses) {
+      await supabase.from('invoice_expenses').update({ export_status: ex.export_status || 'FRESH' }).eq('id', ex.id)
     }
 
     // PARTS TO STOCK: these are always DONATED. The donor is the current
