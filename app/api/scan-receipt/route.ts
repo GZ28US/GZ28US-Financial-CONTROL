@@ -158,24 +158,34 @@ Rules:
       if (derived > 0.01) tax = Math.round(derived * 100) / 100
     }
 
-    const processedItems: { description: string; quantity: string; amount: string; tax: string }[] = []
+    const processedItems: { description: string; quantity: string; amount: string; tax: string; extra: string }[] = []
 
     if (separateExtras) {
-      // Tax is split across products proportionally to line total and reported
-      // per row in `tax`; the item `amount` is the tax-free unit price. Each
-      // extra (shipping, handling, ...) becomes its own row with tax 0.
+      // Tax AND extra costs (shipping, handling, insurance, ...) are each split
+      // across the products proportionally to line total and reported per row in
+      // `tax` / `extra`. The item `amount` is the bare tax-free, extra-free unit
+      // price. Extras are NO LONGER emitted as their own rows.
       let taxAllocated = 0
+      let extraAllocated = 0
       items.forEach((item: any, idx: number) => {
         const lineTotal = num(item.line_total)
         const quantity = parseInt(item.quantity) || 1
         const proportion = itemsSubtotal > 0 ? lineTotal / itemsSubtotal : (items.length ? 1 / items.length : 0)
-        // Last product absorbs the rounding remainder so the tax sums exactly.
+        const isLast = idx === items.length - 1
+        // Last product absorbs the rounding remainder so each total sums exactly.
         let lineTax: number
-        if (idx === items.length - 1) {
+        if (isLast) {
           lineTax = Math.max(0, tax - taxAllocated)
         } else {
           lineTax = Math.round(tax * proportion * 100) / 100
           taxAllocated += lineTax
+        }
+        let lineExtra: number
+        if (isLast) {
+          lineExtra = Math.max(0, extrasTotal - extraAllocated)
+        } else {
+          lineExtra = Math.round(extrasTotal * proportion * 100) / 100
+          extraAllocated += lineExtra
         }
         const unitPrice = quantity > 0 ? lineTotal / quantity : 0
         processedItems.push({
@@ -183,14 +193,7 @@ Rules:
           quantity: String(quantity),
           amount: unitPrice.toFixed(2),
           tax: lineTax.toFixed(2),
-        })
-      })
-      extras.forEach((x: any) => {
-        processedItems.push({
-          description: x.description || 'Extra',
-          quantity: '1',
-          amount: x.amount.toFixed(2),
-          tax: '0.00',
+          extra: lineExtra.toFixed(2),
         })
       })
     } else {
@@ -208,6 +211,7 @@ Rules:
           quantity: String(quantity),
           amount: unitPrice.toFixed(2),
           tax: '0.00',
+          extra: '0.00',
         })
       })
     }

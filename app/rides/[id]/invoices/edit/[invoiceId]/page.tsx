@@ -23,6 +23,7 @@ type Expense = {
   item: string
   amount: string
   tax: string
+  extra: string
   quantity: string
   payment_date: string
   receipt_urls: string[]
@@ -43,7 +44,7 @@ type StockItem = {
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
 type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
-type ExpenseReportItem = { item: string; amount: string; quantity: string; tax: string }
+type ExpenseReportItem = { item: string; amount: string; quantity: string; tax: string; extra: string }
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
@@ -191,9 +192,9 @@ export default function EditInvoicePage() {
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number }[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -201,12 +202,12 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string; quantity: string; tax: string }[]; receiptUrl: string } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string; quantity: string; tax: string; extra: string }[]; receiptUrl: string } | null>(null)
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
-  const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string }>({ description: '', amount: '', quantity: '1', tax: '0' })
+  const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string; extra: string }>({ description: '', amount: '', quantity: '1', tax: '0', extra: '0' })
   // sendToConfirm: the SEND TO button on an expense row opens this modal. The user
   // enters a quantity and chooses STOCK or GOODS as the destination. STOCK applies
   // the DONATED/PURCHASED lineage rules; GOODS inserts a fresh row into the goods
@@ -288,6 +289,7 @@ export default function EditInvoicePage() {
         item: e.item,
         amount: String(e.price),
         tax: String(e.tax ?? 0),
+        extra: String(e.extra ?? 0),
         quantity: String(e.quantity || 1),
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
@@ -357,6 +359,7 @@ export default function EditInvoicePage() {
       item: item.description,
       amount,
       tax: '0',
+      extra: '0',
       quantity: String(qty),
       payment_date: item.purchase_date || '',
       receipt_urls: [],
@@ -404,7 +407,7 @@ export default function EditInvoicePage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0') }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
@@ -538,6 +541,7 @@ export default function EditInvoicePage() {
       item: item.description,
       amount: item.amount,
       tax: item.tax || '0',
+      extra: item.extra || '0',
       quantity: item.quantity || '1',
       payment_date: scannedPurchase.date,
       receipt_urls: [scannedPurchase.receiptUrl],
@@ -592,7 +596,7 @@ export default function EditInvoicePage() {
 
   function startEditGroupItem(expenseIndex: number, exp: Expense) {
     setEditingGroupItemIndex(expenseIndex)
-    setEditingGroupItem({ description: exp.item, amount: exp.amount, quantity: exp.quantity || '1', tax: exp.tax || '0' })
+    setEditingGroupItem({ description: exp.item, amount: exp.amount, quantity: exp.quantity || '1', tax: exp.tax || '0', extra: exp.extra || '0' })
   }
 
   async function saveEditGroupItem() {
@@ -603,11 +607,12 @@ export default function EditInvoicePage() {
         item: editingGroupItem.description,
         price: parseFloat(editingGroupItem.amount) || 0,
         tax: parseFloat(editingGroupItem.tax) || 0,
+        extra: parseFloat(editingGroupItem.extra) || 0,
         quantity: parseFloat(editingGroupItem.quantity) || 1,
       }).eq('id', exp.id)
     }
     const updated = [...expenses]
-    updated[editingGroupItemIndex] = { ...updated[editingGroupItemIndex], item: editingGroupItem.description, amount: editingGroupItem.amount, tax: editingGroupItem.tax, quantity: editingGroupItem.quantity }
+    updated[editingGroupItemIndex] = { ...updated[editingGroupItemIndex], item: editingGroupItem.description, amount: editingGroupItem.amount, tax: editingGroupItem.tax, extra: editingGroupItem.extra, quantity: editingGroupItem.quantity }
     setExpenses(updated)
     setEditingGroupItemIndex(null)
   }
@@ -686,7 +691,8 @@ export default function EditInvoicePage() {
         const amount = parseFloat(e.amount) || 0
         const qty = parseFloat(e.quantity) || 1
         const tax = parseFloat(e.tax) || 0
-        const unitInclTax = qty > 0 ? (amount * qty + tax) / qty : amount
+        const extra = parseFloat(e.extra) || 0
+        const unitInclTax = qty > 0 ? (amount * qty + tax + extra) / qty : amount
         const unitFinal = (unitInclTax * factor).toFixed(2)
         const key = `${desc.toLowerCase()}|${unitFinal}`
         const existing = sourceMap.get(key)
@@ -789,8 +795,8 @@ export default function EditInvoicePage() {
   const balance = totalPaid - grandTotal
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
-  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
-  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
+  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -948,7 +954,7 @@ export default function EditInvoicePage() {
 
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
   }
   async function removeExpense(index: number) {
     const exp = expenses[index]
@@ -964,6 +970,7 @@ export default function EditInvoicePage() {
         expense_date: null, supplier: editingExpense.supplier || null,
         item: editingExpense.item, price: parseFloat(editingExpense.amount),
         tax: parseFloat(editingExpense.tax) || 0,
+        extra: parseFloat(editingExpense.extra) || 0,
         quantity: parseFloat(editingExpense.quantity) || 1,
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
@@ -971,9 +978,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', quantity: '1', payment_date: '', receipt_urls: [] }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [] }) }
 
   async function saveInvoice() {
     const { error } = await supabase.from('invoices').update({
@@ -1035,6 +1042,7 @@ export default function EditInvoicePage() {
         supplier: ex.supplier || null, item: ex.item,
         price: parseFloat(ex.amount),
         tax: parseFloat(ex.tax) || 0,
+        extra: parseFloat(ex.extra) || 0,
         quantity: parseFloat(ex.quantity) || 1,
         payment_date: isValidDate(ex.payment_date) ? ex.payment_date : null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
@@ -1082,7 +1090,7 @@ export default function EditInvoicePage() {
     const groupMap = new Map<string, ExpenseReport>()
     const pendingExpenses: ExpenseReport[] = []
     newExpenses.forEach(ex => {
-      const item: ExpenseReportItem = { item: ex.item, amount: ex.amount, quantity: ex.quantity || '1', tax: ex.tax || '0' }
+      const item: ExpenseReportItem = { item: ex.item, amount: ex.amount, quantity: ex.quantity || '1', tax: ex.tax || '0', extra: ex.extra || '0' }
       if (ex.purchase_group) {
         const existing = groupMap.get(ex.purchase_group)
         if (existing) {
@@ -1145,7 +1153,7 @@ export default function EditInvoicePage() {
 
   function buildExpenseCaption(exp: ExpenseReport) {
     const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
-    const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0), 0)
+    const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0)
     const amountStr = formatUSD(total)
     const ownerLbl = isClient ? clientName : projectName
     const lines: string[] = [
@@ -1163,9 +1171,11 @@ export default function EditInvoicePage() {
       const qty = parseFloat(it.quantity) || 1
       const price = parseFloat(it.amount) || 0
       const itemTax = parseFloat(it.tax) || 0
+      const itemExtra = parseFloat(it.extra) || 0
       const itemTotal = price * qty
       const taxStr = itemTax > 0 ? ` (+tax ${formatUSD(itemTax)})` : ''
-      lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}${taxStr}`)
+      const extraStr = itemExtra > 0 ? ` (+extra ${formatUSD(itemExtra)})` : ''
+      lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}${taxStr}${extraStr}`)
     })
 
     if (!isClient && feedStatus === 'REAL_TIME') {
@@ -1397,7 +1407,7 @@ export default function EditInvoicePage() {
             <p className="text-gray-400 text-base">Choose which new expenses to report to the WhatsApp group. Grouped purchases (scanned receipts) are reported as a single message listing all items.</p>
             <div className="overflow-y-auto flex-1 space-y-3">
               {expenseReports.map((exp, i) => {
-                const total = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1) + (parseFloat(it.tax) || 0), 0)
+                const total = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1) + (parseFloat(it.tax) || 0) + (parseFloat(it.extra) || 0), 0)
                 const isGroup = exp.items.length > 1
                 const titleText = isGroup
                   ? `${exp.supplier || 'Purchase'} — ${exp.items.length} items`
@@ -1464,14 +1474,18 @@ export default function EditInvoicePage() {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Tax $</span>
                     <input type="text" inputMode="decimal" value={item.tax} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-12`} placeholder="0.00" />
                   </div>
+                  <div className="relative w-32">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Extra $</span>
+                    <input type="text" inputMode="decimal" value={item.extra} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-14`} placeholder="0.00" />
+                  </div>
                   <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1', tax: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1', tax: '0', extra: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
-                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0), 0))}
+                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0))}
               </div>
               <button onClick={confirmScannedPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
             </div>
@@ -2034,6 +2048,11 @@ export default function EditInvoicePage() {
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, tax: e.target.value }) }} className={`${inputClass} pl-10`} />
                 </div>
               </div>
+              <div className="w-36"><label className="block mb-1 text-sm text-gray-400">EXTRA COSTS</label>
+                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
+                </div>
+              </div>
             </div>
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
 
@@ -2061,7 +2080,7 @@ export default function EditInvoicePage() {
                       (SKIP_WORDS.test(a.expense.item) ? 1 : 0) - (SKIP_WORDS.test(b.expense.item) ? 1 : 0)
                     )
                     const firstItem = groupItems[0].expense
-                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0), 0)
+                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
                     const isExpanded = expandedGroups.has(groupId)
                     const receiptUrl = firstItem.receipt_urls[0]
                     return (
@@ -2099,6 +2118,10 @@ export default function EditInvoicePage() {
                                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Tax$</span>
                                       <input type="text" inputMode="decimal" value={editingGroupItem.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, tax: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} placeholder="0.00" />
                                     </div>
+                                    <div className="relative w-28">
+                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
+                                    </div>
                                     <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-3 py-2 rounded-xl font-bold text-sm">SAVE</button>
                                     <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
                                   </div>
@@ -2106,7 +2129,7 @@ export default function EditInvoicePage() {
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
-                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}</p>
+                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                     </div>
                                     <div className="flex gap-2 shrink-0">
                                       <button onClick={() => startEditGroupItem(index, exp)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -2154,6 +2177,11 @@ export default function EditInvoicePage() {
                                   <input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, tax: e.target.value }) }} className={`${inputClass} pl-10`} />
                                 </div>
                               </div>
+                              <div className="w-36"><label className="block mb-1 text-sm text-gray-400">EXTRA COSTS</label>
+                                <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                  <input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, extra: e.target.value }) }} className={`${inputClass} pl-10`} />
+                                </div>
+                              </div>
                             </div>
                             <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} />
                             <div>
@@ -2183,7 +2211,7 @@ export default function EditInvoicePage() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}</p>
+                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                                 {supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
