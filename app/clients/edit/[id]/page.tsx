@@ -31,6 +31,7 @@ export default function EditClientPage() {
   const [form, setForm] = useState({
     name: '',
     email: '',
+    instagram: '',
     country: 'USA',
     phone: '+1 ',
     address: '',
@@ -70,6 +71,7 @@ export default function EditClientPage() {
     setForm({
       name: data.name || '',
       email: data.email || '',
+      instagram: data.instagram || '',
       country: data.country || 'USA',
       phone: data.phone || '',
       address: data.address || '',
@@ -97,6 +99,7 @@ export default function EditClientPage() {
       .update({
         name: form.name,
         email: form.email,
+        instagram: form.instagram,
         country: form.country,
         phone: form.phone,
         address: form.address,
@@ -176,6 +179,18 @@ export default function EditClientPage() {
             setForm({
               ...form,
               email: e.target.value,
+            })
+          }
+          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
+        />
+
+        <input
+          placeholder="INSTAGRAM (@username)"
+          value={form.instagram}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              instagram: e.target.value,
             })
           }
           className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"

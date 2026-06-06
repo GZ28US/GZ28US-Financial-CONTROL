@@ -10,6 +10,7 @@ type Client = {
   id: string
   name: string
   email: string | null
+  instagram: string | null
   phone: string | null
   address: string | null
   city: string | null
@@ -111,6 +112,7 @@ export default function ViewClientPage() {
           <div className={sectionClass}>
             {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone)}</span></div>}
             {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
+            {client.instagram && <div className={rowClass}><span className={labelClass}>INSTAGRAM</span><a href={`https://instagram.com/${client.instagram.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-400 hover:text-blue-300">{client.instagram.startsWith('@') ? client.instagram : `@${client.instagram}`}</a></div>}
             {client.preferred_message_method && <div className={rowClass}><span className={labelClass}>PREFERRED MESSAGE METHOD</span><span className="font-bold">{client.preferred_message_method}</span></div>}
           </div>
         </div>

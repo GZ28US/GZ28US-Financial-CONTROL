@@ -24,6 +24,7 @@ export default function NewClientPage() {
   const [form, setForm] = useState({
     name: '',
     email: '',
+    instagram: '',
     country: 'USA',
     phone: '+1 ',
     zip: '',
@@ -115,6 +116,7 @@ export default function NewClientPage() {
       .insert({
         name: form.name,
         email: form.email,
+        instagram: form.instagram,
         country: form.country,
         phone: form.phone,
         address: form.address,
@@ -161,6 +163,16 @@ export default function NewClientPage() {
             onChange={(e) => setForm({ ...form, email: e.target.value })}
             className={`${inputClass} w-full`}
             placeholder="name@example.com"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">INSTAGRAM</label>
+          <input
+            value={form.instagram}
+            onChange={(e) => setForm({ ...form, instagram: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder="@username"
           />
         </div>
 
