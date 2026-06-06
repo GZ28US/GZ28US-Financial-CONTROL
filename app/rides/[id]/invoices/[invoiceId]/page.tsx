@@ -26,6 +26,7 @@ type Invoice = {
 type Client = {
   name: string
   email: string | null
+  instagram: string | null
   phone: string | null
   address: string | null
   city: string | null
@@ -283,6 +284,18 @@ export default function ViewInvoicePage() {
         const subject = fname.replace(/\.pdf$/, '')
         const body = `Hello${client?.name ? ` ${client.name}` : ''},\n\nPlease find your ${invoice.is_quote ? 'quote' : 'invoice'} ${invoice.invoice_code} at the link below:\n${pdfUrl}\n\nThank you,\nGZ28 V8 SpeedShop`
         window.location.href = `mailto:${client?.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+        setSending(false)
+        return
+      }
+
+      if (method === 'Instagram') {
+        // Instagram has no document-send API or prefill link — copy the invoice
+        // link to the clipboard and open the client's DM/profile to paste & send.
+        const linkText = `${caption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
+        try { await navigator.clipboard.writeText(linkText) } catch {}
+        const handle = (client?.instagram || '').replace(/^@/, '').trim()
+        window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
+        alert('Invoice link copied to clipboard. Instagram opened — paste it into the client’s DM to send.')
         setSending(false)
         return
       }

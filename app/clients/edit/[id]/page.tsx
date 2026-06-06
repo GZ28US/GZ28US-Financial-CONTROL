@@ -19,7 +19,7 @@ const brazilStates = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
 
-const messageMethods = ['WhatsApp', 'SMS', 'E-Mail']
+const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram']
 
 export default function EditClientPage() {
   const params = useParams()
