@@ -11,8 +11,8 @@ export const manufacturersByYear: Record<number, string[]> = {
   2009: ['MOPAR'],
   2010: ['GM'], 2011: ['GM'], 2012: ['GM'], 2013: ['GM'],
   2014: ['GM'],
-  2015: ['MOPAR', 'GM'],
-  2016: ['MOPAR', 'GM'],
+  2015: ['MOPAR', 'GM', 'FORD'],
+  2016: ['MOPAR', 'GM', 'FORD'],
   2017: ['MOPAR', 'GM', 'FORD'],
   2018: ['MOPAR', 'GM', 'FORD'],
   2019: ['MOPAR', 'GM', 'FORD'],
@@ -40,6 +40,7 @@ export const brandsByManufacturerAndYear: Record<string, Record<number, string[]
     2022: ['CHEVROLET'], 2023: ['CHEVROLET'], 2024: ['CHEVROLET'], 2025: ['CHEVROLET'], 2026: ['CHEVROLET'],
   },
   FORD: {
+    2015: ['FORD'], 2016: ['FORD'],
     2017: ['FORD'], 2018: ['FORD'], 2019: ['FORD'], 2020: ['FORD'],
     2021: ['FORD'], 2022: ['FORD'], 2023: ['FORD'], 2024: ['FORD'],
     2025: ['FORD'], 2026: ['FORD'],
@@ -72,9 +73,10 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
     2024: ['CAMARO', 'CORVETTE'], 2025: ['CORVETTE'], 2026: ['CORVETTE'],
   },
   FORD: {
-    2017: ['F150'], 2018: ['F150'], 2019: ['F150'], 2020: ['F150'],
-    2021: ['F150'], 2022: ['F150'], 2023: ['F150'], 2024: ['F150'],
-    2025: ['F150'], 2026: ['F150'],
+    2015: ['MUSTANG'], 2016: ['MUSTANG'],
+    2017: ['F150', 'MUSTANG'], 2018: ['F150', 'MUSTANG'], 2019: ['F150', 'MUSTANG'], 2020: ['F150', 'MUSTANG'],
+    2021: ['F150', 'MUSTANG'], 2022: ['F150', 'MUSTANG'], 2023: ['F150', 'MUSTANG'], 2024: ['F150', 'MUSTANG'],
+    2025: ['F150', 'MUSTANG'], 2026: ['F150', 'MUSTANG'],
   },
 }
 
@@ -155,6 +157,20 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     2025: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
     2026: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
   },
+  MUSTANG: {
+    2015: ['GT 5.0'],
+    2016: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2'],
+    2017: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2'],
+    2018: ['GT 5.0', 'Shelby GT350 5.2'],
+    2019: ['GT 5.0', 'Bullitt 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2'],
+    2020: ['GT 5.0', 'Bullitt 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Shelby GT500 5.2 SC'],
+    2021: ['GT 5.0', 'Mach 1 5.0', 'Shelby GT500 5.2 SC'],
+    2022: ['GT 5.0', 'Mach 1 5.0', 'Shelby GT500 5.2 SC'],
+    2023: ['GT 5.0', 'Mach 1 5.0'],
+    2024: ['GT 5.0', 'Dark Horse 5.0'],
+    2025: ['GT 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC'],
+    2026: ['GT 5.0', 'Dark Horse 5.0', 'Dark Horse SC 5.2 SC', 'GTD 5.2 SC'],
+  },
 }
 
 export const specialEditions: Record<string, string[]> = {
@@ -188,6 +204,26 @@ export const specialEditions: Record<string, string[]> = {
   '2023-CHARGER-SRT HellCat RedEye WideBody 6.2': ['None', 'King Daytona', 'Daytona', 'JailBreak'],
   '2025-DURANGO-SRT HellCat 6.2': ['None', 'Silver Bullet', 'Hammerhead', 'Brass Monkey'],
   '2026-DURANGO-SRT HellCat 6.2': ['None', 'JailBreak'],
+  // Ford Mustang (S550 2015-2023, S650 2024-2026) — appearance / limited packages.
+  '2015-MUSTANG-GT 5.0': ['None', '50 Years Limited Edition'],
+  '2017-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2019-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2020-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2020-MUSTANG-Shelby GT350 5.2': ['None', 'Heritage Edition'],
+  '2020-MUSTANG-Shelby GT350R 5.2': ['None', 'Heritage Edition'],
+  '2020-MUSTANG-Shelby GT500 5.2 SC': ['None', 'Carbon Fiber Track Pack'],
+  '2021-MUSTANG-Mach 1 5.0': ['None', 'Handling Package'],
+  '2021-MUSTANG-Shelby GT500 5.2 SC': ['None', 'Carbon Fiber Track Pack'],
+  '2022-MUSTANG-GT 5.0': ['None', 'California Special', 'Ice White Edition'],
+  '2022-MUSTANG-Mach 1 5.0': ['None', 'Handling Package'],
+  '2022-MUSTANG-Shelby GT500 5.2 SC': ['None', 'Heritage Edition', 'Carbon Fiber Track Pack'],
+  '2023-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2023-MUSTANG-Mach 1 5.0': ['None', 'Handling Package'],
+  '2024-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2024-MUSTANG-Dark Horse 5.0': ['None', 'Appearance Package', 'Handling Package'],
+  '2025-MUSTANG-GT 5.0': ['None', '60th Anniversary', 'California Special'],
+  '2025-MUSTANG-Dark Horse 5.0': ['None', 'Appearance Package', 'Handling Package'],
+  '2026-MUSTANG-Dark Horse 5.0': ['None', 'Appearance Package'],
 }
 
 const moparColors = ['B5 Blue', 'Destroyer Gray', 'F8 Green', 'Frostbite', 'Go Mango', 'Granite', 'Octane Red', 'Pitch Black', 'Plum Crazy', 'Sinamon Stick', 'Sublime', 'TorRed', 'Triple Nickel', 'White Knuckle']
@@ -248,6 +284,21 @@ const corvetteColorsByYear: Record<number, string[]> = {
   2026: ['Admiral Blue', 'Arctic White', 'Black', 'Blade Silver', 'Competition Yellow', 'Hysteria Purple', 'Rapid Blue', 'Red Mist', 'Riptide Blue', 'Roswell Green', 'Sebring Orange', 'Torch Red'],
 }
 
+const mustangColorsByYear: Record<number, string[]> = {
+  2015: ['Oxford White', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Guard', 'Race Red', 'Ruby Red', 'Competition Orange', 'Deep Impact Blue', 'Triple Yellow'],
+  2016: ['Oxford White', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Avalanche Gray', 'Guard', 'Race Red', 'Ruby Red', 'Competition Orange', 'Deep Impact Blue', 'Triple Yellow'],
+  2017: ['Oxford White', 'White Platinum', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Avalanche Gray', 'Race Red', 'Ruby Red', 'Lightning Blue', 'Grabber Blue', 'Triple Yellow'],
+  2018: ['Oxford White', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Lead Foot Gray', 'Race Red', 'Ruby Red', 'Lightning Blue', 'Kona Blue', 'Royal Crimson', 'Orange Fury', 'Triple Yellow'],
+  2019: ['Oxford White', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Race Red', 'Ruby Red', 'Velocity Blue', 'Kona Blue', 'Need for Green', 'Orange Fury', 'Dark Highland Green', 'Triple Yellow'],
+  2020: ['Oxford White', 'Shadow Black', 'Iconic Silver', 'Magnetic', 'Race Red', 'Velocity Blue', 'Kona Blue', 'Grabber Lime', 'Twister Orange', 'Rapid Red', 'Dark Highland Green'],
+  2021: ['Oxford White', 'Shadow Black', 'Iconic Silver', 'Carbonized Gray', 'Race Red', 'Velocity Blue', 'Antimatter Blue', 'Grabber Yellow', 'Rapid Red', 'Fighter Jet Gray'],
+  2022: ['Oxford White', 'Shadow Black', 'Iconic Silver', 'Carbonized Gray', 'Dark Matter Gray', 'Race Red', 'Grabber Blue', 'Brittany Blue', 'Atlas Blue', 'Eruption Green', 'Cyber Orange', 'Mischievous Purple'],
+  2023: ['Oxford White', 'Shadow Black', 'Iconic Silver', 'Carbonized Gray', 'Dark Matter Gray', 'Race Red', 'Grabber Blue', 'Brittany Blue', 'Atlas Blue', 'Eruption Green', 'Mischievous Purple'],
+  2024: ['Oxford White', 'Shadow Black', 'Iconic Silver', 'Carbonized Gray', 'Dark Matter Gray', 'Race Red', 'Rapid Red', 'Grabber Blue', 'Atlas Blue', 'Vapor Blue', 'Yellow Splash', 'Blue Ember'],
+  2025: ['Oxford White', 'Wimbledon White', 'Shadow Black', 'Iconic Silver', 'Carbonized Gray', 'Race Red', 'Grabber Blue', 'Vapor Blue', 'Molten Magenta', 'Intense Lime Yellow', 'Blue Ember', 'Indulgent Blue'],
+  2026: ['Oxford White', 'Shadow Black', 'Carbonized Gray', 'Iconic Silver', 'Race Red', 'Grabber Blue', 'Vapor Blue', 'Adriatic Blue', 'Orange Fury', 'Molten Magenta', 'Blue Ember'],
+}
+
 const colorsByConfiguration: Record<string, string[]> = {
   '2010-CAMARO-SS 6.2-Synergy Green Edition': ['Synergy Green'],
   '2010-CAMARO-SS 1LE 6.2-Synergy Green Edition': ['Synergy Green'],
@@ -287,6 +338,15 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2024-F150-5.2L SC V8 Raptor R-None': raptorRColors,
   '2025-F150-5.2L SC V8 Raptor R-None': raptorRColors,
   '2026-F150-5.2L SC V8 Raptor R-None': raptorRColors,
+  // Mustang editions / versions with a forced or exclusive color set.
+  '2015-MUSTANG-GT 5.0-50 Years Limited Edition': ['Wimbledon White', 'Kona Blue'],
+  '2019-MUSTANG-Bullitt 5.0-None': ['Dark Highland Green', 'Shadow Black'],
+  '2020-MUSTANG-Bullitt 5.0-None': ['Dark Highland Green', 'Shadow Black'],
+  '2020-MUSTANG-Shelby GT350 5.2-Heritage Edition': ['Wimbledon White'],
+  '2020-MUSTANG-Shelby GT350R 5.2-Heritage Edition': ['Wimbledon White'],
+  '2022-MUSTANG-GT 5.0-Ice White Edition': ['Oxford White'],
+  '2022-MUSTANG-Shelby GT500 5.2 SC-Heritage Edition': ['Brittany Blue'],
+  '2025-MUSTANG-GT 5.0-60th Anniversary': ['Race Red', 'Vapor Blue', 'Wimbledon White', 'Brittany Blue'],
 }
 
 export function getAvailableColors(year: number, brand: string, model: string, version: string, specialEdition: string): string[] {
@@ -297,6 +357,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
   if (model === 'VIPER' && viperColorsByYear[year]) return viperColorsByYear[year]
   if (model === 'CORVETTE' && corvetteColorsByYear[year]) return corvetteColorsByYear[year]
+  if (model === 'MUSTANG' && mustangColorsByYear[year]) return mustangColorsByYear[year]
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
   if (model === 'DURANGO') return durangoColors
   if (brand === 'RAM') return ramColors
@@ -326,6 +387,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   FORD: {
     FORD: {
       F150: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
+      MUSTANG: ['GT 5.0', 'Bullitt 5.0', 'Mach 1 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Shelby GT500 5.2 SC', 'Dark Horse 5.0', 'Dark Horse SC 5.2 SC', 'GTD 5.2 SC'],
     },
   },
 }
