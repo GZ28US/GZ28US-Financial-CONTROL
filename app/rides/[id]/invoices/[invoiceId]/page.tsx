@@ -106,6 +106,9 @@ export default function ViewInvoicePage() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [sending, setSending] = useState(false)
+  // Archived pre-conversion quote (if this invoice was once a quote) + its modal.
+  const [quoteBackup, setQuoteBackup] = useState<any | null>(null)
+  const [showQuoteBackup, setShowQuoteBackup] = useState(false)
   // Ref to the hidden .print-page container. SEND temporarily un-hides it
   // off-screen so html2canvas can capture the exact print layout to a PDF.
   const printPageRef = useRef<HTMLDivElement>(null)
@@ -133,6 +136,9 @@ export default function ViewInvoicePage() {
     }
     const { data: inv } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
     if (inv) setInvoice(inv)
+    // If this invoice was converted from a quote, surface the archived original.
+    const { data: backup } = await supabase.from('quote_backups').select('*').eq('invoice_id', invoiceId).order('archived_at', { ascending: false }).limit(1).maybeSingle()
+    if (backup) setQuoteBackup(backup)
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (partsData) setParts(partsData)
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
@@ -544,6 +550,101 @@ export default function ViewInvoicePage() {
       <main className="min-h-screen bg-black text-white p-8 no-print">
         <Header />
 
+        {showQuoteBackup && quoteBackup && (() => {
+          const b = quoteBackup.snapshot || {}
+          const bInv = b.invoice || {}
+          const bParts = b.parts || []
+          const bServices = b.services || []
+          const bExpenses = b.expenses || []
+          const bNotes = b.notes || []
+          const bPayments = b.payments || []
+          const partsSub = bParts.reduce((s: number, p: any) => s + (Number(p.unit_price) || 0) * (Number(p.quantity) || 0), 0)
+          const flTax = partsSub * ((Number(bInv.florida_taxes) || 0) / 100)
+          const partsTot = partsSub + flTax
+          const svcTot = bServices.reduce((s: number, sv: any) => s + (Number(sv.price) || 0), 0)
+          const pAndS = partsTot + svcTot
+          const disc = pAndS * ((Number(bInv.global_discount) || 0) / 100)
+          const grand = pAndS - disc
+          const paid = bPayments.filter((p: any) => !!p.paid_at).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0)
+          return (
+            <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+              <div className="bg-gray-900 border border-amber-600 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-4">
+                  <h2 className="text-2xl font-bold text-amber-400">ORIGINAL QUOTE — {bInv.invoice_code || invoice.invoice_code}</h2>
+                  <button onClick={() => setShowQuoteBackup(false)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold shrink-0">CLOSE</button>
+                </div>
+                <p className="text-sm text-gray-400">Archived {new Date(quoteBackup.archived_at).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}{bInv.service ? ` · ${bInv.service}` : ''}</p>
+
+                {bParts.length > 0 && (
+                  <div>
+                    <p className="font-bold text-gray-300 mb-1">PARTS</p>
+                    {bParts.map((p: any, i: number) => (
+                      <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
+                        <span className="min-w-0 truncate">{p.description}</span>
+                        <span className="text-gray-400 shrink-0">{Number(p.unit_price) === 0 ? 'COURTESY' : `${formatUSD(Number(p.unit_price) || 0)} × ${Number(p.quantity) || 0} = ${formatUSD((Number(p.unit_price) || 0) * (Number(p.quantity) || 0))}`}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm font-bold pt-1"><span>PARTS TOTAL{(Number(bInv.florida_taxes) || 0) > 0 ? ` (incl. ${bInv.florida_taxes}% FL tax)` : ''}</span><span>{formatUSD(partsTot)}</span></div>
+                  </div>
+                )}
+
+                {bServices.length > 0 && (
+                  <div>
+                    <p className="font-bold text-gray-300 mb-1">SERVICES</p>
+                    {bServices.map((sv: any, i: number) => (
+                      <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
+                        <span className="min-w-0 truncate">{sv.description}</span>
+                        <span className="text-gray-400 shrink-0">{Number(sv.price) === 0 ? 'COURTESY' : formatUSD(Number(sv.price) || 0)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm font-bold pt-1"><span>SERVICES TOTAL</span><span>{formatUSD(svcTot)}</span></div>
+                  </div>
+                )}
+
+                <div className="flex justify-between text-lg font-bold border-t border-gray-700 pt-2">
+                  <span>GRAND TOTAL{(Number(bInv.global_discount) || 0) > 0 ? ` (after ${bInv.global_discount}% discount)` : ''}</span>
+                  <span>{formatUSD(grand)}</span>
+                </div>
+                {bInv.target_grand_total != null && (
+                  <div className="flex justify-between text-sm text-gray-400"><span>TARGET GRAND TOTAL</span><span>{formatUSD(Number(bInv.target_grand_total) || 0)}</span></div>
+                )}
+
+                {bExpenses.length > 0 && (
+                  <div>
+                    <p className="font-bold text-gray-300 mb-1">EXPENSES</p>
+                    {bExpenses.map((e: any, i: number) => (
+                      <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
+                        <span className="min-w-0 truncate">{e.item}{e.supplier ? ` — ${e.supplier}` : ''}</span>
+                        <span className="text-gray-400 shrink-0">{formatUSD((Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0))}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {bPayments.length > 0 && (
+                  <div>
+                    <p className="font-bold text-gray-300 mb-1">INCOME</p>
+                    {bPayments.map((p: any, i: number) => (
+                      <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
+                        <span className={p.paid_at ? '' : 'text-yellow-400'}>{formatUSD(Number(p.amount) || 0)}{p.paid_at ? '' : ' — PENDING'}{p.source ? ` · ${p.source}` : ''}</span>
+                        <span className="text-gray-400 shrink-0">{p.payment_date ? formatDate(p.payment_date) : '—'}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm font-bold pt-1"><span>TOTAL PAID</span><span>{formatUSD(paid)}</span></div>
+                  </div>
+                )}
+
+                {bNotes.length > 0 && (
+                  <div>
+                    <p className="font-bold text-gray-300 mb-1">NOTES</p>
+                    {bNotes.map((n: any, i: number) => <p key={i} className="text-sm text-gray-300 whitespace-pre-wrap">{n.note}</p>)}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
         <div className="flex items-center justify-between mb-8">
           <div>
             <div className="flex items-center gap-3 mb-1 flex-wrap">
@@ -554,6 +655,9 @@ export default function ViewInvoicePage() {
             <p className="text-gray-400 text-xl">{isClient ? `${client?.client_number ?? ''}${client?.name ? ` — ${client.name}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
           </div>
           <div className="flex gap-3">
+            {quoteBackup && (
+              <button onClick={() => setShowQuoteBackup(true)} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-4 rounded-2xl text-xl font-bold">📋 ORIGINAL QUOTE</button>
+            )}
             {client && (
               <button onClick={handleSend} disabled={sending} className={`px-6 py-4 rounded-2xl text-xl font-bold ${sending ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
                 {sending ? 'SENDING…' : `📤 SEND · ${sendMethod}`}
