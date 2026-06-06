@@ -57,8 +57,10 @@ function parseReceiptUrls(raw: string | null): string[] {
 //   entry but no conclusion  -> ON DUTY (blue)
 //   conclusion but no delivery -> DONE (green)
 //   delivery                 -> DELIVERED (white)
-function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null }) {
+function getStatusBadge(inv: { entry_date: string | null; conclusion_date: string | null; delivery_date: string | null; is_quote?: boolean | null }) {
   const valid = (d: string | null) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d)
+  // QUOTE is the first rung of the ladder (no HIRING DATE yet → still a quote).
+  if (inv.is_quote) return { label: 'QUOTE', cls: 'bg-amber-600 text-black' }
   if (!valid(inv.entry_date)) return { label: 'AWAITING CAR', cls: 'bg-gray-700 text-gray-300' }
   if (!valid(inv.conclusion_date)) return { label: 'ON DUTY', cls: 'bg-blue-800 text-blue-200' }
   if (!valid(inv.delivery_date)) return { label: 'DONE', cls: 'bg-green-800 text-green-300' }
@@ -546,7 +548,6 @@ export default function ViewInvoicePage() {
           <div>
             <div className="flex items-center gap-3 mb-1 flex-wrap">
               <h1 className="text-4xl font-bold">{invoice.invoice_code}</h1>
-              {invoice.is_quote && <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-600 text-black">QUOTE</span>}
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
             </div>
