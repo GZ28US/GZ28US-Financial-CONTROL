@@ -1079,10 +1079,42 @@ export default function EditInvoicePage() {
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' }) }
 
+  // Before a quote converts to an invoice, archive its full content exactly as
+  // currently stored (invoice row + line items, payments, notes) into
+  // quote_backups so the original quote is never lost. Reads from the DB, so the
+  // snapshot is the pristine pre-conversion quote — this save's edits (including
+  // the HIRING DATE that triggers the conversion) haven't been written yet.
+  async function backupQuoteBeforeConversion() {
+    const [invRes, partsRes, servicesRes, paymentsRes, notesRes, expensesRes] = await Promise.all([
+      supabase.from('invoices').select('*').eq('id', invoiceId).single(),
+      supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+    ])
+    const snapshot = {
+      invoice: invRes.data || null,
+      parts: partsRes.data || [],
+      services: servicesRes.data || [],
+      payments: paymentsRes.data || [],
+      notes: notesRes.data || [],
+      expenses: expensesRes.data || [],
+    }
+    const { error } = await supabase.from('quote_backups').insert([{
+      invoice_id: invoiceId,
+      invoice_code: invoiceCode,
+      snapshot,
+    }])
+    if (error) alert('Note: the quote backup could not be saved (' + error.message + '). The invoice was still saved.')
+  }
+
   async function saveInvoice() {
     // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
     // invoice (one-way; an invoice never reverts to a quote).
     const nextIsQuote = isQuote && !isValidDate(hiringDate)
+    // On that transition, archive the quote as it stands before it's overwritten.
+    if (isQuote && !nextIsQuote) await backupQuoteBeforeConversion()
     const { error } = await supabase.from('invoices').update({
       hiring_date: isValidDate(hiringDate) ? hiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,
