@@ -190,12 +190,11 @@ export default function RidesPage() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
   }
 
-  // QUOTES = rides that have a quote but no invoice yet (quote-only). INVOICES =
-  // everything else (has an invoice, or is empty). This partitions cleanly, so
-  // INVOICES + QUOTES = ALL.
+  // INVOICES = rides with at least one invoice. QUOTES = rides with a quote but
+  // no invoice yet. Rides with neither (empty) appear only under ALL.
   const filteredRides = (rides as any[]).filter(r => {
     const quoteOnly = r._hasQuote && !r._hasInvoice
-    return filter === 'ALL' ? true : filter === 'QUOTES' ? quoteOnly : !quoteOnly
+    return filter === 'ALL' ? true : filter === 'QUOTES' ? quoteOnly : r._hasInvoice
   })
 
   return (
