@@ -48,6 +48,14 @@ function calculateSeasonTotal(expenses: Expense[], season: Season): number {
     }, 0)
 }
 
+// Days worked in the season (entry -> conclusion, or entry -> today if still open).
+function seasonDays(season: Season): number {
+  if (!season.date_entry) return 0
+  const start = new Date(season.date_entry + 'T00:00:00')
+  const end = season.date_conclusion ? new Date(season.date_conclusion + 'T00:00:00') : new Date()
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))
+}
+
 export default function SeasonsPage() {
   const params = useParams()
   const staffId = String(params.id)
@@ -209,6 +217,8 @@ export default function SeasonsPage() {
             const total = calculateSeasonTotal(expenses, season)
             const isConcluded = !!season.date_conclusion
             const totalLabel = isConcluded ? 'FINAL EXPENSES TOTAL' : 'ACTUAL EXPENSES TOTAL'
+            const days = seasonDays(season)
+            const daily = days > 0 ? total / days : 0
 
             return (
               <div
@@ -219,11 +229,18 @@ export default function SeasonsPage() {
                   <h2 className="text-2xl font-bold">{season.season_code}</h2>
                   <p className="text-lg text-gray-400">Entry: {formatDate(season.date_entry)}</p>
                   <p className="text-lg text-gray-400">Conclusion: {formatDate(season.date_conclusion)}</p>
+                  <p className="text-lg text-gray-400">Days: {days}</p>
                 </div>
 
                 <div className="bg-red-700 rounded-2xl px-6 py-4 text-center">
                   <p className="text-sm font-bold">{totalLabel}</p>
                   <p className="text-3xl font-bold">{formatUSD(total)}</p>
+                </div>
+
+                <div className="bg-gray-800 rounded-2xl px-5 py-4 text-sm min-w-[200px]">
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{formatUSD(daily)}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{formatUSD(daily * 7)}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{formatUSD(daily * 30)}</span></div>
                 </div>
 
                 <div className="flex gap-3 flex-wrap">
