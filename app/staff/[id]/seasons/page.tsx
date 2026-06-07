@@ -42,8 +42,8 @@ function calculateSeasonTotal(expenses: Expense[], season: Season): number {
       const diffMs = end.getTime() - start.getTime()
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
       if (e.type === 'DAILY') return sum + amount * diffDays
-      if (e.type === 'WEEKLY') return sum + amount * Math.floor(diffDays / 7)
-      if (e.type === 'MONTHLY') return sum + amount * Math.floor(diffDays / 30)
+      if (e.type === 'WEEKLY') return sum + amount * (diffDays / 7)
+      if (e.type === 'MONTHLY') return sum + amount * (diffDays / 30)
       return sum
     }, 0)
 }

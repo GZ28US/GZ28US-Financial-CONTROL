@@ -55,8 +55,8 @@ function calculateRunningTotal(expense: Expense, season: Season): number {
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
   if (expense.type === 'DAILY') return amount * diffDays
-  if (expense.type === 'WEEKLY') return amount * Math.floor(diffDays / 7)
-  if (expense.type === 'MONTHLY') return amount * Math.floor(diffDays / 30)
+  if (expense.type === 'WEEKLY') return amount * (diffDays / 7)
+  if (expense.type === 'MONTHLY') return amount * (diffDays / 30)
 
   return amount
 }
@@ -72,9 +72,10 @@ function formatRunningLabel(expense: Expense, season: Season): string {
   const diffMs = end.getTime() - start.getTime()
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
+  const round1 = (n: number) => { const r = Math.round(n * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1) }
   if (expense.type === 'DAILY') return `${diffDays} days`
-  if (expense.type === 'WEEKLY') return `${Math.floor(diffDays / 7)} weeks`
-  if (expense.type === 'MONTHLY') return `${Math.floor(diffDays / 30)} months`
+  if (expense.type === 'WEEKLY') return `${round1(diffDays / 7)} weeks`
+  if (expense.type === 'MONTHLY') return `${round1(diffDays / 30)} months`
 
   return ''
 }
