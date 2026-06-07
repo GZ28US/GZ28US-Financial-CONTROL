@@ -203,7 +203,8 @@ export default function RidesPage() {
       : filter === 'EMPTY' ? isEmpty
       : r._hasInvoice
     const isOnline = r._latestInvoice?.feed_status === 'REAL_TIME'
-    const feedOk = feedFilter === 'ALL' ? true : feedFilter === 'ONLINE' ? isOnline : !isOnline
+    // EMPTY rides have no feed status, so the feed filter doesn't apply to them.
+    const feedOk = (filter === 'EMPTY' || feedFilter === 'ALL') ? true : feedFilter === 'ONLINE' ? isOnline : !isOnline
     return typeOk && feedOk
   })
 
@@ -238,17 +239,19 @@ export default function RidesPage() {
               </button>
             ))}
           </div>
-          <div className="flex gap-2 border-l border-gray-700 pl-4">
-            {(['ONLINE', 'OFFLINE', 'ALL'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFeedFilter(f)}
-                className={`px-4 py-2 rounded-2xl font-bold text-sm ${feedFilter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
+          {filter !== 'EMPTY' && (
+            <div className="flex gap-2 border-l border-gray-700 pl-4">
+              {(['ONLINE', 'OFFLINE', 'ALL'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFeedFilter(f)}
+                  className={`px-4 py-2 rounded-2xl font-bold text-sm ${feedFilter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <Link href="/rides/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
       </div>
