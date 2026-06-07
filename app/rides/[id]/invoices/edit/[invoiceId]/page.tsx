@@ -273,7 +273,7 @@ export default function EditInvoicePage() {
     setImportMargin(data.import_margin ? String(data.import_margin) : '')
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
-    const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
     if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
@@ -918,6 +918,17 @@ export default function EditInvoicePage() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all part fields'); return }
     setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
   }
+  // Reorder a PARTS row up (-1) or down (+1). Local only; the new order is
+  // persisted (position column) on SAVE CHANGES. Editing is cancelled to avoid
+  // an index mismatch with the edit form.
+  function movePart(index: number, dir: -1 | 1) {
+    const j = index + dir
+    if (j < 0 || j >= parts.length) return
+    const next = [...parts]
+    const tmp = next[index]; next[index] = next[j]; next[j] = tmp
+    setParts(next)
+    if (editingPartIndex !== null) setEditingPartIndex(null)
+  }
   async function removePart(index: number) {
     const part = parts[index]
     if (part.id) await supabase.from('invoice_parts').delete().eq('id', part.id)
@@ -1134,16 +1145,30 @@ export default function EditInvoicePage() {
     if (error) { alert(error.message); return }
     setIsQuote(nextIsQuote)
 
-    const newParts = parts.filter(p => !p.id)
-    if (newParts.length > 0) {
-      const { error: e } = await supabase.from('invoice_parts').insert(newParts.map(p => ({ invoice_id: invoiceId, description: p.description, unit_price: parseFloat(p.unit_price), quantity: parseFloat(p.quantity), base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })))
-      if (e) { alert(e.message); return }
-    }
-    // Re-persist margin-managed existing parts whose unit_price may have shifted
-    // because the live IMPORT MARGIN changed since they were last saved.
-    const existingMarginParts = parts.filter(p => p.id && p.base_cost != null && p.base_cost !== '')
-    for (const p of existingMarginParts) {
-      await supabase.from('invoice_parts').update({ unit_price: parseFloat(p.unit_price) || 0, base_cost: parseFloat(p.base_cost!) || 0 }).eq('id', p.id)
+    // Persist parts in their current order: insert new ones with their position,
+    // and for existing ones write position (always) plus refreshed margin-managed
+    // unit_price/base_cost (which may have shifted with the live IMPORT MARGIN).
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]
+      if (!p.id) {
+        const { error: e } = await supabase.from('invoice_parts').insert({
+          invoice_id: invoiceId,
+          description: p.description,
+          unit_price: parseFloat(p.unit_price) || 0,
+          quantity: parseFloat(p.quantity) || 0,
+          base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null,
+          position: i,
+        })
+        if (e) { alert(e.message); return }
+      } else {
+        const upd: any = { position: i }
+        if (p.base_cost != null && p.base_cost !== '') {
+          upd.unit_price = parseFloat(p.unit_price) || 0
+          upd.base_cost = parseFloat(p.base_cost) || 0
+        }
+        const { error: e } = await supabase.from('invoice_parts').update(upd).eq('id', p.id)
+        if (e) { alert(e.message); return }
+      }
     }
     const newServices = services.filter(s => !s.id)
     if (newServices.length > 0) {
@@ -2271,6 +2296,8 @@ export default function EditInvoicePage() {
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
+                          <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>
+                          <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
                           <button onClick={() => startEditPart(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => removePart(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </div>
