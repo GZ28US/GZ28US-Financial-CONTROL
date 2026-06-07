@@ -12,6 +12,7 @@ export default function NewSupplierPage() {
   const [name, setName] = useState('')
   const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>('FIXED')
   const [discount, setDiscount] = useState('')
+  const [aliases, setAliases] = useState('')
   const [saving, setSaving] = useState(false)
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -23,6 +24,7 @@ export default function NewSupplierPage() {
       name: name.trim(),
       discount_type: discountType,
       discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
+      aliases: aliases.trim() || null,
     }])
     if (error) { alert(error.message); setSaving(false); return }
     router.push('/suppliers')
@@ -38,6 +40,12 @@ export default function NewSupplierPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">SUPPLIER NAME</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="Supplier name" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">ALSO KNOWN AS</label>
+          <textarea value={aliases} onChange={(e) => setAliases(e.target.value)} className={`${inputClass} h-28`} placeholder="Alternate names / acronyms — one per line (e.g. HHP Racing)" />
+          <p className="text-gray-400 text-sm mt-1">Any of these will be recognized as this supplier on scans (case, spaces and punctuation are ignored automatically).</p>
         </div>
 
         <div>

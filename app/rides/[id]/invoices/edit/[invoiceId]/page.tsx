@@ -197,7 +197,7 @@ export default function EditInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string }[]>([])
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
@@ -322,8 +322,8 @@ export default function EditInvoicePage() {
       setExpandedGroups(new Set())
     }
 
-    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount, discount_type')
-    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' })))
+    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
+    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
 
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
@@ -843,10 +843,16 @@ export default function EditInvoicePage() {
   // no math is applied to the prices.
   // Returns the registered supplier's discount config, or null if unregistered.
   function supplierInfo(name: string | undefined | null): { discount: number; type: 'FIXED' | 'VARIABLE' } | null {
-    if (!name) return null
-    const n = name.trim().toLowerCase()
-    if (!n) return null
-    const m = suppliers.find(s => s.name.trim().toLowerCase() === n)
+    // Normalize away case, spaces and punctuation; match against the supplier's
+    // name AND its aliases (one per line / comma) so variant spellings and
+    // acronyms (e.g. "HHP Racing" vs "HighHorsePerformance Racing") unify.
+    const norm = (s: string | undefined | null) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const target = norm(name)
+    if (!target) return null
+    const m = suppliers.find(s => {
+      const variants = [s.name, ...(s.aliases || '').split(/[\n,]/)]
+      return variants.some(v => norm(v) === target)
+    })
     if (!m) return null
     return { discount: m.discount, type: m.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' }
   }
