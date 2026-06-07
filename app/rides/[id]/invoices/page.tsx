@@ -52,8 +52,8 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
 
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
-    ? { label: 'REAL-TIME FEED', cls: 'bg-green-800 text-green-300' }
-    : { label: 'INCOMPLETE', cls: 'bg-red-800 text-red-200' }
+    ? { label: 'ONLINE', cls: 'bg-green-800 text-green-300' }
+    : { label: 'OFF', cls: 'bg-red-800 text-red-200' }
 }
 
 export default function InvoicesPage() {

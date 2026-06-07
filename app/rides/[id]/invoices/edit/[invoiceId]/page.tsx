@@ -1931,13 +1931,13 @@ export default function EditInvoicePage() {
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">FEED STATUS</p>
-            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as a real-time feed once it is fully up to date.</p>
+            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as ONLINE once it is fully up to date.</p>
           </div>
           <button
             onClick={() => setFeedStatus(feedStatus === 'REAL_TIME' ? 'INCOMPLETE' : 'REAL_TIME')}
             className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedStatus === 'REAL_TIME' ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'}`}
           >
-            {feedStatus === 'REAL_TIME' ? 'REAL-TIME FEED' : 'INCOMPLETE'}
+            {feedStatus === 'REAL_TIME' ? 'ONLINE' : 'OFF'}
           </button>
         </div>
 
