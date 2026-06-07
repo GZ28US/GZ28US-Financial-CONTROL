@@ -45,7 +45,7 @@ export default function RidesPage() {
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Filter the list by whether a ride has actual invoices, quotes, neither, or all.
-  const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'EMPTY' | 'ALL'>('INVOICES')
+  const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'EMPTY' | 'ALL'>('ALL')
   // Second, independent filter: feed status of the ride's latest invoice.
   const [feedFilter, setFeedFilter] = useState<'ONLINE' | 'OFFLINE' | 'ALL'>('ALL')
 
