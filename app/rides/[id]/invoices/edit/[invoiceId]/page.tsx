@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
+import { enrollParts } from '@/lib/partsDb'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string }
 type Service = { id?: string; description: string; price: string }
@@ -237,6 +238,12 @@ export default function EditInvoicePage() {
   // flow. rideMatch carries the car spec (manufacturer+model+year) used to scope packs.
   const [packPrompt, setPackPrompt] = useState<{ mode: 'create' | 'update'; packId?: string; proceed: () => void } | null>(null)
   const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string }>({ manufacturer: '', model: '', year: '' })
+  // Parts data bank: alias map (item -> alias) for IMPORT INTUITIVE PARTS, and
+  // the IMPORT FROM DATABASE picker modal.
+  const [aliasMap, setAliasMap] = useState<Map<string, string>>(new Map())
+  const [showDbModal, setShowDbModal] = useState(false)
+  const [dbItems, setDbItems] = useState<any[]>([])
+  const [dbSearch, setDbSearch] = useState('')
   const rideNameRef = useRef('')
 
   useEffect(() => { loadData() }, [])
@@ -335,7 +342,37 @@ export default function EditInvoicePage() {
       setPartsToStock(mapped)
     }
 
+    // Aliases from the parts data bank, applied as part descriptions when
+    // IMPORT INTUITIVE PARTS runs.
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias')
+    const am = new Map<string, string>()
+    for (const d of dbParts || []) { if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias) }
+    setAliasMap(am)
+
     setLoading(false)
+  }
+
+  async function openDbModal() {
+    const { data } = await supabase.from('parts_database').select('*').order('item', { ascending: true })
+    setDbItems(data || [])
+    setDbSearch('')
+    setShowDbModal(true)
+  }
+
+  // Insert a parts-database item as a fresh, unpaid expense on this invoice.
+  function addDbItem(it: any) {
+    setExpenses(prev => [...prev, {
+      supplier: it.supplier || '',
+      item: it.item,
+      amount: String(it.unit_price ?? 0),
+      tax: String(it.tax ?? 0),
+      extra: String(it.extra ?? 0),
+      quantity: String(it.quantity ?? 1),
+      payment_date: '',
+      receipt_urls: [],
+      export_status: 'FRESH',
+      item_discount: String(it.item_discount ?? 0),
+    }])
   }
 
   // Returns the canonical "owner label" string used as the donor identifier.
@@ -568,6 +605,18 @@ export default function EditInvoicePage() {
     }))
     setExpenses(prev => [...prev, ...newItems])
     setExpandedGroups(prev => new Set([...prev, groupId]))
+    // Enroll the scanned items into the parts data bank (last purchase for parts,
+    // cheapest for extras).
+    void enrollParts(scannedPurchase.items.map(it => ({
+      item: it.description,
+      supplier: scannedPurchase.supplier,
+      unit_price: it.amount,
+      tax: it.tax,
+      extra: it.extra,
+      quantity: it.quantity,
+      item_discount: it.item_discount,
+      purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedPurchase.date) ? scannedPurchase.date : null,
+    })))
     setScannedPurchase(null)
   }
 
@@ -767,7 +816,7 @@ export default function EditInvoicePage() {
     const toAdd: Part[] = []
     sourceMap.forEach(src => {
       toAdd.push({
-        description: src.description,
+        description: aliasMap.get(src.description.trim().toLowerCase()) || src.description,
         unit_price: (src.base * factor).toFixed(2),
         quantity: String(src.quantity),
         base_cost: String(src.base),
@@ -1909,6 +1958,32 @@ export default function EditInvoicePage() {
         </div>
       )}
 
+      {showDbModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-2xl font-bold text-teal-300">IMPORT FROM DATABASE</h2>
+              <button onClick={() => setShowDbModal(false)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold shrink-0">CLOSE</button>
+            </div>
+            <input value={dbSearch} onChange={(e) => setDbSearch(e.target.value)} placeholder="Search item or alias..." className={inputClass} />
+            {(() => {
+              const t = dbSearch.trim().toLowerCase()
+              const list = t ? dbItems.filter((d: any) => (d.item || '').toLowerCase().includes(t) || (d.alias || '').toLowerCase().includes(t)) : dbItems
+              if (list.length === 0) return <p className="text-gray-400">No items in the database.</p>
+              return list.map((d: any) => (
+                <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">
+                  <div className="min-w-0">
+                    <p className="font-bold truncate">{d.item}{d.alias ? ` (${d.alias})` : ''}{d.is_extra ? ' — EXTRA' : ''}</p>
+                    <p className="text-sm text-gray-400">{formatUSD(Number(d.unit_price) || 0)}{d.supplier ? ` · ${d.supplier}` : ''}</p>
+                  </div>
+                  <button onClick={() => addDbItem(d)} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">ADD</button>
+                </div>
+              ))
+            })()}
+          </div>
+        </div>
+      )}
+
       {(scanningPurchase || scanningPayment) && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 text-center">
@@ -1970,6 +2045,7 @@ export default function EditInvoicePage() {
               🧾 SCAN EXPENSE
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
             </label>
+            <button onClick={openDbModal} className="flex items-center justify-center gap-2 w-full bg-teal-700 hover:bg-teal-600 px-5 py-3 rounded-2xl font-bold text-lg">📚 IMPORT FROM DATABASE</button>
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
