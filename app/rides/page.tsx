@@ -44,8 +44,10 @@ export default function RidesPage() {
   const [rides, setRides] = useState<Ride[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  // Filter the list by whether a ride has actual invoices, quotes, or show all.
-  const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'ALL'>('INVOICES')
+  // Filter the list by whether a ride has actual invoices, quotes, neither, or all.
+  const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'EMPTY' | 'ALL'>('INVOICES')
+  // Second, independent filter: feed status of the ride's latest invoice.
+  const [feedFilter, setFeedFilter] = useState<'ONLINE' | 'OFFLINE' | 'ALL'>('ONLINE')
 
   useEffect(() => { loadRides() }, [])
 
@@ -190,11 +192,19 @@ export default function RidesPage() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
   }
 
-  // INVOICES = rides with at least one invoice. QUOTES = rides with a quote but
-  // no invoice yet. Rides with neither (empty) appear only under ALL.
+  // Type filter: INVOICES = has an invoice; QUOTES = quote but no invoice yet;
+  // EMPTY = neither; ALL = everything. Feed filter (independent): ONLINE/OFFLINE
+  // by the latest invoice's feed status (empty rides have none -> OFFLINE).
   const filteredRides = (rides as any[]).filter(r => {
     const quoteOnly = r._hasQuote && !r._hasInvoice
-    return filter === 'ALL' ? true : filter === 'QUOTES' ? quoteOnly : r._hasInvoice
+    const isEmpty = !r._hasInvoice && !r._hasQuote
+    const typeOk = filter === 'ALL' ? true
+      : filter === 'QUOTES' ? quoteOnly
+      : filter === 'EMPTY' ? isEmpty
+      : r._hasInvoice
+    const isOnline = r._latestInvoice?.feed_status === 'REAL_TIME'
+    const feedOk = feedFilter === 'ALL' ? true : feedFilter === 'ONLINE' ? isOnline : !isOnline
+    return typeOk && feedOk
   })
 
   return (
@@ -218,11 +228,22 @@ export default function RidesPage() {
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">RIDES ({filteredRides.length})</h1>
           <div className="flex gap-2">
-            {(['INVOICES', 'QUOTES', 'ALL'] as const).map((f) => (
+            {(['INVOICES', 'QUOTES', 'EMPTY', 'ALL'] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
                 className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 border-l border-gray-700 pl-4">
+            {(['ONLINE', 'OFFLINE', 'ALL'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFeedFilter(f)}
+                className={`px-4 py-2 rounded-2xl font-bold text-sm ${feedFilter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
               >
                 {f}
               </button>
