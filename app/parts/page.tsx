@@ -41,7 +41,6 @@ export default function PartsPage() {
   async function saveAlias(p: Part) {
     const { error } = await supabase.from('parts_database').update({ alias: (p.alias || '').trim() || null, updated_at: new Date().toISOString() }).eq('id', p.id)
     if (error) { alert(error.message); return }
-    alert('Alias saved.')
   }
 
   async function removePart(p: Part) {
