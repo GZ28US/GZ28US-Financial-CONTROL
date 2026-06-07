@@ -1937,7 +1937,7 @@ export default function EditInvoicePage() {
             onClick={() => setFeedStatus(feedStatus === 'REAL_TIME' ? 'INCOMPLETE' : 'REAL_TIME')}
             className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedStatus === 'REAL_TIME' ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'}`}
           >
-            {feedStatus === 'REAL_TIME' ? 'ONLINE' : 'OFF'}
+            {feedStatus === 'REAL_TIME' ? 'ONLINE' : 'OFFLINE'}
           </button>
         </div>
 

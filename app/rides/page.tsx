@@ -37,13 +37,15 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
     ? { label: 'ONLINE', cls: 'bg-green-800 text-green-300' }
-    : { label: 'OFF', cls: 'bg-red-800 text-red-200' }
+    : { label: 'OFFLINE', cls: 'bg-red-800 text-red-200' }
 }
 
 export default function RidesPage() {
   const [rides, setRides] = useState<Ride[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Filter the list by whether a ride has actual invoices, quotes, or show all.
+  const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'ALL'>('INVOICES')
 
   useEffect(() => { loadRides() }, [])
 
@@ -60,11 +62,14 @@ export default function RidesPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, florida_taxes, global_discount, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, updated_at, created_at')
+        .select('id, is_quote, florida_taxes, global_discount, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, updated_at, created_at')
         .eq('ride_id', ride.id)
 
       const invoiceList = invoices || []
       const invoiceIds = invoiceList.map(i => i.id)
+      // For the INVOICES / QUOTES / ALL filter: does this ride have each kind?
+      const hasQuote = invoiceList.some(i => i.is_quote)
+      const hasInvoice = invoiceList.some(i => !i.is_quote)
 
       for (const inv of invoiceList) {
         if (inv.updated_at) timestamps.push(inv.updated_at)
@@ -158,6 +163,8 @@ export default function RidesPage() {
         ...ride,
         _latestActivity: latest,
         _latestInvoice: latestInvoice,
+        _hasInvoice: hasInvoice,
+        _hasQuote: hasQuote,
         _currentProfit: currentProfit,
         _currentProfitPct: currentProfitPct,
         _finalProfit: finalProfit,
@@ -183,6 +190,10 @@ export default function RidesPage() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
   }
 
+  const filteredRides = (rides as any[]).filter(r =>
+    filter === 'ALL' ? true : filter === 'INVOICES' ? r._hasInvoice : r._hasQuote
+  )
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
@@ -200,18 +211,31 @@ export default function RidesPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">RIDES ({rides.length})</h1>
+      <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-4xl font-bold">RIDES ({filteredRides.length})</h1>
+          <div className="flex gap-2">
+            {(['INVOICES', 'QUOTES', 'ALL'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
         <Link href="/rides/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
       </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : rides.length === 0 ? (
+      ) : filteredRides.length === 0 ? (
         <p className="text-2xl text-gray-400">No rides found.</p>
       ) : (
         <div className="space-y-5">
-          {(rides as any[]).map((ride) => {
+          {filteredRides.map((ride) => {
             const statusBadge = getStatusBadge(ride._latestInvoice)
             const feedBadge = getFeedBadge(ride._latestInvoice?.feed_status ?? null)
             return (
