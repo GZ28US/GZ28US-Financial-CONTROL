@@ -70,6 +70,7 @@ export default function SuppliersPage() {
                 <p className="text-lg text-gray-400">Discount: {supplier.discount_type === 'VARIABLE' ? 'VARIABLE (per item)' : `${supplier.discount || 0}%`}</p>
               </div>
               <div className="flex gap-3 flex-wrap shrink-0">
+                <Link href={`/parts?supplierId=${supplier.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">PARTS</Link>
                 <Link href={`/suppliers/edit/${supplier.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                 <button onClick={() => setConfirmId(supplier.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
               </div>

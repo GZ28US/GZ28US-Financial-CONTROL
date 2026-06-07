@@ -26,8 +26,27 @@ export default function PartsPage() {
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [search, setSearch] = useState('')
+  // When arriving from a supplier's PARTS button (?supplierId=…) we restrict the
+  // list to that supplier's parts, matching its name + aliases (normalized).
+  const [supplierFilter, setSupplierFilter] = useState<{ name: string; variants: Set<string> } | null>(null)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sid = new URLSearchParams(window.location.search).get('supplierId')
+      if (sid) loadSupplierFilter(sid)
+    }
+    load()
+  }, [])
+
+  async function loadSupplierFilter(id: string) {
+    const { data } = await supabase.from('suppliers').select('name, aliases').eq('id', id).maybeSingle()
+    if (!data) return
+    const norm = (s: any) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const variants = new Set<string>()
+    if (norm(data.name)) variants.add(norm(data.name))
+    ;(data.aliases || '').split(/[\n,]/).forEach((a: string) => { const n = norm(a); if (n) variants.add(n) })
+    setSupplierFilter({ name: data.name || '', variants })
+  }
 
   async function load() {
     const { data } = await supabase.from('parts_database').select('*').order('item', { ascending: true })
@@ -96,10 +115,13 @@ export default function PartsPage() {
     setScanning(false)
   }
 
+  const normSup = (s: any) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
   const term = search.trim().toLowerCase()
-  const filtered = term
-    ? parts.filter(p => (p.item || '').toLowerCase().includes(term) || (p.alias || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term))
-    : parts
+  const filtered = parts.filter(p => {
+    if (supplierFilter && !supplierFilter.variants.has(normSup(p.supplier))) return false
+    if (term && !((p.item || '').toLowerCase().includes(term) || (p.alias || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term))) return false
+    return true
+  })
 
   function formatDate(d: string | null) {
     if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
@@ -119,6 +141,13 @@ export default function PartsPage() {
           <input type="file" accept="image/*,.pdf" className="hidden" disabled={scanning} onChange={(e) => { if (e.target.files?.[0]) handleScanItems(e.target.files[0]); e.currentTarget.value = '' }} />
         </label>
       </div>
+
+      {supplierFilter && (
+        <div className="mb-4 flex items-center gap-3 flex-wrap">
+          <span className="px-4 py-2 rounded-2xl bg-gray-800 text-base font-bold">Supplier: {supplierFilter.name}</span>
+          <a href="/parts" className="text-blue-400 hover:text-blue-300 font-bold">show all parts</a>
+        </div>
+      )}
 
       <input
         value={search}
