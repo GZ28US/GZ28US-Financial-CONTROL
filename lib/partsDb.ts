@@ -7,6 +7,7 @@ export const EXTRA_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge
 
 export type EnrollItem = {
   item: string
+  part_number?: string | null
   supplier?: string | null
   unit_price?: number | string
   tax?: number | string
@@ -17,27 +18,39 @@ export type EnrollItem = {
   receipt_url?: string | null
 }
 
-// Enroll scanned items into parts_database. One row per item name (case-insensitive):
-//   - extras  -> keep the cheapest unit_price
-//   - parts   -> keep the most recent purchase (by purchase_date)
-// A user-set alias on an existing row is always preserved. Returns how many rows
-// were inserted or updated.
+// Enroll scanned items into parts_database. The product code is the PART NUMBER
+// when present (most reliable, minimizes duplicates); otherwise the item name.
+// One row per product:
+//   - extras -> keep the cheapest unit_price
+//   - parts  -> keep the most recent purchase (by purchase_date)
+// A user-set alias is always preserved. Returns how many rows were inserted/updated.
 export async function enrollParts(items: EnrollItem[]): Promise<number> {
   let changed = 0
   for (const raw of items) {
     const name = (raw.item || '').trim()
-    if (!name) continue
+    const pn = (raw.part_number || '').trim()
+    if (!name && !pn) continue
     const isExtra = EXTRA_WORDS.test(name)
     const price = Number(raw.unit_price) || 0
 
-    const { data: existing } = await supabase
-      .from('parts_database')
-      .select('*')
-      .ilike('item', name)
-      .maybeSingle()
+    // Find the existing row: prefer the part number; fall back to the item name.
+    // A scan that now carries a PN can adopt an earlier name-only row.
+    let existing: any = null
+    if (pn) {
+      const { data } = await supabase.from('parts_database').select('*').ilike('part_number', pn).limit(1)
+      existing = data?.[0] || null
+      if (!existing && name) {
+        const { data: d2 } = await supabase.from('parts_database').select('*').ilike('item', name).is('part_number', null).limit(1)
+        existing = d2?.[0] || null
+      }
+    } else if (name) {
+      const { data } = await supabase.from('parts_database').select('*').ilike('item', name).limit(1)
+      existing = data?.[0] || null
+    }
 
     const row: any = {
-      item: name,
+      item: name || existing?.item || pn,
+      part_number: pn || existing?.part_number || null,
       supplier: raw.supplier || null,
       unit_price: price,
       tax: Number(raw.tax) || 0,
@@ -58,11 +71,8 @@ export async function enrollParts(items: EnrollItem[]): Promise<number> {
 
     let replace: boolean
     if (isExtra) {
-      // Cheapest wins.
       replace = price < (Number(existing.unit_price) || Infinity)
     } else {
-      // Most recent purchase wins (string YYYY-MM-DD compare; equal/blank replaces
-      // so the latest scan takes precedence).
       replace = (row.purchase_date || '') >= (existing.purchase_date || '')
     }
     if (replace) {

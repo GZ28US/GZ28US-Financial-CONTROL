@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     { "description": "the receipt's own label for the charge, e.g. Shipping, Handling, Insurance, Freight, Surcharge", "amount": "number string like 12.50" }
   ],
   "items": [
-    { "description": "item name", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0" }
+    { "description": "item name", "part_number": "manufacturer part number / SKU / MPN / item or catalog number printed for this line, else empty string", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0" }
   ]
 }
 Rules:
@@ -40,7 +40,8 @@ Rules:
 6. extras: every OTHER non-product charge line — shipping, handling, insurance, freight, surcharges, and any other fee — as its own entry, using the label printed on the receipt. Do NOT include tax here, and do NOT include discounts or coupons. Only include entries whose amount is greater than 0 (skip "Free" or $0.00 lines). If there are none, return an empty array.
 7. grand_total: the final total of the invoice.
 8. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
-9. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+9. part_number: the manufacturer part number, SKU, MPN, or item/catalog number printed for that line item (NOT the quantity or price). Use it as the product's identifying code. Empty string if none is shown.
+10. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -172,7 +173,7 @@ Rules:
     }
     const scaledSubtotal = itemsSubtotal * itemScale
 
-    const processedItems: { description: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string }[] = []
+    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string }[] = []
 
     if (separateExtras) {
       // Tax AND extra costs (shipping, handling, insurance, ...) are each split
@@ -211,6 +212,7 @@ Rules:
           : 0
         processedItems.push({
           description: item.description || '',
+          part_number: String(item.part_number || '').trim(),
           quantity: String(quantity),
           amount: unitPrice.toFixed(2),
           tax: lineTax.toFixed(2),
@@ -230,6 +232,7 @@ Rules:
         const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
         processedItems.push({
           description: item.description || '',
+          part_number: String(item.part_number || '').trim(),
           quantity: String(quantity),
           amount: unitPrice.toFixed(2),
           tax: '0.00',

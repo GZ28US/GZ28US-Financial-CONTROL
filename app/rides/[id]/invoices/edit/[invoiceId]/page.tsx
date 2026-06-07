@@ -208,7 +208,7 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string } | null>(null)
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
@@ -461,7 +461,7 @@ export default function EditInvoicePage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
@@ -609,6 +609,7 @@ export default function EditInvoicePage() {
     // cheapest for extras).
     void enrollParts(scannedPurchase.items.map(it => ({
       item: it.description,
+      part_number: it.part_number,
       supplier: scannedPurchase.supplier,
       unit_price: it.amount,
       tax: it.tax,

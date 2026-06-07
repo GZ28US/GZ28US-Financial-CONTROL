@@ -9,6 +9,7 @@ import { enrollParts } from '@/lib/partsDb'
 type Part = {
   id: string
   item: string
+  part_number: string | null
   alias: string | null
   supplier: string | null
   unit_price: number | null
@@ -75,6 +76,7 @@ export default function PartsPage() {
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => ({
         item: String(i.description || ''),
+        part_number: String(i.part_number || ''),
         supplier,
         unit_price: String(i.amount || '0'),
         quantity: String(i.quantity || '1'),
@@ -96,7 +98,7 @@ export default function PartsPage() {
 
   const term = search.trim().toLowerCase()
   const filtered = term
-    ? parts.filter(p => (p.item || '').toLowerCase().includes(term) || (p.alias || '').toLowerCase().includes(term))
+    ? parts.filter(p => (p.item || '').toLowerCase().includes(term) || (p.alias || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term))
     : parts
 
   function formatDate(d: string | null) {
@@ -136,6 +138,7 @@ export default function PartsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-xl font-bold">{p.item}</h2>
+                  {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
                 </div>
