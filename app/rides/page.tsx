@@ -227,8 +227,19 @@ export default function RidesPage() {
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">RIDES ({filteredRides.length})</h1>
+          <div className="flex gap-2">
+            {(['ALL', 'INVOICES', 'QUOTES', 'EMPTY'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
           {filter !== 'EMPTY' && (
-            <div className="flex gap-2">
+            <div className="flex gap-2 border-l border-gray-700 pl-4">
               {(['ALL', 'ONLINE', 'OFFLINE'] as const).map((f) => (
                 <button
                   key={f}
@@ -240,17 +251,6 @@ export default function RidesPage() {
               ))}
             </div>
           )}
-          <div className={`flex gap-2 ${filter !== 'EMPTY' ? 'border-l border-gray-700 pl-4' : ''}`}>
-            {(['INVOICES', 'QUOTES', 'EMPTY', 'ALL'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
         </div>
         <Link href="/rides/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
       </div>
