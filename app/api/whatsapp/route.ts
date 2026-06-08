@@ -116,8 +116,11 @@ export async function POST(req: NextRequest) {
       elapsedMs: Date.now() - t0,
     })
 
-    // UltraMsg returns { sent: "true", ... } on success, or { error: ... }.
-    const ok = res.ok && (data.sent === 'true' || data.sent === true || !data.error)
+    // UltraMsg returns { sent: "true", id: ... } on a real send. Require that
+    // explicitly — a 200 with { sent: "false" } (instance offline, bad number,
+    // unreachable document URL, etc.) is NOT a success even without an `error`.
+    const sentOk = data.sent === 'true' || data.sent === true
+    const ok = res.ok && (sentOk || (!!data.id && !data.error))
     if (!ok) {
       console.error('[whatsapp] send failed', { status: res.status, rawPreview: rawText.slice(0, 500) })
       return NextResponse.json({ error: 'UltraMsg send failed', status: res.status, detail: data, raw: rawText }, { status: 502 })
