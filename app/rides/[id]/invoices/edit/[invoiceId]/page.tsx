@@ -880,6 +880,8 @@ export default function EditInvoicePage() {
   // "HANDLING". The stored description stays FULL_PROJECT_LABOR so the auto-CALCULATE
   // lookup, labor index, and save logic keep matching on the real key.
   function serviceDisplayName(desc: string) { return isClient && desc === FULL_PROJECT_LABOR ? 'HANDLING' : desc }
+  // The parts-database alias (if any) for an expense item, shown next to its name.
+  function aliasFor(item: string): string { return aliasMap.get((item || '').trim().toLowerCase()) || '' }
 
   async function uploadReceiptsToEditing(files: FileList) {
     const urls: string[] = [...editingExpense.receipt_urls]
@@ -2174,7 +2176,7 @@ export default function EditInvoicePage() {
                                 ) : (
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-bold truncate text-blue-300">{exp.item}</p>
+                                      <p className="text-sm font-bold truncate text-blue-300">{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}{supplierIsVariable(exp.supplier) ? ` · Disc: ${parseFloat(exp.item_discount || '0') || 0}%` : ''}</p>
                                       {exportStatusLine(exp, index)}
                                     </div>
@@ -2265,7 +2267,7 @@ export default function EditInvoicePage() {
                           <div className="px-4 py-3">
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
-                                <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                                <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                                 {exportStatusLine(exp, index)}
