@@ -32,6 +32,9 @@ export async function enrollParts(items: EnrollItem[]): Promise<number> {
     if (!name && !pn) continue
     const isExtra = EXTRA_WORDS.test(name)
     const price = Number(raw.unit_price) || 0
+    const qtyN = Number(raw.quantity) || 1
+    // Landed unit cost = unit price + per-unit share of tax + extras.
+    const baseCost = price + (qtyN > 0 ? ((Number(raw.tax) || 0) + (Number(raw.extra) || 0)) / qtyN : 0)
 
     // Find the existing row: prefer the part number; fall back to the item name.
     // A scan that now carries a PN can adopt an earlier name-only row.
@@ -53,6 +56,7 @@ export async function enrollParts(items: EnrollItem[]): Promise<number> {
       part_number: pn || existing?.part_number || null,
       supplier: raw.supplier || null,
       unit_price: price,
+      base_cost: baseCost,
       tax: Number(raw.tax) || 0,
       extra: Number(raw.extra) || 0,
       quantity: Number(raw.quantity) || 1,

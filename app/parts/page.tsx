@@ -13,12 +13,17 @@ type Part = {
   alias: string | null
   supplier: string | null
   unit_price: number | null
+  base_cost: number | null
   tax: number | null
   extra: number | null
   quantity: number | null
   item_discount: number | null
   purchase_date: string | null
   is_extra: boolean
+  category: string | null
+  source_type: string | null
+  donor: string | null
+  notes: string | null
 }
 
 export default function PartsPage() {
@@ -176,8 +181,14 @@ export default function PartsPage() {
                   {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax))}` : ''}
                   {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra))}` : ''}
                   {(Number(p.item_discount) || 0) > 0 ? ` · Disc ${p.item_discount}%` : ''}
+                  {(Number(p.base_cost) || 0) > 0 ? ` · Base ${formatUSD(Number(p.base_cost))}` : ''}
                   {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
                 </p>
+                {(p.category || p.source_type || p.donor || p.notes) && (
+                  <p className="text-xs text-gray-500">
+                    {[p.category && `Cat: ${p.category}`, p.source_type, p.donor && `Donor: ${p.donor}`, p.notes].filter(Boolean).join(' · ')}
+                  </p>
+                )}
               </div>
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
                 <div>

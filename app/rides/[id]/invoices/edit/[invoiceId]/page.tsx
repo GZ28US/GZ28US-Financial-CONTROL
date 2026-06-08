@@ -22,6 +22,7 @@ type Expense = {
   id?: string
   supplier: string
   item: string
+  part_number?: string
   amount: string
   tax: string
   extra: string
@@ -307,6 +308,7 @@ export default function EditInvoicePage() {
         id: e.id,
         supplier: e.supplier || '',
         item: e.item,
+        part_number: e.part_number || '',
         amount: String(e.price),
         tax: String(e.tax ?? 0),
         extra: String(e.extra ?? 0),
@@ -364,6 +366,7 @@ export default function EditInvoicePage() {
     setExpenses(prev => [...prev, {
       supplier: it.supplier || '',
       item: it.item,
+      part_number: it.part_number || '',
       amount: String(it.unit_price ?? 0),
       tax: String(it.tax ?? 0),
       extra: String(it.extra ?? 0),
@@ -593,6 +596,7 @@ export default function EditInvoicePage() {
     const newItems: Expense[] = scannedPurchase.items.map(item => ({
       supplier: scannedPurchase.supplier,
       item: item.description,
+      part_number: item.part_number || '',
       amount: item.amount,
       tax: item.tax || '0',
       extra: item.extra || '0',
@@ -603,7 +607,18 @@ export default function EditInvoicePage() {
       export_status: 'FRESH',
       item_discount: item.item_discount || '0',
     }))
-    setExpenses(prev => [...prev, ...newItems])
+    // Override: an official purchase replaces the matching quote estimate. Match
+    // by part number (or item name when a line has no PN); drop those lines — and
+    // delete already-saved ones from the DB — before adding the official items.
+    const norm = (s: string | undefined | null) => (s || '').trim().toLowerCase()
+    const scannedPNs = new Set(scannedPurchase.items.map(i => norm(i.part_number)).filter(Boolean))
+    const scannedNames = new Set(scannedPurchase.items.map(i => norm(i.description)).filter(Boolean))
+    const replaced = expenses.filter(e => {
+      const epn = norm(e.part_number)
+      return epn ? scannedPNs.has(epn) : scannedNames.has(norm(e.item))
+    })
+    for (const e of replaced) { if (e.id) supabase.from('invoice_expenses').delete().eq('id', e.id) }
+    setExpenses(prev => [...prev.filter(e => !replaced.includes(e)), ...newItems])
     setExpandedGroups(prev => new Set([...prev, groupId]))
     // Enroll the scanned items into the parts data bank (last purchase for parts,
     // cheapest for extras).
@@ -1264,6 +1279,7 @@ export default function EditInvoicePage() {
       const { error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({
         invoice_id: invoiceId, expense_date: null,
         supplier: ex.supplier || null, item: ex.item,
+        part_number: ex.part_number || null,
         price: parseFloat(ex.amount),
         tax: parseFloat(ex.tax) || 0,
         extra: parseFloat(ex.extra) || 0,
