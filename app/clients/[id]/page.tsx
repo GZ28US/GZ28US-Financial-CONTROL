@@ -63,20 +63,20 @@ export default function ViewClientPage() {
     setLoading(false)
   }
 
-  function formatPhone(phone: string | null) {
+  // Format by country: US -> +1 (XXX) XXX-XXXX, Brazil -> +55 (XX) XXXXX.XXXX.
+  function formatPhone(phone: string | null, country?: string | null) {
     if (!phone) return '-'
     const digits = phone.replace(/\D/g, '')
-    let countryCode = ''
-    let local = digits
-    if (digits.startsWith('55') && digits.length > 11) {
-      countryCode = '+55 '
-      local = digits.slice(2)
-    } else if (digits.startsWith('1') && digits.length > 10) {
-      countryCode = '+1 '
-      local = digits.slice(1)
+    const isBR = country === 'BRAZIL' || (!country && digits.startsWith('55') && digits.length > 11)
+    if (isBR) {
+      const local = digits.startsWith('55') ? digits.slice(2) : digits
+      if (local.length === 11) return `+55 (${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
+      if (local.length === 10) return `+55 (${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
+      return phone
     }
-    if (local.length === 11) return `${countryCode}(${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
-    if (local.length === 10) return `${countryCode}(${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
+    // US (default)
+    const local = (digits.startsWith('1') && digits.length === 11) ? digits.slice(1) : digits
+    if (local.length === 10) return `+1 (${local.slice(0,3)}) ${local.slice(3,6)}-${local.slice(6)}`
     return phone
   }
 
@@ -110,7 +110,7 @@ export default function ViewClientPage() {
         <div>
           <label className="block mb-3 text-lg font-bold">CONTACT</label>
           <div className={sectionClass}>
-            {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone)}</span></div>}
+            {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone, client.country)}</span></div>}
             {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
             {client.instagram && <div className={rowClass}><span className={labelClass}>INSTAGRAM</span><a href={`https://instagram.com/${client.instagram.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-400 hover:text-blue-300">{client.instagram.startsWith('@') ? client.instagram : `@${client.instagram}`}</a></div>}
             {client.preferred_message_method && <div className={rowClass}><span className={labelClass}>PREFERRED MESSAGE METHOD</span><span className="font-bold">{client.preferred_message_method}</span></div>}
