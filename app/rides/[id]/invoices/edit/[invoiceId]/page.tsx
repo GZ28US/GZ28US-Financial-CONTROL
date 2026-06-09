@@ -5,7 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { enrollParts } from '@/lib/partsDb'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string }
@@ -451,7 +451,7 @@ export default function EditInvoicePage() {
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-      const response = await fetch('/api/scan-receipt', {
+      const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true }),
@@ -519,7 +519,7 @@ export default function EditInvoicePage() {
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-      const response = await fetch('/api/scan-receipt', {
+      const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType: file.type, mode: 'payment' }),
@@ -1547,7 +1547,7 @@ export default function EditInvoicePage() {
       const payload: any = { body: caption }
       if (inc.receipt_url) { payload.documentUrl = inc.receipt_url; payload.filename = `income-${invoiceCode}.${inc.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}` }
       try {
-        const res = await fetch('/api/whatsapp', {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -1579,7 +1579,7 @@ export default function EditInvoicePage() {
       const payload: any = { body: caption }
       if (exp.receipt_url) { payload.documentUrl = exp.receipt_url; payload.filename = `expense-${invoiceCode}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}` }
       try {
-        const res = await fetch('/api/whatsapp', {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -2710,7 +2710,7 @@ export default function EditInvoicePage() {
             <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
             <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">FINAL PROFIT RESULT</span><span className={`font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
           </div>
-          <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
+          <a href={`${BASE_PATH}${basePath}`} className="text-gray-400 text-xl">Cancel</a>
           <button onClick={saveInvoice} className="flex-1 bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         </div>
       </div>

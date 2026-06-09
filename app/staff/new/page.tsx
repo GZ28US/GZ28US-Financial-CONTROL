@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 export default function NewStaffPage() {
   const router = useRouter()
@@ -65,7 +66,7 @@ export default function NewStaffPage() {
           SAVE STAFF MEMBER
         </button>
 
-        <a href="/staff" className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/staff`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

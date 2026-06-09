@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 import Header from '@/components/Header'
 
 const usaStates = [
@@ -115,7 +116,7 @@ export default function EditClientPage() {
       return
     }
 
-    window.location.href = '/clients'
+    window.location.href = `${BASE_PATH}/clients`
   }
 
   const stateOptions =
@@ -142,7 +143,7 @@ export default function EditClientPage() {
         </h2>
 
         <a
-          href="/clients"
+          href={`${BASE_PATH}/clients`}
           className="text-gray-400 text-xl"
         >
           Back to Clients
@@ -302,7 +303,7 @@ export default function EditClientPage() {
         </button>
 
         <a
-          href="/clients"
+          href={`${BASE_PATH}/clients`}
           className="text-gray-400 text-xl"
         >
           Cancel

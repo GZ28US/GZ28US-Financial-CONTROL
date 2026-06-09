@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 export default function EditStaffPage() {
   const params = useParams()
@@ -102,7 +103,7 @@ export default function EditStaffPage() {
           SAVE CHANGES
         </button>
 
-        <a href="/staff" className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/staff`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

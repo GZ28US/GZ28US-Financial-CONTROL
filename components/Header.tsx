@@ -1,5 +1,18 @@
 'use client'
 
+import { BASE_PATH } from '@/lib/utils'
+
+const NAV: [string, string][] = [
+  ['/', 'HOME'],
+  ['/clients', 'CLIENTS'],
+  ['/rides', 'RIDES'],
+  ['/staff', 'STAFF'],
+  ['/goods', 'GOODS'],
+  ['/parts', 'PARTS'],
+  ['/inputs', 'INPUTS'],
+  ['/suppliers', 'SUPPLIERS'],
+]
+
 export default function Header() {
   return (
     <div className="mb-10">
@@ -8,30 +21,15 @@ export default function Header() {
       </h1>
 
       <div className="flex gap-2 flex-wrap">
-        <a href="/" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          HOME
-        </a>
-        <a href="/clients" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          CLIENTS
-        </a>
-        <a href="/rides" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          RIDES
-        </a>
-        <a href="/staff" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          STAFF
-        </a>
-        <a href="/goods" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          GOODS
-        </a>
-        <a href="/parts" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          PARTS
-        </a>
-        <a href="/inputs" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          INPUTS
-        </a>
-        <a href="/suppliers" className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold">
-          SUPPLIERS
-        </a>
+        {NAV.map(([href, label]) => (
+          <a
+            key={href}
+            href={`${BASE_PATH}${href === '/' ? '' : href}`}
+            className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold"
+          >
+            {label}
+          </a>
+        ))}
       </div>
     </div>
   )

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { enrollParts } from '@/lib/partsDb'
 
 type Part = {
@@ -86,7 +86,7 @@ export default function PartsPage() {
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-      const res = await fetch('/api/scan-receipt', {
+      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true }),
@@ -150,7 +150,7 @@ export default function PartsPage() {
       {supplierFilter && (
         <div className="mb-4 flex items-center gap-3 flex-wrap">
           <span className="px-4 py-2 rounded-2xl bg-gray-800 text-base font-bold">Supplier: {supplierFilter.name}</span>
-          <a href="/parts" className="text-blue-400 hover:text-blue-300 font-bold">show all parts</a>
+          <a href={`${BASE_PATH}/parts`} className="text-blue-400 hover:text-blue-300 font-bold">show all parts</a>
         </div>
       )}
 

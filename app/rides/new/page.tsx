@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 import {
   years,
   manufacturersByYear,
@@ -270,7 +271,7 @@ export default function NewRidePage() {
         </div>
 
         <button onClick={saveRide} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE RIDE</button>
-        <a href="/rides" className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/rides`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

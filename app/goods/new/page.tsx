@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 type Expense = {
   description: string
@@ -260,7 +261,7 @@ export default function NewGoodPage() {
         payload.filename = `good-${exp.supplier || 'purchase'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
       }
       try {
-        const res = await fetch('/api/whatsapp', {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -515,7 +516,7 @@ export default function NewGoodPage() {
         </div>
 
         <button onClick={saveGood} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE GOOD</button>
-        <a href="/goods" className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/goods`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

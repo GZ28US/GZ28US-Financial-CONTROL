@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 export default function EditSeasonPage() {
   const params = useParams()
@@ -128,7 +129,7 @@ export default function EditSeasonPage() {
           SAVE CHANGES
         </button>
 
-        <a href={`/staff/${staffId}/seasons`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/staff/${staffId}/seasons`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

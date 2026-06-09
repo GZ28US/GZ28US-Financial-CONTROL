@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 import Header from '@/components/Header'
 
 const usaStates = [
@@ -132,7 +133,7 @@ export default function NewClientPage() {
       return
     }
 
-    window.location.href = '/clients'
+    window.location.href = `${BASE_PATH}/clients`
   }
 
   const stateOptions = form.country === 'USA' ? usaStates : brazilStates
@@ -263,7 +264,7 @@ export default function NewClientPage() {
           SAVE CLIENT
         </button>
 
-        <a href="/clients" className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/clients`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

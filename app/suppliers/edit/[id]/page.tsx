@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 
@@ -88,7 +89,7 @@ export default function EditSupplierPage() {
 
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
         <div className="max-w-2xl mx-auto px-8 flex items-center gap-6">
-          <a href="/suppliers" className="text-gray-400 text-xl">Cancel</a>
+          <a href={`${BASE_PATH}/suppliers`} className="text-gray-400 text-xl">Cancel</a>
           <button onClick={save} disabled={saving} className={`flex-1 px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
             {saving ? 'SAVING...' : 'SAVE CHANGES'}
           </button>

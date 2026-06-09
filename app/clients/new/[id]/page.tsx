@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 const usaStates = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -91,7 +92,7 @@ export default function EditClientPage({
       return
     }
 
-    window.location.href = '/clients'
+    window.location.href = `${BASE_PATH}/clients`
   }
 
   const stateOptions =
@@ -224,7 +225,7 @@ export default function EditClientPage({
         </button>
 
         <a
-          href="/clients"
+          href={`${BASE_PATH}/clients`}
           className="text-gray-400 text-xl"
         >
           Cancel

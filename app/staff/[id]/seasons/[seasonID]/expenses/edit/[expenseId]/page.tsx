@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 const expenseTypes = ['DAILY', 'WEEKLY', 'MONTHLY', 'SINGLE']
 const expenseSources = ['Regions', 'Cash', 'GZ28BR', 'Humberto']
@@ -203,7 +204,7 @@ export default function EditExpensePage() {
           SAVE CHANGES
         </button>
 
-        <a href={`/staff/${staffId}/seasons/${seasonID}/expenses`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/staff/${staffId}/seasons/${seasonID}/expenses`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

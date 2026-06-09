@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -225,7 +226,7 @@ export default function EditInputPage() {
         </div>
 
         <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
-        <a href="/inputs" className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/inputs`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

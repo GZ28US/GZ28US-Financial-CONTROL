@@ -5,6 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 
@@ -258,7 +259,7 @@ export default function NewInvoicePage() {
         <button onClick={createInvoice} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">
           {saving ? 'CREATING...' : `CREATE ${noun}`}
         </button>
-        <a href={basePath} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}${basePath}`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

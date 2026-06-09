@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 import {
   years,
   manufacturersByYear,
@@ -308,7 +309,7 @@ export default function EditRidePage() {
         <button onClick={saveChanges} disabled={saving} className={`px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
           {saving ? 'SAVING...' : 'SAVE CHANGES'}
         </button>
-        <a href={`/rides/${rideId}`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/rides/${rideId}`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 const expenseTypes = ['DAILY', 'WEEKLY', 'MONTHLY', 'SINGLE']
 const expenseSources = ['Regions', 'Cash', 'GZ28BR', 'Humberto']
@@ -161,7 +162,7 @@ export default function NewExpensePage() {
         payload.filename = `staff-${exp.supplier || 'expense'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
       }
       try {
-        const res = await fetch('/api/whatsapp', {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -300,7 +301,7 @@ export default function NewExpensePage() {
           SAVE EXPENSE
         </button>
 
-        <a href={`/staff/${staffId}/seasons/${seasonID}/expenses`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}/staff/${staffId}/seasons/${seasonID}/expenses`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

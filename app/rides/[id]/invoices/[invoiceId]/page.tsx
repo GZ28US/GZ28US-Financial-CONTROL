@@ -5,7 +5,7 @@ import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { formatUSD, BASE_PATH } from '@/lib/utils'
 
 type Invoice = {
   id: string
@@ -307,7 +307,7 @@ export default function ViewInvoicePage() {
         setSending(false)
         return
       }
-      const res = await fetch('/api/whatsapp', {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to, body: caption, documentUrl: pdfUrl, filename: fname }),
@@ -428,10 +428,10 @@ export default function ViewInvoicePage() {
       {/* PRINT PAGE */}
       <div className="print-page" ref={printPageRef}>
         <div className="pi">
-          <img src="/logo_gz28.jpg" className="pi-watermark" alt="" aria-hidden="true" />
+          <img src={`${BASE_PATH}/logo_gz28.jpg`} className="pi-watermark" alt="" aria-hidden="true" />
           <div className="pi-content">
             <div className="pi-header">
-              <img src="/logo_gz28.jpg" className="pi-logo" alt="GZ28 Logo" />
+              <img src={`${BASE_PATH}/logo_gz28.jpg`} className="pi-logo" alt="GZ28 Logo" />
               <div className="pi-company">
                 <div className="pi-company-name">GZ28 V8 SpeedShop USA LLC</div>
                 <div className="pi-company-sub">11320 Space Blvd, 32837, Orlando / FL</div>

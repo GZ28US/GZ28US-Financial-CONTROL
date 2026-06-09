@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 type Good = {
   id: string
@@ -170,7 +171,7 @@ export default function GoodsPage() {
         reader.readAsDataURL(file)
       })
 
-      const response = await fetch('/api/scan-receipt', {
+      const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType: file.type }),
@@ -293,7 +294,7 @@ export default function GoodsPage() {
         payload.filename = `good-${exp.supplier || 'purchase'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
       }
       try {
-        const res = await fetch('/api/whatsapp', {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
