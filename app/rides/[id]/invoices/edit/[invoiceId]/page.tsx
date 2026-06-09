@@ -931,6 +931,10 @@ export default function EditInvoicePage() {
   // Owed amount NOT covered by any listed payment (paid or pending): all listed
   // payments minus the grand total. Negative = still owed once pending clears.
   const pendingBalance = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - grandTotal
+  // ONLINE is allowed only when fully settled: BALANCE >= 0 (TOTAL PAID covers the
+  // grand total) AND no PENDING BALANCE still owed (>= 0). Otherwise locked OFFLINE.
+  const canBeOnline = balance >= 0 && pendingBalance >= 0
+  const feedOnline = feedStatus === 'REAL_TIME' && canBeOnline
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
   const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
@@ -1209,7 +1213,7 @@ export default function EditInvoicePage() {
       delivery_date: isValidDate(deliveryDate) ? deliveryDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
-      feed_status: feedStatus === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE',
+      feed_status: feedOnline ? 'REAL_TIME' : 'INCOMPLETE',
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
@@ -2034,13 +2038,17 @@ export default function EditInvoicePage() {
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">FEED STATUS</p>
-            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as ONLINE once it is fully up to date.</p>
+            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as ONLINE once it is fully up to date.{!canBeOnline ? ' Locked OFFLINE until the BALANCE and PENDING BALANCE are settled.' : ''}</p>
           </div>
           <button
-            onClick={() => setFeedStatus(feedStatus === 'REAL_TIME' ? 'INCOMPLETE' : 'REAL_TIME')}
-            className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedStatus === 'REAL_TIME' ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'}`}
+            onClick={() => {
+              if (feedOnline) { setFeedStatus('INCOMPLETE'); return }
+              if (!canBeOnline) { alert('This invoice can be ONLINE only when it is fully paid (BALANCE ≥ 0) and has no PENDING BALANCE owed. Settle those first.'); return }
+              setFeedStatus('REAL_TIME')
+            }}
+            className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedOnline ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'} ${!canBeOnline && !feedOnline ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
-            {feedStatus === 'REAL_TIME' ? 'ONLINE' : 'OFFLINE'}
+            {feedOnline ? 'ONLINE' : 'OFFLINE'}
           </button>
         </div>
 
