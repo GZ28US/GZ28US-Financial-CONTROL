@@ -38,7 +38,7 @@ type Client = {
 
 type Part = { id: string; description: string; unit_price: number; quantity: number }
 type Service = { id: string; description: string; price: number }
-type Payment = { id: string; amount: number; payment_date: string | null; source: string | null; description: string | null; paid_at: string | null }
+type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; description: string | null; paid_at: string | null }
 type Note = { id: string; note: string }
 type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null }
 
@@ -771,7 +771,7 @@ export default function ViewInvoicePage() {
                     <div key={payment.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <div>
                         <p className={`text-base font-bold ${isPaid ? '' : 'text-yellow-400'}`}>{formatUSD(payment.amount)}{!isPaid ? ' — PENDING' : ''}</p>
-                        <p className="text-sm text-gray-400">{payment.source || ''}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                        <p className="text-sm text-gray-400">{payment.source || ''}{payment.source === 'GZ28BR' && payment.amount_brl ? ` · R$ ${(Number(payment.amount_brl) || 0).toFixed(2)}` : ''}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
                         {payment.description && <p className="text-sm text-gray-500">{payment.description}</p>}
                       </div>
                     </div>
