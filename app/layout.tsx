@@ -8,11 +8,11 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'GZ28US Financial CONTROL',
     description: 'GZ28 V8 SpeedShop USA LLC — Financial Control',
-    url: 'https://gz28-speedshop-control.vercel.app',
+    url: 'https://www.gz28us.com/fcs',
     siteName: 'GZ28US Financial CONTROL',
     images: [
       {
-        url: 'https://gz28-speedshop-control.vercel.app/logo_gz28.jpg',
+        url: 'https://www.gz28us.com/fcs/logo_gz28.jpg',
         width: 1200,
         height: 630,
         alt: 'GZ28 V8 SpeedShop',
