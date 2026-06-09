@@ -928,6 +928,9 @@ export default function EditInvoicePage() {
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
+  // Owed amount NOT covered by any listed payment (paid or pending): all listed
+  // payments minus the grand total. Negative = still owed once pending clears.
+  const pendingBalance = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - grandTotal
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
   const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
@@ -2602,6 +2605,10 @@ export default function EditInvoicePage() {
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
               <span className="text-gray-400 font-bold">TOTAL PAID</span>
               <span className="text-xl font-bold">{formatUSD(totalPaid)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400 font-bold">PENDING BALANCE</span>
+              <span className={`text-xl font-bold ${pendingBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(pendingBalance)}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="font-bold text-lg">BALANCE</span>
