@@ -58,6 +58,8 @@ const FULL_PROJECT_LABOR = 'Full Project Labor'
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+// Like isNumeric but allows a leading minus, for expense amounts (credits/refunds).
+function isSignedNumeric(v: string) { return v === '' || v === '-' || /^-?\d*\.?\d*$/.test(v) }
 function isTodayOrPast(dateStr: string) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -2095,7 +2097,7 @@ export default function EditInvoicePage() {
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                 <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
                 </div>
               </div>
               <div className="w-24"><label className="block mb-1 text-sm text-gray-400">QTY</label>
@@ -2180,7 +2182,7 @@ export default function EditInvoicePage() {
                                     <input type="text" inputMode="decimal" value={editingGroupItem.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, quantity: e.target.value }) }} className={`${smallInputClass} w-14 text-center`} placeholder="Qty" />
                                     <div className="relative w-24">
                                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-7`} placeholder="0.00" />
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-7`} placeholder="0.00" />
                                     </div>
                                     <div className="relative w-24">
                                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Tax$</span>
@@ -2242,7 +2244,7 @@ export default function EditInvoicePage() {
                             <div className="flex gap-3">
                               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                                 <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                  <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
+                                  <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
                                 </div>
                               </div>
                               <div className="w-24"><label className="block mb-1 text-sm text-gray-400">QTY</label>
