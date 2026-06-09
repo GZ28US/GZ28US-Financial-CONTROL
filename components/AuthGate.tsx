@@ -1,0 +1,87 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+
+// Wraps the whole app. When signed out it shows a login screen; when signed in
+// it renders the app. No public sign-up — accounts are created in the Supabase
+// dashboard. No roles yet: any signed-in user has full access.
+export default function AuthGate({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<'loading' | 'in' | 'out'>('loading')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    let mounted = true
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setStatus(data.session ? 'in' : 'out')
+    })
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setStatus(session ? 'in' : 'out')
+    })
+    return () => { mounted = false; sub.subscription.unsubscribe() }
+  }, [])
+
+  async function login(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError('')
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+    if (error) setError(error.message)
+    setSubmitting(false)
+    // onAuthStateChange flips status to 'in' on success.
+  }
+
+  if (status === 'loading') {
+    return <div className="min-h-screen bg-black" />
+  }
+
+  if (status === 'out') {
+    return (
+      <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+        <form onSubmit={login} className="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-3xl p-8 flex flex-col gap-5">
+          <div className="text-center mb-2">
+            <h1 className="text-3xl font-bold">GZ28US</h1>
+            <p className="text-gray-400 mt-1">Financial Control System</p>
+          </div>
+          <div>
+            <label className="block mb-2 text-sm font-bold text-gray-400">EMAIL</label>
+            <input
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
+              placeholder="you@example.com"
+              required
+            />
+          </div>
+          <div>
+            <label className="block mb-2 text-sm font-bold text-gray-400">PASSWORD</label>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
+              placeholder="••••••••"
+              required
+            />
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold"
+          >
+            {submitting ? 'SIGNING IN…' : 'SIGN IN'}
+          </button>
+        </form>
+      </main>
+    )
+  }
+
+  return <>{children}</>
+}

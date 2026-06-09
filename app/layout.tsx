@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import AuthGate from '@/components/AuthGate'
 
 export const metadata: Metadata = {
   title: 'GZ28US Financial CONTROL',
@@ -28,7 +29,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body><AuthGate>{children}</AuthGate></body>
     </html>
   )
 }

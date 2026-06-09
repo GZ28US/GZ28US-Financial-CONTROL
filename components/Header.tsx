@@ -1,6 +1,7 @@
 'use client'
 
 import { BASE_PATH } from '@/lib/utils'
+import { supabase } from '@/lib/supabase'
 
 const NAV: [string, string][] = [
   ['/', 'HOME'],
@@ -30,6 +31,12 @@ export default function Header() {
             {label}
           </a>
         ))}
+        <button
+          onClick={() => supabase.auth.signOut()}
+          className="bg-gray-900 hover:bg-red-800 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold"
+        >
+          SIGN OUT
+        </button>
       </div>
     </div>
   )
