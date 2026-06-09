@@ -2748,7 +2748,7 @@ export default function EditInvoicePage() {
         <div className="max-w-2xl mx-auto px-8 flex items-center gap-4">
           <div className="shrink-0 text-xs leading-tight">
             <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
-            <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">FINAL PROFIT RESULT</span><span className={`font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+            <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">FINAL MARKUP</span><span className={`font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
           </div>
           <a href={`${BASE_PATH}${basePath}`} className="text-gray-400 text-xl">Cancel</a>
           <button onClick={saveInvoice} className="flex-1 bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>

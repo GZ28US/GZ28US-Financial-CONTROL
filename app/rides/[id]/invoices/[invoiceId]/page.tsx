@@ -848,7 +848,7 @@ export default function ViewInvoicePage() {
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className={labelClass}>TOTAL PAID</span><span className="font-bold">{formatUSD(expensesTotalPaid)}</span></div>
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span></div>
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
-                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">FINAL PROFIT RESULT</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">FINAL MARKUP</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
               </div>
             </div>
           )}

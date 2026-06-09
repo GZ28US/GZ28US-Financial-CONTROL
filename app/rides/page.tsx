@@ -293,7 +293,7 @@ export default function RidesPage() {
                       CURRENT CASH FLOW: {formatUSD(ride._currentProfit)} / {ride._currentProfitPct.toFixed(1)}%
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-                      FINAL PROFIT RESULT: {formatUSD(ride._finalProfit)} / {ride._finalProfitPct.toFixed(1)}%
+                      FINAL MARKUP: {formatUSD(ride._finalProfit)} / {ride._finalProfitPct.toFixed(1)}%
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
                       DUE by CLIENT: {formatUSD(ride._paymentsBalance)}
