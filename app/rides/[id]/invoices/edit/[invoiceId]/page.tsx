@@ -931,9 +931,9 @@ export default function EditInvoicePage() {
   // Owed amount NOT covered by any listed payment (paid or pending): all listed
   // payments minus the grand total. Negative = still owed once pending clears.
   const pendingBalance = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - grandTotal
-  // ONLINE is allowed only when fully settled: BALANCE >= 0 (TOTAL PAID covers the
-  // grand total) AND no PENDING BALANCE still owed (>= 0). Otherwise locked OFFLINE.
-  const canBeOnline = balance >= 0 && pendingBalance >= 0
+  // ONLINE is allowed only when there's no PENDING BALANCE still owed (>= 0).
+  // While a pending balance is owed (negative), the invoice is locked OFFLINE.
+  const canBeOnline = pendingBalance >= 0
   const feedOnline = feedStatus === 'REAL_TIME' && canBeOnline
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
@@ -2038,12 +2038,12 @@ export default function EditInvoicePage() {
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">FEED STATUS</p>
-            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as ONLINE once it is fully up to date.{!canBeOnline ? ' Locked OFFLINE until the BALANCE and PENDING BALANCE are settled.' : ''}</p>
+            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as ONLINE once it is fully up to date.{!canBeOnline ? ' Locked OFFLINE until the PENDING BALANCE is settled.' : ''}</p>
           </div>
           <button
             onClick={() => {
               if (feedOnline) { setFeedStatus('INCOMPLETE'); return }
-              if (!canBeOnline) { alert('This invoice can be ONLINE only when it is fully paid (BALANCE ≥ 0) and has no PENDING BALANCE owed. Settle those first.'); return }
+              if (!canBeOnline) { alert('This invoice can be ONLINE only when it has no PENDING BALANCE owed. Settle it first.'); return }
               setFeedStatus('REAL_TIME')
             }}
             className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedOnline ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'} ${!canBeOnline && !feedOnline ? 'opacity-60 cursor-not-allowed' : ''}`}
