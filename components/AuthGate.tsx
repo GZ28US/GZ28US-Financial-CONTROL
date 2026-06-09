@@ -7,13 +7,19 @@ import { supabase } from '@/lib/supabase'
 // it renders the app. No public sign-up — accounts are created in the Supabase
 // dashboard. No roles yet: any signed-in user has full access.
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<'loading' | 'in' | 'out'>('loading')
+  const [status, setStatus] = useState<'loading' | 'in' | 'out' | 'public'>('loading')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
+    // The public marketing landing lives at the bare domain root (outside /fcs);
+    // it must NOT require login.
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/fcs')) {
+      setStatus('public')
+      return
+    }
     let mounted = true
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) setStatus(data.session ? 'in' : 'out')
@@ -36,6 +42,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (status === 'loading') {
     return <div className="min-h-screen bg-black" />
+  }
+
+  // Public pages (the landing) render without the login gate.
+  if (status === 'public') {
+    return <>{children}</>
   }
 
   if (status === 'out') {
