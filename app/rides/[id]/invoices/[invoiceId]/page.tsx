@@ -346,6 +346,10 @@ export default function ViewInvoicePage() {
   // included in both the global and paid expense totals.
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
+  // R$ (BRL) incomes: when any payment was paid via GZ28BR, the PDF shows a
+  // second amount column with the recorded R$ values.
+  const hasBrlIncome = payments.some(p => Number(p.amount_brl) > 0)
+  const totalPaidBrl = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (Number(p.amount_brl) || 0), 0)
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(invoice.fl_tax_expense_date)
   const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
@@ -526,10 +530,11 @@ export default function ViewInvoicePage() {
               <div className="pi-sec-title">Payments</div>
               <table className="pi-table">
                 <thead><tr>
-                  <th style={{width:'16%'}}>Date</th>
-                  <th style={{width:'22%'}}>Source</th>
-                  <th style={{width:'42%'}}>Description</th>
-                  <th className="r" style={{width:'20%'}}>Amount</th>
+                  <th style={{width: hasBrlIncome ? '14%' : '16%'}}>Date</th>
+                  <th style={{width: hasBrlIncome ? '18%' : '22%'}}>Source</th>
+                  <th style={{width: hasBrlIncome ? '34%' : '42%'}}>Description</th>
+                  <th className="r" style={{width: hasBrlIncome ? '17%' : '20%'}}>Amount{hasBrlIncome ? ' (US$)' : ''}</th>
+                  {hasBrlIncome && <th className="r" style={{width:'17%'}}>Amount (R$)</th>}
                 </tr></thead>
                 <tbody>
                   {payments.map(p => (
@@ -538,10 +543,11 @@ export default function ViewInvoicePage() {
                       <td>{p.source || '—'}</td>
                       <td>{p.description || '—'}</td>
                       <td className="r">{formatUSD(p.amount)}</td>
+                      {hasBrlIncome && <td className="r">{Number(p.amount_brl) > 0 ? `R$ ${Number(p.amount_brl).toFixed(2)}` : '—'}</td>}
                     </tr>
                   ))}
-                  <tr className="pi-pay-subtotal"><td colSpan={3} className="r">Total Paid</td><td className="r">{formatUSD(totalPaid)}</td></tr>
-                  <tr className="pi-balance"><td colSpan={3} className="r">Balance</td><td className="r">{balance === 0 ? '$ —' : formatUSD(balance)}</td></tr>
+                  <tr className="pi-pay-subtotal"><td colSpan={3} className="r">Total Paid</td><td className="r">{formatUSD(totalPaid)}</td>{hasBrlIncome && <td className="r">{`R$ ${totalPaidBrl.toFixed(2)}`}</td>}</tr>
+                  <tr className="pi-balance"><td colSpan={3} className="r">Balance</td><td className="r">{balance === 0 ? '$ —' : formatUSD(balance)}</td>{hasBrlIncome && <td className="r"></td>}</tr>
                 </tbody>
               </table>
             </div>}
