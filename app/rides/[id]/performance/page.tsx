@@ -43,7 +43,7 @@ function applyLoss(wheel: string, loss: string): number | null {
   return Math.round((w / denom) * 100) / 100
 }
 
-type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null }
+type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null }
 
 function DynoSection({ rideId }: { rideId: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
@@ -54,6 +54,8 @@ function DynoSection({ rideId }: { rideId: string }) {
   const editBhp = applyLoss(editForm.whp, editForm.loss)
   const editBnm = applyLoss(editForm.wnm, editForm.loss)
   const [scanning, setScanning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [scannedFile, setScannedFile] = useState<File | null>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
 
   async function handleScanFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -81,6 +83,7 @@ function DynoSection({ rideId }: { rideId: string }) {
         dyear: m ? m[1] : f.dyear,
         dyno: data.dyno || f.dyno,
       }))
+      setScannedFile(file)
     } catch (err) {
       alert('Scan failed: ' + String(err))
     } finally {
@@ -103,21 +106,37 @@ function DynoSection({ rideId }: { rideId: string }) {
 
   async function addPull() {
     if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
-    const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
-    const { error } = await supabase.from('dyno_pulls').insert([{
-      ride_id: rideId,
-      pack: form.pack.trim() || null,
-      whp: form.whp ? parseFloat(form.whp) : null,
-      wnm: form.wnm ? parseFloat(form.wnm) : null,
-      loss_pct: form.loss ? parseFloat(form.loss) : null,
-      bhp: applyLoss(form.whp, form.loss),
-      bnm: applyLoss(form.wnm, form.loss),
-      pull_date: pullDate,
-      dyno: form.dyno || null,
-    }])
-    if (error) { alert(error.message); return }
-    setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
-    load()
+    setSaving(true)
+    try {
+      let documentUrl: string | null = null
+      if (scannedFile) {
+        const ext = scannedFile.name.split('.').pop() || 'pdf'
+        const path = `dyno/${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage.from('dyno-charts').upload(path, scannedFile, { upsert: true })
+        if (upErr) { alert('Document upload failed: ' + upErr.message); return }
+        const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
+        documentUrl = urlData.publicUrl
+      }
+      const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
+      const { error } = await supabase.from('dyno_pulls').insert([{
+        ride_id: rideId,
+        pack: form.pack.trim() || null,
+        whp: form.whp ? parseFloat(form.whp) : null,
+        wnm: form.wnm ? parseFloat(form.wnm) : null,
+        loss_pct: form.loss ? parseFloat(form.loss) : null,
+        bhp: applyLoss(form.whp, form.loss),
+        bnm: applyLoss(form.wnm, form.loss),
+        pull_date: pullDate,
+        dyno: form.dyno || null,
+        document_url: documentUrl,
+      }])
+      if (error) { alert(error.message); return }
+      setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+      setScannedFile(null)
+      load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function removePull(id: string) {
@@ -205,7 +224,7 @@ function DynoSection({ rideId }: { rideId: string }) {
         </div>
         <div>
           <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">ADD</label>
-          <button onClick={addPull} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PULL</button>
+          <button onClick={addPull} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{saving ? 'SAVING…' : '+ ADD PULL'}</button>
         </div>
         <div>
           <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">SCAN</label>
@@ -213,6 +232,12 @@ function DynoSection({ rideId }: { rideId: string }) {
           <input ref={scanInputRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleScanFile} />
         </div>
       </div>
+
+      {scannedFile && (
+        <p className="text-sm text-purple-300 mb-4">📎 Chart attached: <span className="font-bold">{scannedFile.name}</span> — saved with this pull on ADD.
+          <button onClick={() => setScannedFile(null)} className="ml-2 text-gray-400 hover:text-gray-200 underline">remove</button>
+        </p>
+      )}
 
       {/* Pulls table */}
       {loading ? (
@@ -232,6 +257,7 @@ function DynoSection({ rideId }: { rideId: string }) {
                 <th className="py-2 pr-4 font-bold">BNM</th>
                 <th className="py-2 pr-4 font-bold">DATE</th>
                 <th className="py-2 pr-4 font-bold">DYNO</th>
+                <th className="py-2 pr-4 font-bold">DOC</th>
                 <th className="py-2"></th>
               </tr>
             </thead>
@@ -265,6 +291,7 @@ function DynoSection({ rideId }: { rideId: string }) {
                       {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </td>
+                  <td className="py-2 pr-2">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>
                   <td className="py-2 text-right">
                     <div className="flex gap-1 justify-end">
                       <button onClick={() => saveEdit(p.id)} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm">SAVE</button>
@@ -282,6 +309,7 @@ function DynoSection({ rideId }: { rideId: string }) {
                   <td className="py-3 pr-4">{p.bnm != null ? `${p.bnm.toFixed(2)} N·m` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
                   <td className="py-3 pr-4">{p.dyno || '—'}</td>
+                  <td className="py-3 pr-4">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>
                   <td className="py-3 text-right">
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
