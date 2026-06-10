@@ -20,6 +20,15 @@ const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0')
 const YEARS = Array.from({ length: new Date().getFullYear() - 2025 + 1 }, (_, i) => String(2025 + i))
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+// Normalize a stored phone string into the digits-only form UltraMsg expects.
+// US default: a bare 10-digit number gets a leading 1. Numbers that already
+// include a country code are passed through.
+function toWaNumber(phone: string | null | undefined): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) return '1' + digits
+  return digits
+}
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader()
@@ -57,6 +66,18 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
   const [saving, setSaving] = useState(false)
   const [scannedFile, setScannedFile] = useState<File | null>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
+  const [client, setClient] = useState<{ name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
+  const [sendingId, setSendingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    (async () => {
+      const { data: rideRow } = await supabase.from('rides').select('client_id').eq('id', rideId).single()
+      if (rideRow?.client_id) {
+        const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method').eq('id', rideRow.client_id).single()
+        if (c) setClient(c as typeof client)
+      }
+    })()
+  }, [])
 
   async function handleScanFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -212,6 +233,71 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     load()
   }
 
+  function pullReport(p: DynoPull): string {
+    return [
+      '🏁 *DYNO PULL*',
+      rideTitle ? `*Ride:* ${rideTitle}` : null,
+      p.pack ? `*Pack:* ${p.pack}` : null,
+      p.whp != null ? `*WHP:* ${p.whp.toFixed(2)}` : null,
+      p.wnm != null ? `*WNM:* ${p.wnm.toFixed(2)} N·m` : null,
+      p.loss_pct != null ? `*Loss:* ${p.loss_pct}%` : null,
+      p.bhp != null ? `*BHP:* ${p.bhp.toFixed(2)}` : null,
+      p.bnm != null ? `*BNM:* ${p.bnm.toFixed(2)} N·m` : null,
+      p.pull_date ? `*Date:* ${fmtDate(p.pull_date)}` : null,
+      p.dyno ? `*Dyno:* ${p.dyno}` : null,
+    ].filter(Boolean).join('\n')
+  }
+
+  async function sendPull(p: DynoPull) {
+    if (!client) { alert('This ride has no client on file to send to. Assign a client on the ride page first.'); return }
+    const method = client.preferred_message_method || 'WhatsApp'
+    const report = pullReport(p)
+    const plain = report.replace(/\*/g, '') + (p.document_url ? `\n\nChart: ${p.document_url}` : '')
+
+    if (method === 'WhatsApp') {
+      const to = toWaNumber(client.phone)
+      if (!to) { alert('This client has no phone number for WhatsApp.\nAdd a phone on the client page, or change their preferred method to SMS / E-Mail.'); return }
+      setSendingId(p.id)
+      try {
+        const payload: { to: string; body: string; documentUrl?: string; filename?: string } = { to, body: report }
+        if (p.document_url) {
+          payload.documentUrl = p.document_url
+          payload.filename = `dyno-chart.${(p.document_url.split('?')[0].split('.').pop() || 'pdf')}`
+        }
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!data.ok) {
+          const detailErr = data?.detail?.error
+          alert('WhatsApp send failed:\n' + (typeof detailErr === 'object' ? JSON.stringify(detailErr) : String(detailErr || data?.error || `HTTP ${res.status}`)))
+          return
+        }
+        alert(`Report sent to ${client.name || 'client'} via WhatsApp.`)
+      } finally {
+        setSendingId(null)
+      }
+      return
+    }
+
+    if (method === 'SMS') {
+      window.location.href = `sms:${client.phone || ''}?&body=${encodeURIComponent(plain)}`
+      return
+    }
+
+    if (method === 'E-Mail') {
+      const subject = `Dyno Pull${rideTitle ? ` — ${rideTitle}` : ''}`
+      window.location.href = `mailto:${client.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
+      return
+    }
+
+    // Instagram or any non-automated method: copy the text for manual paste.
+    try { await navigator.clipboard.writeText(plain) } catch { /* clipboard may be blocked */ }
+    alert(`This client prefers ${method}, which can't be sent automatically.\nThe report was copied to your clipboard — paste it into ${method}.`)
+  }
+
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
   const editInput = 'bg-gray-800 border border-gray-700 rounded-xl px-2 py-1 text-base'
 
@@ -350,6 +436,7 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                       <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                      <button onClick={() => sendPull(p)} disabled={sendingId === p.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-1 rounded-xl font-bold text-sm">{sendingId === p.id ? 'SENDING…' : 'SEND'}</button>
                     </div>
                   </td>
                 </tr>
