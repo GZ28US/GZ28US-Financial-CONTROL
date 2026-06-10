@@ -563,6 +563,8 @@ export default function ExpensesPage() {
                 </div>
 
                 <div className="flex gap-3 flex-wrap shrink-0 items-center">
+                  <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                  <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                   {receiptUrls.length > 0 && (
                     <div className="relative">
                       <button onClick={() => setOpenReceiptsId(openReceiptsId === expense.id ? null : expense.id)} className="bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded-xl font-bold text-sm">
@@ -577,8 +579,6 @@ export default function ExpensesPage() {
                       )}
                     </div>
                   )}
-                  <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                  <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                 </div>
               </div>
             )

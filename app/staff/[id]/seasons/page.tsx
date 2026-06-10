@@ -245,13 +245,6 @@ export default function SeasonsPage() {
 
                 <div className="flex gap-3 flex-wrap">
                   <Link
-                    href={`/staff/${staffId}/seasons/${season.id}/expenses`}
-                    className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold"
-                  >
-                    EXPENSES
-                  </Link>
-
-                  <Link
                     href={`/staff/${staffId}/seasons/edit/${season.id}`}
                     className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold"
                   >
@@ -264,6 +257,13 @@ export default function SeasonsPage() {
                   >
                     REMOVE
                   </button>
+
+                  <Link
+                    href={`/staff/${staffId}/seasons/${season.id}/expenses`}
+                    className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold"
+                  >
+                    EXPENSES
+                  </Link>
                 </div>
               </div>
             )
