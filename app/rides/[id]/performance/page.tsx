@@ -4,10 +4,130 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 
 const TABS = ['DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
+
+const DYNO_OPTIONS = ['DynoSolutions', 'GZ28U']
+
+function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+function fmtDate(d: string | null) {
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+type DynoPull = { id: string; pack: string | null; whp: number | null; bhp: number | null; pull_date: string | null; dyno: string | null }
+
+function DynoSection({ rideId }: { rideId: string }) {
+  const [pulls, setPulls] = useState<DynoPull[]>([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm] = useState({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28U' })
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    const { data } = await supabase
+      .from('dyno_pulls')
+      .select('*')
+      .eq('ride_id', rideId)
+      .order('pull_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+    setPulls((data || []) as DynoPull[])
+    setLoading(false)
+  }
+
+  async function addPull() {
+    if (!form.pack.trim() && !form.whp && !form.bhp) { alert('Enter at least a PACK or a power figure.'); return }
+    const { error } = await supabase.from('dyno_pulls').insert([{
+      ride_id: rideId,
+      pack: form.pack.trim() || null,
+      whp: form.whp ? parseFloat(form.whp) : null,
+      bhp: form.bhp ? parseFloat(form.bhp) : null,
+      pull_date: /^\d{4}-\d{2}-\d{2}$/.test(form.pull_date) ? form.pull_date : null,
+      dyno: form.dyno || null,
+    }])
+    if (error) { alert(error.message); return }
+    setForm({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28U' })
+    load()
+  }
+
+  async function removePull(id: string) {
+    if (!window.confirm('Remove this pull?')) return
+    const { error } = await supabase.from('dyno_pulls').delete().eq('id', id)
+    if (error) { alert(error.message); return }
+    setPulls(prev => prev.filter(p => p.id !== id))
+  }
+
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      {/* Add a pull */}
+      <div className="flex flex-wrap gap-3 items-end mb-6">
+        <div className="flex-1 min-w-[160px]">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">PACK</label>
+          <input value={form.pack} onChange={(e) => setForm({ ...form, pack: e.target.value })} className={inputClass} placeholder="e.g. Stage 2" />
+        </div>
+        <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">WHP</label>
+          <input value={form.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, whp: e.target.value }) }} className={inputClass} placeholder="0" />
+        </div>
+        <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">BHP</label>
+          <input value={form.bhp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, bhp: e.target.value }) }} className={inputClass} placeholder="0" />
+        </div>
+        <div className="min-w-[320px] flex-1">
+          <DatePicker label="DATE" value={form.pull_date} onChange={(v) => setForm({ ...form, pull_date: v })} />
+        </div>
+        <div className="min-w-[160px]">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">DYNO</label>
+          <select value={form.dyno} onChange={(e) => setForm({ ...form, dyno: e.target.value })} className={inputClass}>
+            {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <button onClick={addPull} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PULL</button>
+      </div>
+
+      {/* Pulls table */}
+      {loading ? (
+        <p className="text-lg text-gray-400">Loading...</p>
+      ) : pulls.length === 0 ? (
+        <p className="text-lg text-gray-400">No pulls recorded yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-gray-400 text-sm border-b border-gray-700">
+                <th className="py-2 pr-4 font-bold">PACK</th>
+                <th className="py-2 pr-4 font-bold">WHP</th>
+                <th className="py-2 pr-4 font-bold">BHP</th>
+                <th className="py-2 pr-4 font-bold">DATE</th>
+                <th className="py-2 pr-4 font-bold">DYNO</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {pulls.map((p) => (
+                <tr key={p.id} className="border-b border-gray-800">
+                  <td className="py-3 pr-4 font-bold">{p.pack || '—'}</td>
+                  <td className="py-3 pr-4">{p.whp != null ? `${p.whp} whp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp} bhp` : '—'}</td>
+                  <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
+                  <td className="py-3 pr-4">{p.dyno || '—'}</td>
+                  <td className="py-3 text-right">
+                    <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function RidePerformancePage() {
   const params = useParams()
@@ -46,10 +166,14 @@ export default function RidePerformancePage() {
         ))}
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
-        <h2 className="text-2xl font-bold mb-2">{tab}</h2>
-        <p className="text-xl text-gray-400">This section is under construction.</p>
-      </div>
+      {tab === 'DYNO' ? (
+        <DynoSection rideId={rideId} />
+      ) : (
+        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
+          <h2 className="text-2xl font-bold mb-2">{tab}</h2>
+          <p className="text-xl text-gray-400">This section is under construction.</p>
+        </div>
+      )}
     </main>
   )
 }
