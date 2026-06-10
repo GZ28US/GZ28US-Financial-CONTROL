@@ -77,7 +77,7 @@ function DynoSection({ rideId }: { rideId: string }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
       {/* Add a pull */}
-      <div className="flex flex-wrap gap-3 items-end mb-6">
+      <div className="flex flex-wrap gap-3 items-start mb-6">
         <div className="flex-1 min-w-[160px]">
           <label className="block mb-1 text-sm text-gray-400 font-bold">PACK</label>
           <input value={form.pack} onChange={(e) => setForm({ ...form, pack: e.target.value })} className={inputClass} placeholder="e.g. Stage 2" />
@@ -103,7 +103,10 @@ function DynoSection({ rideId }: { rideId: string }) {
             {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         </div>
-        <button onClick={addPull} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PULL</button>
+        <div>
+          <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">ADD</label>
+          <button onClick={addPull} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PULL</button>
+        </div>
       </div>
 
       {/* Pulls table */}
