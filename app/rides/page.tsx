@@ -306,8 +306,9 @@ export default function RidesPage() {
                 <div className="flex gap-3 flex-wrap shrink-0">
                   <Link href={`/rides/${ride.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                   <Link href={`/rides/edit/${ride.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                  <Link href={`/rides/${ride.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">INVOICES</Link>
                   <button onClick={() => setConfirmId(ride.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                  <Link href={`/rides/${ride.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">INVOICES</Link>
+                  <Link href={`/rides/${ride.id}/performance`} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold">PERFORMANCE</Link>
                 </div>
               </div>
             </div>
