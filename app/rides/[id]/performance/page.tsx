@@ -23,9 +23,9 @@ function fmtDate(d: string | null) {
   if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
-// BHP (crank) = WHP / (1 - loss%). e.g. 850 whp @ 15% loss => 1000 bhp
-function computeBhp(whp: string, loss: string): number | null {
-  const w = parseFloat(whp)
+// Crank value = wheel value / (1 - loss%). e.g. 850 whp @ 15% loss => 1000 bhp (same for torque)
+function applyLoss(wheel: string, loss: string): number | null {
+  const w = parseFloat(wheel)
   if (!isFinite(w)) return null
   const l = loss === '' ? 0 : parseFloat(loss)
   if (!isFinite(l)) return null
@@ -34,13 +34,14 @@ function computeBhp(whp: string, loss: string): number | null {
   return Math.round((w / denom) * 100) / 100
 }
 
-type DynoPull = { id: string; pack: string | null; whp: number | null; loss_pct: number | null; bhp: number | null; pull_date: string | null; dyno: string | null }
+type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null }
 
 function DynoSection({ rideId }: { rideId: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ pack: '', whp: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
-  const previewBhp = computeBhp(form.whp, form.loss)
+  const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+  const previewBhp = applyLoss(form.whp, form.loss)
+  const previewBnm = applyLoss(form.wnm, form.loss)
 
   useEffect(() => { load() }, [])
 
@@ -62,13 +63,15 @@ function DynoSection({ rideId }: { rideId: string }) {
       ride_id: rideId,
       pack: form.pack.trim() || null,
       whp: form.whp ? parseFloat(form.whp) : null,
+      wnm: form.wnm ? parseFloat(form.wnm) : null,
       loss_pct: form.loss ? parseFloat(form.loss) : null,
-      bhp: computeBhp(form.whp, form.loss),
+      bhp: applyLoss(form.whp, form.loss),
+      bnm: applyLoss(form.wnm, form.loss),
       pull_date: pullDate,
       dyno: form.dyno || null,
     }])
     if (error) { alert(error.message); return }
-    setForm({ pack: '', whp: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+    setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
     load()
   }
 
@@ -94,12 +97,20 @@ function DynoSection({ rideId }: { rideId: string }) {
           <input value={form.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, whp: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
         <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">WNM</label>
+          <input value={form.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, wnm: e.target.value }) }} className={inputClass} placeholder="0" />
+        </div>
+        <div className="w-28">
           <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
           <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
         <div className="w-28">
           <label className="block mb-1 text-sm text-gray-400 font-bold">BHP</label>
           <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBhp != null ? previewBhp.toFixed(2) : '—'}</div>
+        </div>
+        <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">BNM</label>
+          <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBnm != null ? previewBnm.toFixed(2) : '—'}</div>
         </div>
         <div className="min-w-[300px] flex-1">
           <label className="block mb-1 text-sm text-gray-400 font-bold">DATE</label>
@@ -142,8 +153,10 @@ function DynoSection({ rideId }: { rideId: string }) {
               <tr className="text-gray-400 text-sm border-b border-gray-700">
                 <th className="py-2 pr-4 font-bold">PACK</th>
                 <th className="py-2 pr-4 font-bold">WHP</th>
+                <th className="py-2 pr-4 font-bold">WNM</th>
                 <th className="py-2 pr-4 font-bold">LOSS (%)</th>
                 <th className="py-2 pr-4 font-bold">BHP</th>
+                <th className="py-2 pr-4 font-bold">BNM</th>
                 <th className="py-2 pr-4 font-bold">DATE</th>
                 <th className="py-2 pr-4 font-bold">DYNO</th>
                 <th className="py-2"></th>
@@ -154,8 +167,10 @@ function DynoSection({ rideId }: { rideId: string }) {
                 <tr key={p.id} className="border-b border-gray-800">
                   <td className="py-3 pr-4 font-bold">{p.pack || '—'}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} N·m` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{p.loss_pct != null ? `${p.loss_pct}%` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.bnm != null ? `${p.bnm.toFixed(2)} N·m` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
                   <td className="py-3 pr-4">{p.dyno || '—'}</td>
                   <td className="py-3 text-right">
