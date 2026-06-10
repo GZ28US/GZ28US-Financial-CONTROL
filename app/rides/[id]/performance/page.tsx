@@ -4,13 +4,19 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
-import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 
 const TABS = ['DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
 
 const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet']
+
+const MONTHS: [string, string][] = [
+  ['01', 'January'], ['02', 'February'], ['03', 'March'], ['04', 'April'], ['05', 'May'], ['06', 'June'],
+  ['07', 'July'], ['08', 'August'], ['09', 'September'], ['10', 'October'], ['11', 'November'], ['12', 'December'],
+]
+const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'))
+const YEARS = ['2025', '2026', '2027', '2028', '2029', '2030']
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function fmtDate(d: string | null) {
@@ -33,7 +39,7 @@ type DynoPull = { id: string; pack: string | null; whp: number | null; loss_pct:
 function DynoSection({ rideId }: { rideId: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ pack: '', whp: '', loss: '', pull_date: '', dyno: 'GZ28US DynoJet' })
+  const [form, setForm] = useState({ pack: '', whp: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const previewBhp = computeBhp(form.whp, form.loss)
 
   useEffect(() => { load() }, [])
@@ -51,17 +57,18 @@ function DynoSection({ rideId }: { rideId: string }) {
 
   async function addPull() {
     if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
+    const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
     const { error } = await supabase.from('dyno_pulls').insert([{
       ride_id: rideId,
       pack: form.pack.trim() || null,
       whp: form.whp ? parseFloat(form.whp) : null,
       loss_pct: form.loss ? parseFloat(form.loss) : null,
       bhp: computeBhp(form.whp, form.loss),
-      pull_date: /^\d{4}-\d{2}-\d{2}$/.test(form.pull_date) ? form.pull_date : null,
+      pull_date: pullDate,
       dyno: form.dyno || null,
     }])
     if (error) { alert(error.message); return }
-    setForm({ pack: '', whp: '', loss: '', pull_date: '', dyno: 'GZ28US DynoJet' })
+    setForm({ pack: '', whp: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
     load()
   }
 
@@ -94,8 +101,22 @@ function DynoSection({ rideId }: { rideId: string }) {
           <label className="block mb-1 text-sm text-gray-400 font-bold">BHP</label>
           <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBhp != null ? previewBhp.toFixed(2) : '—'}</div>
         </div>
-        <div className="min-w-[320px] flex-1">
-          <DatePicker label="DATE" value={form.pull_date} onChange={(v) => setForm({ ...form, pull_date: v })} />
+        <div className="min-w-[300px] flex-1">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">DATE</label>
+          <div className="flex gap-2">
+            <select value={form.dmonth} onChange={(e) => setForm({ ...form, dmonth: e.target.value })} className={inputClass}>
+              <option value="">Month</option>
+              {MONTHS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <select value={form.dday} onChange={(e) => setForm({ ...form, dday: e.target.value })} className={inputClass}>
+              <option value="">Day</option>
+              {DAYS.map((d) => <option key={d} value={d}>{parseInt(d, 10)}</option>)}
+            </select>
+            <select value={form.dyear} onChange={(e) => setForm({ ...form, dyear: e.target.value })} className={inputClass}>
+              <option value="">Year</option>
+              {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
         </div>
         <div className="min-w-[160px]">
           <label className="block mb-1 text-sm text-gray-400 font-bold">DYNO</label>
