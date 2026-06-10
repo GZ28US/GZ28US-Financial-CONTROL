@@ -45,7 +45,7 @@ function applyLoss(wheel: string, loss: string): number | null {
 
 type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null }
 
-function DynoSection({ rideId }: { rideId: string }) {
+function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
@@ -131,6 +131,42 @@ function DynoSection({ rideId }: { rideId: string }) {
         document_url: documentUrl,
       }])
       if (error) { alert(error.message); return }
+
+      // WhatsApp report
+      const bhp = applyLoss(form.whp, form.loss)
+      const bnm = applyLoss(form.wnm, form.loss)
+      const reportBody = [
+        '🏁 *NEW DYNO PULL*',
+        rideTitle ? `*Ride:* ${rideTitle}` : null,
+        form.pack ? `*Pack:* ${form.pack}` : null,
+        form.whp ? `*WHP:* ${parseFloat(form.whp).toFixed(2)}` : null,
+        form.wnm ? `*WNM:* ${parseFloat(form.wnm).toFixed(2)} N·m` : null,
+        form.loss ? `*Loss:* ${form.loss}%` : null,
+        bhp != null ? `*BHP:* ${bhp.toFixed(2)}` : null,
+        bnm != null ? `*BNM:* ${bnm.toFixed(2)} N·m` : null,
+        pullDate ? `*Date:* ${fmtDate(pullDate)}` : null,
+        `*Dyno:* ${form.dyno}`,
+      ].filter(Boolean).join('\n')
+
+      const waPayload: { body: string; documentUrl?: string; filename?: string } = { body: reportBody }
+      if (documentUrl) {
+        waPayload.documentUrl = documentUrl
+        waPayload.filename = scannedFile?.name || 'dyno-chart.pdf'
+      }
+      try {
+        const waRes = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(waPayload),
+        })
+        if (!waRes.ok) {
+          const waData = await waRes.json().catch(() => ({}))
+          alert('Pull saved, but the WhatsApp report failed: ' + (waData.error || `HTTP ${waRes.status}`))
+        }
+      } catch (waErr) {
+        alert('Pull saved, but the WhatsApp report failed: ' + String(waErr))
+      }
+
       setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
       setScannedFile(null)
       load()
@@ -364,7 +400,7 @@ export default function RidePerformancePage() {
       </div>
 
       {tab === 'DYNO' ? (
-        <DynoSection rideId={rideId} />
+        <DynoSection rideId={rideId} rideTitle={title} />
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>
