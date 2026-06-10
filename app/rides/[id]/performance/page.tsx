@@ -17,13 +17,24 @@ function fmtDate(d: string | null) {
   if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
+// BHP (crank) = WHP / (1 - loss%). e.g. 850 whp @ 15% loss => 1000 bhp
+function computeBhp(whp: string, loss: string): number | null {
+  const w = parseFloat(whp)
+  if (!isFinite(w)) return null
+  const l = loss === '' ? 0 : parseFloat(loss)
+  if (!isFinite(l)) return null
+  const denom = 1 - l / 100
+  if (denom <= 0) return null
+  return Math.round(w / denom)
+}
 
-type DynoPull = { id: string; pack: string | null; whp: number | null; bhp: number | null; pull_date: string | null; dyno: string | null }
+type DynoPull = { id: string; pack: string | null; whp: number | null; loss_pct: number | null; bhp: number | null; pull_date: string | null; dyno: string | null }
 
 function DynoSection({ rideId }: { rideId: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28US DynoJet' })
+  const [form, setForm] = useState({ pack: '', whp: '', loss: '', pull_date: '', dyno: 'GZ28US DynoJet' })
+  const previewBhp = computeBhp(form.whp, form.loss)
 
   useEffect(() => { load() }, [])
 
@@ -39,17 +50,18 @@ function DynoSection({ rideId }: { rideId: string }) {
   }
 
   async function addPull() {
-    if (!form.pack.trim() && !form.whp && !form.bhp) { alert('Enter at least a PACK or a power figure.'); return }
+    if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
     const { error } = await supabase.from('dyno_pulls').insert([{
       ride_id: rideId,
       pack: form.pack.trim() || null,
       whp: form.whp ? parseFloat(form.whp) : null,
-      bhp: form.bhp ? parseFloat(form.bhp) : null,
+      loss_pct: form.loss ? parseFloat(form.loss) : null,
+      bhp: computeBhp(form.whp, form.loss),
       pull_date: /^\d{4}-\d{2}-\d{2}$/.test(form.pull_date) ? form.pull_date : null,
       dyno: form.dyno || null,
     }])
     if (error) { alert(error.message); return }
-    setForm({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28US DynoJet' })
+    setForm({ pack: '', whp: '', loss: '', pull_date: '', dyno: 'GZ28US DynoJet' })
     load()
   }
 
@@ -75,8 +87,12 @@ function DynoSection({ rideId }: { rideId: string }) {
           <input value={form.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, whp: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
         <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
+          <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
+        </div>
+        <div className="w-28">
           <label className="block mb-1 text-sm text-gray-400 font-bold">BHP</label>
-          <input value={form.bhp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, bhp: e.target.value }) }} className={inputClass} placeholder="0" />
+          <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBhp != null ? previewBhp : '—'}</div>
         </div>
         <div className="min-w-[320px] flex-1">
           <DatePicker label="DATE" value={form.pull_date} onChange={(v) => setForm({ ...form, pull_date: v })} />
@@ -102,6 +118,7 @@ function DynoSection({ rideId }: { rideId: string }) {
               <tr className="text-gray-400 text-sm border-b border-gray-700">
                 <th className="py-2 pr-4 font-bold">PACK</th>
                 <th className="py-2 pr-4 font-bold">WHP</th>
+                <th className="py-2 pr-4 font-bold">LOSS (%)</th>
                 <th className="py-2 pr-4 font-bold">BHP</th>
                 <th className="py-2 pr-4 font-bold">DATE</th>
                 <th className="py-2 pr-4 font-bold">DYNO</th>
@@ -113,6 +130,7 @@ function DynoSection({ rideId }: { rideId: string }) {
                 <tr key={p.id} className="border-b border-gray-800">
                   <td className="py-3 pr-4 font-bold">{p.pack || '—'}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp} whp` : '—'}</td>
+                  <td className="py-3 pr-4 text-gray-400">{p.loss_pct != null ? `${p.loss_pct}%` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp} bhp` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
                   <td className="py-3 pr-4">{p.dyno || '—'}</td>
