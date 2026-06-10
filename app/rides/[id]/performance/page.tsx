@@ -42,6 +42,10 @@ function DynoSection({ rideId }: { rideId: string }) {
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const previewBhp = applyLoss(form.whp, form.loss)
   const previewBnm = applyLoss(form.wnm, form.loss)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+  const editBhp = applyLoss(editForm.whp, editForm.loss)
+  const editBnm = applyLoss(editForm.wnm, editForm.loss)
 
   useEffect(() => { load() }, [])
 
@@ -82,7 +86,38 @@ function DynoSection({ rideId }: { rideId: string }) {
     setPulls(prev => prev.filter(p => p.id !== id))
   }
 
+  function startEdit(p: DynoPull) {
+    const m = (p.pull_date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    setEditForm({
+      pack: p.pack || '',
+      whp: p.whp != null ? String(p.whp) : '',
+      wnm: p.wnm != null ? String(p.wnm) : '',
+      loss: p.loss_pct != null ? String(p.loss_pct) : '',
+      dmonth: m ? m[2] : '', dday: m ? m[3] : '', dyear: m ? m[1] : '',
+      dyno: p.dyno || 'GZ28US DynoJet',
+    })
+    setEditingId(p.id)
+  }
+
+  async function saveEdit(id: string) {
+    const pullDate = editForm.dyear && editForm.dmonth && editForm.dday ? `${editForm.dyear}-${editForm.dmonth}-${editForm.dday}` : null
+    const { error } = await supabase.from('dyno_pulls').update({
+      pack: editForm.pack.trim() || null,
+      whp: editForm.whp ? parseFloat(editForm.whp) : null,
+      wnm: editForm.wnm ? parseFloat(editForm.wnm) : null,
+      loss_pct: editForm.loss ? parseFloat(editForm.loss) : null,
+      bhp: applyLoss(editForm.whp, editForm.loss),
+      bnm: applyLoss(editForm.wnm, editForm.loss),
+      pull_date: pullDate,
+      dyno: editForm.dyno || null,
+    }).eq('id', id)
+    if (error) { alert(error.message); return }
+    setEditingId(null)
+    load()
+  }
+
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
+  const editInput = 'bg-gray-800 border border-gray-700 rounded-xl px-2 py-1 text-base'
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
@@ -163,7 +198,43 @@ function DynoSection({ rideId }: { rideId: string }) {
               </tr>
             </thead>
             <tbody>
-              {pulls.map((p) => (
+              {pulls.map((p) => editingId === p.id ? (
+                <tr key={p.id} className="border-b border-gray-800 bg-gray-950/40">
+                  <td className="py-2 pr-2"><input value={editForm.pack} onChange={(e) => setEditForm({ ...editForm, pack: e.target.value })} className={`${editInput} w-full`} placeholder="PACK" /></td>
+                  <td className="py-2 pr-2"><input value={editForm.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, whp: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
+                  <td className="py-2 pr-2"><input value={editForm.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, wnm: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
+                  <td className="py-2 pr-2"><input value={editForm.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, loss: e.target.value }) }} className={`${editInput} w-16`} placeholder="0" /></td>
+                  <td className="py-2 pr-2 text-gray-400">{editBhp != null ? editBhp.toFixed(2) : '—'}</td>
+                  <td className="py-2 pr-2 text-gray-400">{editBnm != null ? editBnm.toFixed(2) : '—'}</td>
+                  <td className="py-2 pr-2">
+                    <div className="flex gap-1">
+                      <select value={editForm.dmonth} onChange={(e) => setEditForm({ ...editForm, dmonth: e.target.value })} className={editInput}>
+                        <option value="">Mon</option>
+                        {MONTHS.map(([v, l]) => <option key={v} value={v}>{l.slice(0, 3)}</option>)}
+                      </select>
+                      <select value={editForm.dday} onChange={(e) => setEditForm({ ...editForm, dday: e.target.value })} className={editInput}>
+                        <option value="">Day</option>
+                        {DAYS.map((d) => <option key={d} value={d}>{parseInt(d, 10)}</option>)}
+                      </select>
+                      <select value={editForm.dyear} onChange={(e) => setEditForm({ ...editForm, dyear: e.target.value })} className={editInput}>
+                        <option value="">Year</option>
+                        {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+                      </select>
+                    </div>
+                  </td>
+                  <td className="py-2 pr-2">
+                    <select value={editForm.dyno} onChange={(e) => setEditForm({ ...editForm, dyno: e.target.value })} className={editInput}>
+                      {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-2 text-right">
+                    <div className="flex gap-1 justify-end">
+                      <button onClick={() => saveEdit(p.id)} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm">SAVE</button>
+                      <button onClick={() => setEditingId(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
                 <tr key={p.id} className="border-b border-gray-800">
                   <td className="py-3 pr-4 font-bold">{p.pack || '—'}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
@@ -174,7 +245,10 @@ function DynoSection({ rideId }: { rideId: string }) {
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
                   <td className="py-3 pr-4">{p.dyno || '—'}</td>
                   <td className="py-3 text-right">
-                    <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                      <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                    </div>
                   </td>
                 </tr>
               ))}
