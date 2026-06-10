@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 const TABS = ['DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
@@ -19,6 +20,14 @@ const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0')
 const YEARS = Array.from({ length: new Date().getFullYear() - 2025 + 1 }, (_, i) => String(2025 + i))
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result).split(',')[1] || '')
+    r.onerror = reject
+    r.readAsDataURL(file)
+  })
+}
 function fmtDate(d: string | null) {
   if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -46,6 +55,40 @@ function DynoSection({ rideId }: { rideId: string }) {
   const [editForm, setEditForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const editBhp = applyLoss(editForm.whp, editForm.loss)
   const editBnm = applyLoss(editForm.wnm, editForm.loss)
+  const [scanning, setScanning] = useState(false)
+  const scanInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleScanFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setScanning(true)
+    try {
+      const base64 = await fileToBase64(file)
+      const res = await fetch(`${BASE_PATH}/api/scan-dyno`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, mediaType: file.type || 'application/octet-stream' }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) { alert(data.error || 'Scan failed.'); return }
+      const m = String(data.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      setForm((f) => ({
+        ...f,
+        pack: data.pack || f.pack,
+        whp: data.whp || f.whp,
+        wnm: data.wnm || f.wnm,
+        dmonth: m ? m[2] : f.dmonth,
+        dday: m ? m[3] : f.dday,
+        dyear: m ? m[1] : f.dyear,
+        dyno: data.dyno || f.dyno,
+      }))
+    } catch (err) {
+      alert('Scan failed: ' + String(err))
+    } finally {
+      setScanning(false)
+    }
+  }
 
   useEffect(() => { load() }, [])
 
@@ -173,6 +216,11 @@ function DynoSection({ rideId }: { rideId: string }) {
         <div>
           <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">ADD</label>
           <button onClick={addPull} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PULL</button>
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">SCAN</label>
+          <button onClick={() => scanInputRef.current?.click()} disabled={scanning} className="bg-purple-700 hover:bg-purple-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{scanning ? 'SCANNING…' : 'SCAN PULL'}</button>
+          <input ref={scanInputRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleScanFile} />
         </div>
       </div>
 
