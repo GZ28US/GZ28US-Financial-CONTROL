@@ -49,8 +49,6 @@ function DynoSection({ rideId }: { rideId: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
-  const previewBhp = applyLoss(form.whp, form.loss)
-  const previewBnm = applyLoss(form.wnm, form.loss)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const editBhp = applyLoss(editForm.whp, editForm.loss)
@@ -181,14 +179,6 @@ function DynoSection({ rideId }: { rideId: string }) {
         <div className="w-28">
           <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
           <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
-        </div>
-        <div className="w-28">
-          <label className="block mb-1 text-sm text-gray-400 font-bold">BHP</label>
-          <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBhp != null ? previewBhp.toFixed(2) : '—'}</div>
-        </div>
-        <div className="w-28">
-          <label className="block mb-1 text-sm text-gray-400 font-bold">BNM</label>
-          <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBnm != null ? previewBnm.toFixed(2) : '—'}</div>
         </div>
         <div className="min-w-[300px] flex-1">
           <label className="block mb-1 text-sm text-gray-400 font-bold">DATE</label>
