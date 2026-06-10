@@ -78,6 +78,15 @@ export default function RidesPage() {
         if (inv.created_at) timestamps.push(inv.created_at)
       }
 
+      // Performance (dyno) activity also counts toward the ride's recency.
+      const { data: dynoRows } = await supabase
+        .from('dyno_pulls')
+        .select('created_at')
+        .eq('ride_id', ride.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      if (dynoRows?.[0]?.created_at) timestamps.push(dynoRows[0].created_at)
+
       // Most recent invoice (by created_at) drives the status + feed balloons
       const latestInvoice = invoiceList.slice().sort((a, b) =>
         String(b.created_at || '').localeCompare(String(a.created_at || ''))
