@@ -1,26 +1,44 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
+function pad3(n: number) { return String(n).padStart(3, '0') }
+
 export default function NewStaffPage() {
   const router = useRouter()
 
+  const [staffCode, setStaffCode] = useState('')
   const [name, setName] = useState('')
   const [position, setPosition] = useState('')
 
+  useEffect(() => { suggestCode() }, [])
+
+  // Auto-suggest the next staff code (PREFIX.NNN, e.g. US.001) by incrementing
+  // the highest existing one — same convention as rides / seasons.
+  async function suggestCode() {
+    const { data } = await supabase.from('staff').select('staff_code').not('staff_code', 'is', null)
+    let maxNum = 0
+    let prefix = 'US'
+    for (const s of data || []) {
+      const m = (s.staff_code || '').match(/^(.+?)\.(\d+)$/)
+      if (m) { const n = parseInt(m[2], 10); if (n > maxNum) { maxNum = n; prefix = m[1] } }
+    }
+    setStaffCode(maxNum > 0 ? `${prefix}.${pad3(maxNum + 1)}` : 'US.001')
+  }
+
   async function saveStaff() {
-    if (!name || !position) {
+    if (!staffCode.trim() || !name || !position) {
       alert('Please fill in all fields')
       return
     }
 
     const { error } = await supabase
       .from('staff')
-      .insert([{ name, position }])
+      .insert([{ staff_code: staffCode.trim(), name, position }])
 
     if (error) {
       alert(error.message)
@@ -39,6 +57,16 @@ export default function NewStaffPage() {
       <h1 className="text-4xl font-bold mb-8">ADD A NEW STAFF MEMBER</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
+        <div>
+          <label className="block mb-2 text-lg font-bold">STAFF CODE</label>
+          <input
+            value={staffCode}
+            onChange={(e) => setStaffCode(e.target.value)}
+            className={inputClass}
+            placeholder="e.g. US.001"
+          />
+        </div>
+
         <div>
           <label className="block mb-2 text-lg font-bold">NAME</label>
           <input

@@ -8,6 +8,7 @@ import { formatUSD } from '@/lib/utils'
 
 type StaffMember = {
   id: string
+  staff_code: string | null
   name: string
   position: string
   latestConclusion: string | null
@@ -208,6 +209,7 @@ export default function StaffPage() {
               className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between"
             >
               <div>
+                {member.staff_code && <p className="text-sm text-gray-500 font-bold">{member.staff_code}</p>}
                 <h2 className="text-2xl font-bold">{member.name}</h2>
                 <p className="text-lg text-gray-400">{member.position}</p>
               </div>
