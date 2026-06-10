@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase'
 const TABS = ['DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
 
-const DYNO_OPTIONS = ['DynoSolutions', 'GZ28U']
+const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet']
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function fmtDate(d: string | null) {
@@ -23,7 +23,7 @@ type DynoPull = { id: string; pack: string | null; whp: number | null; bhp: numb
 function DynoSection({ rideId }: { rideId: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28U' })
+  const [form, setForm] = useState({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28US DynoJet' })
 
   useEffect(() => { load() }, [])
 
@@ -49,7 +49,7 @@ function DynoSection({ rideId }: { rideId: string }) {
       dyno: form.dyno || null,
     }])
     if (error) { alert(error.message); return }
-    setForm({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28U' })
+    setForm({ pack: '', whp: '', bhp: '', pull_date: '', dyno: 'GZ28US DynoJet' })
     load()
   }
 
