@@ -25,7 +25,7 @@ function computeBhp(whp: string, loss: string): number | null {
   if (!isFinite(l)) return null
   const denom = 1 - l / 100
   if (denom <= 0) return null
-  return Math.round(w / denom)
+  return Math.round((w / denom) * 100) / 100
 }
 
 type DynoPull = { id: string; pack: string | null; whp: number | null; loss_pct: number | null; bhp: number | null; pull_date: string | null; dyno: string | null }
@@ -92,7 +92,7 @@ function DynoSection({ rideId }: { rideId: string }) {
         </div>
         <div className="w-28">
           <label className="block mb-1 text-sm text-gray-400 font-bold">BHP</label>
-          <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBhp != null ? previewBhp : '—'}</div>
+          <div className={`${inputClass} bg-gray-950 text-gray-300`}>{previewBhp != null ? previewBhp.toFixed(2) : '—'}</div>
         </div>
         <div className="min-w-[320px] flex-1">
           <DatePicker label="DATE" value={form.pull_date} onChange={(v) => setForm({ ...form, pull_date: v })} />
@@ -129,9 +129,9 @@ function DynoSection({ rideId }: { rideId: string }) {
               {pulls.map((p) => (
                 <tr key={p.id} className="border-b border-gray-800">
                   <td className="py-3 pr-4 font-bold">{p.pack || '—'}</td>
-                  <td className="py-3 pr-4">{p.whp != null ? `${p.whp} whp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{p.loss_pct != null ? `${p.loss_pct}%` : '—'}</td>
-                  <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp} bhp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
                   <td className="py-3 pr-4">{p.dyno || '—'}</td>
                   <td className="py-3 text-right">
