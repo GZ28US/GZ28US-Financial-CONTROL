@@ -409,7 +409,7 @@ export default function ExpensesPage() {
                   </select>
                 </div>
                 <div className="flex-1">
-                  <label className="block mb-1 text-sm text-gray-400">ORIGIN</label>
+                  <label className="block mb-1 text-sm text-gray-400">RESPONSIBLE</label>
                   <select value={scannedPurchase.origin} onChange={(e) => setScannedPurchase({ ...scannedPurchase, origin: e.target.value })} className={selectClass}>
                     <option value="GZ28US">GZ28US</option>
                     <option value="PERSONAL">PERSONAL</option>

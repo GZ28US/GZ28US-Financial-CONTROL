@@ -160,7 +160,7 @@ export default function EditExpensePage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">ORIGIN</label>
+          <label className="block mb-2 text-lg font-bold">RESPONSIBLE</label>
           <select value={origin} onChange={(e) => setOrigin(e.target.value)} className={selectClass}>
             {expenseOrigins.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
