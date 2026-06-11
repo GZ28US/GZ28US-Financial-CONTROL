@@ -4,5 +4,8 @@
       "path": "/api/cron/recurring-expense-reports",
       "schedule": "0 15 * * *"
     }
+  ],
+  "rewrites": [
+    { "source": "/", "destination": "/ca/landing.html" }
   ]
 }
