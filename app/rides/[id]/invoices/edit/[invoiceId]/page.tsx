@@ -235,6 +235,15 @@ export default function EditInvoicePage() {
   const [confirmRemoveExpenseIndex, setConfirmRemoveExpenseIndex] = useState<number | null>(null)
   const [confirmRemovePurchaseGroupId, setConfirmRemovePurchaseGroupId] = useState<string | null>(null)
   const [partsToStock, setPartsToStock] = useState<PartsToStock[]>([])
+  // REMOVE only stages a deletion: the row's id is parked here and the actual DB
+  // delete happens in saveInvoice (SAVE CHANGES). CANCEL never persists, so a
+  // removed line reappears exactly as it was — matching the editor's intent that
+  // nothing is written until SAVE.
+  const [removedPartIds, setRemovedPartIds] = useState<string[]>([])
+  const [removedServiceIds, setRemovedServiceIds] = useState<string[]>([])
+  const [removedPaymentIds, setRemovedPaymentIds] = useState<string[]>([])
+  const [removedNoteIds, setRemovedNoteIds] = useState<string[]>([])
+  const [removedExpenseIds, setRemovedExpenseIds] = useState<string[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
@@ -654,11 +663,10 @@ export default function EditInvoicePage() {
     })
   }
 
-  async function removePurchaseGroup(groupItems: { index: number; expense: Expense }[]) {
+  function removePurchaseGroup(groupItems: { index: number; expense: Expense }[]) {
     const indicesToRemove = new Set(groupItems.map(({ index }) => index))
-    for (const { expense: exp } of groupItems) {
-      if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
-    }
+    const ids = groupItems.map(({ expense }) => expense.id).filter((id): id is string => !!id)
+    if (ids.length) setRemovedExpenseIds(prev => [...prev, ...ids])
     setExpenses(prev => prev.filter((_, i) => !indicesToRemove.has(i)))
   }
 
@@ -1018,9 +1026,9 @@ export default function EditInvoicePage() {
     setParts(next)
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
-  async function removePart(index: number) {
+  function removePart(index: number) {
     const part = parts[index]
-    if (part.id) await supabase.from('invoice_parts').delete().eq('id', part.id)
+    if (part.id) setRemovedPartIds(prev => [...prev, part.id!])
     setParts(parts.filter((_, i) => i !== index))
     // Any EXPORTED expense item that produced this part (matched by description)
     // flips to REMOVED so the user can see it was exported then pulled from PARTS.
@@ -1052,9 +1060,9 @@ export default function EditInvoicePage() {
     if (!newService.description) { alert('Please enter a description'); return }
     setServices([...services, newService]); setNewService({ description: '', price: '' })
   }
-  async function removeService(index: number) {
+  function removeService(index: number) {
     const svc = services[index]
-    if (svc.id) await supabase.from('invoice_services').delete().eq('id', svc.id)
+    if (svc.id) setRemovedServiceIds(prev => [...prev, svc.id!])
     setServices(services.filter((_, i) => i !== index))
   }
   function startEditService(index: number) { setEditingServiceIndex(index); setEditingService({ ...services[index] }) }
@@ -1074,9 +1082,9 @@ export default function EditInvoicePage() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
     setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   }
-  async function removePayment(index: number) {
+  function removePayment(index: number) {
     const payment = payments[index]
-    if (payment.id) await supabase.from('invoice_payments').delete().eq('id', payment.id)
+    if (payment.id) setRemovedPaymentIds(prev => [...prev, payment.id!])
     setPayments(payments.filter((_, i) => i !== index))
   }
   function startEditPayment(index: number) { setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }) }
@@ -1130,9 +1138,9 @@ export default function EditInvoicePage() {
     if (!newNote.trim()) { alert('Please enter a note'); return }
     setNotes([...notes, { note: newNote.trim() }]); setNewNote('')
   }
-  async function removeNote(index: number) {
+  function removeNote(index: number) {
     const n = notes[index]
-    if (n.id) await supabase.from('invoice_notes').delete().eq('id', n.id)
+    if (n.id) setRemovedNoteIds(prev => [...prev, n.id!])
     setNotes(notes.filter((_, i) => i !== index))
   }
   function startEditNote(index: number) { setEditingNoteIndex(index); setEditingNote(notes[index].note) }
@@ -1152,9 +1160,9 @@ export default function EditInvoicePage() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
     setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   }
-  async function removeExpense(index: number) {
+  function removeExpense(index: number) {
     const exp = expenses[index]
-    if (exp.id) await supabase.from('invoice_expenses').delete().eq('id', exp.id)
+    if (exp.id) setRemovedExpenseIds(prev => [...prev, exp.id!])
     setExpenses(expenses.filter((_, i) => i !== index))
   }
   function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }); setOpenReceiptsIndex(null) }
@@ -1342,6 +1350,14 @@ export default function EditInvoicePage() {
       })))
       if (e) { alert(e.message); return }
     }
+
+    // Commit staged REMOVEs now (not at click time) so CANCEL leaves them intact.
+    for (const id of removedPartIds) await supabase.from('invoice_parts').delete().eq('id', id)
+    for (const id of removedServiceIds) await supabase.from('invoice_services').delete().eq('id', id)
+    for (const id of removedPaymentIds) await supabase.from('invoice_payments').delete().eq('id', id)
+    for (const id of removedNoteIds) await supabase.from('invoice_notes').delete().eq('id', id)
+    for (const id of removedExpenseIds) await supabase.from('invoice_expenses').delete().eq('id', id)
+    setRemovedPartIds([]); setRemovedServiceIds([]); setRemovedPaymentIds([]); setRemovedNoteIds([]); setRemovedExpenseIds([])
 
     await maybePromptPackThenFinish(newPayments, newExpenses, nextIsQuote)
   }
