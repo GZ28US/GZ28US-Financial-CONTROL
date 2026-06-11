@@ -41,7 +41,7 @@ export default function Header() {
   return (
     <div className="mb-10">
       <h1 className="text-3xl font-bold mb-4">
-        GZ28US Financial CONTROL
+        GZ28US Control App
       </h1>
 
       <div className="flex gap-2 flex-wrap items-start">

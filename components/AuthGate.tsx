@@ -44,7 +44,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         <form onSubmit={login} className="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-3xl p-8 flex flex-col gap-5">
           <div className="text-center mb-2">
             <h1 className="text-3xl font-bold">GZ28US</h1>
-            <p className="text-gray-400 mt-1">Financial Control System</p>
+            <p className="text-gray-400 mt-1">Control App</p>
           </div>
           <div>
             <label className="block mb-2 text-sm font-bold text-gray-400">EMAIL</label>
