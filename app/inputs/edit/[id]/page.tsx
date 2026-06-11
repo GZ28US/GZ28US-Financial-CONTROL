@@ -137,7 +137,7 @@ export default function EditInputPage() {
       updated_at: new Date().toISOString(),
     }).eq('id', inputId)
     if (error) { alert(error.message); return }
-    router.push('/inputs')
+    router.push(category === 'STOCK' ? '/inventory' : '/inputs')
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -226,7 +226,7 @@ export default function EditInputPage() {
         </div>
 
         <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
-        <a href={`${BASE_PATH}/inputs`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}${category === 'STOCK' ? '/inventory' : '/inputs'}`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

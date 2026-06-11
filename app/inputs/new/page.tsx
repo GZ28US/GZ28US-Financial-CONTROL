@@ -79,7 +79,16 @@ export default function NewInputPage() {
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
 
-  useEffect(() => { loadSuppliers() }, [])
+  useEffect(() => {
+    loadSuppliers()
+    // Default the category from the ?category= query param (set by the INPUTS vs
+    // INVENTORY list pages) so each "ADD NEW" lands on the right category.
+    const c = new URLSearchParams(window.location.search).get('category')
+    if (c === 'STOCK' || c === 'CONSUMPTION') setCategory(c)
+  }, [])
+
+  // After saving, return to the list the item belongs to.
+  const listHref = () => (category === 'STOCK' ? '/inventory' : '/inputs')
 
   async function loadSuppliers() {
     const { data } = await supabase.from('suppliers').select('name').order('name')
@@ -141,7 +150,7 @@ export default function NewInputPage() {
       return
     }
 
-    router.push('/inputs')
+    router.push(listHref())
   }
 
   function buildExpenseCaption(exp: ExpenseReport) {
@@ -192,7 +201,7 @@ export default function NewInputPage() {
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The input was still saved.`)
     setExpenseReports(null)
-    router.push('/inputs')
+    router.push(listHref())
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -320,7 +329,7 @@ export default function NewInputPage() {
         </div>
 
         <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE INPUT</button>
-        <a href={`${BASE_PATH}/inputs`} className="text-gray-400 text-xl">Cancel</a>
+        <a href={`${BASE_PATH}${listHref()}`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )
