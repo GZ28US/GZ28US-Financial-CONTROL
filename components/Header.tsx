@@ -4,28 +4,38 @@ import { useState } from 'react'
 import { BASE_PATH } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 
-// Top-level items shown before the PARTS dropdown.
-const NAV_BEFORE: [string, string][] = [
+// Flat top-level items shown before the dropdowns.
+const NAV: [string, string][] = [
   ['/', 'HOME'],
   ['/clients', 'CLIENTS'],
   ['/rides', 'RIDES'],
   ['/staff', 'STAFF'],
-  ['/goods', 'GOODS'],
 ]
-// PARTS dropdown children.
-const PARTS_SUBMENU: [string, string][] = [
-  ['/inventory', 'INVENTORY'],
-  ['/parts', 'PARTS DB'],
-  ['/packs', 'PACKS DB'],
-  ['/suppliers', 'SUPPLIERS'],
-]
-// Top-level items shown after the PARTS dropdown.
-const NAV_AFTER: [string, string][] = [
-  ['/inputs', 'INPUTS'],
+
+// Dropdown menus, in order, shown after the flat items.
+const DROPDOWNS: { label: string; items: [string, string][] }[] = [
+  {
+    label: 'PARTS',
+    items: [
+      ['/inventory', 'INVENTORY'],
+      ['/parts', 'PARTS DB'],
+      ['/packs', 'PACKS DB'],
+      ['/suppliers', 'SUPPLIERS'],
+    ],
+  },
+  {
+    label: 'COSTS',
+    items: [
+      ['/costs/fixed', 'FIXED'],
+      ['/costs/variable', 'VARIABLE'],
+      ['/goods', 'GOODS'],
+      ['/inputs', 'INPUTS'],
+    ],
+  },
 ]
 
 export default function Header() {
-  const [partsOpen, setPartsOpen] = useState(false)
+  const [openMenu, setOpenMenu] = useState<string | null>(null)
   const linkClass = 'bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold'
 
   return (
@@ -35,7 +45,7 @@ export default function Header() {
       </h1>
 
       <div className="flex gap-2 flex-wrap items-start">
-        {NAV_BEFORE.map(([href, label]) => (
+        {NAV.map(([href, label]) => (
           <a
             key={href}
             href={`${BASE_PATH}${href === '/' ? '' : href}`}
@@ -45,37 +55,32 @@ export default function Header() {
           </a>
         ))}
 
-        {/* PARTS dropdown */}
-        <div className="relative" onMouseLeave={() => setPartsOpen(false)}>
-          <button
-            onClick={() => setPartsOpen((o) => !o)}
-            className={`${linkClass} flex items-center gap-1`}
+        {DROPDOWNS.map(({ label, items }) => (
+          <div
+            key={label}
+            className="relative"
+            onMouseLeave={() => setOpenMenu((prev) => (prev === label ? null : prev))}
           >
-            PARTS <span className="text-xs">▾</span>
-          </button>
-          {partsOpen && (
-            <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-2xl p-2 z-50 flex flex-col gap-1 min-w-48 shadow-xl">
-              {PARTS_SUBMENU.map(([href, label]) => (
-                <a
-                  key={href}
-                  href={`${BASE_PATH}${href}`}
-                  className="hover:bg-gray-700 px-4 py-3 rounded-xl text-base font-bold whitespace-nowrap"
-                >
-                  {label}
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {NAV_AFTER.map(([href, label]) => (
-          <a
-            key={href}
-            href={`${BASE_PATH}${href}`}
-            className={linkClass}
-          >
-            {label}
-          </a>
+            <button
+              onClick={() => setOpenMenu((prev) => (prev === label ? null : label))}
+              className={`${linkClass} flex items-center gap-1`}
+            >
+              {label} <span className="text-xs">▾</span>
+            </button>
+            {openMenu === label && (
+              <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-2xl p-2 z-50 flex flex-col gap-1 min-w-48 shadow-xl">
+                {items.map(([href, l]) => (
+                  <a
+                    key={href}
+                    href={`${BASE_PATH}${href}`}
+                    className="hover:bg-gray-700 px-4 py-3 rounded-xl text-base font-bold whitespace-nowrap"
+                  >
+                    {l}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
 
         <button
