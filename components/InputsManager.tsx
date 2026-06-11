@@ -111,10 +111,8 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
     if (error) { console.error(error); setLoading(false); return }
     setInputs(data || [])
     setLoading(false)
-    // Expand all groups by default
-    const groups = new Set<string>()
-    data?.forEach(i => { if (i.purchase_group) groups.add(i.purchase_group) })
-    setExpandedGroups(groups)
+    // Purchases start collapsed; the user expands the ones they want to inspect.
+    setExpandedGroups(new Set())
   }
 
   async function removeInput(id: string) {
