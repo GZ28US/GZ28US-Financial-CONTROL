@@ -65,6 +65,8 @@ export default function NewInputPage() {
   const router = useRouter()
 
   const [suppliers, setSuppliers] = useState<string[]>([])
+  // STOCK items live in the `inventory` table (?src=inventory), consumption in `inputs`.
+  const [table, setTable] = useState<'inputs' | 'inventory'>('inputs')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('STOCK')
   const [quantity, setQuantity] = useState('1')
@@ -81,14 +83,16 @@ export default function NewInputPage() {
 
   useEffect(() => {
     loadSuppliers()
-    // Default the category from the ?category= query param (set by the INPUTS vs
-    // INVENTORY list pages) so each "ADD NEW" lands on the right category.
-    const c = new URLSearchParams(window.location.search).get('category')
+    // Default the category + target table from the query params (set by the INPUTS
+    // vs INVENTORY list pages) so each "ADD NEW" lands in the right place.
+    const sp = new URLSearchParams(window.location.search)
+    const c = sp.get('category')
     if (c === 'STOCK' || c === 'CONSUMPTION') setCategory(c)
+    if (sp.get('src') === 'inventory') setTable('inventory')
   }, [])
 
   // After saving, return to the list the item belongs to.
-  const listHref = () => (category === 'STOCK' ? '/inventory' : '/inputs')
+  const listHref = () => (table === 'inventory' ? '/inventory' : '/inputs')
 
   async function loadSuppliers() {
     const { data } = await supabase.from('suppliers').select('name').order('name')
@@ -126,7 +130,7 @@ export default function NewInputPage() {
     if (!description) { alert('Please enter a description'); return }
     await ensureSupplier(supplier)
 
-    const { error } = await supabase.from('inputs').insert([{
+    const { error } = await supabase.from(table).insert([{
       description, category,
       quantity: qty || 1,
       unit_price: unitPrice,

@@ -38,7 +38,9 @@ export default function ViewInputPage() {
   useEffect(() => { loadInput() }, [])
 
   async function loadInput() {
-    const { data } = await supabase.from('inputs').select('*').eq('id', inputId).single()
+    // STOCK items live in `inventory` (?src=inventory); consumption in `inputs`.
+    const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
+    const { data } = await supabase.from(t).select('*').eq('id', inputId).single()
     if (data) setInput(data)
     setLoading(false)
   }
@@ -72,7 +74,7 @@ export default function ViewInputPage() {
         </div>
         <div className="flex gap-3">
           <Link href={input.category === 'STOCK' ? '/inventory' : '/inputs'} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
-          <Link href={`/inputs/edit/${inputId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
+          <Link href={`/inputs/edit/${inputId}${input.category === 'STOCK' ? '?src=inventory' : ''}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
         </div>
       </div>
 

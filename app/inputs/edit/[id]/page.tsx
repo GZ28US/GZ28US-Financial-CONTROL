@@ -69,17 +69,24 @@ export default function EditInputPage() {
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
+  // STOCK rows live in `inventory` (reached via ?src=inventory); consumption in `inputs`.
+  const [table, setTable] = useState<'inputs' | 'inventory'>('inputs')
 
-  useEffect(() => { loadSuppliers(); loadInput() }, [])
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
+    setTable(t)
+    loadSuppliers()
+    loadInput(t)
+  }, [])
 
   async function loadSuppliers() {
     const { data } = await supabase.from('suppliers').select('name').order('name')
     if (data) setSuppliers(data.map(s => s.name))
   }
 
-  async function loadInput() {
-    const { data, error } = await supabase.from('inputs').select('*').eq('id', inputId).single()
-    if (error || !data) { alert('Input not found'); router.push('/inputs'); return }
+  async function loadInput(t: 'inputs' | 'inventory') {
+    const { data, error } = await supabase.from(t).select('*').eq('id', inputId).single()
+    if (error || !data) { alert('Input not found'); router.push(t === 'inventory' ? '/inventory' : '/inputs'); return }
     setDescription(data.description || '')
     setCategory(data.category || 'STOCK')
     setQuantity(String(data.quantity || 1))
@@ -127,7 +134,7 @@ export default function EditInputPage() {
     if (!description) { alert('Please enter a description'); return }
     await ensureSupplier(supplier)
 
-    const { error } = await supabase.from('inputs').update({
+    const { error } = await supabase.from(table).update({
       description, category,
       quantity: qty || 1,
       unit_price: unitPrice,

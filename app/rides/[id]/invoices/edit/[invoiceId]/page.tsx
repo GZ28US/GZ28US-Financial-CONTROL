@@ -339,7 +339,7 @@ export default function EditInvoicePage() {
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
     const prefix = `From ${iCode} — ${rName}`
-    const { data: stockHistory } = await supabase.from('inputs').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
+    const { data: stockHistory } = await supabase.from('inventory').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (stockHistory) {
       // Newest first — both for the editable PARTS TO STOCK list and the
       // "already in stock from this invoice" recap below it.
@@ -401,7 +401,7 @@ export default function EditInvoicePage() {
   async function openStockModal(target: 'new' | number) {
     setStockTarget(target)
     const { data } = await supabase
-      .from('inputs')
+      .from('inventory')
       .select('id, description, quantity, unit_price, supplier, purchase_date, source_type, donor')
       .eq('category', 'STOCK')
       .gt('quantity', 0)
@@ -437,11 +437,11 @@ export default function EditInvoicePage() {
     } else {
       const updated = [...expenses]; updated[stockTarget as number] = { ...updated[stockTarget as number], ...expense }; setExpenses(updated)
     }
-    const { data: inputData } = await supabase.from('inputs').select('notes').eq('id', item.id).single()
+    const { data: inputData } = await supabase.from('inventory').select('notes').eq('id', item.id).single()
     const existingNote = inputData?.notes || ''
     const usageNote = `Used ${qty} in ${rideName || ownerLabel()}`
     const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
-    await supabase.from('inputs').update({ quantity: item.quantity - qty, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', item.id)
+    await supabase.from('inventory').update({ quantity: item.quantity - qty, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', item.id)
     setShowStockModal(false)
   }
 
@@ -733,7 +733,7 @@ export default function EditInvoicePage() {
       const sourceType = camFromDonated ? 'DONATED' : 'PURCHASED'
       const donor = camFromDonated ? (exp.stock_donor || null) : null
       const note = `From ${invoiceCode} — ${ownerLabel()}`
-      const { error } = await supabase.from('inputs').insert([{
+      const { error } = await supabase.from('inventory').insert([{
         description: exp.item,
         category: 'STOCK',
         quantity: qtyToSend,
@@ -1327,9 +1327,9 @@ export default function EditInvoicePage() {
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const donorLabel = ownerLabel()
     const prefix = `From ${invoiceCode} — ${rideName}`
-    await supabase.from('inputs').delete().eq('supplier', rideName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
+    await supabase.from('inventory').delete().eq('supplier', rideName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
     if (partsToStock.length > 0) {
-      const { error: e } = await supabase.from('inputs').insert(partsToStock.map(p => ({
+      const { error: e } = await supabase.from('inventory').insert(partsToStock.map(p => ({
         description: p.description,
         category: 'STOCK',
         quantity: parseFloat(p.quantity) || 1,

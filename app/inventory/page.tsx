@@ -3,5 +3,5 @@
 import InputsManager from '@/components/InputsManager'
 
 export default function InventoryPage() {
-  return <InputsManager mode="STOCK" />
+  return <InputsManager mode="STOCK" table="inventory" />
 }

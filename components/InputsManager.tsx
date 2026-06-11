@@ -62,10 +62,13 @@ function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 //   mode="CONSUMPTION"  -> /inputs    (titled INPUTS)
 //   mode="STOCK"        -> /inventory (titled INVENTORY)
 // Each route only shows, totals, scans and adds rows of its own category.
-export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' }) {
+export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | 'STOCK'; table: 'inputs' | 'inventory' }) {
   const isStockMode = mode === 'STOCK'
   const noun = isStockMode ? 'ITEM' : 'INPUT'
-  const backHref = isStockMode ? '/inventory' : '/inputs'
+  // STOCK rows live in the `inventory` table; CONSUMPTION in `inputs`. The shared
+  // /inputs/* detail pages switch table via ?src=inventory.
+  const itemQuery = table === 'inventory' ? '?src=inventory' : ''
+  const addQuery = `?category=${mode}${table === 'inventory' ? '&src=inventory' : ''}`
 
   const [inputs, setInputs] = useState<Input[]>([])
   const [loading, setLoading] = useState(true)
@@ -103,7 +106,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
     // tiebreaker so rows entered later for the same day still float to the top.
     // nullsFirst:false pushes inputs with no purchase_date to the bottom.
     const { data, error } = await supabase
-      .from('inputs')
+      .from(table)
       .select('*')
       .eq('category', mode)
       .order('purchase_date', { ascending: false, nullsFirst: false })
@@ -116,7 +119,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
   }
 
   async function removeInput(id: string) {
-    const { error } = await supabase.from('inputs').delete().eq('id', id)
+    const { error } = await supabase.from(table).delete().eq('id', id)
     if (error) { alert(error.message); return }
     setConfirmId(null)
     loadInputs()
@@ -132,7 +135,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
 
   async function confirmEditPurchase() {
     if (!editingPurchaseGroupId) return
-    const { error } = await supabase.from('inputs').update({
+    const { error } = await supabase.from(table).update({
       supplier: editingPurchaseSupplier || null,
       purchase_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
     }).eq('purchase_group', editingPurchaseGroupId)
@@ -142,7 +145,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
   }
 
   async function removePurchaseGroup(groupId: string) {
-    const { error } = await supabase.from('inputs').delete().eq('purchase_group', groupId)
+    const { error } = await supabase.from(table).delete().eq('purchase_group', groupId)
     if (error) { alert(error.message); return }
     setConfirmGroupId(null)
     loadInputs()
@@ -200,7 +203,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
       // (summed per purchase_group) is treated as a possible re-scan.
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
-          .from('inputs')
+          .from(table)
           .select('id, supplier, purchase_date, unit_price, quantity, purchase_group')
           .ilike('supplier', supplier)
           .eq('purchase_date', date)
@@ -239,7 +242,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
     // STOCK purchases entered via this page are always PURCHASED (donor stays null).
     // CONSUMPTION rows don't use source_type at all.
     const isStock = scannedPurchase.category === 'STOCK'
-    const { error } = await supabase.from('inputs').insert(
+    const { error } = await supabase.from(table).insert(
       scannedPurchase.items.map(item => ({
         description: item.description,
         category: scannedPurchase.category,
@@ -521,7 +524,7 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
             🧾 SCAN A NEW {noun}
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleAddPurchase(e.target.files[0]) }} />
           </label>
-          <Link href={`/inputs/new?category=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW {noun}</Link>
+          <Link href={`/inputs/new${addQuery}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW {noun}</Link>
         </div>
       </div>
 
@@ -582,8 +585,8 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
                             )}
                           </div>
                           <div className="flex gap-3 shrink-0">
-                            <Link href={`/inputs/${input.id}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
-                            <Link href={`/inputs/edit/${input.id}`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
+                            <Link href={`/inputs/${input.id}${itemQuery}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
+                            <Link href={`/inputs/edit/${input.id}${itemQuery}`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
                             <button onClick={() => setConfirmId(input.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
                           </div>
                         </div>
@@ -618,8 +621,8 @@ export default function InputsManager({ mode }: { mode: 'CONSUMPTION' | 'STOCK' 
                     )}
                   </div>
                   <div className="flex gap-3 flex-wrap shrink-0">
-                    <Link href={`/inputs/${input.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
-                    <Link href={`/inputs/edit/${input.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                    <Link href={`/inputs/${input.id}${itemQuery}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                    <Link href={`/inputs/edit/${input.id}${itemQuery}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                     <button onClick={() => setConfirmId(input.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                   </div>
                 </div>
