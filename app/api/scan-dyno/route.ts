@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
 }
 Rules:
 1. Numbers may use a comma as the decimal separator (e.g. 911,55 means 911.55). Convert every value to a dot decimal and remove any thousands separators. Output plain number strings only — no units, no commas.
-2. whp = the "Max Power" peak value. wnm = the "Max Torque" peak value (assume Newton-metres unless the sheet clearly states lb-ft).
+2. whp = peak wheel power in horsepower (HP). If the sheet reports power in "cv"/"CV" (metric horsepower), convert to HP by multiplying by 0.98632; if already HP/wHP/bhp, leave as-is. wnm = peak wheel torque CONVERTED to Newton-metres (N·m). Some dynos report torque in kgf·m (written "Kgf.m", "kgf.m", "Kgfm" or "kgfm") — convert to N·m by multiplying by 9.80665. If torque is in lb-ft, multiply by 1.35582. If already in N·m, leave as-is. Output the converted N·m value.
 3. date: parse any printed timestamp such as "11:23:49 PM, Tuesday, June 9, 2026" into "2026-06-09".
 4. dyno: inspect logos and any header/footer text. Prefer exactly 'GZ28US DynoJet' or 'DynoSolutions DynoJet'. Use empty string if you cannot tell.
 5. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
