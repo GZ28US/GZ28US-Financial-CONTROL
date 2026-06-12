@@ -19,6 +19,7 @@ type Invoice = {
   florida_taxes: number | null
   global_discount: number | null
   feed_status: string | null
+  live_status: string | null
   fl_tax_expense_date: string | null
   is_quote: boolean | null
 }
@@ -70,8 +71,15 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
 
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
-    ? { label: 'ONLINE', cls: 'bg-green-800 text-green-300' }
-    : { label: 'OFFLINE', cls: 'bg-red-800 text-red-200' }
+    ? { label: 'MATH CLOSED', cls: 'bg-green-800 text-green-300' }
+    : { label: 'MATH OPEN', cls: 'bg-red-800 text-red-200' }
+}
+
+// Manual, rule-free status the user toggles by hand.
+function getLiveBadge(liveStatus: string | null) {
+  return liveStatus === 'REALTIME'
+    ? { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+    : { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 
 // Normalize a stored phone string into the digits-only form UltraMsg expects as
@@ -362,6 +370,7 @@ export default function ViewInvoicePage() {
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
   const statusBadge = getStatusBadge(invoice)
   const feedBadge = getFeedBadge(invoice.feed_status)
+  const liveBadge = getLiveBadge(invoice.live_status)
   const sendMethod = client?.preferred_message_method || 'WhatsApp'
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
@@ -670,6 +679,7 @@ export default function ViewInvoicePage() {
               <h1 className="text-4xl font-bold">{invoice.invoice_code}</h1>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
+              <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
             </div>
             <p className="text-gray-400 text-xl">{isClient ? `${client?.client_number ?? ''}${client?.name ? ` — ${client.name}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
           </div>

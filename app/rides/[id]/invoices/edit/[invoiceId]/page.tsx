@@ -179,6 +179,7 @@ export default function EditInvoicePage() {
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
   const [feedStatus, setFeedStatus] = useState('INCOMPLETE')
+  const [liveStatus, setLiveStatus] = useState('INCOMPLETE')
   const [floridaTaxes, setFloridaTaxes] = useState('')
   const [globalDiscount, setGlobalDiscount] = useState('')
   const [targetGrandTotal, setTargetGrandTotal] = useState('')
@@ -292,6 +293,7 @@ export default function EditInvoicePage() {
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
     setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
+    setLiveStatus(data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
     setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '6.5')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
@@ -1241,6 +1243,7 @@ export default function EditInvoicePage() {
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
       feed_status: feedOnline ? 'REAL_TIME' : 'INCOMPLETE',
+      live_status: liveStatus,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
@@ -2079,18 +2082,31 @@ export default function EditInvoicePage() {
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
-            <p className="text-lg font-bold">FEED STATUS</p>
-            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as ONLINE once it is fully up to date.{!canBeOnline ? ' Locked OFFLINE until the PENDING BALANCE is settled.' : ''}</p>
+            <p className="text-lg font-bold">MATH STATUS</p>
+            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as MATH CLOSED once it is fully up to date.{!canBeOnline ? ' Locked MATH OPEN until the PENDING BALANCE is settled.' : ''}</p>
           </div>
           <button
             onClick={() => {
               if (feedOnline) { setFeedStatus('INCOMPLETE'); return }
-              if (!canBeOnline) { alert('This invoice can be ONLINE only when it has no PENDING BALANCE owed. Settle it first.'); return }
+              if (!canBeOnline) { alert('This invoice can be MATH CLOSED only when it has no PENDING BALANCE owed. Settle it first.'); return }
               setFeedStatus('REAL_TIME')
             }}
             className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedOnline ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'} ${!canBeOnline && !feedOnline ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
-            {feedOnline ? 'ONLINE' : 'OFFLINE'}
+            {feedOnline ? 'MATH CLOSED' : 'MATH OPEN'}
+          </button>
+        </div>
+
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-lg font-bold">REALTIME STATUS</p>
+            <p className="text-sm text-gray-400">Manually flag this {isQuote ? 'quote' : 'invoice'} as REALTIME or INCOMPLETE — your choice, no rule.</p>
+          </div>
+          <button
+            onClick={() => setLiveStatus(liveStatus === 'REALTIME' ? 'INCOMPLETE' : 'REALTIME')}
+            className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${liveStatus === 'REALTIME' ? 'bg-blue-700 hover:bg-blue-600 text-white' : 'bg-gray-600 hover:bg-gray-500 text-white'}`}
+          >
+            {liveStatus === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE'}
           </button>
         </div>
 

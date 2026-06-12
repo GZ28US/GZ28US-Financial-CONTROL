@@ -36,8 +36,8 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
 
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
-    ? { label: 'ONLINE', cls: 'bg-green-800 text-green-300' }
-    : { label: 'OFFLINE', cls: 'bg-red-800 text-red-200' }
+    ? { label: 'MATH CLOSED', cls: 'bg-green-800 text-green-300' }
+    : { label: 'MATH OPEN', cls: 'bg-red-800 text-red-200' }
 }
 
 export default function RidesPage() {
@@ -255,7 +255,7 @@ export default function RidesPage() {
                   onClick={() => setFeedFilter(f)}
                   className={`px-4 py-2 rounded-2xl font-bold text-sm ${feedFilter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
                 >
-                  {f}
+                  {f === 'ONLINE' ? 'MATH CLOSED' : f === 'OFFLINE' ? 'MATH OPEN' : f}
                 </button>
               ))}
             </div>
