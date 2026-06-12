@@ -68,6 +68,10 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
   const scanInputRef = useRef<HTMLInputElement>(null)
   const [client, setClient] = useState<{ name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
+  // After a pull is saved, ask whether to report it on WhatsApp (and optionally to the client).
+  const [reportPull, setReportPull] = useState<DynoPull | null>(null)
+  const [reportToClient, setReportToClient] = useState(false)
+  const [reporting, setReporting] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -139,7 +143,7 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
         documentUrl = urlData.publicUrl
       }
       const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
-      const { error } = await supabase.from('dyno_pulls').insert([{
+      const { data: inserted, error } = await supabase.from('dyno_pulls').insert([{
         ride_id: rideId,
         pack: form.pack.trim() || null,
         whp: form.whp ? parseFloat(form.whp) : null,
@@ -150,47 +154,15 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
         pull_date: pullDate,
         dyno: form.dyno || null,
         document_url: documentUrl,
-      }])
+      }]).select().single()
       if (error) { alert(error.message); return }
-
-      // WhatsApp report
-      const bhp = applyLoss(form.whp, form.loss)
-      const bnm = applyLoss(form.wnm, form.loss)
-      const reportBody = [
-        '🏁 *NEW DYNO PULL*',
-        rideTitle ? `*Ride:* ${rideTitle}` : null,
-        form.pack ? `*Pack:* ${form.pack}` : null,
-        form.whp ? `*WHP:* ${parseFloat(form.whp).toFixed(2)}` : null,
-        form.wnm ? `*WNM:* ${parseFloat(form.wnm).toFixed(2)} N·m` : null,
-        form.loss ? `*Loss:* ${form.loss}%` : null,
-        bhp != null ? `*BHP:* ${bhp.toFixed(2)}` : null,
-        bnm != null ? `*BNM:* ${bnm.toFixed(2)} N·m` : null,
-        pullDate ? `*Date:* ${fmtDate(pullDate)}` : null,
-        `*Dyno:* ${form.dyno}`,
-      ].filter(Boolean).join('\n')
-
-      const waPayload: { body: string; documentUrl?: string; filename?: string } = { body: reportBody }
-      if (documentUrl) {
-        waPayload.documentUrl = documentUrl
-        waPayload.filename = scannedFile?.name || 'dyno-chart.pdf'
-      }
-      try {
-        const waRes = await fetch(`${BASE_PATH}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(waPayload),
-        })
-        if (!waRes.ok) {
-          const waData = await waRes.json().catch(() => ({}))
-          alert('Pull saved, but the WhatsApp report failed: ' + (waData.error || `HTTP ${waRes.status}`))
-        }
-      } catch (waErr) {
-        alert('Pull saved, but the WhatsApp report failed: ' + String(waErr))
-      }
 
       setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
       setScannedFile(null)
       load()
+      // Ask whether to report it (instead of auto-sending).
+      setReportToClient(false)
+      setReportPull(inserted as DynoPull)
     } finally {
       setSaving(false)
     }
@@ -248,6 +220,35 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     ].filter(Boolean).join('\n')
   }
 
+  function docFilename(p: DynoPull) {
+    return `dyno-chart.${(p.document_url || '').split('?')[0].split('.').pop() || 'pdf'}`
+  }
+
+  // Post the report to the WhatsApp reports group. Returns true on success.
+  async function sendGroupReport(p: DynoPull): Promise<boolean> {
+    const payload: { body: string; documentUrl?: string; filename?: string } = { body: pullReport(p) }
+    if (p.document_url) { payload.documentUrl = p.document_url; payload.filename = docFilename(p) }
+    try {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) { alert('WhatsApp report failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return false }
+      return true
+    } catch (e) { alert('WhatsApp report failed: ' + String(e)); return false }
+  }
+
+  // The "Report this pull?" dialog Send button.
+  async function confirmReport() {
+    if (!reportPull) return
+    setReporting(true)
+    try {
+      await sendGroupReport(reportPull)
+      if (reportToClient && client) await sendPull(reportPull)
+    } finally {
+      setReporting(false)
+      setReportPull(null)
+    }
+  }
+
   async function sendPull(p: DynoPull) {
     if (!client) { alert('This ride has no client on file to send to. Assign a client on the ride page first.'); return }
     const method = client.preferred_message_method || 'WhatsApp'
@@ -303,6 +304,24 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      {/* REPORT THIS PULL TO WHATSAPP? */}
+      {reportPull && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
+            <h2 className="text-2xl font-bold">REPORT THIS PULL TO WHATSAPP?</h2>
+            <label className="flex items-center gap-3 text-lg cursor-pointer">
+              <input type="checkbox" checked={reportToClient} onChange={(e) => setReportToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
+              Send to the client too?
+            </label>
+            {reportToClient && !client && <p className="text-sm text-yellow-400">This ride has no client on file — only the group report will be sent.</p>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setReportPull(null)} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
+              <button onClick={confirmReport} disabled={reporting} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add a pull */}
       <div className="flex flex-wrap gap-3 items-start mb-6">
         <div className="flex-1 min-w-[160px]">
