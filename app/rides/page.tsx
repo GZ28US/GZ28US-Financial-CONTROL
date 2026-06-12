@@ -36,14 +36,14 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
 
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
-    ? { label: 'MATH CLOSED', cls: 'bg-green-800 text-green-300' }
-    : { label: 'MATH OPEN', cls: 'bg-red-800 text-red-200' }
+    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
+    : null
 }
 
 function getLiveBadge(liveStatus: string | null) {
-  return liveStatus === 'REALTIME'
-    ? { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
-    : { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
+  if (liveStatus === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
+  if (liveStatus === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 
 export default function RidesPage() {
@@ -261,7 +261,7 @@ export default function RidesPage() {
                   onClick={() => setFeedFilter(f)}
                   className={`px-4 py-2 rounded-2xl font-bold text-sm ${feedFilter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
                 >
-                  {f === 'ONLINE' ? 'MATH CLOSED' : f === 'OFFLINE' ? 'MATH OPEN' : f}
+                  {f === 'ONLINE' ? 'REPORT READY' : f === 'OFFLINE' ? 'NOT READY' : f}
                 </button>
               ))}
             </div>
@@ -299,8 +299,8 @@ export default function RidesPage() {
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
+                    {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}

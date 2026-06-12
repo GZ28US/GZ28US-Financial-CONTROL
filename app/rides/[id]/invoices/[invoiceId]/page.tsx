@@ -69,17 +69,18 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
+// REPORT READY badge: shown ONLY when ON (feed_status REAL_TIME); otherwise no badge.
 function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
-    ? { label: 'MATH CLOSED', cls: 'bg-green-800 text-green-300' }
-    : { label: 'MATH OPEN', cls: 'bg-red-800 text-red-200' }
+    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
+    : null
 }
 
-// Manual, rule-free status the user toggles by hand.
+// Manual status the user cycles by hand: INCOMPLETE / REALTIME / CLOSED.
 function getLiveBadge(liveStatus: string | null) {
-  return liveStatus === 'REALTIME'
-    ? { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
-    : { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
+  if (liveStatus === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
+  if (liveStatus === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 
 // Normalize a stored phone string into the digits-only form UltraMsg expects as
@@ -678,8 +679,8 @@ export default function ViewInvoicePage() {
             <div className="flex items-center gap-3 mb-1 flex-wrap">
               <h1 className="text-4xl font-bold">{invoice.invoice_code}</h1>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
-              <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
+              {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
             </div>
             <p className="text-gray-400 text-xl">{isClient ? `${client?.client_number ?? ''}${client?.name ? ` — ${client.name}` : ''}` : `${projectCode}${projectName ? ` — ${projectName}` : ''}`}</p>
           </div>
