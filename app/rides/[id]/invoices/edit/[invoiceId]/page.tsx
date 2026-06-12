@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS } from '@/lib/utils'
 import { enrollParts } from '@/lib/partsDb'
 
-type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string }
+type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null }
 type Service = { id?: string; description: string; price: string }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
@@ -299,7 +299,7 @@ export default function EditInvoicePage() {
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined, payment_date: p.payment_date ?? null })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
@@ -1055,6 +1055,16 @@ export default function EditInvoicePage() {
     setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
   }
   function cancelEditPart() { setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' }) }
+  // Toggle a part's PAID status (payment_date = today / cleared). Persists immediately for saved parts.
+  async function togglePartPaid(index: number) {
+    const p = parts[index]
+    const next = isValidDate(p.payment_date || '') ? null : todayStr()
+    if (p.id) {
+      const { error } = await supabase.from('invoice_parts').update({ payment_date: next }).eq('id', p.id)
+      if (error) { alert(error.message); return }
+    }
+    setParts(prev => prev.map((x, i) => i === index ? { ...x, payment_date: next } : x))
+  }
 
   function addService() {
     if (!newService.description) { alert('Please enter a description'); return }
@@ -1254,11 +1264,12 @@ export default function EditInvoicePage() {
           unit_price: parseFloat(p.unit_price) || 0,
           quantity: parseFloat(p.quantity) || 0,
           base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null,
+          payment_date: isValidDate(p.payment_date || '') ? p.payment_date : null,
           position: i,
         })
         if (e) { alert(e.message); return }
       } else {
-        const upd: any = { position: i }
+        const upd: any = { position: i, payment_date: isValidDate(p.payment_date || '') ? p.payment_date : null }
         if (p.base_cost != null && p.base_cost !== '') {
           upd.unit_price = parseFloat(p.unit_price) || 0
           upd.base_cost = parseFloat(p.base_cost) || 0
@@ -2435,10 +2446,12 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate">{part.description}</p>
+                          <p className={`text-base font-bold truncate ${isValidDate(part.payment_date || '') ? '' : 'text-yellow-400'}`}>{part.description}{isValidDate(part.payment_date || '') ? '' : ' — PENDING'}</p>
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
+                          <p className="text-sm text-gray-500">{isValidDate(part.payment_date || '') ? `Paid: ${formatDate(part.payment_date || '')}` : 'Not paid yet'}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
+                          <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>
                           <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>
                           <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
                           <button onClick={() => startEditPart(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>

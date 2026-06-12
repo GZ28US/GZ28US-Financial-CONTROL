@@ -36,7 +36,7 @@ type Client = {
   preferred_message_method: string | null
 }
 
-type Part = { id: string; description: string; unit_price: number; quantity: number }
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; description: string | null; paid_at: string | null }
 type Note = { id: string; note: string }
@@ -729,16 +729,20 @@ export default function ViewInvoicePage() {
             <div>
               <label className="block mb-3 text-lg font-bold">PARTS</label>
               <div className={sectionClass}>
-                {parts.map((part, index) => (
+                {parts.map((part, index) => {
+                  const partPaid = isValidDate(part.payment_date)
+                  return (
                   <div key={part.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <div className="flex-1 min-w-0">
-                      <p className="text-base font-bold truncate">{part.description}</p>
+                      <p className={`text-base font-bold truncate ${partPaid ? '' : 'text-yellow-400'}`}>{part.description}{partPaid ? '' : ' — PENDING'}</p>
                       <p className="text-sm text-gray-400">
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
+                      <p className="text-sm text-gray-500">{partPaid ? `Paid: ${formatDate(part.payment_date)}` : 'Not paid yet'}</p>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className="text-gray-400 font-bold">PARTS SUB-TOTAL</span><span className="font-bold">{formatUSD(partsSubTotal)}</span></div>
                 {(invoice.florida_taxes || 0) > 0 && <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="text-gray-400 font-bold">FLORIDA PARTS TAXES ({invoice.florida_taxes}%)</span><span className="font-bold">{formatUSD(floridaTaxesAmount)}</span></div>}
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">PARTS TOTAL</span><span className="text-xl font-bold">{formatUSD(partsTotal)}</span></div>
