@@ -40,6 +40,12 @@ function getFeedBadge(feedStatus: string | null) {
     : { label: 'MATH OPEN', cls: 'bg-red-800 text-red-200' }
 }
 
+function getLiveBadge(liveStatus: string | null) {
+  return liveStatus === 'REALTIME'
+    ? { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+    : { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
+}
+
 export default function RidesPage() {
   const [rides, setRides] = useState<Ride[]>([])
   const [loading, setLoading] = useState(true)
@@ -64,7 +70,7 @@ export default function RidesPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, is_quote, florida_taxes, global_discount, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, updated_at, created_at')
+        .select('id, is_quote, florida_taxes, global_discount, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, live_status, updated_at, created_at')
         .eq('ride_id', ride.id)
 
       const invoiceList = invoices || []
@@ -273,6 +279,7 @@ export default function RidesPage() {
           {filteredRides.map((ride) => {
             const statusBadge = getStatusBadge(ride._latestInvoice)
             const feedBadge = getFeedBadge(ride._latestInvoice?.feed_status ?? null)
+            const liveBadge = getLiveBadge(ride._latestInvoice?.live_status ?? null)
             return (
             <div key={ride.id} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden flex items-stretch">
               {/* PHOTO */}
@@ -293,6 +300,7 @@ export default function RidesPage() {
                     <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                   </div>
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}

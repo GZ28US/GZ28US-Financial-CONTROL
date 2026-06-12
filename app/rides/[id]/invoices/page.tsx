@@ -19,6 +19,7 @@ type Invoice = {
   global_discount: number | null
   fl_tax_expense_date: string | null
   feed_status: string | null
+  live_status: string | null
   is_quote: boolean | null
 }
 
@@ -54,6 +55,12 @@ function getFeedBadge(feedStatus: string | null) {
   return feedStatus === 'REAL_TIME'
     ? { label: 'MATH CLOSED', cls: 'bg-green-800 text-green-300' }
     : { label: 'MATH OPEN', cls: 'bg-red-800 text-red-200' }
+}
+
+function getLiveBadge(liveStatus: string | null) {
+  return liveStatus === 'REALTIME'
+    ? { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+    : { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 
 export default function InvoicesPage() {
@@ -207,6 +214,7 @@ export default function InvoicesPage() {
             const s = stats[invoice.id]
             const statusBadge = getStatusBadge(invoice)
             const feedBadge = getFeedBadge(invoice.feed_status)
+            const liveBadge = getLiveBadge(invoice.live_status)
 
             return (
               <div key={invoice.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
@@ -215,6 +223,7 @@ export default function InvoicesPage() {
                     <h2 className="text-2xl font-bold">{invoice.invoice_code}</h2>
                     {(!isClient || invoice.is_quote) && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                   </div>
                   <p className="text-lg text-gray-400">Entry: {formatDate(invoice.entry_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
                   {invoice.service && <p className="text-lg text-gray-400">{invoice.service}</p>}

@@ -952,7 +952,10 @@ export default function EditInvoicePage() {
   const pendingBalance = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - grandTotal
   // ONLINE is allowed only when there's no PENDING BALANCE still owed (>= 0).
   // While a pending balance is owed (negative), the invoice is locked OFFLINE.
-  const canBeOnline = pendingBalance >= 0
+  const noPendingBalance = pendingBalance >= 0
+  // MATH CLOSED also requires every income (payment) to carry a date.
+  const allIncomesDated = payments.every(p => isValidDate(p.payment_date))
+  const canBeOnline = noPendingBalance && allIncomesDated
   const feedOnline = feedStatus === 'REAL_TIME' && canBeOnline
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
@@ -2083,12 +2086,12 @@ export default function EditInvoicePage() {
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">MATH STATUS</p>
-            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as MATH CLOSED once it is fully up to date.{!canBeOnline ? ' Locked MATH OPEN until the PENDING BALANCE is settled.' : ''}</p>
+            <p className="text-sm text-gray-400">Mark this {isQuote ? 'quote' : 'invoice'} as MATH CLOSED once it is fully up to date.{!canBeOnline ? ` Locked MATH OPEN until ${!noPendingBalance ? 'the PENDING BALANCE is settled' : 'every income has a date'}.` : ''}</p>
           </div>
           <button
             onClick={() => {
               if (feedOnline) { setFeedStatus('INCOMPLETE'); return }
-              if (!canBeOnline) { alert('This invoice can be MATH CLOSED only when it has no PENDING BALANCE owed. Settle it first.'); return }
+              if (!canBeOnline) { alert(noPendingBalance ? 'This invoice can be MATH CLOSED only when every income has a date.' : 'This invoice can be MATH CLOSED only when it has no PENDING BALANCE owed. Settle it first.'); return }
               setFeedStatus('REAL_TIME')
             }}
             className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${feedOnline ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-red-700 hover:bg-red-600 text-white'} ${!canBeOnline && !feedOnline ? 'opacity-60 cursor-not-allowed' : ''}`}
