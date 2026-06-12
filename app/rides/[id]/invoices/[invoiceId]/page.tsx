@@ -483,7 +483,7 @@ export default function ViewInvoicePage() {
             </div>
 
             {parts.length > 0 && <div className="pi-sec">
-              <div className="pi-sec-title">Parts</div>
+              <div className="pi-sec-title">Items</div>
               <table className="pi-table">
                 <thead><tr>
                   <th style={{width:'56%'}}>Description</th>
@@ -502,7 +502,7 @@ export default function ViewInvoicePage() {
                   ))}
                   <tr className="pi-subtotal"><td colSpan={3} className="r">Sub-Total</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
                   {(invoice.florida_taxes || 0) > 0 && <tr className="pi-taxes"><td colSpan={3} className="r">Florida Taxes {invoice.florida_taxes}%</td><td className="r">{formatUSD(floridaTaxesAmount)}</td></tr>}
-                  <tr className="pi-ptotal"><td colSpan={3} className="r">Parts Total</td><td className="r">{formatUSD(partsTotal)}</td></tr>
+                  <tr className="pi-ptotal"><td colSpan={3} className="r">Items Total</td><td className="r">{formatUSD(partsTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -529,7 +529,7 @@ export default function ViewInvoicePage() {
             <div className="pi-totals-wrap">
               <table className="pi-totals-tbl">
                 <tbody>
-                  <tr className="pi-psrow"><td>Parts + Services</td><td className="r">{formatUSD(partsAndServicesTotal)}</td></tr>
+                  <tr className="pi-psrow"><td>Items + Services</td><td className="r">{formatUSD(partsAndServicesTotal)}</td></tr>
                   {hasDiscount && <tr className="pi-discrow"><td>Discount ({invoice.global_discount}%)</td><td className="r">— {formatUSD(globalDiscountAmount)}</td></tr>}
                   <tr className="pi-grandrow"><td>Grand Total</td><td className="r">{formatUSD(grandTotal)}</td></tr>
                 </tbody>
@@ -606,14 +606,14 @@ export default function ViewInvoicePage() {
 
                 {bParts.length > 0 && (
                   <div>
-                    <p className="font-bold text-gray-300 mb-1">PARTS</p>
+                    <p className="font-bold text-gray-300 mb-1">ITEMS</p>
                     {bParts.map((p: any, i: number) => (
                       <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
                         <span className="min-w-0 truncate">{p.description}</span>
                         <span className="text-gray-400 shrink-0">{Number(p.unit_price) === 0 ? 'COURTESY' : `${formatUSD(Number(p.unit_price) || 0)} × ${Number(p.quantity) || 0} = ${formatUSD((Number(p.unit_price) || 0) * (Number(p.quantity) || 0))}`}</span>
                       </div>
                     ))}
-                    <div className="flex justify-between text-sm font-bold pt-1"><span>PARTS TOTAL{(Number(bInv.florida_taxes) || 0) > 0 ? ` (incl. ${bInv.florida_taxes}% FL tax)` : ''}</span><span>{formatUSD(partsTot)}</span></div>
+                    <div className="flex justify-between text-sm font-bold pt-1"><span>ITEMS TOTAL{(Number(bInv.florida_taxes) || 0) > 0 ? ` (incl. ${bInv.florida_taxes}% FL tax)` : ''}</span><span>{formatUSD(partsTot)}</span></div>
                   </div>
                 )}
 
@@ -754,9 +754,9 @@ export default function ViewInvoicePage() {
                   </div>
                   )
                 })}
-                <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className="text-gray-400 font-bold">PARTS SUB-TOTAL</span><span className="font-bold">{formatUSD(partsSubTotal)}</span></div>
+                <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className="text-gray-400 font-bold">ITEMS SUB-TOTAL</span><span className="font-bold">{formatUSD(partsSubTotal)}</span></div>
                 {(invoice.florida_taxes || 0) > 0 && <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="text-gray-400 font-bold">FLORIDA PARTS TAXES ({invoice.florida_taxes}%)</span><span className="font-bold">{formatUSD(floridaTaxesAmount)}</span></div>}
-                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">PARTS TOTAL</span><span className="text-xl font-bold">{formatUSD(partsTotal)}</span></div>
+                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">ITEMS TOTAL</span><span className="text-xl font-bold">{formatUSD(partsTotal)}</span></div>
               </div>
             </div>
           )}
@@ -777,7 +777,7 @@ export default function ViewInvoicePage() {
           )}
 
           <div className={sectionClass}>
-            <div className={rowClass}><span className={labelClass}>PARTS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
+            <div className={rowClass}><span className={labelClass}>ITEMS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
             {hasDiscount && <div className={rowClass}><span className={labelClass}>GLOBAL DISCOUNT ({invoice.global_discount}%)</span><span className="font-bold text-red-400">- {formatUSD(globalDiscountAmount)}</span></div>}
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>

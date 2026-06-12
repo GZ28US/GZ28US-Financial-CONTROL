@@ -1018,7 +1018,7 @@ export default function EditInvoicePage() {
   }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading])
 
   function addPart() {
-    if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all part fields'); return }
+    if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all item fields'); return }
     setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
   }
   // Reorder a PARTS row up (-1) or down (+1). Local only; the new order is
@@ -1049,7 +1049,7 @@ export default function EditInvoicePage() {
   }
   function startEditPart(index: number) { setEditingPartIndex(index); setEditingPart({ ...parts[index] }) }
   async function saveEditPart() {
-    if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all part fields'); return }
+    if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all item fields'); return }
     const part = parts[editingPartIndex!]
     if (part.id) {
       // A manual edit detaches the part from the live margin (base_cost -> null),
@@ -2420,7 +2420,7 @@ export default function EditInvoicePage() {
         </div>
 
         <div>
-          <label className="block mb-3 text-lg font-bold">PARTS</label>
+          <label className="block mb-3 text-lg font-bold">ITEMS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <input type="text" placeholder="Description" value={newPart.description} onChange={(e) => setNewPart({ ...newPart, description: e.target.value })} className={inputClass} />
             <div className="flex gap-3">
@@ -2437,7 +2437,7 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <div className="flex gap-3 items-center flex-wrap">
-              <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD PART</button>
+              <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD ITEM</button>
               <button onClick={importIntuitiveParts} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold text-lg">⬆ IMPORT INTUITIVE PARTS</button>
               <div className="flex items-center gap-2">
                 <span className="text-gray-400 font-bold text-sm">MARGIN</span>
@@ -2493,11 +2493,11 @@ export default function EditInvoicePage() {
               </div>
             )}
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
-              <span className="text-gray-400 font-bold">PARTS SUB-TOTAL</span>
+              <span className="text-gray-400 font-bold">ITEMS SUB-TOTAL</span>
               <span className="text-xl font-bold">{formatUSD(partsSubTotal)}</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-gray-400 font-bold whitespace-nowrap">FLORIDA PARTS TAXES</span>
+              <span className="text-gray-400 font-bold whitespace-nowrap">FLORIDA TAXES</span>
               <div className="relative w-28">
                 <input type="text" inputMode="decimal" value={floridaTaxes} onChange={(e) => { if (isNumeric(e.target.value)) setFloridaTaxes(e.target.value) }} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
@@ -2505,7 +2505,7 @@ export default function EditInvoicePage() {
               <span className="text-xl font-bold ml-auto">{formatUSD(floridaTaxesAmount)}</span>
             </div>
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
-              <span className="font-bold text-lg">PARTS TOTAL</span>
+              <span className="font-bold text-lg">ITEMS TOTAL</span>
               <span className="text-2xl font-bold">{formatUSD(partsTotal)}</span>
             </div>
           </div>
@@ -2569,7 +2569,7 @@ export default function EditInvoicePage() {
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
           <div className="flex justify-between items-center">
-            <span className="text-gray-400 font-bold">PARTS + SERVICES TOTAL</span>
+            <span className="text-gray-400 font-bold">ITEMS + SERVICES TOTAL</span>
             <span className="text-xl font-bold">{formatUSD(partsAndServicesTotal)}</span>
           </div>
           <div className="flex items-center gap-3">
@@ -2746,9 +2746,9 @@ export default function EditInvoicePage() {
 
         {!isClient && (
         <div>
-          <label className="block mb-3 text-lg font-bold">PARTS TO STOCK</label>
+          <label className="block mb-3 text-lg font-bold">ITEMS TO INVENTORY</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <p className="text-sm text-gray-400">Parts removed from this car that go into our stock inventory as DONATED.</p>
+            <p className="text-sm text-gray-400">Items removed from this car that go into our inventory as DONATED.</p>
             <input type="text" placeholder="Description" value={newPartToStock.description} onChange={(e) => setNewPartToStock({ ...newPartToStock, description: e.target.value })} className={inputClass} />
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
@@ -2761,7 +2761,7 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <DatePicker label="DATE" value={newPartToStock.date} onChange={(v) => setNewPartToStock({ ...newPartToStock, date: v })} />
-            <button onClick={addPartToStock} className="bg-orange-700 hover:bg-orange-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD TO STOCK</button>
+            <button onClick={addPartToStock} className="bg-orange-700 hover:bg-orange-600 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD TO INVENTORY</button>
 
             {partsToStock.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
@@ -2779,7 +2779,7 @@ export default function EditInvoicePage() {
 
             {savedPartsToStock.length > 0 && (
               <div className="border-t border-gray-700 pt-3">
-                <p className="text-sm text-gray-500 mb-2">ALREADY IN STOCK FROM THIS {isQuote ? 'QUOTE' : 'INVOICE'}</p>
+                <p className="text-sm text-gray-500 mb-2">ALREADY IN INVENTORY FROM THIS {isQuote ? 'QUOTE' : 'INVOICE'}</p>
                 <div className="border border-gray-700 rounded-2xl overflow-hidden">
                   {savedPartsToStock.map((p, index) => (
                     <div key={index} className={`flex items-center gap-4 px-4 py-3 ${index < savedPartsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
