@@ -310,7 +310,7 @@ export default function ViewInvoicePage() {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, body: caption, documentUrl: pdfUrl, filename: fname }),
+        body: JSON.stringify({ to, body: caption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
       })
       const data = await res.json()
       if (!data.ok) {

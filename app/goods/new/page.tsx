@@ -246,7 +246,7 @@ export default function NewGoodPage() {
       lines.push(`• ${it.item} — ${qtyN} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
     })
 
-    return lines.join('\n')
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   async function sendExpenseReports() {

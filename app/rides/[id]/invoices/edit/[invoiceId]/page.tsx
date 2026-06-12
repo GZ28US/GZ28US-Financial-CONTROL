@@ -1530,7 +1530,7 @@ export default function EditInvoicePage() {
       lines.push(`*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
       lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
     }
-    return lines.join('\n')
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   function buildExpenseCaption(exp: ExpenseReport) {
@@ -1567,7 +1567,7 @@ export default function EditInvoicePage() {
       lines.push(`*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
       lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
     }
-    return lines.join('\n')
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   async function sendIncomeReports() {

@@ -54,6 +54,9 @@ function applyLoss(wheel: string, loss: string): number | null {
 
 type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null }
 
+// The auto-created baseline row is identified by its PACK label.
+function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
+
 function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,13 +75,25 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
   const [reportPull, setReportPull] = useState<DynoPull | null>(null)
   const [reportToClient, setReportToClient] = useState(false)
   const [reporting, setReporting] = useState(false)
+  const [car, setCar] = useState<{ manufacturer: string | null; brand: string | null; model: string | null; version: string | null; year: number | null } | null>(null)
+  // "SEND DYNO DATA" — generate the full sheet PDF and WhatsApp it (group + optionally client).
+  const [dynoSendOpen, setDynoSendOpen] = useState(false)
+  const [dynoSendToClient, setDynoSendToClient] = useState(false)
+  const [dynoSending, setDynoSending] = useState(false)
+  // Loss (crank→wheel) is a per-ride CONSTANT — entered once, shown above the table, not a column.
+  const [editingLoss, setEditingLoss] = useState(false)
+  const [lossDraft, setLossDraft] = useState('')
+  const rideLoss = pulls.find((p) => p.loss_pct != null)?.loss_pct ?? null
 
   useEffect(() => {
     (async () => {
-      const { data: rideRow } = await supabase.from('rides').select('client_id').eq('id', rideId).single()
-      if (rideRow?.client_id) {
-        const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method').eq('id', rideRow.client_id).single()
-        if (c) setClient(c as typeof client)
+      const { data: rideRow } = await supabase.from('rides').select('client_id, manufacturer, brand, model, version, year').eq('id', rideId).single()
+      if (rideRow) {
+        setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, year: rideRow.year })
+        if (rideRow.client_id) {
+          const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method').eq('id', rideRow.client_id).single()
+          if (c) setClient(c as typeof client)
+        }
       }
     })()
   }, [])
@@ -125,12 +140,62 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
       .eq('ride_id', rideId)
       .order('pull_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-    setPulls((data || []) as DynoPull[])
+    const rows = (data || []) as DynoPull[]
+    // BoneStock baseline is always pinned as the first row.
+    rows.sort((a, b) => (isBoneStock(b) ? 1 : 0) - (isBoneStock(a) ? 1 : 0))
+    setPulls(rows)
     setLoading(false)
+  }
+
+  // Auto-create the BoneStock baseline (factory crank specs → wheel via the entered loss).
+  async function createBoneStock(lossStr: string) {
+    let hp: number | null = null, nm: number | null = null
+    if (car) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/factory-specs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car) })
+        const data = await res.json().catch(() => ({}))
+        if (Number.isFinite(Number(data.hp))) hp = Number(data.hp)
+        if (Number.isFinite(Number(data.nm))) nm = Number(data.nm)
+      } catch { /* leave null — still create the row so every table has a BoneStock */ }
+    }
+    const loss = lossStr === '' ? 15 : (parseFloat(lossStr) || 15)
+    const lf = 1 - loss / 100
+    const whp = hp != null ? Math.round(hp * lf * 100) / 100 : null
+    const wnm = nm != null ? Math.round(nm * lf * 100) / 100 : null
+    await supabase.from('dyno_pulls').insert([{
+      ride_id: rideId,
+      pack: 'BoneStock',
+      whp, wnm,
+      loss_pct: loss,
+      bhp: hp, // factory crank hp
+      bnm: nm, // factory crank torque (N·m)
+      pull_date: null, dyno: null, document_url: null,
+    }])
+  }
+
+  // Edit the ride-constant loss: re-peg BoneStock to factory crank, re-derive crank for measured pulls.
+  async function saveLoss() {
+    const v = parseFloat(lossDraft)
+    if (!Number.isFinite(v)) { alert('Enter a valid loss %.'); return }
+    const lf = 1 - v / 100
+    for (const p of pulls) {
+      if (isBoneStock(p)) {
+        const whp = p.bhp != null ? Math.round(p.bhp * lf * 100) / 100 : p.whp
+        const wnm = p.bnm != null ? Math.round(p.bnm * lf * 100) / 100 : p.wnm
+        await supabase.from('dyno_pulls').update({ loss_pct: v, whp, wnm }).eq('id', p.id)
+      } else {
+        await supabase.from('dyno_pulls').update({ loss_pct: v, bhp: applyLoss(p.whp != null ? String(p.whp) : '', String(v)), bnm: applyLoss(p.wnm != null ? String(p.wnm) : '', String(v)) }).eq('id', p.id)
+      }
+    }
+    setEditingLoss(false)
+    load()
   }
 
   async function addPull() {
     if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
+    // Loss is set ONCE for the whole ride (on the first pull) — required so the pull and the
+    // auto BoneStock share the exact same crank→wheel conversion.
+    if (pulls.length === 0 && !form.loss.trim()) { alert('Enter the crank→wheel LOSS % — it is set once for the whole ride.'); return }
     setSaving(true)
     try {
       let documentUrl: string | null = null
@@ -143,19 +208,24 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
         documentUrl = urlData.publicUrl
       }
       const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
+      // Loss is constant per ride: use what the user typed on the first pull, reuse it after.
+      const effLoss = pulls.length === 0 ? form.loss : (rideLoss != null ? String(rideLoss) : form.loss)
       const { data: inserted, error } = await supabase.from('dyno_pulls').insert([{
         ride_id: rideId,
         pack: form.pack.trim() || null,
         whp: form.whp ? parseFloat(form.whp) : null,
         wnm: form.wnm ? parseFloat(form.wnm) : null,
-        loss_pct: form.loss ? parseFloat(form.loss) : null,
-        bhp: applyLoss(form.whp, form.loss),
-        bnm: applyLoss(form.wnm, form.loss),
+        loss_pct: effLoss ? parseFloat(effLoss) : null,
+        bhp: applyLoss(form.whp, effLoss),
+        bnm: applyLoss(form.wnm, effLoss),
         pull_date: pullDate,
         dyno: form.dyno || null,
         document_url: documentUrl,
       }]).select().single()
       if (error) { alert(error.message); return }
+
+      // Every ride's table leads with a BoneStock baseline row — create it once, on the first pull.
+      if (!pulls.some(isBoneStock)) { await createBoneStock(effLoss) }
 
       setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
       setScannedFile(null)
@@ -217,7 +287,7 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
       p.bnm != null ? `*BNM:* ${p.bnm.toFixed(2)} N·m` : null,
       p.pull_date ? `*Date:* ${fmtDate(p.pull_date)}` : null,
       p.dyno ? `*Dyno:* ${p.dyno}` : null,
-    ].filter(Boolean).join('\n')
+    ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   function docFilename(p: DynoPull) {
@@ -299,8 +369,178 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     alert(`This client prefers ${method}, which can't be sent automatically.\nThe report was copied to your clipboard — paste it into ${method}.`)
   }
 
+  // Title for the dyno sheet, built from the car + ride (auto).
+  function sheetTitle(): string {
+    const carName = [car?.year, car?.brand, car?.model, car?.version].filter(Boolean).join(' ')
+    return [carName, rideTitle].filter((s) => s && String(s).trim()).join(' — ')
+  }
+
+  // Load the white-background GZ28 logo as a data URL (for embedding in the PDF). Null if it can't load.
+  async function loadLogo(): Promise<{ data: string; w: number; h: number } | null> {
+    try {
+      const img = new window.Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = `${BASE_PATH}/logo_gz28.jpg` })
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d'); if (!ctx) return null
+      ctx.drawImage(img, 0, 0)
+      return { data: canvas.toDataURL('image/jpeg', 0.92), w: img.naturalWidth, h: img.naturalHeight }
+    } catch { return null }
+  }
+
+  // Build the styled dyno-data sheet (landscape A4) and return it as a PDF Blob.
+  async function buildDynoPdf(): Promise<Blob> {
+    const { jsPDF } = await import('jspdf')
+    const autoTable = (await import('jspdf-autotable')).default
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const pageW = doc.internal.pageSize.getWidth()
+
+    const logo = await loadLogo()
+    if (logo) {
+      // NEVER distort: scale by the single smaller fit factor so width:height stays exact.
+      const maxW = 48, maxH = 17
+      const s = Math.min(maxW / logo.w, maxH / logo.h)
+      doc.addImage(logo.data, 'JPEG', 8, 5, logo.w * s, logo.h * s)
+    } else { doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); doc.setTextColor(225, 29, 29); doc.text('GZ', 8, 17); const gx = 8 + doc.getTextWidth('GZ'); doc.setTextColor(23, 70, 200); doc.text('28', gx, 17) }
+
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(13); doc.setTextColor(20, 20, 20)
+    doc.text(sheetTitle() || 'Dyno Data', pageW / 2, 13, { align: 'center', maxWidth: pageW - 120 })
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(20, 20, 20)
+    doc.text(`Crank → wheel LOSS:  ${rideLoss != null ? Number(rideLoss) : '—'}%`, pageW - 8, 9, { align: 'right' })
+
+    const REDFILL: [number, number, number] = [255, 0, 0], BLUEFILL: [number, number, number] = [36, 51, 194]
+    const lighten = (c: [number, number, number]): [number, number, number] => [Math.round(c[0] + (255 - c[0]) * 0.55), Math.round(c[1] + (255 - c[1]) * 0.55), Math.round(c[2] + (255 - c[2]) * 0.55)]
+    const f2 = (v: number | null | undefined) => (v == null ? '—' : Number(v).toFixed(2))
+    // WHP/WNM are the WHEEL columns (red); BHP/BNM are the ENGINE/crank columns (blue).
+    const cols: Array<{ f: (p: DynoPull) => string; fill: [number, number, number] }> = [
+      { f: (p) => f2(p.whp), fill: REDFILL },
+      { f: (p) => f2(p.wnm), fill: REDFILL },
+      { f: (p) => f2(p.bhp), fill: BLUEFILL },
+      { f: (p) => f2(p.bnm), fill: BLUEFILL },
+    ]
+    const bs = pulls.find(isBoneStock)
+    const others = pulls.filter((p) => !isBoneStock(p)).slice().reverse() // oldest -> newest
+    const ordered = [...(bs ? [bs] : []), ...others]
+    type Cell = { content: string; styles: Record<string, unknown> }
+    const WHITE: [number, number, number] = [255, 255, 255]
+    const body: Cell[][] = ordered.map((p) => {
+      const stock = isBoneStock(p)
+      const nameCell: Cell = { content: stock ? 'BoneStock' : (p.pack || '—'), styles: { halign: 'center', fontStyle: 'bold', textColor: (stock ? lighten([40, 40, 40]) : [40, 40, 40]), fillColor: WHITE } }
+      const cells: Cell[] = cols.map((col) => ({ content: col.f(p), styles: { textColor: WHITE, fontStyle: 'bold', fillColor: col.fill } }))
+      return [nameCell, ...cells]
+    })
+    // Always render at least 7 body rows — pad with empties that keep the red/blue column bands.
+    const MIN_ROWS = 7
+    while (body.length < MIN_ROWS) {
+      body.push([{ content: '', styles: { fillColor: WHITE } }, ...cols.map((col) => ({ content: '', styles: { fillColor: col.fill } } as Cell))])
+    }
+
+    // Gains: latest pull minus BoneStock (whole row black).
+    let foot: Array<{ content: string; styles: Record<string, unknown> }> | null = null
+    if (bs && others.length) {
+      const a = others[others.length - 1], b = bs
+      const n = (v: number | null | undefined) => v ?? 0
+      const gv = [f2(n(a.whp) - n(b.whp)), f2(n(a.wnm) - n(b.wnm)), f2(n(a.bhp) - n(b.bhp)), f2(n(a.bnm) - n(b.bnm))]
+      foot = [{ content: 'Gains', styles: { halign: 'left', fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [0, 0, 0] } }, ...gv.map((t) => ({ content: t, styles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold' } }))]
+    }
+
+    const noBorder = { fillColor: WHITE, lineWidth: 0 }
+    const head = [
+      [
+        { content: '', styles: { ...noBorder } },
+        { content: 'WHEEL', colSpan: 2, styles: { fillColor: [255, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
+        { content: 'ENGINE (Crank)', colSpan: 2, styles: { fillColor: [36, 51, 194], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
+      ],
+      [
+        { content: '', styles: { ...noBorder } },
+        'WHP', 'WNM', 'BHP', 'BNM',
+      ],
+    ]
+
+    autoTable(doc, {
+      startY: 22,
+      head: head as never,
+      body: body as never,
+      foot: (foot ? [foot] : undefined) as never,
+      theme: 'grid',
+      styles: { fontSize: 9, halign: 'center', valign: 'middle', cellPadding: 2.2, lineColor: [150, 150, 150], lineWidth: 0.2, textColor: [40, 40, 40] },
+      headStyles: { fillColor: [224, 224, 224], textColor: [55, 55, 55], fontStyle: 'bold', fontSize: 9, halign: 'center', lineColor: [120, 120, 120], lineWidth: 0.2 },
+      footStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [120, 120, 120], lineWidth: 0.2 },
+      columnStyles: { 0: { cellWidth: 60 } },
+      margin: { left: 8, right: 8 },
+    })
+
+    return doc.output('blob')
+  }
+
+  // SEND DYNO DATA dialog confirm: build the PDF, upload it, WhatsApp it to the group (+ client).
+  async function confirmSendDynoData() {
+    setDynoSending(true)
+    try {
+      const blob = await buildDynoPdf()
+      const rideLabel = (rideTitle || sheetTitle() || 'Dyno Data').replace(/\s*—\s*/g, ' ').trim()
+      const fileLabel = `GZ28 V8 SpeedShop Dyno Data - ${rideLabel}`
+      const filename = `${fileLabel}.pdf`
+      const slug = (fileLabel.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80)) || 'dyno-data'
+      const path = `reports/${rideId}/${slug}-${Date.now()}.pdf`
+      const { error: upErr } = await supabase.storage.from('dyno-charts').upload(path, blob, { upsert: true, contentType: 'application/pdf' })
+      if (upErr) { alert('PDF upload failed: ' + upErr.message); return }
+      const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
+      const url = urlData.publicUrl
+      const caption = [
+        '🏁 *GZ28US · DYNO DATA*',
+        sheetTitle() ? `*${sheetTitle()}*` : null,
+      ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
+
+      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: caption, documentUrl: url, filename }) })
+      const gd = await group.json().catch(() => ({}))
+      if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${group.status}`))); return }
+
+      if (dynoSendToClient) {
+        const to = client ? toWaNumber(client.phone) : null
+        if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the sheet was not sent to them.') }
+        else {
+          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: caption, documentUrl: url, filename }) })
+          const cd = await cli.json().catch(() => ({}))
+          if (!cd.ok) { alert('Sent to the group, but the client send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`))); return }
+          return
+        }
+      }
+    } catch (e) {
+      alert('Could not generate/send the dyno data: ' + String(e))
+    } finally {
+      setDynoSending(false)
+      setDynoSendOpen(false)
+    }
+  }
+
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
   const editInput = 'bg-gray-800 border border-gray-700 rounded-xl px-2 py-1 text-base'
+
+  // Final GAINS row: latest pull minus the BoneStock baseline.
+  function gainsRow() {
+    const bs = pulls.find(isBoneStock)
+    const last = pulls.find((p) => !isBoneStock(p))
+    if (!bs || !last) return null
+    const n = (v: number | null | undefined) => v ?? 0
+    const cell = (v: number) => (
+      <td className={`py-3 pr-4 font-bold ${v >= 0 ? 'text-green-400' : 'text-red-400'}`}>{(v >= 0 ? '+' : '') + v.toFixed(2)}</td>
+    )
+    return (
+      <tr className="border-t-2 border-gray-600 bg-green-900/10">
+        <td className="py-3 pr-4 font-bold text-green-300">GAINS</td>
+        {cell(n(last.whp) - n(bs.whp))}
+        {cell(n(last.wnm) - n(bs.wnm))}
+        {cell(n(last.bhp) - n(bs.bhp))}
+        {cell(n(last.bnm) - n(bs.bnm))}
+        <td className="py-3 pr-4"></td>
+        <td className="py-3 pr-4"></td>
+        <td className="py-3 pr-4"></td>
+        <td className="py-3"></td>
+      </tr>
+    )
+  }
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
@@ -336,10 +576,12 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
           <label className="block mb-1 text-sm text-gray-400 font-bold">WNM</label>
           <input value={form.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, wnm: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
-        <div className="w-28">
-          <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
-          <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
-        </div>
+        {pulls.length === 0 && (
+          <div className="w-28">
+            <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
+            <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
+          </div>
+        )}
         <div className="min-w-[300px] flex-1">
           <label className="block mb-1 text-sm text-gray-400 font-bold">DATE</label>
           <div className="flex gap-2">
@@ -380,12 +622,30 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
         </p>
       )}
 
+      {/* Loss is a per-ride constant — shown here once, never as a per-pull column. */}
+      <div className="flex items-center gap-3 mb-4 text-lg">
+        <span className="text-gray-400 font-bold">Crank → wheel loss:</span>
+        {editingLoss ? (
+          <>
+            <input value={lossDraft} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setLossDraft(e.target.value) }} className="w-20 bg-gray-800 border border-gray-700 rounded-xl px-3 py-1" placeholder="%" />
+            <button onClick={saveLoss} className="bg-green-700 hover:bg-green-600 px-4 py-1 rounded-xl font-bold text-sm">SAVE</button>
+            <button onClick={() => setEditingLoss(false)} className="bg-gray-600 hover:bg-gray-500 px-4 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+          </>
+        ) : (
+          <>
+            <span className="font-bold text-white">{rideLoss != null ? `${rideLoss}%` : '— (set on the first pull)'}</span>
+            {rideLoss != null && <button onClick={() => { setLossDraft(String(rideLoss)); setEditingLoss(true) }} className="bg-blue-700 hover:bg-blue-600 px-4 py-1 rounded-xl font-bold text-sm">EDIT</button>}
+          </>
+        )}
+      </div>
+
       {/* Pulls table */}
       {loading ? (
         <p className="text-lg text-gray-400">Loading...</p>
       ) : pulls.length === 0 ? (
         <p className="text-lg text-gray-400">No pulls recorded yet.</p>
       ) : (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
@@ -393,7 +653,6 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                 <th className="py-2 pr-4 font-bold">PACK</th>
                 <th className="py-2 pr-4 font-bold">WHP</th>
                 <th className="py-2 pr-4 font-bold">WNM</th>
-                <th className="py-2 pr-4 font-bold">LOSS (%)</th>
                 <th className="py-2 pr-4 font-bold">BHP</th>
                 <th className="py-2 pr-4 font-bold">BNM</th>
                 <th className="py-2 pr-4 font-bold">DATE</th>
@@ -408,7 +667,6 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                   <td className="py-2 pr-2"><input value={editForm.pack} onChange={(e) => setEditForm({ ...editForm, pack: e.target.value })} className={`${editInput} w-full`} placeholder="PACK" /></td>
                   <td className="py-2 pr-2"><input value={editForm.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, whp: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
                   <td className="py-2 pr-2"><input value={editForm.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, wnm: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
-                  <td className="py-2 pr-2"><input value={editForm.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, loss: e.target.value }) }} className={`${editInput} w-16`} placeholder="0" /></td>
                   <td className="py-2 pr-2 text-gray-400">{editBhp != null ? editBhp.toFixed(2) : '—'}</td>
                   <td className="py-2 pr-2 text-gray-400">{editBnm != null ? editBnm.toFixed(2) : '—'}</td>
                   <td className="py-2 pr-2">
@@ -441,11 +699,10 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                   </td>
                 </tr>
               ) : (
-                <tr key={p.id} className="border-b border-gray-800">
-                  <td className="py-3 pr-4 font-bold">{p.pack || '—'}</td>
+                <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
                   <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} N·m` : '—'}</td>
-                  <td className="py-3 pr-4 text-gray-400">{p.loss_pct != null ? `${p.loss_pct}%` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
                   <td className="py-3 pr-4">{p.bnm != null ? `${p.bnm.toFixed(2)} N·m` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
@@ -460,8 +717,31 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                   </td>
                 </tr>
               ))}
+              {gainsRow()}
             </tbody>
           </table>
+        </div>
+        <div className="flex justify-center mt-6">
+          <button onClick={() => { setDynoSendToClient(false); setDynoSendOpen(true) }} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SEND DYNO DATA</button>
+        </div>
+        </>
+      )}
+
+      {/* SEND DYNO DATA TO WHATSAPP? */}
+      {dynoSendOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
+            <h2 className="text-2xl font-bold">SEND DYNO DATA TO WHATSAPP?</h2>
+            <p className="text-sm text-gray-400">Generates the full dyno sheet (BoneStock + every pull + gains) as a PDF and sends it to the reports group.</p>
+            <label className="flex items-center gap-3 text-lg cursor-pointer">
+              <input type="checkbox" checked={dynoSendToClient} onChange={(e) => setDynoSendToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
+              Send to the client too?
+            </label>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setDynoSendOpen(false)} disabled={dynoSending} className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">SKIP</button>
+              <button onClick={confirmSendDynoData} disabled={dynoSending} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{dynoSending ? 'SENDING…' : 'SEND'}</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -292,7 +292,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
       lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
     })
 
-    return lines.join('\n')
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   async function sendExpenseReports() {

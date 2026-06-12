@@ -147,7 +147,7 @@ export default function NewExpensePage() {
     const typeAndOrigin = [exp.type, exp.origin === 'PERSONAL' ? 'PERSONAL' : null].filter(Boolean).join(' — ')
     if (typeAndOrigin) lines.push(typeAndOrigin)
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
-    return lines.join('\n')
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   async function sendExpenseReports() {

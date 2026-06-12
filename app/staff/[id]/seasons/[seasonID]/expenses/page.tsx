@@ -302,7 +302,7 @@ export default function ExpensesPage() {
       })
     }
 
-    return lines.join('\n')
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
   async function sendExpenseReports() {
