@@ -49,6 +49,8 @@ export default function ClientsPage() {
     if (typeof window === 'undefined') return 'project'
     return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
   })
+  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
+  const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
 
   useEffect(() => { loadClients() }, [])
 
@@ -197,6 +199,14 @@ export default function ClientsPage() {
     return phone
   }
 
+  // Filter clients by their (latest-invoice) live status; the REPORT filter only shows
+  // when the current selection has both ready and not-ready clients (never on INCOMPLETE).
+  const isReady = (c: any) => c._liveStatus === 'CLOSED' || (c._liveStatus === 'REALTIME' && c._feedStatus === 'REAL_TIME')
+  const liveFiltered = clients.filter((c: any) => liveFilter === 'ALL' || (c._hasInvoices && (c._liveStatus || 'INCOMPLETE') === liveFilter))
+  const showReportFilter = liveFilter !== 'INCOMPLETE' && liveFiltered.some(isReady) && liveFiltered.some((c: any) => !isReady(c))
+  const filtered = liveFiltered.filter((c: any) => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(c) : !isReady(c)))
+  const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
@@ -214,18 +224,32 @@ export default function ClientsPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({clients.length})</h1>
+      <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
+          <div className="flex gap-2 flex-wrap">
+            {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
+              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+            ))}
+          </div>
+          {showReportFilter && (
+            <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+              {(['ALL', 'READY', 'NOT'] as const).map((f) => (
+                <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
+              ))}
+            </div>
+          )}
+        </div>
         <Link href={`/clients/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>
       </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : clients.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <p className="text-2xl text-gray-400">No clients yet.</p>
       ) : (
         <div className="space-y-5">
-          {clients.map((client) => (
+          {filtered.map((client) => (
             <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
