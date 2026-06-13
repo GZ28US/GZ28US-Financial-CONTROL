@@ -50,10 +50,9 @@ export default function RidesPage() {
   const [rides, setRides] = useState<Ride[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  // Filter the list by whether a ride has actual invoices, quotes, neither, or all.
-  const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'EMPTY' | 'ALL'>('ALL')
-  // Second, independent filter: feed status of the ride's latest invoice.
-  const [feedFilter, setFeedFilter] = useState<'ONLINE' | 'OFFLINE' | 'ALL'>('ALL')
+  // Projects filter by the latest invoice's status-ladder badge. (Quote rides are
+  // always AWAITING CAR, so the Quotes view shows no filter at all.)
+  const [filter, setFilter] = useState<'ALL' | 'AWAITING CAR' | 'ON DUTY' | 'DONE' | 'DELIVERED'>('ALL')
   // Projects area shows is_quote=false rides; Quotes area shows is_quote=true.
   const [mode] = useState<'project' | 'quote'>(() => {
     if (typeof window === 'undefined') return 'project'
@@ -212,19 +211,10 @@ export default function RidesPage() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
   }
 
-  // Type filter: INVOICES = has an invoice; QUOTES = quote but no invoice yet;
-  // EMPTY = neither; ALL = everything. Feed filter (independent): ONLINE/OFFLINE
-  // by the latest invoice's feed status (empty rides have none -> OFFLINE).
+  // Project rides filter by their latest invoice's status badge; quote rides aren't filtered.
   const filteredRides = (rides as any[]).filter(r => {
-    const isEmpty = !r._hasInvoice && !r._hasQuote
-    const typeOk = filter === 'ALL' ? true
-      : filter === 'QUOTES' ? r._hasQuote
-      : filter === 'EMPTY' ? isEmpty
-      : r._hasInvoice
-    const isOnline = r._latestInvoice?.feed_status === 'REAL_TIME'
-    // EMPTY rides have no feed status, so the feed filter doesn't apply to them.
-    const feedOk = (filter === 'EMPTY' || feedFilter === 'ALL') ? true : feedFilter === 'ONLINE' ? isOnline : !isOnline
-    return typeOk && feedOk
+    if (mode === 'quote' || filter === 'ALL') return true
+    return getStatusBadge(r._latestInvoice).label === filter
   })
 
   return (
@@ -247,26 +237,15 @@ export default function RidesPage() {
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
-          <div className="flex gap-2">
-            {(['ALL', 'INVOICES', 'QUOTES', 'EMPTY'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-          {filter !== 'EMPTY' && (
-            <div className="flex gap-2 border-l border-gray-700 pl-4">
-              {(['ALL', 'ONLINE', 'OFFLINE'] as const).map((f) => (
+          {mode === 'project' && (
+            <div className="flex gap-2 flex-wrap">
+              {(['ALL', 'AWAITING CAR', 'ON DUTY', 'DONE', 'DELIVERED'] as const).map((f) => (
                 <button
                   key={f}
-                  onClick={() => setFeedFilter(f)}
-                  className={`px-4 py-2 rounded-2xl font-bold text-sm ${feedFilter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+                  onClick={() => setFilter(f)}
+                  className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
                 >
-                  {f === 'ONLINE' ? 'REPORT READY' : f === 'OFFLINE' ? 'NOT READY' : f}
+                  {f}
                 </button>
               ))}
             </div>

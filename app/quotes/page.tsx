@@ -15,13 +15,14 @@ function fmtDate(d: string | null) {
 export default function QuotesPage() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME'>('ALL')
 
   useEffect(() => { load() }, [])
 
   async function load() {
     const { data } = await supabase
       .from('invoices')
-      .select('id, invoice_code, ride_id, is_quote, hiring_date, created_at, updated_at, rides(project_code, project_name)')
+      .select('id, invoice_code, ride_id, is_quote, hiring_date, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', true)
       .not('ride_id', 'is', null)
       .order('updated_at', { ascending: false, nullsFirst: false })
@@ -30,21 +31,31 @@ export default function QuotesPage() {
     setLoading(false)
   }
 
+  const filtered = rows.filter(r => liveFilter === 'ALL' || (r.live_status || 'INCOMPLETE') === liveFilter)
+  const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">QUOTES ({rows.length})</h1>
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-4xl font-bold">QUOTES ({filtered.length})</h1>
+          <div className="flex gap-2 flex-wrap">
+            {(['ALL', 'INCOMPLETE', 'REALTIME'] as const).map((f) => (
+              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+            ))}
+          </div>
+        </div>
         <Link href="/rides?mode=quote" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
       </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : rows.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <p className="text-2xl text-gray-400">No quotes yet.</p>
       ) : (
         <div className="space-y-4">
-          {rows.map((q) => {
+          {filtered.map((q) => {
             const ride = Array.isArray(q.rides) ? q.rides[0] : q.rides
             return (
               <div key={q.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">

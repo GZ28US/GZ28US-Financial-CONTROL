@@ -31,6 +31,8 @@ function getFeedBadge(s: string | null) {
 export default function InvoicesPage() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
+  const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
 
   useEffect(() => { load() }, [])
 
@@ -46,18 +48,43 @@ export default function InvoicesPage() {
     setLoading(false)
   }
 
+  // Primary filter by live_status; secondary REPORT READY filter only shows when the
+  // current selection actually contains both ready and not-ready invoices.
+  const liveFiltered = rows.filter(r => liveFilter === 'ALL' || (r.live_status || 'INCOMPLETE') === liveFilter)
+  const hasReady = liveFiltered.some(r => r.feed_status === 'REAL_TIME')
+  const hasNotReady = liveFiltered.some(r => r.feed_status !== 'REAL_TIME')
+  const showReportFilter = hasReady && hasNotReady
+  const filtered = liveFiltered.filter(r => !showReportFilter || reportFilter === 'ALL'
+    || (reportFilter === 'READY' ? r.feed_status === 'REAL_TIME' : r.feed_status !== 'REAL_TIME'))
+
+  const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">INVOICES ({rows.length})</h1>
+      <div className="flex items-center gap-4 mb-8 flex-wrap">
+        <h1 className="text-4xl font-bold">INVOICES ({filtered.length})</h1>
+        <div className="flex gap-2 flex-wrap">
+          {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
+            <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+          ))}
+        </div>
+        {showReportFilter && (
+          <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+            {(['ALL', 'READY', 'NOT'] as const).map((f) => (
+              <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : rows.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <p className="text-2xl text-gray-400">No invoices yet.</p>
       ) : (
         <div className="space-y-4">
-          {rows.map((inv) => {
+          {filtered.map((inv) => {
             const statusBadge = getStatusBadge(inv)
             const liveBadge = getLiveBadge(inv.live_status)
             const feedBadge = getFeedBadge(inv.feed_status)
