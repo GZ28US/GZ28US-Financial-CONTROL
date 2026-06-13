@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, clientCode } from '@/lib/utils'
 import Header from '@/components/Header'
 
 const usaStates = [
@@ -35,6 +35,15 @@ export default function NewClientPage() {
     preferred_message_method: 'WhatsApp',
   })
   const [zipLookup, setZipLookup] = useState(false)
+  // Preview the auto-assigned client code (US.### / US.QT.###) for this area.
+  const [nextCode, setNextCode] = useState('')
+  useEffect(() => {
+    const isQuote = new URLSearchParams(window.location.search).get('mode') === 'quote'
+    ;(async () => {
+      const { data: maxRow } = await supabase.from('clients').select('client_number').eq('is_quote', isQuote).order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
+      setNextCode(clientCode({ is_quote: isQuote, client_number: (maxRow?.client_number ?? 0) + 1 }))
+    })()
+  }, [])
 
   function changeCountry(country: string) {
     setForm({
@@ -149,6 +158,11 @@ export default function NewClientPage() {
       <h2 className="text-4xl font-bold mb-8">ADD A NEW CLIENT</h2>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">CLIENT CODE</label>
+          <input value={nextCode} readOnly className={`${inputClass} w-full opacity-50 cursor-not-allowed`} />
+        </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">NAME</label>
