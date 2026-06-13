@@ -1,16 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 
 // A performance-package template. Mirrors the pack-relevant content of an invoice
 // (totals config + PARTS / SERVICES / EXPENSES / NOTES) plus the set of cars it
 // applies to and a DRAFT/CLOSED lifecycle. CLOSED packs are the ones offered for
 // import on the new-quote screen.
 
-export type Car = { manufacturer: string; model: string; year: string }
+export type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
 type Part = { description: string; unit_price: string; quantity: string; base_cost: string }
 type Service = { description: string; price: string }
 type Expense = { supplier: string; item: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string }
@@ -19,7 +20,7 @@ type Note = { note: string }
 export type PackData = {
   name: string
   status: string
-  cars: Car[]
+  cars: any[]
   target_grand_total: number | null
   florida_taxes: number | null
   global_discount: number | null
@@ -30,19 +31,33 @@ export type PackData = {
   notes: any[]
 }
 
-const carKey = (c: { manufacturer?: any; model?: any; year?: any }) =>
-  [c.manufacturer, c.model, c.year].map((s) => String(s ?? '').trim().toLowerCase()).join('|')
-const carLabel = (c: Car) => [c.manufacturer, c.model, c.year].filter(Boolean).join(' ') || '—'
+// Cascade option lists, derived from the nested carData[manufacturer][brand][model] = versions map.
+const MANUFACTURERS = Object.keys(carData)
+const brandsFor = (m: string) => (m && carData[m] ? Object.keys(carData[m]) : [])
+const modelsFor = (m: string, b: string) => (m && b && carData[m]?.[b] ? Object.keys(carData[m][b]) : [])
+const versionsFor = (m: string, b: string, mo: string) => (m && b && mo ? (carData[m]?.[b]?.[mo] || []) : [])
 
 const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
 const numClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
+const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
 export default function PackForm({ packId, initial }: { packId?: string; initial?: PackData }) {
   const router = useRouter()
 
+  const [cars, setCars] = useState<Car[]>((initial?.cars || []).map((c: any) => ({
+    manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
+    years: Array.isArray(c.years) ? c.years.map(Number) : (c.year != null && c.year !== '' ? [Number(c.year)] : []),
+  })))
+
+  // The car currently being assembled in the cascade.
+  const [bMan, setBMan] = useState('')
+  const [bBrand, setBBrand] = useState('')
+  const [bModel, setBModel] = useState('')
+  const [bVersion, setBVersion] = useState('')
+  const [bYears, setBYears] = useState<number[]>([])
+
   const [name, setName] = useState(initial?.name || '')
   const [status, setStatus] = useState(initial?.status || 'DRAFT')
-  const [cars, setCars] = useState<Car[]>(initial?.cars || [])
   const [targetGrandTotal, setTargetGrandTotal] = useState(initial?.target_grand_total != null ? String(initial.target_grand_total) : '')
   const [floridaTaxes, setFloridaTaxes] = useState(initial?.florida_taxes != null ? String(initial.florida_taxes) : '')
   const [globalDiscount, setGlobalDiscount] = useState(initial?.global_discount != null ? String(initial.global_discount) : '')
@@ -53,35 +68,30 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
   const [expenses, setExpenses] = useState<Expense[]>((initial?.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0' })))
   const [notes, setNotes] = useState<Note[]>((initial?.notes || []).map((n: any) => ({ note: n.note || '' })))
 
-  const [availableCars, setAvailableCars] = useState<Car[]>([])
   const [saving, setSaving] = useState(false)
-
   const locked = status === 'CLOSED'
 
-  useEffect(() => { loadRideCars() }, [])
+  const builderYears = (bMan && bBrand && bModel && bVersion) ? yearsForSpec(bMan, bBrand, bModel, bVersion) : []
+  const pendingComplete = !!(bMan && bBrand && bModel && bVersion && bYears.length)
 
-  // Distinct car specs that already exist on rides, for the car picker.
-  async function loadRideCars() {
-    const { data } = await supabase.from('rides').select('manufacturer, model, year')
-    const seen = new Map<string, Car>()
-    ;(data || []).forEach((r: any) => {
-      const c: Car = { manufacturer: r.manufacturer || '', model: r.model || '', year: r.year != null ? String(r.year) : '' }
-      if (!c.manufacturer && !c.model && !c.year) return
-      const k = carKey(c)
-      if (!seen.has(k)) seen.set(k, c)
-    })
-    setAvailableCars([...seen.values()].sort((a, b) => carLabel(a).localeCompare(carLabel(b))))
+  // Cascade selectors reset everything downstream.
+  function pickMan(m: string) { setBMan(m); setBBrand(''); setBModel(''); setBVersion(''); setBYears([]) }
+  function pickBrand(b: string) { setBBrand(b); setBModel(''); setBVersion(''); setBYears([]) }
+  function pickModel(mo: string) { setBModel(mo); setBVersion(''); setBYears([]) }
+  function pickVersion(v: string) { setBVersion(v); setBYears([]) }
+  function toggleYear(y: number) { setBYears((prev) => prev.includes(y) ? prev.filter((x) => x !== y) : [...prev, y]) }
+  function resetBuilder() { setBMan(''); setBBrand(''); setBModel(''); setBVersion(''); setBYears([]) }
+
+  function addCar() {
+    if (!pendingComplete) return
+    setCars((prev) => [...prev, { manufacturer: bMan, brand: bBrand, model: bModel, version: bVersion, years: [...bYears].sort((a, b) => a - b) }])
+    resetBuilder()
   }
 
-  function toggleCar(c: Car) {
-    const k = carKey(c)
-    setCars((prev) => prev.some((x) => carKey(x) === k) ? prev.filter((x) => carKey(x) !== k) : [...prev, c])
-  }
-
-  function content() {
+  function content(finalCars: Car[]) {
     return {
       name: name.trim(),
-      cars,
+      cars: finalCars,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
@@ -96,8 +106,10 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
   async function save(nextStatus?: string) {
     if (saving) return
     if (!name.trim()) { alert('Give the package a name.'); return }
+    // Fold a complete-but-not-yet-added car into the list so it isn't lost on save.
+    const finalCars = pendingComplete ? [...cars, { manufacturer: bMan, brand: bBrand, model: bModel, version: bVersion, years: [...bYears].sort((a, b) => a - b) }] : cars
     setSaving(true)
-    const row: any = { ...content(), status: nextStatus || status, updated_at: new Date().toISOString() }
+    const row: any = { ...content(finalCars), status: nextStatus || status, updated_at: new Date().toISOString() }
     const res = packId
       ? await supabase.from('packs').update(row).eq('id', packId)
       : await supabase.from('packs').insert([row])
@@ -107,29 +119,77 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
 
   return (
     <div className="grid grid-cols-1 gap-6 max-w-4xl">
+
+      {/* CARS — the first area: manufacturer -> brand -> model -> version -> years cascade. */}
+      <div>
+        <label className="block mb-3 text-lg font-bold">CARS THIS PACKAGE FITS ({cars.length})</label>
+
+        {cars.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {cars.map((c, i) => (
+              <div key={i} className="flex items-center justify-between gap-3 bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3">
+                <span className="text-lg">{carLabel(c)}</span>
+                {!locked && <button onClick={() => setCars(cars.filter((_, j) => j !== i))} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded-2xl font-bold">✕</button>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!locked && (
+          <div className="bg-gray-900/50 border border-gray-800 rounded-3xl p-5 space-y-4">
+            <div>
+              <p className="mb-2 text-sm text-gray-400 font-bold">MANUFACTURER</p>
+              <div className="flex gap-2 flex-wrap">
+                {MANUFACTURERS.map((m) => <button key={m} onClick={() => pickMan(m)} className={chip(bMan === m)}>{m}</button>)}
+              </div>
+            </div>
+
+            {bMan && (
+              <div>
+                <p className="mb-2 text-sm text-gray-400 font-bold">BRAND</p>
+                <div className="flex gap-2 flex-wrap">
+                  {brandsFor(bMan).map((b) => <button key={b} onClick={() => pickBrand(b)} className={chip(bBrand === b)}>{b}</button>)}
+                </div>
+              </div>
+            )}
+
+            {bBrand && (
+              <div>
+                <p className="mb-2 text-sm text-gray-400 font-bold">MODEL</p>
+                <div className="flex gap-2 flex-wrap">
+                  {modelsFor(bMan, bBrand).map((mo) => <button key={mo} onClick={() => pickModel(mo)} className={chip(bModel === mo)}>{mo}</button>)}
+                </div>
+              </div>
+            )}
+
+            {bModel && (
+              <div>
+                <p className="mb-2 text-sm text-gray-400 font-bold">VERSION</p>
+                <div className="flex gap-2 flex-wrap">
+                  {versionsFor(bMan, bBrand, bModel).map((v) => <button key={v} onClick={() => pickVersion(v)} className={chip(bVersion === v)}>{v}</button>)}
+                </div>
+              </div>
+            )}
+
+            {bVersion && (
+              <div>
+                <p className="mb-2 text-sm text-gray-400 font-bold">YEARS (pick as many as you want)</p>
+                <div className="flex gap-2 flex-wrap">
+                  {builderYears.map((y) => <button key={y} onClick={() => toggleYear(y)} className={chip(bYears.includes(y))}>{y}</button>)}
+                </div>
+              </div>
+            )}
+
+            {pendingComplete && (
+              <button onClick={addCar} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold">+ ADD ANOTHER CAR</button>
+            )}
+          </div>
+        )}
+      </div>
+
       <div>
         <label className="block mb-2 text-lg font-bold">PACKAGE NAME</label>
         <input value={name} onChange={(e) => setName(e.target.value)} disabled={locked} className={`${inputClass} disabled:opacity-50`} placeholder="e.g. Stage 2 Turbo Kit" />
-      </div>
-
-      {/* CARS — pick from the specs that already exist on rides. */}
-      <div>
-        <label className="block mb-2 text-lg font-bold">CARS THIS PACKAGE FITS ({cars.length})</label>
-        {availableCars.length === 0 ? (
-          <p className="text-gray-500 text-lg">No car specs found on rides yet.</p>
-        ) : (
-          <div className="flex gap-2 flex-wrap">
-            {availableCars.map((c) => {
-              const on = cars.some((x) => carKey(x) === carKey(c))
-              return (
-                <button key={carKey(c)} onClick={() => !locked && toggleCar(c)} disabled={locked}
-                  className={`px-4 py-2 rounded-2xl font-bold text-sm ${on ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'} disabled:opacity-50`}>
-                  {carLabel(c)}
-                </button>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {/* TOTALS CONFIG */}

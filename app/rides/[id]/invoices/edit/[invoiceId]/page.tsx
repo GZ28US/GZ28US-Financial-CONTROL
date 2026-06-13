@@ -1495,7 +1495,7 @@ export default function EditInvoicePage() {
       manufacturer: rideMatch.manufacturer || null,
       model: rideMatch.model || null,
       year: rideMatch.year || null,
-      cars: [{ manufacturer: rideMatch.manufacturer || '', model: rideMatch.model || '', year: rideMatch.year != null ? String(rideMatch.year) : '' }],
+      cars: [{ manufacturer: rideMatch.manufacturer || '', brand: '', model: rideMatch.model || '', version: '', years: rideMatch.year ? [Number(rideMatch.year)] : [] }],
       ...currentPackContent(),
     }])
     if (error) alert('Could not save pack: ' + error.message)

@@ -73,29 +73,39 @@ export default function NewInvoicePage() {
         await loadNextClientInvoiceCode(numStr)
       }
     } else {
-      const { data: ride } = await supabase.from('rides').select('project_code, project_name, manufacturer, model, year').eq('id', ownerId).single()
+      const { data: ride } = await supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year').eq('id', ownerId).single()
       if (ride) {
         setOwnerLabel(ride.project_code || '')
         setOwnerSubtitle(ride.project_name || '')
         await loadNextRideInvoiceCode(ride.project_code)
-        await loadPacks(ride.manufacturer || '', ride.model || '', ride.year != null ? String(ride.year) : '')
+        await loadPacks({ manufacturer: ride.manufacturer || '', brand: ride.brand || '', model: ride.model || '', version: ride.version || '', year: ride.year != null ? String(ride.year) : '' })
       }
     }
   }
 
-  // Packs registered for this exact car spec (manufacturer + model + year),
-  // surfaced in the SERVICE dropdown so a past build can pre-fill a new invoice.
-  async function loadPacks(manufacturer: string, model: string, year: string) {
+  // CLOSED packs that fit this ride's car, surfaced in the SERVICE dropdown so a
+  // performance package can pre-fill the new quote/invoice.
+  async function loadPacks(ride: { manufacturer: string; brand: string; model: string; version: string; year: string }) {
     const { data } = await supabase.from('packs').select('*').order('name')
     const norm = (s: any) => String(s ?? '').trim().toLowerCase()
-    const key = (c: any) => [norm(c?.manufacturer), norm(c?.model), norm(c?.year)].join('|')
-    const target = [norm(manufacturer), norm(model), norm(year)].join('|')
-    // Only CLOSED packs are offered for import; match against the pack's car list
-    // (falling back to legacy single manufacturer/model/year columns).
+    const eq = (a: any, b: any) => norm(a) === norm(b)
+    // A car entry matches the ride. New shape carries brand/version + a years[]
+    // list; only fields the entry actually specifies are required to match.
+    const carMatches = (c: any) => {
+      if (Array.isArray(c?.years)) {
+        if (c.manufacturer && !eq(c.manufacturer, ride.manufacturer)) return false
+        if (c.brand && !eq(c.brand, ride.brand)) return false
+        if (c.model && !eq(c.model, ride.model)) return false
+        if (c.version && !eq(c.version, ride.version)) return false
+        return c.years.map(Number).includes(Number(ride.year))
+      }
+      // Legacy shape {manufacturer, model, year}.
+      return eq(c?.manufacturer, ride.manufacturer) && eq(c?.model, ride.model) && eq(c?.year, ride.year)
+    }
     const matched = (data || []).filter((p: any) => {
       if ((p.status || 'DRAFT') !== 'CLOSED') return false
       const carList = Array.isArray(p.cars) && p.cars.length ? p.cars : [{ manufacturer: p.manufacturer, model: p.model, year: p.year }]
-      return carList.some((c: any) => key(c) === target)
+      return carList.some(carMatches)
     })
     setPacks(matched as Pack[])
   }

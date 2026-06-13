@@ -5,8 +5,8 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { carLabel } from '@/lib/carData'
 
-const carLabel = (c: any) => [c?.manufacturer, c?.model, c?.year].filter(Boolean).join(' ')
 const money = (n: any) => (n == null || n === '' ? '—' : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
 
 export default function ViewPackPage() {

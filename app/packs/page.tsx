@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-
-const carLabel = (c: any) => [c?.manufacturer, c?.model, c?.year].filter(Boolean).join(' ')
+import { carLabel } from '@/lib/carData'
 
 // Catalog of the performance packages we sell, as reusable templates. A CLOSED
 // pack is a finished template offered for import on the new-quote screen; a DRAFT

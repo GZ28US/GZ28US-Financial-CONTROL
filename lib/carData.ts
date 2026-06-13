@@ -439,3 +439,24 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
     },
   },
 }
+
+// Years valid for a full manufacturer/brand/model/version spec, drawn from the
+// year-keyed catalog maps (used by the packs car picker's YEARS step).
+export function yearsForSpec(manufacturer: string, brand: string, model: string, version: string): number[] {
+  return years.filter((y) =>
+    (manufacturersByYear[y] || []).includes(manufacturer) &&
+    (brandsByManufacturerAndYear[manufacturer]?.[y] || []).includes(brand) &&
+    (modelsByBrandAndYear[brand]?.[y] || []).includes(model) &&
+    (versionsByModelAndYear[model]?.[y] || []).includes(version))
+}
+
+// Human label for a pack car entry — new shape ({manufacturer,brand,model,version,years[]})
+// or legacy shape ({manufacturer,model,year}).
+export function carLabel(c: any): string {
+  if (!c) return '—'
+  const head = [c.brand, c.model, c.version].filter(Boolean).join(' ') || c.manufacturer || '—'
+  const yrs = Array.isArray(c.years) && c.years.length
+    ? [...c.years].sort((a: number, b: number) => a - b).join(', ')
+    : (c.year != null && c.year !== '' ? String(c.year) : '')
+  return yrs ? `${head} — ${yrs}` : head
+}
