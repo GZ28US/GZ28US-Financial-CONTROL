@@ -78,8 +78,9 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
   const mapDelivered = (map + ship + hand) * (1 + FL_TAX)
   // OUR delivered = dealer net + freight, no tax (reseller-exempt), no insurance.
   const ourDelivered = ourCost + ship + hand
-  const partDisc = map > 0 ? (1 - ourCost / map) * 100 : 0
-  const finalDisc = mapDelivered > 0 ? (1 - ourDelivered / mapDelivered) * 100 : 0
+  // Discounts only mean something once OUR cost is entered (else it reads 100%).
+  const partDisc = (map > 0 && ourCost > 0) ? (1 - ourCost / map) * 100 : 0
+  const finalDisc = (mapDelivered > 0 && ourDelivered > 0) ? (1 - ourDelivered / mapDelivered) * 100 : 0
 
   async function save() {
     if (!result) return
