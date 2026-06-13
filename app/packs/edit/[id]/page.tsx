@@ -1,50 +1,600 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
-import PackForm, { PackData } from '@/components/PackForm'
 import { supabase } from '@/lib/supabase'
+import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { carData, yearsForSpec, carLabel } from '@/lib/carData'
+
+// FULL pack editor — a standalone page that mirrors the invoice editor's item
+// machinery (TOTALS CONFIG + PARTS + SERVICES + EXPENSES + NOTES + auto-CALCULATE
+// + live import-margin re-pricer) for a TEMPLATE pack. Persists to the `packs`
+// JSONB columns (no child tables). No dates / payments / reports / inventory moves.
+// NOTE: kept deliberately separate from the invoice editor; changes meant for both
+// must be applied in both places by hand.
+
+type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
+type Part = { description: string; unit_price: string; quantity: string; base_cost?: string }
+type Service = { description: string; price: string }
+type Expense = { supplier: string; item: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string }
+type Note = { note: string }
+
+const FULL_PROJECT_LABOR = 'Full Project Labor'
+function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+
+// Cascade option lists (same source as the New-Pack car picker).
+const MANUFACTURERS = Object.keys(carData)
+const brandsFor = (m: string) => (m && carData[m] ? Object.keys(carData[m]) : [])
+const modelsFor = (m: string, b: string) => (m && b && carData[m]?.[b] ? Object.keys(carData[m][b]) : [])
+const versionsFor = (m: string, b: string, mo: string) => (m && b && mo ? (carData[m]?.[b]?.[mo] || []) : [])
+
+const inputClass = 'w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg disabled:opacity-50'
+const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg disabled:opacity-50'
+const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
 export default function EditPackPage() {
   const params = useParams()
+  const router = useRouter()
   const id = String(params.id || '')
-  const [pack, setPack] = useState<PackData | null>(null)
+
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  // Pack identity / status
+  const [name, setName] = useState('')
+  const [status, setStatus] = useState('DRAFT')
+  const [cars, setCars] = useState<Car[]>([])
+  const locked = status === 'CLOSED'
+
+  // Car cascade builder
+  const [bMan, setBMan] = useState(''); const [bBrand, setBBrand] = useState('')
+  const [bModel, setBModel] = useState(''); const [bVersion, setBVersion] = useState('')
+  const [bYears, setBYears] = useState<number[]>([])
+
+  // Totals config
+  const [targetGrandTotal, setTargetGrandTotal] = useState('')
+  const [floridaTaxes, setFloridaTaxes] = useState('')
+  const [globalDiscount, setGlobalDiscount] = useState('')
+  const [importMargin, setImportMargin] = useState('')
+
+  // Items
+  const [parts, setParts] = useState<Part[]>([])
+  const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
+  const [editingPartIndex, setEditingPartIndex] = useState<number | null>(null)
+  const [editingPart, setEditingPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
+
+  const [services, setServices] = useState<Service[]>([])
+  const [newService, setNewService] = useState<Service>({ description: '', price: '' })
+  const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
+  const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
+
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+  const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+
+  const [notes, setNotes] = useState<Note[]>([])
+  const [newNote, setNewNote] = useState('')
+  const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
+  const [editingNote, setEditingNote] = useState('')
+
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
 
   useEffect(() => { if (id) load(id) }, [id])
 
   async function load(packId: string) {
     const { data } = await supabase.from('packs').select('*').eq('id', packId).maybeSingle()
     if (!data) { setNotFound(true); setLoading(false); return }
-    setPack({
-      name: data.name || '',
-      status: data.status || 'DRAFT',
-      cars: Array.isArray(data.cars) ? data.cars : [],
-      target_grand_total: data.target_grand_total ?? null,
-      florida_taxes: data.florida_taxes ?? null,
-      global_discount: data.global_discount ?? null,
-      import_margin: data.import_margin ?? 0,
-      parts: data.parts || [],
-      services: data.services || [],
-      expenses: data.expenses || [],
-      notes: data.notes || [],
-    })
+    setName(data.name || '')
+    setStatus(data.status || 'DRAFT')
+    setCars(Array.isArray(data.cars) ? data.cars.map((c: any) => ({
+      manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
+      years: Array.isArray(c.years) ? c.years.map(Number) : (c.year != null && c.year !== '' ? [Number(c.year)] : []),
+    })) : [])
+    setTargetGrandTotal(data.target_grand_total != null ? String(data.target_grand_total) : '')
+    setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '')
+    setGlobalDiscount(data.global_discount != null ? String(data.global_discount) : '')
+    setImportMargin(data.import_margin != null ? String(data.import_margin) : '')
+    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : undefined })))
+    setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
+    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0' })))
+    setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
+
+    const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
+    if (sup) setSuppliers(sup.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
     setLoading(false)
   }
 
+  // ---- Car cascade ----
+  const builderYears = (bMan && bBrand && bModel && bVersion) ? yearsForSpec(bMan, bBrand, bModel, bVersion) : []
+  const pendingComplete = !!(bMan && bBrand && bModel && bVersion && bYears.length)
+  function pickMan(m: string) { setBMan(m); setBBrand(''); setBModel(''); setBVersion(''); setBYears([]) }
+  function pickBrand(b: string) { setBBrand(b); setBModel(''); setBVersion(''); setBYears([]) }
+  function pickModel(mo: string) { setBModel(mo); setBVersion(''); setBYears([]) }
+  function pickVersion(v: string) { setBVersion(v); setBYears([]) }
+  function toggleYear(y: number) { setBYears(prev => prev.includes(y) ? prev.filter(x => x !== y) : [...prev, y]) }
+  function addCar() {
+    if (!pendingComplete) return
+    setCars(prev => [...prev, { manufacturer: bMan, brand: bBrand, model: bModel, version: bVersion, years: [...bYears].sort((a, b) => a - b) }])
+    setBMan(''); setBBrand(''); setBModel(''); setBVersion(''); setBYears([])
+  }
+
+  // ---- Supplier discount (display only) ----
+  function supplierInfo(nm: string | undefined | null): { discount: number; type: 'FIXED' | 'VARIABLE' } | null {
+    const norm = (s: string | undefined | null) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const target = norm(nm); if (!target) return null
+    const m = suppliers.find(s => [s.name, ...(s.aliases || '').split(/[\n,]/)].some(v => norm(v) === target))
+    return m ? { discount: m.discount, type: m.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' } : null
+  }
+
+  // ---- Totals math (mirrors the invoice editor) ----
+  const getPartTotal = (p: Part) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)
+  const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
+  const floridaTaxesPct = parseFloat(floridaTaxes) || 0
+  const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
+  const partsTotal = partsSubTotal + floridaTaxesAmount
+  const laborIndex = services.findIndex(s => s.description === FULL_PROJECT_LABOR)
+  const otherServicesTotal = services.reduce((sum, s, i) => i === laborIndex ? sum : sum + (parseFloat(s.price) || 0), 0)
+  const servicesTotal = services.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
+  const partsAndServicesTotal = partsTotal + servicesTotal
+  const globalDiscountPct = parseFloat(globalDiscount) || 0
+  const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
+  const grandTotal = partsAndServicesTotal - globalDiscountAmount
+  const expensesTotal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
+  const finalProfit = grandTotal - expensesTotal
+  const finalProfitPct = expensesTotal > 0 ? (finalProfit / expensesTotal) * 100 : 0
+
+  // ---- Live IMPORT MARGIN re-pricer (same as invoice) ----
+  useEffect(() => {
+    if (loading || locked) return
+    const factor = 1 + (parseFloat(importMargin) || 0) / 100
+    setParts(prev => {
+      let changed = false
+      const next = prev.map(p => {
+        if (p.base_cost == null || p.base_cost === '') return p
+        const np = ((parseFloat(p.base_cost) || 0) * factor).toFixed(2)
+        if (np === p.unit_price) return p
+        changed = true
+        return { ...p, unit_price: np }
+      })
+      return changed ? next : prev
+    })
+  }, [importMargin, loading, locked])
+
+  // ---- Auto-CALCULATE Full Project Labor to hit TARGET GRAND TOTAL (same as invoice) ----
+  useEffect(() => {
+    if (loading || locked) return
+    const target = parseFloat((targetGrandTotal || '').replace(/,/g, ''))
+    if (!target || target <= 0) return
+    const discountFactor = 1 - (globalDiscountPct / 100)
+    if (discountFactor <= 0) return
+    const labor = (target / discountFactor) - partsTotal - otherServicesTotal
+    const laborStr = (labor < 0 ? 0 : labor).toFixed(2)
+    setServices(prev => {
+      const li = prev.findIndex(s => s.description === FULL_PROJECT_LABOR)
+      if (li < 0) return [...prev, { description: FULL_PROJECT_LABOR, price: laborStr }]
+      if (prev[li].price === laborStr) return prev
+      const updated = [...prev]; updated[li] = { ...updated[li], price: laborStr }; return updated
+    })
+  }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading, locked])
+
+  // ---- Item handlers ----
+  function addPart() {
+    if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all item fields'); return }
+    setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
+  }
+  function movePart(index: number, dir: -1 | 1) {
+    const j = index + dir; if (j < 0 || j >= parts.length) return
+    const next = [...parts]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setParts(next)
+    if (editingPartIndex !== null) setEditingPartIndex(null)
+  }
+  function removePart(index: number) { setParts(parts.filter((_, i) => i !== index)) }
+  function startEditPart(index: number) { setEditingPartIndex(index); setEditingPart({ ...parts[index] }) }
+  function saveEditPart() {
+    if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all item fields'); return }
+    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, base_cost: undefined }; setParts(updated)
+    setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
+  }
+
+  function addService() {
+    if (!newService.description) { alert('Please enter a description'); return }
+    setServices([...services, newService]); setNewService({ description: '', price: '' })
+  }
+  function removeService(index: number) { setServices(services.filter((_, i) => i !== index)) }
+  function startEditService(index: number) { setEditingServiceIndex(index); setEditingService({ ...services[index] }) }
+  function saveEditService() {
+    if (!editingService.description) { alert('Please enter a description'); return }
+    const updated = [...services]; updated[editingServiceIndex!] = { ...editingService }; setServices(updated)
+    setEditingServiceIndex(null); setEditingService({ description: '', price: '' })
+  }
+
+  function addExpense() {
+    if (!newExpense.item) { alert('Please enter an item'); return }
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+  }
+  function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
+  function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
+  function saveEditExpense() {
+    if (!editingExpense.item) { alert('Please enter an item'); return }
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense }; setExpenses(updated)
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+  }
+  const expenseLineTotal = (e: Expense) => (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+
+  function addNote() {
+    if (!newNote.trim()) return
+    setNotes([...notes, { note: newNote.trim() }]); setNewNote('')
+  }
+  function removeNote(index: number) { setNotes(notes.filter((_, i) => i !== index)) }
+  function startEditNote(index: number) { setEditingNoteIndex(index); setEditingNote(notes[index].note) }
+  function saveEditNote() {
+    const updated = [...notes]; updated[editingNoteIndex!] = { note: editingNote }; setNotes(updated)
+    setEditingNoteIndex(null); setEditingNote('')
+  }
+
+  // ---- Save ----
+  async function save(nextStatus?: string) {
+    if (saving) return
+    if (!name.trim()) { alert('Give the package a name.'); return }
+    setSaving(true)
+    const row: any = {
+      name: name.trim(),
+      cars,
+      status: nextStatus || status,
+      target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
+      florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
+      global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
+      import_margin: parseFloat(importMargin) || 0,
+      parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })),
+      services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
+      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0 })),
+      notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim() })),
+      updated_at: new Date().toISOString(),
+    }
+    const { error } = await supabase.from('packs').update(row).eq('id', id)
+    if (error) { alert(error.message); setSaving(false); return }
+    router.push('/packs')
+  }
+
+  if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-gray-400">Loading...</p></main>
+  if (notFound) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-gray-400">Pack not found.</p></main>
+
   return (
-    <main className="min-h-screen bg-black text-white p-8">
+    <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">EDIT PACK</h1>
-      {loading ? (
-        <p className="text-xl text-gray-400">Loading...</p>
-      ) : notFound ? (
-        <p className="text-xl text-gray-400">Pack not found.</p>
-      ) : (
-        <PackForm packId={id} initial={pack!} />
-      )}
+      <div className="flex items-center gap-3 mb-8 flex-wrap">
+        <h1 className="text-4xl font-bold">EDIT PACK</h1>
+        <span className={`px-3 py-1 rounded-full text-sm font-bold ${locked ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{locked ? 'CLOSED — locked' : 'DRAFT'}</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 max-w-2xl">
+
+        {/* CARS */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">CARS THIS PACKAGE FITS ({cars.length})</label>
+          {cars.length > 0 && (
+            <div className="space-y-2 mb-4">
+              {cars.map((c, i) => (
+                <div key={i} className="flex items-center justify-between gap-3 bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3">
+                  <span className="text-lg">{carLabel(c)}</span>
+                  {!locked && <button onClick={() => setCars(cars.filter((_, j) => j !== i))} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded-2xl font-bold">✕</button>}
+                </div>
+              ))}
+            </div>
+          )}
+          {!locked && (
+            <div className="bg-gray-900/50 border border-gray-800 rounded-3xl p-5 space-y-4">
+              <div><p className="mb-2 text-sm text-gray-400 font-bold">MANUFACTURER</p><div className="flex gap-2 flex-wrap">{MANUFACTURERS.map(m => <button key={m} onClick={() => pickMan(m)} className={chip(bMan === m)}>{m}</button>)}</div></div>
+              {bMan && <div><p className="mb-2 text-sm text-gray-400 font-bold">BRAND</p><div className="flex gap-2 flex-wrap">{brandsFor(bMan).map(b => <button key={b} onClick={() => pickBrand(b)} className={chip(bBrand === b)}>{b}</button>)}</div></div>}
+              {bBrand && <div><p className="mb-2 text-sm text-gray-400 font-bold">MODEL</p><div className="flex gap-2 flex-wrap">{modelsFor(bMan, bBrand).map(mo => <button key={mo} onClick={() => pickModel(mo)} className={chip(bModel === mo)}>{mo}</button>)}</div></div>}
+              {bModel && <div><p className="mb-2 text-sm text-gray-400 font-bold">VERSION</p><div className="flex gap-2 flex-wrap">{versionsFor(bMan, bBrand, bModel).map(v => <button key={v} onClick={() => pickVersion(v)} className={chip(bVersion === v)}>{v}</button>)}</div></div>}
+              {bVersion && <div><p className="mb-2 text-sm text-gray-400 font-bold">YEARS (pick as many as you want)</p><div className="flex gap-2 flex-wrap">{builderYears.map(y => <button key={y} onClick={() => toggleYear(y)} className={chip(bYears.includes(y))}>{y}</button>)}</div></div>}
+              {pendingComplete && <button onClick={addCar} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold">+ ADD ANOTHER CAR</button>}
+            </div>
+          )}
+        </div>
+
+        {/* NAME + TARGET */}
+        <div>
+          <label className="block mb-2 text-lg font-bold">PACKAGE NAME</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} disabled={locked} className={inputClass} placeholder="e.g. Stage 2 Turbo Kit" />
+        </div>
+        <div>
+          <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
+          <div className="relative max-w-xs"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+            <input type="text" inputMode="decimal" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} disabled={locked} className={`${inputClass} pl-8`} placeholder="0.00" />
+          </div>
+          <p className="text-gray-500 text-sm mt-1">Auto-solves a “{FULL_PROJECT_LABOR}” service so the grand total hits this target.</p>
+        </div>
+
+        {/* PARTS */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">PARTS</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <input type="text" placeholder="Description" value={newPart.description} onChange={(e) => setNewPart({ ...newPart, description: e.target.value })} disabled={locked} className={inputClass} />
+            <div className="flex gap-3">
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
+                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newPart.unit_price} onChange={(e) => { if (isNumeric(e.target.value)) setNewPart({ ...newPart, unit_price: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full pl-8`} />
+                </div>
+              </div>
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">QUANTITY</label>
+                <input type="text" inputMode="decimal" placeholder="1" value={newPart.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewPart({ ...newPart, quantity: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} />
+              </div>
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">TOTAL</label>
+                <div className={`${smallInputClass} w-full opacity-50`}>{newPart.unit_price && newPart.quantity ? formatUSD(parseFloat(newPart.unit_price || '0') * parseFloat(newPart.quantity || '0')) : '$0.00'}</div>
+              </div>
+            </div>
+            {!locked && (
+              <div className="flex gap-3 items-center flex-wrap">
+                <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD ITEM</button>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400 font-bold text-sm">MARGIN</span>
+                  <div className="relative w-24">
+                    <input type="text" inputMode="decimal" value={importMargin} onChange={(e) => { if (isNumeric(e.target.value)) setImportMargin(e.target.value) }} className={`${smallInputClass} w-full pr-7`} placeholder="0" />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {parts.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {parts.map((part, index) => (
+                  <div key={index}>
+                    {editingPartIndex === index ? (
+                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                        <input type="text" value={editingPart.description} onChange={(e) => setEditingPart({ ...editingPart, description: e.target.value })} className={inputClass} />
+                        <div className="flex gap-3">
+                          <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
+                            <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                              <input type="text" inputMode="decimal" value={editingPart.unit_price} onChange={(e) => { if (isNumeric(e.target.value)) setEditingPart({ ...editingPart, unit_price: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
+                            </div>
+                          </div>
+                          <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">QUANTITY</label>
+                            <input type="text" inputMode="decimal" value={editingPart.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingPart({ ...editingPart, quantity: e.target.value }) }} className={`${smallInputClass} w-full`} />
+                          </div>
+                          <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">TOTAL</label>
+                            <div className={`${smallInputClass} w-full opacity-50`}>{formatUSD((parseFloat(editingPart.unit_price || '0')) * (parseFloat(editingPart.quantity || '0')))}</div>
+                          </div>
+                        </div>
+                        <div className="flex gap-3">
+                          <button onClick={saveEditPart} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                          <button onClick={() => setEditingPartIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-base font-bold truncate">{part.description}</p>
+                          <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
+                        </div>
+                        {!locked && (
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▲</button>
+                            <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▼</button>
+                            <button onClick={() => startEditPart(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removePart(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+              <span className="text-gray-400 font-bold">ITEMS SUB-TOTAL</span>
+              <span className="text-xl font-bold">{formatUSD(partsSubTotal)}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-gray-400 font-bold whitespace-nowrap">FLORIDA TAXES</span>
+              <div className="relative w-28">
+                <input type="text" inputMode="decimal" value={floridaTaxes} onChange={(e) => { if (isNumeric(e.target.value)) setFloridaTaxes(e.target.value) }} disabled={locked} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+              </div>
+              <span className="text-xl font-bold ml-auto">{formatUSD(floridaTaxesAmount)}</span>
+            </div>
+            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+              <span className="font-bold text-lg">ITEMS TOTAL</span>
+              <span className="text-2xl font-bold">{formatUSD(partsTotal)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* SERVICES */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">SERVICES</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <input type="text" placeholder="Description" value={newService.description} onChange={(e) => setNewService({ ...newService, description: e.target.value })} disabled={locked} className={inputClass} />
+            <div className="flex gap-3">
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={newService.price} onChange={(e) => { if (isNumeric(e.target.value)) setNewService({ ...newService, price: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full pl-8`} />
+                </div>
+              </div>
+            </div>
+            {!locked && <button onClick={addService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD SERVICE</button>}
+            {services.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {services.map((svc, index) => (
+                  <div key={index}>
+                    {editingServiceIndex === index ? (
+                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                        <input type="text" value={editingService.description} onChange={(e) => setEditingService({ ...editingService, description: e.target.value })} className={inputClass} />
+                        <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                          <input type="text" inputMode="decimal" value={editingService.price} onChange={(e) => { if (isNumeric(e.target.value)) setEditingService({ ...editingService, price: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
+                        </div>
+                        <div className="flex gap-3">
+                          <button onClick={saveEditService} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                          <button onClick={() => setEditingServiceIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-base font-bold truncate">{svc.description}</p>
+                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
+                        </div>
+                        {!locked && (
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => startEditService(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removeService(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+              <span className="font-bold text-lg">SERVICES TOTAL</span>
+              <span className="text-2xl font-bold">{formatUSD(servicesTotal)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* GRAND TOTAL */}
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+          <div className="flex justify-between items-center">
+            <span className="text-gray-400 font-bold">ITEMS + SERVICES TOTAL</span>
+            <span className="text-xl font-bold">{formatUSD(partsAndServicesTotal)}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-gray-400 font-bold whitespace-nowrap">GLOBAL DISCOUNT</span>
+            <div className="relative w-28">
+              <input type="text" inputMode="decimal" value={globalDiscount} onChange={(e) => { if (isNumeric(e.target.value)) setGlobalDiscount(e.target.value) }} disabled={locked} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+            </div>
+            <span className="text-xl font-bold ml-auto text-red-400">- {formatUSD(globalDiscountAmount)}</span>
+          </div>
+          <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+            <span className="font-bold text-xl">GRAND TOTAL</span>
+            <span className="text-3xl font-bold">{formatUSD(grandTotal)}</span>
+          </div>
+        </div>
+
+        {/* EXPENSES */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">EXPENSES (cost side)</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <div className="flex gap-3 flex-wrap">
+              <input type="text" placeholder="Supplier" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} disabled={locked} className={`${smallInputClass} w-40`} />
+              <input type="text" placeholder="Item" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} disabled={locked} className={`${smallInputClass} flex-1 min-w-40`} />
+            </div>
+            <div className="flex gap-3 flex-wrap">
+              <div className="w-16"><label className="block mb-1 text-xs text-gray-400">QTY</label><input type="text" inputMode="decimal" value={newExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, quantity: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
+              <div className="w-24"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label><input type="text" inputMode="decimal" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} placeholder="0" /></div>
+              <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={newExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, tax: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
+              <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
+            </div>
+            {!locked && <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>}
+            {expenses.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {expenses.map((e, index) => {
+                  const info = supplierInfo(e.supplier)
+                  return (
+                    <div key={index}>
+                      {editingExpenseIndex === index ? (
+                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                          <div className="flex gap-3 flex-wrap">
+                            <input type="text" placeholder="Supplier" value={editingExpense.supplier} onChange={(ev) => setEditingExpense({ ...editingExpense, supplier: ev.target.value })} className={`${smallInputClass} w-40`} />
+                            <input type="text" placeholder="Item" value={editingExpense.item} onChange={(ev) => setEditingExpense({ ...editingExpense, item: ev.target.value })} className={`${smallInputClass} flex-1 min-w-40`} />
+                          </div>
+                          <div className="flex gap-3 flex-wrap">
+                            <div className="w-16"><label className="block mb-1 text-xs text-gray-400">QTY</label><input type="text" inputMode="decimal" value={editingExpense.quantity} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, quantity: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                            <div className="w-24"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label><input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, amount: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                            <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, tax: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                            <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, extra: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                          </div>
+                          <div className="flex gap-3">
+                            <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                            <button onClick={() => setEditingExpenseIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-base font-bold truncate">{e.item}</p>
+                            <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{info ? (info.type === 'VARIABLE' ? ' · VARIABLE' : ` · ${info.discount}% off`) : ''}</p>
+                          </div>
+                          {!locked && (
+                            <div className="flex gap-2 shrink-0">
+                              <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+              <span className="font-bold text-lg">EXPENSES TOTAL</span>
+              <span className="text-2xl font-bold">{formatUSD(expensesTotal)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
+              <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(0)}%` : ''}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* NOTES */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">NOTES</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <textarea placeholder="Enter a note..." value={newNote} onChange={(e) => setNewNote(e.target.value)} disabled={locked} rows={3} className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg resize-none disabled:opacity-50" />
+            {!locked && <button onClick={addNote} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD NOTE</button>}
+            {notes.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {notes.map((n, index) => (
+                  <div key={index}>
+                    {editingNoteIndex === index ? (
+                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                        <textarea value={editingNote} onChange={(e) => setEditingNote(e.target.value)} rows={3} className="w-full bg-gray-900 border border-gray-600 rounded-2xl px-4 py-3 text-lg resize-none" />
+                        <div className="flex gap-3">
+                          <button onClick={saveEditNote} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                          <button onClick={() => setEditingNoteIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`flex items-start justify-between gap-4 px-4 py-3 ${index < notes.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <p className="flex-1 text-base text-gray-300 whitespace-pre-wrap">{n.note}</p>
+                        {!locked && (
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => startEditNote(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removeNote(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ACTION BAR */}
+      <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
+        <div className="max-w-2xl mx-auto px-8 flex items-center gap-4 flex-wrap">
+          <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
+          {locked ? (
+            <button onClick={() => save('DRAFT')} disabled={saving} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">REOPEN (back to DRAFT)</button>
+          ) : (
+            <>
+              <button onClick={() => save()} disabled={saving} className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">{saving ? 'SAVING...' : 'SAVE DRAFT'}</button>
+              <button onClick={() => save('CLOSED')} disabled={saving} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">{saving ? 'SAVING...' : 'CLOSE (lock as template)'}</button>
+            </>
+          )}
+        </div>
+      </div>
     </main>
   )
 }
