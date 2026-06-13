@@ -33,11 +33,9 @@ function getLiveBadge(s: string | null) {
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 function getReportBadge(live: string | null, feed: string | null) {
-  // READY only makes sense once the client is REALTIME (and feed on) or CLOSED (forced on).
+  // Only show REPORT READY (when REALTIME + feed on, or CLOSED). Never a NOT-READY badge.
   const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
-  return ready
-    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
-    : { label: 'REPORT NOT READY', cls: 'bg-red-900 text-red-200' }
+  return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 export default function ClientsPage() {
@@ -257,7 +255,9 @@ export default function ClientsPage() {
                   {client._hasInvoices && (
                     <>
                       <span className={`px-3 py-1 rounded-full text-sm font-bold ${getLiveBadge(client._liveStatus).cls}`}>{getLiveBadge(client._liveStatus).label}</span>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${getReportBadge(client._liveStatus, client._feedStatus).cls}`}>{getReportBadge(client._liveStatus, client._feedStatus).label}</span>
+                      {getReportBadge(client._liveStatus, client._feedStatus) && (
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${getReportBadge(client._liveStatus, client._feedStatus)!.cls}`}>{getReportBadge(client._liveStatus, client._feedStatus)!.label}</span>
+                      )}
                     </>
                   )}
                 </div>
