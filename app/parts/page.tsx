@@ -98,6 +98,14 @@ export default function PartsPage() {
   const isHunt = (p: Part) => p.source_type === 'HUNT'
   const isPending = (p: Part) => isHunt(p) && p.our_cost == null
 
+  // Provenance badge — how the part got into the database. Legacy rows (null)
+  // predate source tagging and were all built by scanning, so they read SCANNED.
+  function sourceBadge(p: Part): { label: string; cls: string } {
+    if (p.source_type === 'HUNT') return { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
+    if (p.source_type === 'MANUAL') return { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
+    return { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
+  }
+
   function openCostEditor(p: Part) {
     setEditPart(p)
     setEcOur(p.our_cost != null ? String(p.our_cost) : '')
@@ -262,6 +270,7 @@ export default function PartsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-xl font-bold">{p.item}</h2>
+                  {(() => { const b = sourceBadge(p); return <span className={`px-3 py-1 rounded-full text-xs font-bold ${b.cls}`}>{b.label}</span> })()}
                   {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}

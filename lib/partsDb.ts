@@ -24,7 +24,7 @@ export type EnrollItem = {
 //   - extras -> keep the cheapest unit_price
 //   - parts  -> keep the most recent purchase (by purchase_date)
 // A user-set alias is always preserved. Returns how many rows were inserted/updated.
-export async function enrollParts(items: EnrollItem[]): Promise<number> {
+export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCAN'): Promise<number> {
   let changed = 0
   for (const raw of items) {
     const name = (raw.item || '').trim()
@@ -68,7 +68,9 @@ export async function enrollParts(items: EnrollItem[]): Promise<number> {
     }
 
     if (!existing) {
-      const { error } = await supabase.from('parts_database').insert([row])
+      // Tag the lineage on first insert (default SCAN). Never overwrite it on
+      // later updates below, so a HUNT row re-touched by a scan keeps HUNTED.
+      const { error } = await supabase.from('parts_database').insert([{ ...row, source_type: sourceType }])
       if (!error) changed++
       continue
     }
