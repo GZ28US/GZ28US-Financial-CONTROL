@@ -412,7 +412,8 @@ export default function EditPackPage() {
                 return (
                   <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">
                     <div className="min-w-0">
-                      <p className="font-bold truncate">{d.item}{d.alias ? ` (${d.alias})` : ''}{isHunt ? ' — HUNT' : ''}</p>
+                      <p className="font-bold truncate">{d.item}{isHunt ? ' — HUNT' : ''}</p>
+                      {d.alias && <p className="text-sm text-teal-300 truncate">alias: {d.alias}</p>}
                       <p className="text-sm text-gray-400">{formatUSD(Number(cost) || 0)}{sup ? ` · ${sup}` : ''}{d.part_number ? ` · PN ${d.part_number}` : ''}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
