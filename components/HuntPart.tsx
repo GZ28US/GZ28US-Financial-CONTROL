@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { enrollOne } from '@/lib/partsDb'
 import { BASE_PATH } from '@/lib/utils'
 
 // HUNT PART — enter a part number, the app searches the web for the part + its MAP
@@ -103,16 +104,10 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
       is_extra: false,
       updated_at: new Date().toISOString(),
     }
-    // Upsert by part number: adopt an existing row if this PN is already known.
-    let existingId: string | null = null
-    if (result.part_number) {
-      const { data } = await supabase.from('parts_database').select('id').ilike('part_number', result.part_number).limit(1)
-      existingId = data?.[0]?.id || null
-    }
-    const res = existingId
-      ? await supabase.from('parts_database').update(row).eq('id', existingId)
-      : await supabase.from('parts_database').insert([row])
-    if (res.error) { alert(res.error.message); setSaving(false); return }
+    // One row per part number, keeping the lowest OUR COST (MAP held constant).
+    const { status, error } = await enrollOne(row)
+    if (error) { alert(error.message); setSaving(false); return }
+    if (status === 'kept') alert('An entry with a lower OUR COST already exists for this part number — kept that one.')
     onSaved()
   }
 

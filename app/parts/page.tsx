@@ -5,7 +5,7 @@ import Header from '@/components/Header'
 import HuntPart from '@/components/HuntPart'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
-import { enrollParts } from '@/lib/partsDb'
+import { enrollParts, enrollOne } from '@/lib/partsDb'
 
 type Part = {
   id: string
@@ -164,7 +164,8 @@ export default function PartsPage() {
     if (!item) { alert('Please enter the part name.'); return }
     setSaving(true)
     const price = numOf(naPrice)
-    const { error } = await supabase.from('parts_database').insert([{
+    // One row per part number, keeping the lowest OUR COST (MAP held constant).
+    const { status, error } = await enrollOne({
       item,
       part_number: naPn.trim() || null,
       alias: naAlias.trim() || null,
@@ -177,9 +178,10 @@ export default function PartsPage() {
       notes: naNotes.trim() || null,
       source_type: 'MANUAL',
       updated_at: new Date().toISOString(),
-    }])
+    })
     setSaving(false)
     if (error) { alert(error.message); return }
+    if (status === 'kept') alert('A cheaper entry for this part number already exists — kept that one (lowest OUR COST wins).')
     setShowAdd(false)
     load()
   }
