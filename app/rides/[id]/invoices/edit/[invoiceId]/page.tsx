@@ -5,7 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS } from '@/lib/utils'
+import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
 import { enrollParts } from '@/lib/partsDb'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null }
@@ -1233,12 +1233,49 @@ export default function EditInvoicePage() {
     if (error) alert('Note: the quote backup could not be saved (' + error.message + '). The invoice was still saved.')
   }
 
+  // On quote -> invoice approval, migrate the still-quote ride & client to PROJECT:
+  // flip their is_quote, assign FRESH project numbers, and re-code every invoice on
+  // the ride to the new ride code. Entities already on the project side are untouched.
+  async function migrateQuoteToProject() {
+    if (isClient) {
+      const { data: c } = await supabase.from('clients').select('is_quote').eq('id', ownerId).single()
+      if (c?.is_quote) {
+        const { data: mx } = await supabase.from('clients').select('client_number').eq('is_quote', false).order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
+        await supabase.from('clients').update({ client_number: (mx?.client_number ?? 0) + 1, is_quote: false }).eq('id', ownerId)
+      }
+      return
+    }
+    const { data: ride } = await supabase.from('rides').select('id, project_code, is_quote, client_id').eq('id', ownerId).single()
+    if (!ride?.is_quote) return
+    const { data: pr } = await supabase.from('rides').select('project_code').eq('is_quote', false).not('project_code', 'is', null)
+    let maxN = 0
+    for (const r of (pr || [])) { const m = r.project_code?.match(/\.(\d+)$/); if (m) { const n = parseInt(m[1], 10); if (n > maxN) maxN = n } }
+    const newRideCode = `${CODE_PREFIX}.${pad3(maxN + 1)}`
+    const oldRideCode = ride.project_code || ''
+    await supabase.from('rides').update({ project_code: newRideCode, is_quote: false }).eq('id', ride.id)
+    // Cascade: re-code every invoice on this ride from the old ride code to the new one.
+    const { data: invs } = await supabase.from('invoices').select('id, invoice_code').eq('ride_id', ride.id)
+    for (const inv of (invs || [])) {
+      if (oldRideCode && inv.invoice_code?.startsWith(oldRideCode + '.')) {
+        await supabase.from('invoices').update({ invoice_code: newRideCode + inv.invoice_code.slice(oldRideCode.length) }).eq('id', inv.id)
+      }
+    }
+    // Migrate the ride's client too, if it was still a quote client.
+    if (ride.client_id) {
+      const { data: c } = await supabase.from('clients').select('is_quote').eq('id', ride.client_id).single()
+      if (c?.is_quote) {
+        const { data: mx } = await supabase.from('clients').select('client_number').eq('is_quote', false).order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
+        await supabase.from('clients').update({ client_number: (mx?.client_number ?? 0) + 1, is_quote: false }).eq('id', ride.client_id)
+      }
+    }
+  }
+
   async function saveInvoice() {
     // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
     // invoice (one-way; an invoice never reverts to a quote).
     const nextIsQuote = isQuote && !isValidDate(hiringDate)
-    // On that transition, archive the quote as it stands before it's overwritten.
-    if (isQuote && !nextIsQuote) await backupQuoteBeforeConversion()
+    // On that transition, archive the quote, then migrate its quote ride/client to project.
+    if (isQuote && !nextIsQuote) { await backupQuoteBeforeConversion(); await migrateQuoteToProject() }
     const { error } = await supabase.from('invoices').update({
       hiring_date: isValidDate(hiringDate) ? hiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,

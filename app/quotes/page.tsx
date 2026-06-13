@@ -33,7 +33,10 @@ export default function QuotesPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">QUOTES ({rows.length})</h1>
+      <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
+        <h1 className="text-4xl font-bold">QUOTES ({rows.length})</h1>
+        <Link href="/rides?mode=quote" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
+      </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
