@@ -54,23 +54,25 @@ export default function RidesPage() {
   // always AWAITING CAR, so the Quotes view shows no filter at all.)
   const [filter, setFilter] = useState<'ALL' | 'AWAITING CAR' | 'ON DUTY' | 'DONE' | 'DELIVERED'>('ALL')
   // Projects area shows is_quote=false rides; Quotes area shows is_quote=true.
-  const [mode] = useState<'project' | 'quote'>(() => {
-    if (typeof window === 'undefined') return 'project'
-    return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
-  })
+  const [mode, setMode] = useState<'project' | 'quote'>('project')
   // Optional ?client=<id> narrows the list to one client's rides (the clients-list RIDES button).
-  const [clientParam] = useState<string>(() => {
-    if (typeof window === 'undefined') return ''
-    return new URLSearchParams(window.location.search).get('client') || ''
-  })
+  const [clientParam, setClientParam] = useState('')
 
-  useEffect(() => { loadRides() }, [])
+  // Read mode/client from the URL AFTER mount (reliable across soft navigation), then load.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const m = sp.get('mode') === 'quote' ? 'quote' : 'project'
+    const c = sp.get('client') || ''
+    setMode(m)
+    setClientParam(c)
+    loadRides(m, c)
+  }, [])
 
-  async function loadRides() {
+  async function loadRides(m: 'project' | 'quote', c: string) {
     const { data, error } = await supabase.from('rides').select('*')
     if (error) { console.error(error); setLoading(false); return }
 
-    const ridesData = (data || []).filter((r: any) => !!r.is_quote === (mode === 'quote') && (!clientParam || r.client_id === clientParam))
+    const ridesData = (data || []).filter((r: any) => !!r.is_quote === (m === 'quote') && (!c || r.client_id === c))
 
     const ridesWithActivity = await Promise.all(ridesData.map(async (ride) => {
       const timestamps: string[] = []
@@ -209,7 +211,7 @@ export default function RidesPage() {
     const { error } = await supabase.from('rides').delete().eq('id', id)
     if (error) { alert(error.message); return }
     setConfirmId(null)
-    loadRides()
+    loadRides(mode, clientParam)
   }
 
   function formatUSD(v: number) {
