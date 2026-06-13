@@ -54,6 +54,11 @@ export default function RidesPage() {
   const [filter, setFilter] = useState<'INVOICES' | 'QUOTES' | 'EMPTY' | 'ALL'>('ALL')
   // Second, independent filter: feed status of the ride's latest invoice.
   const [feedFilter, setFeedFilter] = useState<'ONLINE' | 'OFFLINE' | 'ALL'>('ALL')
+  // Projects area shows is_quote=false rides; Quotes area shows is_quote=true.
+  const [mode] = useState<'project' | 'quote'>(() => {
+    if (typeof window === 'undefined') return 'project'
+    return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
+  })
 
   useEffect(() => { loadRides() }, [])
 
@@ -61,7 +66,7 @@ export default function RidesPage() {
     const { data, error } = await supabase.from('rides').select('*')
     if (error) { console.error(error); setLoading(false); return }
 
-    const ridesData = data || []
+    const ridesData = (data || []).filter((r: any) => !!r.is_quote === (mode === 'quote'))
 
     const ridesWithActivity = await Promise.all(ridesData.map(async (ride) => {
       const timestamps: string[] = []
@@ -241,7 +246,7 @@ export default function RidesPage() {
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-4xl font-bold">RIDES ({filteredRides.length})</h1>
+          <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
           <div className="flex gap-2">
             {(['ALL', 'INVOICES', 'QUOTES', 'EMPTY'] as const).map((f) => (
               <button
@@ -267,7 +272,7 @@ export default function RidesPage() {
             </div>
           )}
         </div>
-        <Link href="/rides/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
+        <Link href={`/rides/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
       </div>
 
       {loading ? (

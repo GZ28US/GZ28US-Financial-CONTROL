@@ -4,17 +4,34 @@ import { useState } from 'react'
 import { BASE_PATH } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 
-// Flat top-level items shown before the dropdowns.
-const NAV: [string, string][] = [
-  ['/', 'HOME'],
-  ['/clients', 'CLIENTS'],
-  ['/rides', 'RIDES'],
-  ['/staff', 'STAFF'],
-]
+// Unified, ordered menu: each entry is a flat link or a dropdown.
+type MenuItem =
+  | { type: 'link'; href: string; label: string }
+  | { type: 'dropdown'; label: string; items: [string, string][] }
 
-// Dropdown menus, in order, shown after the flat items.
-const DROPDOWNS: { label: string; items: [string, string][] }[] = [
+const MENU: MenuItem[] = [
+  { type: 'link', href: '/', label: 'HOME' },
   {
+    type: 'dropdown',
+    label: 'PROJECTS',
+    items: [
+      ['/clients?mode=project', 'CLIENTS'],
+      ['/rides?mode=project', 'RIDES'],
+      ['/invoices', 'INVOICES'],
+    ],
+  },
+  {
+    type: 'dropdown',
+    label: 'QUOTES',
+    items: [
+      ['/clients?mode=quote', 'CLIENTS'],
+      ['/rides?mode=quote', 'RIDES'],
+      ['/quotes', 'QUOTES'],
+    ],
+  },
+  { type: 'link', href: '/staff', label: 'STAFF' },
+  {
+    type: 'dropdown',
     label: 'PARTS',
     items: [
       ['/inventory', 'INVENTORY'],
@@ -24,6 +41,7 @@ const DROPDOWNS: { label: string; items: [string, string][] }[] = [
     ],
   },
   {
+    type: 'dropdown',
     label: 'COSTS',
     items: [
       ['/costs/fixed', 'FIXED'],
@@ -45,31 +63,29 @@ export default function Header() {
       </h1>
 
       <div className="flex gap-2 flex-wrap items-start">
-        {NAV.map(([href, label]) => (
+        {MENU.map((item) => item.type === 'link' ? (
           <a
-            key={href}
-            href={`${BASE_PATH}${href === '/' ? '' : href}`}
+            key={item.label}
+            href={`${BASE_PATH}${item.href === '/' ? '' : item.href}`}
             className={linkClass}
           >
-            {label}
+            {item.label}
           </a>
-        ))}
-
-        {DROPDOWNS.map(({ label, items }) => (
+        ) : (
           <div
-            key={label}
+            key={item.label}
             className="relative"
-            onMouseLeave={() => setOpenMenu((prev) => (prev === label ? null : prev))}
+            onMouseLeave={() => setOpenMenu((prev) => (prev === item.label ? null : prev))}
           >
             <button
-              onClick={() => setOpenMenu((prev) => (prev === label ? null : label))}
+              onClick={() => setOpenMenu((prev) => (prev === item.label ? null : item.label))}
               className={`${linkClass} flex items-center gap-1`}
             >
-              {label} <span className="text-xs">▾</span>
+              {item.label} <span className="text-xs">▾</span>
             </button>
-            {openMenu === label && (
+            {openMenu === item.label && (
               <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-2xl p-2 z-50 flex flex-col gap-1 min-w-48 shadow-xl">
-                {items.map(([href, l]) => (
+                {item.items.map(([href, l]) => (
                   <a
                     key={href}
                     href={`${BASE_PATH}${href}`}

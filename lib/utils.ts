@@ -12,3 +12,14 @@ export function formatUSD(amount: number): string {
     currency: 'USD',
   }).format(amount)
 }
+
+// Entity-code prefix for this app (US.### projects, US.QT.### quotes).
+export const CODE_PREFIX = 'US'
+
+export function pad3(n: number): string { return String(n).padStart(3, '0') }
+
+// Display code for a client: US.### (project) / US.QT.### (quote).
+export function clientCode(c: { is_quote?: boolean | null; client_number: number | null }): string {
+  const num = c.client_number != null ? pad3(c.client_number) : '—'
+  return `${CODE_PREFIX}.${c.is_quote ? 'QT.' : ''}${num}`
+}

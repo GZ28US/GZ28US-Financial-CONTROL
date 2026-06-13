@@ -102,11 +102,13 @@ export default function NewClientPage() {
       return
     }
 
-    // Auto-assign the next client_number = current MAX + 1. A first-ever client
-    // (no rows yet) starts at 1.
+    // Quote-area clients are quote clients (US.QT.###); project-area are US.###.
+    // Each kind has its own client_number sequence.
+    const isQuote = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'quote'
     const { data: maxRow } = await supabase
       .from('clients')
       .select('client_number')
+      .eq('is_quote', isQuote)
       .order('client_number', { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle()
@@ -125,6 +127,7 @@ export default function NewClientPage() {
         state: form.state,
         zip: form.zip,
         client_number: nextNumber,
+        is_quote: isQuote,
         preferred_message_method: form.preferred_message_method,
       })
 
@@ -133,7 +136,7 @@ export default function NewClientPage() {
       return
     }
 
-    window.location.href = `${BASE_PATH}/clients`
+    window.location.href = `${BASE_PATH}/clients?mode=${isQuote ? 'quote' : 'project'}`
   }
 
   const stateOptions = form.country === 'USA' ? usaStates : brazilStates

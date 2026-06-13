@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { clientCode } from '@/lib/utils'
 
 type Client = {
   id: string
@@ -16,6 +17,7 @@ type Client = {
   state: string | null
   zip: string | null
   client_number: number | null
+  is_quote: boolean | null
 }
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -28,6 +30,11 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Projects area shows is_quote=false clients; Quotes area shows is_quote=true.
+  const [mode] = useState<'project' | 'quote'>(() => {
+    if (typeof window === 'undefined') return 'project'
+    return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
+  })
 
   useEffect(() => { loadClients() }, [])
 
@@ -37,7 +44,7 @@ export default function ClientsPage() {
       .select('*')
       .order('name', { ascending: true })
 
-    const clientList = data || []
+    const clientList = (data || []).filter((c: any) => !!c.is_quote === (mode === 'quote'))
 
     const withStats = await Promise.all(clientList.map(async (client) => {
       // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
@@ -190,8 +197,8 @@ export default function ClientsPage() {
       )}
 
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">CLIENTS ({clients.length})</h1>
-        <Link href="/clients/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>
+        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({clients.length})</h1>
+        <Link href={`/clients/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>
       </div>
 
       {loading ? (
@@ -204,7 +211,7 @@ export default function ClientsPage() {
             <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
-                  <h2 className="text-2xl font-bold">{client.client_number != null ? `${client.client_number} — ` : ''}{client.name}</h2>
+                  <h2 className="text-2xl font-bold">{clientCode(client)} — {client.name}</h2>
                 </div>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
                 <p className="text-lg text-gray-400">{formatPhone(client.phone, client.country)}</p>

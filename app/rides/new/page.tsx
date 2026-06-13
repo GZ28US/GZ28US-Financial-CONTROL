@@ -27,6 +27,8 @@ export default function NewRidePage() {
   const [projectName, setProjectName] = useState('')
   const [clientId, setClientId] = useState('')
   const [clients, setClients] = useState<Client[]>([])
+  // Quote-area rides are quote rides (US.QT.###); project-area are US.###.
+  const [isQuote] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'quote')
 
   // Year-driven cascading vehicle fields.
   const [year, setYear] = useState('')
@@ -52,28 +54,22 @@ export default function NewRidePage() {
       .order('client_number', { ascending: true, nullsFirst: false })
     if (clientData) setClients(clientData as Client[])
 
-    // Auto-suggest the next project code by parsing existing rides for the
-    // PREFIX.NUMBER pattern (e.g. "US.012"). Take the prefix from the highest-
-    // numbered code and increment, padded to 3 digits. Defaults to US.001.
+    // Auto-suggest the next code within this kind's own sequence: US.### for
+    // project rides, US.QT.### for quote rides. Take the max trailing number
+    // among same-kind rides and increment, padded to 3 digits.
     const { data: rideData } = await supabase
       .from('rides')
       .select('project_code')
+      .eq('is_quote', isQuote)
       .not('project_code', 'is', null)
 
-    let suggested = 'US.001'
-    if (rideData && rideData.length > 0) {
-      let maxNum = 0
-      let prefix = 'US'
-      for (const r of rideData) {
-        const m = r.project_code?.match(/^(.+?)\.(\d+)$/)
-        if (m) {
-          const n = parseInt(m[2], 10)
-          if (n > maxNum) { maxNum = n; prefix = m[1] }
-        }
-      }
-      if (maxNum > 0) suggested = `${prefix}.${pad3(maxNum + 1)}`
+    const wantPrefix = isQuote ? 'US.QT' : 'US'
+    let maxNum = 0
+    for (const r of (rideData || [])) {
+      const m = r.project_code?.match(/^(.+)\.(\d+)$/)
+      if (m) { const n = parseInt(m[2], 10); if (n > maxNum) maxNum = n }
     }
-    setProjectCode(suggested)
+    setProjectCode(`${wantPrefix}.${pad3(maxNum + 1)}`)
   }
 
   // Derived dropdown options based on the year-aware carData maps.
@@ -147,9 +143,10 @@ export default function NewRidePage() {
       vin: vin || null,
       plate: plate || null,
       photo_url: photoUrl || null,
+      is_quote: isQuote,
     }])
     if (error) { alert(error.message); return }
-    router.push('/rides')
+    router.push(`/rides?mode=${isQuote ? 'quote' : 'project'}`)
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
