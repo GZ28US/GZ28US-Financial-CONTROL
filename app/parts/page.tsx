@@ -50,6 +50,17 @@ export default function PartsPage() {
   const [ecOur, setEcOur] = useState('')
   const [ecShip, setEcShip] = useState('')
   const [ecHand, setEcHand] = useState('')
+  // Manual ADD PART modal (source_type = MANUAL).
+  const [showAdd, setShowAdd] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [naItem, setNaItem] = useState('')
+  const [naPn, setNaPn] = useState('')
+  const [naSupplier, setNaSupplier] = useState('')
+  const [naPrice, setNaPrice] = useState('')
+  const [naQty, setNaQty] = useState('1')
+  const [naDate, setNaDate] = useState('')
+  const [naAlias, setNaAlias] = useState('')
+  const [naNotes, setNaNotes] = useState('')
   // When arriving from a supplier's PARTS button (?supplierId=…) we restrict the
   // list to that supplier's parts, matching its name + aliases (normalized).
   const [supplierFilter, setSupplierFilter] = useState<{ name: string; variants: Set<string> } | null>(null)
@@ -141,6 +152,38 @@ export default function PartsPage() {
     load()
   }
 
+  function openAdd() {
+    setNaItem(''); setNaPn(''); setNaSupplier(''); setNaPrice(''); setNaQty('1'); setNaDate(''); setNaAlias(''); setNaNotes('')
+    setShowAdd(true)
+  }
+
+  // Hand-enter a part. Tagged MANUALLY ENTERED so its provenance is clear, and it
+  // sorts to the top (created_at default). Landed base cost = the price typed.
+  async function saveNewPart() {
+    const item = naItem.trim()
+    if (!item) { alert('Please enter the part name.'); return }
+    setSaving(true)
+    const price = numOf(naPrice)
+    const { error } = await supabase.from('parts_database').insert([{
+      item,
+      part_number: naPn.trim() || null,
+      alias: naAlias.trim() || null,
+      supplier: naSupplier.trim() || null,
+      unit_price: price,
+      base_cost: price,
+      quantity: Number(naQty) || 1,
+      purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(naDate) ? naDate : null,
+      is_extra: false,
+      notes: naNotes.trim() || null,
+      source_type: 'MANUAL',
+      updated_at: new Date().toISOString(),
+    }])
+    setSaving(false)
+    if (error) { alert(error.message); return }
+    setShowAdd(false)
+    load()
+  }
+
   // SCAN ITEMS — scan any receipt/invoice and enroll its items into the data bank
   // (same dedupe rules as invoice expense scans). No invoice is created.
   async function handleScanItems(file: File) {
@@ -227,6 +270,33 @@ export default function PartsPage() {
         </div>
       )}
 
+      {showAdd && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-lg w-full">
+            <h2 className="text-2xl font-bold mb-1">ADD PART</h2>
+            <p className="text-gray-500 text-sm mb-6">Hand-entered — saved as <span className="text-sky-400 font-bold">MANUALLY ENTERED</span>.</p>
+            <div className="grid grid-cols-1 gap-4 mb-6">
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">ITEM *</label><input value={naItem} onChange={(e) => setNaItem(e.target.value)} className={`${inputClass} w-full`} placeholder="Part name" autoFocus /></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block mb-1 text-sm font-bold text-gray-400">PART NUMBER</label><input value={naPn} onChange={(e) => setNaPn(e.target.value)} className={`${inputClass} w-full`} placeholder="optional" /></div>
+                <div><label className="block mb-1 text-sm font-bold text-gray-400">SUPPLIER</label><input value={naSupplier} onChange={(e) => setNaSupplier(e.target.value)} className={`${inputClass} w-full`} placeholder="optional" /></div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div><label className="block mb-1 text-sm font-bold text-gray-400">UNIT PRICE</label><input value={naPrice} onChange={(e) => setNaPrice(e.target.value)} className={`${inputClass} w-full`} placeholder="0" /></div>
+                <div><label className="block mb-1 text-sm font-bold text-gray-400">QTY</label><input value={naQty} onChange={(e) => setNaQty(e.target.value)} className={`${inputClass} w-full`} placeholder="1" /></div>
+                <div><label className="block mb-1 text-sm font-bold text-gray-400">DATE</label><input type="date" value={naDate} onChange={(e) => setNaDate(e.target.value)} className={`${inputClass} w-full`} /></div>
+              </div>
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">ALIAS</label><input value={naAlias} onChange={(e) => setNaAlias(e.target.value)} className={`${inputClass} w-full`} placeholder="Display name (optional)" /></div>
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">NOTES</label><input value={naNotes} onChange={(e) => setNaNotes(e.target.value)} className={`${inputClass} w-full`} placeholder="optional" /></div>
+            </div>
+            <div className="flex gap-4">
+              <button onClick={() => setShowAdd(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={saveNewPart} disabled={saving} className={`flex-1 px-5 py-4 rounded-2xl font-bold text-lg ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>{saving ? 'SAVING…' : 'SAVE PART'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">PARTS DATABASE ({filtered.length})</h1>
         <div className="flex gap-3 flex-wrap">
@@ -235,6 +305,7 @@ export default function PartsPage() {
             {scanning ? 'SCANNING…' : '🧾 SCAN ITEMS'}
             <input type="file" accept="image/*,.pdf" className="hidden" disabled={scanning} onChange={(e) => { if (e.target.files?.[0]) handleScanItems(e.target.files[0]); e.currentTarget.value = '' }} />
           </label>
+          <button onClick={openAdd} className="px-6 py-4 rounded-2xl text-xl font-bold bg-sky-700 hover:bg-sky-600">➕ ADD PART</button>
         </div>
       </div>
 
