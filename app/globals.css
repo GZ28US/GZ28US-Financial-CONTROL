@@ -24,3 +24,12 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Every enabled clickable shows a hand pointer (links already do; buttons don't by default). */
+button:not(:disabled),
+[role="button"],
+select,
+summary,
+label[for] {
+  cursor: pointer;
+}

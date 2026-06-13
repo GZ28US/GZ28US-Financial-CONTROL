@@ -36,6 +36,7 @@ export default function InvoicesPage() {
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
   const [picker, setPicker] = useState(false)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -49,6 +50,13 @@ export default function InvoicesPage() {
       .order('created_at', { ascending: false })
     setRows(data || [])
     setLoading(false)
+  }
+
+  async function removeInvoice(id: string) {
+    const { error } = await supabase.from('invoices').delete().eq('id', id)
+    if (error) { alert(error.message); return }
+    setConfirmId(null)
+    load()
   }
 
   // Primary filter by live_status; secondary REPORT READY filter only shows when the
@@ -65,6 +73,18 @@ export default function InvoicesPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+      {confirmId && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">Remove Invoice</h2>
+            <p className="text-gray-400 text-lg mb-8">Are you sure you want to remove this invoice? This action cannot be undone.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => removeInvoice(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">INVOICES ({filtered.length})</h1>
@@ -111,6 +131,7 @@ export default function InvoicesPage() {
                 <div className="flex gap-3 flex-wrap shrink-0">
                   <Link href={`/rides/${inv.ride_id}/invoices/${inv.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                   <Link href={`/rides/${inv.ride_id}/invoices/edit/${inv.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                  <button onClick={() => setConfirmId(inv.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                 </div>
               </div>
             )
