@@ -752,7 +752,7 @@ export default function EditPackPage() {
         <div className="max-w-2xl mx-auto px-8 flex flex-col gap-2">
           <div className="flex justify-between items-center">
             <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
-            <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(0)}%` : ''}</span>
+            <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(2)}%` : ''}</span>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
