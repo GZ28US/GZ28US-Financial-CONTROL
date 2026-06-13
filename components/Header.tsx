@@ -29,7 +29,6 @@ const MENU: MenuItem[] = [
       ['/quotes', 'QUOTES'],
     ],
   },
-  { type: 'link', href: '/staff', label: 'STAFF' },
   {
     type: 'dropdown',
     label: 'PARTS',
@@ -48,6 +47,7 @@ const MENU: MenuItem[] = [
       ['/costs/variable', 'VARIABLE'],
       ['/goods', 'GOODS'],
       ['/inputs', 'INPUTS'],
+      ['/staff', 'STAFF'],
     ],
   },
 ]
