@@ -73,7 +73,7 @@ export default function PartsPage() {
   }
 
   async function load() {
-    const { data } = await supabase.from('parts_database').select('*').order('item', { ascending: true })
+    const { data } = await supabase.from('parts_database').select('*').order('created_at', { ascending: false, nullsFirst: false })
     setParts((data || []) as Part[])
     setLoading(false)
   }
