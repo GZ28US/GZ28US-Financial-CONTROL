@@ -18,7 +18,9 @@ export default function PacksPage() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const { data } = await supabase.from('packs').select('*').order('name')
+    const { data } = await supabase.from('packs').select('*')
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
     setRows(data || [])
     setLoading(false)
   }
