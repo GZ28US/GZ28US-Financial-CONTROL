@@ -34,10 +34,10 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
-function getFeedBadge(feedStatus: string | null) {
-  return feedStatus === 'REAL_TIME'
-    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
-    : null
+function getFeedBadge(live: string | null, feed: string | null) {
+  // REPORT READY only when REALTIME (feed on) or CLOSED — never on an INCOMPLETE ride.
+  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+  return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 function getLiveBadge(liveStatus: string | null) {
@@ -269,7 +269,7 @@ export default function RidesPage() {
         <div className="space-y-5">
           {filteredRides.map((ride) => {
             const statusBadge = getStatusBadge(ride._latestInvoice)
-            const feedBadge = getFeedBadge(ride._latestInvoice?.feed_status ?? null)
+            const feedBadge = getFeedBadge(ride._latestInvoice?.live_status ?? null, ride._latestInvoice?.feed_status ?? null)
             const liveBadge = getLiveBadge(ride._latestInvoice?.live_status ?? null)
             return (
             <div key={ride.id} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden flex items-stretch">

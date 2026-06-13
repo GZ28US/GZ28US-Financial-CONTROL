@@ -70,10 +70,9 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
 }
 
 // REPORT READY badge: shown ONLY when ON (feed_status REAL_TIME); otherwise no badge.
-function getFeedBadge(feedStatus: string | null) {
-  return feedStatus === 'REAL_TIME'
-    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
-    : null
+function getFeedBadge(live: string | null, feed: string | null) {
+  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+  return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 // Manual status the user cycles by hand: INCOMPLETE / REALTIME / CLOSED.
@@ -370,7 +369,7 @@ export default function ViewInvoicePage() {
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
   const statusBadge = getStatusBadge(invoice)
-  const feedBadge = getFeedBadge(invoice.feed_status)
+  const feedBadge = getFeedBadge(invoice.live_status, invoice.feed_status)
   const liveBadge = getLiveBadge(invoice.live_status)
   const sendMethod = client?.preferred_message_method || 'WhatsApp'
 

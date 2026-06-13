@@ -51,10 +51,9 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
-function getFeedBadge(feedStatus: string | null) {
-  return feedStatus === 'REAL_TIME'
-    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
-    : null
+function getFeedBadge(live: string | null, feed: string | null) {
+  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+  return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 function getLiveBadge(liveStatus: string | null) {
@@ -222,7 +221,7 @@ export default function InvoicesPage() {
           {invoices.map((invoice) => {
             const s = stats[invoice.id]
             const statusBadge = getStatusBadge(invoice)
-            const feedBadge = getFeedBadge(invoice.feed_status)
+            const feedBadge = getFeedBadge(invoice.live_status, invoice.feed_status)
             const liveBadge = getLiveBadge(invoice.live_status)
 
             return (

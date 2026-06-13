@@ -24,8 +24,9 @@ function getLiveBadge(s: string | null) {
   if (s === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
-function getFeedBadge(s: string | null) {
-  return s === 'REAL_TIME' ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
+function getFeedBadge(live: string | null, feed: string | null) {
+  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+  return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 // Global list of every PROJECT (real, non-quote) ride invoice, newest saved first.
@@ -93,7 +94,7 @@ export default function InvoicesPage() {
           {filtered.map((inv) => {
             const statusBadge = getStatusBadge(inv)
             const liveBadge = getLiveBadge(inv.live_status)
-            const feedBadge = getFeedBadge(inv.feed_status)
+            const feedBadge = getFeedBadge(inv.live_status, inv.feed_status)
             const ride = Array.isArray(inv.rides) ? inv.rides[0] : inv.rides
             return (
               <div key={inv.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
