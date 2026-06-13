@@ -65,7 +65,6 @@ export default function QuotesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{q.invoice_code}</h2>
-                    <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-600 text-black">QUOTE</span>
                   </div>
                   <p className="text-lg text-gray-400">{[ride?.project_code, ride?.project_name].filter(Boolean).join(' — ') || '—'}</p>
                   <p className="text-lg text-gray-400">Created {fmtDate((q.created_at || '').slice(0, 10))}</p>
