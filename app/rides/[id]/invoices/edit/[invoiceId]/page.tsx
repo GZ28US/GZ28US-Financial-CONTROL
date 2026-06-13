@@ -375,7 +375,7 @@ export default function EditInvoicePage() {
   }
 
   async function openDbModal() {
-    const { data } = await supabase.from('parts_database').select('*').order('item', { ascending: true })
+    const { data } = await supabase.from('parts_database').select('*').order('created_at', { ascending: false, nullsFirst: false })
     setDbItems(data || [])
     setDbSearch('')
     setShowDbModal(true)
