@@ -111,8 +111,10 @@ export default function PartsPage() {
   async function saveCost() {
     if (!editPart) return
     const map = Number(editPart.map_price) || 0
-    const mapDel = Number(editPart.map_delivered) || 0
     const our = numOf(ecOur), ship = numOf(ecShip), hand = numOf(ecHand)
+    // Ordinary buyer pays the SAME freight as us, plus 6.5% FL tax — recompute
+    // MAP delivered with the freight so the comparison stays apples-to-apples.
+    const mapDel = (map + ship + hand) * 1.065
     const costDel = our + ship + hand
     const partDisc = (map > 0 && our > 0) ? (1 - our / map) * 100 : 0
     const delDisc = (mapDel > 0 && costDel > 0) ? (1 - costDel / mapDel) * 100 : 0
@@ -120,6 +122,7 @@ export default function PartsPage() {
       our_cost: our || null,
       shipping: ship || null,
       handling: hand || null,
+      map_delivered: Math.round(mapDel * 100) / 100 || null,
       cost_delivered: Math.round(costDel * 100) / 100 || null,
       part_discount: Math.round(partDisc * 10) / 10,
       delivered_discount: Math.round(delDisc * 10) / 10,
