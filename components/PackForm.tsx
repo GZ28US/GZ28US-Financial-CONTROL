@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 
 // A performance-package template. Mirrors the pack-relevant content of an invoice
@@ -114,7 +113,7 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
       ? await supabase.from('packs').update(row).eq('id', packId)
       : await supabase.from('packs').insert([row])
     if (res.error) { alert(res.error.message); setSaving(false); return }
-    router.push(`${BASE_PATH}/packs`)
+    router.push('/packs')
   }
 
   return (
