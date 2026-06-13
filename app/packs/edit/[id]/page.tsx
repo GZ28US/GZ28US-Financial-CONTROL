@@ -8,22 +8,21 @@ import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 
 // FULL pack editor — a standalone page that mirrors the invoice editor's item
-// machinery (TOTALS CONFIG + PARTS + SERVICES + EXPENSES + NOTES + auto-CALCULATE
-// + live import-margin re-pricer) for a TEMPLATE pack. Persists to the `packs`
-// JSONB columns (no child tables). No dates / payments / reports / inventory moves.
-// NOTE: kept deliberately separate from the invoice editor; changes meant for both
-// must be applied in both places by hand.
+// machinery (EXPENSES + PARTS + SERVICES + GRAND TOTAL + NOTES, auto-CALCULATE,
+// live import-margin re-pricer) for a TEMPLATE pack. Box order matches the invoice
+// edit page (EXPENSES first). Persists to the `packs` JSONB columns (no child
+// tables). No dates / payments / reports / inventory moves. Kept deliberately
+// separate from the invoice editor; changes meant for both go in both by hand.
 
 type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
 type Part = { description: string; unit_price: string; quantity: string; base_cost?: string }
 type Service = { description: string; price: string }
-type Expense = { supplier: string; item: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string }
+type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string }
 type Note = { note: string }
 
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 
-// Cascade option lists (same source as the New-Pack car picker).
 const MANUFACTURERS = Object.keys(carData)
 const brandsFor = (m: string) => (m && carData[m] ? Object.keys(carData[m]) : [])
 const modelsFor = (m: string, b: string) => (m && b && carData[m]?.[b] ? Object.keys(carData[m][b]) : [])
@@ -42,24 +41,20 @@ export default function EditPackPage() {
   const [notFound, setNotFound] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // Pack identity / status
   const [name, setName] = useState('')
   const [status, setStatus] = useState('DRAFT')
   const [cars, setCars] = useState<Car[]>([])
   const locked = status === 'CLOSED'
 
-  // Car cascade builder
   const [bMan, setBMan] = useState(''); const [bBrand, setBBrand] = useState('')
   const [bModel, setBModel] = useState(''); const [bVersion, setBVersion] = useState('')
   const [bYears, setBYears] = useState<number[]>([])
 
-  // Totals config
   const [targetGrandTotal, setTargetGrandTotal] = useState('')
   const [floridaTaxes, setFloridaTaxes] = useState('')
   const [globalDiscount, setGlobalDiscount] = useState('')
   const [importMargin, setImportMargin] = useState('')
 
-  // Items
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
   const [editingPartIndex, setEditingPartIndex] = useState<number | null>(null)
@@ -82,6 +77,11 @@ export default function EditPackPage() {
 
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
 
+  // IMPORT FROM PARTS DB picker
+  const [showDbModal, setShowDbModal] = useState(false)
+  const [dbItems, setDbItems] = useState<any[]>([])
+  const [dbSearch, setDbSearch] = useState('')
+
   useEffect(() => { if (id) load(id) }, [id])
 
   async function load(packId: string) {
@@ -99,7 +99,7 @@ export default function EditPackPage() {
     setImportMargin(data.import_margin != null ? String(data.import_margin) : '')
     setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : undefined })))
     setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
-    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0' })))
+    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0' })))
     setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
 
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
@@ -127,6 +127,34 @@ export default function EditPackPage() {
     const target = norm(nm); if (!target) return null
     const m = suppliers.find(s => [s.name, ...(s.aliases || '').split(/[\n,]/)].some(v => norm(v) === target))
     return m ? { discount: m.discount, type: m.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' } : null
+  }
+
+  // ---- IMPORT FROM PARTS DB ----
+  async function openDbModal() {
+    const { data } = await supabase.from('parts_database').select('*').order('item', { ascending: true })
+    setDbItems(data || [])
+    setDbSearch('')
+    setShowDbModal(true)
+  }
+  // Pull a parts_database row in as an expense with ALL its info. HUNT parts carry
+  // dealer pricing (our_cost / dealer_supplier / shipping+handling, tax-exempt);
+  // scanned parts carry unit_price / supplier / tax / extra.
+  function importDbItem(it: any) {
+    const isHunt = it.source_type === 'HUNT'
+    const supplier = (isHunt ? it.dealer_supplier : it.supplier) || it.supplier || ''
+    const amount = isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)
+    const extra = isHunt ? ((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : (Number(it.extra) || 0)
+    const tax = isHunt ? 0 : (Number(it.tax) || 0)
+    setExpenses(prev => [...prev, {
+      supplier: String(supplier || ''),
+      item: it.item || '',
+      part_number: it.part_number || '',
+      amount: String(amount ?? 0),
+      tax: String(tax),
+      extra: String(extra),
+      quantity: String(it.quantity ?? 1),
+      item_discount: String(it.item_discount ?? 0),
+    }])
   }
 
   // ---- Totals math (mirrors the invoice editor) ----
@@ -249,7 +277,7 @@ export default function EditPackPage() {
       import_margin: parseFloat(importMargin) || 0,
       parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })),
       services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
-      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0 })),
+      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0 })),
       notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim() })),
       updated_at: new Date().toISOString(),
     }
@@ -264,6 +292,39 @@ export default function EditPackPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
+
+      {/* IMPORT FROM PARTS DB modal */}
+      {showDbModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-2xl font-bold text-teal-300">IMPORT FROM PARTS DB</h2>
+              <button onClick={() => setShowDbModal(false)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold shrink-0">CLOSE</button>
+            </div>
+            <input value={dbSearch} onChange={(e) => setDbSearch(e.target.value)} placeholder="Search item, alias or part number..." className={inputClass} />
+            {(() => {
+              const t = dbSearch.trim().toLowerCase()
+              const list = t ? dbItems.filter((d: any) => (d.item || '').toLowerCase().includes(t) || (d.alias || '').toLowerCase().includes(t) || (d.part_number || '').toLowerCase().includes(t)) : dbItems
+              if (list.length === 0) return <p className="text-gray-400">No items in the parts database.</p>
+              return list.map((d: any) => {
+                const isHunt = d.source_type === 'HUNT'
+                const cost = isHunt ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)
+                const sup = isHunt ? (d.dealer_supplier || d.supplier) : d.supplier
+                return (
+                  <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">
+                    <div className="min-w-0">
+                      <p className="font-bold truncate">{d.item}{d.alias ? ` (${d.alias})` : ''}{isHunt ? ' — HUNT' : ''}</p>
+                      <p className="text-sm text-gray-400">{formatUSD(Number(cost) || 0)}{sup ? ` · ${sup}` : ''}{d.part_number ? ` · PN ${d.part_number}` : ''}</p>
+                    </div>
+                    <button onClick={() => importDbItem(d)} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">ADD</button>
+                  </div>
+                )
+              })
+            })()}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-8 flex-wrap">
         <h1 className="text-4xl font-bold">EDIT PACK</h1>
         <span className={`px-3 py-1 rounded-full text-sm font-bold ${locked ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{locked ? 'CLOSED — locked' : 'DRAFT'}</span>
@@ -307,6 +368,75 @@ export default function EditPackPage() {
             <input type="text" inputMode="decimal" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} disabled={locked} className={`${inputClass} pl-8`} placeholder="0.00" />
           </div>
           <p className="text-gray-500 text-sm mt-1">Auto-solves a “{FULL_PROJECT_LABOR}” service so the grand total hits this target.</p>
+        </div>
+
+        {/* EXPENSES (first box, matching the invoice edit page) */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">EXPENSES</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            {!locked && <button onClick={openDbModal} className="flex items-center justify-center gap-2 w-full bg-teal-700 hover:bg-teal-600 px-5 py-3 rounded-2xl font-bold text-lg">📚 IMPORT FROM PARTS DB</button>}
+            <div className="flex gap-3 flex-wrap">
+              <input type="text" placeholder="Supplier" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} disabled={locked} className={`${smallInputClass} w-40`} />
+              <input type="text" placeholder="Item" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} disabled={locked} className={`${smallInputClass} flex-1 min-w-40`} />
+            </div>
+            <div className="flex gap-3 flex-wrap">
+              <div className="w-16"><label className="block mb-1 text-xs text-gray-400">QTY</label><input type="text" inputMode="decimal" value={newExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, quantity: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
+              <div className="w-24"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label><input type="text" inputMode="decimal" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} placeholder="0" /></div>
+              <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={newExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, tax: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
+              <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
+            </div>
+            {!locked && <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>}
+            {expenses.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {expenses.map((e, index) => {
+                  const info = supplierInfo(e.supplier)
+                  return (
+                    <div key={index}>
+                      {editingExpenseIndex === index ? (
+                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                          <div className="flex gap-3 flex-wrap">
+                            <input type="text" placeholder="Supplier" value={editingExpense.supplier} onChange={(ev) => setEditingExpense({ ...editingExpense, supplier: ev.target.value })} className={`${smallInputClass} w-40`} />
+                            <input type="text" placeholder="Item" value={editingExpense.item} onChange={(ev) => setEditingExpense({ ...editingExpense, item: ev.target.value })} className={`${smallInputClass} flex-1 min-w-40`} />
+                          </div>
+                          <div className="flex gap-3 flex-wrap">
+                            <div className="w-16"><label className="block mb-1 text-xs text-gray-400">QTY</label><input type="text" inputMode="decimal" value={editingExpense.quantity} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, quantity: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                            <div className="w-24"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label><input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, amount: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                            <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, tax: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                            <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, extra: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
+                          </div>
+                          <div className="flex gap-3">
+                            <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                            <button onClick={() => setEditingExpenseIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-base font-bold truncate">{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
+                            <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{info ? (info.type === 'VARIABLE' ? ' · VARIABLE' : ` · ${info.discount}% off`) : ''}</p>
+                          </div>
+                          {!locked && (
+                            <div className="flex gap-2 shrink-0">
+                              <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+              <span className="font-bold text-lg">EXPENSES TOTAL</span>
+              <span className="text-2xl font-bold">{formatUSD(expensesTotal)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
+              <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(0)}%` : ''}</span>
+            </div>
+          </div>
         </div>
 
         {/* PARTS */}
@@ -473,74 +603,6 @@ export default function EditPackPage() {
           <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
             <span className="font-bold text-xl">GRAND TOTAL</span>
             <span className="text-3xl font-bold">{formatUSD(grandTotal)}</span>
-          </div>
-        </div>
-
-        {/* EXPENSES */}
-        <div>
-          <label className="block mb-3 text-lg font-bold">EXPENSES (cost side)</label>
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <div className="flex gap-3 flex-wrap">
-              <input type="text" placeholder="Supplier" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} disabled={locked} className={`${smallInputClass} w-40`} />
-              <input type="text" placeholder="Item" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} disabled={locked} className={`${smallInputClass} flex-1 min-w-40`} />
-            </div>
-            <div className="flex gap-3 flex-wrap">
-              <div className="w-16"><label className="block mb-1 text-xs text-gray-400">QTY</label><input type="text" inputMode="decimal" value={newExpense.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, quantity: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
-              <div className="w-24"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label><input type="text" inputMode="decimal" value={newExpense.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} placeholder="0" /></div>
-              <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={newExpense.tax} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, tax: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
-              <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} disabled={locked} className={`${smallInputClass} w-full`} /></div>
-            </div>
-            {!locked && <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>}
-            {expenses.length > 0 && (
-              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
-                {expenses.map((e, index) => {
-                  const info = supplierInfo(e.supplier)
-                  return (
-                    <div key={index}>
-                      {editingExpenseIndex === index ? (
-                        <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                          <div className="flex gap-3 flex-wrap">
-                            <input type="text" placeholder="Supplier" value={editingExpense.supplier} onChange={(ev) => setEditingExpense({ ...editingExpense, supplier: ev.target.value })} className={`${smallInputClass} w-40`} />
-                            <input type="text" placeholder="Item" value={editingExpense.item} onChange={(ev) => setEditingExpense({ ...editingExpense, item: ev.target.value })} className={`${smallInputClass} flex-1 min-w-40`} />
-                          </div>
-                          <div className="flex gap-3 flex-wrap">
-                            <div className="w-16"><label className="block mb-1 text-xs text-gray-400">QTY</label><input type="text" inputMode="decimal" value={editingExpense.quantity} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, quantity: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
-                            <div className="w-24"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label><input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, amount: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
-                            <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, tax: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
-                            <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, extra: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
-                          </div>
-                          <div className="flex gap-3">
-                            <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
-                            <button onClick={() => setEditingExpenseIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-base font-bold truncate">{e.item}</p>
-                            <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{info ? (info.type === 'VARIABLE' ? ' · VARIABLE' : ` · ${info.discount}% off`) : ''}</p>
-                          </div>
-                          {!locked && (
-                            <div className="flex gap-2 shrink-0">
-                              <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                              <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
-              <span className="font-bold text-lg">EXPENSES TOTAL</span>
-              <span className="text-2xl font-bold">{formatUSD(expensesTotal)}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
-              <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(0)}%` : ''}</span>
-            </div>
           </div>
         </div>
 
