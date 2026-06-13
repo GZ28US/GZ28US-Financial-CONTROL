@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
+import HuntPart from '@/components/HuntPart'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { enrollParts } from '@/lib/partsDb'
@@ -30,6 +31,7 @@ export default function PartsPage() {
   const [parts, setParts] = useState<Part[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
+  const [hunting, setHunting] = useState(false)
   const [search, setSearch] = useState('')
   // When arriving from a supplier's PARTS button (?supplierId=…) we restrict the
   // list to that supplier's parts, matching its name + aliases (normalized).
@@ -141,11 +143,16 @@ export default function PartsPage() {
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">PARTS DATABASE ({filtered.length})</h1>
-        <label className={`px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer ${scanning ? 'bg-gray-600 cursor-not-allowed' : 'bg-purple-700 hover:bg-purple-600'}`}>
-          {scanning ? 'SCANNING…' : '🧾 SCAN ITEMS'}
-          <input type="file" accept="image/*,.pdf" className="hidden" disabled={scanning} onChange={(e) => { if (e.target.files?.[0]) handleScanItems(e.target.files[0]); e.currentTarget.value = '' }} />
-        </label>
+        <div className="flex gap-3 flex-wrap">
+          <button onClick={() => setHunting(true)} className="px-6 py-4 rounded-2xl text-xl font-bold bg-yellow-600 hover:bg-yellow-500 text-black">🎯 HUNT PART</button>
+          <label className={`px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer ${scanning ? 'bg-gray-600 cursor-not-allowed' : 'bg-purple-700 hover:bg-purple-600'}`}>
+            {scanning ? 'SCANNING…' : '🧾 SCAN ITEMS'}
+            <input type="file" accept="image/*,.pdf" className="hidden" disabled={scanning} onChange={(e) => { if (e.target.files?.[0]) handleScanItems(e.target.files[0]); e.currentTarget.value = '' }} />
+          </label>
+        </div>
       </div>
+
+      {hunting && <HuntPart onClose={() => setHunting(false)} onSaved={() => { setHunting(false); load() }} />}
 
       {supplierFilter && (
         <div className="mb-4 flex items-center gap-3 flex-wrap">
