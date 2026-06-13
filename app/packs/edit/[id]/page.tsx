@@ -409,10 +409,16 @@ export default function EditPackPage() {
                 const isHunt = d.source_type === 'HUNT'
                 const cost = isHunt ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)
                 const sup = isHunt ? (d.dealer_supplier || d.supplier) : d.supplier
+                const badge = d.source_type === 'HUNT' ? { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
+                  : d.source_type === 'MANUAL' ? { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
+                  : { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
                 return (
                   <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">
                     <div className="min-w-0">
-                      <p className="font-bold truncate">{d.item}{isHunt ? ' — HUNT' : ''}</p>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${badge.cls}`}>{badge.label}</span>
+                        <p className="font-bold truncate">{d.item}</p>
+                      </div>
                       {d.alias && <p className="text-sm text-teal-300 truncate">alias: {d.alias}</p>}
                       <p className="text-sm text-gray-400">{formatUSD(Number(cost) || 0)}{sup ? ` · ${sup}` : ''}{d.part_number ? ` · PN ${d.part_number}` : ''}</p>
                     </div>

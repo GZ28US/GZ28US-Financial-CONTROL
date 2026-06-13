@@ -2099,16 +2099,23 @@ export default function EditInvoicePage() {
               const t = dbSearch.trim().toLowerCase()
               const list = t ? dbItems.filter((d: any) => (d.item || '').toLowerCase().includes(t) || (d.alias || '').toLowerCase().includes(t)) : dbItems
               if (list.length === 0) return <p className="text-gray-400">No items in the database.</p>
-              return list.map((d: any) => (
+              return list.map((d: any) => {
+                const badge = d.source_type === 'HUNT' ? { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
+                  : d.source_type === 'MANUAL' ? { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
+                  : { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
+                return (
                 <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">
                   <div className="min-w-0">
-                    <p className="font-bold truncate">{d.item}{d.is_extra ? ' — EXTRA' : ''}</p>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${badge.cls}`}>{badge.label}</span>
+                      <p className="font-bold truncate">{d.item}{d.is_extra ? ' — EXTRA' : ''}</p>
+                    </div>
                     {d.alias && <p className="text-sm text-teal-300 truncate">alias: {d.alias}</p>}
                     <p className="text-sm text-gray-400">{formatUSD(Number(d.unit_price) || 0)}{d.supplier ? ` · ${d.supplier}` : ''}</p>
                   </div>
                   <button onClick={() => addDbItem(d)} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">ADD</button>
                 </div>
-              ))
+                )})
             })()}
           </div>
         </div>
