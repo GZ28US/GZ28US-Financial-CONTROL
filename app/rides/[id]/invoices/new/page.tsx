@@ -88,10 +88,15 @@ export default function NewInvoicePage() {
   async function loadPacks(manufacturer: string, model: string, year: string) {
     const { data } = await supabase.from('packs').select('*').order('name')
     const norm = (s: any) => String(s ?? '').trim().toLowerCase()
-    const matched = (data || []).filter((p: any) =>
-      norm(p.manufacturer) === norm(manufacturer) &&
-      norm(p.model) === norm(model) &&
-      norm(p.year) === norm(year))
+    const key = (c: any) => [norm(c?.manufacturer), norm(c?.model), norm(c?.year)].join('|')
+    const target = [norm(manufacturer), norm(model), norm(year)].join('|')
+    // Only CLOSED packs are offered for import; match against the pack's car list
+    // (falling back to legacy single manufacturer/model/year columns).
+    const matched = (data || []).filter((p: any) => {
+      if ((p.status || 'DRAFT') !== 'CLOSED') return false
+      const carList = Array.isArray(p.cars) && p.cars.length ? p.cars : [{ manufacturer: p.manufacturer, model: p.model, year: p.year }]
+      return carList.some((c: any) => key(c) === target)
+    })
     setPacks(matched as Pack[])
   }
 
