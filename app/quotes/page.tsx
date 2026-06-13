@@ -16,7 +16,7 @@ function fmtDate(d: string | null) {
 export default function QuotesPage() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME'>('ALL')
+  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'CLOSED'>('ALL')
   const [picker, setPicker] = useState(false)
 
   useEffect(() => { load() }, [])
@@ -43,7 +43,7 @@ export default function QuotesPage() {
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">QUOTES ({filtered.length})</h1>
           <div className="flex gap-2 flex-wrap">
-            {(['ALL', 'INCOMPLETE', 'REALTIME'] as const).map((f) => (
+            {(['ALL', 'INCOMPLETE', 'CLOSED'] as const).map((f) => (
               <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
             ))}
           </div>

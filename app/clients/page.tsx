@@ -201,7 +201,7 @@ export default function ClientsPage() {
   // when the current selection has both ready and not-ready clients (never on INCOMPLETE).
   const isReady = (c: any) => c._liveStatus === 'CLOSED' || (c._liveStatus === 'REALTIME' && c._feedStatus === 'REAL_TIME')
   const liveFiltered = clients.filter((c: any) => liveFilter === 'ALL' || (c._liveStatus || 'INCOMPLETE') === liveFilter)
-  const showReportFilter = liveFilter !== 'INCOMPLETE' && liveFiltered.some(isReady) && liveFiltered.some((c: any) => !isReady(c))
+  const showReportFilter = mode === 'project' && liveFilter !== 'INCOMPLETE' && liveFiltered.some(isReady) && liveFiltered.some((c: any) => !isReady(c))
   const filtered = liveFiltered.filter((c: any) => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(c) : !isReady(c)))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
@@ -226,7 +226,7 @@ export default function ClientsPage() {
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
           <div className="flex gap-2 flex-wrap">
-            {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
+            {(mode === 'quote' ? (['ALL', 'INCOMPLETE', 'CLOSED'] as const) : (['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const)).map((f) => (
               <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
             ))}
           </div>

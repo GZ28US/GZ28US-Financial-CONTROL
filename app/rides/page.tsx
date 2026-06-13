@@ -223,9 +223,9 @@ export default function RidesPage() {
   // Project rides filter by status ladder + live status; quote rides aren't filtered.
   const isReady = (r: any) => { const i = r._latestInvoice; const live = i?.live_status; return live === 'CLOSED' || (live === 'REALTIME' && i?.feed_status === 'REAL_TIME') }
   const baseFiltered = (rides as any[]).filter(r => {
-    if (mode === 'quote') return true
-    const statusOk = filter === 'ALL' || getStatusBadge(r._latestInvoice).label === filter
     const liveOk = liveFilter === 'ALL' || (r._latestInvoice?.live_status || 'INCOMPLETE') === liveFilter
+    if (mode === 'quote') return liveOk
+    const statusOk = filter === 'ALL' || getStatusBadge(r._latestInvoice).label === filter
     return statusOk && liveOk
   })
   // REPORT filter only when the current selection has both ready & not-ready (never on INCOMPLETE).
@@ -273,6 +273,13 @@ export default function RidesPage() {
                 </div>
               )}
             </>
+          )}
+          {mode === 'quote' && (
+            <div className="flex gap-2 flex-wrap">
+              {(['ALL', 'INCOMPLETE', 'CLOSED'] as const).map((f) => (
+                <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+              ))}
+            </div>
           )}
         </div>
         <Link href={`/rides/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
