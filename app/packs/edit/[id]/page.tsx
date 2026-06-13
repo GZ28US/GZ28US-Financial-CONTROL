@@ -17,10 +17,12 @@ import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
 type Part = { description: string; unit_price: string; quantity: string; base_cost?: string }
 type Service = { description: string; price: string }
-type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string }
+type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string; export_status?: string }
 type Note = { note: string }
 
 const FULL_PROJECT_LABOR = 'Full Project Labor'
+// Extra/charge rows never import into PARTS (shipping, tax, handling, etc.).
+const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 
 const MANUFACTURERS = Object.keys(carData)
@@ -66,9 +68,9 @@ export default function EditPackPage() {
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
 
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
 
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState('')
@@ -82,6 +84,8 @@ export default function EditPackPage() {
   const [dbItems, setDbItems] = useState<any[]>([])
   const [dbSearch, setDbSearch] = useState('')
   const [dbQty, setDbQty] = useState<Record<string, string>>({})
+  // parts_database item -> alias, applied as the part description on import.
+  const [aliasMap, setAliasMap] = useState<Map<string, string>>(new Map())
 
   useEffect(() => { if (id) load(id) }, [id])
 
@@ -100,11 +104,17 @@ export default function EditPackPage() {
     setImportMargin(data.import_margin != null ? String(data.import_margin) : '')
     setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : undefined })))
     setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
-    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0' })))
+    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH' })))
     setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
 
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
     if (sup) setSuppliers(sup.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
+
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias')
+    const am = new Map<string, string>()
+    for (const d of dbParts || []) { if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias) }
+    setAliasMap(am)
+
     setLoading(false)
   }
 
@@ -156,8 +166,57 @@ export default function EditPackPage() {
       extra: String(extra),
       quantity: String(parseFloat(qty) || 1),
       item_discount: String(it.item_discount ?? 0),
+      export_status: 'FRESH',
     }])
     setShowDbModal(false)
+  }
+
+  // ---- Export status (which expenses have been imported into PARTS) ----
+  function markExportStatus(indices: number[], status: string) {
+    const set = new Set(indices)
+    setExpenses(prev => prev.map((e, i) => set.has(i) ? { ...e, export_status: status } : e))
+  }
+  function resetExportStatus(index: number) { markExportStatus([index], 'FRESH') }
+
+  // IMPORT ITEMS FROM EXPENSES — bring each FRESH expense into PARTS at its market
+  // (pre-discount) landed cost as base_cost, priced unit_price = base_cost*(1+MARGIN).
+  // Skips extras/charges (SKIP_WORDS) and anything already EXPORTED. The MARGIN field
+  // then manipulates every imported part at once (live re-pricer). Imported expenses
+  // flip to EXPORTED so they won't import twice.
+  function importItemsFromExpenses() {
+    const margin = parseFloat(importMargin) || 0
+    const factor = 1 + margin / 100
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number }>()
+    const importedIndices: number[] = []
+    expenses.forEach((e, idx) => {
+      if (SKIP_WORDS.test(e.item)) return
+      if ((e.export_status || 'FRESH') !== 'FRESH') return
+      const desc = (e.item || '').trim(); if (!desc) return
+      const amount = parseFloat(e.amount) || 0
+      const qty = parseFloat(e.quantity) || 1
+      const tax = parseFloat(e.tax) || 0
+      const extra = parseFloat(e.extra) || 0
+      const info = supplierInfo(e.supplier)
+      const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
+      const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
+      const marketAmount = amount / discFactor
+      const unitBase = qty > 0 ? (marketAmount * qty + tax + extra) / qty : marketAmount
+      const key = `${desc.toLowerCase()}|${unitBase.toFixed(4)}`
+      const existing = sourceMap.get(key)
+      if (existing) existing.quantity += qty
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty })
+      importedIndices.push(idx)
+    })
+    if (importedIndices.length === 0) { alert('No FRESH expenses to import.'); return }
+    const toAdd: Part[] = []
+    sourceMap.forEach(src => toAdd.push({
+      description: aliasMap.get(src.description.trim().toLowerCase()) || src.description,
+      unit_price: (src.base * factor).toFixed(2),
+      quantity: String(src.quantity),
+      base_cost: String(src.base),
+    }))
+    setParts(prev => [...prev, ...toAdd])
+    markExportStatus(importedIndices, 'EXPORTED')
   }
 
   // ---- Totals math (mirrors the invoice editor) ----
@@ -221,7 +280,17 @@ export default function EditPackPage() {
     const next = [...parts]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setParts(next)
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
-  function removePart(index: number) { setParts(parts.filter((_, i) => i !== index)) }
+  function removePart(index: number) {
+    const part = parts[index]
+    setParts(parts.filter((_, i) => i !== index))
+    // An EXPORTED expense that produced this part (matched by item name) flips to REMOVED.
+    const desc = (part.description || '').trim().toLowerCase()
+    if (desc) {
+      const matchIdx: number[] = []
+      expenses.forEach((e, i) => { if ((e.export_status || 'FRESH') === 'EXPORTED' && (e.item || '').trim().toLowerCase() === desc) matchIdx.push(i) })
+      if (matchIdx.length) markExportStatus(matchIdx, 'REMOVED')
+    }
+  }
   function startEditPart(index: number) { setEditingPartIndex(index); setEditingPart({ ...parts[index] }) }
   function saveEditPart() {
     if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all item fields'); return }
@@ -243,14 +312,14 @@ export default function EditPackPage() {
 
   function addExpense() {
     if (!newExpense.item) { alert('Please enter an item'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
   }
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
   function startEditExpense(index: number) { setEditingExpenseIndex(index); setEditingExpense({ ...expenses[index] }) }
   function saveEditExpense() {
     if (!editingExpense.item) { alert('Please enter an item'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
   }
   const expenseLineTotal = (e: Expense) => (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 
@@ -280,7 +349,7 @@ export default function EditPackPage() {
       import_margin: parseFloat(importMargin) || 0,
       parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })),
       services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
-      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0 })),
+      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0, export_status: e.export_status || 'FRESH' })),
       notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim() })),
       updated_at: new Date().toISOString(),
     }
@@ -422,6 +491,9 @@ export default function EditPackPage() {
                           <div className="flex-1 min-w-0">
                             <p className="text-base font-bold truncate">{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
                             <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{info ? (info.type === 'VARIABLE' ? ' · VARIABLE' : ` · ${info.discount}% off`) : ''}</p>
+                            {(() => { const st = e.export_status || 'FRESH'; const color = st === 'EXPORTED' ? 'text-green-400' : st === 'REMOVED' ? 'text-red-400' : 'text-gray-400'; return (
+                              <p className="text-xs mt-0.5"><span className={`font-bold ${color}`}>{st}</span>{st !== 'FRESH' && !locked && <button onClick={() => resetExportStatus(index)} className="ml-2 text-gray-400 underline hover:text-white">RESET</button>}</p>
+                            ) })()}
                           </div>
                           {!locked && (
                             <div className="flex gap-2 shrink-0">
@@ -451,6 +523,7 @@ export default function EditPackPage() {
         <div>
           <label className="block mb-3 text-lg font-bold">PARTS</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            {!locked && <button onClick={importItemsFromExpenses} className="flex items-center justify-center gap-2 w-full bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold text-lg">⬆ IMPORT ITEMS FROM EXPENSES</button>}
             <input type="text" placeholder="Description" value={newPart.description} onChange={(e) => setNewPart({ ...newPart, description: e.target.value })} disabled={locked} className={inputClass} />
             <div className="flex gap-3">
               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
