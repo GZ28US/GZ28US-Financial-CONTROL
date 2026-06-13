@@ -239,7 +239,7 @@ export default function ClientsPage() {
                 <Link href={`/clients/${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                 <Link href={`/clients/edit/${client.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                 <button onClick={() => setConfirmId(client.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
-                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">SHOPPING INVOICES</Link>
+                <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">{mode === 'quote' ? 'SHOPPING QUOTES' : 'SHOPPING INVOICES'}</Link>
               </div>
             </div>
           ))}

@@ -160,7 +160,7 @@ export default function ViewClientPage() {
         {/* Shopping Invoices */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <label className="text-lg font-bold">SHOPPING INVOICES ({personalInvoices.length})</label>
+            <label className="text-lg font-bold">{(client as any).is_quote ? 'SHOPPING QUOTES' : 'SHOPPING INVOICES'} ({personalInvoices.length})</label>
             <Link href={`/clients/${clientId}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold text-sm">OPEN</Link>
           </div>
           {personalInvoices.length === 0 ? (
