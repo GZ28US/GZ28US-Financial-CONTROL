@@ -86,8 +86,10 @@ export default function EditPackPage() {
   const [dbQty, setDbQty] = useState<Record<string, string>>({})
   // parts_database item -> alias, applied as the part description on import.
   const [aliasMap, setAliasMap] = useState<Map<string, string>>(new Map())
-  // parts_database part_number -> MAP price, so IMPORT ITEMS FROM EXPENSES can set
-  // the part's sell base to its MAP (not the cost we paid).
+  // parts_database part_number -> MAP FINAL price (delivered MAP, pre-tax = MAP +
+  // shipping + handling), so IMPORT ITEMS FROM EXPENSES sets the part's sell base
+  // to the price an ordinary buyer pays delivered (the pack's FL TAXES line then
+  // adds the tax). This is above our cost; the bare MAP alone is not.
   const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
 
   useEffect(() => { if (id) load(id) }, [id])
@@ -113,13 +115,14 @@ export default function EditPackPage() {
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
     if (sup) setSuppliers(sup.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
 
-    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price')
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
     for (const d of dbParts || []) {
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
       const pn = (d.part_number || '').trim().toLowerCase()
-      if (pn && d.map_price != null) mp.set(pn, Number(d.map_price) || 0)
+      // MAP final (delivered, pre-tax) = MAP + shipping + handling.
+      if (pn && d.map_price != null) mp.set(pn, (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0))
     }
     setAliasMap(am)
     setMapByPN(mp)
@@ -205,15 +208,16 @@ export default function EditPackPage() {
       const desc = (e.item || '').trim(); if (!desc) return
       const amount = parseFloat(e.amount) || 0
       const qty = parseFloat(e.quantity) || 1
-      // Sell-side base = the part's MARKET price (what an ordinary buyer pays).
-      // Freight/tax never enter the sell base — they stay on the COST side. If we
-      // know the part's MAP (matched by part number in the Parts DB) use it; else
-      // gross the cost up to market by the supplier/item discount.
+      // Sell-side base = the part's MAP FINAL price (delivered MAP, pre-tax =
+      // MAP + freight) — the price an ordinary buyer pays before tax, which is
+      // above our cost. Matched by part number in the Parts DB. If unknown, gross
+      // the cost up to market by the supplier/item discount. The pack's FL TAXES
+      // line adds the tax on top; tax never enters the base here.
       const pn = (e.part_number || '').trim().toLowerCase()
-      const knownMap = pn ? (mapByPN.get(pn) || 0) : 0
+      const mapFinal = pn ? (mapByPN.get(pn) || 0) : 0
       let unitBase: number
-      if (knownMap > 0) {
-        unitBase = knownMap
+      if (mapFinal > 0) {
+        unitBase = mapFinal
       } else {
         const info = supplierInfo(e.supplier)
         const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
