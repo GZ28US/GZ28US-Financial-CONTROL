@@ -25,7 +25,18 @@ type Part = {
   source_type: string | null
   donor: string | null
   notes: string | null
+  map_price: number | null
+  our_cost: number | null
+  shipping: number | null
+  handling: number | null
+  map_delivered: number | null
+  cost_delivered: number | null
+  part_discount: number | null
+  delivered_discount: number | null
+  dealer_supplier: string | null
 }
+
+const numOf = (s: string) => { const n = parseFloat(String(s).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
 
 export default function PartsPage() {
   const [parts, setParts] = useState<Part[]>([])
@@ -33,6 +44,12 @@ export default function PartsPage() {
   const [scanning, setScanning] = useState(false)
   const [hunting, setHunting] = useState(false)
   const [search, setSearch] = useState('')
+  const [costFilter, setCostFilter] = useState(false)
+  // The part whose OUR cost is being filled, plus its editor fields.
+  const [editPart, setEditPart] = useState<Part | null>(null)
+  const [ecOur, setEcOur] = useState('')
+  const [ecShip, setEcShip] = useState('')
+  const [ecHand, setEcHand] = useState('')
   // When arriving from a supplier's PARTS button (?supplierId=…) we restrict the
   // list to that supplier's parts, matching its name + aliases (normalized).
   const [supplierFilter, setSupplierFilter] = useState<{ name: string; variants: Set<string> } | null>(null)
@@ -75,6 +92,42 @@ export default function PartsPage() {
     const { error } = await supabase.from('parts_database').delete().eq('id', p.id)
     if (error) { alert(error.message); return }
     setParts(prev => prev.filter(x => x.id !== p.id))
+  }
+
+  // HUNT parts carry MAP/cost pricing; "pending" = hunted but OUR cost not yet filled.
+  const isHunt = (p: Part) => p.source_type === 'HUNT'
+  const isPending = (p: Part) => isHunt(p) && p.our_cost == null
+
+  function openCostEditor(p: Part) {
+    setEditPart(p)
+    setEcOur(p.our_cost != null ? String(p.our_cost) : '')
+    setEcShip(p.shipping != null ? String(p.shipping) : '')
+    setEcHand(p.handling != null ? String(p.handling) : '')
+  }
+
+  // Write OUR cost back to a hunted part and recompute delivered + discounts
+  // against the stored MAP. This is the surface the assistant drives to clear
+  // the PENDING COST queue from the logged-in dealer carts.
+  async function saveCost() {
+    if (!editPart) return
+    const map = Number(editPart.map_price) || 0
+    const mapDel = Number(editPart.map_delivered) || 0
+    const our = numOf(ecOur), ship = numOf(ecShip), hand = numOf(ecHand)
+    const costDel = our + ship + hand
+    const partDisc = (map > 0 && our > 0) ? (1 - our / map) * 100 : 0
+    const delDisc = (mapDel > 0 && costDel > 0) ? (1 - costDel / mapDel) * 100 : 0
+    const { error } = await supabase.from('parts_database').update({
+      our_cost: our || null,
+      shipping: ship || null,
+      handling: hand || null,
+      cost_delivered: Math.round(costDel * 100) / 100 || null,
+      part_discount: Math.round(partDisc * 10) / 10,
+      delivered_discount: Math.round(delDisc * 10) / 10,
+      updated_at: new Date().toISOString(),
+    }).eq('id', editPart.id)
+    if (error) { alert(error.message); return }
+    setEditPart(null)
+    load()
   }
 
   // SCAN ITEMS — scan any receipt/invoice and enroll its items into the data bank
@@ -126,9 +179,11 @@ export default function PartsPage() {
   const term = search.trim().toLowerCase()
   const filtered = parts.filter(p => {
     if (supplierFilter && !supplierFilter.variants.has(normSup(p.supplier))) return false
+    if (costFilter && !isPending(p)) return false
     if (term && !((p.item || '').toLowerCase().includes(term) || (p.alias || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term))) return false
     return true
   })
+  const pendingCount = parts.filter(isPending).length
 
   function formatDate(d: string | null) {
     if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
@@ -136,10 +191,30 @@ export default function PartsPage() {
   }
 
   const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg'
+  const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+
+      {editPart && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-md w-full">
+            <h2 className="text-2xl font-bold mb-1">OUR COST</h2>
+            <p className="text-gray-400">{editPart.item}{editPart.part_number ? ` · ${editPart.part_number}` : ''}</p>
+            <p className="text-gray-500 text-sm mb-6">MAP {formatUSD(Number(editPart.map_price) || 0)}{editPart.dealer_supplier ? ` · ${editPart.dealer_supplier}` : ''}</p>
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">DEALER NET</label><input value={ecOur} onChange={(e) => setEcOur(e.target.value)} className={`${inputClass} w-full`} placeholder="0" autoFocus /></div>
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">SHIPPING</label><input value={ecShip} onChange={(e) => setEcShip(e.target.value)} className={`${inputClass} w-full`} placeholder="0" /></div>
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">HANDLING</label><input value={ecHand} onChange={(e) => setEcHand(e.target.value)} className={`${inputClass} w-full`} placeholder="0" /></div>
+            </div>
+            <div className="flex gap-4">
+              <button onClick={() => setEditPart(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={saveCost} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-lg">SAVE COST</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">PARTS DATABASE ({filtered.length})</h1>
@@ -165,8 +240,13 @@ export default function PartsPage() {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search item or alias..."
-        className={`${inputClass} w-full max-w-2xl mb-6`}
+        className={`${inputClass} w-full max-w-2xl mb-4`}
       />
+
+      <div className="flex gap-3 mb-6 flex-wrap">
+        <button onClick={() => setCostFilter(false)} className={chip(!costFilter)}>ALL</button>
+        <button onClick={() => setCostFilter(true)} className={chip(costFilter)}>💲 OUR COST PENDING ({pendingCount})</button>
+      </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
@@ -183,18 +263,30 @@ export default function PartsPage() {
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
                 </div>
-                <p className="text-sm text-gray-400">
-                  {formatUSD(Number(p.unit_price) || 0)}
-                  {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax))}` : ''}
-                  {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra))}` : ''}
-                  {(Number(p.item_discount) || 0) > 0 ? ` · Disc ${p.item_discount}%` : ''}
-                  {(Number(p.base_cost) || 0) > 0 ? ` · Base ${formatUSD(Number(p.base_cost))}` : ''}
-                  {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
-                </p>
-                {(p.category || p.source_type || p.donor || p.notes) && (
-                  <p className="text-xs text-gray-500">
-                    {[p.category && `Cat: ${p.category}`, p.source_type, p.donor && `Donor: ${p.donor}`, p.notes].filter(Boolean).join(' · ')}
+                {isHunt(p) ? (
+                  <p className="text-sm text-gray-400">
+                    MAP del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
+                    {p.our_cost != null
+                      ? <> · OUR del: <span className="text-green-400 font-bold">{formatUSD(Number(p.cost_delivered) || 0)}</span> ({Number(p.delivered_discount) || 0}% off)</>
+                      : <span className="text-amber-400 font-bold"> · OUR COST PENDING</span>}
+                    {p.dealer_supplier ? ` · ${p.dealer_supplier}` : ''}
                   </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-400">
+                      {formatUSD(Number(p.unit_price) || 0)}
+                      {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax))}` : ''}
+                      {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra))}` : ''}
+                      {(Number(p.item_discount) || 0) > 0 ? ` · Disc ${p.item_discount}%` : ''}
+                      {(Number(p.base_cost) || 0) > 0 ? ` · Base ${formatUSD(Number(p.base_cost))}` : ''}
+                      {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
+                    </p>
+                    {(p.category || p.donor || p.notes) && (
+                      <p className="text-xs text-gray-500">
+                        {[p.category && `Cat: ${p.category}`, p.donor && `Donor: ${p.donor}`, p.notes].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
@@ -208,6 +300,7 @@ export default function PartsPage() {
                   />
                 </div>
                 <button onClick={() => saveAlias(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">SAVE</button>
+                {isHunt(p) && <button onClick={() => openCostEditor(p)} className={`px-4 py-2 rounded-2xl font-bold text-sm ${isPending(p) ? 'bg-yellow-600 hover:bg-yellow-500 text-black' : 'bg-gray-600 hover:bg-gray-500'}`}>{isPending(p) ? 'FILL COST' : 'EDIT COST'}</button>}
                 <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
               </div>
             </div>
