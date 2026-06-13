@@ -26,6 +26,18 @@ function formatUSD(v: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
 }
 
+// Client badges (from the latest invoice) — live status + report status. No AWAITING-CAR ladder here.
+function getLiveBadge(s: string | null) {
+  if (s === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
+  if (s === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
+}
+function getReportBadge(feed: string | null) {
+  return feed === 'REAL_TIME'
+    ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' }
+    : { label: 'REPORT NOT READY', cls: 'bg-red-900 text-red-200' }
+}
+
 export default function ClientsPage() {
   const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,7 +68,7 @@ export default function ClientsPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, florida_taxes, global_discount, fl_tax_expense_date, created_at, updated_at')
+        .select('id, florida_taxes, global_discount, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
         .or(orParts.join(','))
 
       const invoiceList = invoices || []
@@ -135,9 +147,13 @@ export default function ClientsPage() {
       for (const inv of invoiceList) { pushTime((inv as any).created_at); pushTime((inv as any).updated_at) }
       const activityTime = times.length > 0 ? Math.max(...times) : 0
 
+      // Badges reflect the most recently touched invoice across this client's rides + shopping.
+      const latestInv = [...invoiceList].sort((a: any, b: any) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')))[0] as any
       return {
         ...client,
         _hasInvoices: invoiceIds.length > 0,
+        _liveStatus: latestInv?.live_status ?? null,
+        _feedStatus: latestInv?.feed_status ?? null,
         _activityTime: activityTime,
         _currentProfit: currentProfit,
         _currentProfitPct: currentProfitPct,
@@ -212,6 +228,12 @@ export default function ClientsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-2xl font-bold">{clientCode(client)} — {client.name}</h2>
+                  {client._hasInvoices && (
+                    <>
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${getLiveBadge(client._liveStatus).cls}`}>{getLiveBadge(client._liveStatus).label}</span>
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${getReportBadge(client._feedStatus).cls}`}>{getReportBadge(client._feedStatus).label}</span>
+                    </>
+                  )}
                 </div>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
                 <p className="text-lg text-gray-400">{formatPhone(client.phone, client.country)}</p>
@@ -239,6 +261,7 @@ export default function ClientsPage() {
                 <Link href={`/clients/${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                 <Link href={`/clients/edit/${client.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                 <button onClick={() => setConfirmId(client.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                <Link href={`/rides?mode=${mode}&client=${client.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">RIDES</Link>
                 <Link href={`/clients/${client.id}/invoices`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">{mode === 'quote' ? 'SHOPPING QUOTES' : 'SHOPPING INVOICES'}</Link>
               </div>
             </div>

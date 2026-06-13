@@ -55,7 +55,7 @@ export default function InvoicesPage() {
   const liveFiltered = rows.filter(r => liveFilter === 'ALL' || (r.live_status || 'INCOMPLETE') === liveFilter)
   const hasReady = liveFiltered.some(r => r.feed_status === 'REAL_TIME')
   const hasNotReady = liveFiltered.some(r => r.feed_status !== 'REAL_TIME')
-  const showReportFilter = hasReady && hasNotReady
+  const showReportFilter = liveFilter !== 'INCOMPLETE' && hasReady && hasNotReady
   const filtered = liveFiltered.filter(r => !showReportFilter || reportFilter === 'ALL'
     || (reportFilter === 'READY' ? r.feed_status === 'REAL_TIME' : r.feed_status !== 'REAL_TIME'))
 

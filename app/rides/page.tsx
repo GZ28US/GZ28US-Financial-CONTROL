@@ -58,6 +58,11 @@ export default function RidesPage() {
     if (typeof window === 'undefined') return 'project'
     return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
   })
+  // Optional ?client=<id> narrows the list to one client's rides (the clients-list RIDES button).
+  const [clientParam] = useState<string>(() => {
+    if (typeof window === 'undefined') return ''
+    return new URLSearchParams(window.location.search).get('client') || ''
+  })
 
   useEffect(() => { loadRides() }, [])
 
@@ -65,7 +70,7 @@ export default function RidesPage() {
     const { data, error } = await supabase.from('rides').select('*')
     if (error) { console.error(error); setLoading(false); return }
 
-    const ridesData = (data || []).filter((r: any) => !!r.is_quote === (mode === 'quote'))
+    const ridesData = (data || []).filter((r: any) => !!r.is_quote === (mode === 'quote') && (!clientParam || r.client_id === clientParam))
 
     const ridesWithActivity = await Promise.all(ridesData.map(async (ride) => {
       const timestamps: string[] = []
@@ -282,9 +287,9 @@ export default function RidesPage() {
                 <div>
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
+                    {mode === 'project' && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
-                    {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
+                    {mode === 'project' && feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}
