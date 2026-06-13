@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 
 function fmtDate(d: string | null) {
@@ -33,6 +34,7 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true)
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
+  const [picker, setPicker] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -62,21 +64,25 @@ export default function InvoicesPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <div className="flex items-center gap-4 mb-8 flex-wrap">
-        <h1 className="text-4xl font-bold">INVOICES ({filtered.length})</h1>
-        <div className="flex gap-2 flex-wrap">
-          {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
-            <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
-          ))}
-        </div>
-        {showReportFilter && (
-          <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
-            {(['ALL', 'READY', 'NOT'] as const).map((f) => (
-              <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
+      <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-4xl font-bold">INVOICES ({filtered.length})</h1>
+          <div className="flex gap-2 flex-wrap">
+            {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
+              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
             ))}
           </div>
-        )}
+          {showReportFilter && (
+            <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+              {(['ALL', 'READY', 'NOT'] as const).map((f) => (
+                <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={() => setPicker(true)} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</button>
       </div>
+      {picker && <DocPicker type="invoice" onClose={() => setPicker(false)} />}
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>

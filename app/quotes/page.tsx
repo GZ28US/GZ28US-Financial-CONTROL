@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 
 function fmtDate(d: string | null) {
@@ -16,6 +17,7 @@ export default function QuotesPage() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME'>('ALL')
+  const [picker, setPicker] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -46,8 +48,9 @@ export default function QuotesPage() {
             ))}
           </div>
         </div>
-        <Link href="/rides?mode=quote" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
+        <button onClick={() => setPicker(true)} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</button>
       </div>
+      {picker && <DocPicker type="quote" onClose={() => setPicker(false)} />}
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
