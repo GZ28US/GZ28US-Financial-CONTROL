@@ -26,6 +26,7 @@ export default function NewSupplierPage() {
       discount_type: discountType,
       discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
       aliases: aliases.trim() || null,
+      updated_at: new Date().toISOString(),
     }])
     if (error) { alert(error.message); setSaving(false); return }
     router.push('/suppliers')

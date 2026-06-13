@@ -63,6 +63,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       email: email.trim() || null,
       ordering_method: orderingMethod || null,
       account_number: accountNumber,
+      updated_at: new Date().toISOString(),
     }
     const res = supplierId
       ? await supabase.from('suppliers').update(row).eq('id', supplierId)

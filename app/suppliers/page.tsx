@@ -30,7 +30,8 @@ export default function SuppliersPage() {
     const { data } = await supabase
       .from('suppliers')
       .select('*')
-      .order('name', { ascending: true })
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
     setSuppliers((data || []) as Supplier[])
     setLoading(false)
   }
