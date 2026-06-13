@@ -5,7 +5,7 @@ import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { formatUSD, clientCode } from '@/lib/utils'
 
 type Invoice = {
   id: string
@@ -78,6 +78,8 @@ export default function InvoicesPage() {
   const [stats, setStats] = useState<Record<string, InvoiceStats>>({})
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Whether this owner (client or ride) is a quote entity — drives label + create button.
+  const [ownerIsQuote, setOwnerIsQuote] = useState(false)
 
   useEffect(() => {
     loadOwner()
@@ -88,22 +90,24 @@ export default function InvoicesPage() {
     if (isClient) {
       const { data } = await supabase
         .from('clients')
-        .select('name, client_number')
+        .select('name, client_number, is_quote')
         .eq('id', ownerId)
         .single()
       if (data) {
-        setHeaderTitle(data.client_number != null ? `${data.client_number}` : (data.name || ''))
+        setHeaderTitle(clientCode(data))
         setHeaderSubtitle(data.name || null)
+        setOwnerIsQuote(!!data.is_quote)
       }
     } else {
       const { data } = await supabase
         .from('rides')
-        .select('project_code, project_name')
+        .select('project_code, project_name, is_quote')
         .eq('id', ownerId)
         .single()
       if (data) {
         setHeaderTitle(data.project_code || '')
         setHeaderSubtitle(data.project_name || null)
+        setOwnerIsQuote(!!data.is_quote)
       }
     }
   }
@@ -173,7 +177,9 @@ export default function InvoicesPage() {
     return new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
-  const invoicesLabel = isClient ? 'SHOPPING INVOICES' : 'INVOICES'
+  const invoicesLabel = isClient
+    ? (ownerIsQuote ? 'SHOPPING QUOTES' : 'SHOPPING INVOICES')
+    : (ownerIsQuote ? 'QUOTES' : 'INVOICES')
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -199,8 +205,11 @@ export default function InvoicesPage() {
         </div>
         <div className="flex gap-4">
           <Link href={backPath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
-          <Link href={`${basePath}/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
-          <Link href={`${basePath}/new?mode=quote`} className="bg-amber-600 hover:bg-amber-500 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
+          {ownerIsQuote ? (
+            <Link href={`${basePath}/new?mode=quote`} className="bg-amber-600 hover:bg-amber-500 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
+          ) : (
+            <Link href={`${basePath}/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
+          )}
         </div>
       </div>
 

@@ -1238,10 +1238,20 @@ export default function EditInvoicePage() {
   // the ride to the new ride code. Entities already on the project side are untouched.
   async function migrateQuoteToProject() {
     if (isClient) {
-      const { data: c } = await supabase.from('clients').select('is_quote').eq('id', ownerId).single()
+      const { data: c } = await supabase.from('clients').select('client_number, is_quote').eq('id', ownerId).single()
       if (c?.is_quote) {
         const { data: mx } = await supabase.from('clients').select('client_number').eq('is_quote', false).order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
-        await supabase.from('clients').update({ client_number: (mx?.client_number ?? 0) + 1, is_quote: false }).eq('id', ownerId)
+        const newNum = (mx?.client_number ?? 0) + 1
+        const oldPad = pad3(c.client_number ?? 0)
+        const newPad = pad3(newNum)
+        await supabase.from('clients').update({ client_number: newNum, is_quote: false }).eq('id', ownerId)
+        // re-code this client's shopping invoices ("<oldnum>.<n>" -> "<newnum>.<n>")
+        const { data: cinvs } = await supabase.from('invoices').select('id, invoice_code').eq('client_id', ownerId).is('ride_id', null)
+        for (const inv of (cinvs || [])) {
+          if (inv.invoice_code?.startsWith(oldPad + '.')) {
+            await supabase.from('invoices').update({ invoice_code: newPad + inv.invoice_code.slice(oldPad.length) }).eq('id', inv.id)
+          }
+        }
       }
       return
     }
