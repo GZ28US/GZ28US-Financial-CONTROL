@@ -81,6 +81,7 @@ export default function EditPackPage() {
   const [showDbModal, setShowDbModal] = useState(false)
   const [dbItems, setDbItems] = useState<any[]>([])
   const [dbSearch, setDbSearch] = useState('')
+  const [dbQty, setDbQty] = useState<Record<string, string>>({})
 
   useEffect(() => { if (id) load(id) }, [id])
 
@@ -134,12 +135,13 @@ export default function EditPackPage() {
     const { data } = await supabase.from('parts_database').select('*').order('item', { ascending: true })
     setDbItems(data || [])
     setDbSearch('')
+    setDbQty({})
     setShowDbModal(true)
   }
   // Pull a parts_database row in as an expense with ALL its info. HUNT parts carry
   // dealer pricing (our_cost / dealer_supplier / shipping+handling, tax-exempt);
   // scanned parts carry unit_price / supplier / tax / extra.
-  function importDbItem(it: any) {
+  function importDbItem(it: any, qty: string) {
     const isHunt = it.source_type === 'HUNT'
     const supplier = (isHunt ? it.dealer_supplier : it.supplier) || it.supplier || ''
     const amount = isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)
@@ -152,9 +154,10 @@ export default function EditPackPage() {
       amount: String(amount ?? 0),
       tax: String(tax),
       extra: String(extra),
-      quantity: String(it.quantity ?? 1),
+      quantity: String(parseFloat(qty) || 1),
       item_discount: String(it.item_discount ?? 0),
     }])
+    setShowDbModal(false)
   }
 
   // ---- Totals math (mirrors the invoice editor) ----
@@ -316,7 +319,12 @@ export default function EditPackPage() {
                       <p className="font-bold truncate">{d.item}{d.alias ? ` (${d.alias})` : ''}{isHunt ? ' — HUNT' : ''}</p>
                       <p className="text-sm text-gray-400">{formatUSD(Number(cost) || 0)}{sup ? ` · ${sup}` : ''}{d.part_number ? ` · PN ${d.part_number}` : ''}</p>
                     </div>
-                    <button onClick={() => importDbItem(d)} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">ADD</button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div><label className="block mb-1 text-xs text-gray-400 text-center">QTY</label>
+                        <input type="text" inputMode="decimal" value={dbQty[d.id] ?? '1'} onChange={(ev) => { if (isNumeric(ev.target.value)) setDbQty({ ...dbQty, [d.id]: ev.target.value }) }} className={`${smallInputClass} w-16 text-center`} />
+                      </div>
+                      <button onClick={() => importDbItem(d, dbQty[d.id] ?? '1')} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm self-end">ADD</button>
+                    </div>
                   </div>
                 )
               })
