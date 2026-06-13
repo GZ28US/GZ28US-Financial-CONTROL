@@ -539,10 +539,6 @@ export default function EditPackPage() {
               <span className="font-bold text-lg">EXPENSES TOTAL</span>
               <span className="text-2xl font-bold">{formatUSD(expensesTotal)}</span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
-              <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(0)}%` : ''}</span>
-            </div>
           </div>
         </div>
 
@@ -753,16 +749,22 @@ export default function EditPackPage() {
 
       {/* ACTION BAR */}
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
-        <div className="max-w-2xl mx-auto px-8 flex items-center gap-4 flex-wrap">
-          <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
-          {locked ? (
-            <button onClick={() => save('DRAFT')} disabled={saving} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">REOPEN (back to DRAFT)</button>
-          ) : (
-            <>
-              <button onClick={() => save()} disabled={saving} className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">{saving ? 'SAVING...' : 'SAVE DRAFT'}</button>
-              <button onClick={() => save('CLOSED')} disabled={saving} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">{saving ? 'SAVING...' : 'CLOSE (lock as template)'}</button>
-            </>
-          )}
+        <div className="max-w-2xl mx-auto px-8 flex flex-col gap-2">
+          <div className="flex justify-between items-center">
+            <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
+            <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(0)}%` : ''}</span>
+          </div>
+          <div className="flex items-center gap-4 flex-wrap">
+            <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
+            {locked ? (
+              <button onClick={() => save('DRAFT')} disabled={saving} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">REOPEN (back to DRAFT)</button>
+            ) : (
+              <>
+                <button onClick={() => save()} disabled={saving} className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">{saving ? 'SAVING...' : 'SAVE DRAFT'}</button>
+                <button onClick={() => save('CLOSED')} disabled={saving} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">{saving ? 'SAVING...' : 'CLOSE (lock as template)'}</button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </main>
