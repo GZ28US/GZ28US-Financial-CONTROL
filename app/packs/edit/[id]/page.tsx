@@ -165,7 +165,9 @@ export default function EditPackPage() {
       tax: String(tax),
       extra: String(extra),
       quantity: String(parseFloat(qty) || 1),
-      item_discount: String(it.item_discount ?? 0),
+      // HUNT items carry their MAP→net discount % so the PARTS gross-up recovers
+      // the MAP as the part base; scanned items keep their own item discount.
+      item_discount: String(isHunt ? (it.part_discount ?? 0) : (it.item_discount ?? 0)),
       export_status: 'FRESH',
     }])
     setShowDbModal(false)
