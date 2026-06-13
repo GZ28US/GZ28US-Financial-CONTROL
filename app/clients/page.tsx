@@ -200,7 +200,7 @@ export default function ClientsPage() {
   // Filter clients by their (latest-invoice) live status; the REPORT filter only shows
   // when the current selection has both ready and not-ready clients (never on INCOMPLETE).
   const isReady = (c: any) => c._liveStatus === 'CLOSED' || (c._liveStatus === 'REALTIME' && c._feedStatus === 'REAL_TIME')
-  const liveFiltered = clients.filter((c: any) => liveFilter === 'ALL' || (c._hasInvoices && (c._liveStatus || 'INCOMPLETE') === liveFilter))
+  const liveFiltered = clients.filter((c: any) => liveFilter === 'ALL' || (c._liveStatus || 'INCOMPLETE') === liveFilter)
   const showReportFilter = liveFilter !== 'INCOMPLETE' && liveFiltered.some(isReady) && liveFiltered.some((c: any) => !isReady(c))
   const filtered = liveFiltered.filter((c: any) => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(c) : !isReady(c)))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
@@ -252,13 +252,9 @@ export default function ClientsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-2xl font-bold">{clientCode(client)} — {client.name}</h2>
-                  {client._hasInvoices && (
-                    <>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${getLiveBadge(client._liveStatus).cls}`}>{getLiveBadge(client._liveStatus).label}</span>
-                      {getReportBadge(client._liveStatus, client._feedStatus) && (
-                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${getReportBadge(client._liveStatus, client._feedStatus)!.cls}`}>{getReportBadge(client._liveStatus, client._feedStatus)!.label}</span>
-                      )}
-                    </>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${getLiveBadge(client._liveStatus).cls}`}>{getLiveBadge(client._liveStatus).label}</span>
+                  {getReportBadge(client._liveStatus, client._feedStatus) && (
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${getReportBadge(client._liveStatus, client._feedStatus)!.cls}`}>{getReportBadge(client._liveStatus, client._feedStatus)!.label}</span>
                   )}
                 </div>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
