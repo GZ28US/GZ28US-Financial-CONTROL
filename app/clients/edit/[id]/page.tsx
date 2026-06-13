@@ -302,12 +302,13 @@ export default function EditClientPage() {
           UPDATE CLIENT
         </button>
 
-        <a
-          href={`${BASE_PATH}/clients`}
+        <button
+          type="button"
+          onClick={() => window.history.back()}
           className="text-gray-400 text-xl"
         >
           Cancel
-        </a>
+        </button>
       </div>
     </main>
   )

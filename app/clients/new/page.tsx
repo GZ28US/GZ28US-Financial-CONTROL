@@ -281,7 +281,7 @@ export default function NewClientPage() {
           SAVE CLIENT
         </button>
 
-        <a href={`${BASE_PATH}/clients`} className="text-gray-400 text-xl">Cancel</a>
+        <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
       </div>
     </main>
   )

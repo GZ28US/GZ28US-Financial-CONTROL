@@ -259,7 +259,7 @@ export default function NewInvoicePage() {
         <button onClick={createInvoice} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">
           {saving ? 'CREATING...' : `CREATE ${noun}`}
         </button>
-        <a href={`${BASE_PATH}${basePath}`} className="text-gray-400 text-xl">Cancel</a>
+        <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
       </div>
     </main>
   )

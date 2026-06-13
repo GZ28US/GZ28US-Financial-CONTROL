@@ -268,7 +268,7 @@ export default function NewRidePage() {
         </div>
 
         <button onClick={saveRide} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE RIDE</button>
-        <a href={`${BASE_PATH}/rides`} className="text-gray-400 text-xl">Cancel</a>
+        <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
       </div>
     </main>
   )
