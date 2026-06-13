@@ -85,14 +85,14 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       </div>
 
       <div>
-        <label className="block mb-2 text-lg font-bold">WEBSITE</label>
-        <input value={website} onChange={(e) => setWebsite(e.target.value)} className={inputClass} placeholder="https://…" />
+        <label className="block mb-2 text-lg font-bold">ALIAS</label>
+        <input value={aliases} onChange={(e) => setAliases(e.target.value)} className={inputClass} placeholder="e.g. HHP" />
+        <p className="text-gray-400 text-sm mt-1">Short name also recognized as this supplier on scans (case, spaces and punctuation are ignored).</p>
       </div>
 
       <div>
-        <label className="block mb-2 text-lg font-bold">ALSO KNOWN AS</label>
-        <textarea value={aliases} onChange={(e) => setAliases(e.target.value)} className={`${inputClass} h-24`} placeholder="Alternate names / acronyms — one per line (e.g. HHP Racing)" />
-        <p className="text-gray-400 text-sm mt-1">Any of these will be recognized as this supplier on scans (case, spaces and punctuation are ignored).</p>
+        <label className="block mb-2 text-lg font-bold">WEBSITE</label>
+        <input value={website} onChange={(e) => setWebsite(e.target.value)} className={inputClass} placeholder="https://…" />
       </div>
 
       <div>
