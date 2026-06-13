@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BASE_PATH } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 
@@ -54,7 +54,19 @@ const MENU: MenuItem[] = [
 
 export default function Header() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
+  const navRef = useRef<HTMLDivElement>(null)
   const linkClass = 'bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold'
+
+  // Close the open dropdown only on a click outside the nav (not on hover) — hovering
+  // from the button onto the panel must never close it.
+  useEffect(() => {
+    if (!openMenu) return
+    function onDocClick(e: MouseEvent) {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setOpenMenu(null)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [openMenu])
 
   return (
     <div className="mb-10">
@@ -62,7 +74,7 @@ export default function Header() {
         GZ28US Control App
       </h1>
 
-      <div className="flex gap-2 flex-wrap items-start">
+      <div ref={navRef} className="flex gap-2 flex-wrap items-start">
         {MENU.map((item) => item.type === 'link' ? (
           <a
             key={item.label}
@@ -75,7 +87,6 @@ export default function Header() {
           <div
             key={item.label}
             className="relative"
-            onMouseLeave={() => setOpenMenu((prev) => (prev === item.label ? null : prev))}
           >
             <button
               onClick={() => setOpenMenu((prev) => (prev === item.label ? null : item.label))}
@@ -84,7 +95,8 @@ export default function Header() {
               {item.label} <span className="text-xs">▾</span>
             </button>
             {openMenu === item.label && (
-              <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-2xl p-2 z-50 flex flex-col gap-1 min-w-48 shadow-xl">
+              <div className="absolute left-0 top-full pt-1 z-50 min-w-48">
+                <div className="bg-gray-900 border border-gray-700 rounded-2xl p-2 flex flex-col gap-1 shadow-xl">
                 {item.items.map(([href, l]) => (
                   <a
                     key={href}
@@ -94,6 +106,7 @@ export default function Header() {
                     {l}
                   </a>
                 ))}
+                </div>
               </div>
             )}
           </div>
