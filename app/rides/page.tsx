@@ -53,6 +53,8 @@ export default function RidesPage() {
   // Projects filter by the latest invoice's status-ladder badge. (Quote rides are
   // always AWAITING CAR, so the Quotes view shows no filter at all.)
   const [filter, setFilter] = useState<'ALL' | 'AWAITING CAR' | 'ON DUTY' | 'DONE' | 'DELIVERED'>('ALL')
+  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
+  const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
   // Projects area shows is_quote=false rides; Quotes area shows is_quote=true.
   const [mode, setMode] = useState<'project' | 'quote'>('project')
   // Optional ?client=<id> narrows the list to one client's rides (the clients-list RIDES button).
@@ -218,11 +220,18 @@ export default function RidesPage() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
   }
 
-  // Project rides filter by their latest invoice's status badge; quote rides aren't filtered.
-  const filteredRides = (rides as any[]).filter(r => {
-    if (mode === 'quote' || filter === 'ALL') return true
-    return getStatusBadge(r._latestInvoice).label === filter
+  // Project rides filter by status ladder + live status; quote rides aren't filtered.
+  const isReady = (r: any) => { const i = r._latestInvoice; const live = i?.live_status; return live === 'CLOSED' || (live === 'REALTIME' && i?.feed_status === 'REAL_TIME') }
+  const baseFiltered = (rides as any[]).filter(r => {
+    if (mode === 'quote') return true
+    const statusOk = filter === 'ALL' || getStatusBadge(r._latestInvoice).label === filter
+    const liveOk = liveFilter === 'ALL' || (r._latestInvoice?.live_status || 'INCOMPLETE') === liveFilter
+    return statusOk && liveOk
   })
+  // REPORT filter only when the current selection has both ready & not-ready (never on INCOMPLETE).
+  const showReportFilter = mode === 'project' && liveFilter !== 'INCOMPLETE' && baseFiltered.some(isReady) && baseFiltered.some(r => !isReady(r))
+  const filteredRides = baseFiltered.filter(r => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(r) : !isReady(r)))
+  const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -245,17 +254,25 @@ export default function RidesPage() {
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
           {mode === 'project' && (
-            <div className="flex gap-2 flex-wrap">
-              {(['ALL', 'AWAITING CAR', 'ON DUTY', 'DONE', 'DELIVERED'] as const).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-4 py-2 rounded-2xl font-bold text-sm ${filter === f ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="flex gap-2 flex-wrap">
+                {(['ALL', 'AWAITING CAR', 'ON DUTY', 'DONE', 'DELIVERED'] as const).map((f) => (
+                  <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
+                ))}
+              </div>
+              <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+                {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
+                  <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+                ))}
+              </div>
+              {showReportFilter && (
+                <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+                  {(['ALL', 'READY', 'NOT'] as const).map((f) => (
+                    <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
         <Link href={`/rides/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
