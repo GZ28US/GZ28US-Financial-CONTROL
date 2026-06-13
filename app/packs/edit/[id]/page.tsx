@@ -115,17 +115,17 @@ export default function EditPackPage() {
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
     if (sup) setSuppliers(sup.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
 
-    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling, map_delivered')
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
     for (const d of dbParts || []) {
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
       const pn = (d.part_number || '').trim().toLowerCase()
-      // MAP FINAL = full delivered MAP WITH tax (what an ordinary buyer pays).
-      // Prefer the stored map_delivered; else MAP + freight grossed by 6.5% FL tax.
-      const mapFinal = d.map_delivered != null
-        ? Number(d.map_delivered) || 0
-        : ((Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)) * 1.065
+      // RULE: tax follows how WE bought it. HUNT parts are bought tax-exempt
+      // (reseller), so they enter the parts table WITHOUT tax: MAP + freight only.
+      // The pack's FL TAXES line then adds the CUSTOMER's tax. (A future "bought
+      // with tax" flag from hunt/scan will switch this to a tax-inclusive base.)
+      const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
       if (pn && mapFinal > 0) mp.set(pn, mapFinal)
     }
     setAliasMap(am)
@@ -212,11 +212,11 @@ export default function EditPackPage() {
       const desc = (e.item || '').trim(); if (!desc) return
       const amount = parseFloat(e.amount) || 0
       const qty = parseFloat(e.quantity) || 1
-      // Sell-side base = the part's MAP FINAL price = the FULL delivered MAP WITH
-      // tax (what an ordinary buyer actually pays), matched by part number in the
-      // Parts DB. This sits above our cost (captures both the dealer discount AND
-      // the tax we don't pay). If unknown, gross the cost up to market by the
-      // supplier/item discount. Keep the pack's FL TAXES at 0 — tax is baked in here.
+      // Sell-side base = the part's MAP FINAL price matched by part number in the
+      // Parts DB. Tax follows how WE bought it (RULE): tax-exempt purchases (HUNT)
+      // give a NO-tax base (MAP + freight); the pack's FL TAXES line adds the
+      // customer's tax. If the part isn't known, gross the cost up to market by
+      // the supplier/item discount.
       const pn = (e.part_number || '').trim().toLowerCase()
       const mapFinal = pn ? (mapByPN.get(pn) || 0) : 0
       let unitBase: number
