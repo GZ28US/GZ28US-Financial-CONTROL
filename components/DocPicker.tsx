@@ -20,7 +20,8 @@ export default function DocPicker({ type, onClose }: { type: 'invoice' | 'quote'
     void (async () => {
       let q: any = supabase.from('clients').select('id, name, client_number, is_quote')
       if (type === 'invoice') q = q.eq('is_quote', false)
-      const { data } = await q.order('client_number', { ascending: true })
+      // Project clients (is_quote=false) first, then quote clients — each by number.
+      const { data } = await q.order('is_quote', { ascending: true }).order('client_number', { ascending: true })
       setClients(data || [])
     })()
   }, [type])
@@ -31,7 +32,8 @@ export default function DocPicker({ type, onClose }: { type: 'invoice' | 'quote'
     void (async () => {
       let q: any = supabase.from('rides').select('id, project_code, project_name, is_quote').eq('client_id', clientId)
       if (type === 'invoice') q = q.eq('is_quote', false)
-      const { data } = await q.order('project_code', { ascending: true })
+      // Project rides first, then quote rides — each by code.
+      const { data } = await q.order('is_quote', { ascending: true }).order('project_code', { ascending: true })
       setRides(data || [])
     })()
   }, [clientId, type])
