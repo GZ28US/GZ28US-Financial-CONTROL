@@ -71,6 +71,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
   const addQuery = `?category=${mode}${table === 'inventory' ? '&src=inventory' : ''}`
 
   const [inputs, setInputs] = useState<Input[]>([])
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Group-level removal confirmation: stores the purchase_group UUID to delete.
@@ -327,14 +328,21 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
   const visibleInputs = inputs.filter(i => !(isStockMode && i.quantity <= 0))
   const total = visibleInputs.reduce((s, i) => s + i.quantity * i.unit_price, 0)
 
+  // Optional text search across description / supplier / notes / donor. Totals stay
+  // on the full inventory; only the displayed rows are narrowed.
+  const term = search.trim().toLowerCase()
+  const filteredInputs = term
+    ? visibleInputs.filter(i => [i.description, i.supplier, i.notes, i.donor].some(f => (f || '').toLowerCase().includes(term)))
+    : visibleInputs
+
   // Build rows: group purchases together
   const rows: { type: 'single' | 'group'; input?: Input; groupId?: string; groupInputs?: Input[] }[] = []
   const seenGroups = new Set<string>()
-  visibleInputs.forEach(input => {
+  filteredInputs.forEach(input => {
     if (input.purchase_group) {
       if (!seenGroups.has(input.purchase_group)) {
         seenGroups.add(input.purchase_group)
-        const groupInputs = visibleInputs.filter(i => i.purchase_group === input.purchase_group)
+        const groupInputs = filteredInputs.filter(i => i.purchase_group === input.purchase_group)
         rows.push({ type: 'group', groupId: input.purchase_group, groupInputs })
       }
     } else {
@@ -518,7 +526,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
       )}
 
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">{isStockMode ? 'INVENTORY' : 'INPUTS'} ({visibleInputs.length})</h1>
+        <h1 className="text-4xl font-bold">{isStockMode ? 'INVENTORY' : 'INPUTS'} ({filteredInputs.length})</h1>
         <div className="flex gap-3">
           <label className="bg-indigo-700 hover:bg-indigo-600 px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer">
             🧾 SCAN A NEW {noun}
@@ -537,10 +545,19 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
         </div>
       )}
 
+      {visibleInputs.length > 0 && (
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={`Search ${isStockMode ? 'inventory' : 'inputs'} by item, supplier or note...`}
+          className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg mb-6"
+        />
+      )}
+
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : visibleInputs.length === 0 ? (
-        <p className="text-2xl text-gray-400">No {isStockMode ? 'inventory items' : 'inputs'} found.</p>
+      ) : filteredInputs.length === 0 ? (
+        <p className="text-2xl text-gray-400">{visibleInputs.length === 0 ? `No ${isStockMode ? 'inventory items' : 'inputs'} found.` : 'No matches.'}</p>
       ) : (
         <div className="space-y-5">
           {rows.map((row) => {
