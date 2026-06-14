@@ -567,7 +567,7 @@ export default function EditPackPage() {
                       ) : (
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
-                            <p className="text-base font-bold truncate">{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
+                            <p className="text-base font-bold truncate" title={e.item}>{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
                             <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{info ? (info.type === 'VARIABLE' ? ' · VARIABLE' : ` · ${info.discount}% off`) : ''}</p>
                             {(() => { const st = e.export_status || 'FRESH'; const color = st === 'EXPORTED' ? 'text-green-400' : st === 'REMOVED' ? 'text-red-400' : 'text-gray-400'; return (
                               <p className="text-xs mt-0.5"><span className={`font-bold ${color}`}>{st}</span>{st !== 'FRESH' && !locked && <button onClick={() => resetExportStatus(index)} className="ml-2 text-gray-400 underline hover:text-white">RESET</button>}</p>
@@ -670,7 +670,7 @@ export default function EditPackPage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate">{part.description}</p>
+                          <p className="text-base font-bold truncate" title={part.description}>{part.description}</p>
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
                         </div>
                         {!locked && (
@@ -740,7 +740,7 @@ export default function EditPackPage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate">{svc.description}</p>
+                          <p className="text-base font-bold truncate" title={svc.description}>{svc.description}</p>
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         {!locked && (

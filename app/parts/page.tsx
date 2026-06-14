@@ -375,7 +375,7 @@ export default function PartsPage() {
               <div className="border border-gray-700 rounded-2xl overflow-hidden">
                 {kitMembers.map((m, i) => { const pr = memberPrices(resolveMember(m)); const q = Number(m.quantity) || 1; return (
                   <div key={i} className="flex items-center gap-3 px-3 py-2 border-b border-gray-800 last:border-b-0">
-                    <span className="flex-1 min-w-0 truncate text-sm">{m.item}{m.part_number ? <span className="text-xs text-gray-500"> · {m.part_number}</span> : ''}</span>
+                    <span className="flex-1 min-w-0 truncate text-sm" title={m.item}>{m.item}{m.part_number ? <span className="text-xs text-gray-500"> · {m.part_number}</span> : ''}</span>
                     <input value={m.quantity} onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setKitMembers(prev => prev.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x)) }} className="bg-gray-800 border border-gray-600 rounded-xl px-2 py-1 w-14 text-center text-sm" />
                     <span className="text-xs text-gray-400 w-36 text-right">{formatUSD(pr.retail * q)} / {formatUSD(pr.cost * q)}</span>
                     <button onClick={() => removeKitMember(i)} className="text-red-400 hover:text-red-300 font-bold">✕</button>
@@ -394,7 +394,7 @@ export default function PartsPage() {
               <div className="max-h-56 overflow-y-auto border border-gray-700 rounded-2xl divide-y divide-gray-800">
                 {parts.filter(p => !p.is_kit && (kitSearch.trim() ? ((p.item || '').toLowerCase().includes(kitSearch.toLowerCase()) || (p.part_number || '').toLowerCase().includes(kitSearch.toLowerCase())) : true)).slice(0, 50).map(p => { const pr = memberPrices(p); return (
                   <div key={p.id} className="flex items-center gap-3 px-3 py-2">
-                    <span className="flex-1 min-w-0 truncate text-sm">{p.item}{p.part_number ? <span className="text-xs text-gray-500"> · {p.part_number}</span> : ''}</span>
+                    <span className="flex-1 min-w-0 truncate text-sm" title={p.item}>{p.item}{p.part_number ? <span className="text-xs text-gray-500"> · {p.part_number}</span> : ''}</span>
                     <span className="text-xs text-gray-400 shrink-0">{formatUSD(pr.retail)} / {formatUSD(pr.cost)}</span>
                     <button onClick={() => addKitMember(p)} className="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">ADD</button>
                   </div>

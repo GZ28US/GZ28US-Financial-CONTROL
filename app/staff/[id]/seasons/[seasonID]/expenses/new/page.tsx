@@ -201,7 +201,7 @@ export default function NewExpensePage() {
                   <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold">EXPENSE — STAFF — {formatUSD(t)}</p>
-                      <p className="text-sm text-gray-400 truncate">{exp.description || exp.supplier || 'Expense'}</p>
+                      <p className="text-sm text-gray-400 truncate" title={exp.description || exp.supplier || 'Expense'}>{exp.description || exp.supplier || 'Expense'}</p>
                       <p className="text-sm text-gray-400">{exp.type}{exp.origin === 'PERSONAL' ? ' — PERSONAL' : ''}{isValidDate(exp.date) ? ` — ${formatDate(exp.date)}` : ''}</p>
                       <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
                     </div>

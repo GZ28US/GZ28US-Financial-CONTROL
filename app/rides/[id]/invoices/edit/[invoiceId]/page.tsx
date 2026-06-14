@@ -1698,7 +1698,7 @@ export default function EditInvoicePage() {
                 {stockItems.map(item => (
                   <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <p className="text-base font-bold truncate">{item.description}</p>
+                      <p className="text-base font-bold truncate" title={item.description}>{item.description}</p>
                       {item.source_type === 'DONATED' && item.donor && <p className="text-sm text-orange-400">DONATED by {item.donor}</p>}
                       {item.supplier && item.source_type !== 'DONATED' && <p className="text-sm text-gray-400">{item.supplier}</p>}
                       <p className="text-sm text-gray-400">Available: {item.quantity} — {formatUSD(item.unit_price)} each</p>
@@ -1785,7 +1785,7 @@ export default function EditInvoicePage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-base font-bold">INCOME — {formatUSD(parseFloat(inc.amount) || 0)}</p>
                     <p className="text-sm text-gray-400">{inc.source ? `${inc.source} — ` : ''}{isValidDate(inc.date) ? formatDate(inc.date) : 'No date'}</p>
-                    {inc.description && <p className="text-sm text-gray-400 truncate">{inc.description}</p>}
+                    {inc.description && <p className="text-sm text-gray-400 truncate" title={inc.description}>{inc.description}</p>}
                     <p className="text-sm text-gray-500">{inc.receipt_url ? '📎 Document attached' : 'No document (text only)'}</p>
                   </div>
                   <button
@@ -2273,7 +2273,7 @@ export default function EditInvoicePage() {
                                 ) : (
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-bold truncate text-blue-300">{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
+                                      <p className="text-sm font-bold truncate text-blue-300" title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}{supplierIsVariable(exp.supplier) ? ` · Disc: ${parseFloat(exp.item_discount || '0') || 0}%` : ''}</p>
                                       {exportStatusLine(exp, index)}
                                     </div>
@@ -2364,7 +2364,7 @@ export default function EditInvoicePage() {
                           <div className="px-4 py-3">
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
-                                <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                                <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
@@ -2490,7 +2490,7 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-base font-bold truncate ${(isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`}>{part.description}{(isQuote || isValidDate(part.payment_date || '')) ? '' : ' — PENDING'}</p>
+                          <p className={`text-base font-bold truncate ${(isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(isQuote || isValidDate(part.payment_date || '')) ? '' : ' — PENDING'}</p>
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
                           {!isQuote && <p className="text-sm text-gray-500">{isValidDate(part.payment_date || '') ? `Paid: ${formatDate(part.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>
@@ -2565,7 +2565,7 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate">{serviceDisplayName(svc.description)}</p>
+                          <p className="text-base font-bold truncate" title={serviceDisplayName(svc.description)}>{serviceDisplayName(svc.description)}</p>
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
@@ -2698,7 +2698,7 @@ export default function EditInvoicePage() {
                             <p className={`text-base font-bold ${statusColor}`}>{formatUSD(parseFloat(payment.amount))} — {status}</p>
                             <p className="text-sm text-gray-400">{payment.source}{payment.source === 'GZ28BR' && payment.amount_brl ? ` · R$ ${(parseFloat(payment.amount_brl) || 0).toFixed(2)}` : ''}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
                             {isPaid && <p className="text-sm text-green-400">Paid: {formatTsDate(payment.paid_at)}</p>}
-                            {payment.description && <p className="text-sm text-gray-500 truncate">{payment.description}</p>}
+                            {payment.description && <p className="text-sm text-gray-500 truncate" title={payment.description}>{payment.description}</p>}
                           </div>
                           <div className="flex gap-2 shrink-0">
                             {payment.receipt_url && <a href={payment.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">DOC</a>}
@@ -2793,7 +2793,7 @@ export default function EditInvoicePage() {
                 {partsToStock.map((p, index) => (
                   <div key={index} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < partsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <div className="flex-1 min-w-0">
-                      <p className="text-base font-bold truncate text-orange-400">{p.description}</p>
+                      <p className="text-base font-bold truncate text-orange-400" title={p.description}>{p.description}</p>
                       <p className="text-sm text-orange-400">Qty: {p.quantity} × {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
                     </div>
                     <button onClick={() => removePartToStock(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
@@ -2809,7 +2809,7 @@ export default function EditInvoicePage() {
                   {savedPartsToStock.map((p, index) => (
                     <div key={index} className={`flex items-center gap-4 px-4 py-3 ${index < savedPartsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <div className="flex-1 min-w-0">
-                        <p className="text-base font-bold truncate text-orange-300">{p.description}</p>
+                        <p className="text-base font-bold truncate text-orange-300" title={p.description}>{p.description}</p>
                         <p className="text-sm text-orange-300">Qty: {p.quantity} × {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
                       </div>
                     </div>

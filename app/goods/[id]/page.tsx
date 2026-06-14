@@ -126,7 +126,7 @@ export default function ViewGoodPage() {
                   <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex-1 min-w-0">
-                        <p className="text-base font-bold truncate">{exp.description}</p>
+                        <p className="text-base font-bold truncate" title={exp.description}>{exp.description}</p>
                         {exp.supplier && <p className="text-sm text-gray-400">{exp.supplier}</p>}
                         <p className="text-sm text-gray-400">{formatDate(exp.expense_date)}</p>
                       </div>

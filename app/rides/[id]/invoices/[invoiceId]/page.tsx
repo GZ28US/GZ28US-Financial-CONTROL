@@ -608,7 +608,7 @@ export default function ViewInvoicePage() {
                     <p className="font-bold text-gray-300 mb-1">ITEMS</p>
                     {bParts.map((p: any, i: number) => (
                       <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
-                        <span className="min-w-0 truncate">{p.description}</span>
+                        <span className="min-w-0 truncate" title={p.description}>{p.description}</span>
                         <span className="text-gray-400 shrink-0">{Number(p.unit_price) === 0 ? 'COURTESY' : `${formatUSD(Number(p.unit_price) || 0)} × ${Number(p.quantity) || 0} = ${formatUSD((Number(p.unit_price) || 0) * (Number(p.quantity) || 0))}`}</span>
                       </div>
                     ))}
@@ -621,7 +621,7 @@ export default function ViewInvoicePage() {
                     <p className="font-bold text-gray-300 mb-1">SERVICES</p>
                     {bServices.map((sv: any, i: number) => (
                       <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
-                        <span className="min-w-0 truncate">{sv.description}</span>
+                        <span className="min-w-0 truncate" title={sv.description}>{sv.description}</span>
                         <span className="text-gray-400 shrink-0">{Number(sv.price) === 0 ? 'COURTESY' : formatUSD(Number(sv.price) || 0)}</span>
                       </div>
                     ))}
@@ -642,7 +642,7 @@ export default function ViewInvoicePage() {
                     <p className="font-bold text-gray-300 mb-1">EXPENSES</p>
                     {bExpenses.map((e: any, i: number) => (
                       <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
-                        <span className="min-w-0 truncate">{e.item}{e.supplier ? ` — ${e.supplier}` : ''}</span>
+                        <span className="min-w-0 truncate" title={e.item}>{e.item}{e.supplier ? ` — ${e.supplier}` : ''}</span>
                         <span className="text-gray-400 shrink-0">{formatUSD((Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0))}</span>
                       </div>
                     ))}
@@ -744,7 +744,7 @@ export default function ViewInvoicePage() {
                   return (
                   <div key={part.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-base font-bold truncate ${partPaid ? '' : 'text-yellow-400'}`}>{part.description}{partPaid ? '' : ' — PENDING'}</p>
+                      <p className={`text-base font-bold truncate ${partPaid ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{partPaid ? '' : ' — PENDING'}</p>
                       <p className="text-sm text-gray-400">
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
@@ -766,7 +766,7 @@ export default function ViewInvoicePage() {
               <div className={sectionClass}>
                 {services.map((svc, index) => (
                   <div key={svc.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                    <p className="text-base font-bold flex-1 truncate">{svc.description}</p>
+                    <p className="text-base font-bold flex-1 truncate" title={svc.description}>{svc.description}</p>
                     <p className="text-gray-400 font-bold">{svc.price === 0 ? 'COURTESY' : formatUSD(svc.price)}</p>
                   </div>
                 ))}
@@ -835,7 +835,7 @@ export default function ViewInvoicePage() {
                     <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex-1 min-w-0">
-                          <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                          <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                           <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}</p>
                           <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
                         </div>
