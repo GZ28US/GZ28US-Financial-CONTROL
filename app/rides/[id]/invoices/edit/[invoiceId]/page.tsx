@@ -2119,10 +2119,17 @@ export default function EditInvoicePage() {
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-lg font-bold">REALTIME STATUS</p>
-            <p className="text-sm text-gray-400">Cycle this {isQuote ? 'quote' : 'invoice'}: INCOMPLETE → REALTIME → CLOSED. CLOSED forces REPORT READY ON (needs no pending balance and every income dated).</p>
+            <p className="text-sm text-gray-400">{isQuote ? 'Cycle this quote: INCOMPLETE → CLOSED.' : 'Cycle this invoice: INCOMPLETE → REALTIME → CLOSED. CLOSED forces REPORT READY ON (needs no pending balance and every income dated).'}</p>
           </div>
           <button
             onClick={() => {
+              if (isQuote) {
+                // Quotes: only INCOMPLETE <-> CLOSED. No REALTIME, no balance lock
+                // (a quote has no income/balance).
+                if (liveStatus === 'CLOSED') { setLiveStatus('INCOMPLETE'); setFeedStatus('INCOMPLETE') }
+                else setLiveStatus('CLOSED')
+                return
+              }
               if (liveStatus === 'INCOMPLETE') { setLiveStatus('REALTIME'); return }
               if (liveStatus === 'REALTIME') {
                 if (!canBeOnline) { alert(noPendingBalance ? 'CLOSED requires every income to have a date.' : 'CLOSED requires no PENDING BALANCE owed. Settle it first.'); return }
