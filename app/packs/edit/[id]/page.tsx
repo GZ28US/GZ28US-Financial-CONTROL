@@ -203,7 +203,10 @@ export default function EditPackPage() {
   function importDbItem(it: any, qty: string) {
     const factor = parseFloat(qty) || 1
     if (it.is_kit) {
-      const group = 'kit-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+      // Use a real UUID for the group id: it's valid for both uuid and text columns,
+      // so it survives applyPack/duplicate into invoice_parts/expenses without the
+      // "invalid input syntax for type uuid" error.
+      const group = crypto.randomUUID()
       const name = it.item || 'Kit'
       const rows = (it.kit_items || []).map((m: any) => {
         const mr = kitMemberRow(m)

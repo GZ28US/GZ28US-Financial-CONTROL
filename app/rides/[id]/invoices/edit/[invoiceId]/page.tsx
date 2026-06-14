@@ -424,7 +424,9 @@ export default function EditInvoicePage() {
   // group (members share a purchase_group + carry the kit_name for the header).
   function addDbItem(it: any) {
     if (it.is_kit) {
-      const group = 'kit-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+      // purchase_group is a uuid column — the group id must be a real UUID, not a
+      // "kit-…" string (that's what triggered "invalid input syntax for type uuid").
+      const group = crypto.randomUUID()
       const name = it.item || 'Kit'
       const rows = (it.kit_items || []).map((m: any) => {
         const mr = kitMemberRow(m)
