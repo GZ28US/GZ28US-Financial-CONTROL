@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
@@ -70,6 +70,11 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
   const [saving, setSaving] = useState(false)
   const locked = status === 'CLOSED'
 
+  // START FROM: when creating a NEW pack, offer the CLOSED packs that already fit
+  // the picked cars so the user can copy one and tweak it (same pack + additions).
+  const [closedPacks, setClosedPacks] = useState<any[]>([])
+  const [startFrom, setStartFrom] = useState('')
+
   const builderYears = (bMan && bBrand && bModel && bVersion) ? yearsForSpec(bMan, bBrand, bModel, bVersion) : []
   const pendingComplete = !!(bMan && bBrand && bModel && bVersion && bYears.length)
 
@@ -85,6 +90,48 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
     if (!pendingComplete) return
     setCars((prev) => [...prev, { manufacturer: bMan, brand: bBrand, model: bModel, version: bVersion, years: [...bYears].sort((a, b) => a - b) }])
     resetBuilder()
+  }
+
+  // ---- START FROM an existing CLOSED pack (new-pack mode only) ----
+  useEffect(() => {
+    if (packId) return
+    supabase.from('packs').select('*').eq('status', 'CLOSED').order('name').then(({ data }) => setClosedPacks(data || []))
+  }, [packId])
+
+  const nrm = (s: any) => String(s ?? '').trim().toLowerCase()
+  const eqv = (a: any, b: any) => nrm(a) === nrm(b)
+  // Does a pack car entry cover one of the user's picked car+year specs?
+  function carEntryCovers(c: any, spec: { manufacturer: string; brand: string; model: string; version: string; year: any }) {
+    if (Array.isArray(c?.years)) {
+      if (c.manufacturer && !eqv(c.manufacturer, spec.manufacturer)) return false
+      if (c.brand && !eqv(c.brand, spec.brand)) return false
+      if (c.model && !eqv(c.model, spec.model)) return false
+      if (c.version && !eqv(c.version, spec.version)) return false
+      return c.years.map(Number).includes(Number(spec.year))
+    }
+    return eqv(c?.manufacturer, spec.manufacturer) && eqv(c?.model, spec.model) && eqv(c?.year, spec.year)
+  }
+  // CLOSED packs that fit at least one of the cars the user picked here.
+  const matchingPacks = packId ? [] : closedPacks.filter((p) => {
+    const carList = Array.isArray(p.cars) && p.cars.length ? p.cars : [{ manufacturer: p.manufacturer, model: p.model, year: p.year }]
+    return cars.some((uc) => (uc.years.length ? uc.years : [undefined]).some((y) =>
+      carList.some((c: any) => carEntryCovers(c, { manufacturer: uc.manufacturer, brand: uc.brand, model: uc.model, version: uc.version, year: y }))))
+  })
+
+  // Copy a chosen pack's whole content into the form (cars stay as the user picked).
+  function applyStartFrom(id: string) {
+    setStartFrom(id)
+    const p = closedPacks.find((x) => x.id === id)
+    if (!p) return
+    setName(p.name || '')
+    setTargetGrandTotal(p.target_grand_total != null ? String(p.target_grand_total) : '')
+    setFloridaTaxes(p.florida_taxes != null ? String(p.florida_taxes) : '')
+    setGlobalDiscount(p.global_discount != null ? String(p.global_discount) : '')
+    setImportMargin(p.import_margin != null ? String(p.import_margin) : '0')
+    setParts((p.parts || []).map((x: any) => ({ description: x.description || '', unit_price: x.unit_price != null ? String(x.unit_price) : '', quantity: x.quantity != null ? String(x.quantity) : '1', base_cost: x.base_cost != null ? String(x.base_cost) : '' })))
+    setServices((p.services || []).map((x: any) => ({ description: x.description || '', price: x.price != null ? String(x.price) : '' })))
+    setExpenses((p.expenses || []).map((x: any) => ({ supplier: x.supplier || '', item: x.item || '', amount: x.amount != null ? String(x.amount) : '', tax: x.tax != null ? String(x.tax) : '0', extra: x.extra != null ? String(x.extra) : '0', quantity: x.quantity != null ? String(x.quantity) : '1', item_discount: x.item_discount != null ? String(x.item_discount) : '0' })))
+    setNotes((p.notes || []).map((x: any) => ({ note: x.note || '' })))
   }
 
   function content(finalCars: Car[]) {
@@ -185,6 +232,18 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
           </div>
         )}
       </div>
+
+      {/* START FROM — offered only when the picked cars already have CLOSED packs. */}
+      {!packId && matchingPacks.length > 0 && (
+        <div>
+          <label className="block mb-2 text-lg font-bold">START FROM</label>
+          <select value={startFrom} onChange={(e) => applyStartFrom(e.target.value)} className={inputClass}>
+            <option value="">— none (build from scratch) —</option>
+            {matchingPacks.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <p className="text-gray-500 text-sm mt-1">These CLOSED packs already fit the car(s) you picked. Choose one to copy all its content here as a starting point, then tweak it.</p>
+        </div>
+      )}
 
       <div>
         <label className="block mb-2 text-lg font-bold">PACKAGE NAME</label>
