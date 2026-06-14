@@ -258,7 +258,7 @@ export default function PartsPage() {
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-md w-full">
             <h2 className="text-2xl font-bold mb-1">OUR COST</h2>
             <p className="text-gray-400">{editPart.item}{editPart.part_number ? ` · ${editPart.part_number}` : ''}</p>
-            <p className="text-gray-500 text-sm mb-6">MAP {formatUSD(Number(editPart.map_price) || 0)}{editPart.dealer_supplier ? ` · ${editPart.dealer_supplier}` : ''}</p>
+            <p className="text-gray-500 text-sm mb-6">RETAIL {formatUSD(Number(editPart.map_price) || 0)}{editPart.dealer_supplier ? ` · ${editPart.dealer_supplier}` : ''}</p>
             <div className="grid grid-cols-3 gap-3 mb-6">
               <div><label className="block mb-1 text-sm font-bold text-gray-400">DEALER NET</label><input value={ecOur} onChange={(e) => setEcOur(e.target.value)} className={`${inputClass} w-full`} placeholder="0" autoFocus /></div>
               <div><label className="block mb-1 text-sm font-bold text-gray-400">SHIPPING</label><input value={ecShip} onChange={(e) => setEcShip(e.target.value)} className={`${inputClass} w-full`} placeholder="0" /></div>
@@ -350,7 +350,7 @@ export default function PartsPage() {
                 </div>
                 {isHunt(p) ? (
                   <p className="text-sm text-gray-400">
-                    MAP del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
+                    RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
                     {p.our_cost != null
                       ? <> · OUR del: <span className="text-green-400 font-bold">{formatUSD(Number(p.cost_delivered) || 0)}</span> ({Number(p.delivered_discount) || 0}% off)</>
                       : <span className="text-amber-400 font-bold"> · OUR COST PENDING</span>}

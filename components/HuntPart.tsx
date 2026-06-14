@@ -138,7 +138,7 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
         {/* RESULT */}
         {step === 'result' && result && (
           <div className="mt-6 space-y-5">
-            {!result.found && <p className="text-amber-400 text-base">Couldn’t confirm a MAP automatically — enter it below.</p>}
+            {!result.found && <p className="text-amber-400 text-base">Couldn’t confirm a RETAIL price automatically — enter it below.</p>}
 
             <div>
               <h3 className="text-2xl font-bold">{result.name || result.part_number}</h3>
@@ -164,7 +164,7 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
             {/* COST INPUTS */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block mb-1 text-sm font-bold text-gray-400">MAP (per unit)</label>
+                <label className="block mb-1 text-sm font-bold text-gray-400">RETAIL (per unit)</label>
                 <input value={mapStr} onChange={(e) => setMapStr(e.target.value)} className={inputClass} placeholder="0" />
               </div>
               <div>
@@ -193,7 +193,7 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
             {/* COMPARISON TABLE */}
             <div className="bg-black/40 rounded-2xl p-4">
               <table className="w-full text-base">
-                <thead><tr className="text-gray-400 text-sm"><th className="text-left font-bold pb-2"></th><th className="text-right font-bold pb-2">MAP (retail)</th><th className="text-right font-bold pb-2">OUR COST</th></tr></thead>
+                <thead><tr className="text-gray-400 text-sm"><th className="text-left font-bold pb-2"></th><th className="text-right font-bold pb-2">RETAIL</th><th className="text-right font-bold pb-2">OUR COST</th></tr></thead>
                 <tbody className="text-gray-200">
                   <tr><td className="py-1">Part</td><td className="text-right">{money(map)}</td><td className="text-right">{money(ourCost)}</td></tr>
                   <tr><td className="py-1">Shipping + Handling</td><td className="text-right">{money(ship + hand)}</td><td className="text-right">{money(ship + hand)}</td></tr>
