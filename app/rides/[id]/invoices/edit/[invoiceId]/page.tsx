@@ -294,7 +294,7 @@ export default function EditInvoicePage() {
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
     setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
-    setLiveStatus(data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
+    setLiveStatus(data.live_status === 'CLOSED' ? 'CLOSED' : data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
