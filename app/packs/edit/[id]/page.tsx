@@ -468,17 +468,10 @@ export default function EditPackPage() {
           )}
         </div>
 
-        {/* NAME + TARGET */}
+        {/* NAME */}
         <div>
           <label className="block mb-2 text-lg font-bold">PACKAGE NAME</label>
           <input value={name} onChange={(e) => setName(e.target.value)} disabled={locked} className={inputClass} placeholder="e.g. Stage 2 Turbo Kit" />
-        </div>
-        <div>
-          <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
-          <div className="relative max-w-xs"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-            <input type="text" inputMode="decimal" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} disabled={locked} className={`${inputClass} pl-8`} placeholder="0.00" />
-          </div>
-          <p className="text-gray-500 text-sm mt-1">Auto-solves a “{FULL_PROJECT_LABOR}” service so the grand total hits this target.</p>
         </div>
 
         {/* EXPENSES (first box, matching the invoice edit page) */}
@@ -695,6 +688,15 @@ export default function EditPackPage() {
               <span className="text-2xl font-bold">{formatUSD(servicesTotal)}</span>
             </div>
           </div>
+        </div>
+
+        {/* TARGET GRAND TOTAL */}
+        <div>
+          <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
+          <div className="relative max-w-xs"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+            <input type="text" inputMode="decimal" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} disabled={locked} className={`${inputClass} pl-8`} placeholder="0.00" />
+          </div>
+          <p className="text-gray-500 text-sm mt-1">Auto-solves a “{FULL_PROJECT_LABOR}” service so the grand total hits this target.</p>
         </div>
 
         {/* GRAND TOTAL */}
