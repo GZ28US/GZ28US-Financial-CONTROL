@@ -84,7 +84,8 @@ export default function QuotesPage() {
               <div key={q.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
-                    <h2 className="text-2xl font-bold">{q.invoice_code}</h2>
+                    {/* Quote on a project car → .QT before the number (US.033.QT.1); a quote car already carries .QT in its code. */}
+                    <h2 className="text-2xl font-bold">{q.invoice_code && !q.invoice_code.includes('.QT.') ? q.invoice_code.replace(/\.(\d+)$/, '.QT.$1') : q.invoice_code}</h2>
                   </div>
                   <p className="text-lg text-gray-400">{[ride?.project_code, ride?.project_name].filter(Boolean).join(' — ') || '—'}</p>
                   <p className="text-lg text-gray-400">Created {fmtDate((q.created_at || '').slice(0, 10))}</p>

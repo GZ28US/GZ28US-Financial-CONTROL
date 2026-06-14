@@ -2037,8 +2037,9 @@ export default function EditInvoicePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">{isQuote ? 'QUOTE' : 'INVOICE'} CODE</label>
-          {/* While it's a quote, the code carries .QT (US.QT.033.1); it drops to US.033.1 when it becomes an invoice. */}
-          <input value={isQuote && invoiceCode && !invoiceCode.includes('.QT.') ? invoiceCode.replace(/^([A-Za-z0-9]+)\./, '$1.QT.') : invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
+          {/* A quote on a PROJECT car gets .QT before the invoice number (US.033.QT.1). A quote on a
+              QUOTE car already carries .QT in the ride code (US.QT.033.1), so it's left as-is. Drops on conversion. */}
+          <input value={isQuote && invoiceCode && !invoiceCode.includes('.QT.') ? invoiceCode.replace(/\.(\d+)$/, '.QT.$1') : invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
