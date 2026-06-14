@@ -430,9 +430,11 @@ export default function EditInvoicePage() {
       })
       setExpenses(prev => [...prev, ...rows])
       setExpandedGroups(prev => new Set(prev).add(group))
+      setShowDbModal(false)
       return
     }
     setExpenses(prev => [...prev, expenseFromDbRow(it, Number(it.quantity) || 1)])
+    setShowDbModal(false)
   }
   function togglePartKit(g: string) { setPartExpandedKits(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n }) }
   function removePartGroup(g: string) {
