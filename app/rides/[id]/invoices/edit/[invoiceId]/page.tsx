@@ -2108,9 +2108,9 @@ export default function EditInvoicePage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${badge.cls}`}>{badge.label}</span>
-                      <p className="font-bold truncate">{d.item}{d.is_extra ? ' — EXTRA' : ''}</p>
+                      <p className="font-bold truncate" title={d.item}>{d.item}{d.is_extra ? ' — EXTRA' : ''}</p>
                     </div>
-                    {d.alias && <p className="text-sm text-teal-300 truncate">alias: {d.alias}</p>}
+                    {d.alias && <p className="text-sm text-teal-300 truncate" title={d.alias}>alias: {d.alias}</p>}
                     <p className="text-sm text-gray-400">{formatUSD(Number(d.unit_price) || 0)}{d.supplier ? ` · ${d.supplier}` : ''}</p>
                   </div>
                   <button onClick={() => addDbItem(d)} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">ADD</button>

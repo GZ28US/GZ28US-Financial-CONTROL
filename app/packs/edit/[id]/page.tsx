@@ -417,9 +417,9 @@ export default function EditPackPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${badge.cls}`}>{badge.label}</span>
-                        <p className="font-bold truncate">{d.item}</p>
+                        <p className="font-bold truncate" title={d.item}>{d.item}</p>
                       </div>
-                      {d.alias && <p className="text-sm text-teal-300 truncate">alias: {d.alias}</p>}
+                      {d.alias && <p className="text-sm text-teal-300 truncate" title={d.alias}>alias: {d.alias}</p>}
                       <p className="text-sm text-gray-400">{formatUSD(Number(cost) || 0)}{sup ? ` · ${sup}` : ''}{d.part_number ? ` · PN ${d.part_number}` : ''}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
