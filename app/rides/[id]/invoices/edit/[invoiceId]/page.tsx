@@ -2409,6 +2409,7 @@ export default function EditInvoicePage() {
               <span className="text-gray-400 font-bold">TOTAL GLOBAL</span>
               <span className="text-xl font-bold">{formatUSD(expensesTotalGlobal)}</span>
             </div>
+            {!isQuote && (<>
             <div className="flex justify-between items-center">
               <span className="text-gray-400 font-bold">TOTAL PAID</span>
               <span className="text-xl font-bold">{formatUSD(expensesTotalPaid)}</span>
@@ -2417,6 +2418,7 @@ export default function EditInvoicePage() {
               <span className="font-bold text-lg">BALANCE</span>
               <span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span>
             </div>
+            </>)}
           </div>
         </div>
 
@@ -2613,6 +2615,7 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
+        {!isQuote && (
         <div>
           <label className="block mb-3 text-lg font-bold">INCOME</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
@@ -2734,6 +2737,7 @@ export default function EditInvoicePage() {
             </div>
           </div>
         </div>
+        )}
 
         <div>
           <label className="block mb-3 text-lg font-bold">NOTES</label>
@@ -2769,7 +2773,7 @@ export default function EditInvoicePage() {
         </div>
 
         {!isClient && isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
-        {!isClient && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
+        {!isClient && !isQuote && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
         {!isClient && (
         <div>
@@ -2832,7 +2836,7 @@ export default function EditInvoicePage() {
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
         <div className="max-w-2xl mx-auto px-8 flex items-center gap-4">
           <div className="shrink-0 text-xs leading-tight">
-            <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
+            {!isQuote && <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>}
             <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">FINAL MARKUP</span><span className={`font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
           </div>
           <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
