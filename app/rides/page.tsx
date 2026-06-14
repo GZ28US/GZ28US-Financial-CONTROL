@@ -34,9 +34,10 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
-function getFeedBadge(live: string | null, feed: string | null) {
-  // REPORT READY only when REALTIME (feed on) or CLOSED — never on an INCOMPLETE ride.
-  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+function getFeedBadge(live: string | null, feed: string | null, isQuote?: boolean | null) {
+  // REPORT READY only when REALTIME (feed on) or CLOSED — never on an INCOMPLETE ride,
+  // and never on a quote (a quote has no live customer report).
+  const ready = !isQuote && (live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME'))
   return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
@@ -221,7 +222,7 @@ export default function RidesPage() {
   }
 
   // Project rides filter by status ladder + live status; quote rides aren't filtered.
-  const isReady = (r: any) => { const i = r._latestInvoice; const live = i?.live_status; return live === 'CLOSED' || (live === 'REALTIME' && i?.feed_status === 'REAL_TIME') }
+  const isReady = (r: any) => { if (r.is_quote) return false; const i = r._latestInvoice; const live = i?.live_status; return live === 'CLOSED' || (live === 'REALTIME' && i?.feed_status === 'REAL_TIME') }
   const baseFiltered = (rides as any[]).filter(r => {
     const liveOk = liveFilter === 'ALL' || (r._latestInvoice?.live_status || 'INCOMPLETE') === liveFilter
     if (mode === 'quote') return liveOk
@@ -293,7 +294,7 @@ export default function RidesPage() {
         <div className="space-y-5">
           {filteredRides.map((ride) => {
             const statusBadge = getStatusBadge(ride._latestInvoice)
-            const feedBadge = getFeedBadge(ride._latestInvoice?.live_status ?? null, ride._latestInvoice?.feed_status ?? null)
+            const feedBadge = getFeedBadge(ride._latestInvoice?.live_status ?? null, ride._latestInvoice?.feed_status ?? null, ride.is_quote)
             const liveBadge = getLiveBadge(ride._latestInvoice?.live_status ?? null)
             return (
             <div key={ride.id} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden flex items-stretch">

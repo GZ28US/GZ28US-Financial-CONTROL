@@ -1021,7 +1021,8 @@ export default function EditInvoicePage() {
   const allIncomesDated = payments.every(p => isValidDate(p.payment_date))
   const canBeOnline = noPendingBalance && allIncomesDated
   // CLOSED forces REPORT READY ON; otherwise it's the manual feed toggle, gated.
-  const feedOnline = liveStatus === 'CLOSED' ? true : (feedStatus === 'REAL_TIME' && canBeOnline)
+  // A quote is never report-ready, even when CLOSED — it has no live customer report.
+  const feedOnline = isQuote ? false : (liveStatus === 'CLOSED' ? true : (feedStatus === 'REAL_TIME' && canBeOnline))
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
   const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)

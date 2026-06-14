@@ -51,8 +51,9 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
-function getFeedBadge(live: string | null, feed: string | null) {
-  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+function getFeedBadge(live: string | null, feed: string | null, isQuote?: boolean | null) {
+  // Quotes are never report-ready: there's no live customer report behind a quote.
+  const ready = !isQuote && (live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME'))
   return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
@@ -221,7 +222,7 @@ export default function InvoicesPage() {
           {invoices.map((invoice) => {
             const s = stats[invoice.id]
             const statusBadge = getStatusBadge(invoice)
-            const feedBadge = getFeedBadge(invoice.live_status, invoice.feed_status)
+            const feedBadge = getFeedBadge(invoice.live_status, invoice.feed_status, invoice.is_quote)
             const liveBadge = getLiveBadge(invoice.live_status)
 
             return (
