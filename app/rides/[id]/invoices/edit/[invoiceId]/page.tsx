@@ -2160,8 +2160,8 @@ export default function EditInvoicePage() {
             <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
               <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={inputClass} />
             </div>
-            <div className="flex gap-3">
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+            <div className="flex gap-3 flex-wrap">
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                 <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setNewExpense({ ...newExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
                 </div>
@@ -2309,8 +2309,8 @@ export default function EditInvoicePage() {
                             <div><label className="block mb-1 text-sm text-gray-400">ITEM</label>
                               <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={inputClass} />
                             </div>
-                            <div className="flex gap-3">
-                              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+                            <div className="flex gap-3 flex-wrap">
+                              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                                 <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                                   <input type="text" inputMode="decimal" value={editingExpense.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setEditingExpense({ ...editingExpense, amount: e.target.value }) }} className={`${inputClass} pl-10`} />
                                 </div>
@@ -2533,8 +2533,8 @@ export default function EditInvoicePage() {
           <label className="block mb-3 text-lg font-bold">SERVICES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <input type="text" placeholder="Description" value={newService.description} onChange={(e) => setNewService({ ...newService, description: e.target.value })} className={inputClass} />
-            <div className="flex gap-3">
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+            <div className="flex gap-3 flex-wrap">
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                 <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newService.price} onChange={(e) => { if (isNumeric(e.target.value)) setNewService({ ...newService, price: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
                 </div>
@@ -2618,8 +2618,8 @@ export default function EditInvoicePage() {
               🧾 SCAN INCOME
               <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScanPayment(e.target.files[0]) }} />
             </label>
-            <div className="flex gap-3">
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
+            <div className="flex gap-3 flex-wrap">
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
                 <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newPayment.amount} onChange={(e) => { if (isNumeric(e.target.value)) setNewPayment({ ...newPayment, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
                 </div>
