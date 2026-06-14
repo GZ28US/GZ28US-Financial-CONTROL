@@ -600,7 +600,7 @@ export default function ViewInvoicePage() {
       </div>
 
       {/* SCREEN UI */}
-      <main className="min-h-screen bg-black text-white p-8 no-print">
+      <main className="min-h-screen bg-black text-white p-8 pb-28 no-print">
         <Header />
 
         {showDuplicate && <DocPicker type="quote" duplicateFrom={invoiceId} onClose={() => setShowDuplicate(false)} />}
@@ -920,6 +920,15 @@ export default function ViewInvoicePage() {
 
         </div>
       </main>
+
+      {/* Fixed footer dash — GRAND TOTAL + MARKUP always visible, like the edit page. */}
+      <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40 no-print">
+        <div className="max-w-2xl mx-auto px-8 flex items-center justify-center gap-x-10 gap-y-1 flex-wrap text-xs leading-tight">
+          <div className="flex items-baseline gap-2"><span className="text-sm text-gray-400 font-bold">GRAND TOTAL</span><span className="text-xl font-bold">{formatUSD(grandTotal)}</span></div>
+          {!invoice.is_quote && <div className="flex items-baseline gap-2"><span className="text-gray-400 font-bold">CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>}
+          <div className="flex items-baseline gap-2"><span className="text-sm text-gray-400 font-bold">FINAL MARKUP</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+        </div>
+      </div>
     </>
   )
 }
