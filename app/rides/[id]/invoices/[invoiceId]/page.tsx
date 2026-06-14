@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 
@@ -119,6 +120,7 @@ export default function ViewInvoicePage() {
   const [quoteBackup, setQuoteBackup] = useState<any | null>(null)
   const [showQuoteBackup, setShowQuoteBackup] = useState(false)
   const [showSendChooser, setShowSendChooser] = useState(false)
+  const [showDuplicate, setShowDuplicate] = useState(false)
   // Ref to the hidden .print-page container. SEND temporarily un-hides it
   // off-screen so html2canvas can capture the exact print layout to a PDF.
   const printPageRef = useRef<HTMLDivElement>(null)
@@ -601,6 +603,8 @@ export default function ViewInvoicePage() {
       <main className="min-h-screen bg-black text-white p-8 no-print">
         <Header />
 
+        {showDuplicate && <DocPicker type="quote" duplicateFrom={invoiceId} onClose={() => setShowDuplicate(false)} />}
+
         {showSendChooser && (
           <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6" onClick={() => setShowSendChooser(false)}>
             <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
@@ -731,6 +735,9 @@ export default function ViewInvoicePage() {
               </button>
             )}
             <button onClick={handlePrint} className="bg-white text-black hover:bg-gray-200 px-6 py-4 rounded-2xl text-xl font-bold">🖨 PRINT</button>
+            {invoice.is_quote && !isClient && (
+              <button onClick={() => setShowDuplicate(true)} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-4 rounded-2xl text-xl font-bold">⧉ DUPLICATE QUOTE</button>
+            )}
             <Link href={basePath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
             <Link href={`${basePath}/edit/${invoiceId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
           </div>

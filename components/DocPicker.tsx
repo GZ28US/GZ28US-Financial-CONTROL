@@ -9,7 +9,7 @@ import { clientCode } from '@/lib/utils'
 // client's RIDES, then jump to that ride's invoice/quote creation page.
 //   type='invoice' -> project clients & project rides, creates an invoice
 //   type='quote'   -> any client & any of their rides, creates a quote (?mode=quote)
-export default function DocPicker({ type, onClose }: { type: 'invoice' | 'quote'; onClose: () => void }) {
+export default function DocPicker({ type, onClose, duplicateFrom }: { type: 'invoice' | 'quote'; onClose: () => void; duplicateFrom?: string }) {
   const router = useRouter()
   const [clients, setClients] = useState<any[]>([])
   const [rides, setRides] = useState<any[]>([])
@@ -40,7 +40,11 @@ export default function DocPicker({ type, onClose }: { type: 'invoice' | 'quote'
 
   function create() {
     if (!rideId) return
-    router.push(`/rides/${rideId}/invoices/new${type === 'quote' ? '?mode=quote' : ''}`)
+    const qs = new URLSearchParams()
+    if (type === 'quote') qs.set('mode', 'quote')
+    if (duplicateFrom) qs.set('duplicateFrom', duplicateFrom)
+    const s = qs.toString()
+    router.push(`/rides/${rideId}/invoices/new${s ? `?${s}` : ''}`)
   }
 
   const isQ = type === 'quote'
@@ -48,7 +52,8 @@ export default function DocPicker({ type, onClose }: { type: 'invoice' | 'quote'
   return (
     <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
-        <h2 className="text-2xl font-bold">NEW {isQ ? 'QUOTE' : 'INVOICE'}</h2>
+        <h2 className="text-2xl font-bold">{duplicateFrom ? 'DUPLICATE QUOTE' : `NEW ${isQ ? 'QUOTE' : 'INVOICE'}`}</h2>
+        {duplicateFrom && <p className="text-sm text-gray-400 -mt-3">Pick the client and ride for the copy.</p>}
         <div>
           <label className="block mb-1 text-sm text-gray-400 font-bold">CLIENT</label>
           <select value={clientId} onChange={(e) => setClientId(e.target.value)} className={sel}>

@@ -55,13 +55,76 @@ export default function NewInvoicePage() {
   // selectedPackId: '' = none, '__new__' = naming a brand-new pack, else a pack id.
   const [packs, setPacks] = useState<Pack[]>([])
   const [selectedPackId, setSelectedPackId] = useState('')
+  // DUPLICATE QUOTE: arrives via ?duplicateFrom=<sourceInvoiceId>. We copy that
+  // quote's config + items/services/expenses/notes onto a brand-new quote for the
+  // picked ride and jump straight to EDIT — no NEW form is shown.
+  const [duplicating, setDuplicating] = useState(false)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      setIsQuote(new URLSearchParams(window.location.search).get('mode') === 'quote')
+      const sp = new URLSearchParams(window.location.search)
+      setIsQuote(sp.get('mode') === 'quote')
+      const dup = sp.get('duplicateFrom')
+      if (dup) { setDuplicating(true); void duplicateQuote(dup); return }
     }
     loadOwner()
   }, [])
+
+  // Copy an existing quote in full onto a new quote for this ride, then open EDIT.
+  async function duplicateQuote(sourceId: string) {
+    try {
+      const { data: ride } = await supabase.from('rides').select('project_code').eq('id', ownerId).single()
+      const code = ride?.project_code || ''
+      const { data: existing } = await supabase.from('invoices').select('invoice_code').eq('ride_id', ownerId)
+      const used = (existing || []).map((i: any) => { const m = i.invoice_code?.match(/\.(\d+)$/); return m ? Number(m[1]) : null })
+      let n = 1; while (used.includes(n)) n++
+      const newCode = `${code}.${n}`
+
+      const { data: src } = await supabase.from('invoices').select('*').eq('id', sourceId).single()
+      if (!src) { alert('Source quote not found.'); router.back(); return }
+
+      const row: any = {
+        invoice_code: newCode,
+        ride_id: ownerId,
+        is_quote: true,
+        target_grand_total: src.target_grand_total ?? null,
+        florida_taxes: src.florida_taxes ?? null,
+        global_discount: src.global_discount ?? null,
+        import_margin: src.import_margin ?? 0,
+        service: src.service ?? null,
+        // Fresh document: no dates, no payment, not report-ready.
+        hiring_date: null, entry_date: null, conclusion_date: null, delivery_date: null,
+        mileage: null, fl_tax_expense_date: null,
+        live_status: 'INCOMPLETE', feed_status: 'INCOMPLETE',
+      }
+      const { data: inv, error } = await supabase.from('invoices').insert([row]).select().single()
+      if (error || !inv) { alert(error?.message || 'Error duplicating quote'); router.back(); return }
+
+      const strip = (r: any) => { const { id, invoice_id, created_at, ...rest } = r; return rest }
+
+      const { data: parts } = await supabase.from('invoice_parts').select('*').eq('invoice_id', sourceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+      const partRows = (parts || []).map((p: any) => ({ ...strip(p), invoice_id: inv.id, payment_date: null }))
+      if (partRows.length) await supabase.from('invoice_parts').insert(partRows)
+
+      const { data: svcs } = await supabase.from('invoice_services').select('*').eq('invoice_id', sourceId)
+      let svcRows = (svcs || []).map((s: any) => ({ ...strip(s), invoice_id: inv.id }))
+      if (!svcRows.length) svcRows = [{ invoice_id: inv.id, description: FULL_PROJECT_LABOR, price: 0 }]
+      await supabase.from('invoice_services').insert(svcRows)
+
+      const { data: exps } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', sourceId)
+      const expRows = (exps || []).map((e: any) => ({ ...strip(e), invoice_id: inv.id, expense_date: null, payment_date: null, receipt_url: null }))
+      if (expRows.length) await supabase.from('invoice_expenses').insert(expRows)
+
+      const { data: notes } = await supabase.from('invoice_notes').select('*').eq('invoice_id', sourceId)
+      const noteRows = (notes || []).map((nt: any) => ({ ...strip(nt), invoice_id: inv.id }))
+      if (noteRows.length) await supabase.from('invoice_notes').insert(noteRows)
+
+      router.replace(`${basePath}/edit/${inv.id}`)
+    } catch (err) {
+      alert('Could not duplicate the quote:\n' + String(err))
+      router.back()
+    }
+  }
 
   async function loadOwner() {
     if (isClient) {
@@ -230,6 +293,13 @@ export default function NewInvoicePage() {
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const noun = isQuote ? 'QUOTE' : 'INVOICE'
+
+  if (duplicating) return (
+    <main className="min-h-screen bg-black text-white p-8">
+      <Header />
+      <p className="text-2xl text-gray-400">Duplicating quote…</p>
+    </main>
+  )
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
