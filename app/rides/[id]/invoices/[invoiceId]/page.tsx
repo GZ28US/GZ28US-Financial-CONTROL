@@ -118,6 +118,7 @@ export default function ViewInvoicePage() {
   // Archived pre-conversion quote (if this invoice was once a quote) + its modal.
   const [quoteBackup, setQuoteBackup] = useState<any | null>(null)
   const [showQuoteBackup, setShowQuoteBackup] = useState(false)
+  const [showSendChooser, setShowSendChooser] = useState(false)
   // Ref to the hidden .print-page container. SEND temporarily un-hides it
   // off-screen so html2canvas can capture the exact print layout to a PDF.
   const printPageRef = useRef<HTMLDivElement>(null)
@@ -262,8 +263,9 @@ export default function ViewInvoicePage() {
   //   WhatsApp -> automatic UltraMsg document send to the client's number
   //   SMS      -> open the SMS composer prefilled with a link to the PDF
   //   E-Mail   -> open the mail composer prefilled with a link to the PDF
-  async function handleSend() {
+  async function handleSend(target: 'REPORTS' | 'CLIENT' | 'BOTH' = 'CLIENT') {
     if (!invoice) return
+    setShowSendChooser(false)
     const method = client?.preferred_message_method || 'WhatsApp'
     setSending(true)
     try {
@@ -280,6 +282,29 @@ export default function ViewInvoicePage() {
       const ownerLbl = isClient ? (client?.name || '') : `${projectCode}${projectName ? ` — ${projectName}` : ''}`
       const docNoun = invoice.is_quote ? 'Quote' : 'Invoice'
       const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*`
+
+      // GZ28US Control App REPORTS — WhatsApp document to the default reports group
+      // (no `to` => the API falls back to ULTRAMSG_GROUP_ID). For BOTH, fall through
+      // to the client delivery afterwards.
+      if (target === 'REPORTS' || target === 'BOTH') {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: caption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
+        })
+        const data = await res.json()
+        if (!data.ok) {
+          const detailErr = data?.detail?.error
+          alert('Send to GZ28US Control App REPORTS failed:\n' + (typeof detailErr === 'object' ? JSON.stringify(detailErr) : String(detailErr || data?.error || data?.raw || `HTTP ${res.status}`)))
+          setSending(false)
+          return
+        }
+        if (target === 'REPORTS') {
+          alert(`${docNoun} sent to GZ28US Control App REPORTS ✓`)
+          setSending(false)
+          return
+        }
+      }
 
       if (method === 'SMS') {
         const text = `${caption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
@@ -327,7 +352,7 @@ export default function ViewInvoicePage() {
         setSending(false)
         return
       }
-      alert(`${invoice.is_quote ? 'Quote' : 'Invoice'} sent on WhatsApp ✓`)
+      alert(target === 'BOTH' ? `${docNoun} sent to client and GZ28US Control App REPORTS ✓` : `${invoice.is_quote ? 'Quote' : 'Invoice'} sent on WhatsApp ✓`)
     } catch (err) {
       alert('Could not generate or send the PDF:\n' + String(err))
     }
@@ -578,6 +603,21 @@ export default function ViewInvoicePage() {
       <main className="min-h-screen bg-black text-white p-8 no-print">
         <Header />
 
+        {showSendChooser && (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6" onClick={() => setShowSendChooser(false)}>
+            <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-2xl font-bold mb-1">Send {invoice?.is_quote ? 'quote' : 'invoice'} to…</h2>
+              <p className="text-sm text-gray-400 mb-5">Choose where to send {invoice?.invoice_code}.</p>
+              <div className="space-y-3">
+                <button onClick={() => handleSend('REPORTS')} className="w-full bg-purple-700 hover:bg-purple-600 px-5 py-4 rounded-2xl font-bold text-lg text-left">📊 GZ28US Control App REPORTS</button>
+                <button onClick={() => handleSend('CLIENT')} className="w-full bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-lg text-left">👤 Client{sendMethod ? ` · ${sendMethod}` : ''}</button>
+                <button onClick={() => handleSend('BOTH')} className="w-full bg-blue-700 hover:bg-blue-600 px-5 py-4 rounded-2xl font-bold text-lg text-left">📨 Both</button>
+              </div>
+              <button onClick={() => setShowSendChooser(false)} className="mt-5 w-full bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">CANCEL</button>
+            </div>
+          </div>
+        )}
+
         {showQuoteBackup && quoteBackup && (() => {
           const b = quoteBackup.snapshot || {}
           const bInv = b.invoice || {}
@@ -688,7 +728,7 @@ export default function ViewInvoicePage() {
               <button onClick={() => setShowQuoteBackup(true)} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-4 rounded-2xl text-xl font-bold">📋 ORIGINAL QUOTE</button>
             )}
             {client && (
-              <button onClick={handleSend} disabled={sending} className={`px-6 py-4 rounded-2xl text-xl font-bold ${sending ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+              <button onClick={() => setShowSendChooser(true)} disabled={sending} className={`px-6 py-4 rounded-2xl text-xl font-bold ${sending ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
                 {sending ? 'SENDING…' : `📤 SEND · ${sendMethod}`}
               </button>
             )}
