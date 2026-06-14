@@ -193,6 +193,8 @@ export default function NewInvoicePage() {
       unit_price: Number(p.unit_price) || 0,
       quantity: Number(p.quantity) || 0,
       base_cost: (p.base_cost != null && p.base_cost !== '') ? Number(p.base_cost) : null,
+      kit_group: p.kit_group || null,
+      kit_name: p.kit_name || null,
     }))
     if (partRows.length > 0) await supabase.from('invoice_parts').insert(partRows)
 
@@ -213,7 +215,11 @@ export default function NewInvoicePage() {
       item_discount: Number(e.item_discount) || 0,
       payment_date: null,
       receipt_url: null,
-      export_status: 'FRESH',
+      // Carry the template's export status so already-exported expenses don't
+      // re-import into ITEMS (which would duplicate items already copied in).
+      export_status: e.export_status || 'FRESH',
+      kit_group: e.kit_group || null,
+      kit_name: e.kit_name || null,
     }))
     if (expenseRows.length > 0) await supabase.from('invoice_expenses').insert(expenseRows)
 
