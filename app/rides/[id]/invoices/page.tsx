@@ -239,18 +239,24 @@ export default function InvoicesPage() {
 
                   {s && (
                     <div className="flex gap-3 mt-3 flex-wrap">
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-                        CURRENT CASH FLOW: {formatUSD(s.currentProfit)} / {s.currentProfitPct.toFixed(1)}%
-                      </span>
+                      {!invoice.is_quote && (
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                          CURRENT CASH FLOW: {formatUSD(s.currentProfit)} / {s.currentProfitPct.toFixed(1)}%
+                        </span>
+                      )}
                       <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                         FINAL MARKUP: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
                       </span>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                        DUE by CLIENT: {formatUSD(s.paymentsBalance)}
-                      </span>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                        DUE by GZ28: {formatUSD(s.expensesBalance)}
-                      </span>
+                      {!invoice.is_quote && (
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                          DUE by CLIENT: {formatUSD(s.paymentsBalance)}
+                        </span>
+                      )}
+                      {!invoice.is_quote && (
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                          DUE by GZ28: {formatUSD(s.expensesBalance)}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
