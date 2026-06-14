@@ -33,8 +33,21 @@ export default function ViewPackPage() {
   const expenses = pack.expenses || []
   const notes = pack.notes || []
 
+  // Profit dash — same math as the invoice: revenue (parts + FL tax + services −
+  // global discount) minus cost (supplier expenses + the FL tax we owe).
+  const num = (v: any) => Number(v) || 0
+  const partsSubTotal = parts.reduce((s: number, p: any) => s + num(p.unit_price) * num(p.quantity), 0)
+  const floridaTaxesAmount = partsSubTotal * (num(pack.florida_taxes) / 100)
+  const servicesTotal = services.reduce((s: number, sv: any) => s + num(sv.price), 0)
+  const partsAndServicesTotal = partsSubTotal + floridaTaxesAmount + servicesTotal
+  const grandTotal = partsAndServicesTotal - partsAndServicesTotal * (num(pack.global_discount) / 100)
+  const expensesTotalGlobal = floridaTaxesAmount + expenses.reduce((s: number, e: any) => s + num(e.amount) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra), 0)
+  const finalProfit = grandTotal - expensesTotalGlobal
+  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
+  const profitColor = finalProfit < 0 ? 'text-red-500' : 'text-blue-400'
+
   return (
-    <main className="min-h-screen bg-black text-white p-8">
+    <main className="min-h-screen bg-black text-white p-8 pb-28">
       <Header />
 
       <div className="flex items-center justify-between gap-4 mb-2 flex-wrap">
@@ -94,6 +107,13 @@ export default function ViewPackPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* PROFIT DASH — fixed footer, always visible */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-gray-700 px-6 py-3 flex items-center justify-between gap-x-8 gap-y-2 flex-wrap">
+        <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">GRAND TOTAL</span><span className="text-xl font-bold">{money(grandTotal)}</span></div>
+        <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">COST</span><span className="text-xl font-bold">{money(expensesTotalGlobal)}</span></div>
+        <div className="flex items-baseline gap-2"><span className="text-sm font-bold text-gray-200">PROFIT</span><span className={`text-2xl font-bold ${profitColor}`}>{money(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
       </div>
     </main>
   )
