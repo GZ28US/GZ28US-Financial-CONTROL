@@ -2136,7 +2136,7 @@ export default function EditInvoicePage() {
           </button>
         </div>
 
-        {liveStatus === 'REALTIME' && (
+        {!isQuote && liveStatus === 'REALTIME' && (
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
             <div>
               <p className="text-lg font-bold">REPORT READY</p>
