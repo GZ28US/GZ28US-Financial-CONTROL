@@ -515,7 +515,9 @@ export default function EditPackPage() {
                             <div className="w-20"><label className="block mb-1 text-xs text-gray-400">TAX</label><input type="text" inputMode="decimal" value={editingExpense.tax} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, tax: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
                             <div className="w-20"><label className="block mb-1 text-xs text-gray-400">EXTRA</label><input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(ev) => { if (isNumeric(ev.target.value)) setEditingExpense({ ...editingExpense, extra: ev.target.value }) }} className={`${smallInputClass} w-full`} /></div>
                           </div>
-                          <div className="flex gap-3">
+                          <div className="flex gap-3 flex-wrap">
+                            {/* Sourced from stock we already own → nominal $1.00 cost. */}
+                            <button onClick={() => setEditingExpense({ ...editingExpense, amount: '1.00' })} className="bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold text-lg">📦 FROM INVENTORY</button>
                             <button onClick={saveEditExpense} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                             <button onClick={() => setEditingExpenseIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
                           </div>
