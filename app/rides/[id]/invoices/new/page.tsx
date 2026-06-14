@@ -72,6 +72,7 @@ export default function NewInvoicePage() {
 
   // Copy an existing quote in full onto a new quote for this ride, then open EDIT.
   async function duplicateQuote(sourceId: string) {
+    let createdId: string | null = null
     try {
       const { data: ride } = await supabase.from('rides').select('project_code').eq('id', ownerId).single()
       const code = ride?.project_code || ''
@@ -99,28 +100,42 @@ export default function NewInvoicePage() {
       }
       const { data: inv, error } = await supabase.from('invoices').insert([row]).select().single()
       if (error || !inv) { alert(error?.message || 'Error duplicating quote'); router.back(); return }
+      createdId = inv.id
 
-      const strip = (r: any) => { const { id, invoice_id, created_at, ...rest } = r; return rest }
-
+      // Copy children with EXPLICIT, insertable columns only. invoice_parts.total is
+      // a generated column and updated_at is server-managed — copying them verbatim
+      // makes PostgREST reject the whole insert (which is why items went missing).
       const { data: parts } = await supabase.from('invoice_parts').select('*').eq('invoice_id', sourceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-      const partRows = (parts || []).map((p: any) => ({ ...strip(p), invoice_id: inv.id, payment_date: null }))
-      if (partRows.length) await supabase.from('invoice_parts').insert(partRows)
+      const partRows = (parts || []).map((p: any) => ({
+        invoice_id: inv.id, description: p.description, unit_price: p.unit_price, quantity: p.quantity,
+        base_cost: p.base_cost, position: p.position, kit_group: p.kit_group, kit_name: p.kit_name,
+        source_item: p.source_item, payment_date: null,
+      }))
+      if (partRows.length) { const { error: pe } = await supabase.from('invoice_parts').insert(partRows); if (pe) throw new Error('items: ' + pe.message) }
 
-      const { data: svcs } = await supabase.from('invoice_services').select('*').eq('invoice_id', sourceId)
-      let svcRows = (svcs || []).map((s: any) => ({ ...strip(s), invoice_id: inv.id }))
+      const { data: svcs } = await supabase.from('invoice_services').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
+      let svcRows = (svcs || []).map((s: any) => ({ invoice_id: inv.id, description: s.description, price: s.price }))
       if (!svcRows.length) svcRows = [{ invoice_id: inv.id, description: FULL_PROJECT_LABOR, price: 0 }]
-      await supabase.from('invoice_services').insert(svcRows)
+      { const { error: se } = await supabase.from('invoice_services').insert(svcRows); if (se) throw new Error('services: ' + se.message) }
 
-      const { data: exps } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', sourceId)
-      const expRows = (exps || []).map((e: any) => ({ ...strip(e), invoice_id: inv.id, expense_date: null, payment_date: null, receipt_url: null }))
-      if (expRows.length) await supabase.from('invoice_expenses').insert(expRows)
+      const { data: exps } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
+      const expRows = (exps || []).map((e: any) => ({
+        invoice_id: inv.id, expense_date: null, supplier: e.supplier, item: e.item, price: e.price,
+        tax: e.tax, extra: e.extra, quantity: e.quantity, item_discount: e.item_discount, part_number: e.part_number,
+        export_status: e.export_status || 'FRESH', purchase_group: e.purchase_group, kit_group: e.kit_group,
+        kit_name: e.kit_name, stock_source_type: e.stock_source_type, stock_donor: e.stock_donor,
+        payment_date: null, receipt_url: null,
+      }))
+      if (expRows.length) { const { error: ee } = await supabase.from('invoice_expenses').insert(expRows); if (ee) throw new Error('expenses: ' + ee.message) }
 
-      const { data: notes } = await supabase.from('invoice_notes').select('*').eq('invoice_id', sourceId)
-      const noteRows = (notes || []).map((nt: any) => ({ ...strip(nt), invoice_id: inv.id }))
-      if (noteRows.length) await supabase.from('invoice_notes').insert(noteRows)
+      const { data: notes } = await supabase.from('invoice_notes').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
+      const noteRows = (notes || []).map((nt: any) => ({ invoice_id: inv.id, note: nt.note }))
+      if (noteRows.length) { const { error: ne } = await supabase.from('invoice_notes').insert(noteRows); if (ne) throw new Error('notes: ' + ne.message) }
 
       router.replace(`${basePath}/edit/${inv.id}`)
     } catch (err) {
+      // Roll back the half-created copy so a failed duplicate leaves nothing behind.
+      if (createdId) { await supabase.from('invoices').delete().eq('id', createdId) }
       alert('Could not duplicate the quote:\n' + String(err))
       router.back()
     }
