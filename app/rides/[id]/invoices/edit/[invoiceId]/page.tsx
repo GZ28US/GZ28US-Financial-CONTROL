@@ -252,14 +252,13 @@ export default function EditInvoicePage() {
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
-  // packPrompt: after a successful save, asks whether to snapshot this invoice's
-  // content as a reusable pack for the car. proceed() resumes the normal post-save
-  // flow. rideMatch carries the car spec (manufacturer+model+year) used to scope packs.
-  const [packPrompt, setPackPrompt] = useState<{ mode: 'create' | 'update'; packId?: string; proceed: () => void } | null>(null)
   const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string }>({ manufacturer: '', model: '', year: '' })
   // Parts data bank: alias map (item -> alias) for IMPORT INTUITIVE PARTS, and
   // the IMPORT FROM DATABASE picker modal.
   const [aliasMap, setAliasMap] = useState<Map<string, string>>(new Map())
+  // part_number -> RETAIL FINAL (map_price + freight), so IMPORT FROM EXPENSES prices
+  // items at the part's enrolled RETAIL instead of grossing the cost up by discount.
+  const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
   const [showDbModal, setShowDbModal] = useState(false)
   const [dbItems, setDbItems] = useState<any[]>([])
   const [dbSearch, setDbSearch] = useState('')
@@ -294,7 +293,7 @@ export default function EditInvoicePage() {
     setService(data.service || '')
     setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
     setLiveStatus(data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
-    setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '6.5')
+    setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
     setImportMargin(data.import_margin ? String(data.import_margin) : '')
@@ -366,10 +365,18 @@ export default function EditInvoicePage() {
 
     // Aliases from the parts data bank, applied as part descriptions when
     // IMPORT INTUITIVE PARTS runs.
-    const { data: dbParts } = await supabase.from('parts_database').select('item, alias')
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
     const am = new Map<string, string>()
-    for (const d of dbParts || []) { if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias) }
+    const mp = new Map<string, number>()
+    for (const d of dbParts || []) {
+      if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
+      const pn = (d.part_number || '').trim().toLowerCase()
+      // RETAIL = map_price + freight (no tax), as enrolled at hunt/scan/manual.
+      const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
+      if (pn && mapFinal > 0) mp.set(pn, mapFinal)
+    }
     setAliasMap(am)
+    setMapByPN(mp)
 
     setLoading(false)
   }
@@ -826,19 +833,20 @@ export default function EditInvoicePage() {
       if (!desc) return
       const amount = parseFloat(e.amount) || 0
       const qty = parseFloat(e.quantity) || 1
-      const tax = parseFloat(e.tax) || 0
-      const extra = parseFloat(e.extra) || 0
-      // Gross the ITEM PRICE back up to its market (pre-discount) value:
-      // market = amount / (1 - discount%). For a FIXED supplier the discount is the
-      // supplier's single %; for a VARIABLE supplier it's this item's own % (e.item_discount);
-      // unregistered suppliers get no gross-up. Tax and extra are real costs and are
-      // NOT grossed up. The market price becomes the part's base cost, on top of
-      // which the live MARGIN is then applied.
-      const info = supplierInfo(e.supplier)
-      const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
-      const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
-      const marketAmount = amount / discFactor
-      const unitBase = qty > 0 ? (marketAmount * qty + tax + extra) / qty : marketAmount
+      // Sell-side base = the part's RETAIL (map_price + freight) matched by part number
+      // in the Parts DB, as enrolled at hunt/scan/manual. If the part isn't known, fall
+      // back to grossing the cost up to market by the supplier/item discount.
+      const pn = (e.part_number || '').trim().toLowerCase()
+      const mapFinal = pn ? (mapByPN.get(pn) || 0) : 0
+      let unitBase: number
+      if (mapFinal > 0) {
+        unitBase = mapFinal
+      } else {
+        const info = supplierInfo(e.supplier)
+        const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
+        const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
+        unitBase = amount / discFactor
+      }
       const key = `${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
@@ -1424,101 +1432,9 @@ export default function EditInvoicePage() {
     for (const id of removedExpenseIds) await supabase.from('invoice_expenses').delete().eq('id', id)
     setRemovedPartIds([]); setRemovedServiceIds([]); setRemovedPaymentIds([]); setRemovedNoteIds([]); setRemovedExpenseIds([])
 
-    await maybePromptPackThenFinish(newPayments, newExpenses, nextIsQuote)
-  }
-
-  // After a successful save, offer to snapshot this ride invoice's content as a
-  // reusable pack for the car's spec (manufacturer + model + year) when its
-  // SERVICE name isn't already a saved pack. The normal post-save flow (income /
-  // expense report prompts, then redirect) runs afterward via `proceed`.
-  async function maybePromptPackThenFinish(newPayments: Payment[], newExpenses: Expense[], stillQuote: boolean) {
-    const proceed = () => finishSave(newPayments, newExpenses, stillQuote)
-    const name = service.trim()
-    const hasContent = parts.length > 0 || services.length > 0 || expenses.length > 0 || notes.length > 0 || !!targetGrandTotal
-    if (!isClient && name && hasContent) {
-      const existing = await findPackForCar(name)
-      if (!existing) { setPackPrompt({ mode: 'create', proceed }); return }
-      // Pack (matrix) exists: if the considered data changed, offer to update it.
-      if (!sameAsPack(existing)) { setPackPrompt({ mode: 'update', packId: existing.id, proceed }); return }
-    }
-    proceed()
-  }
-
-  // The matching pack for the current car spec + service name, or null.
-  async function findPackForCar(name: string): Promise<any | null> {
-    const { data } = await supabase.from('packs').select('*')
-    const norm = (s: any) => String(s ?? '').trim().toLowerCase()
-    return (data || []).find((p: any) =>
-      norm(p.manufacturer) === norm(rideMatch.manufacturer) &&
-      norm(p.model) === norm(rideMatch.model) &&
-      norm(p.year) === norm(rideMatch.year) &&
-      norm(p.name) === norm(name)) || null
-  }
-
-  // The pack-relevant content of the current invoice (no dates / payments). Used
-  // both to write a pack and to detect changes against an existing one.
-  function currentPackContent() {
-    return {
-      target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
-      florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
-      global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
-      import_margin: parseFloat(importMargin) || 0,
-      parts: parts.map(p => ({ description: p.description, unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null })),
-      services: services.map(s => ({ description: s.description, price: parseFloat(s.price) || 0 })),
-      expenses: expenses.map(e => ({ supplier: e.supplier || '', item: e.item, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount || '0') || 0 })),
-      notes: notes.map(n => ({ note: n.note })),
-    }
-  }
-
-  // The same shape rebuilt from a stored pack row, so the two can be compared.
-  function packRowContent(pk: any) {
-    return {
-      target_grand_total: pk.target_grand_total ?? null,
-      florida_taxes: pk.florida_taxes ?? null,
-      global_discount: pk.global_discount ?? null,
-      import_margin: pk.import_margin ?? 0,
-      parts: (pk.parts || []).map((p: any) => ({ description: p.description, unit_price: Number(p.unit_price) || 0, quantity: Number(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? Number(p.base_cost) : null })),
-      services: (pk.services || []).map((s: any) => ({ description: s.description, price: Number(s.price) || 0 })),
-      expenses: (pk.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item, amount: Number(e.amount) || 0, tax: Number(e.tax) || 0, extra: Number(e.extra) || 0, quantity: Number(e.quantity) || 1, item_discount: Number(e.item_discount) || 0 })),
-      notes: (pk.notes || []).map((n: any) => ({ note: n.note })),
-    }
-  }
-
-  function sameAsPack(pk: any): boolean {
-    return JSON.stringify(currentPackContent()) === JSON.stringify(packRowContent(pk))
-  }
-
-  // Insert the current invoice content as a new pack template.
-  async function savePackFromCurrent() {
-    const { error } = await supabase.from('packs').insert([{
-      name: service.trim(),
-      manufacturer: rideMatch.manufacturer || null,
-      model: rideMatch.model || null,
-      year: rideMatch.year || null,
-      cars: [{ manufacturer: rideMatch.manufacturer || '', brand: '', model: rideMatch.model || '', version: '', years: rideMatch.year ? [Number(rideMatch.year)] : [] }],
-      ...currentPackContent(),
-    }])
-    if (error) alert('Could not save pack: ' + error.message)
-  }
-
-  // Overwrite an existing pack (the "matrix") with the current content.
-  async function updatePackContent(packId: string) {
-    const { error } = await supabase.from('packs').update({
-      ...currentPackContent(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', packId)
-    if (error) alert('Could not update pack: ' + error.message)
-  }
-
-  // Pack prompt YES/NO; either way continue the normal post-save flow.
-  async function resolvePackPrompt(save: boolean) {
-    const prompt = packPrompt
-    setPackPrompt(null)
-    if (save && prompt) {
-      if (prompt.mode === 'update' && prompt.packId) await updatePackContent(prompt.packId)
-      else await savePackFromCurrent()
-    }
-    prompt?.proceed()
+    // Quotes/invoices never write back to the Packs DB — edits stay local to this
+    // doc; the pack template is never affected. Go straight to the post-save flow.
+    await finishSave(newPayments, newExpenses, nextIsQuote)
   }
 
   function finishSave(newPayments: Payment[], newExpenses: Expense[], stillQuote: boolean) {
@@ -2070,22 +1986,6 @@ export default function EditInvoicePage() {
         </div>
       )}
 
-      {packPrompt && (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-amber-600 rounded-3xl p-6 w-full max-w-lg flex flex-col gap-4">
-            <h2 className="text-2xl font-bold text-amber-400">{packPrompt.mode === 'update' ? 'UPDATE THE MATRIX?' : 'SAVE AS PACK?'}</h2>
-            <p className="text-gray-300 text-base">
-              {packPrompt.mode === 'update'
-                ? <>The pack “{service.trim()}”{[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).length > 0 ? ` for ${[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).join(' ')}` : ''} already exists and the considered data changed. Update the matrix (PARTS, SERVICES, EXPENSES, NOTES and totals) with the current values? Other invoices keep their own data — only the pack template changes.</>
-                : <>Save “{service.trim()}” as a reusable pack{[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).length > 0 ? ` for ${[rideMatch.manufacturer, rideMatch.model, rideMatch.year].filter(Boolean).join(' ')}` : ' for this car'}? Its PARTS, SERVICES, EXPENSES, NOTES and totals can then pre-fill future quotes/invoices for the same car.</>}
-            </p>
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => resolvePackPrompt(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">NO, JUST SAVE</button>
-              <button onClick={() => resolvePackPrompt(true)} className="flex-1 bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold text-lg">{packPrompt.mode === 'update' ? 'YES, UPDATE MATRIX' : 'YES, SAVE PACK'}</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showDbModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
@@ -2137,7 +2037,8 @@ export default function EditInvoicePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">{isQuote ? 'QUOTE' : 'INVOICE'} CODE</label>
-          <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
+          {/* While it's a quote, the code carries .QT (US.QT.033.1); it drops to US.033.1 when it becomes an invoice. */}
+          <input value={isQuote && invoiceCode && !invoiceCode.includes('.QT.') ? invoiceCode.replace(/^([A-Za-z0-9]+)\./, '$1.QT.') : invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
@@ -2195,13 +2096,6 @@ export default function EditInvoicePage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
-          <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
-          </div>
-        </div>
-
-        <div>
           <label className="block mb-3 text-lg font-bold">EXPENSES</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <label className="flex items-center justify-center gap-2 w-full bg-indigo-700 hover:bg-indigo-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
@@ -2249,16 +2143,18 @@ export default function EditInvoicePage() {
             </div>
             <button onClick={addExpense} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD EXPENSE</button>
 
+            {floridaTaxesAmount > 0 && (
             <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
               <div className="px-4 py-3 space-y-2">
                 <div className="min-w-0">
                   <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
                   <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
-                  <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>
+                  {!isQuote && <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>}
                 </div>
-                <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />
+                {!isQuote && <DatePicker label="PAYMENT DATE" value={flTaxExpenseDate} onChange={setFlTaxExpenseDate} />}
               </div>
             </div>
+            )}
 
             {expenseRows.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-visible mt-2">
@@ -2423,7 +2319,7 @@ export default function EditInvoicePage() {
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
-                                <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                                {!isQuote && <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
                                 {supplierIsVariable(exp.supplier)
                                   ? <p className="text-sm font-bold text-yellow-300">★ Supplier discount: VARIABLE — item {parseFloat(exp.item_discount || '0') || 0}%</p>
@@ -2531,12 +2427,12 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-base font-bold truncate ${isValidDate(part.payment_date || '') ? '' : 'text-yellow-400'}`}>{part.description}{isValidDate(part.payment_date || '') ? '' : ' — PENDING'}</p>
+                          <p className={`text-base font-bold truncate ${(isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`}>{part.description}{(isQuote || isValidDate(part.payment_date || '')) ? '' : ' — PENDING'}</p>
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
-                          <p className="text-sm text-gray-500">{isValidDate(part.payment_date || '') ? `Paid: ${formatDate(part.payment_date || '')}` : 'Not paid yet'}</p>
+                          {!isQuote && <p className="text-sm text-gray-500">{isValidDate(part.payment_date || '') ? `Paid: ${formatDate(part.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>
                         <div className="flex gap-2 shrink-0">
-                          <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>
+                          {!isQuote && <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>}
                           <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>
                           <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
                           <button onClick={() => startEditPart(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -2620,6 +2516,13 @@ export default function EditInvoicePage() {
               <span className="font-bold text-lg">SERVICES TOTAL</span>
               <span className="text-2xl font-bold">{formatUSD(servicesTotal)}</span>
             </div>
+          </div>
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
+          <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
           </div>
         </div>
 

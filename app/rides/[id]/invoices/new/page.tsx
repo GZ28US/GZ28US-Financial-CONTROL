@@ -159,10 +159,11 @@ export default function NewInvoicePage() {
       // Quote until a HIRING DATE is set; filling it at creation makes it an invoice immediately.
       is_quote: isQuote && !isValidDate(hiringDate),
     }
-    // Applying a pack copies its totals config onto the new invoice.
+    // Applying a pack copies its totals config onto the new invoice. Florida taxes
+    // is NOT carried — a quote/invoice starts with no FL tax; the user adds it if wanted.
     if (pack) {
       row.target_grand_total = pack.target_grand_total ?? null
-      row.florida_taxes = pack.florida_taxes ?? null
+      row.florida_taxes = null
       row.global_discount = pack.global_discount ?? null
       row.import_margin = pack.import_margin ?? 0
     }
