@@ -111,10 +111,15 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
     }
     return eqv(c?.manufacturer, spec.manufacturer) && eqv(c?.model, spec.model) && eqv(c?.year, spec.year)
   }
-  // CLOSED packs that fit at least one of the cars the user picked here.
+  // Match against the added cars PLUS a fully-filled-but-not-yet-added one, so the
+  // dropdown appears as soon as the cascade is complete (before "+ ADD ANOTHER CAR").
+  const effectiveCars = pendingComplete
+    ? [...cars, { manufacturer: bMan, brand: bBrand, model: bModel, version: bVersion, years: bYears }]
+    : cars
+  // CLOSED packs that fit at least one of those cars.
   const matchingPacks = packId ? [] : closedPacks.filter((p) => {
     const carList = Array.isArray(p.cars) && p.cars.length ? p.cars : [{ manufacturer: p.manufacturer, model: p.model, year: p.year }]
-    return cars.some((uc) => (uc.years.length ? uc.years : [undefined]).some((y) =>
+    return effectiveCars.some((uc) => (uc.years.length ? uc.years : [undefined]).some((y) =>
       carList.some((c: any) => carEntryCovers(c, { manufacturer: uc.manufacturer, brand: uc.brand, model: uc.model, version: uc.version, year: y }))))
   })
 
