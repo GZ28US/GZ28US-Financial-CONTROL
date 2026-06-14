@@ -789,11 +789,11 @@ export default function ViewInvoicePage() {
                   return (
                   <div key={part.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-base font-bold truncate ${partPaid ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{partPaid ? '' : ' — PENDING'}</p>
+                      <p className={`text-base font-bold truncate ${(invoice.is_quote || partPaid) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(invoice.is_quote || partPaid) ? '' : ' — PENDING'}</p>
                       <p className="text-sm text-gray-400">
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
-                      <p className="text-sm text-gray-500">{partPaid ? `Paid: ${formatDate(part.payment_date)}` : 'Not paid yet'}</p>
+                      {!invoice.is_quote && <p className="text-sm text-gray-500">{partPaid ? `Paid: ${formatDate(part.payment_date)}` : 'Not paid yet'}</p>}
                     </div>
                   </div>
                   )
@@ -826,7 +826,7 @@ export default function ViewInvoicePage() {
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>
 
-          {payments.length > 0 && (
+          {!invoice.is_quote && payments.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">INCOME</label>
               <div className={sectionClass}>
@@ -874,7 +874,7 @@ export default function ViewInvoicePage() {
               <div className={sectionClass}>
                 {expenses.map((exp, index) => {
                   const isPaid = isValidDate(exp.payment_date)
-                  const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
+                  const rowColor = invoice.is_quote ? '' : (isPaid ? 'text-blue-400' : 'text-red-400')
                   const receiptUrls = parseReceiptUrls(exp.receipt_url)
                   return (
                     <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
@@ -882,7 +882,7 @@ export default function ViewInvoicePage() {
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                           <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}</p>
-                          <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>
+                          {!invoice.is_quote && <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                         </div>
                         {receiptUrls.length > 0 && (
                           <div className="relative shrink-0">
@@ -910,9 +910,9 @@ export default function ViewInvoicePage() {
                   </div>
                 )}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>TOTAL GLOBAL</span><span className="font-bold">{formatUSD(expensesTotalGlobal)}</span></div>
-                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className={labelClass}>TOTAL PAID</span><span className="font-bold">{formatUSD(expensesTotalPaid)}</span></div>
-                <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span></div>
-                <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>
+                {!invoice.is_quote && <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className={labelClass}>TOTAL PAID</span><span className="font-bold">{formatUSD(expensesTotalPaid)}</span></div>}
+                {!invoice.is_quote && <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${expensesBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(expensesBalance)}</span></div>}
+                {!invoice.is_quote && <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>}
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">FINAL MARKUP</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
               </div>
             </div>
