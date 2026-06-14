@@ -6,9 +6,9 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
-import { enrollParts } from '@/lib/partsDb'
+import { enrollParts, normPN } from '@/lib/partsDb'
 
-type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null }
+type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string }
 type Service = { id?: string; description: string; price: string }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
@@ -34,6 +34,7 @@ type Expense = {
   stock_donor?: string
   export_status?: string
   item_discount?: string
+  kit_name?: string
 }
 type StockItem = {
   id: string
@@ -261,6 +262,7 @@ export default function EditInvoicePage() {
   const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
   const [showDbModal, setShowDbModal] = useState(false)
   const [dbItems, setDbItems] = useState<any[]>([])
+  const [partExpandedKits, setPartExpandedKits] = useState<Set<string>>(new Set())
   const [dbSearch, setDbSearch] = useState('')
   const rideNameRef = useRef('')
 
@@ -300,7 +302,7 @@ export default function EditInvoicePage() {
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined, payment_date: p.payment_date ?? null })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined, payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
@@ -339,6 +341,7 @@ export default function EditInvoicePage() {
         stock_source_type: e.stock_source_type || undefined,
         stock_donor: e.stock_donor || undefined,
         export_status: e.export_status || 'FRESH',
+        kit_name: e.kit_name || undefined,
       }))))
       setExpandedGroups(new Set())
     }
@@ -388,21 +391,54 @@ export default function EditInvoicePage() {
     setShowDbModal(true)
   }
 
-  // Insert a parts-database item as a fresh, unpaid expense on this invoice.
+  // Resolve a kit member to its parts_database row in the picker (normalized PN / name).
+  function kitMemberRow(m: any) {
+    if (m.part_number) { const k = normPN(m.part_number); return dbItems.find((d: any) => !d.is_kit && d.part_number && normPN(d.part_number) === k) }
+    const nm = (m.item || '').trim().toLowerCase()
+    return dbItems.find((d: any) => !d.is_kit && !d.part_number && (d.item || '').trim().toLowerCase() === nm)
+  }
+  function dbOurCost(d: any) { return d ? (Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0) : 0 }
+  function kitOurTotal(kit: any) { return (kit.kit_items || []).reduce((s: number, m: any) => s + dbOurCost(kitMemberRow(m)) * (Number(m.quantity) || 1), 0) }
+  // Build a fresh expense from a parts_database row. HUNT parts carry dealer pricing
+  // (our_cost/dealer_supplier/freight, tax-exempt, with the MAP→net discount % so the
+  // PARTS gross-up recovers the RETAIL); scanned parts carry unit_price/tax/extra.
+  function expenseFromDbRow(it: any, quantity: number): Expense {
+    const isHunt = it?.source_type === 'HUNT'
+    const supplier = it ? ((isHunt ? it.dealer_supplier : it.supplier) || it.supplier || '') : ''
+    const amount = it ? (isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
+    const extra = it ? (isHunt ? ((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : (Number(it.extra) || 0)) : 0
+    const tax = it ? (isHunt ? 0 : (Number(it.tax) || 0)) : 0
+    return {
+      supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
+      amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
+      payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
+    }
+  }
+  // Insert a parts-database item as a fresh, unpaid expense. A KIT expands into a
+  // group (members share a purchase_group + carry the kit_name for the header).
   function addDbItem(it: any) {
-    setExpenses(prev => [...prev, {
-      supplier: it.supplier || '',
-      item: it.item,
-      part_number: it.part_number || '',
-      amount: String(it.unit_price ?? 0),
-      tax: String(it.tax ?? 0),
-      extra: String(it.extra ?? 0),
-      quantity: String(it.quantity ?? 1),
-      payment_date: '',
-      receipt_urls: [],
-      export_status: 'FRESH',
-      item_discount: String(it.item_discount ?? 0),
-    }])
+    if (it.is_kit) {
+      const group = 'kit-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+      const name = it.item || 'Kit'
+      const rows = (it.kit_items || []).map((m: any) => {
+        const mr = kitMemberRow(m)
+        const row = expenseFromDbRow(mr, Number(m.quantity) || 1)
+        row.purchase_group = group
+        row.kit_name = name
+        if (!mr) { row.item = m.item || m.part_number || 'Part'; row.part_number = m.part_number || '' }
+        return row
+      })
+      setExpenses(prev => [...prev, ...rows])
+      setExpandedGroups(prev => new Set(prev).add(group))
+      return
+    }
+    setExpenses(prev => [...prev, expenseFromDbRow(it, Number(it.quantity) || 1)])
+  }
+  function togglePartKit(g: string) { setPartExpandedKits(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n }) }
+  function removePartGroup(g: string) {
+    const ids = parts.filter(p => p.kit_group === g && p.id).map(p => p.id!)
+    if (ids.length) setRemovedPartIds(prev => [...prev, ...ids])
+    setParts(prev => prev.filter(p => p.kit_group !== g))
   }
 
   // Returns the canonical "owner label" string used as the donor identifier.
@@ -824,7 +860,7 @@ export default function EditInvoicePage() {
     // Only FRESH items import; each imported item flips to EXPORTED.
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; base: number; quantity: number }>()
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (SKIP_WORDS.test(e.item)) return
@@ -847,10 +883,10 @@ export default function EditInvoicePage() {
         const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
         unitBase = amount / discFactor
       }
-      const key = `${desc.toLowerCase()}|${unitBase.toFixed(4)}`
+      const key = `${e.kit_name ? (e.purchase_group || '') : ''}|${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
-      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty })
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_name ? e.purchase_group : undefined, kit_name: e.kit_name })
       importedIndices.push(idx)
     })
 
@@ -863,9 +899,12 @@ export default function EditInvoicePage() {
         unit_price: (src.base * factor).toFixed(2),
         quantity: String(src.quantity),
         base_cost: String(src.base),
+        kit_group: src.kit_group,
+        kit_name: src.kit_name,
       })
     })
     setParts(prev => [...prev, ...toAdd])
+    setPartExpandedKits(prev => { const n = new Set(prev); toAdd.forEach(p => { if (p.kit_group) n.add(p.kit_group) }); return n })
     markExportStatus(importedIndices, 'EXPORTED')
   }
 
@@ -1328,6 +1367,8 @@ export default function EditInvoicePage() {
           base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null,
           payment_date: isValidDate(p.payment_date || '') ? p.payment_date : null,
           position: i,
+          kit_group: p.kit_group || null,
+          kit_name: p.kit_name || null,
         })
         if (e) { alert(e.message); return }
       } else {
@@ -1389,6 +1430,7 @@ export default function EditInvoicePage() {
         stock_source_type: ex.stock_source_type || null,
         stock_donor: ex.stock_donor || null,
         export_status: ex.export_status || 'FRESH',
+        kit_name: ex.kit_name || null,
       })))
       if (e) { alert(e.message); return }
     }
@@ -2000,7 +2042,11 @@ export default function EditInvoicePage() {
               const list = t ? dbItems.filter((d: any) => (d.item || '').toLowerCase().includes(t) || (d.alias || '').toLowerCase().includes(t)) : dbItems
               if (list.length === 0) return <p className="text-gray-400">No items in the database.</p>
               return list.map((d: any) => {
-                const badge = d.source_type === 'HUNT' ? { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
+                const isKit = !!d.is_kit
+                const isHunt = d.source_type === 'HUNT'
+                const cost = isKit ? kitOurTotal(d) : (isHunt ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0))
+                const badge = isKit ? { label: '📦 KIT', cls: 'bg-teal-600 text-white' }
+                  : d.source_type === 'HUNT' ? { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
                   : d.source_type === 'MANUAL' ? { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
                   : { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
                 return (
@@ -2011,7 +2057,7 @@ export default function EditInvoicePage() {
                       <p className="font-bold truncate" title={d.item}>{d.item}{d.is_extra ? ' — EXTRA' : ''}</p>
                     </div>
                     {d.alias && <p className="text-sm text-teal-300 truncate" title={d.alias}>alias: {d.alias}</p>}
-                    <p className="text-sm text-gray-400">{formatUSD(Number(d.unit_price) || 0)}{d.supplier ? ` · ${d.supplier}` : ''}</p>
+                    <p className="text-sm text-gray-400">{formatUSD(Number(cost) || 0)}{isKit ? ` · ${(d.kit_items || []).length} parts` : ''}{d.supplier ? ` · ${d.supplier}` : ''}</p>
                   </div>
                   <button onClick={() => addDbItem(d)} className="bg-teal-700 hover:bg-teal-600 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">ADD</button>
                 </div>
@@ -2179,7 +2225,7 @@ export default function EditInvoicePage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
-                              <p className="text-base font-bold text-blue-400">{firstItem.supplier} — {groupItems.length} items</p>
+                              <p className="text-base font-bold text-blue-400">{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
                             {supplierIsVariable(firstItem.supplier) ? (
@@ -2402,8 +2448,24 @@ export default function EditInvoicePage() {
             </div>
             {parts.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
-                {parts.map((part, index) => (
+                {parts.map((part, index) => {
+                  const firstOfKit = !!part.kit_group && parts.findIndex(x => x.kit_group === part.kit_group) === index
+                  const collapsed = !!part.kit_group && !partExpandedKits.has(part.kit_group)
+                  return (
                   <div key={index}>
+                    {firstOfKit && (() => { const members = parts.filter(x => x.kit_group === part.kit_group); const total = members.reduce((s, x) => s + getPartTotal(x), 0); return (
+                      <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/50 border-b border-gray-700">
+                        <button onClick={() => togglePartKit(part.kit_group!)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                          <span className="text-gray-300">{partExpandedKits.has(part.kit_group!) ? '▾' : '▸'}</span>
+                          <span className="text-base font-bold truncate">📦 {part.kit_name || 'Kit'}</span>
+                          <span className="text-xs text-gray-400">({members.length} parts)</span>
+                        </button>
+                        <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>
+                        <button onClick={() => removePartGroup(part.kit_group!)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
+                      </div>
+                    ) })()}
+                    {!collapsed && (
+                      <div className={part.kit_group ? 'pl-5 border-l-2 border-teal-800 ml-3' : ''}>
                     {editingPartIndex === index ? (
                       <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
                         <input type="text" value={editingPart.description} onChange={(e) => setEditingPart({ ...editingPart, description: e.target.value })} className={inputClass} />
@@ -2441,8 +2503,11 @@ export default function EditInvoicePage() {
                         </div>
                       </div>
                     )}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
