@@ -16,7 +16,7 @@ import { normPN } from '@/lib/partsDb'
 // separate from the invoice editor; changes meant for both go in both by hand.
 
 type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
-type Part = { description: string; unit_price: string; quantity: string; base_cost?: string; kit_group?: string; kit_name?: string }
+type Part = { description: string; unit_price: string; quantity: string; base_cost?: string; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { description: string; price: string }
 type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string; export_status?: string; kit_group?: string; kit_name?: string }
 type Note = { note: string }
@@ -115,7 +115,7 @@ export default function EditPackPage() {
     // the saved margin (base = price / (1 + savedMargin/100)), re-attaching every item
     // to the live MARGIN re-pricer with no price jump at the saved margin.
     const savedFactor = 1 + (parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0) / 100
-    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : (p.unit_price != null ? String(p.unit_price) : undefined)), kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
+    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : (p.unit_price != null ? String(p.unit_price) : undefined)), kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
     setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
     setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH', kit_group: e.kit_group || undefined, kit_name: e.kit_name || undefined })))
     setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
@@ -222,7 +222,15 @@ export default function EditPackPage() {
   function toggleExpKit(g: string) { setExpExpandedKits(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n }) }
   function togglePartKit(g: string) { setPartExpandedKits(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n }) }
   function removeExpenseGroup(g: string) { setExpenses(prev => prev.filter(e => e.kit_group !== g)) }
-  function removePartGroup(g: string) { setParts(prev => prev.filter(p => p.kit_group !== g)) }
+  function removePartGroup(g: string) {
+    const keys = new Set(parts.filter(p => p.kit_group === g).map(p => (p.source_item || p.description || '').trim().toLowerCase()).filter(Boolean))
+    setParts(prev => prev.filter(p => p.kit_group !== g))
+    if (keys.size) {
+      const matchIdx: number[] = []
+      expenses.forEach((e, i) => { if ((e.export_status || 'FRESH') === 'EXPORTED' && keys.has((e.item || '').trim().toLowerCase())) matchIdx.push(i) })
+      if (matchIdx.length) markExportStatus(matchIdx, 'REMOVED')
+    }
+  }
 
   // ---- Export status (which expenses have been imported into PARTS) ----
   function markExportStatus(indices: number[], status: string) {
@@ -239,7 +247,7 @@ export default function EditPackPage() {
   function importItemsFromExpenses() {
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string }>()
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (SKIP_WORDS.test(e.item)) return
@@ -266,7 +274,7 @@ export default function EditPackPage() {
       const key = `${e.kit_group || ''}|${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
-      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_group, kit_name: e.kit_name })
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_group, kit_name: e.kit_name, source_item: desc })
       importedIndices.push(idx)
     })
     if (importedIndices.length === 0) { alert('No FRESH expenses to import.'); return }
@@ -278,6 +286,7 @@ export default function EditPackPage() {
       base_cost: String(src.base),
       kit_group: src.kit_group,
       kit_name: src.kit_name,
+      source_item: src.source_item,
     }))
     setParts(prev => [...prev, ...toAdd])
     setPartExpandedKits(prev => { const n = new Set(prev); toAdd.forEach(p => { if (p.kit_group) n.add(p.kit_group) }); return n })
@@ -352,8 +361,10 @@ export default function EditPackPage() {
   function removePart(index: number) {
     const part = parts[index]
     setParts(parts.filter((_, i) => i !== index))
-    // An EXPORTED expense that produced this part (matched by item name) flips to REMOVED.
-    const desc = (part.description || '').trim().toLowerCase()
+    // An EXPORTED expense that produced this part flips to REMOVED. Match by source_item
+    // (the original expense name stamped at import) so the link survives renames; fall
+    // back to the current description for legacy parts that predate source_item.
+    const desc = (part.source_item || part.description || '').trim().toLowerCase()
     if (desc) {
       const matchIdx: number[] = []
       expenses.forEach((e, i) => { if ((e.export_status || 'FRESH') === 'EXPORTED' && (e.item || '').trim().toLowerCase() === desc) matchIdx.push(i) })
@@ -420,7 +431,7 @@ export default function EditPackPage() {
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       import_margin: parseFloat(importMargin) || 0,
-      parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null, kit_group: p.kit_group || null, kit_name: p.kit_name || null })),
+      parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null, kit_group: p.kit_group || null, kit_name: p.kit_name || null, source_item: p.source_item || null })),
       services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
       expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0, export_status: e.export_status || 'FRESH', kit_group: e.kit_group || null, kit_name: e.kit_name || null })),
       notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim() })),

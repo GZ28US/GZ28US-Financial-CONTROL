@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
 
-type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string }
+type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
@@ -308,7 +308,7 @@ export default function EditInvoicePage() {
     const savedMargin = parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0
     const savedFactor = 1 + savedMargin / 100
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
@@ -444,9 +444,17 @@ export default function EditInvoicePage() {
   }
   function togglePartKit(g: string) { setPartExpandedKits(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n }) }
   function removePartGroup(g: string) {
-    const ids = parts.filter(p => p.kit_group === g && p.id).map(p => p.id!)
+    const removed = parts.filter(p => p.kit_group === g)
+    const ids = removed.filter(p => p.id).map(p => p.id!)
     if (ids.length) setRemovedPartIds(prev => [...prev, ...ids])
     setParts(prev => prev.filter(p => p.kit_group !== g))
+    // Flip the source expenses of every removed kit member to REMOVED (by source_item).
+    const keys = new Set(removed.map(p => (p.source_item || p.description || '').trim().toLowerCase()).filter(Boolean))
+    if (keys.size) {
+      const matchIdx: number[] = []
+      expenses.forEach((e, i) => { if ((e.export_status || 'FRESH') === 'EXPORTED' && keys.has((e.item || '').trim().toLowerCase())) matchIdx.push(i) })
+      if (matchIdx.length) markExportStatus(matchIdx, 'REMOVED')
+    }
   }
 
   // Returns the canonical "owner label" string used as the donor identifier.
@@ -868,7 +876,7 @@ export default function EditInvoicePage() {
     // Only FRESH items import; each imported item flips to EXPORTED.
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string }>()
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (SKIP_WORDS.test(e.item)) return
@@ -894,7 +902,7 @@ export default function EditInvoicePage() {
       const key = `${e.kit_name ? (e.purchase_group || '') : ''}|${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
-      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_name ? e.purchase_group : undefined, kit_name: e.kit_name })
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_name ? e.purchase_group : undefined, kit_name: e.kit_name, source_item: desc })
       importedIndices.push(idx)
     })
 
@@ -909,6 +917,7 @@ export default function EditInvoicePage() {
         base_cost: String(src.base),
         kit_group: src.kit_group,
         kit_name: src.kit_name,
+        source_item: src.source_item,
       })
     })
     setParts(prev => [...prev, ...toAdd])
@@ -1096,9 +1105,11 @@ export default function EditInvoicePage() {
     const part = parts[index]
     if (part.id) setRemovedPartIds(prev => [...prev, part.id!])
     setParts(parts.filter((_, i) => i !== index))
-    // Any EXPORTED expense item that produced this part (matched by description)
-    // flips to REMOVED so the user can see it was exported then pulled from PARTS.
-    const desc = (part.description || '').trim().toLowerCase()
+    // Any EXPORTED expense item that produced this part flips to REMOVED so the user
+    // can see it was exported then pulled from PARTS. Match by source_item (the original
+    // expense name stamped at import) so the link survives renames; fall back to the
+    // current description for legacy parts that predate source_item.
+    const desc = (part.source_item || part.description || '').trim().toLowerCase()
     if (desc) {
       const matchIdx: number[] = []
       expenses.forEach((e, i) => {
@@ -1385,6 +1396,7 @@ export default function EditInvoicePage() {
           position: i,
           kit_group: p.kit_group || null,
           kit_name: p.kit_name || null,
+          source_item: p.source_item || null,
         })
         if (e) { alert(e.message); return }
       } else {

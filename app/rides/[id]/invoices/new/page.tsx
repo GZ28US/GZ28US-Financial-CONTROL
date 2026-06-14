@@ -195,6 +195,7 @@ export default function NewInvoicePage() {
       base_cost: (p.base_cost != null && p.base_cost !== '') ? Number(p.base_cost) : null,
       kit_group: p.kit_group || null,
       kit_name: p.kit_name || null,
+      source_item: p.source_item || null,
     }))
     if (partRows.length > 0) await supabase.from('invoice_parts').insert(partRows)
 
