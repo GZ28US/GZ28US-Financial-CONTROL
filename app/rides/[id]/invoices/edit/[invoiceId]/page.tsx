@@ -301,8 +301,14 @@ export default function EditInvoicePage() {
     setImportMargin(data.import_margin ? String(data.import_margin) : '')
     setFlTaxExpenseDate(data.fl_tax_expense_date || '')
 
+    // Saved margin baseline: any part without a stored base_cost gets one derived
+    // from its current price (price / (1 + savedMargin/100)). This re-attaches every
+    // item to the live MARGIN re-pricer with no price jump at the saved margin, so
+    // changing MARGIN scales all items — even manually-entered/edited ones.
+    const savedMargin = parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0
+    const savedFactor = 1 + savedMargin / 100
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : undefined, payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
@@ -1068,7 +1074,12 @@ export default function EditInvoicePage() {
 
   function addPart() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all item fields'); return }
-    setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
+    // Capture a base_cost from the entered price at the current margin so the new
+    // item scales with the live MARGIN re-pricer (price shown stays as typed at the
+    // current margin). base = price / (1 + margin/100).
+    const f = 1 + (parseFloat(importMargin) || 0) / 100
+    const base = f !== 0 ? ((parseFloat(newPart.unit_price) || 0) / f).toFixed(2) : newPart.unit_price
+    setParts([...parts, { ...newPart, base_cost: base }]); setNewPart({ description: '', unit_price: '', quantity: '1' })
   }
   // Reorder a PARTS row up (-1) or down (+1). Local only; the new order is
   // persisted (position column) on SAVE CHANGES. Editing is cancelled to avoid
@@ -1100,13 +1111,16 @@ export default function EditInvoicePage() {
   async function saveEditPart() {
     if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all item fields'); return }
     const part = parts[editingPartIndex!]
+    // Re-capture base_cost from the edited price at the current margin so the item
+    // stays attached to the live MARGIN re-pricer (entered price shows as typed at
+    // the current margin, then scales when MARGIN changes). base = price / (1 + margin/100).
+    const f = 1 + (parseFloat(importMargin) || 0) / 100
+    const base = f !== 0 ? ((parseFloat(editingPart.unit_price) || 0) / f).toFixed(2) : editingPart.unit_price
     if (part.id) {
-      // A manual edit detaches the part from the live margin (base_cost -> null),
-      // so the entered price sticks and won't be re-priced by margin changes.
-      const { error } = await supabase.from('invoice_parts').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: null }).eq('id', part.id)
+      const { error } = await supabase.from('invoice_parts').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0 }).eq('id', part.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id, base_cost: undefined }; setParts(updated)
+    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id, base_cost: base }; setParts(updated)
     setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
   }
   function cancelEditPart() { setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' }) }

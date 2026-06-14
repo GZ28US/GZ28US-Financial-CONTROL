@@ -111,7 +111,11 @@ export default function EditPackPage() {
     setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount != null ? String(data.global_discount) : '')
     setImportMargin(data.import_margin != null ? String(data.import_margin) : '')
-    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : undefined, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
+    // Any part without a stored base_cost gets one derived from its current price at
+    // the saved margin (base = price / (1 + savedMargin/100)), re-attaching every item
+    // to the live MARGIN re-pricer with no price jump at the saved margin.
+    const savedFactor = 1 + (parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0) / 100
+    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : (p.unit_price != null ? String(p.unit_price) : undefined)), kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined })))
     setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
     setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH', kit_group: e.kit_group || undefined, kit_name: e.kit_name || undefined })))
     setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
@@ -334,7 +338,11 @@ export default function EditPackPage() {
   // ---- Item handlers ----
   function addPart() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all item fields'); return }
-    setParts([...parts, newPart]); setNewPart({ description: '', unit_price: '', quantity: '1' })
+    // Capture base_cost from the entered price at the current margin so the item
+    // scales with the live MARGIN re-pricer. base = price / (1 + margin/100).
+    const f = 1 + (parseFloat(importMargin) || 0) / 100
+    const base = f !== 0 ? ((parseFloat(newPart.unit_price) || 0) / f).toFixed(2) : newPart.unit_price
+    setParts([...parts, { ...newPart, base_cost: base }]); setNewPart({ description: '', unit_price: '', quantity: '1' })
   }
   function movePart(index: number, dir: -1 | 1) {
     const j = index + dir; if (j < 0 || j >= parts.length) return
@@ -355,7 +363,11 @@ export default function EditPackPage() {
   function startEditPart(index: number) { setEditingPartIndex(index); setEditingPart({ ...parts[index] }) }
   function saveEditPart() {
     if (!editingPart.description || !editingPart.unit_price || !editingPart.quantity) { alert('Please fill in all item fields'); return }
-    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, base_cost: undefined }; setParts(updated)
+    // Re-capture base_cost from the edited price at the current margin so the item
+    // stays attached to the live MARGIN re-pricer. base = price / (1 + margin/100).
+    const f = 1 + (parseFloat(importMargin) || 0) / 100
+    const base = f !== 0 ? ((parseFloat(editingPart.unit_price) || 0) / f).toFixed(2) : editingPart.unit_price
+    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, base_cost: base }; setParts(updated)
     setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
   }
 
