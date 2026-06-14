@@ -113,7 +113,7 @@ export default function ViewPackPage() {
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-gray-700 px-6 py-3 flex items-center justify-between gap-x-8 gap-y-2 flex-wrap">
         <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">GRAND TOTAL</span><span className="text-xl font-bold">{money(grandTotal)}</span></div>
         <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">COST</span><span className="text-xl font-bold">{money(expensesTotalGlobal)}</span></div>
-        <div className="flex items-baseline gap-2"><span className="text-sm font-bold text-gray-200">PROFIT</span><span className={`text-2xl font-bold ${profitColor}`}>{money(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+        <div className="flex items-baseline gap-2"><span className="text-sm font-bold text-gray-200">MARKUP</span><span className={`text-2xl font-bold ${profitColor}`}>{money(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
       </div>
     </main>
   )
