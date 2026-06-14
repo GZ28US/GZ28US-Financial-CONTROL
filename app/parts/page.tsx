@@ -5,7 +5,7 @@ import Header from '@/components/Header'
 import HuntPart from '@/components/HuntPart'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
-import { enrollParts, enrollOne } from '@/lib/partsDb'
+import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 
 type Part = {
   id: string
@@ -34,6 +34,8 @@ type Part = {
   part_discount: number | null
   delivered_discount: number | null
   dealer_supplier: string | null
+  is_kit?: boolean
+  kit_items?: { part_number?: string | null; item?: string; quantity: number }[]
 }
 
 const numOf = (s: string) => { const n = parseFloat(String(s).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
@@ -61,6 +63,13 @@ export default function PartsPage() {
   const [naDate, setNaDate] = useState('')
   const [naAlias, setNaAlias] = useState('')
   const [naNotes, setNaNotes] = useState('')
+  // ADD/EDIT KIT modal — a kit bundles member parts (by part number) + quantities.
+  const [showKit, setShowKit] = useState(false)
+  const [kitId, setKitId] = useState<string | null>(null)
+  const [kitName, setKitName] = useState('')
+  const [kitMembers, setKitMembers] = useState<{ part_number: string | null; item: string; quantity: string }[]>([])
+  const [kitSearch, setKitSearch] = useState('')
+  const [expandedKits, setExpandedKits] = useState<Set<string>>(new Set())
   // When arriving from a supplier's PARTS button (?supplierId=…) we restrict the
   // list to that supplier's parts, matching its name + aliases (normalized).
   const [supplierFilter, setSupplierFilter] = useState<{ name: string; variants: Set<string> } | null>(null)
@@ -186,6 +195,62 @@ export default function PartsPage() {
     load()
   }
 
+  // ---- KITS: a kit bundles member parts; its total is the live sum of members ----
+  function toggleKit(id: string) {
+    setExpandedKits(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+  // Resolve a kit member to its current Parts DB row (normalized PN, else item name).
+  function resolveMember(m: { part_number?: string | null; item?: string }): Part | undefined {
+    if (m.part_number) { const k = normPN(m.part_number); return parts.find(p => !p.is_kit && p.part_number && normPN(p.part_number) === k) }
+    const nm = (m.item || '').trim().toLowerCase()
+    return parts.find(p => !p.is_kit && !p.part_number && (p.item || '').trim().toLowerCase() === nm)
+  }
+  // A member's per-unit RETAIL + OUR cost (delivered for hunt parts, unit price else).
+  function memberPrices(p?: Part): { retail: number; cost: number } {
+    if (!p) return { retail: 0, cost: 0 }
+    if (p.source_type === 'HUNT') return { retail: Number(p.map_delivered) || 0, cost: Number(p.cost_delivered ?? p.map_delivered) || 0 }
+    const u = Number(p.unit_price) || 0
+    return { retail: u, cost: Number(p.base_cost) || u }
+  }
+  function kitTotals(kit: Part): { retail: number; cost: number } {
+    return (kit.kit_items || []).reduce((a, m) => {
+      const pr = memberPrices(resolveMember(m)); const q = Number(m.quantity) || 1
+      return { retail: a.retail + pr.retail * q, cost: a.cost + pr.cost * q }
+    }, { retail: 0, cost: 0 })
+  }
+  const membersTotal = kitMembers.reduce((a, m) => {
+    const pr = memberPrices(resolveMember(m)); const q = Number(m.quantity) || 1
+    return { retail: a.retail + pr.retail * q, cost: a.cost + pr.cost * q }
+  }, { retail: 0, cost: 0 })
+
+  function openKitNew() { setKitId(null); setKitName(''); setKitMembers([]); setKitSearch(''); setShowKit(true) }
+  function openKitEdit(kit: Part) {
+    setKitId(kit.id); setKitName(kit.item || '')
+    setKitMembers((kit.kit_items || []).map(m => ({ part_number: m.part_number ?? null, item: m.item || (resolveMember(m)?.item ?? ''), quantity: String(m.quantity || 1) })))
+    setKitSearch(''); setShowKit(true)
+  }
+  function addKitMember(p: Part) { setKitMembers(prev => [...prev, { part_number: p.part_number || null, item: p.item, quantity: '1' }]) }
+  function removeKitMember(i: number) { setKitMembers(prev => prev.filter((_, j) => j !== i)) }
+
+  async function saveKit() {
+    const name = kitName.trim()
+    if (!name) { alert('Give the kit a name.'); return }
+    if (kitMembers.length === 0) { alert('Add at least one part to the kit.'); return }
+    setSaving(true)
+    const row: any = {
+      item: name, is_kit: true, source_type: 'KIT',
+      kit_items: kitMembers.map(m => ({ part_number: m.part_number || null, item: m.item, quantity: Number(m.quantity) || 1 })),
+      updated_at: new Date().toISOString(),
+    }
+    const res = kitId
+      ? await supabase.from('parts_database').update(row).eq('id', kitId)
+      : await supabase.from('parts_database').insert([row])
+    setSaving(false)
+    if (res.error) { alert(res.error.message); return }
+    setShowKit(false)
+    load()
+  }
+
   // SCAN ITEMS — scan any receipt/invoice and enroll its items into the data bank
   // (same dedupe rules as invoice expense scans). No invoice is created.
   async function handleScanItems(file: File) {
@@ -299,6 +364,52 @@ export default function PartsPage() {
         </div>
       )}
 
+      {showKit && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto flex flex-col gap-4">
+            <h2 className="text-2xl font-bold text-teal-300">{kitId ? 'EDIT KIT' : 'ADD KIT'} <span className="text-base font-normal text-gray-400">📦 a bundle of parts</span></h2>
+            <div><label className="block mb-1 text-sm font-bold text-gray-400">KIT NAME *</label>
+              <input value={kitName} onChange={(e) => setKitName(e.target.value)} className={`${inputClass} w-full`} placeholder="e.g. GT500 Cam Kit" autoFocus /></div>
+
+            {kitMembers.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden">
+                {kitMembers.map((m, i) => { const pr = memberPrices(resolveMember(m)); const q = Number(m.quantity) || 1; return (
+                  <div key={i} className="flex items-center gap-3 px-3 py-2 border-b border-gray-800 last:border-b-0">
+                    <span className="flex-1 min-w-0 truncate text-sm">{m.item}{m.part_number ? <span className="text-xs text-gray-500"> · {m.part_number}</span> : ''}</span>
+                    <input value={m.quantity} onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setKitMembers(prev => prev.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x)) }} className="bg-gray-800 border border-gray-600 rounded-xl px-2 py-1 w-14 text-center text-sm" />
+                    <span className="text-xs text-gray-400 w-36 text-right">{formatUSD(pr.retail * q)} / {formatUSD(pr.cost * q)}</span>
+                    <button onClick={() => removeKitMember(i)} className="text-red-400 hover:text-red-300 font-bold">✕</button>
+                  </div>
+                )})}
+                <div className="flex justify-between px-3 py-2 bg-gray-800 font-bold text-sm">
+                  <span>TOTAL — retail / cost</span>
+                  <span>{formatUSD(membersTotal.retail)} / {formatUSD(membersTotal.cost)}</span>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block mb-1 text-sm font-bold text-gray-400">ADD PARTS</label>
+              <input value={kitSearch} onChange={(e) => setKitSearch(e.target.value)} className={`${inputClass} w-full mb-2`} placeholder="Search the Parts DB…" />
+              <div className="max-h-56 overflow-y-auto border border-gray-700 rounded-2xl divide-y divide-gray-800">
+                {parts.filter(p => !p.is_kit && (kitSearch.trim() ? ((p.item || '').toLowerCase().includes(kitSearch.toLowerCase()) || (p.part_number || '').toLowerCase().includes(kitSearch.toLowerCase())) : true)).slice(0, 50).map(p => { const pr = memberPrices(p); return (
+                  <div key={p.id} className="flex items-center gap-3 px-3 py-2">
+                    <span className="flex-1 min-w-0 truncate text-sm">{p.item}{p.part_number ? <span className="text-xs text-gray-500"> · {p.part_number}</span> : ''}</span>
+                    <span className="text-xs text-gray-400 shrink-0">{formatUSD(pr.retail)} / {formatUSD(pr.cost)}</span>
+                    <button onClick={() => addKitMember(p)} className="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">ADD</button>
+                  </div>
+                )})}
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button onClick={() => setShowKit(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={saveKit} disabled={saving} className={`flex-1 px-5 py-4 rounded-2xl font-bold text-lg ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>{saving ? 'SAVING…' : 'SAVE KIT'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">PARTS DATABASE ({filtered.length})</h1>
         <div className="flex gap-3 flex-wrap">
@@ -308,6 +419,7 @@ export default function PartsPage() {
             <input type="file" accept="image/*,.pdf" className="hidden" disabled={scanning} onChange={(e) => { if (e.target.files?.[0]) handleScanItems(e.target.files[0]); e.currentTarget.value = '' }} />
           </label>
           <button onClick={openAdd} className="px-6 py-4 rounded-2xl text-xl font-bold bg-sky-700 hover:bg-sky-600">➕ ADD PART</button>
+          <button onClick={openKitNew} className="px-6 py-4 rounded-2xl text-xl font-bold bg-teal-700 hover:bg-teal-600">📦 ADD KIT</button>
         </div>
       </div>
 
@@ -338,7 +450,34 @@ export default function PartsPage() {
         <p className="text-2xl text-gray-400">{parts.length === 0 ? 'No parts yet. Scan a document or scan expenses on an invoice to build the database.' : 'No matches.'}</p>
       ) : (
         <div className="space-y-4">
-          {filtered.map((p) => (
+          {filtered.map((p) => p.is_kit ? (
+            <div key={p.id} className="bg-gray-900 border border-teal-800 rounded-3xl p-5">
+              <div className="flex items-center justify-between gap-6 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 mb-1 flex-wrap">
+                    <button onClick={() => toggleKit(p.id)} className="text-lg text-gray-300">{expandedKits.has(p.id) ? '▾' : '▸'}</button>
+                    <h2 className="text-xl font-bold">{p.item}</h2>
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-700 text-white">📦 KIT</span>
+                    <span className="text-sm text-gray-400">{(p.kit_items || []).length} parts</span>
+                  </div>
+                  {(() => { const t = kitTotals(p); const pct = t.retail > 0 ? Math.round((1 - t.cost / t.retail) * 1000) / 10 : 0; return (
+                    <p className="text-sm text-gray-400">RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(t.retail)}</span> · OUR del: <span className="text-green-400 font-bold">{formatUSD(t.cost)}</span>{t.retail > 0 ? ` (${pct}% off)` : ''}</p>
+                  ) })()}
+                </div>
+                <div className="flex items-end gap-3 shrink-0">
+                  <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
+                  <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
+                </div>
+              </div>
+              {expandedKits.has(p.id) && (
+                <div className="mt-3 border-t border-gray-800 pt-3 space-y-1">
+                  {(p.kit_items || []).map((m, i) => { const mp = resolveMember(m); const pr = memberPrices(mp); const q = Number(m.quantity) || 1; return (
+                    <p key={i} className="text-sm text-gray-300 pl-7">{q}× {mp?.item || m.item || m.part_number || '—'}{(mp?.part_number || m.part_number) ? <span className="text-xs text-gray-500"> · {mp?.part_number || m.part_number}</span> : ''} — <span className="text-gray-200">{formatUSD(pr.retail * q)}</span> / <span className="text-green-400">{formatUSD(pr.cost * q)}</span>{!mp ? <span className="text-red-400"> · not found</span> : ''}</p>
+                  )})}
+                </div>
+              )}
+            </div>
+          ) : (
             <div key={p.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 flex items-center justify-between gap-6 flex-wrap">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
