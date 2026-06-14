@@ -9,7 +9,7 @@ import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib
 import { enrollParts, normPN } from '@/lib/partsDb'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
-type Service = { id?: string; description: string; price: string }
+type Service = { id?: string; description: string; price: string; payment_date?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
 type Note = { id?: string; note: string }
@@ -311,7 +311,7 @@ export default function EditInvoicePage() {
     if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price) })))
+    if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price), payment_date: s.payment_date ?? null })))
 
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({
@@ -1159,6 +1159,16 @@ export default function EditInvoicePage() {
     setServices(services.filter((_, i) => i !== index))
   }
   function startEditService(index: number) { setEditingServiceIndex(index); setEditingService({ ...services[index] }) }
+  // Toggle a service's PAID status (payment_date = today / cleared). Persists immediately for saved services.
+  async function toggleServicePaid(index: number) {
+    const s = services[index]
+    const next = isValidDate(s.payment_date || '') ? null : todayStr()
+    if (s.id) {
+      const { error } = await supabase.from('invoice_services').update({ payment_date: next }).eq('id', s.id)
+      if (error) { alert(error.message); return }
+    }
+    setServices(prev => prev.map((x, i) => i === index ? { ...x, payment_date: next } : x))
+  }
   async function saveEditService() {
     if (!editingService.description) { alert('Please enter a description'); return }
     const svc = services[editingServiceIndex!]
@@ -1414,7 +1424,7 @@ export default function EditInvoicePage() {
     }
     const newServices = services.filter(s => !s.id)
     if (newServices.length > 0) {
-      const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0 })))
+      const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0, payment_date: isValidDate(s.payment_date || '') ? s.payment_date : null })))
       if (e) { alert(e.message); return }
     }
     // Persist the auto-calculated Full Project Labor on an existing row (the
@@ -2605,10 +2615,12 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-base font-bold truncate" title={serviceDisplayName(svc.description)}>{serviceDisplayName(svc.description)}</p>
+                          <p className={`text-base font-bold truncate ${(isQuote || isValidDate(svc.payment_date || '')) ? '' : 'text-yellow-400'}`} title={serviceDisplayName(svc.description)}>{serviceDisplayName(svc.description)}{(isQuote || isValidDate(svc.payment_date || '')) ? '' : ' — PENDING'}</p>
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
+                          {!isQuote && <p className="text-sm text-gray-500">{isValidDate(svc.payment_date || '') ? `Paid: ${formatDate(svc.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>
                         <div className="flex gap-2 shrink-0">
+                          {!isQuote && <button onClick={() => toggleServicePaid(index)} className={`${isValidDate(svc.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(svc.payment_date || '') ? 'PAID' : 'PENDING'}</button>}
                           <button onClick={() => startEditService(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => removeService(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </div>
