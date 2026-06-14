@@ -300,7 +300,6 @@ export default function ViewInvoicePage() {
           return
         }
         if (target === 'REPORTS') {
-          alert(`${docNoun} sent to GZ28US Control App REPORTS ✓`)
           setSending(false)
           return
         }
@@ -352,7 +351,6 @@ export default function ViewInvoicePage() {
         setSending(false)
         return
       }
-      alert(target === 'BOTH' ? `${docNoun} sent to client and GZ28US Control App REPORTS ✓` : `${invoice.is_quote ? 'Quote' : 'Invoice'} sent on WhatsApp ✓`)
     } catch (err) {
       alert('Could not generate or send the PDF:\n' + String(err))
     }
