@@ -47,29 +47,40 @@ export default function NewRidePage() {
   useEffect(() => { loadInitialData() }, [])
 
   async function loadInitialData() {
-    // Clients ordered by client_number so the dropdown is predictable.
-    const { data: clientData } = await supabase
-      .from('clients')
-      .select('id, name, client_number')
-      .order('client_number', { ascending: true, nullsFirst: false })
-    if (clientData) setClients(clientData as Client[])
-
-    // Auto-suggest the next code within this kind's own sequence: US.### for
-    // project rides, US.QT.### for quote rides. Take the max trailing number
-    // among same-kind rides and increment, padded to 3 digits.
-    const { data: rideData } = await supabase
-      .from('rides')
-      .select('project_code')
-      .eq('is_quote', isQuote)
-      .not('project_code', 'is', null)
-
     const wantPrefix = isQuote ? 'US.QT' : 'US'
-    let maxNum = 0
-    for (const r of (rideData || [])) {
-      const m = r.project_code?.match(/^(.+)\.(\d+)$/)
-      if (m) { const n = parseInt(m[2], 10); if (n > maxNum) maxNum = n }
+
+    // Code generation runs first and on its own, so a slow/failed client fetch can
+    // never leave the PROJECT CODE blank. Auto-suggest the next code within this
+    // kind's own sequence: US.### for project rides, US.QT.### for quote rides —
+    // max trailing number among same-kind rides + 1, padded to 3 digits.
+    try {
+      const { data: rideData } = await supabase
+        .from('rides')
+        .select('project_code')
+        .eq('is_quote', isQuote)
+        .not('project_code', 'is', null)
+      let maxNum = 0
+      for (const r of (rideData || [])) {
+        const m = r.project_code?.match(/^(.+)\.(\d+)$/)
+        if (m) { const n = parseInt(m[2], 10); if (n > maxNum) maxNum = n }
+      }
+      setProjectCode(`${wantPrefix}.${pad3(maxNum + 1)}`)
+    } catch (e) {
+      console.error('Code generation failed', e)
+      setProjectCode(`${wantPrefix}.${pad3(1)}`)
     }
-    setProjectCode(`${wantPrefix}.${pad3(maxNum + 1)}`)
+
+    // Clients load independently (ordered by client_number for a predictable list);
+    // a failure here logs but never touches the code above.
+    try {
+      const { data: clientData } = await supabase
+        .from('clients')
+        .select('id, name, client_number')
+        .order('client_number', { ascending: true, nullsFirst: false })
+      if (clientData) setClients(clientData as Client[])
+    } catch (e) {
+      console.error('Client load failed', e)
+    }
   }
 
   // Derived dropdown options based on the year-aware carData maps.
