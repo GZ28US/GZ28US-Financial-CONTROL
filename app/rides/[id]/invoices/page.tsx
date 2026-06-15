@@ -249,8 +249,8 @@ export default function InvoicesPage() {
                         FINAL MARKUP: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
                       </span>
                       {!invoice.is_quote && (
-                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                          DUE by CLIENT: {formatUSD(s.paymentsBalance)}
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : s.paymentsBalance > 0 ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>
+                          {s.paymentsBalance > 0 ? 'TIP by CLIENT' : 'DUE by CLIENT'}: {formatUSD(s.paymentsBalance)}
                         </span>
                       )}
                       {!invoice.is_quote && (

@@ -331,7 +331,15 @@ export default function EditInvoicePage() {
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) {
-      setExpenses(sortExpensesByDate(expensesData.map(e => ({
+      // Manual order first (position; nulls keep created_at order — safe before the
+      // migration exists), then sortExpensesByDate layers PAID expenses by date on top.
+      const ordered = expensesData.slice().sort((a, b) => {
+        const pa = a.position == null ? Infinity : Number(a.position)
+        const pb = b.position == null ? Infinity : Number(b.position)
+        if (pa !== pb) return pa - pb
+        return String(a.created_at).localeCompare(String(b.created_at))
+      })
+      setExpenses(sortExpensesByDate(ordered.map(e => ({
         id: e.id,
         supplier: e.supplier || '',
         item: e.item,
@@ -1104,6 +1112,20 @@ export default function EditInvoicePage() {
     setParts(next)
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
+  // Reorder an UNPAID single expense up/down by swapping it with the nearest other
+  // unpaid, non-grouped expense (paid expenses are date-locked, groups move as a unit).
+  // The array order is the manual order; it's persisted as `position` on SAVE, and
+  // sortExpensesByDate keeps paid expenses in date order regardless.
+  function moveExpense(index: number, dir: -1 | 1) {
+    const movable = (e: Expense | undefined) => !!e && !isValidDate(e.payment_date || '') && !e.purchase_group
+    let j = index + dir
+    while (j >= 0 && j < expenses.length && !movable(expenses[j])) j += dir
+    if (j < 0 || j >= expenses.length) return
+    const next = [...expenses]
+    const tmp = next[index]; next[index] = next[j]; next[j] = tmp
+    setExpenses(next)
+    if (editingExpenseIndex !== null) setEditingExpenseIndex(null)
+  }
   function removePart(index: number) {
     const part = parts[index]
     if (part.id) setRemovedPartIds(prev => [...prev, part.id!])
@@ -1472,6 +1494,7 @@ export default function EditInvoicePage() {
         stock_donor: ex.stock_donor || null,
         export_status: ex.export_status || 'FRESH',
         kit_name: ex.kit_name || null,
+        position: expenses.indexOf(ex),
       })))
       if (e) { alert(e.message); return }
     }
@@ -1481,7 +1504,7 @@ export default function EditInvoicePage() {
     // written until SAVE CHANGES, so importing without saving leaves no trace.
     const existingExpenses = expenses.filter(e => e.id)
     for (const ex of existingExpenses) {
-      await supabase.from('invoice_expenses').update({ export_status: ex.export_status || 'FRESH' }).eq('id', ex.id)
+      await supabase.from('invoice_expenses').update({ export_status: ex.export_status || 'FRESH', position: expenses.indexOf(ex) }).eq('id', ex.id)
     }
 
     // PARTS TO STOCK: these are always DONATED. The donor is the current
@@ -2436,6 +2459,8 @@ export default function EditInvoicePage() {
                                     )}
                                   </div>
                                 )}
+                                {!isPaid && <button onClick={() => moveExpense(index, -1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>}
+                                {!isPaid && <button onClick={() => moveExpense(index, 1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>}
                                 <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                                 <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
                                 <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>

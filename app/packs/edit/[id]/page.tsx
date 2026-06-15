@@ -361,6 +361,13 @@ export default function EditPackPage() {
     const next = [...parts]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setParts(next)
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
+  // Reorder an EXPENSE row up (-1) / down (+1). Local; the new order is the array
+  // order, persisted as-is on SAVE (pack expenses are a JSONB array).
+  function moveExpense(index: number, dir: -1 | 1) {
+    const j = index + dir; if (j < 0 || j >= expenses.length) return
+    const next = [...expenses]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setExpenses(next)
+    if (editingExpenseIndex !== null) setEditingExpenseIndex(null)
+  }
   function removePart(index: number) {
     const part = parts[index]
     setParts(parts.filter((_, i) => i !== index))
@@ -601,6 +608,8 @@ export default function EditPackPage() {
                           </div>
                           {!locked && (
                             <div className="flex gap-2 shrink-0">
+                              <button onClick={() => moveExpense(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▲</button>
+                              <button onClick={() => moveExpense(index, 1)} disabled={index === expenses.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▼</button>
                               <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </div>
