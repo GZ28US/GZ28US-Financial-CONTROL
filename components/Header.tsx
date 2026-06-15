@@ -50,6 +50,13 @@ const MENU: MenuItem[] = [
       ['/staff', 'STAFF'],
     ],
   },
+  {
+    type: 'dropdown',
+    label: 'ADM',
+    items: [
+      ['/adm/reports', 'REPORTS'],
+    ],
+  },
 ]
 
 export default function Header() {
