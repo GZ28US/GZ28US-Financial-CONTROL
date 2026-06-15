@@ -356,16 +356,35 @@ export default function EditPackPage() {
     const base = f !== 0 ? ((parseFloat(newPart.unit_price) || 0) / f).toFixed(2) : newPart.unit_price
     setParts([...parts, { ...newPart, base_cost: base }]); setNewPart({ description: '', unit_price: '', quantity: '1' })
   }
+  // Move a SINGLE row up/down. If the neighbor belongs to a kit, hop the whole kit
+  // block so a loose item never lands between a kit's members.
+  function moveRow<T extends { kit_group?: string }>(arr: T[], index: number, dir: -1 | 1): T[] {
+    const next = [...arr]
+    if (dir === -1) {
+      if (index <= 0) return next
+      const prev = next[index - 1]
+      let insertAt = index - 1
+      if (prev.kit_group) { while (insertAt > 0 && next[insertAt - 1].kit_group === prev.kit_group) insertAt-- }
+      const [item] = next.splice(index, 1)
+      next.splice(insertAt, 0, item)
+    } else {
+      if (index >= next.length - 1) return next
+      const nx = next[index + 1]
+      let afterIdx = index + 1
+      if (nx.kit_group) { while (afterIdx < next.length - 1 && next[afterIdx + 1].kit_group === nx.kit_group) afterIdx++ }
+      const [item] = next.splice(index, 1)
+      next.splice(afterIdx, 0, item)
+    }
+    return next
+  }
   function movePart(index: number, dir: -1 | 1) {
-    const j = index + dir; if (j < 0 || j >= parts.length) return
-    const next = [...parts]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setParts(next)
+    setParts(prev => moveRow(prev, index, dir))
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
   // Reorder an EXPENSE row up (-1) / down (+1). Local; the new order is the array
   // order, persisted as-is on SAVE (pack expenses are a JSONB array).
   function moveExpense(index: number, dir: -1 | 1) {
-    const j = index + dir; if (j < 0 || j >= expenses.length) return
-    const next = [...expenses]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setExpenses(next)
+    setExpenses(prev => moveRow(prev, index, dir))
     if (editingExpenseIndex !== null) setEditingExpenseIndex(null)
   }
   // Move a whole KIT block up/down as one unit, hopping over the adjacent row OR the
