@@ -342,15 +342,18 @@ export default function NewInvoicePage() {
           <input value={invoiceCode} readOnly className={`${inputClass} opacity-50 cursor-not-allowed`} />
         </div>
 
-        {/* Shopping invoices use REQUEST DATE; ride invoices keep HIRING DATE. */}
-        <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
+        {/* Quotes carry no dates or mileage (a quote isn't hired/entered yet).
+            Shopping invoices use REQUEST DATE; ride invoices keep HIRING DATE. */}
+        {!isQuote && (
+          <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
+        )}
 
         {/* ENTRY DATE is ride-only (a car physically entering the shop). */}
-        {!isClient && (
+        {!isClient && !isQuote && (
           <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />
         )}
 
-        {!isClient && (
+        {!isClient && !isQuote && (
           <div>
             <label className="block mb-2 text-lg font-bold">MILEAGE</label>
             <input type="text" value={mileage} onChange={(e) => setMileage(formatMileage(e.target.value))} className={inputClass} placeholder="0" />
