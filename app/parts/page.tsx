@@ -69,6 +69,7 @@ export default function PartsPage() {
   const [kitName, setKitName] = useState('')
   const [kitMembers, setKitMembers] = useState<{ part_number: string | null; item: string; quantity: string }[]>([])
   const [kitSearch, setKitSearch] = useState('')
+  const [kitAddQty, setKitAddQty] = useState<Record<string, string>>({})
   const [expandedKits, setExpandedKits] = useState<Set<string>>(new Set())
   // When arriving from a supplier's PARTS button (?supplierId=…) we restrict the
   // list to that supplier's parts, matching its name + aliases (normalized).
@@ -229,7 +230,11 @@ export default function PartsPage() {
     setKitMembers((kit.kit_items || []).map(m => ({ part_number: m.part_number ?? null, item: m.item || (resolveMember(m)?.item ?? ''), quantity: String(m.quantity || 1) })))
     setKitSearch(''); setShowKit(true)
   }
-  function addKitMember(p: Part) { setKitMembers(prev => [...prev, { part_number: p.part_number || null, item: p.item, quantity: '1' }]) }
+  function addKitMember(p: Part, qty?: string) {
+    const q = (qty != null && qty.trim() !== '' && (Number(qty) || 0) > 0) ? qty.trim() : '1'
+    setKitMembers(prev => [...prev, { part_number: p.part_number || null, item: p.item, quantity: q }])
+    if (p.id) setKitAddQty(prev => ({ ...prev, [p.id!]: '1' }))
+  }
   function removeKitMember(i: number) { setKitMembers(prev => prev.filter((_, j) => j !== i)) }
 
   async function saveKit() {
@@ -396,7 +401,8 @@ export default function PartsPage() {
                   <div key={p.id} className="flex items-center gap-3 px-3 py-2">
                     <span className="flex-1 min-w-0 truncate text-sm" title={p.item}>{p.item}{p.part_number ? <span className="text-xs text-gray-500"> · {p.part_number}</span> : ''}</span>
                     <span className="text-xs text-gray-400 shrink-0">{formatUSD(pr.retail)} / {formatUSD(pr.cost)}</span>
-                    <button onClick={() => addKitMember(p)} className="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">ADD</button>
+                    <input value={kitAddQty[String(p.id)] ?? '1'} onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setKitAddQty(prev => ({ ...prev, [String(p.id)]: e.target.value })) }} className="bg-gray-800 border border-gray-600 rounded-xl px-2 py-1 w-14 text-center text-sm shrink-0" title="Quantity to add" />
+                    <button onClick={() => addKitMember(p, kitAddQty[String(p.id)])} className="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">ADD</button>
                   </div>
                 )})}
               </div>
