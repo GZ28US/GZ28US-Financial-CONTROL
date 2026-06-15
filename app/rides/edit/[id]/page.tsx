@@ -59,10 +59,9 @@ export default function EditRidePage() {
   async function loadInitialData() {
     // Load clients in parallel with the ride record.
     const [clientsRes, rideRes] = await Promise.all([
-      supabase.from('clients').select('id, name, client_number').order('client_number', { ascending: true, nullsFirst: false }),
+      supabase.from('clients').select('id, name, client_number, is_quote').order('client_number', { ascending: true, nullsFirst: false }),
       supabase.from('rides').select('*').eq('id', rideId).single(),
     ])
-    if (clientsRes.data) setClients(clientsRes.data as Client[])
 
     if (rideRes.error || !rideRes.data) {
       alert(rideRes.error?.message || 'Ride not found')
@@ -70,6 +69,9 @@ export default function EditRidePage() {
       return
     }
     const r = rideRes.data
+    // Only list clients of the same kind (quote vs project) as this ride, so the
+    // two separately-numbered sequences (each from 1) don't collide in the dropdown.
+    if (clientsRes.data) setClients((clientsRes.data as any[]).filter(c => !!c.is_quote === !!r.is_quote) as Client[])
     setProjectCode(r.project_code || '')
     setProjectName(r.project_name || '')
     setClientId(r.client_id || '')

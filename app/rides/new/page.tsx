@@ -71,11 +71,15 @@ export default function NewRidePage() {
     }
 
     // Clients load independently (ordered by client_number for a predictable list);
-    // a failure here logs but never touches the code above.
+    // a failure here logs but never touches the code above. Quote clients and
+    // project clients are separate sequences (each numbered from 1), so a quote
+    // ride only lists quote clients and a project ride only project clients —
+    // otherwise the two #001s, #002s… collide in the dropdown.
     try {
       const { data: clientData } = await supabase
         .from('clients')
         .select('id, name, client_number')
+        .eq('is_quote', isQuote)
         .order('client_number', { ascending: true, nullsFirst: false })
       if (clientData) setClients(clientData as Client[])
     } catch (e) {
