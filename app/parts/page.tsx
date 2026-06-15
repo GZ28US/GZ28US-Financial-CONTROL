@@ -366,11 +366,12 @@ export default function PartsPage() {
 
       {showKit && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto flex flex-col gap-4">
+          <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col gap-4 overflow-hidden">
             <h2 className="text-2xl font-bold text-teal-300">{kitId ? 'EDIT KIT' : 'ADD KIT'} <span className="text-base font-normal text-gray-400">📦 a bundle of parts</span></h2>
             <div><label className="block mb-1 text-sm font-bold text-gray-400">KIT NAME *</label>
               <input value={kitName} onChange={(e) => setKitName(e.target.value)} className={`${inputClass} w-full`} placeholder="e.g. GT500 Cam Kit" autoFocus /></div>
 
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 -mr-2 pr-2">
             {kitMembers.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden">
                 {kitMembers.map((m, i) => { const pr = memberPrices(resolveMember(m)); const q = Number(m.quantity) || 1; return (
@@ -391,7 +392,7 @@ export default function PartsPage() {
             <div>
               <label className="block mb-1 text-sm font-bold text-gray-400">ADD PARTS</label>
               <input value={kitSearch} onChange={(e) => setKitSearch(e.target.value)} className={`${inputClass} w-full mb-2`} placeholder="Search the Parts DB…" />
-              <div className="max-h-56 overflow-y-auto border border-gray-700 rounded-2xl divide-y divide-gray-800">
+              <div className="border border-gray-700 rounded-2xl divide-y divide-gray-800">
                 {parts.filter(p => !p.is_kit && (kitSearch.trim() ? ((p.item || '').toLowerCase().includes(kitSearch.toLowerCase()) || (p.part_number || '').toLowerCase().includes(kitSearch.toLowerCase())) : true)).slice(0, 50).map(p => { const pr = memberPrices(p); return (
                   <div key={p.id} className="flex items-center gap-3 px-3 py-2">
                     <span className="flex-1 min-w-0 truncate text-sm" title={p.item}>{p.item}{p.part_number ? <span className="text-xs text-gray-500"> · {p.part_number}</span> : ''}</span>
@@ -401,8 +402,9 @@ export default function PartsPage() {
                 )})}
               </div>
             </div>
+            </div>
 
-            <div className="flex gap-4">
+            <div className="flex gap-4 shrink-0">
               <button onClick={() => setShowKit(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
               <button onClick={saveKit} disabled={saving} className={`flex-1 px-5 py-4 rounded-2xl font-bold text-lg ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>{saving ? 'SAVING…' : 'SAVE KIT'}</button>
             </div>
