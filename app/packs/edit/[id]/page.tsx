@@ -368,6 +368,33 @@ export default function EditPackPage() {
     const next = [...expenses]; const tmp = next[index]; next[index] = next[j]; next[j] = tmp; setExpenses(next)
     if (editingExpenseIndex !== null) setEditingExpenseIndex(null)
   }
+  // Move a whole KIT block up/down as one unit, hopping over the adjacent row OR the
+  // entire adjacent kit (so two kits swap cleanly and members stay contiguous).
+  function moveBlock<T extends { kit_group?: string }>(arr: T[], g: string, dir: -1 | 1): T[] {
+    const next = [...arr]
+    const idxs = next.map((x, i) => (x.kit_group === g ? i : -1)).filter(i => i >= 0)
+    if (!idxs.length) return next
+    const start = idxs[0], end = idxs[idxs.length - 1]
+    const block = next.slice(start, end + 1)
+    if (dir === -1) {
+      if (start === 0) return next
+      const prev = next[start - 1]
+      let insertAt = start - 1
+      if (prev.kit_group) { while (insertAt > 0 && next[insertAt - 1].kit_group === prev.kit_group) insertAt-- }
+      next.splice(start, block.length)
+      next.splice(insertAt, 0, ...block)
+    } else {
+      if (end === next.length - 1) return next
+      const nx = next[end + 1]
+      let afterIdx = end + 1
+      if (nx.kit_group) { while (afterIdx < next.length - 1 && next[afterIdx + 1].kit_group === nx.kit_group) afterIdx++ }
+      next.splice(start, block.length)
+      next.splice(afterIdx - block.length + 1, 0, ...block)
+    }
+    return next
+  }
+  function moveExpenseGroup(g: string, dir: -1 | 1) { setExpenses(prev => moveBlock(prev, g, dir)); if (editingExpenseIndex !== null) setEditingExpenseIndex(null) }
+  function movePartGroup(g: string, dir: -1 | 1) { setParts(prev => moveBlock(prev, g, dir)); if (editingPartIndex !== null) setEditingPartIndex(null) }
   function removePart(index: number) {
     const part = parts[index]
     setParts(parts.filter((_, i) => i !== index))
@@ -575,6 +602,10 @@ export default function EditPackPage() {
                             <span className="text-xs text-gray-400">({members.length} parts)</span>
                           </button>
                           <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>
+                          {!locked && <>
+                            <button onClick={() => moveExpenseGroup(e.kit_group!, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm shrink-0">▲</button>
+                            <button onClick={() => moveExpenseGroup(e.kit_group!, 1)} disabled={index + members.length >= expenses.length} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm shrink-0">▼</button>
+                          </>}
                           {!locked && <button onClick={() => removeExpenseGroup(e.kit_group!)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>}
                         </div>
                       ) })()}
@@ -608,8 +639,8 @@ export default function EditPackPage() {
                           </div>
                           {!locked && (
                             <div className="flex gap-2 shrink-0">
-                              <button onClick={() => moveExpense(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▲</button>
-                              <button onClick={() => moveExpense(index, 1)} disabled={index === expenses.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▼</button>
+                              {!e.kit_group && <button onClick={() => moveExpense(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▲</button>}
+                              {!e.kit_group && <button onClick={() => moveExpense(index, 1)} disabled={index === expenses.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▼</button>}
                               <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => removeExpense(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </div>
@@ -676,6 +707,10 @@ export default function EditPackPage() {
                           <span className="text-xs text-gray-400">({members.length} parts)</span>
                         </button>
                         <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>
+                        {!locked && <>
+                          <button onClick={() => movePartGroup(part.kit_group!, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm shrink-0">▲</button>
+                          <button onClick={() => movePartGroup(part.kit_group!, 1)} disabled={index + members.length >= parts.length} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm shrink-0">▼</button>
+                        </>}
                         {!locked && <button onClick={() => removePartGroup(part.kit_group!)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>}
                       </div>
                     ) })()}
@@ -710,8 +745,8 @@ export default function EditPackPage() {
                         </div>
                         {!locked && (
                           <div className="flex gap-2 shrink-0">
-                            <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▲</button>
-                            <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▼</button>
+                            {!part.kit_group && <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▲</button>}
+                            {!part.kit_group && <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 px-3 py-1 rounded-xl font-bold text-sm">▼</button>}
                             <button onClick={() => startEditPart(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                             <button onClick={() => removePart(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                           </div>
