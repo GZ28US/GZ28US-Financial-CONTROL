@@ -38,11 +38,11 @@ type Client = {
   preferred_message_method: string | null
 }
 
-type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null }
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; description: string | null; paid_at: string | null }
 type Note = { id: string; note: string }
-type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null }
+type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
@@ -784,10 +784,38 @@ export default function ViewInvoicePage() {
             <div>
               <label className="block mb-3 text-lg font-bold">PARTS</label>
               <div className={sectionClass}>
-                {parts.map((part, index) => {
+                {(() => { const seen = new Set<string>(); return parts.map((part) => {
+                  if (part.kit_group) {
+                    if (seen.has(part.kit_group)) return null
+                    seen.add(part.kit_group)
+                    const members = parts.filter((x: any) => x.kit_group === part.kit_group)
+                    const total = members.reduce((s: number, m: any) => s + m.unit_price * m.quantity, 0)
+                    return (
+                      <div key={part.id} className="border-b border-gray-700">
+                        <div className="flex items-center justify-between gap-4 px-4 py-2 bg-teal-900/30">
+                          <span className="text-base font-bold truncate" title={part.kit_name || 'Kit'}>📦 {part.kit_name || 'Kit'}</span>
+                          <span className="font-bold shrink-0">{formatUSD(total)}</span>
+                        </div>
+                        <div className="pl-4 border-l-2 border-teal-800 ml-3">
+                          {members.map((m: any) => {
+                            const mPaid = isValidDate(m.payment_date)
+                            return (
+                              <div key={m.id} className="flex items-center justify-between gap-4 px-4 py-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-base truncate ${(invoice.is_quote || mPaid) ? '' : 'text-yellow-400'}`} title={m.description}>{m.description}{(invoice.is_quote || mPaid) ? '' : ' — PENDING'}</p>
+                                  <p className="text-sm text-gray-400">{m.unit_price === 0 ? 'COURTESY' : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
+                                  {!invoice.is_quote && <p className="text-sm text-gray-500">{mPaid ? `Paid: ${formatDate(m.payment_date)}` : 'Not paid yet'}</p>}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  }
                   const partPaid = isValidDate(part.payment_date)
                   return (
-                  <div key={part.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                  <div key={part.id} className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700">
                     <div className="flex-1 min-w-0">
                       <p className={`text-base font-bold truncate ${(invoice.is_quote || partPaid) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(invoice.is_quote || partPaid) ? '' : ' — PENDING'}</p>
                       <p className="text-sm text-gray-400">
@@ -797,7 +825,7 @@ export default function ViewInvoicePage() {
                     </div>
                   </div>
                   )
-                })}
+                }) })()}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className="text-gray-400 font-bold">ITEMS SUB-TOTAL</span><span className="font-bold">{formatUSD(partsSubTotal)}</span></div>
                 {(invoice.florida_taxes || 0) > 0 && <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="text-gray-400 font-bold">FLORIDA PARTS TAXES ({invoice.florida_taxes}%)</span><span className="font-bold">{formatUSD(floridaTaxesAmount)}</span></div>}
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">ITEMS TOTAL</span><span className="text-xl font-bold">{formatUSD(partsTotal)}</span></div>
@@ -872,12 +900,14 @@ export default function ViewInvoicePage() {
             <div>
               <label className="block mb-3 text-lg font-bold">EXPENSES</label>
               <div className={sectionClass}>
-                {expenses.map((exp, index) => {
-                  const isPaid = isValidDate(exp.payment_date)
-                  const rowColor = invoice.is_quote ? '' : (isPaid ? 'text-blue-400' : 'text-red-400')
-                  const receiptUrls = parseReceiptUrls(exp.receipt_url)
-                  return (
-                    <div key={exp.id} className={`px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                {(() => {
+                  const seen = new Set<string>()
+                  const renderRow = (exp: any, index: number, inKit: boolean) => {
+                    const isPaid = isValidDate(exp.payment_date)
+                    const rowColor = invoice.is_quote ? '' : (isPaid ? 'text-blue-400' : 'text-red-400')
+                    const receiptUrls = parseReceiptUrls(exp.receipt_url)
+                    return (
+                    <div key={exp.id} className={inKit ? 'px-4 py-2' : 'px-4 py-3 border-b border-gray-700'}>
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
@@ -891,7 +921,7 @@ export default function ViewInvoicePage() {
                             </button>
                             {openReceiptsIndex === index && (
                               <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
-                                {receiptUrls.map((url, ui) => (
+                                {receiptUrls.map((url: string, ui: number) => (
                                   <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
                                 ))}
                               </div>
@@ -900,8 +930,29 @@ export default function ViewInvoicePage() {
                         )}
                       </div>
                     </div>
-                  )
-                })}
+                    )
+                  }
+                  return expenses.map((exp, index) => {
+                    if (exp.purchase_group && exp.kit_name) {
+                      if (seen.has(exp.purchase_group)) return null
+                      seen.add(exp.purchase_group)
+                      const memberIdx = expenses.map((e: any, i: number) => ({ e, i })).filter(({ e }) => e.purchase_group === exp.purchase_group)
+                      const total = memberIdx.reduce((s: number, { e }: any) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+                      return (
+                        <div key={exp.id} className="border-b border-gray-700">
+                          <div className="flex items-center justify-between gap-4 px-4 py-2 bg-teal-900/30">
+                            <span className="text-base font-bold truncate" title={exp.kit_name}>📦 {exp.kit_name}</span>
+                            <span className="font-bold shrink-0">{formatUSD(total)}</span>
+                          </div>
+                          <div className="pl-4 border-l-2 border-teal-800 ml-3">
+                            {memberIdx.map(({ e, i }: any) => renderRow(e, i, true))}
+                          </div>
+                        </div>
+                      )
+                    }
+                    return renderRow(exp, index, false)
+                  })
+                })()}
                 {flTaxExpenseAmount > 0 && (
                   <div className="px-4 py-3 border-b border-gray-700">
                     <p className={`text-base font-bold ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>

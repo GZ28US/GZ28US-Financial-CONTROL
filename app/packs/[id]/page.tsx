@@ -74,9 +74,26 @@ export default function ViewPackPage() {
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
             <h2 className="text-lg font-bold mb-3">PARTS ({parts.length})</h2>
             <div className="space-y-1 text-lg text-gray-300">
-              {parts.map((p: any, i: number) => (
-                <p key={i}>{p.quantity}× {p.description} — {money(p.unit_price)}{p.base_cost != null ? ` (cost ${money(p.base_cost)})` : ''}</p>
-              ))}
+              {(() => { const seen = new Set<string>(); return parts.map((p: any, i: number) => {
+                if (p.kit_group) {
+                  if (seen.has(p.kit_group)) return null
+                  seen.add(p.kit_group)
+                  const members = parts.filter((x: any) => x.kit_group === p.kit_group)
+                  const total = members.reduce((s: number, x: any) => s + num(x.unit_price) * num(x.quantity), 0)
+                  return (
+                    <div key={i} className="border border-teal-800 rounded-2xl overflow-hidden my-2">
+                      <div className="bg-teal-900/40 px-3 py-2 flex items-center justify-between gap-2">
+                        <span className="text-base font-bold">📦 {p.kit_name || 'Kit'}</span>
+                        <span className="font-bold text-white">{money(total)}</span>
+                      </div>
+                      <div className="pl-5 border-l-2 border-teal-800 ml-3 py-1 space-y-1">
+                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.description} — {money(m.unit_price)}{m.base_cost != null ? ` (cost ${money(m.base_cost)})` : ''}</p>)}
+                      </div>
+                    </div>
+                  )
+                }
+                return <p key={i}>{p.quantity}× {p.description} — {money(p.unit_price)}{p.base_cost != null ? ` (cost ${money(p.base_cost)})` : ''}</p>
+              }) })()}
             </div>
           </div>
         )}
@@ -94,7 +111,26 @@ export default function ViewPackPage() {
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
             <h2 className="text-lg font-bold mb-3">EXPENSES ({expenses.length})</h2>
             <div className="space-y-1 text-lg text-gray-300">
-              {expenses.map((e: any, i: number) => <p key={i}>{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(e.amount)}</p>)}
+              {(() => { const seen = new Set<string>(); return expenses.map((e: any, i: number) => {
+                if (e.kit_group) {
+                  if (seen.has(e.kit_group)) return null
+                  seen.add(e.kit_group)
+                  const members = expenses.filter((x: any) => x.kit_group === e.kit_group)
+                  const total = members.reduce((s: number, x: any) => s + num(x.amount) * (num(x.quantity) || 1) + num(x.tax) + num(x.extra), 0)
+                  return (
+                    <div key={i} className="border border-teal-800 rounded-2xl overflow-hidden my-2">
+                      <div className="bg-teal-900/40 px-3 py-2 flex items-center justify-between gap-2">
+                        <span className="text-base font-bold">📦 {e.kit_name || 'Kit'}</span>
+                        <span className="font-bold text-white">{money(total)}</span>
+                      </div>
+                      <div className="pl-5 border-l-2 border-teal-800 ml-3 py-1 space-y-1">
+                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.item}{m.supplier ? ` @ ${m.supplier}` : ''} — {money(m.amount)}</p>)}
+                      </div>
+                    </div>
+                  )
+                }
+                return <p key={i}>{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(e.amount)}</p>
+              }) })()}
             </div>
           </div>
         )}
