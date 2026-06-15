@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { carLabel } from '@/lib/carData'
@@ -10,10 +11,12 @@ import { carLabel } from '@/lib/carData'
 // pack is a finished template offered for import on the new-quote screen; a DRAFT
 // is still being built and is editable.
 export default function PacksPage() {
+  const router = useRouter()
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'ALL' | 'DRAFT' | 'CLOSED'>('ALL')
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -23,6 +26,19 @@ export default function PacksPage() {
       .order('created_at', { ascending: false })
     setRows(data || [])
     setLoading(false)
+  }
+
+  // Copy a pack's whole content into a brand-new DRAFT and open it in the editor,
+  // so it can be the starting point for a new package. Cars/totals/parts/services/
+  // expenses/notes all carry over; the copy is always DRAFT regardless of the source.
+  async function duplicatePack(p: any) {
+    if (duplicatingId) return
+    setDuplicatingId(p.id)
+    const { id, created_at, updated_at, ...rest } = p
+    const row = { ...rest, name: `${p.name || 'Pack'} (copy)`, status: 'DRAFT' }
+    const { data, error } = await supabase.from('packs').insert([row]).select('id').single()
+    if (error || !data) { alert(error?.message || 'Could not duplicate the package.'); setDuplicatingId(null); return }
+    router.push(`/packs/edit/${data.id}`)
   }
 
   async function removePack(id: string) {
@@ -82,6 +98,7 @@ export default function PacksPage() {
                   <p className="text-lg text-gray-400">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
+                  <button onClick={() => duplicatePack(p)} disabled={duplicatingId === p.id} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-black px-5 py-3 rounded-2xl font-bold">{duplicatingId === p.id ? 'DUPLICATING…' : '⧉ DUPLICATE'}</button>
                   <Link href={`/packs/${p.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                   <Link href={`/packs/edit/${p.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                   <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
