@@ -282,24 +282,36 @@ export default function NewInvoicePage() {
     if (serviceRows.length === 0) serviceRows = [{ invoice_id: invoiceId, description: FULL_PROJECT_LABOR, price: 0 }]
     await supabase.from('invoice_services').insert(serviceRows)
 
-    const expenseRows = (pack.expenses || []).map((e: any) => ({
-      invoice_id: invoiceId,
-      expense_date: null,
-      supplier: e.supplier || null,
-      item: e.item,
-      price: Number(e.amount) || 0,
-      tax: Number(e.tax) || 0,
-      extra: Number(e.extra) || 0,
-      quantity: Number(e.quantity) || 1,
-      item_discount: Number(e.item_discount) || 0,
-      payment_date: null,
-      receipt_url: null,
-      // Carry the template's export status so already-exported expenses don't
-      // re-import into ITEMS (which would duplicate items already copied in).
-      export_status: e.export_status || 'FRESH',
-      kit_group: e.kit_group || null,
-      kit_name: e.kit_name || null,
-    }))
+    // Pack expenses group by kit_group (text); invoice expenses group by
+    // purchase_group (uuid). Map each pack kit to a fresh uuid so kits land as
+    // grouped expenses (matching how parts carry kit_group through).
+    const expGroupMap = new Map<string, string>()
+    const expenseRows = (pack.expenses || []).map((e: any) => {
+      let purchaseGroup: string | null = null
+      if (e.kit_group) {
+        if (!expGroupMap.has(e.kit_group)) expGroupMap.set(e.kit_group, crypto.randomUUID())
+        purchaseGroup = expGroupMap.get(e.kit_group)!
+      }
+      return {
+        invoice_id: invoiceId,
+        expense_date: null,
+        supplier: e.supplier || null,
+        item: e.item,
+        price: Number(e.amount) || 0,
+        tax: Number(e.tax) || 0,
+        extra: Number(e.extra) || 0,
+        quantity: Number(e.quantity) || 1,
+        item_discount: Number(e.item_discount) || 0,
+        payment_date: null,
+        receipt_url: null,
+        // Carry the template's export status so already-exported expenses don't
+        // re-import into ITEMS (which would duplicate items already copied in).
+        export_status: e.export_status || 'FRESH',
+        purchase_group: purchaseGroup,
+        kit_group: e.kit_group || null,
+        kit_name: e.kit_name || null,
+      }
+    })
     if (expenseRows.length > 0) await supabase.from('invoice_expenses').insert(expenseRows)
 
     const noteRows = (pack.notes || []).map((n: any) => ({ invoice_id: invoiceId, note: n.note }))
