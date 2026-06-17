@@ -417,8 +417,8 @@ export function getAvailableColors(year: number, brand: string, model: string, v
 export const carData: Record<string, Record<string, Record<string, string[]>>> = {
   MOPAR: {
     DODGE: {
-      CHARGER: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'Base 5.2 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI', '500 6.3 V8', 'Daytona 6.6 V8', 'Daytona 7.0 V8 HEMI', 'R/T 7.2 V8', 'SRT 392 6.4'],
-      CHALLENGER: ['R/T 5.7', 'R/T ScatPack 6.4', 'R/T ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT Demon 170 6.2', 'SRT 392 6.4', 'SRT Demon 6.2', 'SRT HellCat RedEye SuperStock 6.2'],
+      CHARGER: ['Base 5.2 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI', '500 6.3 V8', 'Daytona 6.6 V8', 'Daytona 7.0 V8 HEMI', 'R/T 7.2 V8', 'R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2', 'ScatPack WideBody 6.4', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT HellCat WideBody 6.2'],
+      CHALLENGER: ['R/T 5.7', 'R/T ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT Demon 6.2', 'R/T ScatPack WideBody 6.4', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT HellCat RedEye SuperStock 6.2', 'SRT Demon 170 6.2'],
       VIPER: ['RT/10 8.0 V10'],
       DURANGO: ['SRT HellCat 6.2'],
     },
@@ -428,14 +428,14 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   },
   GM: {
     CHEVROLET: {
-      CAMARO: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0'],
-      CORVETTE: ['Base 6.0', 'Base 6.2', 'Stingray 6.2', 'Grand Sport 6.2', 'Z06 7.0', 'Z06 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 6.2 SC', 'ZR1 6.2', 'ZR1 5.5TT'],
+      CAMARO: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0', 'ZL1 6.2', 'ZL1 1LE 6.2', 'LT1 6.2'],
+      CORVETTE: ['Base 6.0', 'Z06 7.0', 'Base 6.2', 'ZR1 6.2 SC', 'Grand Sport 6.2', 'Stingray 6.2', 'Z06 6.2', 'ZR1 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
     },
   },
   FORD: {
     FORD: {
       F150: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
-      MUSTANG: ['GT 5.0', 'Bullitt 5.0', 'Mach 1 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Shelby GT500 5.2 SC', 'Dark Horse 5.0', 'Dark Horse SC 5.2 SC', 'GTD 5.2 SC'],
+      MUSTANG: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
     },
   },
 }
