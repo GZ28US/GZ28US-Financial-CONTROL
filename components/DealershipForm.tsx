@@ -8,9 +8,10 @@ import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 
 // A DEALERSHIP supplier — a vendor GZ28 holds a dealer contract with. Stored on the
 // same `suppliers` table (is_dealership=true) so it still feeds scan-matching and
-// invoice discounts, plus dealer-specific fields. Discount is always VARIABLE
-// (entered per item at purchase). Credentials are NOT stored — website URL only;
-// the password lives in your password manager.
+// invoice discounts, plus dealer-specific fields. Discount defaults to VARIABLE
+// (entered per item / averaged from hunts); switch to FIXED to enter a flat %.
+// Credentials are NOT stored — website URL only; the password lives in your
+// password manager.
 
 export type DealershipData = {
   name: string
@@ -22,9 +23,12 @@ export type DealershipData = {
   ordering_method: string | null
   account_number: number | null
   discount_code: string | null
+  discount_type: string | null
+  discount: number | null
 }
 
 function pad3(n: number | null) { return n != null ? String(n).padStart(3, '0') : '—' }
+function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 
 const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 
@@ -39,6 +43,9 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
   const [email, setEmail] = useState(initial?.email || '')
   const [orderingMethod, setOrderingMethod] = useState(initial?.ordering_method || '')
   const [discountCode, setDiscountCode] = useState(initial?.discount_code || '')
+  // New dealers default to VARIABLE; switch to FIXED to enter a flat %.
+  const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>(initial?.discount_type === 'FIXED' ? 'FIXED' : 'VARIABLE')
+  const [discount, setDiscount] = useState(initial?.discount != null ? String(initial.discount) : '')
   const [accountNumber, setAccountNumber] = useState<number | null>(initial?.account_number ?? null)
   const [saving, setSaving] = useState(false)
 
@@ -59,8 +66,8 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       name: name.trim(),
       aliases: aliases.trim() || null,
       is_dealership: true,
-      discount_type: 'VARIABLE',
-      discount: 0,
+      discount_type: discountType,
+      discount: discountType === 'FIXED' ? (discount ? parseFloat(discount) : 0) : 0,
       website: website.trim() || null,
       seller: seller.trim() || null,
       phone: phone.trim() || null,
@@ -104,10 +111,18 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
 
       <div>
         <label className="block mb-2 text-lg font-bold">DISCOUNT</label>
-        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-lg text-gray-300">
-          <span className="px-3 py-1 rounded-full text-sm font-bold bg-yellow-600 text-black mr-3">VARIABLE</span>
-          Entered per item on each purchase from this dealership.
+        <div className="flex gap-3 mb-3">
+          <button type="button" onClick={() => setDiscountType('VARIABLE')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'VARIABLE' ? 'bg-yellow-600 text-black' : 'bg-gray-800 text-gray-400'}`}>VARIABLE</button>
+          <button type="button" onClick={() => setDiscountType('FIXED')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'FIXED' ? 'bg-yellow-600 text-black' : 'bg-gray-800 text-gray-400'}`}>FIXED %</button>
         </div>
+        {discountType === 'FIXED' ? (
+          <div className="relative">
+            <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
+            <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+          </div>
+        ) : (
+          <p className="text-gray-400 text-base">Entered per item / averaged from hunts. A hunt that finds a different % keeps this VARIABLE.</p>
+        )}
       </div>
 
       <div className="border-t border-gray-800 pt-5">

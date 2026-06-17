@@ -19,13 +19,33 @@ type Supplier = {
 function pad3(n: number | null) { return n != null ? String(n).padStart(3, '0') : '—' }
 // Ensure an external URL has a protocol so the link opens correctly.
 function withProtocol(url: string) { return /^https?:\/\//i.test(url) ? url : `https://${url}` }
+const normName = (s: unknown) => String(s ?? '').trim().toLowerCase()
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Per-supplier average HUNT discount % (a VARIABLE supplier shows this instead
+  // of a flat rate — see the hunt rules).
+  const [huntAvg, setHuntAvg] = useState<Record<string, { avg: number; count: number }>>({})
 
-  useEffect(() => { loadSuppliers() }, [])
+  useEffect(() => { loadSuppliers(); loadHuntAverages() }, [])
+
+  async function loadHuntAverages() {
+    const { data } = await supabase.from('parts_database')
+      .select('supplier, dealer_supplier, part_discount').eq('source_type', 'HUNT')
+    const agg: Record<string, { sum: number; count: number }> = {}
+    for (const p of data || []) {
+      const key = normName((p as any).dealer_supplier || (p as any).supplier)
+      const d = Number((p as any).part_discount)
+      if (!key || !Number.isFinite(d)) continue
+      agg[key] = agg[key] || { sum: 0, count: 0 }
+      agg[key].sum += d; agg[key].count++
+    }
+    const out: Record<string, { avg: number; count: number }> = {}
+    for (const k in agg) out[k] = { avg: agg[k].sum / agg[k].count, count: agg[k].count }
+    setHuntAvg(out)
+  }
 
   async function loadSuppliers() {
     const { data } = await supabase
@@ -87,7 +107,9 @@ export default function SuppliersPage() {
                   <h2 className="text-2xl font-bold">{supplier.name}</h2>
                   {isDealer && <span className="px-3 py-1 rounded-full text-sm font-bold bg-yellow-600 text-black">DEALERSHIP · D-{pad3(supplier.account_number)}</span>}
                 </div>
-                <p className="text-lg text-gray-400">Discount: {supplier.discount_type === 'VARIABLE' ? 'VARIABLE (per item)' : `${supplier.discount || 0}%`}</p>
+                <p className="text-lg text-gray-400">Discount: {supplier.discount_type === 'VARIABLE'
+                  ? (() => { const hv = huntAvg[normName(supplier.name)]; return hv ? `VARIABLE · avg ${hv.avg.toFixed(1)}% (${hv.count} hunt${hv.count > 1 ? 's' : ''})` : 'VARIABLE (per item)' })()
+                  : `${supplier.discount || 0}%`}</p>
                 {isDealer && supplier.website && (
                   <a href={withProtocol(supplier.website)} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-lg break-all">{supplier.website}</a>
                 )}
