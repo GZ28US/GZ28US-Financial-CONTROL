@@ -886,7 +886,7 @@ export default function EditInvoicePage() {
     // Only FRESH items import; each imported item flips to EXPORTED.
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string }>()
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string; payment_date: string | null }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (SKIP_WORDS.test(e.item)) return
@@ -895,24 +895,32 @@ export default function EditInvoicePage() {
       if (!desc) return
       const amount = parseFloat(e.amount) || 0
       const qty = parseFloat(e.quantity) || 1
+      const tax = parseFloat(e.tax) || 0
+      const extra = parseFloat(e.extra) || 0
       // Sell-side base = the part's RETAIL (map_price + freight) matched by part number
       // in the Parts DB, as enrolled at hunt/scan/manual. If the part isn't known, fall
       // back to grossing the cost up to market by the supplier/item discount.
       const pn = (e.part_number || '').trim().toLowerCase()
       const mapFinal = pn ? (mapByPN.get(pn) || 0) : 0
-      let unitBase: number
+      let marketBase: number
       if (mapFinal > 0) {
-        unitBase = mapFinal
+        marketBase = mapFinal
       } else {
         const info = supplierInfo(e.supplier)
         const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
         const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
-        unitBase = amount / discFactor
+        marketBase = amount / discFactor
       }
+      // Tax and extras (shipping/handling) are real costs we paid — fold them into the
+      // per-unit base so they ride into ITEMS and the client repays them. The purchase
+      // tax is a cost (separate from the invoice's own Florida sales tax line).
+      const unitBase = qty > 0 ? (marketBase * qty + tax + extra) / qty : marketBase
+      // Carry the purchase's PAID status: a part imported from a paid expense is paid.
+      const paid = isValidDate(e.payment_date || '') ? (e.payment_date as string) : null
       const key = `${e.kit_name ? (e.purchase_group || '') : ''}|${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
-      if (existing) existing.quantity += qty
-      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_name ? e.purchase_group : undefined, kit_name: e.kit_name, source_item: desc })
+      if (existing) { existing.quantity += qty; if (!existing.payment_date && paid) existing.payment_date = paid }
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_name ? e.purchase_group : undefined, kit_name: e.kit_name, source_item: desc, payment_date: paid })
       importedIndices.push(idx)
     })
 
@@ -928,6 +936,7 @@ export default function EditInvoicePage() {
         kit_group: src.kit_group,
         kit_name: src.kit_name,
         source_item: src.source_item,
+        payment_date: src.payment_date,
       })
     })
     setParts(prev => [...prev, ...toAdd])
