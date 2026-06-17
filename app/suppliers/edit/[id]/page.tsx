@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
@@ -15,6 +16,7 @@ export default function EditSupplierPage() {
 
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')
+  const [origName, setOrigName] = useState('')
   const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>('FIXED')
   const [discount, setDiscount] = useState('')
   const [aliases, setAliases] = useState('')
@@ -28,6 +30,7 @@ export default function EditSupplierPage() {
     const { data, error } = await supabase.from('suppliers').select('*').eq('id', supplierId).single()
     if (error || !data) { alert('Supplier not found'); router.push('/suppliers'); return }
     setName(data.name || '')
+    setOrigName(data.name || '')
     setDiscountType(data.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED')
     setDiscount(data.discount != null ? String(data.discount) : '')
     setAliases(data.aliases || '')
@@ -37,14 +40,16 @@ export default function EditSupplierPage() {
   async function save() {
     if (!name.trim()) { alert('Please enter a supplier name'); return }
     setSaving(true)
-    const { error } = await supabase.from('suppliers').update({
+    const row = {
       name: name.trim(),
       discount_type: discountType,
       discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
       aliases: aliases.trim() || null,
       updated_at: new Date().toISOString(),
-    }).eq('id', supplierId)
+    }
+    const { error } = await supabase.from('suppliers').update(row).eq('id', supplierId)
     if (error) { alert(error.message); setSaving(false); return }
+    void mirrorUpsertSupplier(row, origName)
     router.push('/suppliers')
   }
 

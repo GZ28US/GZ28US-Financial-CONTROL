@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { mirrorDeleteSupplier } from '@/lib/suppliersMirror'
 
 type Supplier = {
   id: string
@@ -37,8 +38,10 @@ export default function SuppliersPage() {
   }
 
   async function removeSupplier(id: string) {
+    const name = suppliers.find(s => s.id === id)?.name || ''
     const { error } = await supabase.from('suppliers').delete().eq('id', id)
     if (error) { alert(error.message); return }
+    void mirrorDeleteSupplier(name)
     setConfirmId(null)
     loadSuppliers()
   }

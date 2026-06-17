@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 
 // A DEALERSHIP supplier — a vendor GZ28 holds a dealer contract with. Stored on the
 // same `suppliers` table (is_dealership=true) so it still feeds scan-matching and
@@ -69,6 +70,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       ? await supabase.from('suppliers').update(row).eq('id', supplierId)
       : await supabase.from('suppliers').insert([row])
     if (res.error) { alert(res.error.message); setSaving(false); return }
+    void mirrorUpsertSupplier(row, initial?.name)
     router.push('/suppliers')
   }
 

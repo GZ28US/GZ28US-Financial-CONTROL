@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
@@ -21,14 +22,16 @@ export default function NewSupplierPage() {
   async function save() {
     if (!name.trim()) { alert('Please enter a supplier name'); return }
     setSaving(true)
-    const { error } = await supabase.from('suppliers').insert([{
+    const row = {
       name: name.trim(),
       discount_type: discountType,
       discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
       aliases: aliases.trim() || null,
       updated_at: new Date().toISOString(),
-    }])
+    }
+    const { error } = await supabase.from('suppliers').insert([row])
     if (error) { alert(error.message); setSaving(false); return }
+    void mirrorUpsertSupplier(row)
     router.push('/suppliers')
   }
 

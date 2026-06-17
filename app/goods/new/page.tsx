@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
 
 type Expense = {
@@ -101,6 +102,7 @@ export default function NewGoodPage() {
   async function ensureSupplier(name: string) {
     if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
+    void mirrorEnsureSupplier(name.trim())
     setSuppliers(prev => [...prev, name.trim()].sort())
   }
 
