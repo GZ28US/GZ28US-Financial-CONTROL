@@ -219,7 +219,7 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
@@ -552,11 +552,15 @@ export default function EditInvoicePage() {
       const parsed = JSON.parse(clean)
 
       const supplier = String(parsed.supplier || '').trim()
-      const date = String(parsed.date || '')
+      const paid = parsed.paid !== false
+      const rawDate = String(parsed.date || '')
+      // A paid receipt with no readable date is still paid — default it to today so
+      // the expense enrolls as PAID (the user can adjust the date if needed).
+      const date = (paid && !isValidDate(rawDate)) ? todayStr() : rawDate
       const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
-      const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
+      const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl, paid })
 
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
@@ -690,7 +694,7 @@ export default function EditInvoicePage() {
       tax: item.tax || '0',
       extra: item.extra || '0',
       quantity: item.quantity || '1',
-      payment_date: scannedPurchase.date,
+      payment_date: scannedPurchase.paid ? scannedPurchase.date : '',
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
       export_status: 'FRESH',

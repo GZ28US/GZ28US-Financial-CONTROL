@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
 {
   "supplier": "store/supplier name",
   "date": "YYYY-MM-DD format, or empty string if not found",
+  "paid": true or false boolean — see rule 11,
   "grand_total": "invoice grand total as number string like 291.13",
   "tax": "total sales tax as a number string like 17.77, or 0 if there is no tax",
   "extras": [
@@ -41,7 +42,8 @@ Rules:
 7. grand_total: the final total of the invoice.
 8. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
 9. part_number: the manufacturer part number, SKU, MPN, or item/catalog number printed for that line item (NOT the quantity or price). Use it as the product's identifying code. Empty string if none is shown.
-10. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+10. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.
+11. paid: a boolean. true when the document shows the purchase is already paid/charged — a receipt, a paid invoice, a "PAID" mark, an order or payment confirmation, or a balance due of 0. false ONLY when it is clearly an unpaid quote/estimate or shows an outstanding balance still due. When unsure, use true (a scanned purchase receipt is normally already paid).`
 
     const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -248,6 +250,7 @@ Rules:
         text: JSON.stringify({
           supplier: parsed.supplier || '',
           date: parsed.date || '',
+          paid: parsed.paid !== false,
           items: processedItems,
         })
       }]
