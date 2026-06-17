@@ -429,7 +429,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   GM: {
     CHEVROLET: {
       CAMARO: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
-      CORVETTE: ['Stingray 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
+      CORVETTE: ['Base 6.0', 'Base 6.2', 'Stingray 6.2', 'Grand Sport 6.2', 'Z06 7.0', 'Z06 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 6.2 SC', 'ZR1 6.2', 'ZR1 5.5TT'],
     },
   },
   FORD: {
