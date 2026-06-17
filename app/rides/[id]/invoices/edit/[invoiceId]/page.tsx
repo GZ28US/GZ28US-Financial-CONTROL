@@ -257,6 +257,9 @@ export default function EditInvoicePage() {
   // Parts data bank: alias map (item -> alias) for IMPORT INTUITIVE PARTS, and
   // the IMPORT FROM DATABASE picker modal.
   const [aliasMap, setAliasMap] = useState<Map<string, string>>(new Map())
+  // item (lowercased) -> manufacturer part number, for the SHOW PART NUMBERS toggle.
+  const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
+  const [showPartNumbers, setShowPartNumbers] = useState(false)
   // part_number -> RETAIL FINAL (map_price + freight), so IMPORT FROM EXPENSES prices
   // items at the part's enrolled RETAIL instead of grossing the cost up by discount.
   const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
@@ -295,6 +298,7 @@ export default function EditInvoicePage() {
     setService(data.service || '')
     setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
     setLiveStatus(data.live_status === 'CLOSED' ? 'CLOSED' : data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
+    setShowPartNumbers(!!data.show_part_numbers)
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
@@ -385,8 +389,10 @@ export default function EditInvoicePage() {
     const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
+    const pm = new Map<string, string>()
     for (const d of dbParts || []) {
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
+      if (d.part_number) pm.set((d.item || '').trim().toLowerCase(), String(d.part_number))
       const pn = (d.part_number || '').trim().toLowerCase()
       // RETAIL = map_price + freight (no tax), as enrolled at hunt/scan/manual.
       const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
@@ -394,6 +400,7 @@ export default function EditInvoicePage() {
     }
     setAliasMap(am)
     setMapByPN(mp)
+    setPnByItem(pm)
 
     setLoading(false)
   }
@@ -1003,6 +1010,16 @@ export default function EditInvoicePage() {
   function serviceDisplayName(desc: string) { return isClient && desc === FULL_PROJECT_LABOR ? 'HANDLING' : desc }
   // The parts-database alias (if any) for an expense item, shown next to its name.
   function aliasFor(item: string): string { return aliasMap.get((item || '').trim().toLowerCase()) || '' }
+  // Manufacturer part number for a part, matched from the parts DB by its source item
+  // (the item it was imported from), else its description.
+  function pnFor(part: Part): string { return pnByItem.get((part.source_item || part.description || '').trim().toLowerCase()) || '' }
+  // SHOW PART NUMBERS toggle — persisted on the invoice so the VIEW + PRINT honor it.
+  async function toggleShowPartNumbers() {
+    const next = !showPartNumbers
+    setShowPartNumbers(next)
+    const { error } = await supabase.from('invoices').update({ show_part_numbers: next }).eq('id', invoiceId)
+    if (error) alert('Shown here, but to carry it to the VIEW/PRINT pages run this once:\nALTER TABLE invoices ADD COLUMN IF NOT EXISTS show_part_numbers boolean DEFAULT false;')
+  }
 
   async function uploadReceiptsToEditing(files: FileList) {
     const urls: string[] = [...editingExpense.receipt_urls]
@@ -2526,6 +2543,7 @@ export default function EditInvoicePage() {
             <div className="flex gap-3 items-center flex-wrap">
               <button onClick={addPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD ITEM</button>
               <button onClick={importIntuitiveParts} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold text-lg">⬆ IMPORT INTUITIVE PARTS</button>
+              <button onClick={toggleShowPartNumbers} className={`${showPartNumbers ? 'bg-teal-700 hover:bg-teal-600' : 'bg-gray-600 hover:bg-gray-500'} px-5 py-3 rounded-2xl font-bold text-lg`}>🔢 {showPartNumbers ? 'HIDE' : 'SHOW'} PART NUMBERS</button>
               <div className="flex items-center gap-2">
                 <span className="text-gray-400 font-bold text-sm">MARGIN</span>
                 <div className="relative w-24">
@@ -2579,6 +2597,7 @@ export default function EditInvoicePage() {
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${(isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(isQuote || isValidDate(part.payment_date || '')) ? '' : ' — PENDING'}</p>
+                          {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
                           {!isQuote && <p className="text-sm text-gray-500">{isValidDate(part.payment_date || '') ? `Paid: ${formatDate(part.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>

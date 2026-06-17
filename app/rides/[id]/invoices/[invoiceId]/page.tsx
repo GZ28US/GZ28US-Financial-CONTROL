@@ -21,6 +21,7 @@ type Invoice = {
   global_discount: number | null
   feed_status: string | null
   live_status: string | null
+  show_part_numbers: boolean | null
   fl_tax_expense_date: string | null
   is_quote: boolean | null
 }
@@ -38,7 +39,7 @@ type Client = {
   preferred_message_method: string | null
 }
 
-type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null }
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; description: string | null; paid_at: string | null }
 type Note = { id: string; note: string }
@@ -110,6 +111,8 @@ export default function ViewInvoicePage() {
   const [ride, setRide] = useState<any>(null)
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [parts, setParts] = useState<Part[]>([])
+  // item (lowercased) -> manufacturer part number, for the SHOW PART NUMBERS display.
+  const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
   const [services, setServices] = useState<Service[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [notes, setNotes] = useState<Note[]>([])
@@ -126,6 +129,16 @@ export default function ViewInvoicePage() {
   const printPageRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { loadAll() }, [])
+
+  // Load part numbers from the parts DB (only used when SHOW PART NUMBERS is on).
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('parts_database').select('item, part_number')
+      const pm = new Map<string, string>()
+      for (const d of data || []) { if (d.part_number) pm.set((d.item || '').trim().toLowerCase(), String(d.part_number)) }
+      setPnByItem(pm)
+    })()
+  }, [])
 
   async function loadAll() {
     if (isClient) {
@@ -366,6 +379,8 @@ export default function ViewInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Invoice not found.</p></main>
   )
 
+  const showPartNumbers = !!invoice.show_part_numbers
+  const pnFor = (p: { source_item?: string | null; description: string }) => pnByItem.get(((p.source_item || p.description) || '').trim().toLowerCase()) || ''
   const partsSubTotal = parts.reduce((s, p) => s + p.unit_price * p.quantity, 0)
   const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
   const partsTotal = partsSubTotal + floridaTaxesAmount
@@ -436,23 +451,23 @@ export default function ViewInvoicePage() {
         .pi-sec-title { background: #111; color: white; font-weight: 700; font-size: 8px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; }
         .pi-table { width: 100%; border-collapse: collapse; font-size: 8px; }
         .pi-table thead tr { background: #e0e0e0; }
-        .pi-table thead th { padding: 2px 6px; text-align: left; font-weight: 700; font-size: 7px; text-transform: uppercase; border: 0.5px solid #bbb; }
+        .pi-table thead th { padding: 4px 6px; text-align: left; font-weight: 700; font-size: 7px; text-transform: uppercase; border: 0.5px solid #bbb; }
         .pi-table thead th.r { text-align: right; }
-        .pi-table tbody td { padding: 2px 6px; border-left: 0.5px solid #e8e8e8; border-right: 0.5px solid #e8e8e8; border-bottom: 0.5px solid #ececec; }
+        .pi-table tbody td { padding: 4px 6px; vertical-align: top; border-left: 0.5px solid #e8e8e8; border-right: 0.5px solid #e8e8e8; border-bottom: 0.5px solid #ececec; }
         .pi-table tbody tr:nth-child(even) td { background: #fafafa; }
         .pi-table td.r { text-align: right; }
-        .pi-subtotal td { background: #efefef !important; font-weight: 700; padding: 2px 6px; border-top: 1px solid #bbb !important; }
-        .pi-taxes td { background: #cc0000 !important; color: white !important; font-weight: 700; padding: 2px 6px; }
-        .pi-ptotal td { background: #111 !important; color: white !important; font-weight: 900; font-size: 9px; padding: 3px 6px; }
-        .pi-stotal td { background: #111 !important; color: white !important; font-weight: 900; font-size: 9px; padding: 3px 6px; }
+        .pi-subtotal td { background: #efefef !important; font-weight: 700; padding: 4px 6px; border-top: 1px solid #bbb !important; }
+        .pi-taxes td { background: #cc0000 !important; color: white !important; font-weight: 700; padding: 4px 6px; }
+        .pi-ptotal td { background: #111 !important; color: white !important; font-weight: 900; font-size: 9px; padding: 4px 6px; }
+        .pi-stotal td { background: #111 !important; color: white !important; font-weight: 900; font-size: 9px; padding: 4px 6px; }
         .pi-totals-wrap { display: flex; justify-content: flex-end; margin-bottom: 7px; }
         .pi-totals-tbl { width: 250px; border-collapse: collapse; font-size: 8px; }
-        .pi-totals-tbl td { padding: 2px 6px; }
+        .pi-totals-tbl td { padding: 4px 6px; }
         .pi-totals-tbl .r { text-align: right; }
         .pi-psrow td { background: #f0f0f0; font-weight: 700; }
         .pi-discrow td { background: #f0f0f0; font-weight: 700; color: #cc0000; }
         .pi-grandrow td { background: #1a1a2e !important; color: #f0c040 !important; font-weight: 900; font-size: 11px; padding: 5px 6px; border-top: 2px solid #f0c040 !important; }
-        .pi-pay-subtotal td { background: #efefef !important; font-weight: 700; padding: 2px 6px; border-top: 1px solid #bbb !important; }
+        .pi-pay-subtotal td { background: #efefef !important; font-weight: 700; padding: 4px 6px; border-top: 1px solid #bbb !important; }
         .pi-balance td { background: #1a1a2e !important; color: #4ade80 !important; font-weight: 900; font-size: 10px; padding: 4px 6px; }
         .pi-notes { border: 0.5px solid #ccc; border-radius: 3px; padding: 6px 12px; margin-bottom: 8px; text-align: center; }
         .pi-notes-title { font-weight: 700; text-transform: uppercase; font-size: 7px; letter-spacing: 0.5px; color: #888; margin-bottom: 4px; }
@@ -518,7 +533,7 @@ export default function ViewInvoicePage() {
                 <tbody>
                   {parts.map(p => (
                     <tr key={p.id}>
-                      <td>{p.description}</td>
+                      <td>{p.description}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
                       <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price)}</td>
                       <td className="r">{p.quantity}</td>
                       <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price * p.quantity)}</td>
@@ -803,6 +818,7 @@ export default function ViewInvoicePage() {
                               <div key={m.id} className="flex items-center justify-between gap-4 px-4 py-2">
                                 <div className="flex-1 min-w-0">
                                   <p className={`text-base truncate ${(invoice.is_quote || mPaid) ? '' : 'text-yellow-400'}`} title={m.description}>{m.description}{(invoice.is_quote || mPaid) ? '' : ' — PENDING'}</p>
+                                  {showPartNumbers && pnFor(m) && <p className="text-xs text-gray-500">PN: {pnFor(m)}</p>}
                                   <p className="text-sm text-gray-400">{m.unit_price === 0 ? 'COURTESY' : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
                                   {!invoice.is_quote && <p className="text-sm text-gray-500">{mPaid ? `Paid: ${formatDate(m.payment_date)}` : 'Not paid yet'}</p>}
                                 </div>
@@ -818,6 +834,7 @@ export default function ViewInvoicePage() {
                   <div key={part.id} className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700">
                     <div className="flex-1 min-w-0">
                       <p className={`text-base font-bold truncate ${(invoice.is_quote || partPaid) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(invoice.is_quote || partPaid) ? '' : ' — PENDING'}</p>
+                      {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                       <p className="text-sm text-gray-400">
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
