@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { updateSupplier } from '@/lib/supplierSave'
 import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
 
@@ -50,7 +51,7 @@ export default function EditSupplierPage() {
       aliases: aliases.trim() || null,
       updated_at: new Date().toISOString(),
     }
-    const { error } = await supabase.from('suppliers').update(row).eq('id', supplierId)
+    const { error } = await updateSupplier(supplierId, row)
     if (error) { alert(error.message); setSaving(false); return }
     void mirrorUpsertSupplier(row, origName)
     router.push('/suppliers')

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { insertSupplier, updateSupplier } from '@/lib/supplierSave'
 import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 
 // A DEALERSHIP supplier — a vendor GZ28 holds a dealer contract with. Stored on the
@@ -70,8 +71,8 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       updated_at: new Date().toISOString(),
     }
     const res = supplierId
-      ? await supabase.from('suppliers').update(row).eq('id', supplierId)
-      : await supabase.from('suppliers').insert([row])
+      ? await updateSupplier(supplierId, row)
+      : await insertSupplier(row)
     if (res.error) { alert(res.error.message); setSaving(false); return }
     void mirrorUpsertSupplier(row, initial?.name)
     router.push('/suppliers')

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
-import { supabase } from '@/lib/supabase'
+import { insertSupplier } from '@/lib/supplierSave'
 import { mirrorUpsertSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
 
@@ -31,7 +31,7 @@ export default function NewSupplierPage() {
       aliases: aliases.trim() || null,
       updated_at: new Date().toISOString(),
     }
-    const { error } = await supabase.from('suppliers').insert([row])
+    const { error } = await insertSupplier(row)
     if (error) { alert(error.message); setSaving(false); return }
     void mirrorUpsertSupplier(row)
     router.push('/suppliers')
