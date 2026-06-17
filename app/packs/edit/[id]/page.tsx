@@ -309,7 +309,9 @@ export default function EditPackPage() {
   const globalDiscountPct = parseFloat(globalDiscount) || 0
   const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  const expensesTotal = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
+  // Florida taxes are a pass-through: collected as revenue (in the grand total) AND
+  // owed as an expense, so they net to zero profit. Count them on the expense side.
+  const expensesTotal = floridaTaxesAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
   const finalProfit = grandTotal - expensesTotal
   const finalProfitPct = expensesTotal > 0 ? (finalProfit / expensesTotal) * 100 : 0
 
@@ -671,6 +673,12 @@ export default function EditPackPage() {
                     </div>
                   )
                 })}
+              </div>
+            )}
+            {floridaTaxesAmount > 0 && (
+              <div className="flex justify-between items-center text-gray-300">
+                <span>Florida State Taxes</span>
+                <span className="font-bold">{formatUSD(floridaTaxesAmount)}</span>
               </div>
             )}
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
