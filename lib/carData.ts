@@ -417,18 +417,18 @@ export function getAvailableColors(year: number, brand: string, model: string, v
 export const carData: Record<string, Record<string, Record<string, string[]>>> = {
   MOPAR: {
     DODGE: {
-      CHARGER: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
-      CHALLENGER: ['R/T 5.7', 'R/T ScatPack 6.4', 'R/T ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT Demon 170 6.2'],
+      CHARGER: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'Base 5.2 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI', '500 6.3 V8', 'Daytona 6.6 V8', 'Daytona 7.0 V8 HEMI', 'R/T 7.2 V8', 'SRT 392 6.4'],
+      CHALLENGER: ['R/T 5.7', 'R/T ScatPack 6.4', 'R/T ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT Demon 170 6.2', 'SRT 392 6.4', 'SRT Demon 6.2', 'SRT HellCat RedEye SuperStock 6.2'],
       VIPER: ['RT/10 8.0 V10'],
       DURANGO: ['SRT HellCat 6.2'],
     },
     RAM: {
-      '1500': ['1500 5.7', '1500 Rebel 5.7'],
+      1500: ['1500 5.7', '1500 Rebel 5.7'],
     },
   },
   GM: {
     CHEVROLET: {
-      CAMARO: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
+      CAMARO: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0'],
       CORVETTE: ['Base 6.0', 'Base 6.2', 'Stingray 6.2', 'Grand Sport 6.2', 'Z06 7.0', 'Z06 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 6.2 SC', 'ZR1 6.2', 'ZR1 5.5TT'],
     },
   },
