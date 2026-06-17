@@ -20,6 +20,7 @@ export type DealershipData = {
   email: string | null
   ordering_method: string | null
   account_number: number | null
+  discount_code: string | null
 }
 
 function pad3(n: number | null) { return n != null ? String(n).padStart(3, '0') : '—' }
@@ -36,6 +37,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
   const [phone, setPhone] = useState(initial?.phone || '')
   const [email, setEmail] = useState(initial?.email || '')
   const [orderingMethod, setOrderingMethod] = useState(initial?.ordering_method || '')
+  const [discountCode, setDiscountCode] = useState(initial?.discount_code || '')
   const [accountNumber, setAccountNumber] = useState<number | null>(initial?.account_number ?? null)
   const [saving, setSaving] = useState(false)
 
@@ -63,6 +65,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       phone: phone.trim() || null,
       email: email.trim() || null,
       ordering_method: orderingMethod || null,
+      discount_code: discountCode.trim() || null,
       account_number: accountNumber,
       updated_at: new Date().toISOString(),
     }
@@ -130,6 +133,12 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
           <option value="PHONE">Phone</option>
           <option value="EMAIL">Email</option>
         </select>
+      </div>
+
+      <div>
+        <label className="block mb-2 text-lg font-bold">DISCOUNT CODE</label>
+        <input value={discountCode} onChange={(e) => setDiscountCode(e.target.value)} className={inputClass} placeholder="e.g. DLR20" />
+        <p className="text-gray-400 text-sm mt-1">Code to enter at checkout to get our dealer price (after logging in with our account). Leave blank if none.</p>
       </div>
 
       <div className="flex items-center gap-6 pt-2">

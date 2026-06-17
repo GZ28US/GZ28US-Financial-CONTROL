@@ -27,6 +27,7 @@ export default function EditDealershipPage() {
       email: row.email || '',
       ordering_method: row.ordering_method || '',
       account_number: row.account_number ?? null,
+      discount_code: row.discount_code || '',
     })
     setLoading(false)
   }

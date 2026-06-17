@@ -35,7 +35,7 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
   const [result, setResult] = useState<HuntResult | null>(null)
   // Our own suppliers, ordered by discount (most → least) so the hunt starts
   // where we get the best price, then falls back to the open web.
-  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string }[]>([])
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; discount_code?: string | null }[]>([])
 
   // Editable cost inputs shown with the result.
   const [mapStr, setMapStr] = useState('')
@@ -46,7 +46,7 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    supabase.from('suppliers').select('name, discount, discount_type')
+    supabase.from('suppliers').select('name, discount, discount_type, discount_code')
       .order('discount', { ascending: false, nullsFirst: false }).order('name')
       .then(({ data }) => setSuppliers((data || []).filter((s: any) => s.name)))
   }, [])
@@ -176,6 +176,7 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
                   <option value="">— none —</option>
                   {suppliers.map((s) => <option key={s.name} value={s.name}>{s.name}{s.discount_type === 'FIXED' && s.discount ? ` (${s.discount}% off)` : ''}</option>)}
                 </select>
+                {(() => { const code = suppliers.find((s) => s.name === dealer)?.discount_code; return code ? <p className="text-amber-400 text-sm mt-1 font-bold">Log in with our account, then apply code <span className="font-mono">{code}</span> at checkout.</p> : null })()}
               </div>
               <div>
                 <label className="block mb-1 text-sm font-bold text-gray-400">OUR COST (dealer net, per unit)</label>

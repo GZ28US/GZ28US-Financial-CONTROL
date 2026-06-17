@@ -14,6 +14,7 @@ export default function NewSupplierPage() {
   const [name, setName] = useState('')
   const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>('FIXED')
   const [discount, setDiscount] = useState('')
+  const [discountCode, setDiscountCode] = useState('')
   const [aliases, setAliases] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -26,6 +27,7 @@ export default function NewSupplierPage() {
       name: name.trim(),
       discount_type: discountType,
       discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
+      discount_code: discountCode.trim() || null,
       aliases: aliases.trim() || null,
       updated_at: new Date().toISOString(),
     }
@@ -67,6 +69,12 @@ export default function NewSupplierPage() {
           ) : (
             <p className="text-gray-400 text-base">Discount is entered per item on each purchase from this supplier.</p>
           )}
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">DISCOUNT CODE</label>
+          <input type="text" value={discountCode} onChange={(e) => setDiscountCode(e.target.value)} className={inputClass} placeholder="e.g. DLR20" />
+          <p className="text-gray-400 text-sm mt-1">Code to enter at checkout to get our dealer price (after logging in with our account). Leave blank if none.</p>
         </div>
       </div>
 
