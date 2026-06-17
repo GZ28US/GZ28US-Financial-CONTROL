@@ -6,7 +6,7 @@ import { enrollOne } from '@/lib/partsDb'
 import { BASE_PATH } from '@/lib/utils'
 
 // HUNT PART — enter a part number, the app searches the web for the part + its MAP
-// and the best place to buy (preferring a dealership supplier). The user confirms
+// and the best place to buy, STARTING FROM OUR SUPPLIERS (most discount first). The user confirms
 // OUR dealer cost (login-gated, can't be auto-scraped) + freight; the app computes
 // the MAP-vs-cost delivered comparison and enrolls the part into the Parts DB.
 
@@ -33,7 +33,9 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
   const [partNumber, setPartNumber] = useState('')
   const [error, setError] = useState('')
   const [result, setResult] = useState<HuntResult | null>(null)
-  const [dealers, setDealers] = useState<string[]>([])
+  // Our own suppliers, ordered by discount (most → least) so the hunt starts
+  // where we get the best price, then falls back to the open web.
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string }[]>([])
 
   // Editable cost inputs shown with the result.
   const [mapStr, setMapStr] = useState('')
@@ -44,8 +46,9 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    supabase.from('suppliers').select('name').eq('is_dealership', true).order('name')
-      .then(({ data }) => setDealers((data || []).map((d: any) => d.name).filter(Boolean)))
+    supabase.from('suppliers').select('name, discount, discount_type')
+      .order('discount', { ascending: false, nullsFirst: false }).order('name')
+      .then(({ data }) => setSuppliers((data || []).filter((s: any) => s.name)))
   }, [])
 
   async function hunt() {
@@ -56,13 +59,13 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
       const res = await fetch(`${BASE_PATH}/api/hunt-part`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partNumber: pn, dealerships: dealers }),
+        body: JSON.stringify({ partNumber: pn, suppliers }),
       })
       const data = await res.json()
       if (data.error) { setError(`${data.error}${data.detail ? ' — ' + data.detail : ''}`); setStep('input'); return }
       setResult(data)
       setMapStr(data.map ? String(data.map) : '')
-      setDealer(data.recommended_dealership || dealers[0] || '')
+      setDealer(data.recommended_dealership || suppliers[0]?.name || '')
       setOurCostStr('')
       setShipStr(''); setHandStr('')
       setStep('result')
@@ -168,10 +171,10 @@ export default function HuntPart({ onClose, onSaved }: { onClose: () => void; on
                 <input value={mapStr} onChange={(e) => setMapStr(e.target.value)} className={inputClass} placeholder="0" />
               </div>
               <div>
-                <label className="block mb-1 text-sm font-bold text-gray-400">DEALERSHIP</label>
+                <label className="block mb-1 text-sm font-bold text-gray-400">SUPPLIER</label>
                 <select value={dealer} onChange={(e) => setDealer(e.target.value)} className={inputClass}>
                   <option value="">— none —</option>
-                  {dealers.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {suppliers.map((s) => <option key={s.name} value={s.name}>{s.name}{s.discount_type === 'FIXED' && s.discount ? ` (${s.discount}% off)` : ''}</option>)}
                 </select>
               </div>
               <div>

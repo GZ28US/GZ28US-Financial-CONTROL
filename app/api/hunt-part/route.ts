@@ -3,27 +3,36 @@ import { NextRequest, NextResponse } from 'next/server'
 // HUNT PART — given a manufacturer part number, use Claude + web search to
 // identify the part and find its MAP (Minimum Advertised Price = the price
 // authorized dealers converge on; what an ordinary buyer pays before tax/ship).
-// Returns the part identity, MAP, the sellers found, and a best-place
-// recommendation that prefers one of the shop's dealership suppliers.
+// The hunt STARTS FROM OUR OWN SUPPLIERS (passed in priority order, most discount
+// first) and only falls back to the open web if none of them carry the part.
+// Returns the part identity, MAP, the sellers found, and a best-place pick.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const partNumber = String(body.partNumber || '').trim()
-    const dealerships: string[] = Array.isArray(body.dealerships) ? body.dealerships : []
+    // Our own suppliers, already ordered by discount (most → least). Back-compat:
+    // accept the legacy `dealerships` (plain names) too.
+    const suppliers: { name: string; discount?: number; discount_type?: string }[] =
+      Array.isArray(body.suppliers) ? body.suppliers
+      : Array.isArray(body.dealerships) ? body.dealerships.map((n: string) => ({ name: n }))
+      : []
 
     if (!partNumber) {
       return NextResponse.json({ error: 'Missing partNumber' }, { status: 400 })
     }
 
-    const dealerLine = dealerships.length
-      ? `The shop holds DEALER accounts with these suppliers: ${dealerships.join(', ')}. If any of them carries this part, set "recommended_dealership" to that exact name and make it the "best_place".`
-      : `The shop has no dealership suppliers on file.`
+    const supplierLine = suppliers.length
+      ? `START FROM OUR OWN SUPPLIERS. The shop buys from these suppliers, listed in PRIORITY ORDER — the most discount (best price for us) first. Check them FROM THE TOP DOWN:
+${suppliers.map((s, i) => `  ${i + 1}. ${s.name}${s.discount_type === 'FIXED' && s.discount ? ` — ${s.discount}% off` : s.discount_type === 'VARIABLE' ? ' — variable/dealer pricing' : ''}`).join('\n')}
+
+First determine whether any of OUR suppliers above carries part "${partNumber}". Recommend buying from the HIGHEST-priority one that carries it and set "recommended_dealership" to that exact name and "best_place" to it. ONLY if none of our suppliers carry it, recommend the best open-web seller and leave "recommended_dealership" empty.`
+      : `The shop has no suppliers on file — recommend the best open-web seller.`
 
     const prompt = `You are a parts buyer for a US auto speed shop in Orlando, Florida. Use web search to identify the part with manufacturer part number "${partNumber}" and determine its MAP (Minimum Advertised Price).
 
 MAP = the price independent authorized dealers converge on (the same recurring advertised price). It is the price an ORDINARY retail buyer pays for the part itself, before shipping and sales tax. Find it by checking several authorized sellers and reporting the converged price.
 
-${dealerLine}
+${supplierLine}
 
 Return ONLY a single raw JSON object, no markdown, no prose:
 {
