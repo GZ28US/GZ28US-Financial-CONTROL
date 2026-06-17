@@ -4,6 +4,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { base64, mediaType, mode } = body
+    // Client passes today's date so the model can resolve year-less dates (e.g.
+    // "Confirmed Jun 17") and never return a future date.
+    const todayISO = (typeof body.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.today)) ? body.today : ''
     // separateExtras: when true (invoice expense scan), tax is returned per-item
     // (split across products) in a `tax` field and every other non-product
     // charge (shipping, handling, insurance, fees) is returned as its own row.
@@ -43,7 +46,8 @@ Rules:
 8. description: keep it concise, max ~80 characters. Trim long part names to the essential identifying text. Do NOT include inch marks (") or other unescaped double quotes inside any JSON string value — write inches as "in" or omit them.
 9. part_number: the manufacturer part number, SKU, MPN, or item/catalog number printed for that line item (NOT the quantity or price). Use it as the product's identifying code. Empty string if none is shown.
 10. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.
-11. paid: a boolean. true when the document shows the purchase is already paid/charged — a receipt, a paid invoice, a "PAID" mark, an order or payment confirmation, or a balance due of 0. false ONLY when it is clearly an unpaid quote/estimate or shows an outstanding balance still due. When unsure, use true (a scanned purchase receipt is normally already paid).`
+11. paid: a boolean. true when the document shows the purchase is already paid, charged, or CONFIRMED — a receipt, a paid invoice, a "PAID" mark, an order/payment confirmation, a "Confirmed" / "Order Confirmed" status, or a balance due of 0. false ONLY when it is clearly an unpaid quote/estimate or shows an outstanding balance still due. When unsure, use true (a scanned purchase receipt is normally already paid).
+12. date: read the order / confirmation / purchase date and return it as YYYY-MM-DD. If the document shows a date without a year (e.g. "Confirmed Jun 17"), infer the year so the date is the most recent one that is NOT in the future${todayISO ? ` relative to today, ${todayISO}` : ''}. Never return a date after today.`
 
     const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {

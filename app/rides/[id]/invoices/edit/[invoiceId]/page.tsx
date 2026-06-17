@@ -543,7 +543,7 @@ export default function EditInvoicePage() {
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true }),
+        body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true, today: todayStr() }),
       })
       const data = await response.json()
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanningPurchase(false); return }
