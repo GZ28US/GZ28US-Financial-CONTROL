@@ -5,7 +5,21 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { formatUSD } from '@/lib/utils'
 import { carLabel } from '@/lib/carData'
+
+// A pack's GRAND TOTAL — same formula as the pack view: parts + Florida tax +
+// services, less the global discount.
+function packGrandTotal(p: any): number {
+  const num = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
+  const parts = Array.isArray(p.parts) ? p.parts : []
+  const services = Array.isArray(p.services) ? p.services : []
+  const partsSub = parts.reduce((s: number, x: any) => s + num(x.unit_price) * num(x.quantity), 0)
+  const flTax = partsSub * (num(p.florida_taxes) / 100)
+  const svc = services.reduce((s: number, x: any) => s + num(x.price), 0)
+  const pas = partsSub + flTax + svc
+  return pas - pas * (num(p.global_discount) / 100)
+}
 
 // Catalog of the performance packages we sell, as reusable templates. A CLOSED
 // pack is a finished template offered for import on the new-quote screen; a DRAFT
@@ -94,6 +108,7 @@ export default function PacksPage() {
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{p.name || '—'}</h2>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
+                    <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">GRAND TOTAL: {formatUSD(packGrandTotal(p))}</span>
                   </div>
                   <p className="text-lg text-gray-400">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
                 </div>
