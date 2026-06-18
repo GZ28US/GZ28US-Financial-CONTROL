@@ -8,16 +8,16 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
 import { carLabel } from '@/lib/carData'
 
-// A pack's GRAND TOTAL — same formula as the pack view: parts + Florida tax +
-// services, less the global discount.
+// A pack's GRAND TOTAL = the QUOTE price: parts + services, less the global
+// discount. Florida tax is EXCLUDED — quotes are sold tax-exclusive (it's added
+// only on the invoice), matching the "Prices Exclude Florida Taxes" report line.
 function packGrandTotal(p: any): number {
   const num = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
   const parts = Array.isArray(p.parts) ? p.parts : []
   const services = Array.isArray(p.services) ? p.services : []
   const partsSub = parts.reduce((s: number, x: any) => s + num(x.unit_price) * num(x.quantity), 0)
-  const flTax = partsSub * (num(p.florida_taxes) / 100)
   const svc = services.reduce((s: number, x: any) => s + num(x.price), 0)
-  const pas = partsSub + flTax + svc
+  const pas = partsSub + svc
   return pas - pas * (num(p.global_discount) / 100)
 }
 
