@@ -296,7 +296,7 @@ export default function ViewInvoicePage() {
 
       const ownerLbl = isClient ? (client?.name || '') : `${projectCode}${projectName ? ` — ${projectName}` : ''}`
       const docNoun = invoice.is_quote ? 'Quote' : 'Invoice'
-      const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*`
+      const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}`
 
       // GZ28US Control App REPORTS — WhatsApp document to the default reports group
       // (no `to` => the API falls back to ULTRAMSG_GROUP_ID). For BOTH, fall through
