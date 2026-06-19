@@ -67,7 +67,10 @@ export default function ViewClientPage() {
     }
     const link = `${window.location.origin}${BASE_PATH}/clients/self/${clientId}`
     const firstName = (client.name || '').split(' ')[0]
-    const body = `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo speed up your service at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
+    // Message in the CLIENT's language: Portuguese for a BRAZIL client, English otherwise.
+    const body = client.country === 'BRAZIL'
+      ? `Oi${firstName ? ` ${firstName}` : ''}! 👋\n\nPara agilizar seu atendimento na *_GZ28 V8 SpeedShop_*, por favor preencha seus dados neste link e toque em *SALVAR*:\n\n${link}\n\nObrigado!`
+      : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo speed up your service at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
     setSending(true)
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
