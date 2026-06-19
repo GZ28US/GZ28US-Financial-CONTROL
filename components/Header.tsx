@@ -48,6 +48,7 @@ const MENU: MenuItem[] = [
       ['/goods', 'GOODS'],
       ['/inputs', 'INPUTS'],
       ['/staff', 'STAFF'],
+      ['/costs/events', 'EVENTS'],
     ],
   },
   {
