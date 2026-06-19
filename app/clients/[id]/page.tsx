@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH, toWaNumber } from '@/lib/utils'
 
 type Client = {
   id: string
@@ -12,6 +13,7 @@ type Client = {
   email: string | null
   instagram: string | null
   phone: string | null
+  cpf: string | null
   address: string | null
   city: string | null
   state: string | null
@@ -47,8 +49,52 @@ export default function ViewClientPage() {
   const [client, setClient] = useState<Client | null>(null)
   const [rides, setRides] = useState<Ride[]>([])
   const [personalInvoices, setPersonalInvoices] = useState<PersonalInvoice[]>([])
+  const [sending, setSending] = useState(false)
+  const [justSent, setJustSent] = useState(false)
 
   useEffect(() => { loadAll() }, [])
+
+  // SEND CLIENT — WhatsApp the client a link to their OWN self-service form
+  // (/clients/self/[id]), so they fill in all their fields and tap SAVE. Sent from
+  // the app's number via /api/whatsapp (per-client `to`, country-aware). The message
+  // carries only this one link — no other links. Mirrors to the reports group too.
+  async function handleSendClient() {
+    if (!client) return
+    const to = toWaNumber(client.phone, client.country)
+    if (!to) {
+      alert('This client has no phone / WhatsApp number on file.\nAdd a number first (EDIT).')
+      return
+    }
+    const link = `${window.location.origin}${BASE_PATH}/clients/self/${clientId}`
+    const firstName = (client.name || '').split(' ')[0]
+    const body = `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo speed up your service at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
+    setSending(true)
+    try {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) {
+        const detail = typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`)
+        alert('Could not send the link:\n' + detail)
+        return
+      }
+      setJustSent(true)
+      setTimeout(() => setJustSent(false), 3000)
+      // Mirror to the REPORTS group (no `to` -> route defaults to the group).
+      fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: `📤 *CLIENT FORM — LINK SENT*\n${client.name || '—'}\nThe system sent the registration link to the client. Awaiting them to fill in their details.` }),
+      }).catch(() => {})
+    } catch (e) {
+      alert('Failed to send: ' + String(e))
+    } finally {
+      setSending(false)
+    }
+  }
 
   async function loadAll() {
     const { data: clientData } = await supabase.from('clients').select('*').eq('id', clientId).single()
@@ -99,6 +145,7 @@ export default function ViewClientPage() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-4xl font-bold">{client.name}</h1>
         <div className="flex gap-3">
+          <button onClick={handleSendClient} disabled={sending || justSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${justSent ? 'bg-green-600' : 'bg-green-700 hover:bg-green-600'}`}>{sending ? 'SENDING…' : justSent ? '✓ SENT' : '📲 SEND CLIENT'}</button>
           <Link href="/clients" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           <Link href={`/clients/edit/${clientId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
         </div>
@@ -111,6 +158,7 @@ export default function ViewClientPage() {
           <label className="block mb-3 text-lg font-bold">CONTACT</label>
           <div className={sectionClass}>
             {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone, client.country)}</span></div>}
+            {client.cpf && <div className={rowClass}><span className={labelClass}>CPF</span><span className="font-bold">{client.cpf}</span></div>}
             {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
             {client.instagram && <div className={rowClass}><span className={labelClass}>INSTAGRAM</span><a href={`https://instagram.com/${client.instagram.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-400 hover:text-blue-300">{client.instagram.startsWith('@') ? client.instagram : `@${client.instagram}`}</a></div>}
             {client.preferred_message_method && <div className={rowClass}><span className={labelClass}>PREFERRED MESSAGE METHOD</span><span className="font-bold">{client.preferred_message_method}</span></div>}

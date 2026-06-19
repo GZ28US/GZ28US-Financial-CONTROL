@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// Every message — internal report or message to a client — ends with this
+// registered signature line. Centralized here so it's guaranteed on EVERY message
+// that goes through this route, no matter which page built it.
+const SIGNATURE = 'Sent by GZ28US Control App®'
+
+// Append the signature as the last line, after stripping the legacy footer some
+// report builders still add, and without double-adding it.
+function withSignature(raw: string): string {
+  const text = (raw || '').replace(/\n*Sent by GZ28(US)? Control App®?\s*$/i, '').trimEnd()
+  if (text.endsWith(SIGNATURE)) return text
+  return text ? `${text}\n\n${SIGNATURE}` : SIGNATURE
+}
+
 // Sends WhatsApp messages through UltraMsg to the reports group.
 // Secrets live in environment variables, never in the code:
 //   ULTRAMSG_INSTANCE  e.g. instance174454
@@ -53,7 +66,7 @@ export async function POST(req: NextRequest) {
 
     const payload = await req.json().catch(() => ({}))
     const to = payload.to || defaultTo
-    const body = typeof payload.body === 'string' ? payload.body : ''
+    const body = withSignature(typeof payload.body === 'string' ? payload.body : '')
     const documentUrl = payload.documentUrl as string | undefined
     const imageUrl = payload.imageUrl as string | undefined
     const filename = (payload.filename as string | undefined) || 'document'

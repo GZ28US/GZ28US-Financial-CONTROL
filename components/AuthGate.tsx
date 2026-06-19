@@ -1,12 +1,19 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+
+// Routes that are PUBLIC by design — no login. The client self-service form
+// (/clients/self/[id]) is sent to clients so they fill in their own info; they
+// are not app users, so it must render outside the auth gate.
+const PUBLIC_PREFIXES = ['/clients/self/']
 
 // Wraps the whole app. When signed out it shows a login screen; when signed in
 // it renders the app. No public sign-up — accounts are created in the Supabase
 // dashboard. No roles yet: any signed-in user has full access.
 export default function AuthGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
   const [status, setStatus] = useState<'loading' | 'in' | 'out'>('loading')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -32,6 +39,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     if (error) setError(error.message)
     setSubmitting(false)
     // onAuthStateChange flips status to 'in' on success.
+  }
+
+  // Public routes skip the gate entirely (e.g. the client self-service form).
+  if (pathname && PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
+    return <>{children}</>
   }
 
   if (status === 'loading') {

@@ -23,3 +23,47 @@ export function clientCode(c: { is_quote?: boolean | null; client_number: number
   const num = c.client_number != null ? pad3(c.client_number) : '—'
   return `${CODE_PREFIX}.${c.is_quote ? 'QT.' : ''}${num}`
 }
+
+// Normalize a stored phone into the digits-only form UltraMsg expects as `to` for
+// an individual WhatsApp chat, BY the client's country (both apps have clients from
+// both countries). Brazil -> +55 (DDD + number; a 10/11-digit "55…" is a DDD, not
+// the country code, so it still gets +55). USA (default) -> +1.
+export function toWaNumber(phone: string | null | undefined, country?: string | null): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (country === 'BRAZIL') {
+    if (digits.startsWith('55') && digits.length >= 12) return digits
+    if (digits.length === 10 || digits.length === 11) return '55' + digits
+    return digits
+  }
+  if (digits.startsWith('1') && digits.length === 11) return digits
+  if (digits.length === 10) return '1' + digits
+  return digits
+}
+
+// Mask a CPF as the user types: 000.000.000-00 (keeps at most 11 digits).
+export function formatCPF(raw: string): string {
+  const d = (raw || '').replace(/\D/g, '').slice(0, 11)
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+}
+
+// Validate a Brazilian CPF (the two check digits). Accepts any punctuation; only
+// the 11 digits matter. Rejects all-equal sequences (000.../111... are invalid).
+export function isValidCPF(raw: string): boolean {
+  const cpf = (raw || '').replace(/\D/g, '')
+  if (cpf.length !== 11) return false
+  if (/^(\d)\1{10}$/.test(cpf)) return false
+  let sum = 0
+  for (let i = 0; i < 9; i++) sum += parseInt(cpf[i], 10) * (10 - i)
+  let d1 = (sum * 10) % 11
+  if (d1 === 10) d1 = 0
+  if (d1 !== parseInt(cpf[9], 10)) return false
+  sum = 0
+  for (let i = 0; i < 10; i++) sum += parseInt(cpf[i], 10) * (11 - i)
+  let d2 = (sum * 10) % 11
+  if (d2 === 10) d2 = 0
+  return d2 === parseInt(cpf[10], 10)
+}

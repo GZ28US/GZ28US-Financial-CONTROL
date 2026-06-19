@@ -18,6 +18,9 @@ function formatUSD(v: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
 }
 
+// Same registered signature appended to every report (see app/api/whatsapp/route.ts).
+const SIGNATURE = 'Sent by GZ28US Control App®'
+
 async function sendWhatsApp(body: string): Promise<{ ok: boolean; detail?: any }> {
   const instance = process.env.ULTRAMSG_INSTANCE
   const token = process.env.ULTRAMSG_TOKEN
@@ -25,11 +28,13 @@ async function sendWhatsApp(body: string): Promise<{ ok: boolean; detail?: any }
   if (!instance || !token || !groupId) {
     return { ok: false, detail: 'UltraMsg env vars not set' }
   }
+  const signed = body.trimEnd().endsWith(SIGNATURE) ? body : `${body}\n\n${SIGNATURE}`
   try {
-    const res = await fetch(`https://api.ultramsg.com/instance${instance}/messages/chat`, {
+    // ULTRAMSG_INSTANCE already includes the "instance" prefix (e.g. instance174454).
+    const res = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, to: groupId, body, priority: 10 }),
+      body: JSON.stringify({ token, to: groupId, body: signed, priority: 10 }),
     })
     const data = await res.json()
     const sent = data?.sent === 'true' || data?.sent === true

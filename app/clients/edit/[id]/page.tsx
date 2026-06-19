@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, formatCPF, isValidCPF } from '@/lib/utils'
 import Header from '@/components/Header'
 
 const usaStates = [
@@ -35,6 +35,7 @@ export default function EditClientPage() {
     instagram: '',
     country: 'USA',
     phone: '+1 ',
+    cpf: '',
     address: '',
     city: '',
     state: 'FL',
@@ -75,6 +76,7 @@ export default function EditClientPage() {
       instagram: data.instagram || '',
       country: data.country || 'USA',
       phone: data.phone || '',
+      cpf: data.cpf || '',
       address: data.address || '',
       city: data.city || '',
       state: data.state || '',
@@ -95,6 +97,11 @@ export default function EditClientPage() {
   }
 
   async function updateClient() {
+    // CPF is optional, but if a Brazilian client fills it, it must be valid.
+    if (form.country === 'BRAZIL' && form.cpf.trim() && !isValidCPF(form.cpf)) {
+      alert('Invalid CPF. Fix the CPF or leave the field blank.')
+      return
+    }
     const { error } = await supabase
       .from('clients')
       .update({
@@ -103,6 +110,7 @@ export default function EditClientPage() {
         instagram: form.instagram,
         country: form.country,
         phone: form.phone,
+        cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
         address: form.address,
         city: form.city,
         state: form.state,
@@ -221,6 +229,16 @@ export default function EditClientPage() {
           }
           className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
         />
+
+        {form.country === 'BRAZIL' && (
+          <input
+            placeholder="CPF (000.000.000-00) — optional"
+            value={form.cpf}
+            onChange={(e) => setForm({ ...form, cpf: formatCPF(e.target.value) })}
+            inputMode="numeric"
+            className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
+          />
+        )}
 
         <input
           placeholder="ADDRESS"
