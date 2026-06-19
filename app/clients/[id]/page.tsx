@@ -54,44 +54,65 @@ export default function ViewClientPage() {
 
   useEffect(() => { loadAll() }, [])
 
-  // SEND CLIENT — WhatsApp the client a link to their OWN self-service form
-  // (/clients/self/[id]), so they fill in all their fields and tap SAVE. Sent from
-  // the app's number via /api/whatsapp (per-client `to`, country-aware). The message
-  // carries only this one link — no other links. Mirrors to the reports group too.
+  // SEND CLIENT — send the client a link to their OWN self-service form
+  // (/clients/self/[id]) so they fill in their fields and save. Delivered by the
+  // client's PREFERRED method (always honor it — never force WhatsApp):
+  //   WhatsApp -> automatic via /api/whatsapp (per-client `to`, country-aware)
+  //   SMS / E-Mail -> opens the local composer pre-filled with the link
+  //   Instagram -> copies the link + opens the client's DM
+  // The message is in the client's language and carries only this one link. Either
+  // way a note is mirrored to the REPORTS group (team language: English).
   async function handleSendClient() {
     if (!client) return
-    const to = toWaNumber(client.phone, client.country)
-    if (!to) {
-      alert('This client has no phone / WhatsApp number on file.\nAdd a number first (EDIT).')
-      return
-    }
+    const method = client.preferred_message_method || 'WhatsApp'
     const link = `${window.location.origin}${BASE_PATH}/clients/self/${clientId}`
     const firstName = (client.name || '').split(' ')[0]
-    // Message in the CLIENT's language: Portuguese for a BRAZIL client, English otherwise.
-    const body = client.country === 'BRAZIL'
+    const isBR = client.country === 'BRAZIL'
+    // WhatsApp uses *bold*/_italic_ markdown; SMS / E-Mail / Instagram use plain text.
+    const waBody = isBR
       ? `Oi${firstName ? ` ${firstName}` : ''}! 👋\n\nPara agilizar seu atendimento na *_GZ28 V8 SpeedShop_*, por favor preencha seus dados neste link e toque em *SALVAR*:\n\n${link}\n\nObrigado!`
       : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo speed up your service at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
+    const plain = waBody.replace(/[*_]/g, '')
+    const flashSent = () => { setJustSent(true); setTimeout(() => setJustSent(false), 3000) }
+    const notifyGroup = () => { void fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: `📤 *CLIENT FORM — LINK SENT*\n${client.name || '—'}\nThe system sent the registration link to the client (via ${method}). Awaiting them to fill in their details.` }),
+    }).catch(() => {}) }
+
+    if (method === 'SMS') {
+      if (!client.phone) { alert('This client has no phone on file.\nAdd a number first (EDIT).'); return }
+      window.location.href = `sms:${client.phone}?&body=${encodeURIComponent(plain)}`
+      notifyGroup(); flashSent(); return
+    }
+    if (method === 'E-Mail') {
+      if (!client.email) { alert('This client has no email on file.\nAdd an email first (EDIT).'); return }
+      const subject = isBR ? 'Complete seu cadastro — GZ28 V8 SpeedShop' : 'Complete your details — GZ28 V8 SpeedShop'
+      window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
+      notifyGroup(); flashSent(); return
+    }
+    if (method === 'Instagram') {
+      try { await navigator.clipboard.writeText(plain) } catch {}
+      const handle = (client.instagram || '').replace(/^@/, '').trim()
+      window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
+      alert('Link copied. Open the client’s Instagram DM and paste to send.')
+      notifyGroup(); flashSent(); return
+    }
+
+    // WhatsApp (default) — automatic via UltraMsg.
+    const to = toWaNumber(client.phone, client.country)
+    if (!to) { alert('This client has no phone / WhatsApp number on file.\nAdd a number first (EDIT).'); return }
     setSending(true)
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, body }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body: waBody }),
       })
       const data = await res.json().catch(() => ({}))
       if (!data.ok) {
         const detail = typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`)
-        alert('Could not send the link:\n' + detail)
-        return
+        alert('Could not send the link:\n' + detail); return
       }
-      setJustSent(true)
-      setTimeout(() => setJustSent(false), 3000)
-      // Mirror to the REPORTS group (no `to` -> route defaults to the group).
-      fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: `📤 *CLIENT FORM — LINK SENT*\n${client.name || '—'}\nThe system sent the registration link to the client. Awaiting them to fill in their details.` }),
-      }).catch(() => {})
+      flashSent(); notifyGroup()
     } catch (e) {
       alert('Failed to send: ' + String(e))
     } finally {
