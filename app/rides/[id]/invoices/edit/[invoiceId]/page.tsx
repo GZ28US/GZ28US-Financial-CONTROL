@@ -1130,18 +1130,51 @@ export default function EditInvoicePage() {
   // Reorder a PARTS row up (-1) or down (+1). Local only; the new order is
   // persisted (position column) on SAVE CHANGES. Editing is cancelled to avoid
   // an index mismatch with the edit form.
-  function movePart(index: number, dir: -1 | 1) {
-    const j = index + dir
-    if (j < 0 || j >= parts.length) return
-    const next = [...parts]
-    const tmp = next[index]; next[index] = next[j]; next[j] = tmp
-    setParts(next)
+  // Build top-level reorder "units": each ungrouped row is its own unit; all rows
+  // sharing a group key gather into one unit at the group's first appearance.
+  // Flattening the units back yields the reordered array (also normalizes a kit's
+  // members to be contiguous).
+  function buildUnits<T>(rows: T[], keyOf: (r: T) => string | undefined) {
+    const units: { key: string; grouped: boolean; items: T[] }[] = []
+    const byKey = new Map<string, { key: string; grouped: boolean; items: T[] }>()
+    rows.forEach((r, i) => {
+      const k = keyOf(r)
+      if (k) { const u = byKey.get(k); if (u) u.items.push(r); else { const nu = { key: k, grouped: true, items: [r] }; byKey.set(k, nu); units.push(nu) } }
+      else units.push({ key: `__s${i}`, grouped: false, items: [r] })
+    })
+    return units
+  }
+  // Move a whole part-kit up/down among the top-level units (kits + single parts).
+  function movePartKit(kitGroup: string, dir: -1 | 1) {
+    const units = buildUnits(parts, (p: Part) => p.kit_group)
+    const ui = units.findIndex(u => u.grouped && u.key === kitGroup); const uj = ui + dir
+    if (ui < 0 || uj < 0 || uj >= units.length) return
+    const t = units[ui]; units[ui] = units[uj]; units[uj] = t
+    setParts(units.flatMap(u => u.items))
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
-  // Reorder an UNPAID single expense up/down by swapping it with the nearest other
-  // unpaid, non-grouped expense (paid expenses are date-locked, groups move as a unit).
-  // The array order is the manual order; it's persisted as `position` on SAVE, and
-  // sortExpensesByDate keeps paid expenses in date order regardless.
+  // Move a single part: WITHIN its kit only (a part can't leave its kit); an ungrouped
+  // part moves among the top-level units (past a whole adjacent kit). Persisted as
+  // `position` on SAVE.
+  function movePart(index: number, dir: -1 | 1) {
+    const p = parts[index]
+    if (p.kit_group) {
+      const memberIdx = parts.map((x, i) => (x.kit_group === p.kit_group ? i : -1)).filter(i => i >= 0)
+      const at = memberIdx.indexOf(index); const to = at + dir
+      if (to < 0 || to >= memberIdx.length) return
+      const a = memberIdx[at], b = memberIdx[to]
+      const next = [...parts]; const tmp = next[a]; next[a] = next[b]; next[b] = tmp; setParts(next)
+    } else {
+      const units = buildUnits(parts, (x: Part) => x.kit_group)
+      const ui = units.findIndex(u => !u.grouped && u.items[0] === p); const uj = ui + dir
+      if (ui < 0 || uj < 0 || uj >= units.length) return
+      const t = units[ui]; units[ui] = units[uj]; units[uj] = t; setParts(units.flatMap(u => u.items))
+    }
+    if (editingPartIndex !== null) setEditingPartIndex(null)
+  }
+  // Reorder an UNPAID single expense up/down by swapping with the nearest other
+  // unpaid, non-grouped expense (paid expenses are date-locked; kits move as a unit
+  // via moveExpenseKit). Persisted as `position` on SAVE.
   function moveExpense(index: number, dir: -1 | 1) {
     const movable = (e: Expense | undefined) => !!e && !isValidDate(e.payment_date || '') && !e.purchase_group
     let j = index + dir
@@ -1150,6 +1183,15 @@ export default function EditInvoicePage() {
     const next = [...expenses]
     const tmp = next[index]; next[index] = next[j]; next[j] = tmp
     setExpenses(next)
+    if (editingExpenseIndex !== null) setEditingExpenseIndex(null)
+  }
+  // Move a whole expense purchase-group (kit) up/down among the top-level units.
+  function moveExpenseKit(purchaseGroup: string, dir: -1 | 1) {
+    const units = buildUnits(expenses, (e: Expense) => e.purchase_group)
+    const ui = units.findIndex(u => u.grouped && u.key === purchaseGroup); const uj = ui + dir
+    if (ui < 0 || uj < 0 || uj >= units.length) return
+    const t = units[ui]; units[ui] = units[uj]; units[uj] = t
+    setExpenses(units.flatMap(u => u.items))
     if (editingExpenseIndex !== null) setEditingExpenseIndex(null)
   }
   function removePart(index: number) {
@@ -2325,6 +2367,8 @@ export default function EditInvoicePage() {
                           </div>
                           <div className="flex gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                             {receiptUrl && <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">RECEIPT</a>}
+                            <button onClick={() => moveExpenseKit(groupId, -1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move kit up">▲</button>
+                            <button onClick={() => moveExpenseKit(groupId, 1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move kit down">▼</button>
                             <button onClick={() => startEditPurchase(groupId, groupItems)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                             <button onClick={() => setConfirmRemovePurchaseGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE PURCHASE</button>
                           </div>
@@ -2545,6 +2589,11 @@ export default function EditInvoicePage() {
                 {parts.map((part, index) => {
                   const firstOfKit = !!part.kit_group && parts.findIndex(x => x.kit_group === part.kit_group) === index
                   const collapsed = !!part.kit_group && !partExpandedKits.has(part.kit_group)
+                  // Row move arrows: within a kit a part can't pass its first/last member;
+                  // an ungrouped part stops at the very ends of the list.
+                  const kitMembers = part.kit_group ? parts.map((x, i) => (x.kit_group === part.kit_group ? i : -1)).filter(i => i >= 0) : null
+                  const upDisabled = kitMembers ? index === kitMembers[0] : index === 0
+                  const downDisabled = kitMembers ? index === kitMembers[kitMembers.length - 1] : index === parts.length - 1
                   return (
                   <div key={index}>
                     {firstOfKit && (() => { const members = parts.filter(x => x.kit_group === part.kit_group); const total = members.reduce((s, x) => s + getPartTotal(x), 0); return (
@@ -2555,6 +2604,8 @@ export default function EditInvoicePage() {
                           <span className="text-xs text-gray-400">({members.length} parts)</span>
                         </button>
                         <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>
+                        <button onClick={() => movePartKit(part.kit_group!, -1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0" title="Move kit up">▲</button>
+                        <button onClick={() => movePartKit(part.kit_group!, 1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0" title="Move kit down">▼</button>
                         <button onClick={() => removePartGroup(part.kit_group!)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
                       </div>
                     ) })()}
@@ -2591,8 +2642,8 @@ export default function EditInvoicePage() {
                         </div>
                         <div className="flex gap-2 shrink-0">
                           {!isQuote && <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>}
-                          <button onClick={() => movePart(index, -1)} disabled={index === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>
-                          <button onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
+                          <button onClick={() => movePart(index, -1)} disabled={upDisabled} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>
+                          <button onClick={() => movePart(index, 1)} disabled={downDisabled} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
                           <button onClick={() => startEditPart(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => removePart(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </div>
