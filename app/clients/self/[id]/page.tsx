@@ -52,6 +52,7 @@ const STRINGS = {
     loading: 'Carregando…',
     notFoundTitle: 'Cadastro não encontrado', notFoundBody: `Confira o link recebido ou fale com a ${BRAND}.`,
     savedTitle: 'Dados salvos!', savedThanks: 'Obrigado', savedRest: '! Recebemos suas informações.',
+    consent: `Ao enviar este formulário, você autoriza a ${BRAND} a coletar e usar seus dados pessoais (incluindo CPF) apenas para o seu atendimento, conforme a LGPD (Lei nº 13.709/2018). Não compartilhamos seus dados com terceiros sem necessidade, e você pode pedir acesso, correção ou exclusão a qualquer momento.`,
   },
   en: {
     fillPrompt: 'Fill in your details and tap', saveWord: 'SAVE', saving: 'SAVING…',
@@ -69,6 +70,7 @@ const STRINGS = {
     loading: 'Loading…',
     notFoundTitle: 'Record not found', notFoundBody: `Check the link you received or contact ${BRAND}.`,
     savedTitle: 'Saved!', savedThanks: 'Thank you', savedRest: '! We received your information.',
+    consent: `By submitting this form, you authorize ${BRAND} to collect and use your personal data solely to provide your service. We don't sell or share it unnecessarily, and you may request access, correction, or deletion at any time.`,
   },
 }
 
@@ -356,6 +358,8 @@ export default function ClientSelfFormPage() {
           </div>
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
+
+          <p className="text-xs text-gray-500 leading-relaxed">{L.consent}</p>
 
           <button
             onClick={save}
