@@ -531,14 +531,34 @@ export default function ViewInvoicePage() {
                   <th className="r" style={{width:'20%'}}>Total</th>
                 </tr></thead>
                 <tbody>
-                  {parts.map(p => (
-                    <tr key={p.id}>
-                      <td>{p.description}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
-                      <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price)}</td>
-                      <td className="r">{p.quantity}</td>
-                      <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price * p.quantity)}</td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    // Group parts under their kit (📦 header + indented members), matching
+                    // the on-screen view. Ungrouped parts render as plain rows.
+                    const seen = new Set<string>()
+                    const rows: React.ReactElement[] = []
+                    parts.forEach(p => {
+                      if (p.kit_group && !seen.has(p.kit_group)) {
+                        seen.add(p.kit_group)
+                        const members = parts.filter(x => x.kit_group === p.kit_group)
+                        const kitTotal = members.reduce((s, x) => s + x.unit_price * x.quantity, 0)
+                        rows.push(
+                          <tr key={`k-${p.kit_group}`} style={{ background: '#eef2f2' }}>
+                            <td colSpan={3} style={{ fontWeight: 700 }}>📦 {p.kit_name || 'Kit'}</td>
+                            <td className="r" style={{ fontWeight: 700 }}>{kitTotal === 0 ? 'COURTESY' : formatUSD(kitTotal)}</td>
+                          </tr>
+                        )
+                      }
+                      rows.push(
+                        <tr key={p.id}>
+                          <td style={p.kit_group ? { paddingLeft: '16px' } : undefined}>{p.description}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
+                          <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price)}</td>
+                          <td className="r">{p.quantity}</td>
+                          <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price * p.quantity)}</td>
+                        </tr>
+                      )
+                    })
+                    return rows
+                  })()}
                   <tr className="pi-subtotal"><td colSpan={3} className="r">Sub-Total</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
                   {(invoice.florida_taxes || 0) > 0 && <tr className="pi-taxes"><td colSpan={3} className="r">Florida Taxes {invoice.florida_taxes}%</td><td className="r">{formatUSD(floridaTaxesAmount)}</td></tr>}
                   <tr className="pi-ptotal"><td colSpan={3} className="r">Items Total</td><td className="r">{formatUSD(partsTotal)}</td></tr>
