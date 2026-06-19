@@ -21,11 +21,11 @@ function getStatusBadge(inv: any) {
 }
 function getLiveBadge(s: string | null) {
   if (s === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
-  if (s === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  if (s === 'REALTIME') return { label: 'ONLINE', cls: 'bg-blue-800 text-blue-200' }
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
-function getFeedBadge(live: string | null, feed: string | null) {
-  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+function getFeedBadge(live: string | null, _feed?: string | null) {
+  const ready = live === 'REALTIME' || live === 'CLOSED'
   return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
@@ -62,11 +62,12 @@ export default function InvoicesPage() {
   // Primary filter by live_status; secondary REPORT READY filter only shows when the
   // current selection actually contains both ready and not-ready invoices.
   const liveFiltered = rows.filter(r => liveFilter === 'ALL' || (r.live_status || 'INCOMPLETE') === liveFilter)
-  const hasReady = liveFiltered.some(r => r.feed_status === 'REAL_TIME')
-  const hasNotReady = liveFiltered.some(r => r.feed_status !== 'REAL_TIME')
+  const isRdy = (r: any) => r.live_status === 'REALTIME' || r.live_status === 'CLOSED'
+  const hasReady = liveFiltered.some(isRdy)
+  const hasNotReady = liveFiltered.some(r => !isRdy(r))
   const showReportFilter = liveFilter !== 'INCOMPLETE' && hasReady && hasNotReady
   const filtered = liveFiltered.filter(r => !showReportFilter || reportFilter === 'ALL'
-    || (reportFilter === 'READY' ? r.feed_status === 'REAL_TIME' : r.feed_status !== 'REAL_TIME'))
+    || (reportFilter === 'READY' ? isRdy(r) : !isRdy(r)))
 
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
@@ -90,7 +91,7 @@ export default function InvoicesPage() {
           <h1 className="text-4xl font-bold">INVOICES ({filtered.length})</h1>
           <div className="flex gap-2 flex-wrap">
             {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
-              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
             ))}
           </div>
           {showReportFilter && (

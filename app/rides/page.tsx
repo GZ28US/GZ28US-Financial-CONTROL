@@ -34,16 +34,16 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
-function getFeedBadge(live: string | null, feed: string | null, isQuote?: boolean | null) {
-  // REPORT READY only when REALTIME (feed on) or CLOSED — never on an INCOMPLETE ride,
+function getFeedBadge(live: string | null, _feed: string | null, isQuote?: boolean | null) {
+  // REPORT READY for any ONLINE ('REALTIME') or CLOSED ride — never on INCOMPLETE,
   // and never on a quote (a quote has no live customer report).
-  const ready = !isQuote && (live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME'))
+  const ready = !isQuote && (live === 'REALTIME' || live === 'CLOSED')
   return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 function getLiveBadge(liveStatus: string | null) {
   if (liveStatus === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
-  if (liveStatus === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  if (liveStatus === 'REALTIME') return { label: 'ONLINE', cls: 'bg-blue-800 text-blue-200' }
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 
@@ -222,7 +222,7 @@ export default function RidesPage() {
   }
 
   // Project rides filter by status ladder + live status; quote rides aren't filtered.
-  const isReady = (r: any) => { if (r.is_quote) return false; const i = r._latestInvoice; const live = i?.live_status; return live === 'CLOSED' || (live === 'REALTIME' && i?.feed_status === 'REAL_TIME') }
+  const isReady = (r: any) => { if (r.is_quote) return false; const live = r._latestInvoice?.live_status; return live === 'REALTIME' || live === 'CLOSED' }
   const baseFiltered = (rides as any[]).filter(r => {
     const liveOk = liveFilter === 'ALL' || (r._latestInvoice?.live_status || 'INCOMPLETE') === liveFilter
     if (mode === 'quote') return liveOk
@@ -263,7 +263,7 @@ export default function RidesPage() {
               </div>
               <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
                 {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
-                  <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+                  <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
                 ))}
               </div>
               {showReportFilter && (

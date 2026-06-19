@@ -18,9 +18,9 @@ function fmtDate(d: string | null) {
 
 type Row = { date: string | null; code: string; who: string; detail: string; amount: number }
 
-// Report-ready = a real (non-quote) invoice that is CLOSED, or REALTIME with a live feed.
+// Report-ready = a real (non-quote) invoice that is ONLINE ('REALTIME') or CLOSED.
 function isReportReady(i: any) {
-  return !i.is_quote && (i.live_status === 'CLOSED' || (i.live_status === 'REALTIME' && i.feed_status === 'REAL_TIME'))
+  return !i.is_quote && (i.live_status === 'REALTIME' || i.live_status === 'CLOSED')
 }
 
 export default function ReportsPage() {
@@ -85,7 +85,7 @@ export default function ReportsPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-2">REPORTS</h1>
-      <p className="text-gray-400 mb-8">Report-ready invoices only (CLOSED or live REALTIME, non-quote).</p>
+      <p className="text-gray-400 mb-8">Report-ready invoices only (ONLINE or CLOSED, non-quote).</p>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 max-w-7xl">
         <ReportSection title="TO INCOME" subtitle="Scheduled / pending client payments, by date due" rows={income} accent="emerald" emptyMsg="No pending income on report-ready invoices." />

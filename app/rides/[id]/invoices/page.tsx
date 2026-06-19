@@ -51,15 +51,15 @@ function getStatusBadge(inv: { entry_date: string | null; conclusion_date: strin
   return { label: 'DELIVERED', cls: 'bg-white text-black' }
 }
 
-function getFeedBadge(live: string | null, feed: string | null, isQuote?: boolean | null) {
-  // Quotes are never report-ready: there's no live customer report behind a quote.
-  const ready = !isQuote && (live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME'))
+function getFeedBadge(live: string | null, _feed: string | null, isQuote?: boolean | null) {
+  // REPORT READY for any ONLINE ('REALTIME') or CLOSED invoice; quotes are never ready.
+  const ready = !isQuote && (live === 'REALTIME' || live === 'CLOSED')
   return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
 function getLiveBadge(liveStatus: string | null) {
   if (liveStatus === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
-  if (liveStatus === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  if (liveStatus === 'REALTIME') return { label: 'ONLINE', cls: 'bg-blue-800 text-blue-200' }
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
 

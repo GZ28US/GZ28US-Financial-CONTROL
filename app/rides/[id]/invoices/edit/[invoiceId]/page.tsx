@@ -179,7 +179,6 @@ export default function EditInvoicePage() {
   const [deliveryDate, setDeliveryDate] = useState('')
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
-  const [feedStatus, setFeedStatus] = useState('INCOMPLETE')
   const [liveStatus, setLiveStatus] = useState('INCOMPLETE')
   const [floridaTaxes, setFloridaTaxes] = useState('')
   const [globalDiscount, setGlobalDiscount] = useState('')
@@ -296,7 +295,6 @@ export default function EditInvoicePage() {
     setDeliveryDate(data.delivery_date || '')
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
-    setFeedStatus(data.feed_status === 'REAL_TIME' ? 'REAL_TIME' : 'INCOMPLETE')
     setLiveStatus(data.live_status === 'CLOSED' ? 'CLOSED' : data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
     setShowPartNumbers(!!data.show_part_numbers)
     setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
@@ -1057,12 +1055,10 @@ export default function EditInvoicePage() {
   // ONLINE is allowed only when there's no PENDING BALANCE still owed (>= 0).
   // While a pending balance is owed (negative), the invoice is locked OFFLINE.
   const noPendingBalance = pendingBalance >= 0
-  // REPORT READY (ON) also requires every income (payment) to carry a date.
-  const allIncomesDated = payments.every(p => isValidDate(p.payment_date))
-  const canBeOnline = noPendingBalance && allIncomesDated
-  // CLOSED forces REPORT READY ON; otherwise it's the manual feed toggle, gated.
-  // A quote is never report-ready, even when CLOSED — it has no live customer report.
-  const feedOnline = isQuote ? false : (liveStatus === 'CLOSED' ? true : (feedStatus === 'REAL_TIME' && canBeOnline))
+  // REPORT READY is automatic now: a non-quote invoice is report-ready whenever it is
+  // ONLINE (stored 'REALTIME') or CLOSED — no manual feed toggle. A quote is never
+  // report-ready (it has no live customer report).
+  const feedOnline = !isQuote && (liveStatus === 'REALTIME' || liveStatus === 'CLOSED')
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
   const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
@@ -1641,7 +1637,7 @@ export default function EditInvoicePage() {
     ]
     if (inc.description && inc.description.trim()) lines.push(inc.description.trim())
 
-    if (feedStatus === 'REAL_TIME') {
+    if (feedOnline) {
       const due = balance < 0 ? -balance : 0
       lines.push('')
       lines.push(`DUE: ${formatUSD(due)}`)
@@ -1678,7 +1674,7 @@ export default function EditInvoicePage() {
       lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}${taxStr}${extraStr}`)
     })
 
-    if (!isClient && feedStatus === 'REAL_TIME') {
+    if (!isClient && feedOnline) {
       const due = balance < 0 ? -balance : 0
       lines.push('')
       lines.push(`DUE: ${formatUSD(due)}`)
@@ -2184,49 +2180,31 @@ export default function EditInvoicePage() {
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div>
-            <p className="text-lg font-bold">REALTIME STATUS</p>
-            <p className="text-sm text-gray-400">{isQuote ? 'Cycle this quote: INCOMPLETE → CLOSED.' : 'Cycle this invoice: INCOMPLETE → REALTIME → CLOSED. CLOSED forces REPORT READY ON (needs no pending balance and every income dated).'}</p>
+            <p className="text-lg font-bold">STATUS</p>
+            <p className="text-sm text-gray-400">{isQuote ? 'Cycle this quote: INCOMPLETE → CLOSED.' : 'Cycle this invoice: INCOMPLETE → ONLINE → CLOSED. ONLINE and CLOSED are REPORT READY; CLOSED needs no pending balance.'}</p>
           </div>
           <button
             onClick={() => {
               if (isQuote) {
-                // Quotes: only INCOMPLETE <-> CLOSED. No REALTIME, no balance lock
+                // Quotes: only INCOMPLETE <-> CLOSED. No ONLINE, no balance lock
                 // (a quote has no income/balance).
-                if (liveStatus === 'CLOSED') { setLiveStatus('INCOMPLETE'); setFeedStatus('INCOMPLETE') }
+                if (liveStatus === 'CLOSED') setLiveStatus('INCOMPLETE')
                 else setLiveStatus('CLOSED')
                 return
               }
               if (liveStatus === 'INCOMPLETE') { setLiveStatus('REALTIME'); return }
               if (liveStatus === 'REALTIME') {
-                if (!canBeOnline) { alert(noPendingBalance ? 'CLOSED requires every income to have a date.' : 'CLOSED requires no PENDING BALANCE owed. Settle it first.'); return }
-                setLiveStatus('CLOSED'); setFeedStatus('REAL_TIME'); return
+                // ONLINE -> CLOSED requires no pending balance owed.
+                if (!noPendingBalance) { alert('CLOSED requires no PENDING BALANCE owed. Settle it first.'); return }
+                setLiveStatus('CLOSED'); return
               }
-              setLiveStatus('INCOMPLETE'); setFeedStatus('INCOMPLETE')
+              setLiveStatus('INCOMPLETE')
             }}
             className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap text-white ${liveStatus === 'CLOSED' ? 'bg-green-700 hover:bg-green-600' : liveStatus === 'REALTIME' ? 'bg-blue-700 hover:bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'}`}
           >
-            {liveStatus === 'CLOSED' ? 'CLOSED' : liveStatus === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE'}
+            {liveStatus === 'CLOSED' ? 'CLOSED' : liveStatus === 'REALTIME' ? 'ONLINE' : 'INCOMPLETE'}
           </button>
         </div>
-
-        {!isQuote && liveStatus === 'REALTIME' && (
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-lg font-bold">REPORT READY</p>
-              <p className="text-sm text-gray-400">Turn ON once this {isQuote ? 'quote' : 'invoice'} is fully up to date.{!canBeOnline ? ` Locked OFF until ${!noPendingBalance ? 'the PENDING BALANCE is settled' : 'every income has a date'}.` : ''}</p>
-            </div>
-            <button
-              onClick={() => {
-                if (feedStatus === 'REAL_TIME') { setFeedStatus('INCOMPLETE'); return }
-                if (!canBeOnline) { alert(noPendingBalance ? 'REPORT READY can be ON only when every income has a date.' : 'REPORT READY can be ON only when there is no PENDING BALANCE owed. Settle it first.'); return }
-                setFeedStatus('REAL_TIME')
-              }}
-              className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap text-white ${feedOnline ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-600 hover:bg-gray-500'} ${!canBeOnline && !feedOnline ? 'opacity-60 cursor-not-allowed' : ''}`}
-            >
-              {feedOnline ? 'ON' : 'OFF'}
-            </button>
-          </div>
-        )}
 
         <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
         {!isClient && isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}

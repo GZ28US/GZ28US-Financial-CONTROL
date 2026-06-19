@@ -29,12 +29,12 @@ function formatUSD(v: number) {
 // Client badges (from the latest invoice) — live status + report status. No AWAITING-CAR ladder here.
 function getLiveBadge(s: string | null) {
   if (s === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
-  if (s === 'REALTIME') return { label: 'REALTIME', cls: 'bg-blue-800 text-blue-200' }
+  if (s === 'REALTIME') return { label: 'ONLINE', cls: 'bg-blue-800 text-blue-200' }
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
 }
-function getReportBadge(live: string | null, feed: string | null) {
-  // Only show REPORT READY (when REALTIME + feed on, or CLOSED). Never a NOT-READY badge.
-  const ready = live === 'CLOSED' || (live === 'REALTIME' && feed === 'REAL_TIME')
+function getReportBadge(live: string | null, _feed?: string | null) {
+  // REPORT READY for any ONLINE ('REALTIME') or CLOSED invoice. Never a NOT-READY badge.
+  const ready = live === 'REALTIME' || live === 'CLOSED'
   return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
 }
 
@@ -200,7 +200,7 @@ export default function ClientsPage() {
 
   // Filter clients by their (latest-invoice) live status; the REPORT filter only shows
   // when the current selection has both ready and not-ready clients (never on INCOMPLETE).
-  const isReady = (c: any) => c._liveStatus === 'CLOSED' || (c._liveStatus === 'REALTIME' && c._feedStatus === 'REAL_TIME')
+  const isReady = (c: any) => c._liveStatus === 'REALTIME' || c._liveStatus === 'CLOSED'
   const liveFiltered = clients.filter((c: any) => liveFilter === 'ALL' || (c._liveStatus || 'INCOMPLETE') === liveFilter)
   const showReportFilter = mode === 'project' && liveFilter !== 'INCOMPLETE' && liveFiltered.some(isReady) && liveFiltered.some((c: any) => !isReady(c))
   const filtered = liveFiltered.filter((c: any) => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(c) : !isReady(c)))
@@ -228,7 +228,7 @@ export default function ClientsPage() {
           <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
           <div className="flex gap-2 flex-wrap">
             {(mode === 'quote' ? (['ALL', 'INCOMPLETE', 'CLOSED'] as const) : (['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const)).map((f) => (
-              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
             ))}
           </div>
           {showReportFilter && (
