@@ -1416,6 +1416,16 @@ export default function EditInvoicePage() {
   }
 
   async function saveInvoice() {
+    // A CLOSED invoice can NEVER carry a pending balance. If one appeared after it was
+    // closed (e.g. an income was removed), it can't stay CLOSED — drop it to ONLINE on
+    // save. (The status button blocks the same transition; this also guards save.)
+    let effectiveLive = liveStatus
+    if (!isQuote && effectiveLive === 'CLOSED' && !noPendingBalance) {
+      effectiveLive = 'REALTIME'
+      setLiveStatus('REALTIME')
+      alert('There is a PENDING BALANCE, so this invoice cannot stay CLOSED.\nStatus set to ONLINE — settle the balance to close it.')
+    }
+    const effectiveFeedOnline = !isQuote && (effectiveLive === 'REALTIME' || effectiveLive === 'CLOSED')
     // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
     // invoice (one-way; an invoice never reverts to a quote).
     const nextIsQuote = isQuote && !isValidDate(hiringDate)
@@ -1428,8 +1438,8 @@ export default function EditInvoicePage() {
       delivery_date: isValidDate(deliveryDate) ? deliveryDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
-      feed_status: feedOnline ? 'REAL_TIME' : 'INCOMPLETE',
-      live_status: liveStatus,
+      feed_status: effectiveFeedOnline ? 'REAL_TIME' : 'INCOMPLETE',
+      live_status: effectiveLive,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
