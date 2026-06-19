@@ -145,24 +145,33 @@ export default function ClientSelfFormPage() {
     }
     setSaving(true)
     setError('')
-    const { error } = await supabase
-      .from('clients')
-      .update({
-        name: form.name,
-        email: form.email,
-        instagram: form.instagram,
-        country: form.country,
-        phone: form.phone,
-        cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
-        address: form.address,
-        city: form.city,
-        state: form.state,
-        zip: form.zip,
-        preferred_message_method: form.preferred_message_method,
-      })
-      .eq('id', id)
-    setSaving(false)
-    if (error) { setError(error.message); return }
+    // try/finally so a thrown error (e.g. a network blip) can never leave the SAVE
+    // button stuck disabled — setSaving(false) always runs.
+    let saveError: string | null = null
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({
+          name: form.name,
+          email: form.email,
+          instagram: form.instagram,
+          country: form.country,
+          phone: form.phone,
+          cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
+          address: form.address,
+          city: form.city,
+          state: form.state,
+          zip: form.zip,
+          preferred_message_method: form.preferred_message_method,
+        })
+        .eq('id', id)
+      if (error) saveError = error.message
+    } catch (e) {
+      saveError = String(e)
+    } finally {
+      setSaving(false)
+    }
+    if (saveError) { setError(saveError); return }
     setSaved(true)
     // Confirm to the REPORTS group that the client filled in their own data, and
     // list every field they actually filled (blanks skipped). No `to` -> the route
@@ -262,7 +271,7 @@ export default function ClientSelfFormPage() {
           {form.country === 'BRAZIL' && (
             <div>
               <label className={labelClass}>CPF <span className="font-normal text-gray-500">(optional)</span></label>
-              <input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: formatCPF(e.target.value) })} className={inputClass} inputMode="numeric" placeholder="000.000.000-00" />
+              <input value={form.cpf} onChange={(e) => { setForm({ ...form, cpf: formatCPF(e.target.value) }); if (error) setError('') }} className={inputClass} inputMode="numeric" placeholder="000.000.000-00" />
             </div>
           )}
 
