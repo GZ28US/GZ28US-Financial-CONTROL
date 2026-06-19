@@ -116,6 +116,7 @@ export default function EditClientPage() {
         state: form.state,
         zip: form.zip,
         preferred_message_method: form.preferred_message_method,
+        updated_at: new Date().toISOString(),
       })
       .eq('id', id)
 

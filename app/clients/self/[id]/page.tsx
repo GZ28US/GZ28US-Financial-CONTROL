@@ -208,6 +208,7 @@ export default function ClientSelfFormPage() {
           state: form.state,
           zip: form.zip,
           preferred_message_method: form.preferred_message_method,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', id)
       if (error) saveError = error.message
