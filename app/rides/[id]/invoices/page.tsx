@@ -265,6 +265,7 @@ export default function InvoicesPage() {
                 <div className="flex gap-3 flex-wrap shrink-0">
                   <Link href={`${basePath}/${invoice.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                   <Link href={`${basePath}/edit/${invoice.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                  {!isClient && <Link href={`${basePath}/new?mode=quote&duplicateFrom=${invoice.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold">⧉ DUPLICATE</Link>}
                   <button onClick={() => setConfirmId(invoice.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                 </div>
               </div>
