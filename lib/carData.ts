@@ -66,7 +66,7 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
     2021: ['CHALLENGER', 'CHARGER', 'DURANGO'],
     2022: ['CHALLENGER', 'CHARGER'],
     2023: ['CHALLENGER', 'CHARGER', 'DURANGO'],
-    2024: ['CHALLENGER', 'CHARGER', 'DURANGO'],
+    2024: ['CHALLENGER', 'DURANGO'],
     2025: ['DURANGO'],
     2026: ['DURANGO'],
   },
@@ -116,7 +116,6 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     2021: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
     2022: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
     2023: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
-    2024: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
   },
   VIPER: {
     1992: ['RT/10 8.0 V10'], 1993: ['RT/10 8.0 V10'], 1994: ['RT/10 8.0 V10'], 1995: ['RT/10 8.0 V10'],
