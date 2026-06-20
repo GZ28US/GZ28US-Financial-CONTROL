@@ -56,6 +56,8 @@ export default function PartsPage() {
   const [naItem, setNaItem] = useState('')
   const [naPn, setNaPn] = useState('')
   const [naSupplier, setNaSupplier] = useState('')
+  // Suppliers DB for the SUPPLIER typeahead (must resolve to an existing supplier).
+  const [naSuppliers, setNaSuppliers] = useState<{ name: string; aliases: string }[]>([])
   const [naPrice, setNaPrice] = useState('')
   const [naQty, setNaQty] = useState('1')
   const [naDate, setNaDate] = useState('')
@@ -94,7 +96,20 @@ export default function PartsPage() {
   async function load() {
     const { data } = await supabase.from('parts_database').select('*').order('created_at', { ascending: false, nullsFirst: false })
     setParts((data || []) as Part[])
+    const { data: sup } = await supabase.from('suppliers').select('name, aliases')
+    setNaSuppliers((sup || []).map((s: any) => ({ name: s.name || '', aliases: s.aliases || '' })))
     setLoading(false)
+  }
+
+  // True when `name` matches a supplier in the DB (by name or alias). The SUPPLIER
+  // field must resolve to a real supplier — free-typed names are rejected (empty is ok).
+  function supplierKnown(name: string) {
+    const n = (name || '').trim().toLowerCase()
+    if (!n) return false
+    return naSuppliers.some(s =>
+      s.name.trim().toLowerCase() === n ||
+      (s.aliases || '').split(/[,;\n]/).map(a => a.trim().toLowerCase()).filter(Boolean).includes(n)
+    )
   }
 
   function setAlias(id: string, value: string) {
@@ -170,6 +185,7 @@ export default function PartsPage() {
   async function saveNewPart() {
     const item = naItem.trim()
     if (!item) { alert('Please enter the part name.'); return }
+    if (naSupplier.trim() && !supplierKnown(naSupplier)) { alert('Choose an existing supplier from the list (or leave it blank). Add new suppliers in the SUPPLIERS section first.'); return }
     setSaving(true)
     const price = numOf(naPrice)
     // One row per part number, keeping the lowest OUR COST (MAP held constant).
@@ -349,7 +365,7 @@ export default function PartsPage() {
               <div><label className="block mb-1 text-sm font-bold text-gray-400">ITEM *</label><input value={naItem} onChange={(e) => setNaItem(e.target.value)} className={`${inputClass} w-full`} placeholder="Part name" autoFocus /></div>
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block mb-1 text-sm font-bold text-gray-400">PART NUMBER</label><input value={naPn} onChange={(e) => setNaPn(e.target.value)} className={`${inputClass} w-full`} placeholder="optional" /></div>
-                <div><label className="block mb-1 text-sm font-bold text-gray-400">SUPPLIER</label><input value={naSupplier} onChange={(e) => setNaSupplier(e.target.value)} className={`${inputClass} w-full`} placeholder="optional" /></div>
+                <div><label className="block mb-1 text-sm font-bold text-gray-400">SUPPLIER</label><input list="na-supplier-options" value={naSupplier} onChange={(e) => setNaSupplier(e.target.value)} className={`${inputClass} w-full`} placeholder="optional — type to search" /><datalist id="na-supplier-options">{naSuppliers.map(s => <option key={s.name} value={s.name} />)}</datalist></div>
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div><label className="block mb-1 text-sm font-bold text-gray-400">UNIT PRICE</label><input value={naPrice} onChange={(e) => setNaPrice(e.target.value)} className={`${inputClass} w-full`} placeholder="0" /></div>
