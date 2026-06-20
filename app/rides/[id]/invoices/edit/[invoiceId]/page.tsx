@@ -117,31 +117,6 @@ function sortByDateDesc<T>(rows: T[], getDate: (row: T) => string): T[] {
     .map(({ row }) => row)
 }
 
-function sortExpensesByDate(rows: Expense[]): Expense[] {
-  type Block = { key: number; order: number; items: Expense[] }
-  const groups = new Map<string, Block>()
-  const blocks: Block[] = []
-  rows.forEach((exp, i) => {
-    const k = dateSortKey(exp.payment_date)
-    if (exp.purchase_group) {
-      let g = groups.get(exp.purchase_group)
-      if (!g) {
-        g = { key: k, order: i, items: [] }
-        groups.set(exp.purchase_group, g)
-        blocks.push(g)
-      } else if (k < g.key) {
-        g.key = k
-      }
-      g.items.push(exp)
-    } else {
-      blocks.push({ key: k, order: i, items: [exp] })
-    }
-  })
-  return blocks
-    .sort((a, b) => (a.key === b.key ? a.order - b.order : a.key - b.key))
-    .flatMap(b => b.items)
-}
-
 function paymentStatus(p: Payment): 'PAID' | 'DELAYED' | 'PENDING' {
   if (p.paid_at) return 'PAID'
   if (p.payment_date && /^\d{4}-\d{2}-\d{2}$/.test(p.payment_date) && isTodayOrPast(p.payment_date)) return 'DELAYED'
@@ -333,15 +308,15 @@ export default function EditInvoicePage() {
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) {
-      // Manual order first (position; nulls keep created_at order — safe before the
-      // migration exists), then sortExpensesByDate layers PAID expenses by date on top.
+      // Expenses keep the manual order saved in `position` (parity with parts), so any
+      // row — paid or not — can be reordered with the ▲▼ arrows and the order persists.
       const ordered = expensesData.slice().sort((a, b) => {
         const pa = a.position == null ? Infinity : Number(a.position)
         const pb = b.position == null ? Infinity : Number(b.position)
         if (pa !== pb) return pa - pb
         return String(a.created_at).localeCompare(String(b.created_at))
       })
-      setExpenses(sortExpensesByDate(ordered.map(e => ({
+      setExpenses(ordered.map(e => ({
         id: e.id,
         supplier: e.supplier || '',
         item: e.item,
@@ -358,7 +333,7 @@ export default function EditInvoicePage() {
         stock_donor: e.stock_donor || undefined,
         export_status: e.export_status || 'FRESH',
         kit_name: e.kit_name || undefined,
-      }))))
+      })))
       setExpandedGroups(new Set())
     }
 
@@ -1172,11 +1147,11 @@ export default function EditInvoicePage() {
     }
     if (editingPartIndex !== null) setEditingPartIndex(null)
   }
-  // Reorder an UNPAID single expense up/down by swapping with the nearest other
-  // unpaid, non-grouped expense (paid expenses are date-locked; kits move as a unit
-  // via moveExpenseKit). Persisted as `position` on SAVE.
+  // Reorder a single (non-grouped) expense up/down — paid or unpaid — by swapping with
+  // the nearest other non-grouped expense (kits move as a unit via moveExpenseKit).
+  // Persisted as `position` on SAVE.
   function moveExpense(index: number, dir: -1 | 1) {
-    const movable = (e: Expense | undefined) => !!e && !isValidDate(e.payment_date || '') && !e.purchase_group
+    const movable = (e: Expense | undefined) => !!e && !e.purchase_group
     let j = index + dir
     while (j >= 0 && j < expenses.length && !movable(expenses[j])) j += dir
     if (j < 0 || j >= expenses.length) return
@@ -2521,8 +2496,8 @@ export default function EditInvoicePage() {
                                     )}
                                   </div>
                                 )}
-                                {!isPaid && <button onClick={() => moveExpense(index, -1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>}
-                                {!isPaid && <button onClick={() => moveExpense(index, 1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>}
+                                <button onClick={() => moveExpense(index, -1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move up">▲</button>
+                                <button onClick={() => moveExpense(index, 1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
                                 <button onClick={() => startEditExpense(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                                 <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
                                 <button onClick={() => setConfirmRemoveExpenseIndex(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
