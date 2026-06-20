@@ -619,7 +619,7 @@ export default function EditPackPage() {
                         <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/50 border-b border-gray-700">
                           <button onClick={() => toggleExpKit(e.kit_group!)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                             <span className="text-gray-300">{expExpandedKits.has(e.kit_group!) ? '▾' : '▸'}</span>
-                            <span className="text-base font-bold truncate">📦 {e.kit_name || 'Kit'}</span>
+                            <span className="text-base font-bold truncate" title={`📦 ${e.kit_name || 'Kit'}`}>📦 {e.kit_name || 'Kit'}</span>
                             <span className="text-xs text-gray-400">({members.length} parts)</span>
                           </button>
                           <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>
@@ -730,7 +730,7 @@ export default function EditPackPage() {
                       <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/50 border-b border-gray-700">
                         <button onClick={() => togglePartKit(part.kit_group!)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                           <span className="text-gray-300">{partExpandedKits.has(part.kit_group!) ? '▾' : '▸'}</span>
-                          <span className="text-base font-bold truncate">📦 {part.kit_name || 'Kit'}</span>
+                          <span className="text-base font-bold truncate" title={`📦 ${part.kit_name || 'Kit'}`}>📦 {part.kit_name || 'Kit'}</span>
                           <span className="text-xs text-gray-400">({members.length} parts)</span>
                         </button>
                         <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>

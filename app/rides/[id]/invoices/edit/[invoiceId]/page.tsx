@@ -1969,7 +1969,7 @@ export default function EditInvoicePage() {
                   <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold">EXPENSE — {formatUSD(total)}</p>
-                      <p className="text-sm text-gray-400 truncate">{titleText}</p>
+                      <p className="text-sm text-gray-400 truncate" title={titleText}>{titleText}</p>
                       <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
                       <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
                     </div>
@@ -2325,7 +2325,7 @@ export default function EditInvoicePage() {
             <div className="border border-gray-700 rounded-2xl overflow-visible mt-2 bg-gray-800">
               <div className="px-4 py-3 space-y-2">
                 <div className="min-w-0">
-                  <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>Florida State Taxes</p>
+                  <p className={`text-base font-bold truncate ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`} title="Florida State Taxes">Florida State Taxes</p>
                   <p className={`text-sm ${flTaxExpensePaid ? 'text-blue-400' : 'text-red-400'}`}>{formatUSD(flTaxExpenseAmount)}</p>
                   {!isQuote && <p className="text-sm text-gray-500">{flTaxExpensePaid ? `Paid: ${formatDate(flTaxExpenseDate)}` : 'Not paid yet'}</p>}
                 </div>
@@ -2481,7 +2481,7 @@ export default function EditInvoicePage() {
                                 <div className="mt-2 space-y-1">
                                   {editingExpense.receipt_urls.map((url, ui) => (
                                     <div key={ui} className="flex items-center gap-2">
-                                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                                       <button onClick={() => removeReceiptFromEditing(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
                                     </div>
                                   ))}
@@ -2515,7 +2515,7 @@ export default function EditInvoicePage() {
                                     {openReceiptsIndex === index && (
                                       <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
                                         {exp.receipt_urls.map((url, ui) => (
-                                          <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                          <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                                         ))}
                                       </div>
                                     )}
@@ -2600,7 +2600,7 @@ export default function EditInvoicePage() {
                       <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/50 border-b border-gray-700">
                         <button onClick={() => togglePartKit(part.kit_group!)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                           <span className="text-gray-300">{partExpandedKits.has(part.kit_group!) ? '▾' : '▸'}</span>
-                          <span className="text-base font-bold truncate">📦 {part.kit_name || 'Kit'}</span>
+                          <span className="text-base font-bold truncate" title={`📦 ${part.kit_name || 'Kit'}`}>📦 {part.kit_name || 'Kit'}</span>
                           <span className="text-xs text-gray-400">({members.length} parts)</span>
                         </button>
                         <span className="text-base font-bold shrink-0">{formatUSD(total)}</span>

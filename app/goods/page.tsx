@@ -452,7 +452,7 @@ export default function GoodsPage() {
                   <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold">EXPENSE — GOOD — {formatUSD(total)}</p>
-                      <p className="text-sm text-gray-400 truncate">{titleText}</p>
+                      <p className="text-sm text-gray-400 truncate" title={titleText}>{titleText}</p>
                       <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
                       <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
                     </div>

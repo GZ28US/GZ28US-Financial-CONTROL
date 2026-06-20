@@ -959,7 +959,7 @@ export default function ViewInvoicePage() {
                             {openReceiptsIndex === index && (
                               <div className="absolute right-0 top-8 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-40 space-y-1">
                                 {receiptUrls.map((url: string, ui: number) => (
-                                  <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                  <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                                 ))}
                               </div>
                             )}

@@ -233,7 +233,7 @@ export default function NewInputPage() {
                   <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold">EXPENSE — {exp.category} — {formatUSD(t)}</p>
-                      <p className="text-sm text-gray-400 truncate">{titleText || 'Input'}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                      <p className="text-sm text-gray-400 truncate" title={`${titleText || 'Input'}${exp.supplier ? ` — ${exp.supplier}` : ''}`}>{titleText || 'Input'}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                       <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
                       <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
                     </div>
@@ -323,7 +323,7 @@ export default function NewInputPage() {
                   <div className="absolute left-0 top-10 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-48 space-y-1">
                     {receiptUrls.map((url, ui) => (
                       <div key={ui} className="flex items-center gap-2">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                         <button onClick={() => removeReceiptUrl(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-1">✕</button>
                       </div>
                     ))}

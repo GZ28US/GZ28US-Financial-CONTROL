@@ -302,7 +302,7 @@ export default function NewGoodPage() {
                   <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold">EXPENSE — GOOD — {formatUSD(t)}</p>
-                      <p className="text-sm text-gray-400 truncate">{titleText || 'Purchase'}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                      <p className="text-sm text-gray-400 truncate" title={`${titleText || 'Purchase'}${exp.supplier ? ` — ${exp.supplier}` : ''}`}>{titleText || 'Purchase'}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                       <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
                       <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
                     </div>
@@ -386,7 +386,7 @@ export default function NewGoodPage() {
                   <div className="absolute left-0 top-10 bg-gray-800 border border-gray-600 rounded-xl p-2 z-10 min-w-48 space-y-1">
                     {goodReceiptUrls.map((url, ui) => (
                       <div key={ui} className="flex items-center gap-2">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                         <button onClick={() => removeGoodReceiptUrl(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-1">✕</button>
                       </div>
                     ))}
@@ -451,7 +451,7 @@ export default function NewGoodPage() {
                             <div className="mt-2 space-y-1">
                               {editingExpense.receipt_urls.map((url, ui) => (
                                 <div key={ui} className="flex items-center gap-2">
-                                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate">File {ui + 1}</a>
+                                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                                   <button onClick={() => setEditingExpense({ ...editingExpense, receipt_urls: editingExpense.receipt_urls.filter((_, i) => i !== ui) })} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
                                 </div>
                               ))}
@@ -480,7 +480,7 @@ export default function NewGoodPage() {
                                 {openReceiptsIndex === index && (
                                   <div className="absolute right-0 top-9 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
                                     {exp.receipt_urls.map((url, ui) => (
-                                      <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate">File {ui + 1}</a>
+                                      <a key={ui} href={url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:text-blue-300 text-sm truncate" title={`File ${ui + 1}`}>File {ui + 1}</a>
                                     ))}
                                   </div>
                                 )}
