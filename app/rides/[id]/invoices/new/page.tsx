@@ -70,7 +70,9 @@ export default function NewInvoicePage() {
     loadOwner()
   }, [])
 
-  // Copy an existing quote in full onto a new quote for this ride, then open EDIT.
+  // LITERAL duplicate of an existing invoice/quote onto this ride, then open EDIT.
+  // Keeps the source TYPE (quote stays quote, invoice stays invoice) and carries ALL
+  // info — dates, paid statuses, receipts, and the incomes/payments — not just a quote shell.
   async function duplicateQuote(sourceId: string) {
     let createdId: string | null = null
     try {
@@ -87,16 +89,17 @@ export default function NewInvoicePage() {
       const row: any = {
         invoice_code: newCode,
         ride_id: ownerId,
-        is_quote: true,
+        is_quote: src.is_quote,
         target_grand_total: src.target_grand_total ?? null,
         florida_taxes: src.florida_taxes ?? null,
         global_discount: src.global_discount ?? null,
         import_margin: src.import_margin ?? 0,
         service: src.service ?? null,
-        // Fresh document: no dates, no payment, not report-ready.
-        hiring_date: null, entry_date: null, conclusion_date: null, delivery_date: null,
-        mileage: null, fl_tax_expense_date: null,
-        live_status: 'INCOMPLETE', feed_status: 'INCOMPLETE',
+        // Literal clone: carry the source's dates, mileage, and status.
+        hiring_date: src.hiring_date ?? null, entry_date: src.entry_date ?? null,
+        conclusion_date: src.conclusion_date ?? null, delivery_date: src.delivery_date ?? null,
+        mileage: src.mileage ?? null, fl_tax_expense_date: src.fl_tax_expense_date ?? null,
+        live_status: src.live_status ?? 'INCOMPLETE', feed_status: src.feed_status ?? 'INCOMPLETE',
       }
       const { data: inv, error } = await supabase.from('invoices').insert([row]).select().single()
       if (error || !inv) { alert(error?.message || 'Error duplicating quote'); router.back(); return }
@@ -109,7 +112,7 @@ export default function NewInvoicePage() {
       const partRows = (parts || []).map((p: any) => ({
         invoice_id: inv.id, description: p.description, unit_price: p.unit_price, quantity: p.quantity,
         base_cost: p.base_cost, position: p.position, kit_group: p.kit_group, kit_name: p.kit_name,
-        source_item: p.source_item, payment_date: null,
+        source_item: p.source_item, payment_date: p.payment_date,
       }))
       if (partRows.length) { const { error: pe } = await supabase.from('invoice_parts').insert(partRows); if (pe) throw new Error('items: ' + pe.message) }
 
@@ -124,13 +127,22 @@ export default function NewInvoicePage() {
         tax: e.tax, extra: e.extra, quantity: e.quantity, item_discount: e.item_discount, part_number: e.part_number,
         export_status: e.export_status || 'FRESH', purchase_group: e.purchase_group, kit_group: e.kit_group,
         kit_name: e.kit_name, stock_source_type: e.stock_source_type, stock_donor: e.stock_donor,
-        payment_date: null, receipt_url: null,
+        payment_date: e.payment_date, receipt_url: e.receipt_url,
       }))
       if (expRows.length) { const { error: ee } = await supabase.from('invoice_expenses').insert(expRows); if (ee) throw new Error('expenses: ' + ee.message) }
 
       const { data: notes } = await supabase.from('invoice_notes').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
       const noteRows = (notes || []).map((nt: any) => ({ invoice_id: inv.id, note: nt.note }))
       if (noteRows.length) { const { error: ne } = await supabase.from('invoice_notes').insert(noteRows); if (ne) throw new Error('notes: ' + ne.message) }
+
+      // INCOMES (payments) — carried so the duplicate is a true clone, not a quote shell.
+      const { data: pays } = await supabase.from('invoice_payments').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
+      const payRows = (pays || []).map((p: any) => ({
+        invoice_id: inv.id, amount: p.amount, amount_brl: p.amount_brl, payment_date: p.payment_date,
+        source: p.source, paid_to: p.paid_to, receipt_url: p.receipt_url,
+        description: p.description, paid_at: p.paid_at,
+      }))
+      if (payRows.length) { const { error: pae } = await supabase.from('invoice_payments').insert(payRows); if (pae) throw new Error('incomes: ' + pae.message) }
 
       router.replace(`${basePath}/edit/${inv.id}`)
     } catch (err) {
