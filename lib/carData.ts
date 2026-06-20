@@ -9,10 +9,10 @@ export const years = [
 export const manufacturersByYear: Record<number, string[]> = {
   1968: ['MOPAR'], 1969: ['MOPAR'], 1970: ['MOPAR'],
   1992: ['MOPAR'], 1993: ['MOPAR'], 1994: ['MOPAR'], 1995: ['MOPAR'],
-  2005: ['GM'], 2006: ['GM'], 2007: ['GM'], 2008: ['GM'],
+  2005: ['GM'], 2006: ['MOPAR', 'GM'], 2007: ['MOPAR', 'GM'], 2008: ['MOPAR', 'GM'],
   2009: ['MOPAR', 'GM'],
-  2010: ['GM'], 2011: ['GM'], 2012: ['GM'], 2013: ['GM'],
-  2014: ['GM'],
+  2010: ['MOPAR', 'GM'], 2011: ['MOPAR', 'GM'], 2012: ['MOPAR', 'GM'], 2013: ['MOPAR', 'GM'],
+  2014: ['MOPAR', 'GM'],
   2015: ['MOPAR', 'GM', 'FORD'],
   2016: ['MOPAR', 'GM', 'FORD'],
   2017: ['MOPAR', 'GM', 'FORD'],
@@ -31,7 +31,10 @@ export const brandsByManufacturerAndYear: Record<string, Record<number, string[]
   MOPAR: {
     1968: ['DODGE'], 1969: ['DODGE'], 1970: ['DODGE'],
     1992: ['DODGE'], 1993: ['DODGE'], 1994: ['DODGE'], 1995: ['DODGE'],
-    2009: ['RAM'], 2015: ['RAM'], 2016: ['RAM'], 2017: ['RAM'], 2018: ['DODGE', 'RAM'],
+    2006: ['DODGE'], 2007: ['DODGE'], 2008: ['DODGE'],
+    2009: ['DODGE', 'RAM'],
+    2010: ['DODGE'], 2011: ['DODGE'], 2012: ['DODGE'], 2013: ['DODGE'], 2014: ['DODGE'],
+    2015: ['DODGE', 'RAM'], 2016: ['DODGE', 'RAM'], 2017: ['DODGE', 'RAM'], 2018: ['DODGE', 'RAM'],
     2019: ['DODGE'], 2020: ['DODGE'], 2021: ['DODGE'], 2022: ['DODGE'], 2023: ['DODGE'],
     2024: ['DODGE'], 2025: ['DODGE'], 2026: ['DODGE'],
   },
@@ -54,6 +57,9 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
   DODGE: {
     1968: ['CHARGER'], 1969: ['CHARGER'], 1970: ['CHARGER'],
     1992: ['VIPER'], 1993: ['VIPER'], 1994: ['VIPER'], 1995: ['VIPER'],
+    2006: ['CHARGER'], 2007: ['CHARGER'], 2008: ['CHARGER'], 2009: ['CHARGER'], 2010: ['CHARGER'],
+    2011: ['CHARGER'], 2012: ['CHARGER'], 2013: ['CHARGER'], 2014: ['CHARGER'], 2015: ['CHARGER'],
+    2016: ['CHARGER'], 2017: ['CHARGER'],
     2018: ['CHALLENGER', 'CHARGER'],
     2019: ['CHALLENGER', 'CHARGER'],
     2020: ['CHALLENGER', 'CHARGER'],
@@ -89,6 +95,21 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     1968: ['Base 5.2 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI'],
     1969: ['Base 5.2 V8', '500 6.3 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI', 'Daytona 6.6 V8', 'Daytona 7.0 V8 HEMI'],
     1970: ['Base 5.2 V8', '500 6.3 V8', 'R/T 6.3 V8', 'R/T 7.2 V8', 'R/T 7.0 V8 HEMI'],
+    // LX generation (2006-2010): 5.7 HEMI = R/T, 6.1 HEMI = SRT8.
+    2006: ['R/T 5.7', 'Daytona R/T 5.7', 'SRT8 6.1'],
+    2007: ['R/T 5.7', 'Daytona R/T 5.7', 'SRT8 6.1', 'Super Bee 6.1'],
+    2008: ['R/T 5.7', 'SRT8 6.1', 'Super Bee 6.1'],
+    2009: ['R/T 5.7', 'Daytona R/T 5.7', 'SRT8 6.1'],
+    2010: ['R/T 5.7', 'SRT8 6.1'],
+    // LD generation (2011-2014 pre-refresh): 5.7 HEMI = R/T, 6.4 HEMI = SRT8.
+    2011: ['R/T 5.7', 'SRT8 6.4'],
+    2012: ['R/T 5.7', 'SRT8 6.4', 'Super Bee 6.4'],
+    2013: ['R/T 5.7', 'Daytona 5.7', 'SRT8 6.4', 'Super Bee 6.4'],
+    2014: ['R/T 5.7', 'Daytona 5.7', 'SRT8 6.4', 'Super Bee 6.4'],
+    // LD refresh (2015-2017): Scat Pack 6.4, SRT 392 6.4, SRT Hellcat 6.2 SC.
+    2015: ['R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
+    2016: ['R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
+    2017: ['R/T 5.7', 'Daytona 5.7', 'ScatPack 6.4', 'Daytona 392 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
     2018: ['R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
     2019: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
     2020: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
@@ -273,6 +294,26 @@ const classicChargerColorsByYear: Record<number, string[]> = {
   1970: ['Black', 'White', 'Silver', 'B5 Blue', 'Dark Blue', 'F8 Green', 'Go Mango', 'Sublime', 'Plum Crazy', 'Hemi Orange', 'Banana', 'Green Go', 'Panther Pink', 'Butterscotch', 'Bronze', 'Rallye Red', 'Dark Tan'],
 }
 
+// LX Charger (2006-2010) factory paint by year.
+const lxChargerColorsByYear: Record<number, string[]> = {
+  2006: ['Brilliant Black', 'Bright Silver', 'Silver Steel', 'Cool Vanilla', 'Stone White', 'Inferno Red', 'Midnight Blue', 'Magnesium'],
+  2007: ['Brilliant Black', 'Bright Silver', 'Cool Vanilla', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'Detonator Yellow'],
+  2008: ['Brilliant Black', 'Bright Silver', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'HEMI Orange', 'B5 Blue', 'Detonator Yellow', 'Sub Lime'],
+  2009: ['Brilliant Black', 'Bright Silver', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'HEMI Orange', 'Sub Lime', 'Deep Water Blue'],
+  2010: ['Brilliant Black', 'Bright Silver', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'HEMI Orange', 'Deep Water Blue'],
+}
+
+// LD Charger (2011-2017) factory paint by year.
+const ldChargerColorsByYear: Record<number, string[]> = {
+  2011: ['Pitch Black', 'Bright Silver', 'Bright White', 'Tungsten Metallic', 'Redline Red', 'Blackberry', 'Toxic Orange', 'Deep Water Blue', 'Sapphire Blue'],
+  2012: ['Pitch Black', 'Bright Silver', 'Bright White', 'Tungsten Metallic', 'Redline Red', 'Blackberry', 'Header Orange', 'Stinger Yellow', 'Blue Streak', 'Maximum Steel'],
+  2013: ['Pitch Black', 'Billet Silver', 'Bright White', 'Granite Crystal', 'Redline Red', 'Maximum Steel', 'Header Orange', 'Jazz Blue', 'Phantom Black', 'Plum Crazy'],
+  2014: ['Pitch Black', 'Billet Silver', 'Bright White', 'Granite Crystal', 'Redline Red', 'Maximum Steel', 'Header Orange', 'Jazz Blue', 'Phantom Black', 'High Octane Red', 'Plum Crazy'],
+  2015: ['Pitch Black', 'Granite Crystal', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Jazz Blue', 'Phantom Black', 'Go Mango'],
+  2016: ['Pitch Black', 'Granite', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go'],
+  2017: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket'],
+}
+
 const gen5CamaroColorsByYear: Record<number, string[]> = {
   2010: ['Black', 'Silver Ice', 'Inferno Orange', 'Victory Red', 'Rally Yellow', 'Cyber Gray', 'Red Jewel', 'Imperial Blue', 'Aqua Blue', 'Synergy Green'],
   2011: ['Black', 'Silver Ice', 'Victory Red', 'Rally Yellow', 'Inferno Orange', 'Imperial Blue', 'Cyber Gray', 'Red Jewel', 'Aqua Blue', 'Synergy Green', 'Summit White'],
@@ -403,6 +444,8 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
+  if (model === 'CHARGER' && lxChargerColorsByYear[year]) return lxChargerColorsByYear[year]
+  if (model === 'CHARGER' && ldChargerColorsByYear[year]) return ldChargerColorsByYear[year]
   if (model === 'VIPER' && viperColorsByYear[year]) return viperColorsByYear[year]
   if (model === 'CORVETTE' && corvetteColorsByYear[year]) return corvetteColorsByYear[year]
   if (model === 'MUSTANG' && mustangColorsByYear[year]) return mustangColorsByYear[year]
@@ -417,7 +460,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
 export const carData: Record<string, Record<string, Record<string, string[]>>> = {
   MOPAR: {
     DODGE: {
-      CHARGER: ['Base 5.2 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI', '500 6.3 V8', 'Daytona 6.6 V8', 'Daytona 7.0 V8 HEMI', 'R/T 7.2 V8', 'R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2', 'ScatPack WideBody 6.4', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT HellCat WideBody 6.2'],
+      CHARGER: ['Base 5.2 V8', 'R/T 6.3 V8', 'R/T 7.0 V8 HEMI', '500 6.3 V8', 'Daytona 6.6 V8', 'Daytona 7.0 V8 HEMI', 'R/T 7.2 V8', 'R/T 5.7', 'Daytona R/T 5.7', 'Daytona 5.7', 'SRT8 6.1', 'SRT8 6.4', 'Super Bee 6.1', 'Super Bee 6.4', 'ScatPack 6.4', 'Daytona 392 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2', 'ScatPack WideBody 6.4', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT HellCat WideBody 6.2'],
       CHALLENGER: ['R/T 5.7', 'R/T ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT Demon 6.2', 'R/T ScatPack WideBody 6.4', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT HellCat RedEye SuperStock 6.2', 'SRT Demon 170 6.2'],
       VIPER: ['RT/10 8.0 V10'],
       DURANGO: ['SRT HellCat 6.2'],
