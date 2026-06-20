@@ -6,6 +6,7 @@ type Props = {
   label: string
   value: string
   onChange: (value: string) => void
+  compact?: boolean
 }
 
 const months = [
@@ -31,7 +32,7 @@ const days = Array.from({ length: 31 }, (_, i) => {
   return { value: d, label: String(i + 1) }
 })
 
-export default function DatePicker({ label, value, onChange }: Props) {
+export default function DatePicker({ label, value, onChange, compact }: Props) {
   const parsed = value && value.match(/^\d{4}-\d{2}-\d{2}$/) ? value.split('-') : ['', '', '']
 
   const [internalYear, setInternalYear] = useState(parsed[0] || '')
@@ -57,12 +58,14 @@ export default function DatePicker({ label, value, onChange }: Props) {
     onChange('')
   }
 
-  const selectClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-4 py-4 text-xl flex-1'
+  const selectClass = compact
+    ? 'bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm flex-1'
+    : 'bg-gray-900 border border-gray-700 rounded-2xl px-4 py-4 text-xl flex-1'
 
   return (
     <div>
-      <label className="block mb-2 text-lg font-bold">{label}</label>
-      <div className="flex gap-3">
+      <label className={compact ? 'block mb-1 text-xs font-bold' : 'block mb-2 text-lg font-bold'}>{label}</label>
+      <div className={`flex ${compact ? 'gap-2' : 'gap-3'}`}>
         <select
           value={internalMonth}
           onChange={(e) => update(internalYear, e.target.value, internalDay)}
