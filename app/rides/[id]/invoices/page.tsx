@@ -144,6 +144,7 @@ export default function InvoicesPage() {
       // edit page. Expenses include each item's Tax and Extra Costs plus the
       // Florida parts tax that GZ28 owes.
       const totalPaid = (paymentsRes.data || []).filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+      const totalIncomeAll = (paymentsRes.data || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
 
       const flTaxAmount = floridaTaxesAmount
       const flTaxPaid = isValidDate(invoice.fl_tax_expense_date)
@@ -155,7 +156,7 @@ export default function InvoicesPage() {
       const expensesBalance = expensesTotalPaid - expensesTotalGlobal
       const currentProfit = totalPaid - expensesTotalPaid
       const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
-      const finalProfit = grandTotal - expensesTotalGlobal
+      const finalProfit = totalIncomeAll - expensesTotalGlobal
       const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
 
       statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct }

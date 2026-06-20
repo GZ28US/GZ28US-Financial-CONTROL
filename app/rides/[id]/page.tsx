@@ -117,6 +117,7 @@ export default function ViewRidePage() {
         // expenses include each item's qty, Tax and Extra Costs, plus the
         // Florida parts tax GZ28 owes.
         const totalPaid = (paymentsRes.data || []).filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+        const totalIncomeAll = (paymentsRes.data || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
         const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
         const flTaxAmount = floridaTaxesAmount
         const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
@@ -124,7 +125,7 @@ export default function ViewRidePage() {
         const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + (expensesRes.data || []).filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
 
         const currentProfit = totalPaid - expensesTotalPaid
-        const finalProfit = grandTotal - expensesTotalGlobal
+        const finalProfit = totalIncomeAll - expensesTotalGlobal
         stats[inv.id] = {
           currentProfit,
           currentProfitPct: expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0,

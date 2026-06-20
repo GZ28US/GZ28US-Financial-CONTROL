@@ -171,6 +171,7 @@ export default function RidesPage() {
 
           // Income counts only payments explicitly marked PAID (paid_at).
           const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+          const totalIncomeAll = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
 
           const flTaxAmount = floridaTaxesAmount
           const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
@@ -178,7 +179,7 @@ export default function RidesPage() {
           const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
 
           currentProfit += totalPaid - expensesTotalPaid
-          finalProfit += grandTotal - expensesTotalGlobal
+          finalProfit += totalIncomeAll - expensesTotalGlobal
           paymentsBalance += totalPaid - grandTotal
           expensesBalance += expensesTotalPaid - expensesTotalGlobal
           sumExpensesPaid += expensesTotalPaid

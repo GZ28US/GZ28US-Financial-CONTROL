@@ -393,6 +393,7 @@ export default function ViewInvoicePage() {
   // PAID (paid_at), and the Florida parts tax is itself an expense GZ28 owes —
   // included in both the global and paid expense totals.
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0)
+  const totalIncomeAll = payments.reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
   // R$ (BRL) incomes: when any payment was paid via GZ28BR, the PDF shows a
   // second amount column with the recorded R$ values.
@@ -405,7 +406,7 @@ export default function ViewInvoicePage() {
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
-  const finalProfit = grandTotal - expensesTotalGlobal
+  const finalProfit = totalIncomeAll - expensesTotalGlobal
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
   const statusBadge = getStatusBadge(invoice)

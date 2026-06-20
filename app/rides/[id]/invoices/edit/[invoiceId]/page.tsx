@@ -1023,6 +1023,8 @@ export default function EditInvoicePage() {
   const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  // ALL income = every income record (paid + pending). Used by FINAL MARKUP.
+  const totalIncomeAll = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
   // Owed amount NOT covered by any listed payment (paid or pending): all listed
   // payments minus the grand total. Negative = still owed once pending clears.
@@ -1041,7 +1043,7 @@ export default function EditInvoicePage() {
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
-  const finalProfit = grandTotal - expensesTotalGlobal
+  const finalProfit = totalIncomeAll - expensesTotalGlobal
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
