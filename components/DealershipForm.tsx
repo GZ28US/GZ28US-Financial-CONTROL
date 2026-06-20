@@ -17,6 +17,7 @@ export type DealershipData = {
   name: string
   aliases: string | null
   website: string | null
+  instagram: string | null
   seller: string | null
   phone: string | null
   email: string | null
@@ -38,6 +39,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
   const [name, setName] = useState(initial?.name || '')
   const [aliases, setAliases] = useState(initial?.aliases || '')
   const [website, setWebsite] = useState(initial?.website || '')
+  const [instagram, setInstagram] = useState(initial?.instagram || '')
   const [seller, setSeller] = useState(initial?.seller || '')
   const [phone, setPhone] = useState(initial?.phone || '')
   const [email, setEmail] = useState(initial?.email || '')
@@ -69,6 +71,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       discount_type: discountType,
       discount: discountType === 'FIXED' ? (discount ? parseFloat(discount) : 0) : 0,
       website: website.trim() || null,
+      instagram: instagram.trim() || null,
       seller: seller.trim() || null,
       phone: phone.trim() || null,
       email: email.trim() || null,
@@ -110,6 +113,11 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
       </div>
 
       <div>
+        <label className="block mb-2 text-lg font-bold">INSTAGRAM PAGE</label>
+        <input value={instagram} onChange={(e) => setInstagram(e.target.value)} className={inputClass} placeholder="@handle or instagram.com/…" />
+      </div>
+
+      <div>
         <label className="block mb-2 text-lg font-bold">DISCOUNT</label>
         <div className="flex gap-3 mb-3">
           <button type="button" onClick={() => setDiscountType('VARIABLE')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'VARIABLE' ? 'bg-yellow-600 text-black' : 'bg-gray-800 text-gray-400'}`}>VARIABLE</button>
@@ -147,6 +155,7 @@ export default function DealershipForm({ supplierId, initial }: { supplierId?: s
           <option value="">— Select —</option>
           <option value="ONLINE">Online</option>
           <option value="PHONE">Phone</option>
+          <option value="WHATSAPP">WhatsApp</option>
           <option value="EMAIL">Email</option>
         </select>
       </div>

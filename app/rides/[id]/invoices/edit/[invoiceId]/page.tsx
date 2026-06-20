@@ -1324,8 +1324,19 @@ export default function EditInvoicePage() {
   }
   function cancelEditNote() { setEditingNoteIndex(null); setEditingNote('') }
 
+  // True when `name` matches a supplier in the DB (by name or one of its aliases). The
+  // expense SUPPLIER field must resolve to a real supplier — free-typed names are rejected.
+  function supplierKnown(name: string) {
+    const n = (name || '').trim().toLowerCase()
+    if (!n) return false
+    return suppliers.some(s =>
+      s.name.trim().toLowerCase() === n ||
+      (s.aliases || '').split(/[,;]/).map(a => a.trim().toLowerCase()).filter(Boolean).includes(n)
+    )
+  }
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
+    if (!supplierKnown(newExpense.supplier)) { alert('Choose an existing supplier from the list. Add new suppliers in the SUPPLIERS section first.'); return }
     setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   }
   function removeExpense(index: number) {
@@ -1337,6 +1348,11 @@ export default function EditInvoicePage() {
   async function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const exp = expenses[editingExpenseIndex!]
+    // Enforce a real supplier only when it was changed — grandfather existing rows
+    // (scanned / imported) whose supplier isn't a formal DB supplier.
+    if ((editingExpense.supplier || '').trim() !== (exp?.supplier || '').trim() && !supplierKnown(editingExpense.supplier)) {
+      alert('Choose an existing supplier from the list. Add new suppliers in the SUPPLIERS section first.'); return
+    }
     if (exp.id) {
       const { error } = await supabase.from('invoice_expenses').update({
         expense_date: null, supplier: editingExpense.supplier || null,
@@ -2149,10 +2165,7 @@ export default function EditInvoicePage() {
       {showDbModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold text-teal-300">IMPORT FROM DATABASE</h2>
-              <button onClick={() => setShowDbModal(false)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-2xl font-bold shrink-0">CLOSE</button>
-            </div>
+            <h2 className="text-2xl font-bold text-teal-300">IMPORT FROM DATABASE</h2>
             <input value={dbSearch} onChange={(e) => setDbSearch(e.target.value)} placeholder="Search item or alias..." className={inputClass} />
             {(() => {
               const t = dbSearch.trim().toLowerCase()
@@ -2259,7 +2272,8 @@ export default function EditInvoicePage() {
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                <input type="text" placeholder="Supplier (optional)" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+                <input type="text" list="supplier-options" placeholder="Supplier — type to search" value={newExpense.supplier} onChange={(e) => setNewExpense({ ...newExpense, supplier: e.target.value })} className={inputClass} />
+                <datalist id="supplier-options">{suppliers.map(s => <option key={s.name} value={s.name} />)}</datalist>
               </div>
               <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
             </div>
@@ -2410,7 +2424,7 @@ export default function EditInvoicePage() {
                             <div className="flex gap-3 items-end">
                               <div className="flex-1">
                                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                                <input type="text" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
+                                <input type="text" list="supplier-options" placeholder="Supplier — type to search" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={inputClass} />
                               </div>
                               <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-4 py-4 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
                             </div>

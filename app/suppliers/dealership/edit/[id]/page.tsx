@@ -22,6 +22,7 @@ export default function EditDealershipPage() {
       name: row.name || '',
       aliases: row.aliases || '',
       website: row.website || '',
+      instagram: row.instagram || '',
       seller: row.seller || '',
       phone: row.phone || '',
       email: row.email || '',
