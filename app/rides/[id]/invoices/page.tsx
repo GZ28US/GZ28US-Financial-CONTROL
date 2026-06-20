@@ -152,7 +152,7 @@ export default function InvoicesPage() {
       const expensesTotalGlobal = flTaxAmount + (expensesRes.data || []).reduce((s, e) => s + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + (expensesRes.data || []).filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
 
-      const paymentsBalance = totalPaid - grandTotal
+      const paymentsBalance = totalIncomeAll - totalPaid
       const expensesBalance = expensesTotalPaid - expensesTotalGlobal
       const currentProfit = totalPaid - expensesTotalPaid
       const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -250,8 +250,8 @@ export default function InvoicesPage() {
                         FINAL MARKUP: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
                       </span>
                       {!invoice.is_quote && (
-                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : s.paymentsBalance > 0 ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>
-                          {s.paymentsBalance > 0 ? 'TIP by CLIENT' : 'DUE by CLIENT'}: {formatUSD(s.paymentsBalance)}
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                          DUE by CLIENT: {formatUSD(s.paymentsBalance)}
                         </span>
                       )}
                       {!invoice.is_quote && (

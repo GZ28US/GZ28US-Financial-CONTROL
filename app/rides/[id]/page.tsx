@@ -131,7 +131,7 @@ export default function ViewRidePage() {
           currentProfitPct: expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0,
           finalProfit,
           finalProfitPct: expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0,
-          paymentsBalance: totalPaid - grandTotal,
+          paymentsBalance: totalIncomeAll - totalPaid,
           expensesBalance: expensesTotalPaid - expensesTotalGlobal,
           expensesTotalPaid,
           expensesTotalGlobal,
@@ -186,7 +186,7 @@ export default function ViewRidePage() {
             <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
               FINAL MARKUP: {formatUSD(agg.finalProfit)} / {aggFinalPct.toFixed(1)}%
             </span>
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
               DUE by CLIENT: {formatUSD(agg.paymentsBalance)}
             </span>
             <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
@@ -263,7 +263,7 @@ export default function ViewRidePage() {
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                             FINAL MARKUP: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
                           </span>
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.paymentsBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
                             DUE by CLIENT: {formatUSD(s.paymentsBalance)}
                           </span>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
