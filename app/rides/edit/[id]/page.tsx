@@ -160,8 +160,13 @@ export default function EditRidePage() {
     // Store "None" special edition as null so reports don't print "None".
     const seValue = specialEdition && specialEdition !== 'None' ? specialEdition : null
 
+    // Capture the previous code so invoice codes can follow a code change.
+    const newCode = projectCode.trim()
+    const { data: cur } = await supabase.from('rides').select('project_code').eq('id', rideId).single()
+    const oldCode = cur?.project_code || ''
+
     const { error } = await supabase.from('rides').update({
-      project_code: projectCode.trim(),
+      project_code: newCode,
       project_name: projectName || null,
       client_id: clientId || null,
       year: yearNum || null,
@@ -176,8 +181,20 @@ export default function EditRidePage() {
       photo_url: photoUrl || null,
     }).eq('id', rideId)
 
+    if (error) { setSaving(false); alert(error.message); return }
+
+    // The invoice code always carries the car's code: when the ride code changes,
+    // re-code every invoice on this ride (e.g. US.522.1 -> US.517.1).
+    if (oldCode && oldCode !== newCode) {
+      const { data: invs } = await supabase.from('invoices').select('id, invoice_code').eq('ride_id', rideId)
+      for (const inv of (invs || [])) {
+        if (inv.invoice_code?.startsWith(oldCode + '.')) {
+          await supabase.from('invoices').update({ invoice_code: newCode + inv.invoice_code.slice(oldCode.length) }).eq('id', inv.id)
+        }
+      }
+    }
+
     setSaving(false)
-    if (error) { alert(error.message); return }
     router.push(`/rides/${rideId}`)
   }
 
