@@ -10,7 +10,7 @@ function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.tes
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
-type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string }
+type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string }
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
@@ -23,7 +23,7 @@ export default function HomePage() {
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
       supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
-      supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
+      supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description, date_label'),
       supabase.from('invoice_expenses').select('invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
     ])
@@ -126,7 +126,7 @@ export default function HomePage() {
       const dated = isValidDate(p.payment_date)
       const m = metaFor(p.invoice_id, code)
       const desc = p.description || p.source || 'Income'
-      income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc })
+      income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc, milestone: p.date_label || undefined })
     }
     stockByCode.forEach((v, code) => {
       if (!Array.from(codeById.values()).includes(code)) return
@@ -210,13 +210,17 @@ function DashCard({ label, value, color }: { label: string; value: string; color
 }
 
 function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, taxLabel, taxColor }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string; taxRows?: Row[]; taxLabel?: string; taxColor?: string }) {
-  const undated = rows.filter(r => !r.dated)
+  const milestoneRows = rows.filter(r => r.milestone)
+  const undated = rows.filter(r => !r.dated && !r.milestone)
   const dated = rows.filter(r => r.dated)
+  // One group per distinct milestone label present (ARRIVAL, CONCLUSION).
+  const milestoneLabels = [...new Set(milestoneRows.map(r => r.milestone!))]
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
       {undated.length > 0 && <RowGroup label="UNDATED" rows={undated} color={undatedColor} />}
+      {milestoneLabels.map(ml => <RowGroup key={ml} label={ml} rows={milestoneRows.filter(r => r.milestone === ml)} color="text-cyan-400" />)}
       {dated.length > 0 && <RowGroup label="DATED" rows={dated} color="text-gray-300" />}
       {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={taxColor || undatedColor} />}
     </div>
