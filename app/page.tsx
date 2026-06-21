@@ -137,10 +137,10 @@ export default function HomePage() {
         expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null, href: m.href, tip: m.tip })
       }
     }
-    const byCode = (a: Row, b: Row) => a.code.localeCompare(b.code, undefined, { numeric: true }) || b.amount - a.amount
-    // Incomes order by payment date (ascending); undated rows fall to the end.
-    const byIncomeDate = (a: Row, b: Row) => (a.date && b.date) ? (a.date.localeCompare(b.date) || byCode(a, b)) : (a.date ? -1 : b.date ? 1 : byCode(a, b))
-    income.sort(byIncomeDate); expense.sort(byCode)
+    // Sort by date (ascending); for the same date — or undated rows — bigger amount first.
+    const byDateThenAmount = (a: Row, b: Row) =>
+      (a.date && b.date) ? (a.date.localeCompare(b.date) || b.amount - a.amount) : a.date ? -1 : b.date ? 1 : (b.amount - a.amount)
+    income.sort(byDateThenAmount); expense.sort(byDateThenAmount)
 
     setS({
       cashFlow, cashFlowPct: sumExpPaid > 0 ? (cashFlow / sumExpPaid) * 100 : 0,
