@@ -102,9 +102,11 @@ export default function HomePage() {
       if (pendingBalance > 0.005) pendingByInvoice.set(inv.id, pendingBalance)
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
+      const pendingPos = pendingBalance > 0.005 ? pendingBalance : 0
       cashFlow += totalPaid - expensesTotalPaid
-      dueClients += (totalIncomeAll - totalPaid) + (pendingBalance > 0.005 ? pendingBalance : 0)
-      markup += totalIncomeAll - expensesTotalGlobal
+      dueClients += (totalIncomeAll - totalPaid) + pendingPos
+      // FINAL MARKUP income = all listed income (dated + undated) + the pending balance.
+      markup += (totalIncomeAll + pendingPos) - expensesTotalGlobal
       dueGz += expensesTotalPaid - expensesTotalGlobal
       sumExpPaid += expensesTotalPaid
       sumExpGlobal += expensesTotalGlobal
