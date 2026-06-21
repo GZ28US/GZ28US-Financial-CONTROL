@@ -68,16 +68,17 @@ export default function HomePage() {
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
     const companyClientId = (clientsD || []).find((c: any) => /speedshop\s*usa/i.test(c.name || ''))?.id || null
+    // The company's OWN cars stay in every total (cashflow / markup / DUE by GZ28), but
+    // their PENDING BALANCE is NOT listed as income — there's no real client owing it.
+    const companyInvoiceIds = new Set<string>()
 
-    // codeById holds ONLY the report invoices (excludes the company's own cars); it gates
-    // every total and detail row below, so internal cars fall out everywhere at once.
     const codeById = new Map<string, string>()
     const metaById = new Map<string, { href: string; tip: string }>()
     const metaByCode = new Map<string, { href: string; tip: string }>()
     for (const inv of invs || []) {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
-      if (companyClientId && cid === companyClientId) continue
+      if (companyClientId && cid === companyClientId) companyInvoiceIds.add(inv.id)
       codeById.set(inv.id, inv.invoice_code)
       const clientName = cid ? (clientsById.get(cid) || '') : ''
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
@@ -90,7 +91,6 @@ export default function HomePage() {
 
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
-      if (!codeById.has(inv.id)) continue
       const ip = paysBy.get(inv.id) || []
       const ie = expsBy.get(inv.id) || []
       const ipa = partsBy.get(inv.id) || []
@@ -105,10 +105,12 @@ export default function HomePage() {
       const servicesTotal = (svcsBy.get(inv.id) || []).reduce((x: number, sv: any) => x + (parseFloat(sv.price) || 0), 0)
       const grandTotal = (partsSubTotal + flTaxAmount + servicesTotal) * (1 - (inv.global_discount || 0) / 100)
       const pendingBalance = grandTotal - paymentsSum
-      if (pendingBalance > 0.005) pendingByInvoice.set(inv.id, pendingBalance)
+      // Suppress the pending-balance income for the company's own cars (no client owes it).
+      const hasPending = pendingBalance > 0.005 && !companyInvoiceIds.has(inv.id)
+      if (hasPending) pendingByInvoice.set(inv.id, pendingBalance)
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
-      const pendingPos = pendingBalance > 0.005 ? pendingBalance : 0
+      const pendingPos = hasPending ? pendingBalance : 0
       cashFlow += totalPaid - expensesTotalPaid
       dueClients += (totalIncomeAll - totalPaid) + pendingPos
       // FINAL MARKUP income = all listed income (dated + undated) + the pending balance.
@@ -158,7 +160,6 @@ export default function HomePage() {
     // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
     const tax: Row[] = []
     for (const inv of invs || []) {
-      if (!codeById.has(inv.id)) continue
       const ipa = partsBy.get(inv.id) || []
       const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
