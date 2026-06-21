@@ -90,8 +90,8 @@ export default function HomePage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
           <DashCard label="CURRENT CASH FLOW" value={`${formatUSD(s.cashFlow)} / ${s.cashFlowPct.toFixed(1)}%`} color={s.cashFlow < 0 ? 'text-red-500' : 'text-blue-400'} />
-          <DashCard label="DUE by CLIENTS" value={formatUSD(s.dueClients)} color={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} />
           <DashCard label="FINAL MARKUP" value={`${formatUSD(s.markup)} / ${s.markupPct.toFixed(1)}%`} color={s.markup < 0 ? 'text-red-500' : 'text-blue-400'} />
+          <DashCard label="DUE by CLIENTS" value={formatUSD(s.dueClients)} color={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} />
           <DashCard label="DUE by GZ28US" value={formatUSD(s.dueGz)} color={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} />
         </div>
       )}
