@@ -26,18 +26,6 @@ function formatUSD(v: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
 }
 
-// Client badges (from the latest invoice) — live status + report status. No AWAITING-CAR ladder here.
-function getLiveBadge(s: string | null) {
-  if (s === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
-  if (s === 'REALTIME') return { label: 'ONLINE', cls: 'bg-blue-800 text-blue-200' }
-  return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
-}
-function getReportBadge(live: string | null, _feed?: string | null) {
-  // REPORT READY for any ONLINE ('REALTIME') or CLOSED invoice. Never a NOT-READY badge.
-  const ready = live === 'REALTIME' || live === 'CLOSED'
-  return ready ? { label: 'REPORT READY', cls: 'bg-green-800 text-green-300' } : null
-}
-
 export default function ClientsPage() {
   const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,8 +35,7 @@ export default function ClientsPage() {
     if (typeof window === 'undefined') return 'project'
     return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
   })
-  const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
-  const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
+  const [search, setSearch] = useState('')
 
   useEffect(() => { loadClients() }, [])
 
@@ -201,13 +188,9 @@ export default function ClientsPage() {
     return phone
   }
 
-  // Filter clients by their (latest-invoice) live status; the REPORT filter only shows
-  // when the current selection has both ready and not-ready clients (never on INCOMPLETE).
-  const isReady = (c: any) => c._liveStatus === 'REALTIME' || c._liveStatus === 'CLOSED'
-  const liveFiltered = clients.filter((c: any) => liveFilter === 'ALL' || (c._liveStatus || 'INCOMPLETE') === liveFilter)
-  const showReportFilter = mode === 'project' && liveFilter !== 'INCOMPLETE' && liveFiltered.some(isReady) && liveFiltered.some((c: any) => !isReady(c))
-  const filtered = liveFiltered.filter((c: any) => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(c) : !isReady(c)))
-  const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
+  // Search by client name or code.
+  const q = search.trim().toLowerCase()
+  const filtered = clients.filter((c: any) => !q || (c.name || '').toLowerCase().includes(q) || clientCode(c).toLowerCase().includes(q))
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -227,22 +210,11 @@ export default function ClientsPage() {
       )}
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
-          <div className="flex gap-2 flex-wrap">
-            {(mode === 'quote' ? (['ALL', 'INCOMPLETE', 'CLOSED'] as const) : (['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const)).map((f) => (
-              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
-            ))}
-          </div>
-          {showReportFilter && (
-            <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
-              {(['ALL', 'READY', 'NOT'] as const).map((f) => (
-                <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
-              ))}
-            </div>
-          )}
+        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search clients…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
+          <Link href={`/clients/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>
         </div>
-        <Link href={`/clients/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>
       </div>
 
       {loading ? (
@@ -254,13 +226,7 @@ export default function ClientsPage() {
           {filtered.map((client) => (
             <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 mb-1 flex-wrap">
-                  <h2 className="text-2xl font-bold">{clientCode(client)} — {client.name}</h2>
-                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${getLiveBadge(client._liveStatus).cls}`}>{getLiveBadge(client._liveStatus).label}</span>
-                  {getReportBadge(client._liveStatus, client._feedStatus) && (
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${getReportBadge(client._liveStatus, client._feedStatus)!.cls}`}>{getReportBadge(client._liveStatus, client._feedStatus)!.label}</span>
-                  )}
-                </div>
+                <h2 className="text-2xl font-bold mb-1">{clientCode(client)} — {client.name}</h2>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
                 <p className="text-lg text-gray-400">{formatPhone(client.phone, client.country)}</p>
                 <p className="text-lg text-gray-400">{[client.city, client.state, client.zip].filter(Boolean).join(', ')}</p>
