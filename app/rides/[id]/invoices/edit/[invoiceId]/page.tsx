@@ -1262,7 +1262,9 @@ export default function EditInvoicePage() {
   // undated and unpaid, since it has no scheduled date or payment yet.
   function addPendingBalanceIncome(amount: number) {
     if (amount <= 0.005) return
-    const row: Payment = { amount: amount.toFixed(2), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', paid_at: '' }
+    // Keep FULL precision (not toFixed(2)) so the listed income exactly matches the grand
+    // total — rounding to cents would leave the balance fractionally negative.
+    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', paid_at: '' }
     setPayments(sortByDateAsc([...payments, row], p => p.payment_date))
   }
   function removePayment(index: number) {
