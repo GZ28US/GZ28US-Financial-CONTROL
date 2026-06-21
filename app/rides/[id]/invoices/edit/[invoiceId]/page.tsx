@@ -1038,6 +1038,8 @@ export default function EditInvoicePage() {
   // ONLINE is allowed only when there's no PENDING BALANCE still owed (>= 0).
   // While a pending balance is owed (negative), the invoice is locked OFFLINE.
   const noPendingBalance = pendingBalance >= 0
+  // CLOSED also requires every income to carry a date (a valid payment_date).
+  const allIncomesDated = payments.every(p => isValidDate(p.payment_date))
   // REPORT READY is automatic now: a non-quote invoice is report-ready whenever it is
   // ONLINE (stored 'REALTIME') or CLOSED — no manual feed toggle. A quote is never
   // report-ready (it has no live customer report).
@@ -1497,10 +1499,12 @@ export default function EditInvoicePage() {
     // closed (e.g. an income was removed), it can't stay CLOSED — drop it to ONLINE on
     // save. (The status button blocks the same transition; this also guards save.)
     let effectiveLive = liveStatus
-    if (!isQuote && effectiveLive === 'CLOSED' && !noPendingBalance) {
+    if (!isQuote && effectiveLive === 'CLOSED' && (!noPendingBalance || !allIncomesDated)) {
       effectiveLive = 'REALTIME'
       setLiveStatus('REALTIME')
-      alert('There is a PENDING BALANCE, so this invoice cannot stay CLOSED.\nStatus set to ONLINE — settle the balance to close it.')
+      alert(!noPendingBalance
+        ? 'There is a PENDING BALANCE, so this invoice cannot stay CLOSED.\nStatus set to ONLINE — settle the balance to close it.'
+        : 'Every income must have a date to stay CLOSED.\nStatus set to ONLINE — date the incomes to close it.')
     }
     const effectiveFeedOnline = !isQuote && (effectiveLive === 'REALTIME' || effectiveLive === 'CLOSED')
     // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
@@ -2278,8 +2282,9 @@ export default function EditInvoicePage() {
               }
               if (liveStatus === 'INCOMPLETE') { setLiveStatus('REALTIME'); return }
               if (liveStatus === 'REALTIME') {
-                // ONLINE -> CLOSED requires no pending balance owed.
+                // ONLINE -> CLOSED requires no pending balance owed AND every income dated.
                 if (!noPendingBalance) { alert('CLOSED requires no PENDING BALANCE owed. Settle it first.'); return }
+                if (!allIncomesDated) { alert('CLOSED requires every income to have a date. Date them first.'); return }
                 setLiveStatus('CLOSED'); return
               }
               setLiveStatus('INCOMPLETE')
