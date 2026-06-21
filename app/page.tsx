@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
-type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null }
+type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string }
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
@@ -21,7 +22,7 @@ export default function HomePage() {
   async function load() {
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
-      supabase.from('invoices').select('id, invoice_code, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
+      supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
       supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
       supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
@@ -57,6 +58,27 @@ export default function HomePage() {
     const codeById = new Map<string, string>()
     for (const inv of invs || []) codeById.set(inv.id, inv.invoice_code)
 
+    // Per-invoice VIEW link + "CLIENT — CAR — INVOICE" tooltip for each detail row.
+    const [{ data: ridesD }, { data: clientsD }] = await Promise.all([
+      supabase.from('rides').select('id, project_name, model, version, client_id'),
+      supabase.from('clients').select('id, name'),
+    ])
+    const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
+    const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
+    const metaById = new Map<string, { href: string; tip: string }>()
+    const metaByCode = new Map<string, { href: string; tip: string }>()
+    for (const inv of invs || []) {
+      const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
+      const cid = inv.client_id || ride?.client_id || null
+      const clientName = cid ? (clientsById.get(cid) || '') : ''
+      const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
+      const invoiceName = inv.service || inv.invoice_code
+      const ownerSeg = inv.ride_id ? `rides/${inv.ride_id}` : `clients/${cid}`
+      const meta = { href: `${BASE_PATH}/${ownerSeg}/invoices/${inv.id}`, tip: [clientName, carName, invoiceName].filter(Boolean).join(' — ') }
+      metaById.set(inv.id, meta); metaByCode.set(inv.invoice_code, meta)
+    }
+    const metaFor = (id?: string, code?: string) => (id && metaById.get(id)) || (code && metaByCode.get(code)) || { href: '#', tip: code || '' }
+
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
       const ip = paysBy.get(inv.id) || []
@@ -87,12 +109,13 @@ export default function HomePage() {
       if (p.paid_at) continue
       const amount = parseFloat(p.amount) || 0; if (!amount) continue
       const dated = isValidDate(p.payment_date)
-      income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date) : null })
+      const m = metaFor(p.invoice_id, code)
+      income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.tip })
     }
     stockByCode.forEach((v, code) => {
       if (!Array.from(codeById.values()).includes(code)) return
       const pending = v.all - v.paid
-      if (pending > 0.005) income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null })
+      if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.tip }) }
     })
 
     // An expense is PAID once it has a payment_date; DUE expenses have none (UNDATED).
@@ -101,14 +124,16 @@ export default function HomePage() {
       const code = codeById.get(e.invoice_id); if (!code) continue
       if (isValidDate(e.payment_date)) continue
       const amount = expenseLine(e); if (!amount) continue
-      expense.push({ code, label: e.item || e.supplier || 'Expense', amount, dated: false, date: null })
+      const m = metaFor(e.invoice_id, code)
+      expense.push({ code, label: e.item || e.supplier || 'Expense', amount, dated: false, date: null, href: m.href, tip: m.tip })
     }
     for (const inv of invs || []) {
       const ipa = partsBy.get(inv.id) || []
       const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
       if (flTaxAmount > 0.005 && !isValidDate(inv.fl_tax_expense_date)) {
-        expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null })
+        const m = metaFor(inv.id, inv.invoice_code)
+        expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null, href: m.href, tip: m.tip })
       }
     }
     const byCode = (a: Row, b: Row) => a.code.localeCompare(b.code, undefined, { numeric: true }) || b.amount - a.amount
@@ -180,8 +205,8 @@ function RowGroup({ label, rows, color }: { label: string; rows: Row[]; color: s
         <p className="text-xs text-gray-600 py-1">—</p>
       ) : rows.map((r, i) => (
         <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60">
-          <span className="text-gray-300 truncate" title={`${r.code} · ${r.label}`}>
-            <span className="text-gray-500">{r.code}</span> · {r.label}{r.date ? ` · ${r.date}` : ''}
+          <span className="text-gray-300 truncate">
+            <a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · {r.label}{r.date ? ` · ${r.date}` : ''}
           </span>
           <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
         </div>
