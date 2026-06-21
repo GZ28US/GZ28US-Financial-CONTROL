@@ -371,6 +371,22 @@ Object.assign(specialEditions, {
   '2018-DEFENDER-110 V8 5.0': ['None', 'Works V8 70th'],
 })
 
+// ── BMW M5 E60 (S85 5.0 V10, 2006–2010 — sedan E60 + touring E61) ───────────────
+const bmwM5E60Colors = ['Silverstone II', 'Interlagos Blue', 'Sepang Bronze', 'Indianapolis Red', 'Carbon Black', 'Jet Black', 'Alpine White', 'Titanium Silver', 'Space Grey', 'Monaco Blue', 'Mineral Silver', 'Stratus Grey']
+for (let y = 2006; y <= 2010; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('BMW')) manufacturersByYear[y].push('BMW')
+  brandsByManufacturerAndYear['BMW'] = brandsByManufacturerAndYear['BMW'] || {}
+  brandsByManufacturerAndYear['BMW'][y] = ['BMW']
+  modelsByBrandAndYear['BMW'] = modelsByBrandAndYear['BMW'] || {}
+  modelsByBrandAndYear['BMW'][y] = ['M5']
+  versionsByModelAndYear['M5'] = versionsByModelAndYear['M5'] || {}
+  // E60 sedan from 2006; E61 touring added from 2007.
+  versionsByModelAndYear['M5'][y] = y >= 2007 ? ['E60 Sedan 5.0 V10', 'E61 Touring 5.0 V10'] : ['E60 Sedan 5.0 V10']
+}
+years.sort((a, b) => a - b)
+
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
   1993: ['Red', 'Black', 'White'],
@@ -556,6 +572,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   const key = `${year}-${model}-${version}-${specialEdition}`
   if (colorsByConfiguration[key]) return colorsByConfiguration[key]
   if (model === 'DEFENDER') return landRoverDefenderColors
+  if (model === 'M5') return bmwM5E60Colors
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
@@ -607,6 +624,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
 // The pack builder reads the flat carData version list; fill DEFENDER with the union of
 // every era's wheelbase+engine version (built from the year-keyed map above).
 carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
+carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())] } }
 
 // Years valid for a full manufacturer/brand/model/version spec, drawn from the
 // year-keyed catalog maps (used by the packs car picker's YEARS step).
