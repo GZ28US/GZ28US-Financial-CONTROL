@@ -325,6 +325,24 @@ const durangoColors = ['Billet Silver', 'DB Black', 'Destroyer Gray', 'F8 Green'
 const durangoColors2026 = ['Destroyer Gray', 'Diamond Black', 'Octane Red', 'Vapor Gray', 'White Knuckle']
 const durangoColors2026JailBreak = ['Destroyer Gray', 'Diamond Black', 'Green Machine', 'Octane Red', 'Vapor Gray', 'White Knuckle']
 const raptorRColors = ['Agate Black', 'Oxford White', 'Rapid Red', 'Atlas Blue', 'Carbonized Gray', 'Iconic Silver']
+// Land Rover Defender colours (classic era — a representative selection).
+const landRoverDefenderColors = ['Fuji White', 'Alaska White', 'Santorini Black', 'Corris Grey', 'Bonatti Grey', 'Stornoway Grey', 'Indus Silver', 'Keswick Green', 'Coniston Green', 'Epsom Green', 'Galway Green', 'Tamar Blue', 'Firenze Red', 'Yulong White']
+
+// ── Land Rover Defender (classic / "original" Defender, 1990–2016) ──────────────
+// 90 / 110 / 130 wheelbase variants across the whole classic run, injected into the
+// year-keyed catalog maps so the Defender appears in every car picker (both apps).
+for (let y = 1990; y <= 2016; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('LAND ROVER')) manufacturersByYear[y].push('LAND ROVER')
+  brandsByManufacturerAndYear['LAND ROVER'] = brandsByManufacturerAndYear['LAND ROVER'] || {}
+  brandsByManufacturerAndYear['LAND ROVER'][y] = ['LAND ROVER']
+  modelsByBrandAndYear['LAND ROVER'] = modelsByBrandAndYear['LAND ROVER'] || {}
+  modelsByBrandAndYear['LAND ROVER'][y] = ['DEFENDER']
+  versionsByModelAndYear['DEFENDER'] = versionsByModelAndYear['DEFENDER'] || {}
+  versionsByModelAndYear['DEFENDER'][y] = ['90', '110', '130']
+}
+years.sort((a, b) => a - b)
 
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
@@ -510,6 +528,7 @@ const colorsByConfiguration: Record<string, string[]> = {
 export function getAvailableColors(year: number, brand: string, model: string, version: string, specialEdition: string): string[] {
   const key = `${year}-${model}-${version}-${specialEdition}`
   if (colorsByConfiguration[key]) return colorsByConfiguration[key]
+  if (model === 'DEFENDER') return landRoverDefenderColors
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
@@ -550,6 +569,11 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
     FORD: {
       F150: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
       MUSTANG: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
+    },
+  },
+  'LAND ROVER': {
+    'LAND ROVER': {
+      DEFENDER: ['90', '110', '130'],
     },
   },
 }
