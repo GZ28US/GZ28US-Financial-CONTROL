@@ -328,9 +328,15 @@ const raptorRColors = ['Agate Black', 'Oxford White', 'Rapid Red', 'Atlas Blue',
 // Land Rover Defender colours (classic era — a representative selection).
 const landRoverDefenderColors = ['Fuji White', 'Alaska White', 'Santorini Black', 'Corris Grey', 'Bonatti Grey', 'Stornoway Grey', 'Indus Silver', 'Keswick Green', 'Coniston Green', 'Epsom Green', 'Galway Green', 'Tamar Blue', 'Firenze Red', 'Yulong White']
 
-// ── Land Rover Defender (classic / "original" Defender, 1990–2016) ──────────────
-// 90 / 110 / 130 wheelbase variants across the whole classic run, injected into the
-// year-keyed catalog maps so the Defender appears in every car picker (both apps).
+// ── Land Rover Defender (classic / "original" Defender, 1990–2016, + 2018 Works V8) ──
+// Wheelbase (90 / 110 / 130) × the engine of each era, plus the well-known limited
+// editions. Injected into the year-keyed catalog maps (cars are shared across apps).
+const defenderEngines = (y: number): string[] =>
+  y <= 1994 ? ['200Tdi', 'V8 3.5']
+    : y <= 1998 ? ['300Tdi', 'V8 3.9']
+    : y <= 2006 ? ['Td5']
+    : y <= 2011 ? ['2.4 TDCi']
+    : ['2.2 TDCi']
 for (let y = 1990; y <= 2016; y++) {
   if (!years.includes(y)) years.push(y)
   manufacturersByYear[y] = manufacturersByYear[y] || []
@@ -340,9 +346,30 @@ for (let y = 1990; y <= 2016; y++) {
   modelsByBrandAndYear['LAND ROVER'] = modelsByBrandAndYear['LAND ROVER'] || {}
   modelsByBrandAndYear['LAND ROVER'][y] = ['DEFENDER']
   versionsByModelAndYear['DEFENDER'] = versionsByModelAndYear['DEFENDER'] || {}
-  versionsByModelAndYear['DEFENDER'][y] = ['90', '110', '130']
+  versionsByModelAndYear['DEFENDER'][y] = ['90', '110', '130'].flatMap((wb) => defenderEngines(y).map((e) => `${wb} ${e}`))
 }
+// 2018 Works V8 70th — limited Land Rover Classic build on the classic Defender body.
+manufacturersByYear[2018] = manufacturersByYear[2018] || []
+if (!manufacturersByYear[2018].includes('LAND ROVER')) manufacturersByYear[2018].push('LAND ROVER')
+brandsByManufacturerAndYear['LAND ROVER'][2018] = ['LAND ROVER']
+modelsByBrandAndYear['LAND ROVER'][2018] = ['DEFENDER']
+versionsByModelAndYear['DEFENDER'][2018] = ['90 V8 5.0', '110 V8 5.0']
 years.sort((a, b) => a - b)
+// Limited / special editions — each built ON a base wheelbase+engine version.
+Object.assign(specialEditions, {
+  '1998-DEFENDER-90 V8 3.9': ['None', '50th Anniversary'],
+  '2001-DEFENDER-90 Td5': ['None', 'Tomb Raider'],
+  '2001-DEFENDER-110 Td5': ['None', 'Tomb Raider'],
+  '2003-DEFENDER-110 Td5': ['None', 'G4 Challenge'],
+  '2008-DEFENDER-90 2.4 TDCi': ['None', 'SVX 60th Anniversary'],
+  '2008-DEFENDER-110 2.4 TDCi': ['None', 'SVX 60th Anniversary'],
+  '2015-DEFENDER-90 2.2 TDCi': ['None', 'Heritage', 'Adventure', 'Autobiography'],
+  '2015-DEFENDER-110 2.2 TDCi': ['None', 'Heritage', 'Adventure', 'Autobiography'],
+  '2016-DEFENDER-90 2.2 TDCi': ['None', 'Heritage', 'Adventure', 'Autobiography'],
+  '2016-DEFENDER-110 2.2 TDCi': ['None', 'Heritage', 'Adventure', 'Autobiography'],
+  '2018-DEFENDER-90 V8 5.0': ['None', 'Works V8 70th'],
+  '2018-DEFENDER-110 V8 5.0': ['None', 'Works V8 70th'],
+})
 
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
@@ -573,10 +600,13 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   },
   'LAND ROVER': {
     'LAND ROVER': {
-      DEFENDER: ['90', '110', '130'],
+      DEFENDER: [],
     },
   },
 }
+// The pack builder reads the flat carData version list; fill DEFENDER with the union of
+// every era's wheelbase+engine version (built from the year-keyed map above).
+carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
 
 // Years valid for a full manufacturer/brand/model/version spec, drawn from the
 // year-keyed catalog maps (used by the packs car picker's YEARS step).
