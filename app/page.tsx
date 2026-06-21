@@ -14,7 +14,7 @@ type Row = { code: string; label: string; amount: number; dated: boolean; date: 
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
-  const [rows, setRows] = useState<{ income: Row[]; expense: Row[] }>({ income: [], expense: [] })
+  const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[] }>({ income: [], expense: [], tax: [] })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { void load() }, [])
@@ -24,7 +24,7 @@ export default function HomePage() {
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
       supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
       supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
-      supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, item, supplier'),
+      supabase.from('invoice_expenses').select('invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
     ])
 
@@ -118,29 +118,33 @@ export default function HomePage() {
       if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.tip }) }
     })
 
-    // An expense is PAID once it has a payment_date; DUE expenses have none (UNDATED).
+    // An expense is PAID once it has a payment_date; DUE expenses have none. Among DUE
+    // expenses, DATED ones carry an expense_date, UNDATED ones have none.
     const expense: Row[] = []
     for (const e of exps || []) {
       const code = codeById.get(e.invoice_id); if (!code) continue
       if (isValidDate(e.payment_date)) continue
       const amount = expenseLine(e); if (!amount) continue
       const m = metaFor(e.invoice_id, code)
+      const dated = isValidDate(e.expense_date)
       // Show the SUPPLIER; the item description becomes the hover tooltip.
-      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated: false, date: null, href: m.href, tip: m.tip, labelTip: e.item || '' })
+      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated, date: dated ? fmtD(e.expense_date) : null, href: m.href, tip: m.tip, labelTip: e.item || '' })
     }
+    // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
+    const tax: Row[] = []
     for (const inv of invs || []) {
       const ipa = partsBy.get(inv.id) || []
       const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
       if (flTaxAmount > 0.005 && !isValidDate(inv.fl_tax_expense_date)) {
         const m = metaFor(inv.id, inv.invoice_code)
-        expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null, href: m.href, tip: m.tip })
+        tax.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null, href: m.href, tip: m.tip })
       }
     }
     // Sort by date (ascending); for the same date — or undated rows — bigger amount first.
     const byDateThenAmount = (a: Row, b: Row) =>
       (a.date && b.date) ? (a.date.localeCompare(b.date) || b.amount - a.amount) : a.date ? -1 : b.date ? 1 : (b.amount - a.amount)
-    income.sort(byDateThenAmount); expense.sort(byDateThenAmount)
+    income.sort(byDateThenAmount); expense.sort(byDateThenAmount); tax.sort(byDateThenAmount)
 
     setS({
       cashFlow, cashFlowPct: sumExpPaid > 0 ? (cashFlow / sumExpPaid) * 100 : 0,
@@ -148,7 +152,7 @@ export default function HomePage() {
       markup, markupPct: sumExpGlobal > 0 ? (markup / sumExpGlobal) * 100 : 0,
       dueGz,
     })
-    setRows({ income, expense })
+    setRows({ income, expense, tax })
     setLoading(false)
   }
 
@@ -167,7 +171,7 @@ export default function HomePage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mt-4">
             <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" />
-            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" />
+            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" taxRows={rows.tax} taxLabel="FLORIDA TAXES" />
           </div>
         </>
       )}
@@ -184,7 +188,7 @@ function DashCard({ label, value, color }: { label: string; value: string; color
   )
 }
 
-function DetailColumn({ label, value, valueColor, rows, undatedColor }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string }) {
+function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, taxLabel }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string; taxRows?: Row[]; taxLabel?: string }) {
   const undated = rows.filter(r => !r.dated)
   const dated = rows.filter(r => r.dated)
   return (
@@ -193,6 +197,7 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor }: { label:
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
       <RowGroup label="UNDATED" rows={undated} color={undatedColor} />
       <RowGroup label="DATED" rows={dated} color="text-gray-300" />
+      {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={undatedColor} />}
     </div>
   )
 }
