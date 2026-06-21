@@ -66,8 +66,8 @@ export default function HomePage() {
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
 
     const codeById = new Map<string, string>()
-    const metaById = new Map<string, { href: string; tip: string }>()
-    const metaByCode = new Map<string, { href: string; tip: string }>()
+    const metaById = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string }>()
+    const metaByCode = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string }>()
     for (const inv of invs || []) {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
@@ -76,10 +76,15 @@ export default function HomePage() {
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
       const invoiceName = inv.service || inv.invoice_code
       const ownerSeg = inv.ride_id ? `rides/${inv.ride_id}` : `clients/${cid}`
-      const meta = { href: `${BASE_PATH}/${ownerSeg}/invoices/${inv.id}`, tip: [clientName, carName, invoiceName].filter(Boolean).join(' — ') }
+      const meta = {
+        href: `${BASE_PATH}/${ownerSeg}/invoices/${inv.id}`,
+        tip: [clientName, carName, invoiceName].filter(Boolean).join(' — '),   // full (expenses)
+        carInvTip: [carName, invoiceName].filter(Boolean).join(' — '),         // car — invoice (incomes/loss)
+        clientName,
+      }
       metaById.set(inv.id, meta); metaByCode.set(inv.invoice_code, meta)
     }
-    const metaFor = (id?: string, code?: string) => (id && metaById.get(id)) || (code && metaByCode.get(code)) || { href: '#', tip: code || '' }
+    const metaFor = (id?: string, code?: string) => (id && metaById.get(id)) || (code && metaByCode.get(code)) || { href: '#', tip: code || '', carInvTip: code || '', clientName: '' }
 
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
@@ -111,6 +116,8 @@ export default function HomePage() {
     // Detail rows below the boxes: only DUE (unpaid) rows — already-paid ones carry no DUE.
     // Income is PAID when paid_at is set; an unpaid income is DATED if it has a scheduled
     // payment_date (e.g. an installment due-date), UNDATED if it has none.
+    // Income rows show the CLIENT NAME (the description is the label's rollover); the code's
+    // rollover is car — invoice.
     const income: Row[] = []
     for (const p of pays || []) {
       const code = codeById.get(p.invoice_id); if (!code) continue
@@ -118,19 +125,21 @@ export default function HomePage() {
       const amount = parseFloat(p.amount) || 0; if (!amount) continue
       const dated = isValidDate(p.payment_date)
       const m = metaFor(p.invoice_id, code)
-      income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.tip })
+      const desc = p.description || p.source || 'Income'
+      income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc })
     }
     stockByCode.forEach((v, code) => {
       if (!Array.from(codeById.values()).includes(code)) return
       const pending = v.all - v.paid
-      if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.tip }) }
+      if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: m.clientName || 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: 'Stock part sold' }) }
     })
     // LOSS group: invoices whose FINAL MARKUP is negative (shown last, separate from incomes).
     const loss: Row[] = []
     for (const inv of invs || []) {
       const lm = lossByInvoice.get(inv.id); if (!lm) continue
       const m = metaFor(inv.id, inv.invoice_code)
-      loss.push({ code: inv.invoice_code, label: `${lm.pct.toFixed(1)}%`, amount: lm.amount, dated: false, date: null, href: m.href, tip: m.tip })
+      const pctLabel = `${lm.pct.toFixed(1)}%`
+      loss.push({ code: inv.invoice_code, label: m.clientName || pctLabel, amount: lm.amount, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: pctLabel })
     }
     loss.sort((a, b) => a.amount - b.amount)
 
