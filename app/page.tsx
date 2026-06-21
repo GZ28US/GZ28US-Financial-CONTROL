@@ -136,12 +136,10 @@ export default function HomePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
             <DashCard label="CURRENT CASH FLOW" value={`${formatUSD(s.cashFlow)} / ${s.cashFlowPct.toFixed(1)}%`} color={s.cashFlow < 0 ? 'text-red-500' : 'text-blue-400'} />
             <DashCard label="FINAL MARKUP" value={`${formatUSD(s.markup)} / ${s.markupPct.toFixed(1)}%`} color={s.markup < 0 ? 'text-red-500' : 'text-blue-400'} />
-            <DashCard label="DUE by CLIENTS" value={formatUSD(s.dueClients)} color={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} />
-            <DashCard label="DUE by GZ28US" value={formatUSD(s.dueGz)} color={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mt-4">
-            <DetailColumn title="DUE by CLIENTS — INCOMES" rows={rows.income} undatedColor="text-amber-400" />
-            <DetailColumn title="DUE by GZ28US — EXPENSES" rows={rows.expense} undatedColor="text-red-400" />
+            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" />
+            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" />
           </div>
         </>
       )}
@@ -158,12 +156,13 @@ function DashCard({ label, value, color }: { label: string; value: string; color
   )
 }
 
-function DetailColumn({ title, rows, undatedColor }: { title: string; rows: Row[]; undatedColor: string }) {
+function DetailColumn({ label, value, valueColor, rows, undatedColor }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string }) {
   const undated = rows.filter(r => !r.dated)
   const dated = rows.filter(r => r.dated)
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
-      <p className="text-sm font-bold text-gray-400 mb-2">{title}</p>
+      <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
+      <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
       <RowGroup label="UNDATED" rows={undated} color={undatedColor} />
       <RowGroup label="DATED" rows={dated} color="text-gray-300" />
     </div>
