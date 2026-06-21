@@ -2446,10 +2446,12 @@ export default function EditInvoicePage() {
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-bold truncate text-blue-300" title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}{supplierIsVariable(exp.supplier) ? ` · Disc: ${parseFloat(exp.item_discount || '0') || 0}%` : ''}</p>
+                                      {!isQuote && <p className="text-xs text-gray-500">{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                       {exportStatusLine(exp, index)}
                                     </div>
                                     <div className="flex gap-2 shrink-0 items-start">
                                       <div className="flex flex-col gap-1">
+                                        {!isQuote && <button onClick={() => toggleExpensePaid(index)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${isValidDate(exp.payment_date) ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-600 hover:bg-gray-500'}`}>{isValidDate(exp.payment_date) ? 'PAID' : 'UNPAID'}</button>}
                                         <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
                                       </div>
                                       <div className="flex flex-col gap-1">
