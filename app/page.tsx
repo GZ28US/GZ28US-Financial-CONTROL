@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, formatShortDate } from '@/lib/utils'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -208,7 +208,7 @@ function RowGroup({ label, rows, color }: { label: string; rows: Row[]; color: s
       ) : rows.map((r, i) => (
         <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60">
           <span className="text-gray-300 truncate">
-            <a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · {r.label}{r.date ? ` · ${r.date}` : ''}
+            {r.date ? `${formatShortDate(r.date)} · ` : ''}<a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · {r.label}
           </span>
           <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
         </div>

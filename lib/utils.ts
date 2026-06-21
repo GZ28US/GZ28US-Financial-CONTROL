@@ -13,6 +13,14 @@ export function formatUSD(amount: number): string {
   }).format(amount)
 }
 
+// Universal short date format. US is month-first: MM/DD/YY. Input is an ISO
+// 'YYYY-MM-DD' (extra time part tolerated); anything else returns ''.
+export function formatShortDate(d: string | null | undefined): string {
+  if (typeof d !== 'string') return ''
+  const m = d.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return m ? `${m[2]}/${m[3]}/${m[1].slice(2)}` : ''
+}
+
 // Order income payments by their payment_date (ascending); rows with no valid
 // date always sort LAST. Returns a new array. Used by every INCOME list/box.
 export function orderIncomes<T extends { payment_date?: string | null }>(arr: T[]): T[] {
