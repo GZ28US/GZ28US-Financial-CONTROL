@@ -14,7 +14,7 @@ type Row = { code: string; label: string; amount: number; dated: boolean; date: 
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
-  const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[] }>({ income: [], expense: [], tax: [] })
+  const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[]; loss: Row[] }>({ income: [], expense: [], tax: [], loss: [] })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { void load() }, [])
@@ -54,9 +54,9 @@ export default function HomePage() {
     }
     const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts), svcsBy = group(svcs)
     const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
-    // A PENDING BALANCE (grand total not covered by the listed payments) is income the
-    // client still owes with no scheduled date — surfaced as an UNDATED income row.
-    const pendingByInvoice = new Map<string, number>()
+    // Per-invoice FINAL MARKUP; invoices with a negative markup are LOSSES, surfaced in
+    // their own group in the DUE by CLIENTS column (separate from the unpaid incomes).
+    const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
     // Resolve each invoice's client + car (for the VIEW link/tooltip), and DROP the
     // company's OWN cars: a GZ28US car billed to GZ28US is internal, not real income.
@@ -105,16 +105,17 @@ export default function HomePage() {
       const servicesTotal = (svcsBy.get(inv.id) || []).reduce((x: number, sv: any) => x + (parseFloat(sv.price) || 0), 0)
       const grandTotal = (partsSubTotal + flTaxAmount + servicesTotal) * (1 - (inv.global_discount || 0) / 100)
       const pendingBalance = grandTotal - paymentsSum
-      // Suppress the pending-balance income for the company's own cars (no client owes it).
+      // Suppress the pending-balance revenue for the company's own cars (no client owes it).
       const hasPending = pendingBalance > 0.005 && !companyInvoiceIds.has(inv.id)
-      if (hasPending) pendingByInvoice.set(inv.id, pendingBalance)
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
       const pendingPos = hasPending ? pendingBalance : 0
       cashFlow += totalPaid - expensesTotalPaid
-      dueClients += (totalIncomeAll - totalPaid) + pendingPos
-      // FINAL MARKUP income = all listed income (dated + undated) + the pending balance.
-      markup += (totalIncomeAll + pendingPos) - expensesTotalGlobal
+      dueClients += totalIncomeAll - totalPaid
+      // FINAL MARKUP income = listed income + pending balance; a negative result = LOSS invoice.
+      const invMarkup = (totalIncomeAll + pendingPos) - expensesTotalGlobal
+      if (invMarkup < -0.005) lossByInvoice.set(inv.id, { amount: invMarkup, pct: expensesTotalGlobal > 0 ? (invMarkup / expensesTotalGlobal) * 100 : 0 })
+      markup += invMarkup
       dueGz += expensesTotalPaid - expensesTotalGlobal
       sumExpPaid += expensesTotalPaid
       sumExpGlobal += expensesTotalGlobal
@@ -137,12 +138,14 @@ export default function HomePage() {
       const pending = v.all - v.paid
       if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.tip }) }
     })
-    // Each invoice's PENDING BALANCE is an UNDATED income (owed, no date to be paid).
+    // LOSS group: invoices whose FINAL MARKUP is negative (shown last, separate from incomes).
+    const loss: Row[] = []
     for (const inv of invs || []) {
-      const pb = pendingByInvoice.get(inv.id); if (!pb) continue
+      const lm = lossByInvoice.get(inv.id); if (!lm) continue
       const m = metaFor(inv.id, inv.invoice_code)
-      income.push({ code: inv.invoice_code, label: 'Pending balance', amount: pb, dated: false, date: null, href: m.href, tip: m.tip })
+      loss.push({ code: inv.invoice_code, label: `${lm.pct.toFixed(1)}%`, amount: lm.amount, dated: false, date: null, href: m.href, tip: m.tip })
     }
+    loss.sort((a, b) => a.amount - b.amount)
 
     // DUE by GZ28 lists only UNPAID expenses (what GZ28 still owes). A paid expense
     // carries a payment_date and is excluded. Among the unpaid ones, DATED = has an
@@ -179,7 +182,7 @@ export default function HomePage() {
       markup, markupPct: sumExpGlobal > 0 ? (markup / sumExpGlobal) * 100 : 0,
       dueGz,
     })
-    setRows({ income, expense, tax })
+    setRows({ income, expense, tax, loss })
     setLoading(false)
   }
 
@@ -197,7 +200,7 @@ export default function HomePage() {
             <DashCard label="FINAL MARKUP" value={`${formatUSD(s.markup)} / ${s.markupPct.toFixed(1)}%`} color={s.markup < 0 ? 'text-red-500' : 'text-blue-400'} />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mt-4">
-            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" />
+            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
             <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" taxRows={rows.tax} taxLabel="FLORIDA TAXES" />
           </div>
         </>
@@ -215,7 +218,7 @@ function DashCard({ label, value, color }: { label: string; value: string; color
   )
 }
 
-function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, taxLabel }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string; taxRows?: Row[]; taxLabel?: string }) {
+function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, taxLabel, taxColor }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string; taxRows?: Row[]; taxLabel?: string; taxColor?: string }) {
   const undated = rows.filter(r => !r.dated)
   const dated = rows.filter(r => r.dated)
   return (
@@ -224,7 +227,7 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, t
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
       {undated.length > 0 && <RowGroup label="UNDATED" rows={undated} color={undatedColor} />}
       {dated.length > 0 && <RowGroup label="DATED" rows={dated} color="text-gray-300" />}
-      {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={undatedColor} />}
+      {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={taxColor || undatedColor} />}
     </div>
   )
 }
