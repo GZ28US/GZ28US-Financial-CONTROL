@@ -118,16 +118,16 @@ export default function HomePage() {
       if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.tip }) }
     })
 
-    // Expenses group by their payment date: UNDATED = no date yet (what GZ28 still owes —
-    // the DUE total), DATED = already carries a payment date.
+    // DUE by GZ28 lists only UNPAID expenses (what GZ28 still owes). A paid expense
+    // carries a payment_date and is excluded — it is no longer due.
     const expense: Row[] = []
     for (const e of exps || []) {
       const code = codeById.get(e.invoice_id); if (!code) continue
+      if (isValidDate(e.payment_date)) continue
       const amount = expenseLine(e); if (!amount) continue
       const m = metaFor(e.invoice_id, code)
-      const dated = isValidDate(e.payment_date)
       // Show the SUPPLIER; the item description becomes the hover tooltip.
-      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated, date: dated ? fmtD(e.payment_date) : null, href: m.href, tip: m.tip, labelTip: e.item || '' })
+      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated: false, date: null, href: m.href, tip: m.tip, labelTip: e.item || '' })
     }
     // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
     const tax: Row[] = []
@@ -194,8 +194,8 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, t
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
-      <RowGroup label="UNDATED" rows={undated} color={undatedColor} />
-      <RowGroup label="DATED" rows={dated} color="text-gray-300" />
+      {undated.length > 0 && <RowGroup label="UNDATED" rows={undated} color={undatedColor} />}
+      {dated.length > 0 && <RowGroup label="DATED" rows={dated} color="text-gray-300" />}
       {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={undatedColor} />}
     </div>
   )
