@@ -225,6 +225,9 @@ export default function EditInvoicePage() {
   const [removedExpenseIds, setRemovedExpenseIds] = useState<string[]>([])
   const [newPartToStock, setNewPartToStock] = useState<PartsToStock>({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
+  // part description (lowercased) -> buyer car code, paid status, income amount. Drives the
+  // stock-sale income (a part this car donated and another car pulled from stock).
+  const [stockSales, setStockSales] = useState<Map<string, { buyerCode: string; paid: boolean; amount: number }>>(new Map())
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
@@ -359,6 +362,27 @@ export default function EditInvoicePage() {
       })), p => p.date)
       setSavedPartsToStock(mapped)
       setPartsToStock(mapped)
+    }
+
+    // Stock SALES: a part this car donated and another car pulled from stock carries this
+    // car's label as stock_donor on the buyer's expense. Each such pull is a stock-sale
+    // income for this donor invoice, PAID/PENDING per the buyer expense's payment_date.
+    const { data: salesData } = await supabase.from('invoice_expenses')
+      .select('item, payment_date, price, quantity, invoice_id')
+      .eq('stock_donor', rName)
+    const sales = (salesData || []).filter((s: any) => s.invoice_id && s.invoice_id !== invoiceId)
+    if (sales.length) {
+      const buyerIds = [...new Set(sales.map((s: any) => s.invoice_id))]
+      const { data: buyerInvs } = await supabase.from('invoices').select('id, invoice_code').in('id', buyerIds)
+      const codeById = new Map((buyerInvs || []).map((i: any) => [i.id, i.invoice_code]))
+      const m = new Map<string, { buyerCode: string; paid: boolean; amount: number }>()
+      sales.forEach((s: any) => {
+        const key = (s.item || '').trim().toLowerCase()
+        m.set(key, { buyerCode: String(codeById.get(s.invoice_id) || '—'), paid: isValidDate(s.payment_date), amount: (parseFloat(String(s.price)) || 0) * (parseFloat(String(s.quantity)) || 1) })
+      })
+      setStockSales(m)
+    } else {
+      setStockSales(new Map())
     }
 
     // Aliases from the parts data bank, applied as part descriptions when
@@ -1028,9 +1052,12 @@ export default function EditInvoicePage() {
   const globalDiscountPct = parseFloat(globalDiscount) || 0
   const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
-  // ALL income = every income record (paid + pending). Used by FINAL MARKUP.
-  const totalIncomeAll = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  // Stock-sale income: parts this car donated that another car has since pulled from stock.
+  const stockSaleIncomeAll = savedPartsToStock.reduce((s, p) => { const v = stockSales.get((p.description || '').trim().toLowerCase()); return s + (v ? v.amount : 0) }, 0)
+  const stockSaleIncomePaid = savedPartsToStock.reduce((s, p) => { const v = stockSales.get((p.description || '').trim().toLowerCase()); return s + (v && v.paid ? v.amount : 0) }, 0)
+  const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) + stockSaleIncomePaid
+  // ALL income = every income record (paid + pending) + stock-sale income. Used by FINAL MARKUP.
+  const totalIncomeAll = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) + stockSaleIncomeAll
   const balance = totalPaid - grandTotal
   // Owed amount NOT covered by any listed payment (paid or pending): all listed
   // payments minus the grand total. Negative = still owed once pending clears.
@@ -3018,16 +3045,22 @@ export default function EditInvoicePage() {
 
             {savedPartsToStock.length > 0 && (
               <div className="border-t border-gray-700 pt-3">
-                <p className="text-sm text-gray-500 mb-2">ALREADY IN INVENTORY FROM THIS {isQuote ? 'QUOTE' : 'INVOICE'}</p>
+                <p className="text-sm text-gray-500 mb-2">Actual TRACKING of PARTS</p>
                 <div className="border border-gray-700 rounded-2xl overflow-hidden">
-                  {savedPartsToStock.map((p, index) => (
+                  {savedPartsToStock.map((p, index) => {
+                    const sale = stockSales.get((p.description || '').trim().toLowerCase())
+                    return (
                     <div key={index} className={`flex items-center gap-4 px-4 py-3 ${index < savedPartsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <div className="flex-1 min-w-0">
                         <p className="text-base font-bold truncate text-orange-300" title={p.description}>{p.description}</p>
                         <p className="text-sm text-orange-300">Qty: {p.quantity} × {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
+                        {sale
+                          ? <p className="text-sm font-bold">→ <span className="text-blue-300">{sale.buyerCode}</span> · <span className="text-green-300">INCOME {formatUSD(sale.amount)}</span> <span className={sale.paid ? 'text-green-400' : 'text-yellow-400'}>({sale.paid ? 'PAID' : 'PENDING'})</span></p>
+                          : <p className="text-sm font-bold text-sky-300">📦 IN STOCK</p>}
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}

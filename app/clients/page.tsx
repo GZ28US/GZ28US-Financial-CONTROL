@@ -47,6 +47,25 @@ export default function ClientsPage() {
 
     const clientList = (data || []).filter((c: any) => !!c.is_quote === (mode === 'quote'))
 
+    // Stock-sale income per donor invoice (a donated part another car pulled from stock).
+    const stockByCode = new Map<string, { all: number; paid: number }>()
+    {
+      const [{ data: donInv }, { data: pulls }] = await Promise.all([
+        supabase.from('inventory').select('description, donor, notes').eq('category', 'STOCK').eq('source_type', 'DONATED'),
+        supabase.from('invoice_expenses').select('item, stock_donor, payment_date, price, quantity').not('stock_donor', 'is', null),
+      ])
+      const donorCodeByKey = new Map<string, string>()
+      ;(donInv || []).forEach((r: any) => { const mm = (r.notes || '').match(/^From\s+(\S+)\s+—/); if (mm) donorCodeByKey.set(`${(r.donor || '').trim().toLowerCase()}|${(r.description || '').trim().toLowerCase()}`, mm[1]) })
+      ;(pulls || []).forEach((e: any) => {
+        const code = donorCodeByKey.get(`${(e.stock_donor || '').trim().toLowerCase()}|${(e.item || '').trim().toLowerCase()}`)
+        if (!code) return
+        const amt = (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1)
+        const cur = stockByCode.get(code) || { all: 0, paid: 0 }
+        cur.all += amt; if (isValidDate(e.payment_date)) cur.paid += amt
+        stockByCode.set(code, cur)
+      })
+    }
+
     const withStats = await Promise.all(clientList.map(async (client) => {
       // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
       const { data: ridesOwned } = await supabase.from('rides').select('id, created_at, updated_at').eq('client_id', client.id)
@@ -57,7 +76,7 @@ export default function ClientsPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, is_quote, florida_taxes, global_discount, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
+        .select('id, invoice_code, is_quote, florida_taxes, global_discount, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
         .or(orParts.join(','))
 
       const invoiceList = invoices || []
@@ -110,9 +129,10 @@ export default function ClientsPage() {
           const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
           const grandTotal = partsAndServicesTotal - discountAmount
 
-          // Income counts only payments explicitly marked PAID (paid_at).
-          const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-          const totalIncomeAll = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+          // Income counts only payments explicitly marked PAID (paid_at), plus stock-sale income.
+          const ss = stockByCode.get((inv as any).invoice_code) || { all: 0, paid: 0 }
+          const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0) + ss.paid
+          const totalIncomeAll = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0) + ss.all
 
           const flTaxAmount = floridaTaxesAmount
           const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
