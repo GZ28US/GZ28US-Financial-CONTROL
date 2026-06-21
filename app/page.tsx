@@ -78,35 +78,37 @@ export default function HomePage() {
       sumExpGlobal += expensesTotalGlobal
     }
 
-    // Detail rows for the two lists below the boxes. UNDATED first, then DATED.
+    // Detail rows below the boxes: only DUE (unpaid) rows — already-paid ones carry no DUE.
+    // Income is PAID when paid_at is set; an unpaid income is DATED if it has a scheduled
+    // payment_date (e.g. an installment due-date), UNDATED if it has none.
     const income: Row[] = []
     for (const p of pays || []) {
       const code = codeById.get(p.invoice_id); if (!code) continue
+      if (p.paid_at) continue
       const amount = parseFloat(p.amount) || 0; if (!amount) continue
-      const dated = !!p.paid_at
-      income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date || p.paid_at) : null })
+      const dated = isValidDate(p.payment_date)
+      income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date) : null })
     }
     stockByCode.forEach((v, code) => {
       if (!Array.from(codeById.values()).includes(code)) return
       const pending = v.all - v.paid
       if (pending > 0.005) income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null })
-      if (v.paid > 0.005) income.push({ code, label: 'Stock part sold', amount: v.paid, dated: true, date: null })
     })
 
+    // An expense is PAID once it has a payment_date; DUE expenses have none (UNDATED).
     const expense: Row[] = []
     for (const e of exps || []) {
       const code = codeById.get(e.invoice_id); if (!code) continue
+      if (isValidDate(e.payment_date)) continue
       const amount = expenseLine(e); if (!amount) continue
-      const dated = isValidDate(e.payment_date)
-      expense.push({ code, label: e.item || e.supplier || 'Expense', amount, dated, date: dated ? fmtD(e.payment_date) : null })
+      expense.push({ code, label: e.item || e.supplier || 'Expense', amount, dated: false, date: null })
     }
     for (const inv of invs || []) {
       const ipa = partsBy.get(inv.id) || []
       const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
-      if (flTaxAmount > 0.005) {
-        const dated = isValidDate(inv.fl_tax_expense_date)
-        expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated, date: dated ? fmtD(inv.fl_tax_expense_date) : null })
+      if (flTaxAmount > 0.005 && !isValidDate(inv.fl_tax_expense_date)) {
+        expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null })
       }
     }
     const byCode = (a: Row, b: Row) => a.code.localeCompare(b.code, undefined, { numeric: true }) || b.amount - a.amount
