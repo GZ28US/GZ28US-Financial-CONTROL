@@ -1258,6 +1258,13 @@ export default function EditInvoicePage() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
     setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
   }
+  // Add the outstanding PENDING BALANCE (grand total − listed income) as a new income —
+  // undated and unpaid, since it has no scheduled date or payment yet.
+  function addPendingBalanceIncome(amount: number) {
+    if (amount <= 0.005) return
+    const row: Payment = { amount: amount.toFixed(2), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', paid_at: '' }
+    setPayments(sortByDateAsc([...payments, row], p => p.payment_date))
+  }
   function removePayment(index: number) {
     const payment = payments[index]
     if (payment.id) setRemovedPaymentIds(prev => [...prev, payment.id!])
@@ -2841,7 +2848,10 @@ export default function EditInvoicePage() {
               <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
               <input type="text" value={newPayment.description} onChange={(e) => setNewPayment({ ...newPayment, description: e.target.value })} className={inputClass} placeholder="Optional note" />
             </div>
-            <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD INCOME</button>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD INCOME</button>
+              {pendingBalance < -0.005 && <button onClick={() => addPendingBalanceIncome(-pendingBalance)} className="bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold text-lg">ADD PENDING BALANCE ({formatUSD(-pendingBalance)})</button>}
+            </div>
             {payments.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
                 {payments.map((payment, index) => {
