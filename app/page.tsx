@@ -21,12 +21,11 @@ export default function HomePage() {
 
   async function load() {
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
-    const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }, { data: svcs }] = await Promise.all([
-      supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, global_discount, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
+    const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
+      supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
       supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
       supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
-      supabase.from('invoice_services').select('invoice_id, price'),
     ])
 
     // Stock-sale income per donor invoice (a donated part another car pulled from stock),
@@ -52,11 +51,8 @@ export default function HomePage() {
       for (const r of rs || []) { const a = m.get(r.invoice_id) || []; a.push(r); m.set(r.invoice_id, a) }
       return m
     }
-    const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts), svcsBy = group(svcs)
+    const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts)
     const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
-    // Invoices whose listed payments don't cover the grand total still owe a PENDING
-    // BALANCE — their incomes are treated as UNDATED (timing not yet pinned down).
-    const pendingInvoiceIds = new Set<string>()
 
     // invoice id -> code, limited to REPORT-READY invoices (drives the detail lists).
     const codeById = new Map<string, string>()
@@ -93,13 +89,7 @@ export default function HomePage() {
       const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
       const ss = stockByCode.get(inv.invoice_code) || { all: 0, paid: 0 }
       const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0) + ss.paid
-      const paymentsSum = ip.reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0)
-      const totalIncomeAll = paymentsSum + ss.all
-      // grandTotal = (parts + FL tax + services) − global discount; a shortfall vs the
-      // listed payments means a PENDING BALANCE is still owed.
-      const servicesTotal = (svcsBy.get(inv.id) || []).reduce((x: number, sv: any) => x + (parseFloat(sv.price) || 0), 0)
-      const grandTotal = (partsSubTotal + flTaxAmount + servicesTotal) * (1 - (inv.global_discount || 0) / 100)
-      if (paymentsSum - grandTotal < -0.005) pendingInvoiceIds.add(inv.id)
+      const totalIncomeAll = ip.reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0) + ss.all
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
       cashFlow += totalPaid - expensesTotalPaid
@@ -112,14 +102,13 @@ export default function HomePage() {
 
     // Detail rows below the boxes: only DUE (unpaid) rows — already-paid ones carry no DUE.
     // Income is PAID when paid_at is set; an unpaid income is DATED if it has a scheduled
-    // payment_date (e.g. an installment due-date), UNDATED if it has none — and any income
-    // on an invoice that still has a PENDING BALANCE is UNDATED regardless.
+    // payment_date (e.g. an installment due-date), UNDATED if it has none.
     const income: Row[] = []
     for (const p of pays || []) {
       const code = codeById.get(p.invoice_id); if (!code) continue
       if (p.paid_at) continue
       const amount = parseFloat(p.amount) || 0; if (!amount) continue
-      const dated = isValidDate(p.payment_date) && !pendingInvoiceIds.has(p.invoice_id)
+      const dated = isValidDate(p.payment_date)
       const m = metaFor(p.invoice_id, code)
       income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.tip })
     }
