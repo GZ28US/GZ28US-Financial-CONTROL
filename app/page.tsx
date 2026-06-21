@@ -21,12 +21,11 @@ export default function HomePage() {
 
   async function load() {
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
-    const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }, { data: svcs }] = await Promise.all([
-      supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, global_discount, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
+    const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
+      supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
       supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
       supabase.from('invoice_expenses').select('invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
-      supabase.from('invoice_services').select('invoice_id, price'),
     ])
 
     // Stock-sale income per donor invoice (a donated part another car pulled from stock),
@@ -52,25 +51,19 @@ export default function HomePage() {
       for (const r of rs || []) { const a = m.get(r.invoice_id) || []; a.push(r); m.set(r.invoice_id, a) }
       return m
     }
-    const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts), svcsBy = group(svcs)
+    const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts)
     const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
     // Per-invoice FINAL MARKUP; invoices with a negative markup are LOSSES, surfaced in
     // their own group in the DUE by CLIENTS column (separate from the unpaid incomes).
     const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
-    // Resolve each invoice's client + car (for the VIEW link/tooltip), and DROP the
-    // company's OWN cars: a GZ28US car billed to GZ28US is internal, not real income.
-    // (BR cars billed to the US unit are ordinary clients — they stay.)
+    // Resolve each invoice's client + car for the VIEW link/tooltip.
     const [{ data: ridesD }, { data: clientsD }] = await Promise.all([
       supabase.from('rides').select('id, project_name, model, version, client_id'),
       supabase.from('clients').select('id, name'),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
-    const companyClientId = (clientsD || []).find((c: any) => /speedshop\s*usa/i.test(c.name || ''))?.id || null
-    // The company's OWN cars stay in every total (cashflow / markup / DUE by GZ28), but
-    // their PENDING BALANCE is NOT listed as income — there's no real client owing it.
-    const companyInvoiceIds = new Set<string>()
 
     const codeById = new Map<string, string>()
     const metaById = new Map<string, { href: string; tip: string }>()
@@ -78,7 +71,6 @@ export default function HomePage() {
     for (const inv of invs || []) {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
-      if (companyClientId && cid === companyClientId) companyInvoiceIds.add(inv.id)
       codeById.set(inv.id, inv.invoice_code)
       const clientName = cid ? (clientsById.get(cid) || '') : ''
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
@@ -101,19 +93,14 @@ export default function HomePage() {
       const paymentsSum = ip.reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0)
       const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0) + ss.paid
       const totalIncomeAll = paymentsSum + ss.all
-      // Pending balance the client still owes = grand total − the listed payments.
-      const servicesTotal = (svcsBy.get(inv.id) || []).reduce((x: number, sv: any) => x + (parseFloat(sv.price) || 0), 0)
-      const grandTotal = (partsSubTotal + flTaxAmount + servicesTotal) * (1 - (inv.global_discount || 0) / 100)
-      const pendingBalance = grandTotal - paymentsSum
-      // Suppress the pending-balance revenue for the company's own cars (no client owes it).
-      const hasPending = pendingBalance > 0.005 && !companyInvoiceIds.has(inv.id)
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
-      const pendingPos = hasPending ? pendingBalance : 0
       cashFlow += totalPaid - expensesTotalPaid
       dueClients += totalIncomeAll - totalPaid
-      // FINAL MARKUP income = listed income + pending balance; a negative result = LOSS invoice.
-      const invMarkup = (totalIncomeAll + pendingPos) - expensesTotalGlobal
+      // FINAL MARKUP = listed income − expenses (the invoice's real result, matching its card);
+      // a negative value = LOSS invoice. Pending balances are collected via the editor's
+      // ADD PENDING BALANCE button, so they don't auto-mask a loss here.
+      const invMarkup = totalIncomeAll - expensesTotalGlobal
       if (invMarkup < -0.005) lossByInvoice.set(inv.id, { amount: invMarkup, pct: expensesTotalGlobal > 0 ? (invMarkup / expensesTotalGlobal) * 100 : 0 })
       markup += invMarkup
       dueGz += expensesTotalPaid - expensesTotalGlobal
