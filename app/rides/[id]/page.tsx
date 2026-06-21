@@ -156,8 +156,12 @@ export default function ViewRidePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Ride not found.</p></main>
   )
 
-  // Consolidated across ALL of the ride's invoices.
-  const agg = Object.values(invoiceStats).reduce((a, v) => ({
+  // Consolidated across the ride's REPORT-READY invoices only (non-quote AND live ONLINE/CLOSED).
+  const reportReadyStats = invoices
+    .filter((inv: any) => !inv.is_quote && (inv.live_status === 'REALTIME' || inv.live_status === 'CLOSED'))
+    .map((inv: any) => invoiceStats[inv.id])
+    .filter(Boolean)
+  const agg = reportReadyStats.reduce((a, v) => ({
     currentProfit: a.currentProfit + v.currentProfit,
     finalProfit: a.finalProfit + v.finalProfit,
     paymentsBalance: a.paymentsBalance + v.paymentsBalance,

@@ -18,7 +18,7 @@ export default function HomePage() {
   async function load() {
     // EVERYTHING, all time — every real (non-quote) invoice and its children.
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
-      supabase.from('invoices').select('id, invoice_code, florida_taxes, fl_tax_expense_date').eq('is_quote', false),
+      supabase.from('invoices').select('id, invoice_code, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
       supabase.from('invoice_payments').select('invoice_id, amount, paid_at'),
       supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),

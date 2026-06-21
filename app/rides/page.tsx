@@ -156,6 +156,8 @@ export default function RidesPage() {
         const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 
         for (const inv of invoiceList) {
+          // Reports count only REPORT-READY invoices: non-quote AND live ONLINE/CLOSED.
+          if (inv.is_quote || (inv.live_status !== 'REALTIME' && inv.live_status !== 'CLOSED')) continue
           const parts = partsBy.get(inv.id) || []
           const services = servicesBy.get(inv.id) || []
           const payments = paymentsBy.get(inv.id) || []

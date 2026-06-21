@@ -70,7 +70,7 @@ export default function ClientsPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, florida_taxes, global_discount, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
+        .select('id, is_quote, florida_taxes, global_discount, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
         .or(orParts.join(','))
 
       const invoiceList = invoices || []
@@ -108,6 +108,8 @@ export default function ClientsPage() {
         const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 
         for (const inv of invoiceList) {
+          // Reports count only REPORT-READY invoices: non-quote AND live ONLINE/CLOSED.
+          if ((inv as any).is_quote || (inv.live_status !== 'REALTIME' && inv.live_status !== 'CLOSED')) continue
           const parts = partsBy.get(inv.id) || []
           const services = servicesBy.get(inv.id) || []
           const payments = paymentsBy.get(inv.id) || []
