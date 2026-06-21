@@ -58,22 +58,27 @@ export default function HomePage() {
     // client still owes with no scheduled date — surfaced as an UNDATED income row.
     const pendingByInvoice = new Map<string, number>()
 
-    // invoice id -> code, limited to REPORT-READY invoices (drives the detail lists).
-    const codeById = new Map<string, string>()
-    for (const inv of invs || []) codeById.set(inv.id, inv.invoice_code)
-
-    // Per-invoice VIEW link + "CLIENT — CAR — INVOICE" tooltip for each detail row.
+    // Resolve each invoice's client + car (for the VIEW link/tooltip), and DROP the
+    // company's OWN cars: a GZ28US car billed to GZ28US is internal, not real income.
+    // (BR cars billed to the US unit are ordinary clients — they stay.)
     const [{ data: ridesD }, { data: clientsD }] = await Promise.all([
       supabase.from('rides').select('id, project_name, model, version, client_id'),
       supabase.from('clients').select('id, name'),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
+    const companyClientId = (clientsD || []).find((c: any) => /speedshop\s*usa/i.test(c.name || ''))?.id || null
+
+    // codeById holds ONLY the report invoices (excludes the company's own cars); it gates
+    // every total and detail row below, so internal cars fall out everywhere at once.
+    const codeById = new Map<string, string>()
     const metaById = new Map<string, { href: string; tip: string }>()
     const metaByCode = new Map<string, { href: string; tip: string }>()
     for (const inv of invs || []) {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
+      if (companyClientId && cid === companyClientId) continue
+      codeById.set(inv.id, inv.invoice_code)
       const clientName = cid ? (clientsById.get(cid) || '') : ''
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
       const invoiceName = inv.service || inv.invoice_code
@@ -85,6 +90,7 @@ export default function HomePage() {
 
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
+      if (!codeById.has(inv.id)) continue
       const ip = paysBy.get(inv.id) || []
       const ie = expsBy.get(inv.id) || []
       const ipa = partsBy.get(inv.id) || []
@@ -152,6 +158,7 @@ export default function HomePage() {
     // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
     const tax: Row[] = []
     for (const inv of invs || []) {
+      if (!codeById.has(inv.id)) continue
       const ipa = partsBy.get(inv.id) || []
       const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
