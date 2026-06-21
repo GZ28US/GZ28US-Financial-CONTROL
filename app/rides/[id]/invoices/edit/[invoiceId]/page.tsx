@@ -11,7 +11,9 @@ import { enrollParts, normPN } from '@/lib/partsDb'
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
-type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; paid_at: string }
+// date_label: a milestone marker ("Goods Arrival" / "Project Conclusion") used
+// INSTEAD of a calendar payment_date. Empty = a real date (or undated) is used.
+type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
 type Note = { id?: string; note: string }
 // stock_source_type / stock_donor are the lineage carriers: when an item is
 // pulled FROM STOCK into this expense list, we copy the stock row's source_type
@@ -171,9 +173,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   // paidInConfirm: clicking UNPAID (to mark PAID) opens a "PAID IN?" date box,
   // defaulting to today. The chosen date sets paid_at; payment_date is untouched.
   // Going PAID -> UNPAID just clears paid_at with no box.
@@ -306,6 +308,7 @@ export default function EditInvoicePage() {
       amount_brl: p.amount_brl != null ? String(p.amount_brl) : '',
       receipt_url: p.receipt_url || '',
       description: p.description || '',
+      date_label: p.date_label || '',
       paid_at: p.paid_at || '',
     })), p => p.payment_date))
 
@@ -686,7 +689,7 @@ export default function EditInvoicePage() {
       const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
         ? new Date(p.date + 'T12:00:00Z').toISOString()
         : new Date().toISOString()
-      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', paid_at: paidAt }
+      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
     })
     setPayments(prev => sortByDateAsc([...prev, ...newRows], p => p.payment_date))
     setScannedPayments(null)
@@ -1065,8 +1068,9 @@ export default function EditInvoicePage() {
   // ONLINE is allowed only when there's no PENDING BALANCE still owed (>= 0).
   // While a pending balance is owed (negative), the invoice is locked OFFLINE.
   const noPendingBalance = pendingBalance >= 0
-  // CLOSED also requires every income to carry a date (a valid payment_date).
-  const allIncomesDated = payments.every(p => isValidDate(p.payment_date))
+  // CLOSED also requires every income to carry a date — either a valid payment_date
+  // or a milestone label (Goods Arrival / Project Conclusion).
+  const allIncomesDated = payments.every(p => isValidDate(p.payment_date) || !!p.date_label)
   // REPORT READY is automatic now: a non-quote invoice is report-ready whenever it is
   // ONLINE (stored 'REALTIME') or CLOSED — no manual feed toggle. A quote is never
   // report-ready (it has no live customer report).
@@ -1285,7 +1289,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
+    setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
   // Add the outstanding PENDING BALANCE (grand total − listed income) as a new income —
   // undated and unpaid, since it has no scheduled date or payment yet.
@@ -1293,7 +1297,7 @@ export default function EditInvoicePage() {
     if (amount <= 0.005) return
     // Keep FULL precision (not toFixed(2)) so the listed income exactly matches the grand
     // total — rounding to cents would leave the balance fractionally negative.
-    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', paid_at: '' }
+    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', date_label: '', paid_at: '' }
     setPayments(sortByDateAsc([...payments, row], p => p.payment_date))
   }
   function removePayment(index: number) {
@@ -1306,13 +1310,13 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28US', amount_brl: editingPayment.source === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28US', amount_brl: editingPayment.source === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, p => p.payment_date))
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', paid_at: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
 
   async function togglePaid(index: number) {
     const p = payments[index]
@@ -1611,6 +1615,7 @@ export default function EditInvoicePage() {
         amount_brl: p.source === 'GZ28BR' ? (parseFloat(p.amount_brl || '') || null) : null,
         receipt_url: p.receipt_url || null,
         description: p.description || null,
+        date_label: p.date_label || null,
         paid_at: p.paid_at || null,
       })))
       if (e) { alert(e.message); return }
@@ -2879,7 +2884,15 @@ export default function EditInvoicePage() {
                 <p className="text-sm text-gray-400 pb-3 whitespace-nowrap">{brlRate(newPayment.amount, newPayment.amount_brl || '')}</p>
               </div>
             )}
-            <DatePicker label="DATE" value={newPayment.payment_date} onChange={(v) => setNewPayment({ ...newPayment, payment_date: v })} />
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">WHEN</label>
+              <select value={newPayment.date_label || 'DATE'} onChange={(e) => { const v = e.target.value; if (v === 'DATE') setNewPayment({ ...newPayment, date_label: '' }); else setNewPayment({ ...newPayment, date_label: v, payment_date: '' }) }} className={`${selectClass} w-full`}>
+                <option value="DATE">DATE</option>
+                <option value="Goods Arrival">Goods Arrival</option>
+                <option value="Project Conclusion">Project Conclusion</option>
+              </select>
+              {!newPayment.date_label && <div className="mt-2"><DatePicker label="DATE" value={newPayment.payment_date} onChange={(v) => setNewPayment({ ...newPayment, payment_date: v })} /></div>}
+            </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
               <input type="text" value={newPayment.description} onChange={(e) => setNewPayment({ ...newPayment, description: e.target.value })} className={inputClass} placeholder="Optional note" />
@@ -2922,7 +2935,15 @@ export default function EditInvoicePage() {
                               <p className="text-sm text-gray-400 pb-3 whitespace-nowrap">{brlRate(editingPayment.amount, editingPayment.amount_brl || '')}</p>
                             </div>
                           )}
-                          <DatePicker label="DATE" value={editingPayment.payment_date} onChange={(v) => setEditingPayment({ ...editingPayment, payment_date: v })} />
+                          <div>
+                            <label className="block mb-1 text-sm text-gray-400">WHEN</label>
+                            <select value={editingPayment.date_label || 'DATE'} onChange={(e) => { const v = e.target.value; if (v === 'DATE') setEditingPayment({ ...editingPayment, date_label: '' }); else setEditingPayment({ ...editingPayment, date_label: v, payment_date: '' }) }} className={`${selectClass} w-full`}>
+                              <option value="DATE">DATE</option>
+                              <option value="Goods Arrival">Goods Arrival</option>
+                              <option value="Project Conclusion">Project Conclusion</option>
+                            </select>
+                            {!editingPayment.date_label && <div className="mt-2"><DatePicker label="DATE" value={editingPayment.payment_date} onChange={(v) => setEditingPayment({ ...editingPayment, payment_date: v })} /></div>}
+                          </div>
                           <div>
                             <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
                             <input type="text" value={editingPayment.description} onChange={(e) => setEditingPayment({ ...editingPayment, description: e.target.value })} className={`${smallInputClass} w-full`} placeholder="Optional note" />
@@ -2936,7 +2957,7 @@ export default function EditInvoicePage() {
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <p className={`text-base font-bold ${statusColor}`}>{formatUSD(parseFloat(payment.amount))} — {status}</p>
-                            <p className="text-sm text-gray-400">{payment.source}{payment.source === 'GZ28BR' && payment.amount_brl ? ` · R$ ${(parseFloat(payment.amount_brl) || 0).toFixed(2)}` : ''}{payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                            <p className="text-sm text-gray-400">{payment.source}{payment.source === 'GZ28BR' && payment.amount_brl ? ` · R$ ${(parseFloat(payment.amount_brl) || 0).toFixed(2)}` : ''}{payment.date_label ? ` — ${payment.date_label}` : payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
                             {isPaid && <p className="text-sm text-green-400">Paid: {formatTsDate(payment.paid_at)}</p>}
                             {payment.description && <p className="text-sm text-gray-500 truncate" title={payment.description}>{payment.description}</p>}
                           </div>
