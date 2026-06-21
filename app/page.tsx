@@ -24,7 +24,7 @@ export default function HomePage() {
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
       supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
       supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
-      supabase.from('invoice_expenses').select('invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier'),
+      supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
     ])
 
@@ -118,17 +118,16 @@ export default function HomePage() {
       if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.tip }) }
     })
 
-    // An expense is PAID once it has a payment_date; DUE expenses have none. Among DUE
-    // expenses, DATED ones carry an expense_date, UNDATED ones have none.
+    // Expenses group by their payment date: UNDATED = no date yet (what GZ28 still owes —
+    // the DUE total), DATED = already carries a payment date.
     const expense: Row[] = []
     for (const e of exps || []) {
       const code = codeById.get(e.invoice_id); if (!code) continue
-      if (isValidDate(e.payment_date)) continue
       const amount = expenseLine(e); if (!amount) continue
       const m = metaFor(e.invoice_id, code)
-      const dated = isValidDate(e.expense_date)
+      const dated = isValidDate(e.payment_date)
       // Show the SUPPLIER; the item description becomes the hover tooltip.
-      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated, date: dated ? fmtD(e.expense_date) : null, href: m.href, tip: m.tip, labelTip: e.item || '' })
+      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated, date: dated ? fmtD(e.payment_date) : null, href: m.href, tip: m.tip, labelTip: e.item || '' })
     }
     // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
     const tax: Row[] = []
