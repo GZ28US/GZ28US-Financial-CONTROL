@@ -213,15 +213,16 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, t
   const milestoneRows = rows.filter(r => r.milestone)
   const undated = rows.filter(r => !r.dated && !r.milestone)
   const dated = rows.filter(r => r.dated)
-  // One group per distinct milestone label present (ARRIVAL, CONCLUSION).
+  // One group per distinct milestone label present, shown just before LOSS with friendly names.
+  const milestoneNames: Record<string, string> = { ARRIVAL: 'Goods Arrival', CONCLUSION: 'Project Conclusion' }
   const milestoneLabels = [...new Set(milestoneRows.map(r => r.milestone!))]
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
       {undated.length > 0 && <RowGroup label="UNDATED" rows={undated} color={undatedColor} />}
-      {milestoneLabels.map(ml => <RowGroup key={ml} label={ml} rows={milestoneRows.filter(r => r.milestone === ml)} color="text-cyan-400" />)}
       {dated.length > 0 && <RowGroup label="DATED" rows={dated} color="text-gray-300" />}
+      {milestoneLabels.map(ml => <RowGroup key={ml} label={milestoneNames[ml] || ml} rows={milestoneRows.filter(r => r.milestone === ml)} color="text-cyan-400" />)}
       {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={taxColor || undatedColor} />}
     </div>
   )
