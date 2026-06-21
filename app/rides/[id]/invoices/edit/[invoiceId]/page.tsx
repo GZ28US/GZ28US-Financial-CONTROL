@@ -27,6 +27,9 @@ type Expense = {
   tax: string
   extra: string
   quantity: string
+  // expense_date = the expense's own date (freely set, does NOT mark it paid).
+  // payment_date = the date it was PAID (set only via the PAID toggle).
+  expense_date: string
   payment_date: string
   receipt_urls: string[]
   purchase_group?: string
@@ -174,7 +177,7 @@ export default function EditInvoicePage() {
   // paidInConfirm: clicking UNPAID (to mark PAID) opens a "PAID IN?" date box,
   // defaulting to today. The chosen date sets paid_at; payment_date is untouched.
   // Going PAID -> UNPAID just clears paid_at with no box.
-  const [paidInConfirm, setPaidInConfirm] = useState<{ index: number; date: string } | null>(null)
+  const [paidInConfirm, setPaidInConfirm] = useState<{ kind: 'income' | 'expense'; index: number; date: string } | null>(null)
   const [scanningPayment, setScanningPayment] = useState(false)
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
@@ -183,9 +186,9 @@ export default function EditInvoicePage() {
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -326,6 +329,7 @@ export default function EditInvoicePage() {
         extra: String(e.extra ?? 0),
         item_discount: String(e.item_discount ?? 0),
         quantity: String(e.quantity || 1),
+        expense_date: e.expense_date || '',
         payment_date: e.payment_date || '',
         receipt_urls: parseReceiptUrls(e.receipt_url),
         purchase_group: e.purchase_group || undefined,
@@ -405,7 +409,7 @@ export default function EditInvoicePage() {
     return {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
-      payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
+      expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
     }
   }
   // Insert a parts-database item as a fresh, unpaid expense. A KIT expands into a
@@ -485,6 +489,7 @@ export default function EditInvoicePage() {
       tax: '0',
       extra: '0',
       quantity: String(qty),
+      expense_date: item.purchase_date || '',
       payment_date: item.purchase_date || '',
       receipt_urls: [],
       stock_source_type: item.source_type || undefined,
@@ -674,6 +679,7 @@ export default function EditInvoicePage() {
       tax: item.tax || '0',
       extra: item.extra || '0',
       quantity: item.quantity || '1',
+      expense_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedPurchase.date) ? scannedPurchase.date : '',
       payment_date: scannedPurchase.paid ? scannedPurchase.date : '',
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
@@ -729,13 +735,13 @@ export default function EditInvoicePage() {
     const first = groupItems[0].expense
     setEditingPurchaseGroupId(groupId)
     setEditingPurchaseSupplier(first.supplier)
-    setEditingPurchaseDate(first.payment_date)
+    setEditingPurchaseDate(first.expense_date || first.payment_date)
   }
 
   async function confirmEditPurchase() {
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, payment_date: editingPurchaseDate }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: editingPurchaseDate }
         : e
     ))
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
@@ -743,7 +749,7 @@ export default function EditInvoicePage() {
       if (exp.id) {
         await supabase.from('invoice_expenses').update({
           supplier: editingPurchaseSupplier || null,
-          payment_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
+          expense_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
         }).eq('id', exp.id)
       }
     }
@@ -801,7 +807,7 @@ export default function EditInvoicePage() {
         category: 'STOCK',
         quantity: qtyToSend,
         unit_price: parseFloat(exp.amount) || 0,
-        purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
+        purchase_date: isValidDate(exp.expense_date) ? exp.expense_date : (isValidDate(exp.payment_date) ? exp.payment_date : null),
         supplier: exp.supplier || null,
         notes: note,
         receipt_url: receiptUrlsJson,
@@ -814,7 +820,7 @@ export default function EditInvoicePage() {
         description: exp.item,
         quantity: qtyToSend,
         unit_price: parseFloat(exp.amount) || 0,
-        purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
+        purchase_date: isValidDate(exp.expense_date) ? exp.expense_date : (isValidDate(exp.payment_date) ? exp.payment_date : null),
         supplier: exp.supplier || null,
         receipt_url: receiptUrlsJson,
       }])
@@ -1283,13 +1289,39 @@ export default function EditInvoicePage() {
       setPayments(updated)
     } else {
       // Mark paid — ask for the paid date (PAID IN?), default today.
-      setPaidInConfirm({ index, date: todayStr() })
+      setPaidInConfirm({ kind: 'income', index, date: todayStr() })
+    }
+  }
+
+  // Expense PAID toggle: marking paid records the date in payment_date (the paid signal);
+  // unmarking clears it. The expense's own expense_date is never touched here.
+  async function toggleExpensePaid(index: number) {
+    const e = expenses[index]
+    if (isValidDate(e.payment_date)) {
+      if (e.id) {
+        const { error } = await supabase.from('invoice_expenses').update({ payment_date: null }).eq('id', e.id)
+        if (error) { alert(error.message); return }
+      }
+      const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: '' }; setExpenses(updated)
+    } else {
+      setPaidInConfirm({ kind: 'expense', index, date: todayStr() })
     }
   }
 
   async function confirmPaidIn() {
     if (!paidInConfirm) return
-    const { index, date } = paidInConfirm
+    const { kind, index, date } = paidInConfirm
+    if (kind === 'expense') {
+      const e = expenses[index]
+      const payDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr()
+      if (e.id) {
+        const { error } = await supabase.from('invoice_expenses').update({ payment_date: payDate }).eq('id', e.id)
+        if (error) { alert(error.message); return }
+      }
+      const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: payDate }; setExpenses(updated)
+      setPaidInConfirm(null)
+      return
+    }
     const p = payments[index]
     const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(date)
       ? new Date(date + 'T12:00:00Z').toISOString()
@@ -1339,7 +1371,7 @@ export default function EditInvoicePage() {
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
     if (!supplierKnown(newExpense.supplier)) { alert('Choose an existing supplier from the list. Add new suppliers in the SUPPLIERS section first.'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   }
   function removeExpense(index: number) {
     const exp = expenses[index]
@@ -1357,7 +1389,8 @@ export default function EditInvoicePage() {
     }
     if (exp.id) {
       const { error } = await supabase.from('invoice_expenses').update({
-        expense_date: null, supplier: editingExpense.supplier || null,
+        expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
+        supplier: editingExpense.supplier || null,
         item: editingExpense.item, price: parseFloat(editingExpense.amount),
         tax: parseFloat(editingExpense.tax) || 0,
         extra: parseFloat(editingExpense.extra) || 0,
@@ -1369,9 +1402,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' }) }
 
   // Before a quote converts to an invoice, archive its full content exactly as
   // currently stored (invoice row + line items, payments, notes) into
@@ -1550,7 +1583,7 @@ export default function EditInvoicePage() {
     const newExpenses = expenses.filter(e => !e.id)
     if (newExpenses.length > 0) {
       const { error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({
-        invoice_id: invoiceId, expense_date: null,
+        invoice_id: invoiceId, expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
         supplier: ex.supplier || null, item: ex.item,
         part_number: ex.part_number || null,
         price: parseFloat(ex.amount),
@@ -2350,7 +2383,7 @@ export default function EditInvoicePage() {
                               <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
                               <p className="text-base font-bold text-blue-400">{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
                             </div>
-                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
+                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.expense_date || firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
                             {supplierIsVariable(firstItem.supplier) ? (
                               <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: VARIABLE (per item)</p>
                             ) : supplierDiscount(firstItem.supplier) != null && (
@@ -2473,7 +2506,7 @@ export default function EditInvoicePage() {
                             </div>
                             <div className="flex gap-4 items-start flex-wrap">
                               <div className="flex-1 min-w-[14rem]">
-                                <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} compact />
+                                <DatePicker label="EXPENSE DATE" value={editingExpense.expense_date} onChange={(v) => setEditingExpense({ ...editingExpense, expense_date: v })} compact />
                               </div>
                               <div>
                                 <label className="block mb-1 text-xs text-gray-400">RECEIPTS</label>
@@ -2504,7 +2537,7 @@ export default function EditInvoicePage() {
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
-                                {!isQuote && <p className="text-sm text-gray-500">{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
+                                {!isQuote && <p className="text-sm text-gray-500">{isValidDate(exp.expense_date) ? formatDate(exp.expense_date) : 'No date'}{isPaid ? ` · Paid: ${formatDate(exp.payment_date)}` : ' · Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
                                 {supplierIsVariable(exp.supplier)
                                   ? <p className="text-sm font-bold text-yellow-300">★ Supplier discount: VARIABLE — item {parseFloat(exp.item_discount || '0') || 0}%</p>
@@ -2531,6 +2564,7 @@ export default function EditInvoicePage() {
                                   <button onClick={() => moveExpense(index, 1)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-sm" title="Move down">▼</button>
                                 </div>
                                 <div className="flex flex-col gap-1">
+                                  {!isQuote && <button onClick={() => toggleExpensePaid(index)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${isPaid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-600 hover:bg-gray-500'}`}>{isPaid ? 'PAID' : 'UNPAID'}</button>}
                                   <button onClick={() => setSendToConfirm({ index, expense: exp, qtyToSend: '1' })} className="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded-xl font-bold text-sm">SEND TO</button>
                                 </div>
                                 <div className="flex flex-col gap-1">
