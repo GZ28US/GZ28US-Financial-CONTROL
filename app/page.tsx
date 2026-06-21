@@ -66,8 +66,8 @@ export default function HomePage() {
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
 
     const codeById = new Map<string, string>()
-    const metaById = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string }>()
-    const metaByCode = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string }>()
+    const metaById = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string; carName: string; invoiceName: string }>()
+    const metaByCode = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string; carName: string; invoiceName: string }>()
     for (const inv of invs || []) {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
@@ -79,12 +79,12 @@ export default function HomePage() {
       const meta = {
         href: `${BASE_PATH}/${ownerSeg}/invoices/${inv.id}`,
         tip: [clientName, carName, invoiceName].filter(Boolean).join(' — '),   // full (expenses)
-        carInvTip: [carName, invoiceName].filter(Boolean).join(' — '),         // car — invoice (incomes/loss)
-        clientName,
+        carInvTip: [carName, invoiceName].filter(Boolean).join(' — '),         // car — invoice (incomes/loss code)
+        clientName, carName, invoiceName,
       }
       metaById.set(inv.id, meta); metaByCode.set(inv.invoice_code, meta)
     }
-    const metaFor = (id?: string, code?: string) => (id && metaById.get(id)) || (code && metaByCode.get(code)) || { href: '#', tip: code || '', carInvTip: code || '', clientName: '' }
+    const metaFor = (id?: string, code?: string) => (id && metaById.get(id)) || (code && metaByCode.get(code)) || { href: '#', tip: code || '', carInvTip: code || '', clientName: '', carName: '', invoiceName: '' }
 
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
@@ -139,7 +139,8 @@ export default function HomePage() {
       const lm = lossByInvoice.get(inv.id); if (!lm) continue
       const m = metaFor(inv.id, inv.invoice_code)
       const pctLabel = `${lm.pct.toFixed(1)}%`
-      loss.push({ code: inv.invoice_code, label: m.clientName || pctLabel, amount: lm.amount, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: pctLabel })
+      // LOSS rows label with the CAR NAME; the invoice name is the label's rollover.
+      loss.push({ code: inv.invoice_code, label: m.carName || m.clientName || pctLabel, amount: lm.amount, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: m.invoiceName || pctLabel })
     }
     loss.sort((a, b) => a.amount - b.amount)
 
