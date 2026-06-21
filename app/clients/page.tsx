@@ -269,14 +269,14 @@ export default function ClientsPage() {
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                       CURRENT CASH FLOW: {formatUSD(client._currentProfit)} / {client._currentProfitPct.toFixed(1)}%
                     </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                      DUE by CLIENTS: {formatUSD(client._paymentsBalance)}
+                    </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                       FINAL MARKUP: {formatUSD(client._finalProfit)} / {client._finalProfitPct.toFixed(1)}%
                     </span>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      DUE by CLIENT: {formatUSD(client._paymentsBalance)}
-                    </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${client._expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      DUE by GZ28: {formatUSD(client._expensesBalance)}
+                      DUE by GZ28US: {formatUSD(client._expensesBalance)}
                     </span>
                   </div>
                 )}

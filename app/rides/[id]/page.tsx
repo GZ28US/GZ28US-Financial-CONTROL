@@ -183,14 +183,14 @@ export default function ViewRidePage() {
             <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
               CURRENT CASH FLOW: {formatUSD(agg.currentProfit)} / {aggCurrentPct.toFixed(1)}%
             </span>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+              DUE by CLIENTS: {formatUSD(agg.paymentsBalance)}
+            </span>
             <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
               FINAL MARKUP: {formatUSD(agg.finalProfit)} / {aggFinalPct.toFixed(1)}%
             </span>
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-              DUE by CLIENT: {formatUSD(agg.paymentsBalance)}
-            </span>
             <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-              DUE by GZ28: {formatUSD(agg.expensesBalance)}
+              DUE by GZ28US: {formatUSD(agg.expensesBalance)}
             </span>
           </div>
         </div>
@@ -260,14 +260,14 @@ export default function ViewRidePage() {
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                             CURRENT CASH FLOW: {formatUSD(s.currentProfit)} / {s.currentProfitPct.toFixed(1)}%
                           </span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                            DUE by CLIENTS: {formatUSD(s.paymentsBalance)}
+                          </span>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                             FINAL MARKUP: {formatUSD(s.finalProfit)} / {s.finalProfitPct.toFixed(1)}%
                           </span>
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                            DUE by CLIENT: {formatUSD(s.paymentsBalance)}
-                          </span>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                            DUE by GZ28: {formatUSD(s.expensesBalance)}
+                            DUE by GZ28US: {formatUSD(s.expensesBalance)}
                           </span>
                         </div>
                       )}

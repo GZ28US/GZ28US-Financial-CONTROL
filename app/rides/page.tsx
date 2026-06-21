@@ -326,14 +326,14 @@ export default function RidesPage() {
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                       CURRENT CASH FLOW: {formatUSD(ride._currentProfit)} / {ride._currentProfitPct.toFixed(1)}%
                     </span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+                      DUE by CLIENTS: {formatUSD(ride._paymentsBalance)}
+                    </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                       FINAL MARKUP: {formatUSD(ride._finalProfit)} / {ride._finalProfitPct.toFixed(1)}%
                     </span>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      DUE by CLIENT: {formatUSD(ride._paymentsBalance)}
-                    </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-                      DUE by GZ28: {formatUSD(ride._expensesBalance)}
+                      DUE by GZ28US: {formatUSD(ride._expensesBalance)}
                     </span>
                   </div>
                 </div>
