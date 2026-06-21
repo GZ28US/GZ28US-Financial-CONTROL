@@ -13,6 +13,20 @@ export function formatUSD(amount: number): string {
   }).format(amount)
 }
 
+// Order income payments by their payment_date (ascending); rows with no valid
+// date always sort LAST. Returns a new array. Used by every INCOME list/box.
+export function orderIncomes<T extends { payment_date?: string | null }>(arr: T[]): T[] {
+  const valid = (d: unknown): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)
+  return [...arr].sort((a, b) => {
+    const av = valid(a.payment_date) ? a.payment_date : ''
+    const bv = valid(b.payment_date) ? b.payment_date : ''
+    if (av && bv) return av.localeCompare(bv)
+    if (av) return -1
+    if (bv) return 1
+    return 0
+  })
+}
+
 // Entity-code prefix for this app (US.### projects, US.QT.### quotes).
 export const CODE_PREFIX = 'US'
 

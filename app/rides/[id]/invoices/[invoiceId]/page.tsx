@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { formatUSD, BASE_PATH, orderIncomes } from '@/lib/utils'
 
 type Invoice = {
   id: string
@@ -169,7 +169,7 @@ export default function ViewInvoicePage() {
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData)
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (paymentsData) setPayments(paymentsData)
+    if (paymentsData) setPayments(orderIncomes(paymentsData))
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData)
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })

@@ -137,7 +137,9 @@ export default function HomePage() {
       }
     }
     const byCode = (a: Row, b: Row) => a.code.localeCompare(b.code, undefined, { numeric: true }) || b.amount - a.amount
-    income.sort(byCode); expense.sort(byCode)
+    // Incomes order by payment date (ascending); undated rows fall to the end.
+    const byIncomeDate = (a: Row, b: Row) => (a.date && b.date) ? (a.date.localeCompare(b.date) || byCode(a, b)) : (a.date ? -1 : b.date ? 1 : byCode(a, b))
+    income.sort(byIncomeDate); expense.sort(byCode)
 
     setS({
       cashFlow, cashFlowPct: sumExpPaid > 0 ? (cashFlow / sumExpPaid) * 100 : 0,
