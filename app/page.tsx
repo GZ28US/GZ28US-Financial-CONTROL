@@ -10,7 +10,7 @@ function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.tes
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
-type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string }
+type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string }
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
@@ -125,7 +125,8 @@ export default function HomePage() {
       if (isValidDate(e.payment_date)) continue
       const amount = expenseLine(e); if (!amount) continue
       const m = metaFor(e.invoice_id, code)
-      expense.push({ code, label: e.item || e.supplier || 'Expense', amount, dated: false, date: null, href: m.href, tip: m.tip })
+      // Show the SUPPLIER; the item description becomes the hover tooltip.
+      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated: false, date: null, href: m.href, tip: m.tip, labelTip: e.item || '' })
     }
     for (const inv of invs || []) {
       const ipa = partsBy.get(inv.id) || []
@@ -208,7 +209,7 @@ function RowGroup({ label, rows, color }: { label: string; rows: Row[]; color: s
       ) : rows.map((r, i) => (
         <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60">
           <span className="text-gray-300 truncate">
-            {r.date ? `${formatShortDate(r.date)} · ` : ''}<a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · {r.label}
+            {r.date ? `${formatShortDate(r.date)} · ` : ''}<a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · <span title={r.labelTip || undefined}>{r.label}</span>
           </span>
           <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
         </div>
