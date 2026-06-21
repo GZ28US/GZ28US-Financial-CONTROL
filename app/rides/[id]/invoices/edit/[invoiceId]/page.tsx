@@ -11,7 +11,7 @@ import { enrollParts, normPN } from '@/lib/partsDb'
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
-// date_label: a milestone marker ("Goods Arrival" / "Project Conclusion") used
+// date_label: a milestone marker ("ARRIVAL" / "CONCLUSION") used
 // INSTEAD of a calendar payment_date. Empty = a real date (or undated) is used.
 type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
 type Note = { id?: string; note: string }
@@ -1069,7 +1069,7 @@ export default function EditInvoicePage() {
   // While a pending balance is owed (negative), the invoice is locked OFFLINE.
   const noPendingBalance = pendingBalance >= 0
   // CLOSED also requires every income to carry a date — either a valid payment_date
-  // or a milestone label (Goods Arrival / Project Conclusion).
+  // or a milestone label (ARRIVAL / CONCLUSION).
   const allIncomesDated = payments.every(p => isValidDate(p.payment_date) || !!p.date_label)
   // REPORT READY is automatic now: a non-quote invoice is report-ready whenever it is
   // ONLINE (stored 'REALTIME') or CLOSED — no manual feed toggle. A quote is never
@@ -2888,8 +2888,8 @@ export default function EditInvoicePage() {
               <label className="block mb-1 text-sm text-gray-400">WHEN</label>
               <select value={newPayment.date_label || 'DATE'} onChange={(e) => { const v = e.target.value; if (v === 'DATE') setNewPayment({ ...newPayment, date_label: '' }); else setNewPayment({ ...newPayment, date_label: v, payment_date: '' }) }} className={`${selectClass} w-full`}>
                 <option value="DATE">DATE</option>
-                <option value="Goods Arrival">Goods Arrival</option>
-                <option value="Project Conclusion">Project Conclusion</option>
+                <option value="ARRIVAL">ARRIVAL</option>
+                <option value="CONCLUSION">CONCLUSION</option>
               </select>
               {!newPayment.date_label && <div className="mt-2"><DatePicker label="DATE" value={newPayment.payment_date} onChange={(v) => setNewPayment({ ...newPayment, payment_date: v })} /></div>}
             </div>
@@ -2939,8 +2939,8 @@ export default function EditInvoicePage() {
                             <label className="block mb-1 text-sm text-gray-400">WHEN</label>
                             <select value={editingPayment.date_label || 'DATE'} onChange={(e) => { const v = e.target.value; if (v === 'DATE') setEditingPayment({ ...editingPayment, date_label: '' }); else setEditingPayment({ ...editingPayment, date_label: v, payment_date: '' }) }} className={`${selectClass} w-full`}>
                               <option value="DATE">DATE</option>
-                              <option value="Goods Arrival">Goods Arrival</option>
-                              <option value="Project Conclusion">Project Conclusion</option>
+                              <option value="ARRIVAL">ARRIVAL</option>
+                              <option value="CONCLUSION">CONCLUSION</option>
                             </select>
                             {!editingPayment.date_label && <div className="mt-2"><DatePicker label="DATE" value={editingPayment.payment_date} onChange={(v) => setEditingPayment({ ...editingPayment, payment_date: v })} /></div>}
                           </div>
