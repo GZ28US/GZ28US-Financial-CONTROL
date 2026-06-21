@@ -6,21 +6,24 @@ import { supabase } from '@/lib/supabase'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
+type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null }
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
+  const [rows, setRows] = useState<{ income: Row[]; expense: Row[] }>({ income: [], expense: [] })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { void load() }, [])
 
   async function load() {
-    // EVERYTHING, all time — every real (non-quote) invoice and its children.
+    // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
       supabase.from('invoices').select('id, invoice_code, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
-      supabase.from('invoice_payments').select('invoice_id, amount, paid_at'),
-      supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra'),
+      supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description'),
+      supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, item, supplier'),
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
     ])
 
@@ -42,13 +45,17 @@ export default function HomePage() {
       stockByCode.set(code, cur)
     })
 
-    const group = <T extends { invoice_id: string }>(rows: T[] | null) => {
+    const group = <T extends { invoice_id: string }>(rs: T[] | null) => {
       const m = new Map<string, T[]>()
-      for (const r of rows || []) { const a = m.get(r.invoice_id) || []; a.push(r); m.set(r.invoice_id, a) }
+      for (const r of rs || []) { const a = m.get(r.invoice_id) || []; a.push(r); m.set(r.invoice_id, a) }
       return m
     }
     const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts)
     const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+
+    // invoice id -> code, limited to REPORT-READY invoices (drives the detail lists).
+    const codeById = new Map<string, string>()
+    for (const inv of invs || []) codeById.set(inv.id, inv.invoice_code)
 
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
@@ -71,12 +78,47 @@ export default function HomePage() {
       sumExpGlobal += expensesTotalGlobal
     }
 
+    // Detail rows for the two lists below the boxes. UNDATED first, then DATED.
+    const income: Row[] = []
+    for (const p of pays || []) {
+      const code = codeById.get(p.invoice_id); if (!code) continue
+      const amount = parseFloat(p.amount) || 0; if (!amount) continue
+      const dated = !!p.paid_at
+      income.push({ code, label: p.description || p.source || 'Income', amount, dated, date: dated ? fmtD(p.payment_date || p.paid_at) : null })
+    }
+    stockByCode.forEach((v, code) => {
+      if (!Array.from(codeById.values()).includes(code)) return
+      const pending = v.all - v.paid
+      if (pending > 0.005) income.push({ code, label: 'Stock part sold', amount: pending, dated: false, date: null })
+      if (v.paid > 0.005) income.push({ code, label: 'Stock part sold', amount: v.paid, dated: true, date: null })
+    })
+
+    const expense: Row[] = []
+    for (const e of exps || []) {
+      const code = codeById.get(e.invoice_id); if (!code) continue
+      const amount = expenseLine(e); if (!amount) continue
+      const dated = isValidDate(e.payment_date)
+      expense.push({ code, label: e.item || e.supplier || 'Expense', amount, dated, date: dated ? fmtD(e.payment_date) : null })
+    }
+    for (const inv of invs || []) {
+      const ipa = partsBy.get(inv.id) || []
+      const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
+      const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
+      if (flTaxAmount > 0.005) {
+        const dated = isValidDate(inv.fl_tax_expense_date)
+        expense.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated, date: dated ? fmtD(inv.fl_tax_expense_date) : null })
+      }
+    }
+    const byCode = (a: Row, b: Row) => a.code.localeCompare(b.code, undefined, { numeric: true }) || b.amount - a.amount
+    income.sort(byCode); expense.sort(byCode)
+
     setS({
       cashFlow, cashFlowPct: sumExpPaid > 0 ? (cashFlow / sumExpPaid) * 100 : 0,
       dueClients,
       markup, markupPct: sumExpGlobal > 0 ? (markup / sumExpGlobal) * 100 : 0,
       dueGz,
     })
+    setRows({ income, expense })
     setLoading(false)
   }
 
@@ -88,12 +130,18 @@ export default function HomePage() {
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-          <DashCard label="CURRENT CASH FLOW" value={`${formatUSD(s.cashFlow)} / ${s.cashFlowPct.toFixed(1)}%`} color={s.cashFlow < 0 ? 'text-red-500' : 'text-blue-400'} />
-          <DashCard label="FINAL MARKUP" value={`${formatUSD(s.markup)} / ${s.markupPct.toFixed(1)}%`} color={s.markup < 0 ? 'text-red-500' : 'text-blue-400'} />
-          <DashCard label="DUE by CLIENTS" value={formatUSD(s.dueClients)} color={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} />
-          <DashCard label="DUE by GZ28US" value={formatUSD(s.dueGz)} color={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} />
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
+            <DashCard label="CURRENT CASH FLOW" value={`${formatUSD(s.cashFlow)} / ${s.cashFlowPct.toFixed(1)}%`} color={s.cashFlow < 0 ? 'text-red-500' : 'text-blue-400'} />
+            <DashCard label="FINAL MARKUP" value={`${formatUSD(s.markup)} / ${s.markupPct.toFixed(1)}%`} color={s.markup < 0 ? 'text-red-500' : 'text-blue-400'} />
+            <DashCard label="DUE by CLIENTS" value={formatUSD(s.dueClients)} color={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} />
+            <DashCard label="DUE by GZ28US" value={formatUSD(s.dueGz)} color={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mt-4">
+            <DetailColumn title="DUE by CLIENTS — INCOMES" rows={rows.income} undatedColor="text-amber-400" />
+            <DetailColumn title="DUE by GZ28US — EXPENSES" rows={rows.expense} undatedColor="text-red-400" />
+          </div>
+        </>
       )}
     </main>
   )
@@ -104,6 +152,39 @@ function DashCard({ label, value, color }: { label: string; value: string; color
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${color}`}>{value}</p>
+    </div>
+  )
+}
+
+function DetailColumn({ title, rows, undatedColor }: { title: string; rows: Row[]; undatedColor: string }) {
+  const undated = rows.filter(r => !r.dated)
+  const dated = rows.filter(r => r.dated)
+  return (
+    <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
+      <p className="text-sm font-bold text-gray-400 mb-2">{title}</p>
+      <RowGroup label="UNDATED" rows={undated} color={undatedColor} />
+      <RowGroup label="DATED" rows={dated} color="text-gray-300" />
+    </div>
+  )
+}
+
+function RowGroup({ label, rows, color }: { label: string; rows: Row[]; color: string }) {
+  const subtotal = rows.reduce((x, r) => x + r.amount, 0)
+  return (
+    <div className="mt-3">
+      <div className="flex justify-between text-xs font-bold text-gray-500 uppercase mb-1 border-b border-gray-700 pb-1">
+        <span>{label}</span><span>{formatUSD(subtotal)}</span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-600 py-1">—</p>
+      ) : rows.map((r, i) => (
+        <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60">
+          <span className="text-gray-300 truncate" title={`${r.code} · ${r.label}`}>
+            <span className="text-gray-500">{r.code}</span> · {r.label}{r.date ? ` · ${r.date}` : ''}
+          </span>
+          <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
+        </div>
+      ))}
     </div>
   )
 }
