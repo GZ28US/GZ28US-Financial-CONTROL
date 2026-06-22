@@ -1091,7 +1091,10 @@ export default function EditInvoicePage() {
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
-  const finalProfit = totalIncomeAll - expensesTotalGlobal
+  // When no income is recorded yet, the client still owes the grand total, so use it
+  // as the income basis for the markup math.
+  const markupIncome = totalIncomeAll > 0.005 ? totalIncomeAll : grandTotal
+  const finalProfit = markupIncome - expensesTotalGlobal
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
