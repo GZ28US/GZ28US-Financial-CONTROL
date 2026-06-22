@@ -86,6 +86,8 @@ export default function PaymentsPage() {
   // Group each side by month (YYYY-MM); render a block per month so the two sides
   // line up month by month.
   const byMonth = (rows: PayRow[]) => { const m = new Map<string, PayRow[]>(); rows.forEach(r => { const k = (r.date || '').slice(0, 7); if (!k) return; if (!m.has(k)) m.set(k, []); m.get(k)!.push(r) }); return m }
+  const byWeek = (rows: PayRow[]) => { const m = new Map<string, PayRow[]>(); rows.forEach(r => { if (!r.date) return; const k = weekKey(r.date); if (!m.has(k)) m.set(k, []); m.get(k)!.push(r) }); return m }
+  const sum = (rows: PayRow[]) => rows.reduce((s, r) => s + r.amount, 0)
   const cByM = byMonth(clientRows)
   const gByM = byMonth(gzRows)
   const months = [...new Set([...cByM.keys(), ...gByM.keys()])].sort((a, b) => b.localeCompare(a))
@@ -111,15 +113,30 @@ export default function PaymentsPage() {
           </div>
           {months.length === 0 ? (
             <p className="text-gray-400 text-xl">No payments in the last 60 days.</p>
-          ) : months.map((mk) => (
-            <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
-              <p className="text-xs font-bold text-gray-500 uppercase border-b border-gray-700 pb-1 mb-2">{monthLabel(mk)}</p>
-              <div className="grid grid-cols-2 gap-4">
-                <MonthSide rows={cByM.get(mk) || []} color="text-green-400" />
-                <MonthSide rows={gByM.get(mk) || []} color="text-red-400" />
+          ) : months.map((mk) => {
+            const cM = cByM.get(mk) || []
+            const gM = gByM.get(mk) || []
+            const cByW = byWeek(cM)
+            const gByW = byWeek(gM)
+            const weeks = [...new Set([...cByW.keys(), ...gByW.keys()])].sort((a, b) => b.localeCompare(a))
+            return (
+              <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
+                <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2">
+                  <p className="text-sm font-bold text-gray-300 uppercase">{monthLabel(mk)}</p>
+                  <p className="text-sm font-bold"><span className="text-green-400">{formatUSD(sum(cM))}</span><span className="text-gray-600"> · </span><span className="text-red-400">{formatUSD(sum(gM))}</span></p>
+                </div>
+                {weeks.map((wk) => (
+                  <div key={wk} className="mt-2">
+                    <p className="text-xs font-bold text-gray-500 mb-1">{weekLabel(wk)}</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <MonthSide rows={cByW.get(wk) || []} color="text-green-400" />
+                      <MonthSide rows={gByW.get(wk) || []} color="text-red-400" />
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </main>
@@ -128,6 +145,19 @@ export default function PaymentsPage() {
 
 function monthLabel(mk: string): string {
   return new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+// Week key = the Monday of that date's week (YYYY-MM-DD). Label = "Mon DD – Sun DD".
+function weekKey(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function weekLabel(wk: string): string {
+  const start = new Date(wk + 'T00:00:00')
+  const end = new Date(start); end.setDate(start.getDate() + 6)
+  const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${fmt(start)} – ${fmt(end)}`
 }
 
 function MonthSide({ rows, color }: { rows: PayRow[]; color: string }) {
