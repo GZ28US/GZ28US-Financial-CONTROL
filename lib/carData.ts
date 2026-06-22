@@ -469,6 +469,27 @@ for (let y = 2005; y <= 2008; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── Chevrolet Opala (GM do Brasil) — 1974 ───────────────────────────────────────
+// Brazilian Chevrolet on the GM B/Opel-derived platform. 1974: 2.5 L4 (151) and
+// 4.1 L6 (250); sedan 2/4-door + coupé (Caravan wagon arrives 1975). SS is the
+// sporty six. Trim/engine matrix is best-effort — confirm Brazilian-market specs.
+const opala1974Colors = ['Branco', 'Preto', 'Prata', 'Cinza', 'Vermelho', 'Azul', 'Verde', 'Bege', 'Dourado', 'Marrom', 'Amarelo']
+{
+  const y = 1974
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('CHEVROLET')) brandsByManufacturerAndYear['GM'][y].push('CHEVROLET')
+  modelsByBrandAndYear['CHEVROLET'] = modelsByBrandAndYear['CHEVROLET'] || {}
+  modelsByBrandAndYear['CHEVROLET'][y] = modelsByBrandAndYear['CHEVROLET'][y] || []
+  if (!modelsByBrandAndYear['CHEVROLET'][y].includes('OPALA')) modelsByBrandAndYear['CHEVROLET'][y].push('OPALA')
+  versionsByModelAndYear['OPALA'] = versionsByModelAndYear['OPALA'] || {}
+  versionsByModelAndYear['OPALA'][y] = ['Standard 2.5 4cyl', 'Especial 2.5 4cyl', 'Luxo 2.5 4cyl', 'Luxo 4.1 6cyl', 'Gran Luxo 4.1 6cyl', 'SS 4.1 6cyl']
+}
+years.sort((a, b) => a - b)
+
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
   1993: ['Red', 'Black', 'White'],
@@ -659,6 +680,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
+  if (model === 'OPALA') return opala1974Colors
   if (model === 'MAGNUM' && magnumColorsByYear[year]) return magnumColorsByYear[year]
   if (model === 'CHARGER' && lxChargerColorsByYear[year]) return lxChargerColorsByYear[year]
   if (model === 'CHARGER' && ldChargerColorsByYear[year]) return ldChargerColorsByYear[year]
@@ -692,6 +714,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
     CHEVROLET: {
       CAMARO: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0', 'ZL1 6.2', 'ZL1 1LE 6.2', 'LT1 6.2'],
       CORVETTE: ['Base 6.0', 'Z06 7.0', 'Base 6.2', 'ZR1 6.2 SC', 'Grand Sport 6.2', 'Stingray 6.2', 'Z06 6.2', 'ZR1 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
+      OPALA: ['Standard 2.5 4cyl', 'Especial 2.5 4cyl', 'Luxo 2.5 4cyl', 'Luxo 4.1 6cyl', 'Gran Luxo 4.1 6cyl', 'SS 4.1 6cyl'],
     },
   },
   FORD: {
