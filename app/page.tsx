@@ -222,8 +222,8 @@ export default function HomePage() {
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
-            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" />
+            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor="text-green-400" rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
+            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor="text-orange-400" rows={rows.expense} undatedColor="text-red-400" />
           </div>
           {flow.length > 0 && <MonthlyFlow flow={flow} />}
           {rows.tax.length > 0 && (

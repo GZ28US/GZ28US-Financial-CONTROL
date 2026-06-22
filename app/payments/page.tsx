@@ -91,6 +91,8 @@ export default function PaymentsPage() {
   const cByM = byMonth(clientRows)
   const gByM = byMonth(gzRows)
   const months = [...new Set([...cByM.keys(), ...gByM.keys()])].sort((a, b) => b.localeCompare(a))
+  const now = new Date()
+  const nowMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -116,16 +118,21 @@ export default function PaymentsPage() {
           ) : months.map((mk) => {
             const cM = cByM.get(mk) || []
             const gM = gByM.get(mk) || []
+            const clientSub = sum(cM)
+            const gzSub = sum(gM)
+            const bal = clientSub - gzSub
+            const balColor = bal > 0.005 ? 'text-blue-400' : bal < -0.005 ? 'text-red-400' : 'text-gray-400'
+            const isCurrent = mk === nowMonth
             const cByW = byWeek(cM)
             const gByW = byWeek(gM)
             const weeks = [...new Set([...cByW.keys(), ...gByW.keys()])].sort((a, b) => b.localeCompare(a))
             return (
               <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
-                <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2">
+                <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2 gap-3">
                   <p className="text-sm font-bold text-gray-300 uppercase">{monthLabel(mk)}</p>
-                  <p className="text-sm font-bold"><span className="text-green-400">{formatUSD(sum(cM))}</span><span className="text-gray-600"> · </span><span className="text-red-400">{formatUSD(sum(gM))}</span></p>
+                  <p className="text-sm font-bold whitespace-nowrap"><span className="text-green-400">{formatUSD(clientSub)}</span><span className="text-gray-600"> · </span><span className="text-red-400">{formatUSD(gzSub)}</span><span className="text-gray-600"> &nbsp;·&nbsp; </span><span className={balColor}>{formatUSD(bal)}</span></p>
                 </div>
-                {weeks.map((wk) => (
+                {isCurrent ? weeks.map((wk) => (
                   <div key={wk} className="mt-3">
                     <p className="text-xs font-bold text-gray-500 uppercase border-b border-gray-700 pb-1 mb-2">{weekLabel(wk)}</p>
                     <div className="grid grid-cols-2 gap-4">
@@ -133,7 +140,12 @@ export default function PaymentsPage() {
                       <MonthSide rows={gByW.get(wk) || []} color="text-red-400" />
                     </div>
                   </div>
-                ))}
+                )) : (
+                  <div className="grid grid-cols-2 gap-4 mt-1">
+                    <MonthSide rows={cM} color="text-green-400" showSub={false} />
+                    <MonthSide rows={gM} color="text-red-400" showSub={false} />
+                  </div>
+                )}
               </div>
             )
           })}
@@ -160,11 +172,11 @@ function weekLabel(wk: string): string {
   return `${fmt(start)} – ${fmt(end)}`
 }
 
-function MonthSide({ rows, color }: { rows: PayRow[]; color: string }) {
-  const sub = rows.reduce((s, r) => s + r.amount, 0)
+function MonthSide({ rows, color, showSub = true }: { rows: PayRow[]; color: string; showSub?: boolean }) {
+  const subt = rows.reduce((s, r) => s + r.amount, 0)
   return (
     <div>
-      <div className="flex justify-end text-xs mb-1"><span className={`font-bold ${color}`}>{formatUSD(sub)}</span></div>
+      {showSub && <div className="flex justify-end text-xs mb-1"><span className={`font-bold ${color}`}>{formatUSD(subt)}</span></div>}
       {rows.length === 0 ? (
         <p className="text-xs text-gray-600 py-1">—</p>
       ) : rows.map((r) => (
