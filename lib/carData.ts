@@ -387,6 +387,64 @@ for (let y = 2006; y <= 2010; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
+// Trims = base engine packages (per the special-editions rule). Appearance and
+// dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
+// JL8) live in specialEditions.
+const camaroGen1ColorsByYear: Record<number, string[]> = {
+  1967: ['Tuxedo Black', 'Ermine White', 'Nantucket Blue', 'Deepwater Blue', 'Marina Blue', 'Granada Gold', 'Mountain Green', 'Emerald Turquoise', 'Tahoe Turquoise', 'Royal Plum', 'Madeira Maroon', 'Bolero Red', 'Sierra Fawn', 'Capri Cream', 'Butternut Yellow'],
+  1968: ['Tuxedo Black', 'Ermine White', 'Grotto Blue', 'Fathom Blue', 'Island Teal', 'Ash Gold', 'Grecian Green', 'Tripoli Turquoise', 'Teal Blue', 'Cordovan Maroon', 'Matador Red', 'Seafrost Green', 'Palomino Ivory', 'Sequoia Green', 'Le Mans Blue', 'Butternut Yellow', 'British Green', 'Rallye Green', 'Corvette Bronze'],
+  1969: ['Tuxedo Black', 'Cortez Silver', 'Dover White', 'Dusk Blue', 'Garnet Red', 'Glacier Blue', 'Le Mans Blue', 'Azure Turquoise', 'Fathom Green', 'Frost Green', 'Burnished Brown', 'Champagne', 'Olympic Gold', 'Burgundy', 'Hugger Orange', 'Daytona Yellow', 'Rallye Green', 'Butternut Yellow'],
+}
+const camaroGen1Versions = (y: number): string[] => {
+  const v = [
+    'Base 4.1 I6',           // 250 ci I6 — volume base engine
+    'Base 5.3 V8',           // 327 ci V8 — base V8
+    'Z/28 4.9 V8',           // 302 ci high-rev small-block, Trans-Am homologation
+    'SS 5.7 V8 (L48)',       // 350 ci SS — '67–'69
+    'SS 6.5 V8 (L35)',       // 396 ci 325 hp
+    'SS 6.5 V8 (L78)',       // 396 ci 375 hp solid-lifter
+  ]
+  if (y >= 1968) v.push('SS 6.5 V8 (L34)') // 396 350 hp — added 1968
+  if (y === 1969) v.push('COPO 9561 7.0 V8 (L72)', 'COPO 9560 ZL1 7.0 V8') // 427 — 1969 only
+  return v
+}
+for (let y = 1967; y <= 1969; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = ['CHEVROLET']
+  modelsByBrandAndYear['CHEVROLET'] = modelsByBrandAndYear['CHEVROLET'] || {}
+  modelsByBrandAndYear['CHEVROLET'][y] = ['CAMARO']
+  versionsByModelAndYear['CAMARO'] = versionsByModelAndYear['CAMARO'] || {}
+  versionsByModelAndYear['CAMARO'][y] = camaroGen1Versions(y)
+}
+years.sort((a, b) => a - b)
+// Appearance packages and dealer-modified specials — each on a base trim.
+Object.assign(specialEditions, {
+  // RS (Rally Sport) — hidden-headlight appearance package, ran '67–'69 on any trim.
+  '1967-CAMARO-Base 5.3 V8':       ['None', 'RS'],
+  '1967-CAMARO-Z/28 4.9 V8':       ['None', 'RS'],
+  '1967-CAMARO-SS 5.7 V8 (L48)':   ['None', 'RS', 'Indy 500 Pace Car', 'Yenko Super Camaro', 'Dana 427', 'Nickey'],
+  '1967-CAMARO-SS 6.5 V8 (L35)':   ['None', 'RS', 'Indy 500 Pace Car', 'Yenko Super Camaro', 'Dana 427', 'Nickey'],
+  '1967-CAMARO-SS 6.5 V8 (L78)':   ['None', 'RS', 'Yenko Super Camaro', 'Dana 427', 'Nickey'],
+  '1968-CAMARO-Base 5.3 V8':       ['None', 'RS'],
+  '1968-CAMARO-Z/28 4.9 V8':       ['None', 'RS'],
+  '1968-CAMARO-SS 5.7 V8 (L48)':   ['None', 'RS', 'Yenko Super Camaro', 'Baldwin-Motion SS-427', 'Dana 427', 'Nickey'],
+  '1968-CAMARO-SS 6.5 V8 (L35)':   ['None', 'RS', 'Yenko Super Camaro', 'Baldwin-Motion SS-427', 'Dana 427', 'Nickey'],
+  '1968-CAMARO-SS 6.5 V8 (L34)':   ['None', 'RS', 'Yenko Super Camaro', 'Baldwin-Motion SS-427'],
+  '1968-CAMARO-SS 6.5 V8 (L78)':   ['None', 'RS', 'Yenko Super Camaro', 'Baldwin-Motion SS-427'],
+  '1969-CAMARO-Base 5.3 V8':       ['None', 'RS'],
+  '1969-CAMARO-Z/28 4.9 V8':       ['None', 'RS', 'JL8 4-Wheel Disc', 'Berger'],
+  '1969-CAMARO-SS 5.7 V8 (L48)':   ['None', 'RS', 'Indy Pace Car (Z11)', 'Yenko/SC', 'Baldwin-Motion SS-427', 'Berger', 'Nickey'],
+  '1969-CAMARO-SS 6.5 V8 (L35)':   ['None', 'RS', 'Indy Pace Car (Z11)', 'Yenko/SC', 'Baldwin-Motion SS-427', 'Berger', 'Nickey'],
+  '1969-CAMARO-SS 6.5 V8 (L34)':   ['None', 'RS', 'Yenko/SC', 'Baldwin-Motion SS-427', 'Berger'],
+  '1969-CAMARO-SS 6.5 V8 (L78)':   ['None', 'RS', 'Yenko/SC', 'Baldwin-Motion SS-427', 'Berger'],
+  '1969-CAMARO-COPO 9561 7.0 V8 (L72)': ['None', 'Yenko/SC', 'Berger', 'Nickey'],
+  '1969-CAMARO-COPO 9560 ZL1 7.0 V8':   ['None'],
+})
+
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
   1993: ['Red', 'Black', 'White'],
@@ -573,6 +631,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (colorsByConfiguration[key]) return colorsByConfiguration[key]
   if (model === 'DEFENDER') return landRoverDefenderColors
   if (model === 'M5') return bmwM5E60Colors
+  if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
@@ -625,6 +684,11 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
 // every era's wheelbase+engine version (built from the year-keyed map above).
 carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
 carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())] } }
+// Camaro flat list = union of every era's versions (modern gen5+ entries already present).
+carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
+  ...(carData['GM']['CHEVROLET']['CAMARO'] || []),
+  ...Object.values(versionsByModelAndYear['CAMARO']).flat(),
+])]
 
 // Years valid for a full manufacturer/brand/model/version spec, drawn from the
 // year-keyed catalog maps (used by the packs car picker's YEARS step).
