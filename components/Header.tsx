@@ -10,7 +10,14 @@ type MenuItem =
   | { type: 'dropdown'; label: string; items: [string, string][] }
 
 const MENU: MenuItem[] = [
-  { type: 'link', href: '/', label: 'HOME' },
+  {
+    type: 'dropdown',
+    label: 'HOME',
+    items: [
+      ['/', 'INCOME vs BILLS Flow'],
+      ['/payments', 'Last PAYMENTS'],
+    ],
+  },
   {
     type: 'dropdown',
     label: 'PROJECTS',
@@ -108,7 +115,7 @@ export default function Header() {
                 {item.items.map(([href, l]) => (
                   <a
                     key={href}
-                    href={`${BASE_PATH}${href}`}
+                    href={`${BASE_PATH}${href === '/' ? '' : href}`}
                     className="hover:bg-gray-700 px-4 py-3 rounded-xl text-base font-bold whitespace-nowrap"
                   >
                     {l}
