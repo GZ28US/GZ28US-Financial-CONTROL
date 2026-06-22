@@ -83,6 +83,12 @@ export default function PaymentsPage() {
 
   const clientTotal = clientRows.reduce((s, r) => s + r.amount, 0)
   const gzTotal = gzRows.reduce((s, r) => s + r.amount, 0)
+  // Group each side by month (YYYY-MM); render a block per month so the two sides
+  // line up month by month.
+  const byMonth = (rows: PayRow[]) => { const m = new Map<string, PayRow[]>(); rows.forEach(r => { const k = (r.date || '').slice(0, 7); if (!k) return; if (!m.has(k)) m.set(k, []); m.get(k)!.push(r) }); return m }
+  const cByM = byMonth(clientRows)
+  const gByM = byMonth(gzRows)
+  const months = [...new Set([...cByM.keys(), ...gByM.keys()])].sort((a, b) => b.localeCompare(a))
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -92,34 +98,53 @@ export default function PaymentsPage() {
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-          <PaidColumn label="PAID by CLIENTS" total={clientTotal} totalColor="text-green-400" rows={clientRows} amountColor="text-green-400" emptyMsg="No client payments in the last 60 days." />
-          <PaidColumn label="PAID by GZ28US" total={gzTotal} totalColor="text-red-400" rows={gzRows} amountColor="text-red-400" emptyMsg="No payments made in the last 60 days." />
+        <div className="max-w-3xl">
+          <div className="grid grid-cols-2 gap-4 mb-3">
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 flex justify-between items-baseline">
+              <span className="text-sm font-bold text-gray-400">PAID by CLIENTS</span>
+              <span className="text-xl font-bold text-green-400">{formatUSD(clientTotal)}</span>
+            </div>
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 flex justify-between items-baseline">
+              <span className="text-sm font-bold text-gray-400">PAID by GZ28US</span>
+              <span className="text-xl font-bold text-red-400">{formatUSD(gzTotal)}</span>
+            </div>
+          </div>
+          {months.length === 0 ? (
+            <p className="text-gray-400 text-xl">No payments in the last 60 days.</p>
+          ) : months.map((mk) => (
+            <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
+              <p className="text-xs font-bold text-gray-500 uppercase border-b border-gray-700 pb-1 mb-2">{monthLabel(mk)}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <MonthSide rows={cByM.get(mk) || []} color="text-green-400" />
+                <MonthSide rows={gByM.get(mk) || []} color="text-red-400" />
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </main>
   )
 }
 
-function PaidColumn({ label, total, totalColor, rows, amountColor, emptyMsg }: { label: string; total: number; totalColor: string; rows: PayRow[]; amountColor: string; emptyMsg: string }) {
+function monthLabel(mk: string): string {
+  return new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+function MonthSide({ rows, color }: { rows: PayRow[]; color: string }) {
+  const sub = rows.reduce((s, r) => s + r.amount, 0)
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
-      <div className="flex justify-between items-baseline mb-1">
-        <p className="text-sm font-bold text-gray-400">{label}</p>
-        <p className={`text-2xl font-bold ${totalColor}`}>{formatUSD(total)}</p>
-      </div>
-      <div className="mt-2">
-        {rows.length === 0 ? (
-          <p className="text-sm text-gray-600 py-1">{emptyMsg}</p>
-        ) : rows.map((r) => (
-          <div key={r.id} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60 last:border-0">
-            <span className="text-gray-300 truncate">
-              {formatShortDate(r.date)} · <a href={r.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a>{r.label2 ? ` · ${r.label2}` : ''}
-            </span>
-            <span className={`font-bold shrink-0 ${amountColor}`}>{formatUSD(r.amount)}</span>
-          </div>
-        ))}
-      </div>
+    <div>
+      <div className="flex justify-end text-xs mb-1"><span className={`font-bold ${color}`}>{formatUSD(sub)}</span></div>
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-600 py-1">—</p>
+      ) : rows.map((r) => (
+        <div key={r.id} className="flex justify-between gap-2 py-1 text-sm border-b border-gray-800/60 last:border-0">
+          <span className="text-gray-300 truncate">
+            {formatShortDate(r.date)} · <a href={r.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a>{r.label2 ? ` · ${r.label2}` : ''}
+          </span>
+          <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
+        </div>
+      ))}
     </div>
   )
 }
