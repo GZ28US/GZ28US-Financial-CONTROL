@@ -9,6 +9,17 @@ function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: '
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
+// Collapse any stored milestone label (incl. legacy long forms like
+// "Goods Arrival" / "Project Conclusion") to its canonical short code, so old
+// and new rows land in the SAME group.
+function canonMilestone(v: string | null | undefined): string | undefined {
+  if (!v || !v.trim()) return undefined
+  const s = v.trim().toLowerCase()
+  if (s.includes('arrival')) return 'ARRIVAL'
+  if (s.includes('conclusion')) return 'CONCLUSION'
+  return v.trim()
+}
+
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
 type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string }
 // A dated cash-flow entry for the monthly-flow box: income is +, expense is −.
@@ -129,7 +140,7 @@ export default function HomePage() {
       const dated = isValidDate(p.payment_date)
       const m = metaFor(p.invoice_id, code)
       const desc = p.description || p.source || 'Income'
-      income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc, milestone: p.date_label || undefined })
+      income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc, milestone: canonMilestone(p.date_label) })
     }
     stockByCode.forEach((v, code) => {
       if (!Array.from(codeById.values()).includes(code)) return
