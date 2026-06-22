@@ -980,7 +980,7 @@ export default function EditInvoicePage() {
     // Normalize away case, spaces and punctuation; match against the supplier's
     // name AND its aliases (one per line / comma) so variant spellings and
     // acronyms (e.g. "HHP Racing" vs "HighHorsePerformance Racing") unify.
-    const norm = (s: string | undefined | null) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const norm = (s: string | undefined | null) => (s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '')
     const target = norm(name)
     if (!target) return null
     const m = suppliers.find(s => {
