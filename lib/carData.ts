@@ -445,6 +445,30 @@ Object.assign(specialEditions, {
   '1969-CAMARO-COPO 9560 ZL1 7.0 V8':   ['None'],
 })
 
+// ── Dodge Magnum LX (modern, 2005–2008) — V8 trims only ──────────────────────────
+// Same LX platform/era as the LX Charger. V8 trims: R/T 5.7 HEMI (2005–2008) and
+// SRT8 6.1 HEMI (2006–2008). Paints mirror the LX Charger palette per year.
+const magnumColorsByYear: Record<number, string[]> = {
+  2005: ['Brilliant Black', 'Bright Silver', 'Silver Steel', 'Cool Vanilla', 'Stone White', 'Inferno Red', 'Midnight Blue', 'Magnesium', 'Linen Gold'],
+  2006: ['Brilliant Black', 'Bright Silver', 'Silver Steel', 'Cool Vanilla', 'Stone White', 'Inferno Red', 'Midnight Blue', 'Magnesium'],
+  2007: ['Brilliant Black', 'Bright Silver', 'Cool Vanilla', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'Detonator Yellow'],
+  2008: ['Brilliant Black', 'Bright Silver', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'HEMI Orange', 'B5 Blue', 'Detonator Yellow', 'Sub Lime'],
+}
+for (let y = 2005; y <= 2008; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MOPAR')) manufacturersByYear[y].push('MOPAR')
+  brandsByManufacturerAndYear['MOPAR'] = brandsByManufacturerAndYear['MOPAR'] || {}
+  brandsByManufacturerAndYear['MOPAR'][y] = brandsByManufacturerAndYear['MOPAR'][y] || []
+  if (!brandsByManufacturerAndYear['MOPAR'][y].includes('DODGE')) brandsByManufacturerAndYear['MOPAR'][y].push('DODGE')
+  modelsByBrandAndYear['DODGE'] = modelsByBrandAndYear['DODGE'] || {}
+  modelsByBrandAndYear['DODGE'][y] = modelsByBrandAndYear['DODGE'][y] || []
+  if (!modelsByBrandAndYear['DODGE'][y].includes('MAGNUM')) modelsByBrandAndYear['DODGE'][y].push('MAGNUM')
+  versionsByModelAndYear['MAGNUM'] = versionsByModelAndYear['MAGNUM'] || {}
+  versionsByModelAndYear['MAGNUM'][y] = y >= 2006 ? ['R/T 5.7', 'SRT8 6.1'] : ['R/T 5.7']
+}
+years.sort((a, b) => a - b)
+
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
   1993: ['Red', 'Black', 'White'],
@@ -635,6 +659,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
+  if (model === 'MAGNUM' && magnumColorsByYear[year]) return magnumColorsByYear[year]
   if (model === 'CHARGER' && lxChargerColorsByYear[year]) return lxChargerColorsByYear[year]
   if (model === 'CHARGER' && ldChargerColorsByYear[year]) return ldChargerColorsByYear[year]
   if (model === 'CHALLENGER' && lcChallengerColorsByYear[year]) return lcChallengerColorsByYear[year]
@@ -657,6 +682,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
       CHALLENGER: ['SRT8 6.1', 'SRT8 6.4', 'R/T 5.7', 'R/T ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT Demon 6.2', 'R/T ScatPack WideBody 6.4', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2', 'SRT HellCat RedEye SuperStock 6.2', 'SRT Demon 170 6.2'],
       VIPER: ['RT/10 8.0 V10'],
       DURANGO: ['SRT HellCat 6.2'],
+      MAGNUM: ['R/T 5.7', 'SRT8 6.1'],
     },
     RAM: {
       1500: ['1500 5.7', '1500 Rebel 5.7'],
