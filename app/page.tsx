@@ -183,6 +183,8 @@ export default function HomePage() {
     const datedExpense = expense.filter(r => r.dated && r.date)
     dueClients -= datedIncome.reduce((x, r) => x + r.amount, 0)
     dueGz += datedExpense.reduce((x, r) => x + r.amount, 0)
+    // FLORIDA TAXES move to their own box below — drop them from the DUE by GZ28US total too.
+    dueGz += tax.reduce((x, r) => x + r.amount, 0)
     const flowItems: FlowItem[] = [
       ...datedIncome.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: r.amount })),
       ...datedExpense.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: -r.amount })),
@@ -210,9 +212,23 @@ export default function HomePage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
             <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
-            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" taxRows={rows.tax} taxLabel="FLORIDA TAXES" />
+            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" />
           </div>
           {flow.length > 0 && <MonthlyFlow flow={flow} />}
+          {rows.tax.length > 0 && (
+            <div className="mt-4 max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5">
+              <p className="text-sm font-bold text-gray-400 mb-1">FLORIDA TAXES</p>
+              <p className="text-2xl font-bold text-red-400">{formatUSD(rows.tax.reduce((x, r) => x + r.amount, 0))}</p>
+              <div className="mt-2">
+                {rows.tax.map((r, i) => (
+                  <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60 last:border-0">
+                    <span className="text-gray-300 truncate">{r.date ? `${formatShortDate(r.date)} · ` : ''}<a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · <span title={r.labelTip || undefined}>{r.label}</span></span>
+                    <span className="font-bold text-red-400 shrink-0">{formatUSD(r.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
     </main>
