@@ -94,6 +94,15 @@ function dateSortKey(d: string): number {
   return new Date(d + 'T00:00:00').getTime()
 }
 
+// Effective date used to order an income chronologically: the day it actually came
+// in (paid_at) when paid, otherwise its scheduled payment_date. Milestone/undated
+// incomes (e.g. pending ARRIVAL / CONCLUSION) have neither and sort LAST.
+function incomeOrderDate(p: { payment_date?: string | null; paid_at?: string | null }): string {
+  const paid = (p.paid_at || '').slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(paid)) return paid
+  return p.payment_date || ''
+}
+
 function sortByDateAsc<T>(rows: T[], getDate: (row: T) => string): T[] {
   return rows
     .map((row, i) => ({ row, i }))
@@ -310,7 +319,7 @@ export default function EditInvoicePage() {
       description: p.description || '',
       date_label: p.date_label || '',
       paid_at: p.paid_at || '',
-    })), p => p.payment_date))
+    })), incomeOrderDate))
 
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
@@ -691,7 +700,7 @@ export default function EditInvoicePage() {
         : new Date().toISOString()
       return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
     })
-    setPayments(prev => sortByDateAsc([...prev, ...newRows], p => p.payment_date))
+    setPayments(prev => sortByDateAsc([...prev, ...newRows], incomeOrderDate))
     setScannedPayments(null)
   }
 
@@ -1289,7 +1298,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments(sortByDateAsc([...payments, newPayment], p => p.payment_date)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+    setPayments(sortByDateAsc([...payments, newPayment], incomeOrderDate)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
   // Add the outstanding PENDING BALANCE (grand total − listed income) as a new income —
   // undated and unpaid, since it has no scheduled date or payment yet.
@@ -1298,7 +1307,7 @@ export default function EditInvoicePage() {
     // Keep FULL precision (not toFixed(2)) so the listed income exactly matches the grand
     // total — rounding to cents would leave the balance fractionally negative.
     const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', date_label: '', paid_at: '' }
-    setPayments(sortByDateAsc([...payments, row], p => p.payment_date))
+    setPayments(sortByDateAsc([...payments, row], incomeOrderDate))
   }
   function removePayment(index: number) {
     const payment = payments[index]
@@ -1313,7 +1322,7 @@ export default function EditInvoicePage() {
       const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28US', amount_brl: editingPayment.source === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, p => p.payment_date))
+    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
     setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
