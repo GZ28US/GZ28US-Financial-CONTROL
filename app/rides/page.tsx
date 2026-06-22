@@ -56,6 +56,7 @@ export default function RidesPage() {
   const [filter, setFilter] = useState<'ALL' | 'AWAITING CAR' | 'ON DUTY' | 'DONE' | 'DELIVERED'>('ALL')
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
+  const [search, setSearch] = useState('')
   // Projects area shows is_quote=false rides; Quotes area shows is_quote=true.
   const [mode, setMode] = useState<'project' | 'quote'>('project')
   // Optional ?client=<id> narrows the list to one client's rides (the clients-list RIDES button).
@@ -246,11 +247,13 @@ export default function RidesPage() {
 
   // Project rides filter by status ladder + live status; quote rides aren't filtered.
   const isReady = (r: any) => { if (r.is_quote) return false; const live = r._latestInvoice?.live_status; return live === 'REALTIME' || live === 'CLOSED' }
+  const q = search.trim().toLowerCase()
   const baseFiltered = (rides as any[]).filter(r => {
     const liveOk = liveFilter === 'ALL' || (r._latestInvoice?.live_status || 'INCOMPLETE') === liveFilter
-    if (mode === 'quote') return liveOk
+    const searchOk = !q || (r.project_code || '').toLowerCase().includes(q) || (r.project_name || '').toLowerCase().includes(q)
+    if (mode === 'quote') return liveOk && searchOk
     const statusOk = filter === 'ALL' || getStatusBadge(r._latestInvoice).label === filter
-    return statusOk && liveOk
+    return statusOk && liveOk && searchOk
   })
   // REPORT filter only when the current selection has both ready & not-ready (never on INCOMPLETE).
   const showReportFilter = mode === 'project' && liveFilter !== 'INCOMPLETE' && baseFiltered.some(isReady) && baseFiltered.some(r => !isReady(r))
@@ -274,39 +277,42 @@ export default function RidesPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
-          {mode === 'project' && (
-            <>
-              <div className="flex gap-2 flex-wrap">
-                {(['ALL', 'AWAITING CAR', 'ON DUTY', 'DONE', 'DELIVERED'] as const).map((f) => (
-                  <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
-                ))}
-              </div>
-              <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
-                {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
-                  <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
-                ))}
-              </div>
-              {showReportFilter && (
-                <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
-                  {(['ALL', 'READY', 'NOT'] as const).map((f) => (
-                    <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {mode === 'quote' && (
+      <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search rides…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
+          <Link href={`/rides/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
+        </div>
+      </div>
+      <div className="flex items-center gap-4 flex-wrap mb-8">
+        {mode === 'project' && (
+          <>
             <div className="flex gap-2 flex-wrap">
-              {(['ALL', 'INCOMPLETE', 'CLOSED'] as const).map((f) => (
-                <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+              {(['ALL', 'AWAITING CAR', 'ON DUTY', 'DONE', 'DELIVERED'] as const).map((f) => (
+                <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
               ))}
             </div>
-          )}
-        </div>
-        <Link href={`/rides/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
+            <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+              {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
+                <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
+              ))}
+            </div>
+            {showReportFilter && (
+              <div className="flex gap-2 flex-wrap border-l border-gray-700 pl-4">
+                {(['ALL', 'READY', 'NOT'] as const).map((f) => (
+                  <button key={f} onClick={() => setReportFilter(f)} className={chip(reportFilter === f)}>{f === 'READY' ? 'REPORT READY' : f === 'NOT' ? 'REPORT NOT READY' : 'ALL'}</button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        {mode === 'quote' && (
+          <div className="flex gap-2 flex-wrap">
+            {(['ALL', 'INCOMPLETE', 'CLOSED'] as const).map((f) => (
+              <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f}</button>
+            ))}
+          </div>
+        )}
       </div>
 
       {loading ? (
