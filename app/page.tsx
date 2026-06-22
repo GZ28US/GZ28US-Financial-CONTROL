@@ -11,10 +11,13 @@ function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
 type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string }
+// A dated cash-flow entry for the monthly-flow box: income is +, expense is −.
+type FlowItem = { date: string; code: string; label: string; href: string; signed: number }
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
   const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[]; loss: Row[] }>({ income: [], expense: [], tax: [], loss: [] })
+  const [flow, setFlow] = useState<FlowItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { void load() }, [])
@@ -173,6 +176,19 @@ export default function HomePage() {
       (a.date && b.date) ? (a.date.localeCompare(b.date) || b.amount - a.amount) : a.date ? -1 : b.date ? 1 : (b.amount - a.amount)
     income.sort(byDateThenAmount); expense.sort(byDateThenAmount); tax.sort(byDateThenAmount)
 
+    // Pull DATED income & expenses OUT of the DUE boxes into the monthly-flow box
+    // below: income is money in (+), expense is money out (−). Adjust the box
+    // headlines so they reflect only what stays (undated + milestones + loss/tax).
+    const datedIncome = income.filter(r => r.dated && !r.milestone && r.date)
+    const datedExpense = expense.filter(r => r.dated && r.date)
+    dueClients -= datedIncome.reduce((x, r) => x + r.amount, 0)
+    dueGz += datedExpense.reduce((x, r) => x + r.amount, 0)
+    const flowItems: FlowItem[] = [
+      ...datedIncome.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: r.amount })),
+      ...datedExpense.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: -r.amount })),
+    ].sort((a, b) => a.date.localeCompare(b.date))
+    setFlow(flowItems)
+
     setS({
       cashFlow, cashFlowPct: sumExpPaid > 0 ? (cashFlow / sumExpPaid) * 100 : 0,
       dueClients,
@@ -191,10 +207,13 @@ export default function HomePage() {
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-          <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
-          <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" taxRows={rows.tax} taxLabel="FLORIDA TAXES" />
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
+            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor={s.dueClients > 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
+            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor={s.dueGz < 0 ? 'text-red-400' : 'text-gray-300'} rows={rows.expense} undatedColor="text-red-400" taxRows={rows.tax} taxLabel="FLORIDA TAXES" />
+          </div>
+          {flow.length > 0 && <MonthlyFlow flow={flow} />}
+        </>
       )}
     </main>
   )
@@ -212,7 +231,6 @@ function DashCard({ label, value, color }: { label: string; value: string; color
 function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, taxLabel, taxColor }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string; taxRows?: Row[]; taxLabel?: string; taxColor?: string }) {
   const milestoneRows = rows.filter(r => r.milestone)
   const undated = rows.filter(r => !r.dated && !r.milestone)
-  const dated = rows.filter(r => r.dated)
   // One group per distinct milestone label present, shown just before LOSS with friendly names.
   const milestoneNames: Record<string, string> = { ARRIVAL: 'Goods Arrival', CONCLUSION: 'Project Conclusion' }
   const milestoneLabels = [...new Set(milestoneRows.map(r => r.milestone!))]
@@ -221,7 +239,6 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, t
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
       {undated.length > 0 && <RowGroup label="UNDATED" rows={undated} color={undatedColor} />}
-      {dated.length > 0 && <RowGroup label="DATED" rows={dated} color="text-gray-300" />}
       {milestoneLabels.map(ml => <RowGroup key={ml} label={milestoneNames[ml] || ml} rows={milestoneRows.filter(r => r.milestone === ml)} color="text-cyan-400" />)}
       {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={taxColor || undatedColor} />}
     </div>
@@ -245,6 +262,46 @@ function RowGroup({ label, rows, color }: { label: string; rows: Row[]; color: s
           <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
         </div>
       ))}
+    </div>
+  )
+}
+
+// All DATED income (+) and expenses (−) in one column, grouped by month, with a
+// running ("current") balance carried through each month.
+function MonthlyFlow({ flow }: { flow: FlowItem[] }) {
+  const byMonth = new Map<string, FlowItem[]>()
+  for (const it of flow) {
+    const k = it.date.slice(0, 7)
+    if (!byMonth.has(k)) byMonth.set(k, [])
+    byMonth.get(k)!.push(it)
+  }
+  const monthKeys = [...byMonth.keys()].sort()
+  let running = 0
+  return (
+    <div className="mt-4 max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5">
+      <p className="text-sm font-bold text-gray-400 mb-1">MONTHLY FLOW · DATED</p>
+      {monthKeys.map((k) => {
+        const items = byMonth.get(k)!
+        running += items.reduce((x, i) => x + i.signed, 0)
+        const label = new Date(Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1, 1)
+          .toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        return (
+          <div key={k} className="mt-3">
+            <div className="flex justify-between text-xs font-bold uppercase mb-1 border-b border-gray-700 pb-1">
+              <span className="text-gray-400">{label}</span>
+              <span className={running >= 0 ? 'text-green-400' : 'text-red-400'}>Balance {formatUSD(running)}</span>
+            </div>
+            {items.map((it, i) => (
+              <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60">
+                <span className="text-gray-300 truncate">
+                  {formatShortDate(it.date)} · <a href={it.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{it.code}</a> · {it.label}
+                </span>
+                <span className={`font-bold shrink-0 ${it.signed >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatUSD(it.signed)}</span>
+              </div>
+            ))}
+          </div>
+        )
+      })}
     </div>
   )
 }
