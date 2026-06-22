@@ -125,9 +125,9 @@ export default function PaymentsPage() {
                   <p className="text-sm font-bold text-gray-300 uppercase">{monthLabel(mk)}</p>
                   <p className="text-sm font-bold"><span className="text-green-400">{formatUSD(sum(cM))}</span><span className="text-gray-600"> · </span><span className="text-red-400">{formatUSD(sum(gM))}</span></p>
                 </div>
-                {weeks.map((wk, wi) => (
-                  <div key={wk} className={`mt-2 ${wi > 0 ? 'border-t border-gray-700 pt-3' : ''}`}>
-                    <p className="text-xs font-bold text-gray-500 mb-1">{weekLabel(wk)}</p>
+                {weeks.map((wk) => (
+                  <div key={wk} className="mt-3">
+                    <p className="text-xs font-bold text-gray-500 uppercase border-b border-gray-700 pb-1 mb-2">{weekLabel(wk)}</p>
                     <div className="grid grid-cols-2 gap-4">
                       <MonthSide rows={cByW.get(wk) || []} color="text-green-400" />
                       <MonthSide rows={gByW.get(wk) || []} color="text-red-400" />
