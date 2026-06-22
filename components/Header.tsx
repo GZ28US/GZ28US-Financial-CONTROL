@@ -14,8 +14,8 @@ const MENU: MenuItem[] = [
     type: 'dropdown',
     label: 'HOME',
     items: [
-      ['/', 'INCOME vs BILLS Flow'],
-      ['/payments', 'Last PAYMENTS'],
+      ['/', 'CURRENT Payments FLOW'],
+      ['/payments', 'PAST Payments FLOW'],
     ],
   },
   {

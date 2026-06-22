@@ -215,7 +215,7 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-1">INCOME vs BILLS Flow</h1>
+      <h1 className="text-4xl font-bold mb-1">CURRENT Payments FLOW</h1>
       <p className="text-gray-400 mb-6">Everything, all time — no filters.</p>
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
