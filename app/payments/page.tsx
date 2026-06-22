@@ -167,14 +167,17 @@ function MonthSide({ rows, color }: { rows: PayRow[]; color: string }) {
       <div className="flex justify-end text-xs mb-1"><span className={`font-bold ${color}`}>{formatUSD(sub)}</span></div>
       {rows.length === 0 ? (
         <p className="text-xs text-gray-600 py-1">—</p>
-      ) : rows.map((r) => (
-        <div key={r.id} className="flex justify-between gap-2 py-1 text-sm border-b border-gray-800/60 last:border-0">
-          <span className="text-gray-300 truncate">
-            {formatShortDate(r.date)} · <a href={r.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a>{r.label2 ? ` · ${r.label2}` : ''}
-          </span>
-          <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
-        </div>
-      ))}
+      ) : rows.map((r, i) => {
+        const newDay = i > 0 && rows[i - 1].date !== r.date
+        return (
+          <div key={r.id} className={`flex justify-between gap-2 py-1 text-sm ${newDay ? 'border-t border-gray-700 mt-1 pt-2' : ''}`}>
+            <span className="text-gray-300 truncate">
+              {formatShortDate(r.date)} · <a href={r.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a>{r.label2 ? ` · ${r.label2}` : ''}
+            </span>
+            <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
