@@ -52,18 +52,24 @@ Rules:
 13. PAYMENT / TRANSFER / PIX receipts (e.g. a "Comprovante do Pix", a bank transfer / TED / DOC / Zelle / wire confirmation) have NO itemized products. For these, IGNORE rule 1: set "supplier" to the RECIPIENT/payee (the "recebedor" / "Para" / "Dados do recebedor" — the party RECEIVING the money, never the bank, never the payer), set "paid" to true, set "grand_total" to the amount paid ("Valor pago" / "Valor"), set "tax" to 0 and "extras" to [], and return a SINGLE item whose description is a short label (the payee name, or "Pagamento") and whose line_total is that same amount. Never return an empty items array for a payment receipt.
 14. source: the PAYER — who SENT the money (the "pagador" / "De" / "Dados do pagador" / "from"). This is the person/company that paid, NOT the supplier/payee. Empty string if not shown.`
 
-    const paymentPrompt = `You are scanning a PAYMENT proof for an auto shop (a bank transfer confirmation, Zelle/ACH receipt, check image, or card receipt). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
+    const paymentPrompt = `You are scanning a PAYMENT PROOF of money RECEIVED by an auto shop (a bank transfer confirmation, a Zelle/ACH receipt, a check image, a card receipt, or a Brazilian "Comprovante de Pix" / PIX / TED). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
   "payments": [
-    { "amount": "payment amount as number string like 1500.00", "source": "one of CASH, ACH, ZELLE, CHECK, or empty string if not clearly identifiable", "date": "YYYY-MM-DD format, or empty string if not found" }
+    {
+      "amount": "payment amount as number string like 1500.00",
+      "source": "the payment METHOD — one of CASH, ACH, ZELLE, CHECK — or empty string if not identifiable",
+      "date": "YYYY-MM-DD format, or empty string if not found",
+      "payer": "the name of who SENT/PAID the money (the 'from' / 'De' / 'pagador' / 'Origem' / 'Dados do pagador'); empty string if not shown"
+    }
   ]
 }
 Rules:
-1. amount: the money amount of the payment, digits only as a number string (no $ or commas).
-2. source: map to exactly one of CASH, ACH, ZELLE, CHECK based on clear evidence in the document (e.g. the word "Zelle", "ACH", a check number, "cash"). If you cannot tell, use an empty string — do NOT guess.
-3. date: the date the payment was made/settled, YYYY-MM-DD. Empty string if not found.
-4. If the document shows multiple payments, include one object per payment. If only one, return a single-element array.
-5. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+1. amount: the money amount RECEIVED, digits only as a number string (no $ or R$ and no thousands separators; use a dot for the decimals). For a Pix use the "Valor".
+2. source: map to exactly one of CASH, ACH, ZELLE, CHECK based on clear evidence (the word "Zelle"/"ACH", a check number, "cash"). If you cannot tell, use an empty string — do NOT guess.
+3. date: the date the payment was made/settled, as YYYY-MM-DD. A Brazilian date like "09/03/2026" is DD/MM/YYYY, so it becomes 2026-03-09. Empty string if not found.${todayISO ? ` Never return a date after today, ${todayISO}.` : ''}
+4. payer: the party that SENT the money — the "from" / "De" / "pagador" / "Origem" / "Dados do pagador". This is the client who paid, NOT the recipient (the "Para" / "recebedor") and NOT the bank. Empty string if not shown.
+5. If the document shows multiple payments, include one object per payment. If only one, return a single-element array.
+6. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -127,6 +133,7 @@ Rules:
           amount: Number.isFinite(amt) ? amt.toFixed(2) : '',
           source: allowedSources.includes(src) ? src : '',
           date: typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '',
+          payer: String(p.payer || '').trim(),
         }
       }).filter((p: any) => p.amount !== '')
 

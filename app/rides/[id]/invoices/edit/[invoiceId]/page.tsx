@@ -648,7 +648,7 @@ export default function EditInvoicePage() {
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mediaType: file.type, mode: 'payment' }),
+        body: JSON.stringify({ base64, mediaType: file.type, mode: 'payment', today: todayStr() }),
       })
       const data = await response.json()
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanningPayment(false); return }
@@ -661,7 +661,8 @@ export default function EditInvoicePage() {
         paid_to: 'GZ28US',
         date: String(p.date || ''),
         receipt_url: receiptUrl,
-        description: '',
+        // The payer (who SENT the money) becomes the income note.
+        description: String(p.payer || ''),
       }))
       if (list.length === 0) list.push({ amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
 
