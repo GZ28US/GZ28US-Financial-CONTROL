@@ -7,6 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
+import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
@@ -1436,9 +1437,19 @@ export default function EditInvoicePage() {
       (s.aliases || '').split(/[,;]/).map(a => a.trim().toLowerCase()).filter(Boolean).includes(n)
     )
   }
-  function addExpense() {
+  // Register a typed-in supplier into the bank (suppliers table) the first time it's
+  // used, and add it to the local list so it shows in the type-ahead. Supplier is
+  // optional — an empty value is left as-is. Mirrored into the BR suppliers table.
+  async function ensureSupplier(name: string) {
+    const n = (name || '').trim()
+    if (!n || supplierKnown(n)) return
+    await supabase.from('suppliers').upsert([{ name: n }], { onConflict: 'name' })
+    void mirrorEnsureSupplier(n)
+    setSuppliers(prev => [...prev, { name: n, discount: 0, discount_type: 'FIXED', aliases: '' }])
+  }
+  async function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
-    if (!supplierKnown(newExpense.supplier)) { alert('Choose an existing supplier from the list. Add new suppliers in the SUPPLIERS section first.'); return }
+    await ensureSupplier(newExpense.supplier)
     setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
   }
   function removeExpense(index: number) {
@@ -1450,10 +1461,9 @@ export default function EditInvoicePage() {
   async function saveEditExpense() {
     if (!editingExpense.item || !editingExpense.amount) { alert('Please enter at least item and amount'); return }
     const exp = expenses[editingExpenseIndex!]
-    // Enforce a real supplier only when it was changed — grandfather existing rows
-    // (scanned / imported) whose supplier isn't a formal DB supplier.
-    if ((editingExpense.supplier || '').trim() !== (exp?.supplier || '').trim() && !supplierKnown(editingExpense.supplier)) {
-      alert('Choose an existing supplier from the list. Add new suppliers in the SUPPLIERS section first.'); return
+    // A typed-in supplier (when changed) is registered into the bank rather than rejected.
+    if ((editingExpense.supplier || '').trim() !== (exp?.supplier || '').trim()) {
+      await ensureSupplier(editingExpense.supplier)
     }
     if (exp.id) {
       const { error } = await supabase.from('invoice_expenses').update({
