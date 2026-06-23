@@ -390,7 +390,7 @@ years.sort((a, b) => a - b)
 // ── BMW M3 G80 (S58 3.0 TT I6, 2021– — sedan; CS from 2024) ─────────────────────
 // Trims = the powertrain variants (per the special-editions rule). The limited
 // M3 CS lives in specialEditions on the Competition xDrive it is built from.
-const bmwM3G80Colors = ['Alpine White', 'Black Sapphire', 'Brooklyn Grey', 'Skyscraper Grey', 'Mineral White', 'Portimao Blue', 'Tanzanite Blue', 'Toronto Red', 'Sao Paulo Yellow', 'Isle of Man Green', 'Oxford Green', 'Aventurine Red', 'Frozen Portimao Blue', 'Frozen Brooklyn Grey', 'Frozen Deep Green', 'Frozen Tanzanite Blue']
+const bmwM3G80Colors = ['Alpine White', 'Black Sapphire', 'Brooklyn Grey', 'Skyscraper Grey', 'Mineral White', 'Portimao Blue', 'Tanzanite Blue', 'Toronto Red', 'Sao Paulo Yellow', 'Isle of Man Green', 'Oxford Green', 'Aventurine Red', 'Twilight Purple', 'Frozen Portimao Blue', 'Frozen Brooklyn Grey', 'Frozen Deep Green', 'Frozen Tanzanite Blue']
 // The CS ships in its own short list (Frozen Solid White and Signal Green are CS-only).
 const bmwM3CSColors = ['Frozen Solid White', 'Sapphire Black', 'Brooklyn Grey', 'Signal Green']
 const bmwM3G80Versions = (y: number): string[] => {
