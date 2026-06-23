@@ -130,7 +130,7 @@ export default function PaymentsPage() {
             </div>
             <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 flex justify-between items-baseline">
               <span className="text-sm font-bold text-gray-400">PAID by GZ28US</span>
-              <span className="text-xl font-bold text-red-400">{formatUSD(gzTotal)}</span>
+              <span className="text-xl font-bold text-orange-400">{formatUSD(gzTotal)}</span>
             </div>
           </div>
           {months.length === 0 ? (
@@ -150,20 +150,20 @@ export default function PaymentsPage() {
               <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
                 <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2 gap-3">
                   <p className="text-sm font-bold text-gray-300 uppercase">{monthLabel(mk)}</p>
-                  <p className="text-sm font-bold whitespace-nowrap"><span className="text-green-400">{formatUSD(clientSub)}</span><span className="text-gray-600"> · </span><span className="text-red-400">{formatUSD(gzSub)}</span><span className="text-gray-600"> &nbsp;·&nbsp; </span><span className={balColor}>{formatUSD(bal)}</span></p>
+                  <p className="text-sm font-bold whitespace-nowrap"><span className="text-green-400">{formatUSD(clientSub)}</span><span className="text-gray-600"> · </span><span className="text-orange-400">{formatUSD(gzSub)}</span><span className="text-gray-600"> &nbsp;·&nbsp; </span><span className={balColor}>{formatUSD(bal)}</span></p>
                 </div>
                 {isCurrent ? weeks.map((wk) => (
                   <div key={wk} className="mt-3">
                     <p className="text-xs font-bold text-gray-500 uppercase border-b border-gray-700 pb-1 mb-2">{weekLabel(wk)}</p>
                     <div className="grid grid-cols-2 gap-4">
                       <MonthSide rows={cByW.get(wk) || []} color="text-green-400" />
-                      <MonthSide rows={gByW.get(wk) || []} color="text-red-400" />
+                      <MonthSide rows={gByW.get(wk) || []} color="text-orange-400" />
                     </div>
                   </div>
                 )) : (
                   <div className="grid grid-cols-2 gap-4 mt-1">
                     <MonthSide rows={cM} color="text-green-400" showSub={false} />
-                    <MonthSide rows={gM} color="text-red-400" showSub={false} />
+                    <MonthSide rows={gM} color="text-orange-400" showSub={false} />
                   </div>
                 )}
               </div>
