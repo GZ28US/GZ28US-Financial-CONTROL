@@ -387,6 +387,38 @@ for (let y = 2006; y <= 2010; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── BMW M3 G80 (S58 3.0 TT I6, 2021– — sedan; CS from 2024) ─────────────────────
+// Trims = the powertrain variants (per the special-editions rule). The limited
+// M3 CS lives in specialEditions on the Competition xDrive it is built from.
+const bmwM3G80Colors = ['Alpine White', 'Black Sapphire', 'Brooklyn Grey', 'Skyscraper Grey', 'Mineral White', 'Portimao Blue', 'Tanzanite Blue', 'Toronto Red', 'Sao Paulo Yellow', 'Isle of Man Green', 'Oxford Green', 'Aventurine Red', 'Frozen Portimao Blue', 'Frozen Brooklyn Grey', 'Frozen Deep Green', 'Frozen Tanzanite Blue']
+// The CS ships in its own short list (Frozen Solid White and Signal Green are CS-only).
+const bmwM3CSColors = ['Frozen Solid White', 'Sapphire Black', 'Brooklyn Grey', 'Signal Green']
+const bmwM3G80Versions = (y: number): string[] => {
+  // Base (6MT, RWD, 473 hp) + Competition (8AT, RWD, 503 hp) from 2021;
+  // Competition xDrive (AWD, 503 hp) added 2022.
+  const v = ['Base 3.0 TT I6', 'Competition 3.0 TT I6']
+  if (y >= 2022) v.push('Competition xDrive 3.0 TT I6')
+  return v
+}
+for (let y = 2021; y <= 2026; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('BMW')) manufacturersByYear[y].push('BMW')
+  brandsByManufacturerAndYear['BMW'] = brandsByManufacturerAndYear['BMW'] || {}
+  brandsByManufacturerAndYear['BMW'][y] = ['BMW']
+  modelsByBrandAndYear['BMW'] = modelsByBrandAndYear['BMW'] || {}
+  modelsByBrandAndYear['BMW'][y] = ['M3']
+  versionsByModelAndYear['M3'] = versionsByModelAndYear['M3'] || {}
+  versionsByModelAndYear['M3'][y] = bmwM3G80Versions(y)
+}
+years.sort((a, b) => a - b)
+// M3 CS (543 hp, xDrive) — a special edition of the Competition xDrive, 2024+.
+Object.assign(specialEditions, {
+  '2024-M3-Competition xDrive 3.0 TT I6': ['None', 'CS'],
+  '2025-M3-Competition xDrive 3.0 TT I6': ['None', 'CS'],
+  '2026-M3-Competition xDrive 3.0 TT I6': ['None', 'CS'],
+})
+
 // ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
 // Trims = base engine packages (per the special-editions rule). Appearance and
 // dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
@@ -676,6 +708,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (colorsByConfiguration[key]) return colorsByConfiguration[key]
   if (model === 'DEFENDER') return landRoverDefenderColors
   if (model === 'M5') return bmwM5E60Colors
+  if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
@@ -732,7 +765,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
 // The pack builder reads the flat carData version list; fill DEFENDER with the union of
 // every era's wheelbase+engine version (built from the year-keyed map above).
 carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
-carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())] } }
+carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())], M3: [...new Set(Object.values(versionsByModelAndYear['M3']).flat())] } }
 // Camaro flat list = union of every era's versions (modern gen5+ entries already present).
 carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
   ...(carData['GM']['CHEVROLET']['CAMARO'] || []),
