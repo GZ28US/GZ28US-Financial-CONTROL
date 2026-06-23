@@ -22,11 +22,14 @@ export default function PaymentsPage() {
     const cutoffDate = cutoff.toISOString().slice(0, 10)
     const cutoffISO = cutoff.toISOString()
 
-    const [{ data: pays }, { data: exps }, { data: inputsD }, { data: goodsD }] = await Promise.all([
+    const [{ data: pays }, { data: exps }, { data: staffExps }, { data: inputsD }, { data: goodsD }] = await Promise.all([
       // PAID by CLIENTS — income received (paid_at in window).
       supabase.from('invoice_payments').select('id, invoice_id, amount, paid_at, source').not('paid_at', 'is', null).gte('paid_at', cutoffISO),
       // PAID by GZ28US — invoice expenses paid (payment_date in window).
       supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
+      // PAID by GZ28US — staff expenses (no paid flag in this app; a recorded staff
+      // expense is money already spent, like inputs/goods). Use expense_date in window.
+      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date').not('expense_date', 'is', null).gte('expense_date', cutoffDate),
       // PAID by GZ28US — inputs & goods are always paid; use purchase_date.
       supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
       supabase.from('goods').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
@@ -94,7 +97,29 @@ export default function PaymentsPage() {
       const supplier = e0.supplier || ''
       return { id: `inv-${k}`, date: e0.payment_date, amount, code: m.code, label2: items.length > 1 ? `${supplier || 'Purchase'} · ${items.length} items` : (supplier || e0.item || ''), href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/edit/${m.inv.id}` : '#' }
     })
-    const gRows = [...invExpRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods')].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+
+    // Staff expense names + links.
+    const seasonIds = [...new Set((staffExps || []).map((e: any) => e.season_id))]
+    let seasons: any[] = []
+    if (seasonIds.length) {
+      const { data } = await supabase.from('seasons').select('id, season_code, staff_id').in('id', seasonIds)
+      seasons = data || []
+    }
+    const seasonById = new Map<string, any>(); seasons.forEach((s: any) => seasonById.set(s.id, s))
+    const staffIds = [...new Set(seasons.map((s: any) => s.staff_id))]
+    let staff: any[] = []
+    if (staffIds.length) {
+      const { data } = await supabase.from('staff').select('id, name').in('id', staffIds)
+      staff = data || []
+    }
+    const staffNameById = new Map<string, string>(); staff.forEach((s: any) => staffNameById.set(s.id, s.name || ''))
+    const staffRows: PayRow[] = (staffExps || []).map((e: any) => {
+      const season = seasonById.get(e.season_id)
+      const staffName = season ? (staffNameById.get(season.staff_id) || '') : ''
+      return { id: `staff-${e.id}`, date: e.expense_date, amount: parseFloat(e.amount) || 0, code: season?.season_code || 'STAFF', label2: staffName || (e.description || ''), href: season ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${e.season_id}/expenses` : '#' }
+    })
+
+    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods')].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     setClientRows(cRows)
     setGzRows(gRows)
