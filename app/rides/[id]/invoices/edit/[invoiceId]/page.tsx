@@ -7,7 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
@@ -209,7 +209,7 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
@@ -578,6 +578,7 @@ export default function EditInvoicePage() {
       const parsed = JSON.parse(clean)
 
       const supplier = String(parsed.supplier || '').trim()
+      const scannedSource = String(parsed.source || '').trim()
       const paid = parsed.paid !== false
       const rawDate = String(parsed.date || '')
       // A paid receipt with no readable date is still paid — default it to today so
@@ -586,7 +587,7 @@ export default function EditInvoicePage() {
       const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
-      const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl, paid })
+      const openReview = () => setScannedPurchase({ supplier, date, source: scannedSource, items, receiptUrl, paid })
 
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
@@ -726,7 +727,7 @@ export default function EditInvoicePage() {
       purchase_group: groupId,
       export_status: 'FRESH',
       item_discount: item.item_discount || '0',
-      source: DEFAULT_SOURCE,
+      source: matchSource(scannedPurchase.source),
     }))
     // Override: an official purchase replaces the matching quote estimate. Match
     // by part number (or item name when a line has no PN); drop those lines — and
