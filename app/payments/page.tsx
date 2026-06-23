@@ -18,7 +18,7 @@ export default function PaymentsPage() {
 
   async function load() {
     const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 60)
+    cutoff.setMonth(cutoff.getMonth() - 12)
     const cutoffDate = cutoff.toISOString().slice(0, 10)
     const cutoffISO = cutoff.toISOString()
 
@@ -118,7 +118,7 @@ export default function PaymentsPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-1">PAST Payments FLOW</h1>
-      <p className="text-gray-400 mb-6">Everything paid in the last 60 days.</p>
+      <p className="text-gray-400 mb-6">Everything paid in the last 12 months.</p>
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
@@ -134,7 +134,7 @@ export default function PaymentsPage() {
             </div>
           </div>
           {months.length === 0 ? (
-            <p className="text-gray-400 text-xl">No payments in the last 60 days.</p>
+            <p className="text-gray-400 text-xl">No payments in the last 12 months.</p>
           ) : months.map((mk) => {
             const cM = cByM.get(mk) || []
             const gM = gByM.get(mk) || []
