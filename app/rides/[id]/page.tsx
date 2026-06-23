@@ -285,31 +285,32 @@ export default function ViewRidePage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      <div className="flex items-center justify-between mb-8">
-        <div>
+      {/* Standard: title + action buttons on the top line, filters/badges below. */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
           <h1 className="text-4xl font-bold">{ride.project_code}{ride.project_name ? ` — ${ride.project_name}` : ''}</h1>
-          <div className="flex gap-3 mt-2 flex-wrap">
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-              CURRENT CASH FLOW: {formatUSD(agg.currentProfit)} / {aggCurrentPct.toFixed(1)}%
-            </span>
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-              DUE by CLIENTS: {formatUSD(agg.paymentsBalance)}
-            </span>
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
-              FINAL MARKUP: {formatUSD(agg.finalProfit)} / {aggFinalPct.toFixed(1)}%
-            </span>
-            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
-              DUE by GZ28US: {formatUSD(agg.expensesBalance)}
-            </span>
+          <div className="flex gap-3 flex-wrap justify-end">
+            {client && (
+              <button onClick={handleSendPic} disabled={sendingPic || picSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${picSent ? 'bg-green-600' : 'bg-fuchsia-700 hover:bg-fuchsia-600'}`}>{sendingPic ? 'SENDING…' : picSent ? '✓ SENT' : '📸 PIC FROM CLIENT'}</button>
+            )}
+            <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+            <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
+            <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
           </div>
         </div>
-        <div className="flex gap-3 flex-wrap justify-end">
-          {client && (
-            <button onClick={handleSendPic} disabled={sendingPic || picSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${picSent ? 'bg-green-600' : 'bg-fuchsia-700 hover:bg-fuchsia-600'}`}>{sendingPic ? 'SENDING…' : picSent ? '✓ SENT' : '📸 PIC FROM CLIENT'}</button>
-          )}
-          <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
-          <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
-          <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
+        <div className="flex gap-3 flex-wrap">
+          <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+            CURRENT CASH FLOW: {formatUSD(agg.currentProfit)} / {aggCurrentPct.toFixed(1)}%
+          </span>
+          <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+            DUE by CLIENTS: {formatUSD(agg.paymentsBalance)}
+          </span>
+          <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+            FINAL MARKUP: {formatUSD(agg.finalProfit)} / {aggFinalPct.toFixed(1)}%
+          </span>
+          <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>
+            DUE by GZ28US: {formatUSD(agg.expensesBalance)}
+          </span>
         </div>
       </div>
 
