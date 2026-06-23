@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -74,6 +75,7 @@ export default function NewInputPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
+  const [source, setSource] = useState(DEFAULT_SOURCE)
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
@@ -138,6 +140,7 @@ export default function NewInputPage() {
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
+      source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
     }])
     if (error) { alert(error.message); return }
@@ -278,6 +281,11 @@ export default function NewInputPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">SOURCE</label>
+          <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
 
         <div className="flex gap-4">

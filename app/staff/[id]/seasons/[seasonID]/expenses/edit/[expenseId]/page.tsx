@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
 const expenseTypes = ['DAILY', 'WEEKLY', 'MONTHLY', 'SINGLE']
-const expenseSources = ['Regions', 'Cash', 'GZ28BR', 'Humberto']
 const expenseOrigins = ['GZ28US', 'PERSONAL']
 
 function parseReceiptUrls(raw: string | null): string[] {
@@ -30,7 +30,7 @@ export default function EditExpensePage() {
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [origin, setOrigin] = useState('GZ28US')
-  const [source, setSource] = useState('Regions')
+  const [source, setSource] = useState(DEFAULT_SOURCE)
   const [expenseDate, setExpenseDate] = useState('')
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -73,7 +73,7 @@ export default function EditExpensePage() {
     setDescription(data.description || '')
     setAmount(String(data.amount || ''))
     setOrigin(data.origin || 'GZ28US')
-    setSource(data.source || 'Regions')
+    setSource(data.source || DEFAULT_SOURCE)
     setExpenseDate(data.expense_date || '')
     setReceiptUrls(parseReceiptUrls(data.receipt_url))
     setLoading(false)
@@ -168,9 +168,7 @@ export default function EditExpensePage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">SOURCE</label>
-          <select value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
-            {expenseSources.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
 
         <div>

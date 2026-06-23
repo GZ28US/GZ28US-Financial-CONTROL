@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -14,6 +15,7 @@ type Expense = {
   amount: string
   expense_date: string
   supplier: string
+  source: string
   receipt_urls: string[]
 }
 
@@ -78,13 +80,14 @@ export default function EditGoodPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
+  const [source, setSource] = useState('')
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
   const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
@@ -105,12 +108,14 @@ export default function EditGoodPage() {
     setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
+    setSource(data.source || DEFAULT_SOURCE)
     setGoodReceiptUrls(parseReceiptUrls(data.receipt_url))
 
     const { data: expensesData } = await supabase.from('good_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData.map(e => ({
       id: e.id, description: e.description, amount: String(e.amount),
       expense_date: e.expense_date || '', supplier: e.supplier || '',
+      source: e.source || DEFAULT_SOURCE,
       receipt_urls: parseReceiptUrls(e.receipt_url),
     })))
 
@@ -185,7 +190,7 @@ export default function EditGoodPage() {
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
   }
 
   async function removeExpense(index: number) {
@@ -205,15 +210,16 @@ export default function EditGoodPage() {
         description: editingExpense.description, amount: parseFloat(editingExpense.amount),
         expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
         supplier: editingExpense.supplier.trim() || null,
+        source: editingExpense.source || DEFAULT_SOURCE,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
   }
 
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', receipt_urls: [] }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
@@ -224,6 +230,7 @@ export default function EditGoodPage() {
       description, quantity: qty || 1, unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
+      source,
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
       updated_at: new Date().toISOString(),
     }).eq('id', goodId)
@@ -235,6 +242,7 @@ export default function EditGoodPage() {
         good_id: goodId, description: ex.description, amount: parseFloat(ex.amount) || 0,
         expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
         supplier: ex.supplier.trim() || null,
+        source: ex.source || DEFAULT_SOURCE,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
       if (e) { alert(e.message); return }
@@ -264,6 +272,11 @@ export default function EditGoodPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">SOURCE</label>
+          <SourceSelect value={source} onChange={setSource} className={inputClass} />
         </div>
 
         <div className="flex gap-4">
@@ -334,6 +347,10 @@ export default function EditGoodPage() {
               <SupplierField suppliers={suppliers} value={newExpense.supplier} onChange={(v) => setNewExpense({ ...newExpense, supplier: v })} />
             </div>
             <div>
+              <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+              <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
+            </div>
+            <div>
               <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
               <div className="relative">
                 <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
@@ -356,6 +373,10 @@ export default function EditGoodPage() {
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                           <SupplierField suppliers={suppliers} value={editingExpense.supplier} onChange={(v) => setEditingExpense({ ...editingExpense, supplier: v })} />
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                          <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
                         </div>
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>

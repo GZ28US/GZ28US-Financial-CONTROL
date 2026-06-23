@@ -7,6 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
+import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
@@ -40,6 +41,7 @@ type Expense = {
   export_status?: string
   item_discount?: string
   kit_name?: string
+  source: string
 }
 type StockItem = {
   id: string
@@ -197,9 +199,9 @@ export default function EditInvoicePage() {
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -352,6 +354,7 @@ export default function EditInvoicePage() {
         stock_donor: e.stock_donor || undefined,
         export_status: e.export_status || 'FRESH',
         kit_name: e.kit_name || undefined,
+        source: e.source || DEFAULT_SOURCE,
       })))
       setExpandedGroups(new Set())
     }
@@ -446,6 +449,7 @@ export default function EditInvoicePage() {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
       expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
+      source: DEFAULT_SOURCE,
     }
   }
   // Insert a parts-database item as a fresh, unpaid expense. A KIT expands into a
@@ -532,6 +536,7 @@ export default function EditInvoicePage() {
       stock_donor: item.donor || undefined,
       export_status: 'FRESH',
       item_discount: '0',
+      source: DEFAULT_SOURCE,
     }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -721,6 +726,7 @@ export default function EditInvoicePage() {
       purchase_group: groupId,
       export_status: 'FRESH',
       item_discount: item.item_discount || '0',
+      source: DEFAULT_SOURCE,
     }))
     // Override: an official purchase replaces the matching quote estimate. Match
     // by part number (or item name when a line has no PN); drop those lines — and
@@ -1425,7 +1431,7 @@ export default function EditInvoicePage() {
   function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
     if (!supplierKnown(newExpense.supplier)) { alert('Choose an existing supplier from the list. Add new suppliers in the SUPPLIERS section first.'); return }
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
   }
   function removeExpense(index: number) {
     const exp = expenses[index]
@@ -1452,13 +1458,14 @@ export default function EditInvoicePage() {
         item_discount: parseFloat(editingExpense.item_discount || '0') || 0,
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
+        source: editingExpense.source || DEFAULT_SOURCE,
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE }) }
 
   // Before a quote converts to an invoice, archive its full content exactly as
   // currently stored (invoice row + line items, payments, notes) into
@@ -1655,6 +1662,7 @@ export default function EditInvoicePage() {
         stock_donor: ex.stock_donor || null,
         export_status: ex.export_status || 'FRESH',
         kit_name: ex.kit_name || null,
+        source: ex.source || DEFAULT_SOURCE,
         position: expenses.indexOf(ex),
       })))
       if (e) { alert(e.message); return }
@@ -2369,6 +2377,10 @@ export default function EditInvoicePage() {
                 <datalist id="supplier-options">{suppliers.map(s => <option key={s.name} value={s.name} />)}</datalist>
               </div>
               <div className="flex-1 min-w-[10rem]">
+                <label className="block mb-1 text-xs text-gray-400">SOURCE</label>
+                <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={`${smallInputClass} w-full`} />
+              </div>
+              <div className="flex-1 min-w-[10rem]">
                 <label className="block mb-1 text-xs text-gray-400">ITEM</label>
                 <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={smallInputClass + ' w-full'} />
               </div>
@@ -2529,6 +2541,10 @@ export default function EditInvoicePage() {
                               <div className="flex-1 min-w-[10rem]">
                                 <label className="block mb-1 text-xs text-gray-400">SUPPLIER</label>
                                 <input type="text" list="supplier-options" placeholder="Supplier — type to search" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={smallInputClass + ' w-full'} />
+                              </div>
+                              <div className="flex-1 min-w-[10rem]">
+                                <label className="block mb-1 text-xs text-gray-400">SOURCE</label>
+                                <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={`${smallInputClass} w-full`} />
                               </div>
                               <div className="flex-1 min-w-[10rem]">
                                 <label className="block mb-1 text-xs text-gray-400">ITEM</label>

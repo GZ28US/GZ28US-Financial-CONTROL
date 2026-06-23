@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -67,6 +68,7 @@ export default function EditInputPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
+  const [source, setSource] = useState('')
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
@@ -95,6 +97,7 @@ export default function EditInputPage() {
     setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
+    setSource(data.source || DEFAULT_SOURCE)
     setReceiptUrls(parseReceiptUrls(data.receipt_url))
     setLoading(false)
   }
@@ -142,6 +145,7 @@ export default function EditInputPage() {
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
+      source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       updated_at: new Date().toISOString(),
     }).eq('id', inputId)
@@ -178,6 +182,11 @@ export default function EditInputPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">SOURCE</label>
+          <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
 
         <div className="flex gap-4">
