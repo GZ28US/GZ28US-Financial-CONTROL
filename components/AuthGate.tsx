@@ -5,9 +5,10 @@ import { usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 // Routes that are PUBLIC by design — no login. The client self-service form
-// (/clients/self/[id]) is sent to clients so they fill in their own info; they
-// are not app users, so it must render outside the auth gate.
-const PUBLIC_PREFIXES = ['/clients/self/']
+// (/clients/self/[id]) is sent to clients so they fill in their own info;
+// /rides/self/[id] lets a client upload their car photo. They are not app users,
+// so these must render outside the auth gate.
+const PUBLIC_PREFIXES = ['/clients/self/', '/rides/self/']
 
 // Wraps the whole app. When signed out it shows a login screen; when signed in
 // it renders the app. No public sign-up — accounts are created in the Supabase

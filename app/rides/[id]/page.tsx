@@ -5,6 +5,22 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
+
+// Normalize a phone to the digits-only `to` UltraMsg expects, by the client's country.
+// USA -> +1 (this app's default); BRAZIL -> +55.
+function toWaNumber(phone: string | null | undefined, country?: string | null): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (country === 'BRAZIL') {
+    if (digits.startsWith('55') && digits.length >= 12) return digits
+    if (digits.length === 10 || digits.length === 11) return '55' + digits
+    return digits
+  }
+  if (digits.startsWith('1') && digits.length === 11) return digits
+  if (digits.length === 10) return '1' + digits
+  return digits
+}
 
 type Ride = {
   id: string
@@ -28,11 +44,13 @@ type Client = {
   name: string
   email: string | null
   phone: string | null
+  instagram: string | null
   address: string | null
   city: string | null
   state: string | null
   zip: string | null
   country: string | null
+  preferred_message_method: string | null
 }
 
 type Invoice = {
@@ -78,8 +96,75 @@ export default function ViewRidePage() {
   const [client, setClient] = useState<Client | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [invoiceStats, setInvoiceStats] = useState<Record<string, Stats>>({})
+  const [sendingPic, setSendingPic] = useState(false)
+  const [picSent, setPicSent] = useState(false)
 
   useEffect(() => { loadAll() }, [])
+
+  // PIC FROM CLIENT — send the client a link to a login-free page (/rides/self/[id])
+  // where they upload their favorite photo of THIS car; it becomes the ride photo.
+  // Delivered by the client's PREFERRED method (honor it — never force WhatsApp):
+  //   WhatsApp -> automatic via /api/whatsapp (per-client `to`, country-aware)
+  //   SMS / E-Mail -> opens the local composer pre-filled with the link
+  //   Instagram -> copies the link + opens the client's DM
+  // The message is in the client's language and carries only this one link.
+  async function handleSendPic() {
+    if (!client) return
+    const method = client.preferred_message_method || 'WhatsApp'
+    const link = `${window.location.origin}${BASE_PATH}/rides/self/${rideId}`
+    const firstName = (client.name || '').split(' ')[0]
+    const isBR = client.country === 'BRAZIL'
+    // WhatsApp uses *bold*/_italic_ markdown; SMS / E-Mail / Instagram use plain text.
+    const waBody = isBR
+      ? `Oi${firstName ? ` ${firstName}` : ''}! 👋\n\nQueremos a sua foto favorita do seu carro para o registro na *_GZ28 V8 SpeedShop_*. É só abrir o link, escolher a foto e tocar em *ENVIAR FOTO*:\n\n${link}\n\nObrigado! 📸`
+      : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nWe'd love your favorite picture of your car for your record at *_GZ28 V8 SpeedShop_*. Just open the link, choose the photo and tap *SEND PHOTO*:\n\n${link}\n\nThank you! 📸`
+    const plain = waBody.replace(/[*_]/g, '')
+    const flashSent = () => { setPicSent(true); setTimeout(() => setPicSent(false), 3000) }
+    const notifyGroup = () => { void fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: `📸 *CAR PHOTO — LINK SENT TO CLIENT*\n${client.name || '—'}\nThe system asked the client for their favorite car photo (via ${method}). Awaiting the upload.` }),
+    }).catch(() => {}) }
+
+    if (method === 'SMS') {
+      if (!client.phone) { alert('This client has no phone on file.\nAdd a number first (client EDIT).'); return }
+      window.location.href = `sms:${client.phone}?&body=${encodeURIComponent(plain)}`
+      notifyGroup(); flashSent(); return
+    }
+    if (method === 'E-Mail') {
+      if (!client.email) { alert('This client has no email on file.\nAdd an email first (client EDIT).'); return }
+      const subject = isBR ? 'Sua foto do carro — GZ28 V8 SpeedShop' : 'Your car photo — GZ28 V8 SpeedShop'
+      window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
+      notifyGroup(); flashSent(); return
+    }
+    if (method === 'Instagram') {
+      try { await navigator.clipboard.writeText(plain) } catch {}
+      const handle = (client.instagram || '').replace(/^@/, '').trim()
+      window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
+      alert('Link copied. Open the client’s Instagram DM and paste to send.')
+      notifyGroup(); flashSent(); return
+    }
+
+    // WhatsApp (default) — automatic via UltraMsg.
+    const to = toWaNumber(client.phone, client.country)
+    if (!to) { alert('This client has no phone / WhatsApp number on file.\nAdd a number first (client EDIT).'); return }
+    setSendingPic(true)
+    try {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body: waBody }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) {
+        const detail = typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`)
+        alert('Could not send the link:\n' + detail); return
+      }
+      flashSent(); notifyGroup()
+    } catch (e) {
+      alert('Failed to send: ' + String(e))
+    } finally {
+      setSendingPic(false)
+    }
+  }
 
   async function loadAll() {
     const { data: rideData } = await supabase.from('rides').select('*').eq('id', rideId).single()
@@ -218,7 +303,10 @@ export default function ViewRidePage() {
             </span>
           </div>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap justify-end">
+          {client && (
+            <button onClick={handleSendPic} disabled={sendingPic || picSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${picSent ? 'bg-green-600' : 'bg-fuchsia-700 hover:bg-fuchsia-600'}`}>{sendingPic ? 'SENDING…' : picSent ? '✓ SENT' : '📸 PIC FROM CLIENT'}</button>
+          )}
           <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
           <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
