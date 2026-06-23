@@ -176,7 +176,10 @@ export default function InvoicesPage() {
       const expensesBalance = expensesTotalPaid - expensesTotalGlobal
       const currentProfit = totalPaid - expensesTotalPaid
       const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
-      const finalProfit = totalIncomeAll - expensesTotalGlobal
+      // No income recorded yet (every quote, and not-yet-paid invoices): the client
+      // still owes the grand total, so use it as the income basis for the markup.
+      const markupIncome = totalIncomeAll > 0.005 ? totalIncomeAll : grandTotal
+      const finalProfit = markupIncome - expensesTotalGlobal
       const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
 
       statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct }
