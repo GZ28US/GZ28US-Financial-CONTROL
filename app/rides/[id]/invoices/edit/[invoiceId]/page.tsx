@@ -164,7 +164,12 @@ export default function EditInvoicePage() {
   // is_quote is the stored quote/invoice flag. A quote flips to an invoice on
   // SAVE once a valid HIRING DATE is present (handled in saveInvoice).
   const [isQuote, setIsQuote] = useState(false)
+  // Rides: hiringDate IS the HIRING DATE (its presence converts the quote).
+  // Clients (shopping quotes): hiringDate is shown as REQUEST DATE and is purely
+  // informational — it must NOT convert. The client HIRING DATE that DOES convert
+  // is its own field below (clientHiringDate / client_hiring_date).
   const [hiringDate, setHiringDate] = useState('')
+  const [clientHiringDate, setClientHiringDate] = useState('')
   const [entryDate, setEntryDate] = useState('')
   const [conclusionDate, setConclusionDate] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
@@ -284,6 +289,7 @@ export default function EditInvoicePage() {
     setInvoiceCode(data.invoice_code || '')
     setIsQuote(!!data.is_quote)
     setHiringDate(data.hiring_date || '')
+    setClientHiringDate(data.client_hiring_date || '')
     setEntryDate(data.entry_date || '')
     setConclusionDate(data.conclusion_date || '')
     setDeliveryDate(data.delivery_date || '')
@@ -1559,12 +1565,16 @@ export default function EditInvoicePage() {
     }
     const effectiveFeedOnline = !isQuote && (effectiveLive === 'REALTIME' || effectiveLive === 'CLOSED')
     // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
-    // invoice (one-way; an invoice never reverts to a quote).
-    const nextIsQuote = isQuote && !isValidDate(hiringDate)
+    // invoice (one-way; an invoice never reverts to a quote). For a ride the
+    // HIRING DATE is hiringDate; for a client shopping quote it's clientHiringDate
+    // (its REQUEST DATE never converts it).
+    const conversionDate = isClient ? clientHiringDate : hiringDate
+    const nextIsQuote = isQuote && !isValidDate(conversionDate)
     // On that transition, archive the quote, then migrate its quote ride/client to project.
     if (isQuote && !nextIsQuote) { await backupQuoteBeforeConversion(); await migrateQuoteToProject() }
     const { error } = await supabase.from('invoices').update({
       hiring_date: isValidDate(hiringDate) ? hiringDate : null,
+      client_hiring_date: isValidDate(clientHiringDate) ? clientHiringDate : null,
       entry_date: isValidDate(entryDate) ? entryDate : null,
       conclusion_date: isValidDate(conclusionDate) ? conclusionDate : null,
       delivery_date: isValidDate(deliveryDate) ? deliveryDate : null,
@@ -2353,6 +2363,12 @@ export default function EditInvoicePage() {
         </div>
 
         <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
+        {isClient && (
+          <div>
+            <DatePicker label="HIRING DATE" value={clientHiringDate} onChange={setClientHiringDate} />
+            {isQuote && <p className="text-sm text-yellow-400 mt-1">Setting a HIRING DATE turns this shopping quote into an invoice on save.</p>}
+          </div>
+        )}
         {!isClient && isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
 
         {!isClient && (
