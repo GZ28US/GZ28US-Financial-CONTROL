@@ -6,6 +6,9 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+
+function todayStr() { return new Date().toISOString().slice(0, 10) }
 
 type Good = {
   id: string
@@ -79,6 +82,9 @@ export default function GoodsPage() {
   const [scannedPurchase, setScannedPurchase] = useState<{
     supplier: string
     date: string
+    source: string
+    tax: string
+    shipping: string
     items: { description: string; amount: string; quantity: string }[]
     receiptUrl: string
   } | null>(null)
@@ -174,7 +180,9 @@ export default function GoodsPage() {
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mediaType: file.type }),
+        // separateExtras keeps the item price clean and returns sales tax + shipping
+        // separately (per item) so they can land as the good's extra cost lines.
+        body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true, today: todayStr() }),
       })
       const data = await response.json()
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanningPurchase(false); return }
@@ -184,14 +192,20 @@ export default function GoodsPage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
-      const items = (parsed.items || []).map((i: any) => ({
+      const source = matchSource(String(parsed.source || '').trim())
+      const rawItems = (parsed.items || [])
+      const items = rawItems.map((i: any) => ({
         description: String(i.description || ''),
         amount: String(i.amount || '0'),
-        quantity: '1',
+        quantity: String(i.quantity || '1'),
       }))
-      const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+      // Sales tax + shipping/extra are summed across the items into the order-level
+      // TAX and SHIPPING (each becomes one extra cost line on the good).
+      const tax = rawItems.reduce((s: number, it: any) => s + (parseFloat(it.tax) || 0), 0)
+      const shipping = rawItems.reduce((s: number, it: any) => s + (parseFloat(it.extra) || 0), 0)
+      const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0) + tax + shipping
 
-      const openReview = () => setScannedPurchase({ supplier, date, items, receiptUrl })
+      const openReview = () => setScannedPurchase({ supplier, date, source, tax: tax > 0 ? tax.toFixed(2) : '', shipping: shipping > 0 ? shipping.toFixed(2) : '', items, receiptUrl })
 
       // Duplicate check: any existing goods row with the same supplier+date+total
       // (summed per purchase_group) is treated as a possible re-scan.
@@ -233,18 +247,41 @@ export default function GoodsPage() {
   async function confirmScannedPurchase() {
     if (!scannedPurchase) return
     const groupId = generateUUID()
-    const { error } = await supabase.from('goods').insert(
+    const source = scannedPurchase.source || DEFAULT_SOURCE
+    const purchaseDate = isValidDate(scannedPurchase.date) ? scannedPurchase.date : null
+    const { data: insertedGoods, error } = await supabase.from('goods').insert(
       scannedPurchase.items.map(item => ({
         description: item.description,
         quantity: parseFloat(item.quantity) || 1,
         unit_price: parseFloat(item.amount) || 0,
-        purchase_date: isValidDate(scannedPurchase.date) ? scannedPurchase.date : null,
+        purchase_date: purchaseDate,
         supplier: scannedPurchase.supplier || null,
+        source,
         receipt_url: JSON.stringify([scannedPurchase.receiptUrl]),
         purchase_group: groupId,
       }))
-    )
+    ).select('id')
     if (error) { alert(error.message); return }
+
+    // Sales tax + shipping land as extra cost lines (good_expenses) on the first good
+    // of the purchase, carrying the same supplier/source/date.
+    const firstGoodId = insertedGoods?.[0]?.id
+    if (firstGoodId) {
+      const extraLines = [
+        { description: 'Sales Tax', amount: parseFloat(scannedPurchase.tax) || 0 },
+        { description: 'Shipping', amount: parseFloat(scannedPurchase.shipping) || 0 },
+      ].filter(x => x.amount > 0)
+      if (extraLines.length > 0) {
+        await supabase.from('good_expenses').insert(extraLines.map(x => ({
+          good_id: firstGoodId,
+          description: x.description,
+          amount: x.amount,
+          expense_date: purchaseDate,
+          supplier: scannedPurchase.supplier || null,
+          source,
+        })))
+      }
+    }
 
     // Queue the optional WhatsApp report for this good purchase.
     const report: ExpenseReport = {
@@ -401,13 +438,31 @@ export default function GoodsPage() {
               <h2 className="text-2xl font-bold">REVIEW PURCHASE</h2>
               <button onClick={() => setScannedPurchase(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
             </div>
-            <div className="flex gap-4">
-              <div className="flex-1">
+            <div className="flex gap-4 flex-wrap">
+              <div className="flex-1 min-w-[10rem]">
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-[10rem]">
+                <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                <SourceSelect value={scannedPurchase.source} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
+              </div>
+              <div className="flex-1 min-w-[10rem]">
                 <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
+              </div>
+            </div>
+            <div className="flex gap-4 flex-wrap">
+              <div className="flex-1 min-w-[8rem]">
+                <label className="block mb-1 text-sm text-gray-400">SALES TAX</label>
+                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" value={scannedPurchase.tax} onChange={(e) => setScannedPurchase({ ...scannedPurchase, tax: e.target.value })} className={`${inputClass} pl-8`} placeholder="0.00" />
+                </div>
+              </div>
+              <div className="flex-1 min-w-[8rem]">
+                <label className="block mb-1 text-sm text-gray-400">SHIPPING</label>
+                <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input type="text" inputMode="decimal" value={scannedPurchase.shipping} onChange={(e) => setScannedPurchase({ ...scannedPurchase, shipping: e.target.value })} className={`${inputClass} pl-8`} placeholder="0.00" />
+                </div>
               </div>
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
@@ -428,7 +483,7 @@ export default function GoodsPage() {
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
-                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0))}
+                TOTAL: {formatUSD(scannedPurchase.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0) + (parseFloat(scannedPurchase.tax) || 0) + (parseFloat(scannedPurchase.shipping) || 0))}
               </div>
               <button onClick={confirmScannedPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
             </div>
