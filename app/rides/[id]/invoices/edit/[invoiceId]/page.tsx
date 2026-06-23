@@ -587,7 +587,7 @@ export default function EditInvoicePage() {
       const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
-      const openReview = () => setScannedPurchase({ supplier, date, source: scannedSource, items, receiptUrl, paid })
+      const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), items, receiptUrl, paid })
 
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
@@ -727,7 +727,7 @@ export default function EditInvoicePage() {
       purchase_group: groupId,
       export_status: 'FRESH',
       item_discount: item.item_discount || '0',
-      source: matchSource(scannedPurchase.source),
+      source: scannedPurchase.source || DEFAULT_SOURCE,
     }))
     // Override: an official purchase replaces the matching quote estimate. Match
     // by part number (or item name when a line has no PN); drop those lines — and
@@ -2105,6 +2105,10 @@ export default function EditInvoicePage() {
               <div className="flex-1">
                 <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
               </div>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+              <SourceSelect value={scannedPurchase.source || DEFAULT_SOURCE} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
               {scannedPurchase.items.map((item, i) => (
