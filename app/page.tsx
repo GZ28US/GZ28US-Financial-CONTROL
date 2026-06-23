@@ -161,7 +161,11 @@ export default function HomePage() {
     // DUE by GZ28 lists only UNPAID expenses (what GZ28 still owes). A paid expense
     // carries a payment_date and is excluded. Among the unpaid ones, DATED = has an
     // expense_date (the expense's own date), UNDATED = none.
+    // Consolidate the same SUPPLIER within the same invoice (and same date bucket)
+    // into a single row carrying the summed amount — many line items from one
+    // supplier on one invoice show as one DUE row, not one per item.
     const expense: Row[] = []
+    const expByKey = new Map<string, Row & { _n: number }>()
     for (const e of exps || []) {
       const code = codeById.get(e.invoice_id); if (!code) continue
       if (isValidDate(e.payment_date)) continue
@@ -169,8 +173,14 @@ export default function HomePage() {
       const m = metaFor(e.invoice_id, code)
       const dated = isValidDate(e.expense_date)
       // Show the SUPPLIER; the item description becomes the hover tooltip.
-      expense.push({ code, label: e.supplier || e.item || 'Expense', amount, dated, date: dated ? fmtD(e.expense_date) : null, href: m.href, tip: m.tip, labelTip: e.item || '' })
+      const label = e.supplier || e.item || 'Expense'
+      const date = dated ? fmtD(e.expense_date) : null
+      const key = `${e.invoice_id}|${label}|${date || 'UNDATED'}`
+      const prev = expByKey.get(key)
+      if (prev) { prev.amount += amount; prev._n += 1; prev.labelTip = `${prev._n} items` }
+      else expByKey.set(key, { code, label, amount, dated, date, href: m.href, tip: m.tip, labelTip: e.item || '', _n: 1 })
     }
+    for (const r of expByKey.values()) { const { _n, ...row } = r; expense.push(row) }
     // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
     const tax: Row[] = []
     for (const inv of invs || []) {
