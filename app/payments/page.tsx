@@ -55,7 +55,7 @@ export default function PaymentsPage() {
     const invoiceIds = [...new Set([...(pays || []).map((p: any) => p.invoice_id), ...(exps || []).map((e: any) => e.invoice_id)])]
     let invs: any[] = []
     if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id').in('id', invoiceIds)
+      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, is_quote').in('id', invoiceIds)
       invs = data || []
     }
     const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
@@ -75,12 +75,19 @@ export default function PaymentsPage() {
       return { inv, code: inv?.invoice_code || '—', clientName, carName, ownerSeg }
     }
 
-    const cRows: PayRow[] = (pays || []).map((p: any) => {
+    // Quotes are not real money in/out — never count their payments or expenses
+    // in the PAST report (they have no income, but a quote's built-up expenses can
+    // carry a payment_date and would otherwise leak in).
+    const notQuote = (invId: string) => !invById.get(invId)?.is_quote
+    const paysReal = (pays || []).filter((p: any) => notQuote(p.invoice_id))
+    const expsReal = (exps || []).filter((e: any) => notQuote(e.invoice_id))
+
+    const cRows: PayRow[] = paysReal.map((p: any) => {
       const m = invMeta(p.invoice_id)
       return { id: `pay-${p.id}`, date: (p.paid_at || '').slice(0, 10), amount: parseFloat(p.amount) || 0, code: m.code, label2: m.clientName || m.carName || '', href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/${m.inv.id}` : '#' }
     }).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
-    const invExpRows: PayRow[] = byPurchaseGroup(exps || []).map(([k, items]) => {
+    const invExpRows: PayRow[] = byPurchaseGroup(expsReal).map(([k, items]) => {
       const e0 = items[0]
       const m = invMeta(e0.invoice_id)
       const amount = items.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
