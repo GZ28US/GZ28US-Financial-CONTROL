@@ -90,7 +90,16 @@ export default function PaymentsPage() {
       return { id: `pay-${p.id}`, date: (p.paid_at || '').slice(0, 10), amount: parseFloat(p.amount) || 0, code: m.code, label2: m.clientName || m.carName || '', href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/${m.inv.id}` : '#' }
     }).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
-    const invExpRows: PayRow[] = byPurchaseGroup(expsReal).map(([k, items]) => {
+    // Consolidate every expense sharing the same INVOICE + SUPPLIER + PAYMENT DATE into a
+    // single row — covers scanned-receipt groups AND separately-added lines alike. Expenses
+    // with no supplier stay solo so unrelated unlabeled lines never merge.
+    const expByKey = new Map<string, any[]>()
+    for (const e of expsReal) {
+      const key = e.supplier ? `${e.invoice_id}|${e.supplier}|${e.payment_date || ''}` : `solo-${e.id}`
+      if (!expByKey.has(key)) expByKey.set(key, [])
+      expByKey.get(key)!.push(e)
+    }
+    const invExpRows: PayRow[] = [...expByKey.entries()].map(([k, items]) => {
       const e0 = items[0]
       const m = invMeta(e0.invoice_id)
       const amount = items.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
