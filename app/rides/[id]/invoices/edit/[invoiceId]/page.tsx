@@ -740,9 +740,11 @@ export default function EditInvoicePage() {
       item_discount: item.item_discount || '0',
       source: scannedPurchase.source || DEFAULT_SOURCE,
     }))
-    // Override: an official purchase replaces the matching quote estimate. Match
-    // by part number (or item name when a line has no PN); drop those lines — and
-    // delete already-saved ones from the DB — before adding the official items.
+    // Override: an official purchase replaces the matching quote estimate. Match by
+    // part number (or item name when a line has no PN); drop those lines before adding
+    // the official items. Their DB removal is STAGED into removedExpenseIds so the
+    // SAVE deletes them reliably (awaited) — a replaced line must NOT reappear after a
+    // save + reopen (the old fire-and-forget delete could silently not persist).
     const norm = (s: string | undefined | null) => (s || '').trim().toLowerCase()
     const scannedPNs = new Set(scannedPurchase.items.map(i => norm(i.part_number)).filter(Boolean))
     const scannedNames = new Set(scannedPurchase.items.map(i => norm(i.description)).filter(Boolean))
@@ -750,7 +752,8 @@ export default function EditInvoicePage() {
       const epn = norm(e.part_number)
       return epn ? scannedPNs.has(epn) : scannedNames.has(norm(e.item))
     })
-    for (const e of replaced) { if (e.id) supabase.from('invoice_expenses').delete().eq('id', e.id) }
+    const replacedIds = replaced.map(e => e.id).filter((id): id is string => !!id)
+    if (replacedIds.length) setRemovedExpenseIds(prev => Array.from(new Set([...prev, ...replacedIds])))
     setExpenses(prev => [...prev.filter(e => !replaced.includes(e)), ...newItems])
     setExpandedGroups(prev => new Set([...prev, groupId]))
     // Enroll the scanned items into the parts data bank (last purchase for parts,
