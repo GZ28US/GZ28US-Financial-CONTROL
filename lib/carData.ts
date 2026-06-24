@@ -436,6 +436,32 @@ for (let y = 2007; y <= 2009; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── Mustang Shelby GT500, S197 generation (2007–2014) ───────────────────────────
+// Trim = supercharged engine package. 2007–2012 used the 5.4L SC; 2013–2014 the
+// 5.8L SC (662 hp). The GT500KR "King of the Road" (2008–2009) is a special
+// edition on the 5.4 SC trim. Colours come from mustangColorsByYear.
+const s197Gt500Versions = (y: number): string[] => {
+  return y >= 2013 ? ['Shelby GT500 5.8 SC'] : ['Shelby GT500 5.4 SC']
+}
+for (let y = 2007; y <= 2014; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('FORD')) manufacturersByYear[y].push('FORD')
+  brandsByManufacturerAndYear['FORD'] = brandsByManufacturerAndYear['FORD'] || {}
+  brandsByManufacturerAndYear['FORD'][y] = brandsByManufacturerAndYear['FORD'][y] || []
+  if (!brandsByManufacturerAndYear['FORD'][y].includes('FORD')) brandsByManufacturerAndYear['FORD'][y].push('FORD')
+  modelsByBrandAndYear['FORD'] = modelsByBrandAndYear['FORD'] || {}
+  modelsByBrandAndYear['FORD'][y] = modelsByBrandAndYear['FORD'][y] || []
+  if (!modelsByBrandAndYear['FORD'][y].includes('MUSTANG')) modelsByBrandAndYear['FORD'][y].push('MUSTANG')
+  versionsByModelAndYear['MUSTANG'] = versionsByModelAndYear['MUSTANG'] || {}
+  versionsByModelAndYear['MUSTANG'][y] = [...(versionsByModelAndYear['MUSTANG'][y] || []), ...s197Gt500Versions(y)]
+}
+years.sort((a, b) => a - b)
+Object.assign(specialEditions, {
+  '2008-MUSTANG-Shelby GT500 5.4 SC': ['None', 'GT500KR'],
+  '2009-MUSTANG-Shelby GT500 5.4 SC': ['None', 'GT500KR'],
+})
+
 // ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
 // Trims = base engine packages (per the special-editions rule). Appearance and
 // dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
@@ -695,6 +721,15 @@ const corvetteColorsByYear: Record<number, string[]> = {
 }
 
 const mustangColorsByYear: Record<number, string[]> = {
+  // S197 GT500 era (2007–2014) — best-effort GT500 palettes.
+  2007: ['Performance White', 'Black', 'Tungsten Grey', 'Vista Blue', 'Torch Red', 'Alloy', 'Grabber Orange'],
+  2008: ['Performance White', 'Black', 'Vapor Silver', 'Vista Blue', 'Torch Red', 'Dark Candy Apple Red', 'Brilliant Silver'],
+  2009: ['Performance White', 'Black', 'Brilliant Silver', 'Vista Blue', 'Torch Red', 'Dark Candy Apple Red', 'Grabber Blue'],
+  2010: ['Performance White', 'Black', 'Brilliant Silver', 'Grabber Blue', 'Torch Red', 'Sunset Gold', 'Kona Blue', 'Sterling Grey'],
+  2011: ['Performance White', 'Black', 'Ingot Silver', 'Grabber Blue', 'Race Red', 'Kona Blue', 'Sterling Grey', 'Yellow Blaze'],
+  2012: ['Performance White', 'Black', 'Ingot Silver', 'Grabber Blue', 'Race Red', 'Kona Blue', 'Sterling Grey', 'Lava Red'],
+  2013: ['Performance White', 'Black', 'Ingot Silver', 'Grabber Blue', 'Race Red', 'Deep Impact Blue', 'Sterling Grey', 'Gotta Have It Green', 'School Bus Yellow'],
+  2014: ['Oxford White', 'Black', 'Ingot Silver', 'Grabber Blue', 'Race Red', 'Deep Impact Blue', 'Sterling Grey', 'Gotta Have It Green', 'Ruby Red'],
   2015: ['Oxford White', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Guard', 'Race Red', 'Ruby Red', 'Competition Orange', 'Deep Impact Blue', 'Triple Yellow'],
   2016: ['Oxford White', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Avalanche Gray', 'Guard', 'Race Red', 'Ruby Red', 'Competition Orange', 'Deep Impact Blue', 'Triple Yellow'],
   2017: ['Oxford White', 'White Platinum', 'Shadow Black', 'Ingot Silver', 'Magnetic', 'Avalanche Gray', 'Race Red', 'Ruby Red', 'Lightning Blue', 'Grabber Blue', 'Triple Yellow'],
@@ -824,7 +859,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   FORD: {
     FORD: {
       F150: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
-      MUSTANG: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
+      MUSTANG: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.4 SC', 'Shelby GT500 5.8 SC', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
     },
   },
   'LAND ROVER': {
