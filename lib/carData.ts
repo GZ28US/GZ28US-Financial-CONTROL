@@ -462,6 +462,32 @@ Object.assign(specialEditions, {
   '2009-MUSTANG-Shelby GT500 5.4 SC': ['None', 'GT500KR'],
 })
 
+// ── Cadillac CTS-V, 2nd Gen (2009–2015) ─────────────────────────────────────────
+// One trim — the LSA 6.2 supercharged V8 (556 hp). Body styles live in specialEditions
+// per the special-editions rule ('None' = the Sedan). Sedan 2009–2015; Coupe 2011–2015;
+// Wagon 2011–2014.
+const ctsV2Colors = ['Black Raven', 'Radiant Silver Metallic', 'Thunder Gray ChromaFlair', 'Crystal Red Tintcoat', 'White Diamond Tricoat', 'Black Diamond Tricoat', 'Mocha Steel Metallic', 'Opulent Blue Metallic', 'Phantom Gray Metallic']
+for (let y = 2009; y <= 2015; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('CADILLAC')) brandsByManufacturerAndYear['GM'][y].push('CADILLAC')
+  modelsByBrandAndYear['CADILLAC'] = modelsByBrandAndYear['CADILLAC'] || {}
+  modelsByBrandAndYear['CADILLAC'][y] = ['CTS-V']
+  versionsByModelAndYear['CTS-V'] = versionsByModelAndYear['CTS-V'] || {}
+  versionsByModelAndYear['CTS-V'][y] = ['CTS-V 6.2 V8 SC']
+}
+years.sort((a, b) => a - b)
+Object.assign(specialEditions, {
+  '2011-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
+  '2012-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
+  '2013-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
+  '2014-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
+  '2015-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe'],
+})
+
 // ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
 // Trims = base engine packages (per the special-editions rule). Appearance and
 // dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
@@ -828,6 +854,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'VIPER' && viperColorsByYear[year]) return viperColorsByYear[year]
   if (model === 'CORVETTE' && corvetteColorsByYear[year]) return corvetteColorsByYear[year]
   if (model === 'MUSTANG' && mustangColorsByYear[year]) return mustangColorsByYear[year]
+  if (model === 'CTS-V') return ctsV2Colors
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
   if (model === 'DURANGO') return durangoColors
   if (brand === 'RAM') return ramColors
@@ -878,6 +905,7 @@ carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
   ...(carData['GM']['CHEVROLET']['CAMARO'] || []),
   ...Object.values(versionsByModelAndYear['CAMARO']).flat(),
 ])]
+carData['GM']['CADILLAC'] = { 'CTS-V': ['CTS-V 6.2 V8 SC'] }
 
 // Years valid for a full manufacturer/brand/model/version spec, drawn from the
 // year-keyed catalog maps (used by the packs car picker's YEARS step).
