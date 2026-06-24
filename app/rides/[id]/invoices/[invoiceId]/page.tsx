@@ -918,7 +918,7 @@ export default function ViewInvoicePage() {
                   )
                 })}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className={labelClass}>TOTAL PAID</span><span className="font-bold">{formatUSD(totalPaid)}</span></div>
-                <div className="px-4 py-3 flex justify-between"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${balance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(balance)}</span></div>
+                <div className="px-4 py-3 flex justify-between"><span className="font-bold text-lg">BALANCE</span><span className={`text-2xl font-bold ${balance < -0.005 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(balance)}</span></div>
               </div>
             </div>
           )}

@@ -7,10 +7,13 @@ export const BASE_PATH = '/ca'
 export const PAID_VIA_OPTIONS = ['CASH', 'ACH', 'ZELLE', 'CHECK', 'GZ28BR']
 
 export function formatUSD(amount: number): string {
+  // A value that rounds to zero at 2 decimals must never render as "-$0.00" — that minus
+  // is just floating-point residue from subtractions (e.g. a pending balance). Snap to 0.
+  const v = Math.abs(amount) < 0.005 ? 0 : amount
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-  }).format(amount)
+  }).format(v)
 }
 
 // Universal short date format. US is month-first: MM/DD/YY. Input is an ISO

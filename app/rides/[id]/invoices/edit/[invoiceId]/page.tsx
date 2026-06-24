@@ -3034,11 +3034,11 @@ export default function EditInvoicePage() {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-gray-400 font-bold">PENDING BALANCE</span>
-              <span className={`text-xl font-bold ${pendingBalance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(pendingBalance)}</span>
+              <span className={`text-xl font-bold ${pendingBalance < -0.005 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(pendingBalance)}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="font-bold text-lg">BALANCE</span>
-              <span className={`text-2xl font-bold ${balance < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(balance)}</span>
+              <span className={`text-2xl font-bold ${balance < -0.005 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(balance)}</span>
             </div>
           </div>
         </div>
