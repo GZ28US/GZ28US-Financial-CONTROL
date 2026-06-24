@@ -1820,36 +1820,48 @@ export default function EditInvoicePage() {
     const total = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0)
     const amountStr = formatUSD(total)
     const ownerLbl = isClient ? clientName : projectName
-    const lines: string[] = [
+    const header: string[] = [
       '*EXPENSE*',
       `${invoiceCode}${ownerLbl ? ` — ${ownerLbl}` : ''}`,
       `${dateStr} — *${amountStr}*`,
     ]
-    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+    if (exp.supplier && exp.supplier.trim()) header.push(exp.supplier.trim())
 
-    lines.push('')
     const orderedReportItems = [...exp.items].sort((a, b) =>
       (SKIP_WORDS.test(a.item) ? 1 : 0) - (SKIP_WORDS.test(b.item) ? 1 : 0)
     )
-    orderedReportItems.forEach(it => {
+    const itemLines = orderedReportItems.map(it => {
       const qty = parseFloat(it.quantity) || 1
       const price = parseFloat(it.amount) || 0
       const itemTax = parseFloat(it.tax) || 0
       const itemExtra = parseFloat(it.extra) || 0
-      const itemTotal = price * qty
       const taxStr = itemTax > 0 ? ` (+tax ${formatUSD(itemTax)})` : ''
       const extraStr = itemExtra > 0 ? ` (+extra ${formatUSD(itemExtra)})` : ''
-      lines.push(`• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(itemTotal)}${taxStr}${extraStr}`)
+      return `• ${it.item} — ${qty} × ${formatUSD(price)} = ${formatUSD(price * qty)}${taxStr}${extraStr}`
     })
 
+    const footer: string[] = []
     if (!isClient && feedOnline) {
       const due = balance < 0 ? -balance : 0
-      lines.push('')
-      lines.push(`DUE: ${formatUSD(due)}`)
-      lines.push(`*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
-      lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
+      footer.push('', `DUE: ${formatUSD(due)}`, `*CURRENT Profit: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`, `FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
     }
-    return lines.join('\n') + '\n\nSent by GZ28 Control App'
+    const signature = '\n\nSent by GZ28 Control App'
+
+    // WhatsApp document captions cap at 1024 chars. A scanned receipt with many
+    // items can blow past it, so keep header + footer + signature intact and fit
+    // as many item lines as the budget allows, summarizing the rest.
+    const LIMIT = 1024 - 8 // small safety margin
+    const fixedLen = [...header, '', ...footer].join('\n').length + signature.length
+    let budget = LIMIT - fixedLen
+    const kept: string[] = []
+    for (let i = 0; i < itemLines.length; i++) {
+      const remaining = itemLines.length - i
+      const more = `• … +${remaining} more item${remaining > 1 ? 's' : ''}`
+      if (remaining > 1 && budget - (itemLines[i].length + 1) < more.length + 1) { kept.push(more); break }
+      if (budget - (itemLines[i].length + 1) < 0) { kept.push(more); break }
+      kept.push(itemLines[i]); budget -= itemLines[i].length + 1
+    }
+    return [...header, '', ...kept, ...footer].join('\n') + signature
   }
 
   async function sendIncomeReports() {
