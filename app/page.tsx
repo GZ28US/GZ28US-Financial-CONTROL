@@ -20,8 +20,12 @@ function canonMilestone(v: string | null | undefined): string | undefined {
   return v.trim()
 }
 
+// Today as YYYY-MM-DD in local time — for flagging scheduled incomes whose date has
+// already arrived/passed (those are DELAYED).
+function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
-type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string }
+type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string; delayed?: boolean }
 // A dated cash-flow entry for the monthly-flow box: income is +, expense is −.
 type FlowItem = { date: string; code: string; label: string; href: string; signed: number }
 
@@ -200,7 +204,14 @@ export default function HomePage() {
     // Pull DATED income & expenses OUT of the DUE boxes into the monthly-flow box
     // below: income is money in (+), expense is money out (−). Adjust the box
     // headlines so they reflect only what stays (undated + milestones + loss/tax).
-    const datedIncome = income.filter(r => r.dated && !r.milestone && r.date)
+    // A scheduled (dated) client income whose date is today or already past, and still
+    // unpaid, is DELAYED: it stays in the DUE by CLIENTS box (under its own DELAYED group)
+    // and keeps counting toward what clients owe. Only UPCOMING dated income (date in the
+    // future) is pulled out into the monthly flow below.
+    const today = todayYmd()
+    const allDatedIncome = income.filter(r => r.dated && !r.milestone && r.date)
+    allDatedIncome.forEach(r => { if ((r.date as string) <= today) r.delayed = true })
+    const datedIncome = allDatedIncome.filter(r => !r.delayed)
     const datedExpense = expense.filter(r => r.dated && r.date)
     dueClients -= datedIncome.reduce((x, r) => x + r.amount, 0)
     dueGz += datedExpense.reduce((x, r) => x + r.amount, 0)
@@ -267,6 +278,7 @@ function DashCard({ label, value, color }: { label: string; value: string; color
 
 function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, taxLabel, taxColor }: { label: string; value: string; valueColor: string; rows: Row[]; undatedColor: string; taxRows?: Row[]; taxLabel?: string; taxColor?: string }) {
   const milestoneRows = rows.filter(r => r.milestone)
+  const delayed = rows.filter(r => r.delayed)
   const undated = rows.filter(r => !r.dated && !r.milestone)
   // One group per distinct milestone label present, shown just before LOSS with friendly names.
   const milestoneNames: Record<string, string> = { ARRIVAL: 'Goods Arrival', CONCLUSION: 'Project Conclusion' }
@@ -275,6 +287,7 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, t
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
       <p className={`text-2xl font-bold ${valueColor}`}>{value}</p>
+      {delayed.length > 0 && <RowGroup label="DELAYED" rows={delayed} color="text-red-400" />}
       {undated.length > 0 && <RowGroup label="UNDATED" rows={undated} color={undatedColor} />}
       {milestoneLabels.map(ml => <RowGroup key={ml} label={milestoneNames[ml] || ml} rows={milestoneRows.filter(r => r.milestone === ml)} color="text-cyan-400" />)}
       {taxRows && taxRows.length > 0 && <RowGroup label={taxLabel || 'TAXES'} rows={taxRows} color={taxColor || undatedColor} />}
