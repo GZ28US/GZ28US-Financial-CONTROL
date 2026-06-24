@@ -296,7 +296,13 @@ export default function ViewInvoicePage() {
 
       const ownerLbl = isClient ? (client?.name || '') : `${projectCode}${projectName ? ` — ${projectName}` : ''}`
       const docNoun = invoice.is_quote ? 'Quote' : 'Invoice'
-      const caption = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}`
+      // A QUOTE message DIVERGES by destination: the CLIENT gets a courtesy line and
+      // NEVER the markup; the REPORTS GROUP gets the markup and NEVER the courtesy
+      // line. Invoices are identical for both.
+      const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}`
+      const markupLine = `MarkUp: *${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%*`
+      const clientCaption = invoice.is_quote ? `${head}\n\nAt your disposal for any questions.` : head
+      const groupCaption = invoice.is_quote ? `${head}\n${markupLine}` : head
 
       // GZ28US Control App REPORTS — WhatsApp document to the default reports group
       // (no `to` => the API falls back to ULTRAMSG_GROUP_ID). For BOTH, fall through
@@ -305,7 +311,7 @@ export default function ViewInvoicePage() {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ body: caption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
+          body: JSON.stringify({ body: groupCaption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
         })
         const data = await res.json()
         if (!data.ok) {
@@ -321,7 +327,7 @@ export default function ViewInvoicePage() {
       }
 
       if (method === 'SMS') {
-        const text = `${caption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
+        const text = `${clientCaption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
         window.location.href = `sms:${client?.phone || ''}?&body=${encodeURIComponent(text)}`
         setSending(false)
         return
@@ -338,7 +344,7 @@ export default function ViewInvoicePage() {
       if (method === 'Instagram') {
         // Instagram has no document-send API or prefill link — copy the invoice
         // link to the clipboard and open the client's DM/profile to paste & send.
-        const linkText = `${caption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
+        const linkText = `${clientCaption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
         try { await navigator.clipboard.writeText(linkText) } catch {}
         const handle = (client?.instagram || '').replace(/^@/, '').trim()
         window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
@@ -357,7 +363,7 @@ export default function ViewInvoicePage() {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, body: caption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
+        body: JSON.stringify({ to, body: clientCaption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
       })
       const data = await res.json()
       if (!data.ok) {
