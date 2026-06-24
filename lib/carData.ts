@@ -419,6 +419,23 @@ Object.assign(specialEditions, {
   '2026-M3-Competition xDrive 3.0 TT I6': ['None', 'CS'],
 })
 
+// ── Porsche 911 (997.1) Turbo (2007–2009) ───────────────────────────────────────
+// 3.6L twin-turbo flat-6 (480 hp). Coupe from 2007, Cabriolet added 2008. There is no
+// 997.1 Turbo S (the Turbo S arrives with the 997.2). Era's Porsche colour palette.
+const porsche997TurboColors = ['Black', 'Basalt Black Metallic', 'Arctic Silver Metallic', 'GT Silver Metallic', 'Meteor Grey Metallic', 'Atlas Grey Metallic', 'Carrara White', 'Guards Red', 'Speed Yellow', 'Cobalt Blue Metallic', 'Midnight Blue Metallic', 'Malachite Green Metallic', 'Macadamia Metallic']
+for (let y = 2007; y <= 2009; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('PORSCHE')) manufacturersByYear[y].push('PORSCHE')
+  brandsByManufacturerAndYear['PORSCHE'] = brandsByManufacturerAndYear['PORSCHE'] || {}
+  brandsByManufacturerAndYear['PORSCHE'][y] = ['PORSCHE']
+  modelsByBrandAndYear['PORSCHE'] = modelsByBrandAndYear['PORSCHE'] || {}
+  modelsByBrandAndYear['PORSCHE'][y] = ['911']
+  versionsByModelAndYear['911'] = versionsByModelAndYear['911'] || {}
+  versionsByModelAndYear['911'][y] = y >= 2008 ? ['Turbo Coupe 3.6 H6', 'Turbo Cabriolet 3.6 H6'] : ['Turbo Coupe 3.6 H6']
+}
+years.sort((a, b) => a - b)
+
 // ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
 // Trims = base engine packages (per the special-editions rule). Appearance and
 // dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
@@ -761,6 +778,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'DEFENDER') return landRoverDefenderColors
   if (model === 'M5') return bmwM5E60Colors
   if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors
+  if (model === '911') return porsche997TurboColors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
@@ -819,6 +837,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
 // every era's wheelbase+engine version (built from the year-keyed map above).
 carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
 carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())], M3: [...new Set(Object.values(versionsByModelAndYear['M3']).flat())] } }
+carData['PORSCHE'] = { PORSCHE: { '911': [...new Set(Object.values(versionsByModelAndYear['911']).flat())] } }
 // Camaro flat list = union of every era's versions (modern gen5+ entries already present).
 carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
   ...(carData['GM']['CHEVROLET']['CAMARO'] || []),
