@@ -477,6 +477,58 @@ Object.assign(specialEditions, {
   '1969-CAMARO-COPO 9560 ZL1 7.0 V8':   ['None'],
 })
 
+// ── Camaro 3rd Gen — Z28 / IROC-Z (1985–1992) ───────────────────────────────────
+// The 3rd-gen performance Camaro. Trims by engine: Z28 5.0 V8 (305 — LB9 TPI; L69 HO
+// in '85) and Z28 5.7 V8 (350 L98 TPI, automatic, '87+). The IROC-Z (1985–1990) and
+// the 1LE track package live in specialEditions on those trims (per the special-
+// editions rule). Per-year colors are a best-effort GM palette — confirm if needed.
+const camaroGen3ColorsByYear: Record<number, string[]> = {
+  1985: ['Bright Red', 'Black', 'White', 'Silver Metallic', 'Bright Blue Metallic', 'Light Blue Metallic', 'Doeskin Tan', 'Gold Metallic', 'Charcoal Metallic'],
+  1986: ['Bright Red', 'Black', 'White', 'Silver Metallic', 'Bright Blue Metallic', 'Medium Gray Metallic', 'Yellow', 'Gold Metallic', 'Dark Red Metallic'],
+  1987: ['Bright Red', 'Black', 'White', 'Silver Metallic', 'Medium Gray Metallic', 'Flame Red', 'Yellow', 'Medium Blue Metallic', 'Gold Metallic'],
+  1988: ['Bright Red', 'Black', 'White', 'Silver Metallic', 'Medium Gray Metallic', 'Flame Red', 'Yellow', 'Medium Blue Metallic', 'Dark Red Metallic'],
+  1989: ['Bright Red', 'Black', 'White', 'Medium Gray Metallic', 'Flame Red', 'Yellow', 'Medium Blue Metallic', 'Dark Red Metallic', 'Light Beige'],
+  1990: ['Bright Red', 'Black', 'White', 'Medium Gray Metallic', 'Bright Blue Metallic', 'Quasar Blue', 'Dark Red Metallic', 'Light Beige'],
+  1991: ['Bright Red', 'Black', 'White', 'Quasar Blue', 'Dark Blue Metallic', 'Dark Red Metallic', 'Bright Blue Metallic', 'Medium Gray Metallic'],
+  1992: ['Bright Red', 'Black', 'White', 'Quasar Blue', 'Dark Blue Metallic', 'Dark Red Metallic', 'Bright Blue Metallic', 'Polo Green Metallic'],
+}
+const camaroGen3Z28Versions = (y: number): string[] => {
+  const v = ['Z28 5.0 V8']            // 305 ci — LB9 TPI (L69 HO carbureted in 1985)
+  if (y >= 1987) v.push('Z28 5.7 V8') // 350 ci L98 TPI — automatic only
+  return v
+}
+for (let y = 1985; y <= 1992; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('CHEVROLET')) brandsByManufacturerAndYear['GM'][y].push('CHEVROLET')
+  modelsByBrandAndYear['CHEVROLET'] = modelsByBrandAndYear['CHEVROLET'] || {}
+  modelsByBrandAndYear['CHEVROLET'][y] = modelsByBrandAndYear['CHEVROLET'][y] || []
+  if (!modelsByBrandAndYear['CHEVROLET'][y].includes('CAMARO')) modelsByBrandAndYear['CHEVROLET'][y].push('CAMARO')
+  versionsByModelAndYear['CAMARO'] = versionsByModelAndYear['CAMARO'] || {}
+  versionsByModelAndYear['CAMARO'][y] = [...(versionsByModelAndYear['CAMARO'][y] || []), ...camaroGen3Z28Versions(y)]
+}
+years.sort((a, b) => a - b)
+// IROC-Z (option '85–'87, standalone '88–'90) + 1LE track pkg ('88+) + '92 Heritage.
+Object.assign(specialEditions, {
+  '1985-CAMARO-Z28 5.0 V8': ['None', 'IROC-Z'],
+  '1986-CAMARO-Z28 5.0 V8': ['None', 'IROC-Z'],
+  '1987-CAMARO-Z28 5.0 V8': ['None', 'IROC-Z'],
+  '1987-CAMARO-Z28 5.7 V8': ['None', 'IROC-Z'],
+  '1988-CAMARO-Z28 5.0 V8': ['None', 'IROC-Z', '1LE'],
+  '1988-CAMARO-Z28 5.7 V8': ['None', 'IROC-Z', '1LE'],
+  '1989-CAMARO-Z28 5.0 V8': ['None', 'IROC-Z', '1LE'],
+  '1989-CAMARO-Z28 5.7 V8': ['None', 'IROC-Z', '1LE'],
+  '1990-CAMARO-Z28 5.0 V8': ['None', 'IROC-Z', '1LE'],
+  '1990-CAMARO-Z28 5.7 V8': ['None', 'IROC-Z', '1LE'],
+  '1991-CAMARO-Z28 5.0 V8': ['None', '1LE'],
+  '1991-CAMARO-Z28 5.7 V8': ['None', '1LE'],
+  '1992-CAMARO-Z28 5.0 V8': ['None', '1LE', '25th Anniversary Heritage'],
+  '1992-CAMARO-Z28 5.7 V8': ['None', '1LE', '25th Anniversary Heritage'],
+})
+
 // ── Dodge Magnum LX (modern, 2005–2008) — V8 trims only ──────────────────────────
 // Same LX platform/era as the LX Charger. V8 trims: R/T 5.7 HEMI (2005–2008) and
 // SRT8 6.1 HEMI (2006–2008). Paints mirror the LX Charger palette per year.
@@ -710,6 +762,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'M5') return bmwM5E60Colors
   if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
+  if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]
