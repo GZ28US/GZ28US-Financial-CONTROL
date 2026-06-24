@@ -232,7 +232,12 @@ export default function InvoicesPage() {
           {ownerIsQuote ? (
             <Link href={`${basePath}/new?mode=quote`} className="bg-amber-600 hover:bg-amber-500 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>
           ) : (
-            <Link href={`${basePath}/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
+            <>
+              <Link href={`${basePath}/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</Link>
+              {/* A PROJECT car can also be quoted for additional/future work — the quote
+                  gets a .QT. code and converts to an invoice when given a HIRING DATE. */}
+              {!isClient && <Link href={`${basePath}/new?mode=quote`} className="bg-amber-600 hover:bg-amber-500 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</Link>}
+            </>
           )}
         </div>
       </div>
