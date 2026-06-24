@@ -590,7 +590,9 @@ export default function EditInvoicePage() {
       const rawDate = String(parsed.date || '')
       // A paid receipt with no readable date is still paid — default it to today so
       // the expense enrolls as PAID (the user can adjust the date if needed).
-      const date = (paid && !isValidDate(rawDate)) ? todayStr() : rawDate
+      // A scanned PURCHASE invoice is treated as already paid, so it always needs a
+      // valid invoice date: the receipt's date when present, otherwise today.
+      const date = isValidDate(rawDate) ? rawDate : todayStr()
       const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
@@ -730,7 +732,8 @@ export default function EditInvoicePage() {
       extra: item.extra || '0',
       quantity: item.quantity || '1',
       expense_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedPurchase.date) ? scannedPurchase.date : '',
-      payment_date: scannedPurchase.paid ? scannedPurchase.date : '',
+      // A scanned purchase invoice is PAID on its invoice date — every line enters paid.
+      payment_date: scannedPurchase.date,
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
       export_status: 'FRESH',
