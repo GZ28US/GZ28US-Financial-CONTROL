@@ -134,7 +134,7 @@ export default function FixedCostSupplierViewPage() {
       </div>
 
       {/* EXPENSES listing — content to be defined */}
-      <div className="mt-8 max-w-3xl">
+      <div id="expenses" className="mt-8 max-w-3xl scroll-mt-8">
         <h2 className="text-2xl font-bold mb-3">EXPENSES</h2>
         <div className="bg-gray-900 border border-dashed border-gray-700 rounded-3xl p-8 text-gray-500 text-lg">
           Expenses for this fixed cost supplier will appear here.
