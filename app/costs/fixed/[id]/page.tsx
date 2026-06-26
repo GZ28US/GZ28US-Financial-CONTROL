@@ -24,8 +24,9 @@ export default function FixedCostSupplierViewPage() {
   const id = String(params.id)
   const [s, setS] = useState<FixedCostSupplier | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sendOpen, setSendOpen] = useState(false)
   const [sending, setSending] = useState(false)
-  const [justSent, setJustSent] = useState(false)
+  const [sendStatus, setSendStatus] = useState('')
 
   useEffect(() => {
     ;(async () => {
@@ -35,52 +36,73 @@ export default function FixedCostSupplierViewPage() {
     })()
   }, [id])
 
-  // SEND TO — send the supplier a link to their OWN self-service form
-  // (/costs/fixed/self/[id]) so they fill in their details and save. Delivered by
-  // the supplier's PREFERRED contact (WhatsApp auto via UltraMsg; Email/Phone open
-  // the local composer). A note is mirrored to the REPORTS group either way.
-  async function handleSend() {
+  function openSend() { setSendStatus(''); setSendOpen(true) }
+
+  // SUPPLIER — send them a link to their OWN self-service form (/costs/fixed/self/[id])
+  // so they fill in their details and save. Delivered by the supplier's PREFERRED
+  // contact (WhatsApp auto via UltraMsg; Email/Phone open the local composer).
+  async function sendToSupplier() {
     if (!s) return
+    setSendStatus('')
     const method = s.preferred_contact || 'WhatsApp'
     const link = `${window.location.origin}${BASE_PATH}/costs/fixed/self/${id}`
     const firstName = (s.contact_name || '').split(' ')[0]
     const waBody = LANG === 'pt'
-      ? `Olá${firstName ? ` ${firstName}` : ''}! 👋\n\nPor favor, preencha os dados da sua empresa para a *_GZ28 V8 SpeedShop_* neste link e toque em *SALVAR*:\n\n${link}\n\nObrigado!`
-      : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nPlease fill in your company's details for *_GZ28 V8 SpeedShop_* at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
+      ? `Olá${firstName ? ` ${firstName}` : ''}! 👋\n\nPor favor, preencha seus dados neste link e toque em *SALVAR*:\n\n${link}\n\nObrigado!`
+      : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nPlease fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
     const plain = waBody.replace(/[*_]/g, '')
-    const flashSent = () => { setJustSent(true); setTimeout(() => setJustSent(false), 3000) }
-    const label = s.company || s.description || '—'
+    const label = s.company || s.contact_name || s.description || '—'
     const notifyGroup = () => { void fetch(`${BASE_PATH}/api/whatsapp`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: `📤 *FIXED COST SUPPLIER FORM — LINK SENT*\n${label}\nThe system sent the registration link to the supplier (via ${method}). Awaiting them to fill in their details.` }),
     }).catch(() => {}) }
 
     if (method === 'Email') {
-      if (!s.email) { alert('This supplier has no email on file.\nAdd an email first (EDIT).'); return }
+      if (!s.email) { setSendStatus('No email on file. Add one first (EDIT).'); return }
       const subject = LANG === 'pt' ? 'Complete seu cadastro — GZ28 V8 SpeedShop' : 'Complete your details — GZ28 V8 SpeedShop'
       window.location.href = `mailto:${s.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
-      notifyGroup(); flashSent(); return
+      notifyGroup(); setSendStatus('✓ Email composer opened.'); return
     }
     if (method === 'Phone') {
-      if (!s.phone) { alert('This supplier has no phone on file.\nAdd a number first (EDIT).'); return }
+      if (!s.phone) { setSendStatus('No phone on file. Add one first (EDIT).'); return }
       window.location.href = `sms:${s.phone}?&body=${encodeURIComponent(plain)}`
-      notifyGroup(); flashSent(); return
+      notifyGroup(); setSendStatus('✓ SMS composer opened.'); return
     }
 
     // WhatsApp (default) — automatic via UltraMsg.
     const to = (s.phone || '').replace(/\D/g, '')
-    if (!to) { alert('This supplier has no WhatsApp / phone number on file.\nAdd a number first (EDIT).'); return }
-    setSending(true)
+    if (!to) { setSendStatus('No WhatsApp / phone on file. Add one first (EDIT).'); return }
+    setSending(true); setSendStatus('Sending…')
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to, body: waBody }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!data.ok) { alert('Could not send the link:\n' + (data?.error || `HTTP ${res.status}`)); return }
-      notifyGroup(); flashSent()
+      if (data.ok) { notifyGroup(); setSendStatus('✓ Link sent to the supplier on WhatsApp.') }
+      else setSendStatus('Could not send: ' + (data?.error || `HTTP ${res.status}`))
     } catch (e) {
-      alert('Could not send the link:\n' + (e instanceof Error ? e.message : String(e)))
+      setSendStatus('Could not send: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  // REPORT GROUP — send the team a summary of this supplier (internal, no `to`).
+  async function sendToGroup() {
+    if (!s) return
+    setSendStatus('')
+    const body = `📋 *FIXED COST SUPPLIER*\n${s.description || s.company || '—'}\n\nCompany: ${s.company || '—'}\nContact: ${s.contact_name || '—'}\nPhone: ${s.phone || '—'}\nEmail: ${s.email || '—'}\nPreferred: ${s.preferred_contact || 'WhatsApp'}`
+    setSending(true); setSendStatus('Sending…')
+    try {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      })
+      const data = await res.json().catch(() => ({}))
+      setSendStatus(data.ok ? '✓ Sent to the report group.' : 'Could not send: ' + (data?.error || `HTTP ${res.status}`))
+    } catch (e) {
+      setSendStatus('Could not send: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setSending(false)
     }
@@ -96,9 +118,7 @@ export default function FixedCostSupplierViewPage() {
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <Link href="/costs/fixed" className="text-gray-400 text-lg hover:text-white">← Fixed Cost Suppliers</Link>
         <div className="flex gap-3 flex-wrap">
-          <button onClick={handleSend} disabled={sending || justSent} className={`disabled:opacity-60 px-6 py-3 rounded-2xl text-lg font-bold ${justSent ? 'bg-green-600' : 'bg-emerald-700 hover:bg-emerald-600'}`}>
-            {sending ? 'SENDING…' : justSent ? '✓ SENT' : '📲 SEND TO SUPPLIER'}
-          </button>
+          <button onClick={openSend} className="bg-emerald-700 hover:bg-emerald-600 px-6 py-3 rounded-2xl text-lg font-bold">📤 SEND TO</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
         </div>
       </div>
@@ -120,6 +140,26 @@ export default function FixedCostSupplierViewPage() {
           Expenses for this fixed cost supplier will appear here.
         </div>
       </div>
+
+      {/* SEND TO box — who do you want to send to? */}
+      {sendOpen && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50" onClick={() => setSendOpen(false)}>
+          <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-3xl p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-2xl font-bold mb-1">SEND TO</h2>
+            <p className="text-gray-400 mb-5">Who do you want to send to?</p>
+            <div className="grid grid-cols-1 gap-3">
+              <button onClick={sendToSupplier} disabled={sending} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 px-6 py-4 rounded-2xl text-lg font-bold text-left">
+                👤 SUPPLIER <span className="block text-sm font-normal text-emerald-100/80">Send a link to fill in their own details</span>
+              </button>
+              <button onClick={sendToGroup} disabled={sending} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-6 py-4 rounded-2xl text-lg font-bold text-left">
+                📣 REPORT GROUP <span className="block text-sm font-normal text-blue-100/80">Send this supplier's details to the team</span>
+              </button>
+            </div>
+            {sendStatus && <p className="mt-4 text-center text-gray-300">{sendStatus}</p>}
+            <button onClick={() => setSendOpen(false)} className="mt-5 w-full text-gray-400 hover:text-white py-2">Close</button>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

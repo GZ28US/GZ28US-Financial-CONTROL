@@ -18,18 +18,20 @@ const T = {
   en: {
     loading: 'Loading…',
     notFoundTitle: 'Link not found', notFoundBody: 'This registration link is invalid or has expired.',
-    intro: 'Please fill in your contact details and tap', save: 'SAVE', saving: 'SAVING…',
-    company: 'COMPANY', contact: 'MAIN CONTACT NAME', phone: 'PHONE / WHATSAPP', email: 'EMAIL', preferred: 'PREFERRED CONTACT',
-    companyPh: 'Your company name', contactPh: 'Contact person', phonePh: '+1 (407) 123-4567', emailPh: 'contact@company.com',
+    intro: 'Please fill in your details and tap', save: 'SAVE', saving: 'SAVING…',
+    company: 'COMPANY / NAME', contact: 'MAIN CONTACT NAME', phone: 'PHONE / WHATSAPP', email: 'EMAIL', preferred: 'PREFERRED CONTACT',
+    companyPh: 'Company or person', contactPh: 'Contact person', phonePh: '+1 (407) 123-4567', emailPh: 'name@email.com',
     savedTitle: 'Saved!', savedThanks: 'Thank you', savedRest: ' — your details were saved.',
+    consent: `By submitting this form, you authorize ${BRAND} to collect and use your data solely for our business relationship. We don't sell or share it unnecessarily, and you may request access, correction, or deletion at any time.`,
   },
   pt: {
     loading: 'Carregando…',
     notFoundTitle: 'Link não encontrado', notFoundBody: 'Este link de cadastro é inválido ou expirou.',
-    intro: 'Por favor, preencha seus dados de contato e toque em', save: 'SALVAR', saving: 'SALVANDO…',
-    company: 'EMPRESA', contact: 'NOME DO CONTATO PRINCIPAL', phone: 'TELEFONE / WHATSAPP', email: 'E-MAIL', preferred: 'CONTATO PREFERIDO',
-    companyPh: 'Nome da sua empresa', contactPh: 'Pessoa de contato', phonePh: '+55 (11) 99999-9999', emailPh: 'contato@empresa.com',
+    intro: 'Por favor, preencha seus dados e toque em', save: 'SALVAR', saving: 'SALVANDO…',
+    company: 'EMPRESA / NOME', contact: 'NOME DO CONTATO PRINCIPAL', phone: 'TELEFONE / WHATSAPP', email: 'E-MAIL', preferred: 'CONTATO PREFERIDO',
+    companyPh: 'Empresa ou pessoa', contactPh: 'Pessoa de contato', phonePh: '+55 (11) 99999-9999', emailPh: 'nome@email.com',
     savedTitle: 'Salvo!', savedThanks: 'Obrigado', savedRest: ' — seus dados foram salvos.',
+    consent: `Ao enviar este formulário, você autoriza a ${BRAND} a coletar e usar seus dados apenas para o relacionamento comercial, conforme a LGPD (Lei nº 13.709/2018). Não compartilhamos seus dados com terceiros sem necessidade, e você pode pedir acesso, correção ou exclusão a qualquer momento.`,
   },
 }
 const CONTACTS = [{ v: 'WhatsApp', en: 'WhatsApp', pt: 'WhatsApp' }, { v: 'Email', en: 'Email', pt: 'E-mail' }, { v: 'Phone', en: 'Phone', pt: 'Telefone' }]
@@ -142,7 +144,9 @@ export default function FixedCostSupplierSelfForm() {
 
           {error && <p className="text-red-400 font-bold">{error}</p>}
 
-          <button onClick={save} disabled={saving} className={`mt-2 px-6 py-5 rounded-2xl text-2xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+          <p className="text-xs text-gray-500 leading-relaxed">{L.consent}</p>
+
+          <button onClick={save} disabled={saving} className={`px-6 py-5 rounded-2xl text-2xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
             {saving ? L.saving : L.save}
           </button>
         </div>
