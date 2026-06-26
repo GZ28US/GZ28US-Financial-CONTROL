@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { clientCode } from '@/lib/utils'
+import { clientCode, formatPhone } from '@/lib/utils'
 
 type Client = {
   id: string
@@ -192,21 +192,6 @@ export default function ClientsPage() {
   }
 
   // Format by country: US -> +1 (XXX) XXX-XXXX, Brazil -> +55 (XX) XXXXX.XXXX.
-  function formatPhone(phone: string | null, country?: string | null) {
-    if (!phone) return '-'
-    const digits = phone.replace(/\D/g, '')
-    const isBR = country === 'BRAZIL' || (!country && digits.startsWith('55') && digits.length > 11)
-    if (isBR) {
-      const local = digits.startsWith('55') ? digits.slice(2) : digits
-      if (local.length === 11) return `+55 (${local.slice(0,2)})${local.slice(2,7)}.${local.slice(7)}`
-      if (local.length === 10) return `+55 (${local.slice(0,2)})${local.slice(2,6)}.${local.slice(6)}`
-      return phone
-    }
-    // US (default)
-    const local = (digits.startsWith('1') && digits.length === 11) ? digits.slice(1) : digits
-    if (local.length === 10) return `+1 (${local.slice(0,3)}) ${local.slice(3,6)}-${local.slice(6)}`
-    return phone
-  }
 
   // Search by client name or code.
   const q = search.trim().toLowerCase()

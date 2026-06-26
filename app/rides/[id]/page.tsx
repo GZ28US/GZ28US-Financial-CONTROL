@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, formatPhone } from '@/lib/utils'
 
 // Normalize a phone to the digits-only `to` UltraMsg expects, by the client's country.
 // USA -> +1 (this app's default); BRAZIL -> +55.
@@ -343,7 +343,7 @@ export default function ViewRidePage() {
             <label className="block mb-3 text-lg font-bold">CLIENT</label>
             <div className={sectionClass}>
               <div className={rowClass}><span className={labelClass}>NAME</span><span className="font-bold">{client.name}</span></div>
-              {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{client.phone}</span></div>}
+              {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone, client.country)}</span></div>}
               {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
               {client.address && <div className={rowClass}><span className={labelClass}>ADDRESS</span><span className="font-bold">{client.address}</span></div>}
               {(client.city || client.state) && <div className={rowClass}><span className={labelClass}>CITY/ST</span><span className="font-bold">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}

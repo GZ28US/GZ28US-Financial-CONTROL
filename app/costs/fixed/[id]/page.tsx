@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, formatPhone } from '@/lib/utils'
 
 const LANG: 'en' | 'pt' = 'en'
 
@@ -129,7 +129,7 @@ export default function FixedCostSupplierViewPage() {
       <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 max-w-2xl space-y-3">
         <Row label="Company" value={s.company} />
         <Row label="Main Contact" value={s.contact_name} />
-        <Row label="Phone" value={s.phone} />
+        <Row label="Phone" value={formatPhone(s.phone) || null} />
         <Row label="Email" value={s.email} />
       </div>
 

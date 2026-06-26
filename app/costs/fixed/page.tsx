@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { formatPhone } from '@/lib/utils'
 
 type FixedCostSupplier = {
   id: string
@@ -107,7 +108,7 @@ export default function FixedCostSuppliersPage() {
                   <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700">{r.preferred_contact || 'WhatsApp'}</span>
                 </div>
                 <p className="text-lg text-gray-400">{[r.company, r.contact_name].filter(Boolean).join(' · ') || '—'}</p>
-                <p className="text-base text-gray-500">{[r.phone, r.email].filter(Boolean).join(' · ')}</p>
+                <p className="text-base text-gray-500">{[formatPhone(r.phone), r.email].filter(Boolean).join(' · ')}</p>
               </Link>
               <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/costs/fixed/${r.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>

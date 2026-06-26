@@ -75,6 +75,29 @@ export function formatCPF(raw: string): string {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
 }
 
+// Display a phone number in its country's format:
+//   BR  +55 (11) 98121.5678  (mobile)  /  +55 (11) 3121.5678  (landline)
+//   US  +1 (321) 315.0973
+// `country` ('BRAZIL' | 'USA') forces the format; otherwise it's inferred from the
+// digits (leading 55 with 12-13 digits => Brazil, else US). Unknown shapes return
+// the original string untouched.
+export function formatPhone(phone: string | null | undefined, country?: string | null): string {
+  if (!phone) return ''
+  const digits = String(phone).replace(/\D/g, '')
+  if (!digits) return String(phone)
+  const isBR = country === 'BRAZIL' || (!country && digits.startsWith('55') && digits.length > 11)
+  if (isBR) {
+    const local = digits.startsWith('55') ? digits.slice(2) : digits
+    if (local.length === 11) return `+55 (${local.slice(0, 2)}) ${local.slice(2, 7)}.${local.slice(7)}`
+    if (local.length === 10) return `+55 (${local.slice(0, 2)}) ${local.slice(2, 6)}.${local.slice(6)}`
+    return String(phone)
+  }
+  // US (default)
+  const local = (digits.startsWith('1') && digits.length === 11) ? digits.slice(1) : digits
+  if (local.length === 10) return `+1 (${local.slice(0, 3)}) ${local.slice(3, 6)}.${local.slice(6)}`
+  return String(phone)
+}
+
 // Validate a Brazilian CPF (the two check digits). Accepts any punctuation; only
 // the 11 digits matter. Rejects all-equal sequences (000.../111... are invalid).
 export function isValidCPF(raw: string): boolean {

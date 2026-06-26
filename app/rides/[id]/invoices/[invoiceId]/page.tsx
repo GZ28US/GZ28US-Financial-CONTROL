@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, orderIncomes } from '@/lib/utils'
+import { formatUSD, BASE_PATH, orderIncomes, formatPhone } from '@/lib/utils'
 
 type Invoice = {
   id: string
@@ -517,7 +517,7 @@ export default function ViewInvoicePage() {
                   <div className="pi-info-row"><span className="pi-info-label">Name:</span><span className="pi-info-value">{client.name}</span></div>
                   {client.address && <div className="pi-info-row"><span className="pi-info-label">Address:</span><span className="pi-info-value">{client.address}</span></div>}
                   {(client.city || client.state) && <div className="pi-info-row"><span className="pi-info-label">City/ST:</span><span className="pi-info-value">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}
-                  {client.phone && <div className="pi-info-row"><span className="pi-info-label">Phone:</span><span className="pi-info-value">{client.phone}</span></div>}
+                  {client.phone && <div className="pi-info-row"><span className="pi-info-label">Phone:</span><span className="pi-info-value">{formatPhone(client.phone)}</span></div>}
                   {client.email && <div className="pi-info-row"><span className="pi-info-label">E-Mail:</span><span className="pi-info-value">{client.email}</span></div>}
                 </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>No client linked</div>}
               </div>
@@ -817,7 +817,7 @@ export default function ViewInvoicePage() {
               <label className="block mb-3 text-lg font-bold">CLIENT</label>
               <div className={sectionClass}>
                 <div className={rowClass}><span className={labelClass}>NAME</span><span className="font-bold">{client.name}</span></div>
-                {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{client.phone}</span></div>}
+                {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone)}</span></div>}
                 {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
                 {client.address && <div className={rowClass}><span className={labelClass}>ADDRESS</span><span className="font-bold">{client.address}</span></div>}
                 {(client.city || client.state) && <div className={rowClass}><span className={labelClass}>CITY/ST</span><span className="font-bold">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}
