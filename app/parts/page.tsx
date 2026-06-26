@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 
 type Part = {
@@ -320,7 +320,7 @@ export default function PartsPage() {
   const filtered = parts.filter(p => {
     if (supplierFilter && !supplierFilter.variants.has(normSup(p.supplier))) return false
     if (costFilter && !isPending(p)) return false
-    if (term && !((p.item || '').toLowerCase().includes(term) || (p.alias || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term))) return false
+    if (term && !partMatches(term, p.item, p.alias, p.part_number)) return false
     return true
   })
   const pendingCount = parts.filter(isPending).length
@@ -411,7 +411,7 @@ export default function PartsPage() {
               <label className="block mb-1 text-sm font-bold text-gray-400">ADD PARTS</label>
               <input value={kitSearch} onChange={(e) => setKitSearch(e.target.value)} className={`${inputClass} w-full mb-2 shrink-0`} placeholder="Search the Parts DB…" />
               <div className="flex-1 min-h-0 overflow-y-auto border border-gray-700 rounded-2xl divide-y divide-gray-800">
-                {parts.filter(p => !p.is_kit && (kitSearch.trim() ? ((p.item || '').toLowerCase().includes(kitSearch.toLowerCase()) || (p.part_number || '').toLowerCase().includes(kitSearch.toLowerCase())) : true)).slice(0, 50).map(p => { const pr = memberPrices(p); return (
+                {parts.filter(p => !p.is_kit && (kitSearch.trim() ? partMatches(kitSearch, p.item, p.part_number) : true)).slice(0, 50).map(p => { const pr = memberPrices(p); return (
                   <div key={p.id} className="flex items-center gap-3 px-3 py-2">
                     <span className="flex-1 min-w-0 truncate text-sm" title={p.item}>{p.item}{p.part_number ? <span className="text-xs text-gray-500"> · {p.part_number}</span> : ''}</span>
                     <span className="text-xs text-gray-400 shrink-0">{formatUSD(pr.retail)} / {formatUSD(pr.cost)}</span>

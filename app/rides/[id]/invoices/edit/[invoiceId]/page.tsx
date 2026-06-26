@@ -5,7 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX } from '@/lib/utils'
+import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX, partMatches } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
@@ -2284,7 +2284,7 @@ export default function EditInvoicePage() {
             <input value={dbSearch} onChange={(e) => setDbSearch(e.target.value)} placeholder="Search item or alias..." className={inputClass} />
             {(() => {
               const t = dbSearch.trim().toLowerCase()
-              const list = t ? dbItems.filter((d: any) => (d.item || '').toLowerCase().includes(t) || (d.alias || '').toLowerCase().includes(t)) : dbItems
+              const list = t ? dbItems.filter((d: any) => partMatches(t, d.item, d.alias)) : dbItems
               if (list.length === 0) return <p className="text-gray-400">No items in the database.</p>
               return list.map((d: any) => {
                 const isKit = !!d.is_kit

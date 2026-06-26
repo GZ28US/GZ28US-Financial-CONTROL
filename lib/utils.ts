@@ -98,6 +98,17 @@ export function formatPhone(phone: string | null | undefined, country?: string |
   return String(phone)
 }
 
+// Punctuation-insensitive, word-order-tolerant search match. Splits the query into
+// tokens (letters/digits only) and matches only when EVERY token appears across the
+// given fields — so "DragPack Setup Welds" finds "…DragPack Setup - Welds…".
+export function partMatches(query: string, ...fields: (string | null | undefined)[]): boolean {
+  const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+  const q = norm(query).trim()
+  if (!q) return true
+  const hay = fields.map(norm).join(' ')
+  return q.split(' ').filter(Boolean).every((tok) => hay.includes(tok))
+}
+
 // Validate a Brazilian CPF (the two check digits). Accepts any punctuation; only
 // the 11 digits matter. Rejects all-equal sequences (000.../111... are invalid).
 export function isValidCPF(raw: string): boolean {
