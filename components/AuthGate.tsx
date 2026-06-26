@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 // (/clients/self/[id]) is sent to clients so they fill in their own info;
 // /rides/self/[id] lets a client upload their car photo. They are not app users,
 // so these must render outside the auth gate.
-const PUBLIC_PREFIXES = ['/clients/self/', '/rides/self/']
+const PUBLIC_PREFIXES = ['/clients/self/', '/rides/self/', '/costs/fixed/self/']
 
 // Wraps the whole app. When signed out it shows a login screen; when signed in
 // it renders the app. No public sign-up — accounts are created in the Supabase
