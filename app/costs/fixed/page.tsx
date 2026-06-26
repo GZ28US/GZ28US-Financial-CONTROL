@@ -69,13 +69,13 @@ export default function FixedCostSuppliersPage() {
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">FIXED COST SUPPLIERS ({rows.length})</h1>
-        <div className="flex gap-3 flex-1 min-w-[16rem] max-w-xl">
+        <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search description, company, contact…"
-            className="flex-1 bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg"
+            className="w-64 sm:w-80 max-w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg"
           />
           <Link href="/costs/fixed/new" className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD NEW FIXED COST SUPPLIER</Link>
         </div>
