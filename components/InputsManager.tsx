@@ -194,7 +194,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
       const items = (parsed.items || []).map((i: any) => ({
         description: String(i.description || ''),
         amount: String(i.amount || '0'),
-        quantity: '1',
+        quantity: String(i.quantity || '1'),
       }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
