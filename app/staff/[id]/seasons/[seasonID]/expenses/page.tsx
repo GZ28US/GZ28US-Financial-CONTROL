@@ -197,10 +197,17 @@ export default function ExpensesPage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
-      const items = (parsed.items || []).map((i: any) => ({
-        description: String(i.description || ''),
-        amount: String(i.amount || '0'),
-      }))
+      const items = (parsed.items || []).map((i: any) => {
+        // The scan returns the per-UNIT amount + a quantity; fold them into the line
+        // total (qty x unit) so the expense reflects what was actually spent, and note
+        // the quantity in the description. Summing the line totals = the receipt total.
+        const qty = parseFloat(i.quantity) || 1
+        const lineTotal = (parseFloat(i.amount) || 0) * qty
+        return {
+          description: qty > 1 ? `${String(i.description || '')} (×${qty})` : String(i.description || ''),
+          amount: lineTotal.toFixed(2),
+        }
+      })
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0), 0)
       // Pre-fill the description with the items joined; user can refine in the modal.
       const autoDescription = items.length > 0
