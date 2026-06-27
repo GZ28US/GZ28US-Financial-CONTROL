@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// Receipt OCR runs on Opus for maximum accuracy, which is slower than Sonnet —
+// allow up to 60s so a tough/crumpled receipt never times out mid-scan.
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -79,7 +83,7 @@ Rules:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
+        model: 'claude-opus-4-8',
         max_tokens: 8000,
         messages: [{
           role: 'user',
