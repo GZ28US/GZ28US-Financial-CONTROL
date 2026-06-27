@@ -582,6 +582,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
                       <p className="text-lg text-gray-400 ml-7">{groupInputs.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
                     </div>
                     <div className="flex gap-3 flex-wrap shrink-0">
+                      <Link href={`/inputs/group/${groupId}${itemQuery}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                       <button onClick={() => startEditPurchase(groupId, groupInputs)} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>
                       <button onClick={() => setConfirmGroupId(groupId)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                     </div>
