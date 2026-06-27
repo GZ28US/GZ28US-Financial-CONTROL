@@ -41,6 +41,7 @@ const STRINGS = {
     name: 'NOME COMPLETO', namePh: 'Seu nome',
     email: 'E-MAIL', emailPh: 'voce@exemplo.com',
     instagram: 'INSTAGRAM', instagramPh: '@seuusuario',
+    facebook: 'FACEBOOK', facebookPh: 'facebook.com/usuario ou @usuario',
     country: 'PAÍS', countryOptions: [['BRAZIL', 'BRASIL'], ['USA', 'EUA']] as [string, string][],
     phone: 'TELEFONE / WHATSAPP',
     cpfOptional: '(opcional)', cpfInvalid: 'CPF inválido. Corrija o CPF ou deixe o campo em branco.',
@@ -59,6 +60,7 @@ const STRINGS = {
     name: 'FULL NAME', namePh: 'Your name',
     email: 'EMAIL', emailPh: 'you@example.com',
     instagram: 'INSTAGRAM', instagramPh: '@username',
+    facebook: 'FACEBOOK', facebookPh: 'facebook.com/user or @user',
     country: 'COUNTRY', countryOptions: [['USA', 'USA'], ['BRAZIL', 'BRAZIL']] as [string, string][],
     phone: 'PHONE / WHATSAPP',
     cpfOptional: '(optional)', cpfInvalid: 'Invalid CPF. Fix the CPF or leave the field blank.',
@@ -89,6 +91,7 @@ export default function ClientSelfFormPage() {
     name: '',
     email: '',
     instagram: '',
+    facebook: '',
     country: 'USA',
     phone: '+1 ',
     cpf: '',
@@ -119,6 +122,7 @@ export default function ClientSelfFormPage() {
       name: data.name || '',
       email: data.email || '',
       instagram: data.instagram || '',
+      facebook: data.facebook || '',
       country: data.country || 'USA',
       phone: data.phone || '',
       cpf: data.cpf || '',
@@ -200,6 +204,7 @@ export default function ClientSelfFormPage() {
           name: form.name,
           email: form.email,
           instagram: form.instagram,
+          facebook: form.facebook,
           country: form.country,
           phone: form.phone,
           cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
@@ -225,6 +230,7 @@ export default function ClientSelfFormPage() {
     const rows: string[] = []
     if (form.email.trim()) rows.push(`Email: ${form.email.trim()}`)
     if (form.instagram.trim()) rows.push(`Instagram: ${form.instagram.trim()}`)
+    if (form.facebook.trim()) rows.push(`Facebook: ${form.facebook.trim()}`)
     if (form.country.trim()) rows.push(`Country: ${form.country === 'USA' ? 'USA' : 'BRAZIL'}`)
     if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
     if (form.country === 'BRAZIL' && form.cpf.trim()) rows.push(`CPF: ${form.cpf.trim()}`)
@@ -299,6 +305,11 @@ export default function ClientSelfFormPage() {
           <div>
             <label className={labelClass}>{L.instagram}</label>
             <input value={form.instagram} onChange={(e) => setForm({ ...form, instagram: e.target.value })} className={inputClass} placeholder={L.instagramPh} />
+          </div>
+
+          <div>
+            <label className={labelClass}>{L.facebook}</label>
+            <input value={form.facebook} onChange={(e) => setForm({ ...form, facebook: e.target.value })} className={inputClass} placeholder={L.facebookPh} />
           </div>
 
           <div>

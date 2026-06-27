@@ -19,13 +19,14 @@ const brazilStates = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
 
-const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram']
+const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram', 'Facebook']
 
 export default function NewClientPage() {
   const [form, setForm] = useState({
     name: '',
     email: '',
     instagram: '',
+    facebook: '',
     country: 'USA',
     phone: '+1 ',
     zip: '',
@@ -129,6 +130,7 @@ export default function NewClientPage() {
         name: form.name,
         email: form.email,
         instagram: form.instagram,
+        facebook: form.facebook,
         country: form.country,
         phone: form.phone,
         address: form.address,
@@ -191,6 +193,16 @@ export default function NewClientPage() {
             onChange={(e) => setForm({ ...form, instagram: e.target.value })}
             className={`${inputClass} w-full`}
             placeholder="@username"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">FACEBOOK</label>
+          <input
+            value={form.facebook}
+            onChange={(e) => setForm({ ...form, facebook: e.target.value })}
+            className={`${inputClass} w-full`}
+            placeholder="facebook.com/usuario ou @usuario"
           />
         </div>
 

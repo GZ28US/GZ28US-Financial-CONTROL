@@ -20,7 +20,7 @@ const brazilStates = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
 
-const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram']
+const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram', 'Facebook']
 
 export default function EditClientPage() {
   const params = useParams()
@@ -33,6 +33,7 @@ export default function EditClientPage() {
     name: '',
     email: '',
     instagram: '',
+    facebook: '',
     country: 'USA',
     phone: '+1 ',
     cpf: '',
@@ -74,6 +75,7 @@ export default function EditClientPage() {
       name: data.name || '',
       email: data.email || '',
       instagram: data.instagram || '',
+      facebook: data.facebook || '',
       country: data.country || 'USA',
       phone: data.phone || '',
       cpf: data.cpf || '',
@@ -108,6 +110,7 @@ export default function EditClientPage() {
         name: form.name,
         email: form.email,
         instagram: form.instagram,
+        facebook: form.facebook,
         country: form.country,
         phone: form.phone,
         cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
@@ -201,6 +204,18 @@ export default function EditClientPage() {
             setForm({
               ...form,
               instagram: e.target.value,
+            })
+          }
+          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
+        />
+
+        <input
+          placeholder="FACEBOOK (facebook.com/usuario ou @usuario)"
+          value={form.facebook}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              facebook: e.target.value,
             })
           }
           className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
