@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
 
     const purchasePrompt = `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
 {
-  "supplier": "store/supplier name — for a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
+  "supplier": "store/supplier name. If the header is only a generic greeting like 'WELCOME TO OUR STORE' with no business name, use the street address or city printed at the top instead (e.g. '9999 S Hwy 441, Orlando FL'). For a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "paid": true or false boolean — see rule 11,
   "source": "the PAYER who SENT the money (a transfer/PIX 'pagador' / 'De' / 'Dados do pagador'); empty string if not shown — see rule 14",
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   ]
 }
 Rules:
-1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons.
+1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons. A standalone "Dsc"/"Discount"/"Coupon" line (often printed right below the item it applies to) is NOT its own item — fold that amount into the line_total of the item directly above it and never emit it as a separate item.
 2. quantity: read exactly from the Qty column.
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92. When the receipt has separate "List" and "Cost" (or "Price"/"Your Price") columns, use the COST/actual-paid column for line_total — never the List/retail column.
 4. list_price: ONLY when the receipt shows a per-unit retail/list/MSRP price that is HIGHER than the actual unit price paid (e.g. an AutoZone-style "List" column next to a "Cost" column). Report that higher per-unit price here. If the receipt shows only one price, set this to 0.
@@ -48,7 +48,7 @@ Rules:
 9. part_number: the manufacturer part number, SKU, MPN, or item/catalog number printed for that line item (NOT the quantity or price). Use it as the product's identifying code. Empty string if none is shown.
 10. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.
 11. paid: a boolean. true when the document shows the purchase is already paid, charged, or CONFIRMED — a receipt, a paid invoice, a "PAID" mark, an order/payment confirmation, a "Confirmed" / "Order Confirmed" status, or a balance due of 0. false ONLY when it is clearly an unpaid quote/estimate or shows an outstanding balance still due. When unsure, use true (a scanned purchase receipt is normally already paid).
-12. date: read the order / confirmation / purchase date and return it as YYYY-MM-DD. If the document shows a date without a year (e.g. "Confirmed Jun 17"), infer the year so the date is the most recent one that is NOT in the future${todayISO ? ` relative to today, ${todayISO}` : ''}. Never return a date after today.
+12. date: the TRANSACTION / SALE / PURCHASE date — on a store/POS receipt this is the timestamp usually printed at the BOTTOM next to the time (e.g. "6/26/26 7:32 PM"). IGNORE every unrelated date on the receipt: a date of birth or an "ID VERIFIED" age-check date, a "best by"/expiration date, store hours, or a loyalty/coupon date are NOT the purchase date. Return it as YYYY-MM-DD. If the document shows a date without a year (e.g. "Confirmed Jun 17"), infer the year so the date is the most recent one that is NOT in the future${todayISO ? ` relative to today, ${todayISO}` : ''}. Never return a date after today.
 13. PAYMENT / TRANSFER / PIX receipts (e.g. a "Comprovante do Pix", a bank transfer / TED / DOC / Zelle / wire confirmation) have NO itemized products. For these, IGNORE rule 1: set "supplier" to the RECIPIENT/payee (the "recebedor" / "Para" / "Dados do recebedor" — the party RECEIVING the money, never the bank, never the payer), set "paid" to true, set "grand_total" to the amount paid ("Valor pago" / "Valor"), set "tax" to 0 and "extras" to [], and return a SINGLE item whose description is a short label (the payee name, or "Pagamento") and whose line_total is that same amount. Never return an empty items array for a payment receipt.
 14. source: the PAYER — who SENT the money (the "pagador" / "De" / "Dados do pagador" / "from"). This is the person/company that paid, NOT the supplier/payee. Empty string if not shown.`
 
