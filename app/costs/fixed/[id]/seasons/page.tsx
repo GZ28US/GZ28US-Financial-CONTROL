@@ -14,9 +14,9 @@ type Season = {
   date_conclusion: string | null
   periodicity: string | null
   cost_type: string | null
-  payment_date_1: string | null
+  payment_day_1: number | null
   amount_1: number | null
-  payment_date_2: string | null
+  payment_day_2: number | null
   amount_2: number | null
 }
 
@@ -108,8 +108,8 @@ export default function FixedCostSeasonsPage() {
                   <span className={`px-3 py-1 rounded-full text-sm font-bold ${s.cost_type === 'VARIABLE' ? 'bg-amber-700' : 'bg-blue-900 text-blue-200'}`}>{s.cost_type || '—'}</span>
                 </div>
                 <p className="text-base text-gray-500 mt-1">
-                  {isValidDate(s.payment_date_1) || s.amount_1 != null ? `${fmtDate(s.payment_date_1)} · ${formatUSD(Number(s.amount_1) || 0)}` : '—'}
-                  {s.payment_date_2 || s.amount_2 != null ? `   +   ${fmtDate(s.payment_date_2)} · ${formatUSD(Number(s.amount_2) || 0)}` : ''}
+                  {s.payment_day_1 != null || s.amount_1 != null ? `Day ${s.payment_day_1 ?? '—'} · ${formatUSD(Number(s.amount_1) || 0)}` : '—'}
+                  {s.payment_day_2 != null || s.amount_2 != null ? `   +   Day ${s.payment_day_2 ?? '—'} · ${formatUSD(Number(s.amount_2) || 0)}` : ''}
                 </p>
               </div>
               <div className="bg-gray-800 rounded-2xl px-6 py-4 text-center min-w-[200px]">

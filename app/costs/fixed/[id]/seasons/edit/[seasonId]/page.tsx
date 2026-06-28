@@ -9,6 +9,7 @@ import { BASE_PATH } from '@/lib/utils'
 
 const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'ANNUAL']
 const COST_TYPES = ['FIXED', 'VARIABLE']
+const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function isNumeric(v: string) { return v === '' || /^-?\d*\.?\d*$/.test(v) }
 
@@ -22,10 +23,10 @@ export default function EditFixedCostSeasonPage() {
   const [endDate, setEndDate] = useState('')
   const [periodicity, setPeriodicity] = useState('MONTHLY')
   const [costType, setCostType] = useState('FIXED')
-  const [payDate1, setPayDate1] = useState('')
+  const [day1, setDay1] = useState('')
   const [amount1, setAmount1] = useState('')
   const [show2nd, setShow2nd] = useState(false)
-  const [payDate2, setPayDate2] = useState('')
+  const [day2, setDay2] = useState('')
   const [amount2, setAmount2] = useState('')
 
   useEffect(() => {
@@ -37,11 +38,11 @@ export default function EditFixedCostSeasonPage() {
         setEndDate(data.date_conclusion || '')
         setPeriodicity(data.periodicity || 'MONTHLY')
         setCostType(data.cost_type || 'FIXED')
-        setPayDate1(data.payment_date_1 || '')
+        setDay1(data.payment_day_1 != null ? String(data.payment_day_1) : '')
         setAmount1(data.amount_1 != null ? String(data.amount_1) : '')
-        setPayDate2(data.payment_date_2 || '')
+        setDay2(data.payment_day_2 != null ? String(data.payment_day_2) : '')
         setAmount2(data.amount_2 != null ? String(data.amount_2) : '')
-        if (data.payment_date_2 || data.amount_2 != null) setShow2nd(true)
+        if (data.payment_day_2 != null || data.amount_2 != null) setShow2nd(true)
       }
     })()
   }, [seasonId])
@@ -60,9 +61,9 @@ export default function EditFixedCostSeasonPage() {
       date_conclusion: isValidDate(endDate) ? endDate : null,
       periodicity,
       cost_type: costType,
-      payment_date_1: isValidDate(payDate1) ? payDate1 : null,
+      payment_day_1: day1 !== '' ? (parseInt(day1, 10) || null) : null,
       amount_1: amount1 !== '' ? (parseFloat(amount1) || 0) : null,
-      payment_date_2: (show2nd && isValidDate(payDate2)) ? payDate2 : null,
+      payment_day_2: (show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
       amount_2: (show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
     }).eq('id', seasonId)
     if (error) { alert(error.message); return }
@@ -93,33 +94,45 @@ export default function EditFixedCostSeasonPage() {
           </select>
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 space-y-5">
-          <DatePicker label="PAYMENT DATE" value={payDate1} onChange={setPayDate1} compact />
-          <div>
-            <label className="block mb-2 text-sm text-gray-400 font-bold">AMOUNT</label>
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">$</span>
-              <input type="text" inputMode="decimal" value={amount1} onChange={(e) => { if (isNumeric(e.target.value)) setAmount1(e.target.value) }} className={`${inputClass} pl-12`} placeholder="0.00" />
+        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 space-y-4">
+          <div className="flex gap-3 items-end flex-wrap">
+            <div className="w-28">
+              <label className="block mb-2 text-sm text-gray-400 font-bold">DAY</label>
+              <select value={day1} onChange={(e) => setDay1(e.target.value)} className={inputClass}>
+                <option value="">—</option>
+                {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
             </div>
+            <div className="flex-1 min-w-[10rem]">
+              <label className="block mb-2 text-sm text-gray-400 font-bold">AMOUNT</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">$</span>
+                <input type="text" inputMode="decimal" value={amount1} onChange={(e) => { if (isNumeric(e.target.value)) setAmount1(e.target.value) }} className={`${inputClass} pl-12`} placeholder="0.00" />
+              </div>
+            </div>
+            {!show2nd && (
+              <button onClick={() => setShow2nd(true)} className="bg-blue-700 hover:bg-blue-600 px-5 py-4 rounded-2xl font-bold whitespace-nowrap">+ ADD 2ND</button>
+            )}
           </div>
 
-          {!show2nd ? (
-            <button onClick={() => setShow2nd(true)} className="bg-blue-700 hover:bg-blue-600 px-5 py-2 rounded-2xl font-bold">+ ADD 2ND PAYMENT DATE</button>
-          ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-400 font-bold">2ND PAYMENT</span>
-                <button onClick={() => { setShow2nd(false); setPayDate2(''); setAmount2('') }} className="text-red-400 hover:text-red-300 text-sm font-bold">Remove</button>
+          {show2nd && (
+            <div className="flex gap-3 items-end flex-wrap">
+              <div className="w-28">
+                <label className="block mb-2 text-sm text-gray-400 font-bold">DAY</label>
+                <select value={day2} onChange={(e) => setDay2(e.target.value)} className={inputClass}>
+                  <option value="">—</option>
+                  {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
               </div>
-              <DatePicker label="PAYMENT DATE" value={payDate2} onChange={setPayDate2} compact />
-              <div>
+              <div className="flex-1 min-w-[10rem]">
                 <label className="block mb-2 text-sm text-gray-400 font-bold">AMOUNT</label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">$</span>
                   <input type="text" inputMode="decimal" value={amount2} onChange={(e) => { if (isNumeric(e.target.value)) setAmount2(e.target.value) }} className={`${inputClass} pl-12`} placeholder="0.00" />
                 </div>
               </div>
-            </>
+              <button onClick={() => { setShow2nd(false); setDay2(''); setAmount2('') }} className="bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold whitespace-nowrap">Remove</button>
+            </div>
           )}
         </div>
 
