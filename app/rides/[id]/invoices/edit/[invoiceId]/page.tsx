@@ -2606,6 +2606,8 @@ export default function EditInvoicePage() {
                               <div className="flex-1 min-w-[14rem]">
                                 <DatePicker label="EXPENSE DATE" value={editingExpense.expense_date} onChange={(v) => setEditingExpense({ ...editingExpense, expense_date: v })} compact />
                               </div>
+                            </div>
+                            <div className="flex gap-4 items-start flex-wrap">
                               <div className="flex-1 min-w-[14rem]">
                                 <DatePicker label="PAYMENT DATE" value={editingExpense.payment_date} onChange={(v) => setEditingExpense({ ...editingExpense, payment_date: v })} compact />
                               </div>
