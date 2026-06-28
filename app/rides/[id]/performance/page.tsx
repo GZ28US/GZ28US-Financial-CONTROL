@@ -17,7 +17,7 @@ const MONTHS: [string, string][] = [
   ['07', 'July'], ['08', 'August'], ['09', 'September'], ['10', 'October'], ['11', 'November'], ['12', 'December'],
 ]
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'))
-const YEARS = Array.from({ length: new Date().getFullYear() - 2025 + 1 }, (_, i) => String(2025 + i))
+const YEARS = Array.from({ length: new Date().getFullYear() - 2025 + 1 }, (_, i) => String(new Date().getFullYear() - i))
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 // Normalize a stored phone string into the digits-only form UltraMsg expects.

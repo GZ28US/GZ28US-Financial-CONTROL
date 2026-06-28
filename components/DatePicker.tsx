@@ -25,7 +25,8 @@ const months = [
 ]
 
 const currentYear = new Date().getFullYear()
-const years = Array.from({ length: currentYear - 2024 }, (_, i) => 2025 + i)
+// Newest year first (descending) in the dropdown.
+const years = Array.from({ length: currentYear - 2024 }, (_, i) => currentYear - i)
 
 const days = Array.from({ length: 31 }, (_, i) => {
   const d = String(i + 1).padStart(2, '0')
