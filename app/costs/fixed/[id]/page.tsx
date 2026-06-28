@@ -118,7 +118,7 @@ export default function FixedCostSupplierViewPage() {
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <Link href="/costs/fixed" className="text-gray-400 text-lg hover:text-white">← Fixed Cost Suppliers</Link>
         <div className="flex gap-3 flex-wrap">
-          <Link href={`/costs/fixed/${s.id}/expenses`} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-3 rounded-2xl text-lg font-bold">💵 EXPENSES</Link>
+          <Link href={`/costs/fixed/${s.id}/seasons`} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-3 rounded-2xl text-lg font-bold">📅 SEASONS</Link>
           <button onClick={openSend} className="bg-emerald-700 hover:bg-emerald-600 px-6 py-3 rounded-2xl text-lg font-bold">📤 SEND TO</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
         </div>
@@ -134,7 +134,7 @@ export default function FixedCostSupplierViewPage() {
         <Row label="Email" value={s.email} />
       </div>
 
-      <Link href={`/costs/fixed/${s.id}/expenses`} className="inline-block mt-8 bg-amber-600 hover:bg-amber-500 text-black px-6 py-3 rounded-2xl text-lg font-bold">💵 VIEW EXPENSES →</Link>
+      <Link href={`/costs/fixed/${s.id}/seasons`} className="inline-block mt-8 bg-amber-600 hover:bg-amber-500 text-black px-6 py-3 rounded-2xl text-lg font-bold">📅 VIEW SEASONS →</Link>
 
       {/* SEND TO box — who do you want to send to? */}
       {sendOpen && (

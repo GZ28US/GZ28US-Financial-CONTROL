@@ -11,10 +11,11 @@ import { supabase } from '@/lib/supabase'
 const EXPENSE_TYPES = ['MONTHLY', 'WEEKLY', 'DAILY', 'SINGLE']
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
-export default function NewFixedCostExpensePage() {
+export default function NewSeasonExpensePage() {
   const params = useParams()
   const router = useRouter()
   const id = String(params.id)
+  const seasonId = String(params.seasonId)
   const [type, setType] = useState('MONTHLY')
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
@@ -27,6 +28,7 @@ export default function NewFixedCostExpensePage() {
     setSaving(true)
     const { error } = await supabase.from('fixed_cost_expenses').insert([{
       supplier_id: id,
+      season_id: seasonId,
       type,
       description: description || null,
       amount: parseFloat(amount) || 0,
@@ -35,7 +37,7 @@ export default function NewFixedCostExpensePage() {
     }])
     setSaving(false)
     if (error) { alert(error.message); return }
-    router.push(`/costs/fixed/${id}/expenses`)
+    router.push(`/costs/fixed/${id}/seasons/${seasonId}/expenses`)
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -43,7 +45,7 @@ export default function NewFixedCostExpensePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <Link href={`/costs/fixed/${id}/expenses`} className="text-gray-400 text-lg hover:text-white">← Expenses</Link>
+      <Link href={`/costs/fixed/${id}/seasons/${seasonId}/expenses`} className="text-gray-400 text-lg hover:text-white">← Expenses</Link>
       <h1 className="text-4xl font-bold mt-3 mb-8">ADD EXPENSE</h1>
 
       <div className="max-w-2xl space-y-5">

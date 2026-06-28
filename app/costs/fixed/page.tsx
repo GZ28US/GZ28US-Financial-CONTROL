@@ -111,7 +111,7 @@ export default function FixedCostSuppliersPage() {
                 <p className="text-base text-gray-500">{[formatPhone(r.phone), r.email].filter(Boolean).join(' · ')}</p>
               </Link>
               <div className="flex gap-3 flex-wrap shrink-0">
-                <Link href={`/costs/fixed/${r.id}/expenses`} className="bg-amber-600 hover:bg-amber-500 px-5 py-3 rounded-2xl font-bold">💵 EXPENSES</Link>
+                <Link href={`/costs/fixed/${r.id}/seasons`} className="bg-amber-600 hover:bg-amber-500 px-5 py-3 rounded-2xl font-bold">📅 SEASONS</Link>
                 <Link href={`/costs/fixed/${r.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                 <Link href={`/costs/fixed/edit/${r.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                 <button onClick={() => setConfirmId(r.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>

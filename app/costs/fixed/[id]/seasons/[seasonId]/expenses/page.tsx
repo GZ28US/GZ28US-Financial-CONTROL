@@ -13,22 +13,23 @@ const TYPES = ['ALL', 'MONTHLY', 'WEEKLY', 'DAILY', 'SINGLE'] as const
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
 
-export default function FixedCostExpensesPage() {
+export default function SeasonExpensesPage() {
   const params = useParams()
   const id = String(params.id)
+  const seasonId = String(params.seasonId)
   const [rows, setRows] = useState<FixedExpense[]>([])
-  const [supplierName, setSupplierName] = useState('')
+  const [seasonCode, setSeasonCode] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<typeof TYPES[number]>('ALL')
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
-  useEffect(() => { load() }, [id])
+  useEffect(() => { load() }, [seasonId])
 
   async function load() {
-    const { data: sup } = await supabase.from('fixed_cost_suppliers').select('description, company').eq('id', id).maybeSingle()
-    setSupplierName((sup?.description || sup?.company || '') as string)
-    const { data } = await supabase.from('fixed_cost_expenses').select('*').eq('supplier_id', id).order('created_at', { ascending: false })
+    const { data: season } = await supabase.from('fixed_cost_seasons').select('season_code').eq('id', seasonId).maybeSingle()
+    setSeasonCode((season?.season_code || '') as string)
+    const { data } = await supabase.from('fixed_cost_expenses').select('*').eq('season_id', seasonId).order('created_at', { ascending: false })
     setRows((data || []) as FixedExpense[])
     setLoading(false)
   }
@@ -64,10 +65,10 @@ export default function FixedCostExpensesPage() {
         </div>
       )}
 
-      <Link href={`/costs/fixed/${id}`} className="text-gray-400 text-lg hover:text-white">← {supplierName || 'Fixed Cost Supplier'}</Link>
+      <Link href={`/costs/fixed/${id}/seasons`} className="text-gray-400 text-lg hover:text-white">← Seasons</Link>
 
       <div className="flex items-center justify-between mt-3 mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">EXPENSES ({rows.length})</h1>
+        <h1 className="text-4xl font-bold">Season {seasonCode} — EXPENSES ({rows.length})</h1>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
@@ -76,7 +77,7 @@ export default function FixedCostExpensesPage() {
             placeholder="Search description, payer, type…"
             className="w-64 sm:w-80 max-w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg"
           />
-          <Link href={`/costs/fixed/${id}/expenses/new`} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">+ ADD EXPENSE</Link>
+          <Link href={`/costs/fixed/${id}/seasons/${seasonId}/expenses/new`} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">+ ADD EXPENSE</Link>
         </div>
       </div>
 
