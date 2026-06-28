@@ -543,6 +543,25 @@ for (let y = 2005; y <= 2021; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── Jeep Grand Cherokee ZJ — 5.9 Limited (1998, 5.9L V8 Magnum) ──────────────────
+// The hot-rod ZJ: 5.9L V8 Magnum (245 hp), sold only for 1998 as the "5.9 Limited" —
+// the fastest production SUV of its day. Only the 5.9L variant is catalogued here.
+const grandCherokeeZjColors = ['Stone White', 'Bright Platinum Metallic', 'Black', 'Flame Red', 'Deep Amethyst Pearl', 'Bright Jade Satin Glow', 'Emerald Green Pearl', 'Char Gold Satin Glow', 'Light Driftwood Satin Glow', 'Deep Slate Blue Pearl']
+for (const y of [1998]) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MOPAR')) manufacturersByYear[y].push('MOPAR')
+  brandsByManufacturerAndYear['MOPAR'] = brandsByManufacturerAndYear['MOPAR'] || {}
+  brandsByManufacturerAndYear['MOPAR'][y] = brandsByManufacturerAndYear['MOPAR'][y] || []
+  if (!brandsByManufacturerAndYear['MOPAR'][y].includes('JEEP')) brandsByManufacturerAndYear['MOPAR'][y].push('JEEP')
+  modelsByBrandAndYear['JEEP'] = modelsByBrandAndYear['JEEP'] || {}
+  modelsByBrandAndYear['JEEP'][y] = modelsByBrandAndYear['JEEP'][y] || []
+  if (!modelsByBrandAndYear['JEEP'][y].includes('GRAND CHEROKEE')) modelsByBrandAndYear['JEEP'][y].push('GRAND CHEROKEE')
+  versionsByModelAndYear['GRAND CHEROKEE'] = versionsByModelAndYear['GRAND CHEROKEE'] || {}
+  versionsByModelAndYear['GRAND CHEROKEE'][y] = ['5.9 Limited V8']
+}
+years.sort((a, b) => a - b)
+
 // ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
 // Trims = base engine packages (per the special-editions rule). Appearance and
 // dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
@@ -913,6 +932,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'ESCALADE-V') return escaladeVColors
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
   if (model === 'DURANGO') return durangoColors
+  if (model === 'GRAND CHEROKEE' && year <= 2004) return grandCherokeeZjColors
   if (model === 'GRAND CHEROKEE') return grandCherokeeColors
   if (brand === 'RAM') return ramColors
   if (brand === 'FORD') return fordColors
