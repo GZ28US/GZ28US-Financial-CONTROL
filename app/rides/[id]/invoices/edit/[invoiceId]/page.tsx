@@ -1613,10 +1613,14 @@ export default function EditInvoicePage() {
     // Persist parts in their current order: insert new ones with their position,
     // and for existing ones write position (always) plus refreshed margin-managed
     // unit_price/base_cost (which may have shifted with the live IMPORT MARGIN).
+    // Build new-part inserts and existing-part updates, then run one bulk insert + the
+    // updates concurrently — instead of a sequential network round-trip per row.
+    const partInserts: any[] = []
+    const partUpdates: any[] = []
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i]
       if (!p.id) {
-        const { error: e } = await supabase.from('invoice_parts').insert({
+        partInserts.push({
           invoice_id: invoiceId,
           description: p.description,
           unit_price: parseFloat(p.unit_price) || 0,
@@ -1628,16 +1632,22 @@ export default function EditInvoicePage() {
           kit_name: p.kit_name || null,
           source_item: p.source_item || null,
         })
-        if (e) { alert(e.message); return }
       } else {
         const upd: any = { position: i, payment_date: isValidDate(p.payment_date || '') ? p.payment_date : null }
         if (p.base_cost != null && p.base_cost !== '') {
           upd.unit_price = parseFloat(p.unit_price) || 0
           upd.base_cost = parseFloat(p.base_cost) || 0
         }
-        const { error: e } = await supabase.from('invoice_parts').update(upd).eq('id', p.id)
-        if (e) { alert(e.message); return }
+        partUpdates.push(supabase.from('invoice_parts').update(upd).eq('id', p.id))
       }
+    }
+    if (partInserts.length > 0) {
+      const { error: e } = await supabase.from('invoice_parts').insert(partInserts)
+      if (e) { alert(e.message); return }
+    }
+    if (partUpdates.length > 0) {
+      const bad = (await Promise.all(partUpdates)).find((r: any) => r.error)
+      if (bad?.error) { alert(bad.error.message); return }
     }
     const newServices = services.filter(s => !s.id)
     if (newServices.length > 0) {
@@ -1700,8 +1710,10 @@ export default function EditInvoicePage() {
     // RESET -> FRESH) for already-saved expense rows. These are intentionally NOT
     // written until SAVE CHANGES, so importing without saving leaves no trace.
     const existingExpenses = expenses.filter(e => e.id)
-    for (const ex of existingExpenses) {
-      await supabase.from('invoice_expenses').update({ export_status: ex.export_status || 'FRESH', position: expenses.indexOf(ex) }).eq('id', ex.id)
+    if (existingExpenses.length > 0) {
+      await Promise.all(existingExpenses.map(ex =>
+        supabase.from('invoice_expenses').update({ export_status: ex.export_status || 'FRESH', position: expenses.indexOf(ex) }).eq('id', ex.id)
+      ))
     }
 
     // PARTS TO STOCK: these are always DONATED. The donor is the current
@@ -1728,11 +1740,14 @@ export default function EditInvoicePage() {
     }
 
     // Commit staged REMOVEs now (not at click time) so CANCEL leaves them intact.
-    for (const id of removedPartIds) await supabase.from('invoice_parts').delete().eq('id', id)
-    for (const id of removedServiceIds) await supabase.from('invoice_services').delete().eq('id', id)
-    for (const id of removedPaymentIds) await supabase.from('invoice_payments').delete().eq('id', id)
-    for (const id of removedNoteIds) await supabase.from('invoice_notes').delete().eq('id', id)
-    for (const id of removedExpenseIds) await supabase.from('invoice_expenses').delete().eq('id', id)
+    // Batch each table's removals into one .in() delete, all run concurrently.
+    await Promise.all([
+      removedPartIds.length ? supabase.from('invoice_parts').delete().in('id', removedPartIds) : null,
+      removedServiceIds.length ? supabase.from('invoice_services').delete().in('id', removedServiceIds) : null,
+      removedPaymentIds.length ? supabase.from('invoice_payments').delete().in('id', removedPaymentIds) : null,
+      removedNoteIds.length ? supabase.from('invoice_notes').delete().in('id', removedNoteIds) : null,
+      removedExpenseIds.length ? supabase.from('invoice_expenses').delete().in('id', removedExpenseIds) : null,
+    ].filter(Boolean))
     setRemovedPartIds([]); setRemovedServiceIds([]); setRemovedPaymentIds([]); setRemovedNoteIds([]); setRemovedExpenseIds([])
 
     // Quotes/invoices never write back to the Packs DB — edits stay local to this
