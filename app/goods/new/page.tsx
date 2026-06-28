@@ -348,7 +348,7 @@ export default function NewGoodPage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">SOURCE</label>
+          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
           <SourceSelect value={source} onChange={setSource} className={inputClass} />
         </div>
 
@@ -420,7 +420,7 @@ export default function NewGoodPage() {
               <SupplierField suppliers={suppliers} value={newExpense.supplier} onChange={(v) => setNewExpense({ ...newExpense, supplier: v })} />
             </div>
             <div>
-              <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
               <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
             </div>
             <div>
@@ -448,7 +448,7 @@ export default function NewGoodPage() {
                           <SupplierField suppliers={suppliers} value={editingExpense.supplier} onChange={(v) => setEditingExpense({ ...editingExpense, supplier: v })} />
                         </div>
                         <div>
-                          <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                          <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
                           <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
                         </div>
                         <div>

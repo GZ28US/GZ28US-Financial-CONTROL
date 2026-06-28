@@ -444,7 +444,7 @@ export default function GoodsPage() {
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
               </div>
               <div className="flex-1 min-w-[10rem]">
-                <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+                <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
                 <SourceSelect value={scannedPurchase.source} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
               </div>
               <div className="flex-1 min-w-[10rem]">

@@ -2117,7 +2117,7 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <div>
-              <label className="block mb-1 text-sm text-gray-400">SOURCE</label>
+              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
               <SourceSelect value={scannedPurchase.source || DEFAULT_SOURCE} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
@@ -2398,7 +2398,7 @@ export default function EditInvoicePage() {
                 <datalist id="supplier-options">{suppliers.map(s => <option key={s.name} value={s.name} />)}</datalist>
               </div>
               <div className="flex-1 min-w-[10rem]">
-                <label className="block mb-1 text-xs text-gray-400">SOURCE</label>
+                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
                 <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={`${smallInputClass} w-full`} />
               </div>
               <div className="flex-1 min-w-[10rem]">
@@ -2565,7 +2565,7 @@ export default function EditInvoicePage() {
                                 <input type="text" list="supplier-options" placeholder="Supplier — type to search" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={smallInputClass + ' w-full'} />
                               </div>
                               <div className="flex-1 min-w-[10rem]">
-                                <label className="block mb-1 text-xs text-gray-400">SOURCE</label>
+                                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
                                 <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={`${smallInputClass} w-full`} />
                               </div>
                               <div className="flex-1 min-w-[10rem]">

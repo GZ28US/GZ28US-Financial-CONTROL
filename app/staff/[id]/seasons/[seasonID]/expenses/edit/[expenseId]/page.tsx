@@ -167,7 +167,7 @@ export default function EditExpensePage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">SOURCE</label>
+          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
           <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
 
