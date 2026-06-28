@@ -1828,7 +1828,7 @@ export default function EditInvoicePage() {
       lines.push('')
       lines.push(`DUE: ${formatUSD(due)}`)
       lines.push(`*Cash FLOW: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`)
-      lines.push(`FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
+      lines.push(`FINAL MarkUp: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
     }
     return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
@@ -1848,7 +1848,7 @@ export default function EditInvoicePage() {
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
     if (!isClient && feedOnline) {
       const due = balance < 0 ? -balance : 0
-      lines.push('', `DUE by Client: ${formatUSD(due)}`, `*Cash FLOW: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`, `FINAL Profit: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
+      lines.push('', `DUE by Client: ${formatUSD(due)}`, `*Cash FLOW: ${formatUSD(currentProfit)} / ${currentProfitPct.toFixed(1)}%*`, `FINAL MarkUp: ${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%`)
     }
     return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
