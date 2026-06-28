@@ -113,7 +113,7 @@ export default function FixedCostSeasonsPage() {
                 </p>
               </div>
               <div className="bg-gray-800 rounded-2xl px-6 py-4 text-center min-w-[200px]">
-                <p className="text-sm font-bold">PAYMENT TOTAL</p>
+                <p className="text-sm font-bold">MONTHLY TOTAL</p>
                 <p className="text-3xl font-bold">{formatUSD(seasonPayment(s))}</p>
               </div>
               <div className="flex gap-3 flex-wrap">
