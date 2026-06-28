@@ -12,6 +12,7 @@ type Client = {
   name: string
   email: string | null
   instagram: string | null
+  facebook: string | null
   phone: string | null
   cpf: string | null
   address: string | null
@@ -97,6 +98,19 @@ export default function ViewClientPage() {
       alert('Link copied. Open the client’s Instagram DM and paste to send.')
       notifyGroup(); flashSent(); return
     }
+    if (method === 'Facebook') {
+      try { await navigator.clipboard.writeText(plain) } catch {}
+      const fb = (client.facebook || '').trim()
+      let url = 'https://www.facebook.com/messages/'
+      if (fb) {
+        if (/^https?:\/\//i.test(fb)) url = fb
+        else if (fb.includes('facebook.com')) url = `https://${fb.replace(/^\/+/, '')}`
+        else url = `https://www.facebook.com/${fb.replace(/^@/, '').trim()}`
+      }
+      window.open(url, '_blank')
+      alert('Link copied. Open the client’s Facebook / Messenger and paste to send.')
+      notifyGroup(); flashSent(); return
+    }
 
     // WhatsApp (default) — automatic via UltraMsg.
     const to = toWaNumber(client.phone, client.country)
@@ -170,6 +184,7 @@ export default function ViewClientPage() {
             {client.cpf && <div className={rowClass}><span className={labelClass}>CPF</span><span className="font-bold">{client.cpf}</span></div>}
             {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
             {client.instagram && <div className={rowClass}><span className={labelClass}>INSTAGRAM</span><a href={`https://instagram.com/${client.instagram.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-400 hover:text-blue-300">{client.instagram.startsWith('@') ? client.instagram : `@${client.instagram}`}</a></div>}
+            {client.facebook && <div className={rowClass}><span className={labelClass}>FACEBOOK</span><a href={/^https?:\/\//i.test(client.facebook) ? client.facebook : client.facebook.includes('facebook.com') ? `https://${client.facebook.replace(/^\/+/, '')}` : `https://www.facebook.com/${client.facebook.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-400 hover:text-blue-300">{client.facebook}</a></div>}
             {client.preferred_message_method && <div className={rowClass}><span className={labelClass}>PREFERRED MESSAGE METHOD</span><span className="font-bold">{client.preferred_message_method}</span></div>}
           </div>
         </div>
