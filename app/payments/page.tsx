@@ -145,6 +145,12 @@ export default function PaymentsPage() {
   const cByM = byMonth(clientRows)
   const gByM = byMonth(gzRows)
   const months = [...new Set([...cByM.keys(), ...gByM.keys()])].sort((a, b) => b.localeCompare(a))
+  // Rollover: a running balance carried month-to-month (like the cashflow page). Each
+  // month's shown balance = every prior month's net plus this month's, accumulated
+  // chronologically from the oldest month in the 12-month window.
+  const monthNet = (mk: string) => sum(cByM.get(mk) || []) - sum(gByM.get(mk) || [])
+  const rollingByMonth = new Map<string, number>()
+  ;(() => { let run = 0; for (const mk of [...months].sort((a, b) => a.localeCompare(b))) { run += monthNet(mk); rollingByMonth.set(mk, run) } })()
   const now = new Date()
   const nowMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
@@ -174,7 +180,7 @@ export default function PaymentsPage() {
             const gM = gByM.get(mk) || []
             const clientSub = sum(cM)
             const gzSub = sum(gM)
-            const bal = clientSub - gzSub
+            const bal = rollingByMonth.get(mk) ?? (clientSub - gzSub)
             const balColor = bal > 0.005 ? 'text-blue-400' : bal < -0.005 ? 'text-red-400' : 'text-gray-400'
             const isCurrent = mk === nowMonth
             const cByW = byWeek(cM)
@@ -184,7 +190,7 @@ export default function PaymentsPage() {
               <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
                 <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2 gap-3">
                   <p className="text-sm font-bold text-gray-300 uppercase">{monthLabel(mk)}</p>
-                  <p className="text-sm font-bold whitespace-nowrap"><span className="text-green-400">{formatUSD(clientSub)}</span><span className="text-gray-600"> · </span><span className="text-orange-400">{formatUSD(gzSub)}</span><span className="text-gray-600"> &nbsp;·&nbsp; </span><span className={balColor}>{formatUSD(bal)}</span></p>
+                  <p className="text-sm font-bold whitespace-nowrap"><span className="text-green-400">{formatUSD(clientSub)}</span><span className="text-gray-600"> · </span><span className="text-orange-400">{formatUSD(gzSub)}</span><span className="text-gray-600"> &nbsp;·&nbsp; </span><span className={balColor}>Balance {formatUSD(bal)}</span></p>
                 </div>
                 {isCurrent ? weeks.map((wk) => (
                   <div key={wk} className="mt-3">
