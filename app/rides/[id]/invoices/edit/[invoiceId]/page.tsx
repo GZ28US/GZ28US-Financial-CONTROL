@@ -2196,7 +2196,8 @@ export default function EditInvoicePage() {
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-              <input type="text" value={editingPurchaseSupplier} onChange={(e) => setEditingPurchaseSupplier(e.target.value)} className={inputClass} />
+              <input type="text" list="edit-purchase-suppliers" placeholder="Supplier — type to search" value={editingPurchaseSupplier} onChange={(e) => setEditingPurchaseSupplier(e.target.value)} className={inputClass} />
+              <datalist id="edit-purchase-suppliers">{suppliers.map(s => <option key={s.name} value={s.name} />)}</datalist>
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
