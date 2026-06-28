@@ -30,6 +30,7 @@ type InvoiceStats = {
   currentProfitPct: number
   finalProfit: number
   finalProfitPct: number
+  grandTotal: number
 }
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -182,7 +183,7 @@ export default function InvoicesPage() {
       const finalProfit = markupIncome - expensesTotalGlobal
       const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
 
-      statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct }
+      statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct, grandTotal }
     }))
 
     setStats(statsMap)
@@ -263,7 +264,7 @@ export default function InvoicesPage() {
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                     {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
-                  <p className="text-lg text-gray-400">Entry: {formatDate(invoice.entry_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
+                  <p className="text-lg text-gray-400">Grand Total: {s ? formatUSD(s.grandTotal) : '—'}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
                   {invoice.service && <p className="text-lg text-gray-400">{invoice.service}</p>}
                   {invoice.mileage && <p className="text-lg text-gray-400">{Number(invoice.mileage).toLocaleString('en-US')} mi</p>}
 
