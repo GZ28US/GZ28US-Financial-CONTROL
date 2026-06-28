@@ -7,7 +7,7 @@ import { BASE_PATH, formatShortDate } from '@/lib/utils'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 
-type PayRow = { id: string; date: string; amount: number; code: string; label2: string; href: string }
+type PayRow = { id: string; date: string; amount: number; code: string; label2: string; href: string; tip?: string }
 
 export default function PaymentsPage() {
   const [clientRows, setClientRows] = useState<PayRow[]>([])
@@ -51,6 +51,7 @@ export default function PaymentsPage() {
         amount: items.reduce((s, r) => s + (parseFloat(r.unit_price) || 0) * (parseFloat(r.quantity) || 1), 0),
         code: kind,
         label2: items.length > 1 ? `${supplier || 'Purchase'} · ${items.length} items` : [supplier, r0.description].filter(Boolean).join(' — '),
+        tip: items.length > 1 ? `${supplier || 'Purchase'} · ${items.length} items` : [supplier, r0.description].filter(Boolean).join(' — '),
         href: `${BASE_PATH}${path}`,
       }
     })
@@ -58,7 +59,7 @@ export default function PaymentsPage() {
     const invoiceIds = [...new Set([...(pays || []).map((p: any) => p.invoice_id), ...(exps || []).map((e: any) => e.invoice_id)])]
     let invs: any[] = []
     if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, is_quote').in('id', invoiceIds)
+      const { data } = await supabase.from('invoices').select('id, invoice_code, service, ride_id, client_id, is_quote').in('id', invoiceIds)
       invs = data || []
     }
     const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
@@ -74,8 +75,9 @@ export default function PaymentsPage() {
       const cid = inv?.client_id || ride?.client_id || null
       const clientName = cid ? (clientsById.get(cid) || '') : ''
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
+      const invoiceName = inv ? (inv.service || inv.invoice_code || '') : ''
       const ownerSeg = inv?.ride_id ? `rides/${inv.ride_id}` : `clients/${cid}`
-      return { inv, code: inv?.invoice_code || '—', clientName, carName, ownerSeg }
+      return { inv, code: inv?.invoice_code || '—', clientName, carName, invoiceName, ownerSeg }
     }
 
     // Quotes are not real money in/out — never count their payments or expenses
@@ -87,7 +89,7 @@ export default function PaymentsPage() {
 
     const cRows: PayRow[] = paysReal.map((p: any) => {
       const m = invMeta(p.invoice_id)
-      return { id: `pay-${p.id}`, date: (p.paid_at || '').slice(0, 10), amount: parseFloat(p.amount) || 0, code: m.code, label2: m.clientName || m.carName || '', href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/${m.inv.id}` : '#' }
+      return { id: `pay-${p.id}`, date: (p.paid_at || '').slice(0, 10), amount: parseFloat(p.amount) || 0, code: m.code, label2: m.clientName || m.carName || '', tip: [m.clientName, m.carName, m.invoiceName].filter(Boolean).join(' — '), href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/${m.inv.id}` : '#' }
     }).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     // Consolidate every expense sharing the same INVOICE + SUPPLIER + PAYMENT DATE into a
@@ -104,7 +106,7 @@ export default function PaymentsPage() {
       const m = invMeta(e0.invoice_id)
       const amount = items.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
       const supplier = e0.supplier || ''
-      return { id: `inv-${k}`, date: e0.payment_date, amount, code: m.code, label2: items.length > 1 ? `${supplier || 'Purchase'} · ${items.length} items` : (supplier || e0.item || ''), href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/edit/${m.inv.id}` : '#' }
+      return { id: `inv-${k}`, date: e0.payment_date, amount, code: m.code, label2: items.length > 1 ? `${supplier || 'Purchase'} · ${items.length} items` : (supplier || e0.item || ''), tip: [m.clientName, m.carName, m.invoiceName, supplier].filter(Boolean).join(' — '), href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/edit/${m.inv.id}` : '#' }
     })
 
     // Staff expense names + links.
@@ -125,7 +127,7 @@ export default function PaymentsPage() {
     const staffRows: PayRow[] = (staffExps || []).map((e: any) => {
       const season = seasonById.get(e.season_id)
       const staffName = season ? (staffNameById.get(season.staff_id) || '') : ''
-      return { id: `staff-${e.id}`, date: e.expense_date, amount: parseFloat(e.amount) || 0, code: season?.season_code || 'STAFF', label2: staffName || (e.description || ''), href: season ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${e.season_id}/expenses` : '#' }
+      return { id: `staff-${e.id}`, date: e.expense_date, amount: parseFloat(e.amount) || 0, code: season?.season_code || 'STAFF', label2: staffName || (e.description || ''), tip: [staffName, e.description].filter(Boolean).join(' — '), href: season ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${e.season_id}/expenses` : '#' }
     })
 
     const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods')].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
@@ -235,7 +237,7 @@ function MonthSide({ rows, color, showSub = true }: { rows: PayRow[]; color: str
         <p className="text-xs text-gray-600 py-1">—</p>
       ) : rows.map((r) => (
         <div key={r.id} className="flex justify-between gap-2 py-1 text-sm border-b border-gray-800/60 last:border-0">
-          <span className="text-gray-300 truncate" title={`${formatShortDate(r.date)} · ${r.code}${r.label2 ? ` · ${r.label2}` : ''}`}>
+          <span className="text-gray-300 truncate" title={r.tip || undefined}>
             {formatShortDate(r.date)} · <a href={r.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a>{r.label2 ? ` · ${r.label2}` : ''}
           </span>
           <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
