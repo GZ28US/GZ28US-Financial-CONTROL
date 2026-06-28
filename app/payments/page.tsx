@@ -144,7 +144,9 @@ export default function PaymentsPage() {
   const sum = (rows: PayRow[]) => rows.reduce((s, r) => s + r.amount, 0)
   const cByM = byMonth(clientRows)
   const gByM = byMonth(gzRows)
-  const months = [...new Set([...cByM.keys(), ...gByM.keys()])].sort((a, b) => b.localeCompare(a))
+  // Chronological (oldest -> newest) so the running balance accumulates downward, like
+  // the cashflow page's MONTHLY FLOW.
+  const months = [...new Set([...cByM.keys(), ...gByM.keys()])].sort((a, b) => a.localeCompare(b))
   // Rollover: a running balance carried month-to-month (like the cashflow page). Each
   // month's shown balance = every prior month's net plus this month's, accumulated
   // chronologically from the oldest month in the 12-month window.
@@ -185,7 +187,7 @@ export default function PaymentsPage() {
             const isCurrent = mk === nowMonth
             const cByW = byWeek(cM)
             const gByW = byWeek(gM)
-            const weeks = [...new Set([...cByW.keys(), ...gByW.keys()])].sort((a, b) => b.localeCompare(a))
+            const weeks = [...new Set([...cByW.keys(), ...gByW.keys()])].sort((a, b) => a.localeCompare(b))
             return (
               <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
                 <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2 gap-3">
