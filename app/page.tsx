@@ -282,7 +282,10 @@ function DetailColumn({ label, value, valueColor, rows, undatedColor, taxRows, t
   const undated = rows.filter(r => !r.dated && !r.milestone)
   // One group per distinct milestone label present, shown just before LOSS with friendly names.
   const milestoneNames: Record<string, string> = { ARRIVAL: 'Goods Arrival', CONCLUSION: 'Project Conclusion' }
+  // Chronological: goods arrive before the project is concluded.
+  const milestoneOrder = ['ARRIVAL', 'CONCLUSION']
   const milestoneLabels = [...new Set(milestoneRows.map(r => r.milestone!))]
+    .sort((a, b) => (milestoneOrder.indexOf(a) + 1 || 99) - (milestoneOrder.indexOf(b) + 1 || 99))
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
       <p className="text-sm font-bold text-gray-400 mb-1">{label}</p>
