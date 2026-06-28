@@ -513,6 +513,36 @@ Object.assign(specialEditions, {
   '2026-ESCALADE-V-6.2 V8 SC': ['None', 'ESV'],
 })
 
+// ── Jeep Grand Cherokee — Hemi (WK 2005–2010 + WK2 2011–2021) ────────────────────
+// Hemi-powered Grand Cherokees only. Trims = the engine/performance variants (per the
+// special-editions rule): 5.7 V8 HEMI across both gens; SRT8 6.1 on the WK (2006–2010);
+// the WK2 SRT badged "SRT8 6.4" for 2012–2013 then "SRT 6.4" from 2014; and the
+// supercharged Trackhawk 6.2 SC from 2018. Jeep is a MOPAR (Stellantis) brand — appended
+// to MOPAR alongside DODGE/RAM without clobbering those years.
+const grandCherokeeColors = ['Bright White', 'Diamond Black Crystal Pearl', 'Billet Silver Metallic', 'Granite Crystal Metallic', 'Maximum Steel Metallic', 'Velvet Red Pearl', 'Redline 2 Coat Pearl', 'Sangria Metallic', 'True Blue Pearl', 'Slate Blue Pearl', 'Ivory Tri-Coat', 'Rhino', 'Mineral Gray Metallic']
+const grandCherokeeHemiVersions = (y: number): string[] => {
+  const v = ['5.7 V8 HEMI']                          // 5.7 HEMI — WK 2005+ and all of WK2
+  if (y >= 2006 && y <= 2010) v.push('SRT8 6.1')     // WK SRT8 (6.1 HEMI)
+  if (y >= 2012 && y <= 2013) v.push('SRT8 6.4')     // WK2 SRT8 (6.4 HEMI, badged "SRT8")
+  if (y >= 2014) v.push('SRT 6.4')                   // WK2 SRT (6.4 HEMI, badge dropped the "8")
+  if (y >= 2018) v.push('Trackhawk 6.2 SC')          // supercharged Trackhawk (6.2 HEMI SC)
+  return v
+}
+for (let y = 2005; y <= 2021; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MOPAR')) manufacturersByYear[y].push('MOPAR')
+  brandsByManufacturerAndYear['MOPAR'] = brandsByManufacturerAndYear['MOPAR'] || {}
+  brandsByManufacturerAndYear['MOPAR'][y] = brandsByManufacturerAndYear['MOPAR'][y] || []
+  if (!brandsByManufacturerAndYear['MOPAR'][y].includes('JEEP')) brandsByManufacturerAndYear['MOPAR'][y].push('JEEP')
+  modelsByBrandAndYear['JEEP'] = modelsByBrandAndYear['JEEP'] || {}
+  modelsByBrandAndYear['JEEP'][y] = modelsByBrandAndYear['JEEP'][y] || []
+  if (!modelsByBrandAndYear['JEEP'][y].includes('GRAND CHEROKEE')) modelsByBrandAndYear['JEEP'][y].push('GRAND CHEROKEE')
+  versionsByModelAndYear['GRAND CHEROKEE'] = versionsByModelAndYear['GRAND CHEROKEE'] || {}
+  versionsByModelAndYear['GRAND CHEROKEE'][y] = grandCherokeeHemiVersions(y)
+}
+years.sort((a, b) => a - b)
+
 // ── Camaro 1st Gen (1967–1969) ──────────────────────────────────────────────────
 // Trims = base engine packages (per the special-editions rule). Appearance and
 // dealer-built cars (RS, Pace Car, Yenko, Baldwin-Motion, Berger, Dana, Nickey,
@@ -883,6 +913,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'ESCALADE-V') return escaladeVColors
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
   if (model === 'DURANGO') return durangoColors
+  if (model === 'GRAND CHEROKEE') return grandCherokeeColors
   if (brand === 'RAM') return ramColors
   if (brand === 'FORD') return fordColors
   return moparColors
@@ -932,6 +963,8 @@ carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
   ...Object.values(versionsByModelAndYear['CAMARO']).flat(),
 ])]
 carData['GM']['CADILLAC'] = { 'CTS-V': ['CTS-V 6.2 V8 SC'], 'ESCALADE-V': ['6.2 V8 SC'] }
+// Jeep Grand Cherokee flat list = union of every Hemi year's versions.
+carData['MOPAR']['JEEP'] = { 'GRAND CHEROKEE': [...new Set(Object.values(versionsByModelAndYear['GRAND CHEROKEE']).flat())] }
 
 // Years valid for a full manufacturer/brand/model/version spec, drawn from the
 // year-keyed catalog maps (used by the packs car picker's YEARS step).
