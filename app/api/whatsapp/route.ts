@@ -13,6 +13,18 @@ function withSignature(raw: string): string {
   return text ? `${text}\n\n${SIGNATURE}` : SIGNATURE
 }
 
+// UltraMsg requires the `to` in chat format: <digits>@c.us for a person or
+// <id>@g.us for a group. A bare phone number (just digits) is rejected with
+// "Wrong 'to' format". So: pass through anything that already has an @ (groups,
+// or an already-formatted contact), and turn a bare number into <digits>@c.us.
+function normalizeTo(raw: string | null | undefined): string {
+  const v = String(raw || '').trim()
+  if (!v) return ''
+  if (v.includes('@')) return v
+  const digits = v.replace(/\D/g, '')
+  return digits ? `${digits}@c.us` : ''
+}
+
 // Sends WhatsApp messages through UltraMsg to the reports group.
 // Secrets live in environment variables, never in the code:
 //   ULTRAMSG_INSTANCE  e.g. instance174454
@@ -65,7 +77,7 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = await req.json().catch(() => ({}))
-    const to = payload.to || defaultTo
+    const to = normalizeTo(payload.to || defaultTo)
     const body = withSignature(typeof payload.body === 'string' ? payload.body : '')
     const documentUrl = payload.documentUrl as string | undefined
     const imageUrl = payload.imageUrl as string | undefined
