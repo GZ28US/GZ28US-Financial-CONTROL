@@ -462,6 +462,25 @@ Object.assign(specialEditions, {
   '2009-MUSTANG-Shelby GT500 5.4 SC': ['None', 'GT500KR'],
 })
 
+// ── Ford SVT F-150 Lightning, 2nd gen (1999–2004) ───────────────────────────────
+// The supercharged sport truck: 5.4L Triton V8 with an Eaton blower (360 hp 1999–2000,
+// 380 hp 2001–2004). One performance trim, under FORD -> F150 for its run.
+const svtLightningColors = ['Black', 'Oxford White', 'Bright Red', 'Silver Metallic', 'Dark Shadow Grey Metallic', 'Sonic Blue Metallic', 'True Blue Metallic']
+for (let y = 1999; y <= 2004; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('FORD')) manufacturersByYear[y].push('FORD')
+  brandsByManufacturerAndYear['FORD'] = brandsByManufacturerAndYear['FORD'] || {}
+  brandsByManufacturerAndYear['FORD'][y] = brandsByManufacturerAndYear['FORD'][y] || []
+  if (!brandsByManufacturerAndYear['FORD'][y].includes('FORD')) brandsByManufacturerAndYear['FORD'][y].push('FORD')
+  modelsByBrandAndYear['FORD'] = modelsByBrandAndYear['FORD'] || {}
+  modelsByBrandAndYear['FORD'][y] = modelsByBrandAndYear['FORD'][y] || []
+  if (!modelsByBrandAndYear['FORD'][y].includes('F150')) modelsByBrandAndYear['FORD'][y].push('F150')
+  versionsByModelAndYear['F150'] = versionsByModelAndYear['F150'] || {}
+  versionsByModelAndYear['F150'][y] = ['SVT Lightning 5.4 V8 SC']
+}
+years.sort((a, b) => a - b)
+
 // ── Cadillac CTS-V, 2nd Gen (2009–2015) ─────────────────────────────────────────
 // One trim — the LSA 6.2 supercharged V8 (556 hp). Body styles live in specialEditions
 // per the special-editions rule ('None' = the Sedan). Sedan 2009–2015; Coupe 2011–2015;
@@ -935,6 +954,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'GRAND CHEROKEE' && year <= 2004) return grandCherokeeZjColors
   if (model === 'GRAND CHEROKEE') return grandCherokeeColors
   if (brand === 'RAM') return ramColors
+  if (model === 'F150' && year <= 2004) return svtLightningColors
   if (brand === 'FORD') return fordColors
   return moparColors
 }
@@ -962,7 +982,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   },
   FORD: {
     FORD: {
-      F150: ['SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
+      F150: ['SVT Lightning 5.4 V8 SC', 'SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
       MUSTANG: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.4 SC', 'Shelby GT500 5.8 SC', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
     },
   },
