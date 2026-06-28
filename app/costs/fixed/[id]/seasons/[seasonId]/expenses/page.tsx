@@ -40,10 +40,11 @@ export default function SeasonExpensesPage() {
     setLoading(false)
   }
 
-  // Auto-create the season's recurring payment rows up to the due month. Once the current
-  // month's last payment day has passed, next month's row is pre-created. Idempotent:
-  // never re-creates rows on/before the season's auto_generated_through marker, and skips
-  // any date that already has a row. MONTHLY seasons only (the recurring case).
+  // Auto-create the season's recurring payment rows. The first payment falls the month
+  // AFTER the season's start month (the start month has no payment). Both payment days in
+  // a month are combined into ONE row (summed amount, dated on the first day). Pre-creates
+  // next month once the current month's last payment day passes. Only inserts dates that
+  // don't already have a row, so it's safe to re-run. MONTHLY seasons only.
   async function ensureDuePayments(season: any) {
     if (!season || season.periodicity !== 'MONTHLY' || !season.date_entry) return
     const slots: { day: number; amount: number }[] = []
@@ -57,9 +58,14 @@ export default function SeasonExpensesPage() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const start = new Date(season.date_entry + 'T00:00:00')
     const end = season.date_conclusion ? new Date(season.date_conclusion + 'T00:00:00') : null
-    const through = season.auto_generated_through ? new Date(season.auto_generated_through + 'T00:00:00') : null
+    const firstDay = Math.min(...slots.map(s => s.day))
+    const lastDay = Math.max(...slots.map(s => s.day))
+    const monthAmount = slots.reduce((sum, s) => sum + s.amount, 0)
 
-    const lastPayThisMonth = clampDay(today.getFullYear(), today.getMonth(), Math.max(...slots.map(s => s.day)))
+    // First payment is the month AFTER the start month; pre-create next month once the
+    // current month's last payment day has passed.
+    const firstPayMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1)
+    const lastPayThisMonth = clampDay(today.getFullYear(), today.getMonth(), lastDay)
     const targetBase = today > lastPayThisMonth ? new Date(today.getFullYear(), today.getMonth() + 1, 1) : new Date(today.getFullYear(), today.getMonth(), 1)
     const targetEnd = new Date(targetBase.getFullYear(), targetBase.getMonth() + 1, 0)
 
@@ -69,23 +75,15 @@ export default function SeasonExpensesPage() {
     const supName = (sup?.description || sup?.company || 'Payment') as string
 
     const toInsert: any[] = []
-    let maxConsidered = through
-    let cursor = new Date(start.getFullYear(), start.getMonth(), 1)
+    let cursor = new Date(firstPayMonth)
     while (cursor <= targetEnd) {
-      for (const slot of slots) {
-        const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), slot.day)
-        if (pd < start || (end && pd > end) || pd > targetEnd) continue
-        if (!maxConsidered || pd > maxConsidered) maxConsidered = pd
-        if (through && pd <= through) continue
-        if (existingDates.has(ymd(pd))) continue
-        toInsert.push({ supplier_id: id, season_id: seasonId, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: ymd(pd) })
+      const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), firstDay)
+      if (!(end && pd > end) && pd <= targetEnd && !existingDates.has(ymd(pd))) {
+        toInsert.push({ supplier_id: id, season_id: seasonId, type: 'SINGLE', description: supName, amount: monthAmount, source: DEFAULT_SOURCE, expense_date: ymd(pd) })
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
     }
     if (toInsert.length > 0) await supabase.from('fixed_cost_expenses').insert(toInsert)
-    if (maxConsidered && (!through || maxConsidered > through)) {
-      await supabase.from('fixed_cost_seasons').update({ auto_generated_through: ymd(maxConsidered) }).eq('id', seasonId)
-    }
   }
 
   async function remove(eid: string) {
