@@ -887,7 +887,6 @@ export default function ViewInvoicePage() {
                       <p className="text-sm text-gray-400">
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
-                      {!invoice.is_quote && <p className="text-sm text-gray-500">{partPaid ? `Paid: ${formatDate(part.payment_date)}` : 'Not paid yet'}</p>}
                     </div>
                   </div>
                   )

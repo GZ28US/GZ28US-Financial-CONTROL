@@ -2801,7 +2801,6 @@ export default function EditInvoicePage() {
                           <p className={`text-base font-bold truncate ${(isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(isQuote || isValidDate(part.payment_date || '')) ? '' : ' — PENDING'}</p>
                           {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
-                          {!isQuote && <p className="text-sm text-gray-500">{isValidDate(part.payment_date || '') ? `Paid: ${formatDate(part.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>
                         <div className="flex gap-2 shrink-0">
                           {!isQuote && <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>}
