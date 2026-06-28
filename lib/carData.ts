@@ -737,7 +737,7 @@ const opala1974Colors = ['Branco', 'Preto', 'Prata', 'Cinza', 'Vermelho', 'Azul'
 years.sort((a, b) => a - b)
 
 // ── Chevrolet D20 Turbo — MWM turbodiesel (Brazil, 1995–1996) ────────────────────
-// GM do Brasil's D20 pickup with the MWM 4.0L inline-6 turbodiesel ("Turbo"). Only the
+// GM do Brasil's D20 pickup with the Maxion S4T Plus 4-cylinder turbodiesel. Only the
 // turbodiesel variant is catalogued. Brazilian-market — confirm trim/engine specifics.
 const d20Colors = ['Branco', 'Prata', 'Cinza', 'Preto', 'Vermelho', 'Azul', 'Verde', 'Bege', 'Champagne', 'Dourado']
 for (let y = 1995; y <= 1996; y++) {
@@ -751,7 +751,7 @@ for (let y = 1995; y <= 1996; y++) {
   modelsByBrandAndYear['CHEVROLET'][y] = modelsByBrandAndYear['CHEVROLET'][y] || []
   if (!modelsByBrandAndYear['CHEVROLET'][y].includes('D20')) modelsByBrandAndYear['CHEVROLET'][y].push('D20')
   versionsByModelAndYear['D20'] = versionsByModelAndYear['D20'] || {}
-  versionsByModelAndYear['D20'][y] = ['Turbo 4.0 Diesel 6cyl']
+  versionsByModelAndYear['D20'][y] = ['Maxion S4T Plus 4cyl Turbo Diesel']
 }
 years.sort((a, b) => a - b)
 
@@ -998,7 +998,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
       CAMARO: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0', 'ZL1 6.2', 'ZL1 1LE 6.2', 'LT1 6.2'],
       CORVETTE: ['Base 6.0', 'Z06 7.0', 'Base 6.2', 'ZR1 6.2 SC', 'Grand Sport 6.2', 'Stingray 6.2', 'Z06 6.2', 'ZR1 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
       OPALA: ['Standard 2.5 4cyl', 'Especial 2.5 4cyl', 'Luxo 2.5 4cyl', 'Luxo 4.1 6cyl', 'Gran Luxo 4.1 6cyl', 'SS 4.1 6cyl'],
-      D20: ['Turbo 4.0 Diesel 6cyl'],
+      D20: ['Maxion S4T Plus 4cyl Turbo Diesel'],
     },
   },
   FORD: {
