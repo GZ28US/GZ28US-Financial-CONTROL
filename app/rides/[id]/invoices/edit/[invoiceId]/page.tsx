@@ -219,6 +219,7 @@ export default function EditInvoicePage() {
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
+  const [editingPurchaseSource, setEditingPurchaseSource] = useState(DEFAULT_SOURCE)
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }>({ description: '', amount: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' })
   // sendToConfirm: the SEND TO button on an expense row opens this modal. The user
@@ -793,12 +794,13 @@ export default function EditInvoicePage() {
     setEditingPurchaseGroupId(groupId)
     setEditingPurchaseSupplier(first.supplier)
     setEditingPurchaseDate(first.expense_date || first.payment_date)
+    setEditingPurchaseSource(first.source || DEFAULT_SOURCE)
   }
 
   async function confirmEditPurchase() {
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, expense_date: editingPurchaseDate }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: editingPurchaseDate, source: editingPurchaseSource }
         : e
     ))
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
@@ -807,6 +809,7 @@ export default function EditInvoicePage() {
         await supabase.from('invoice_expenses').update({
           supplier: editingPurchaseSupplier || null,
           expense_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
+          source: editingPurchaseSource || DEFAULT_SOURCE,
         }).eq('id', exp.id)
       }
     }
@@ -2190,6 +2193,10 @@ export default function EditInvoicePage() {
             <div>
               <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
               <input type="text" value={editingPurchaseSupplier} onChange={(e) => setEditingPurchaseSupplier(e.target.value)} className={inputClass} />
+            </div>
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+              <SourceSelect value={editingPurchaseSource} onChange={setEditingPurchaseSource} className={inputClass} />
             </div>
             <DatePicker label="DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
             <button onClick={confirmEditPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SAVE</button>
