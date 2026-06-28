@@ -750,6 +750,10 @@ export default function EditInvoicePage() {
     const scannedPNs = new Set(scannedPurchase.items.map(i => norm(i.part_number)).filter(Boolean))
     const scannedNames = new Set(scannedPurchase.items.map(i => norm(i.description)).filter(Boolean))
     const replaced = expenses.filter(e => {
+      // Only an ESTIMATE (a line with no scanned-purchase group) may be replaced by an
+      // official scan — never another already-scanned purchase. A second scan whose item
+      // name matched a prior purchase's line was wiping that earlier purchase.
+      if (e.purchase_group) return false
       const epn = norm(e.part_number)
       return epn ? scannedPNs.has(epn) : scannedNames.has(norm(e.item))
     })
