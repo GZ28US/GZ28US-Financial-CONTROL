@@ -4,17 +4,10 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
-import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
+import { BASE_PATH, formatPhone } from '@/lib/utils'
 
 const LANG: 'en' | 'pt' = 'en'
-const EXPENSE_TYPES = ['MONTHLY', 'WEEKLY', 'DAILY', 'SINGLE']
-function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
-function fmtExpDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
-
-type FixedExpense = { id: string; type: string; description: string | null; amount: number; source: string | null; expense_date: string | null }
 
 type FixedCostSupplier = {
   id: string
@@ -35,51 +28,13 @@ export default function FixedCostSupplierViewPage() {
   const [sending, setSending] = useState(false)
   const [sendStatus, setSendStatus] = useState('')
 
-  // Fixed-cost expenses for this supplier (recurring, like staff costs).
-  const [expenses, setExpenses] = useState<FixedExpense[]>([])
-  const [addOpen, setAddOpen] = useState(false)
-  const [savingExp, setSavingExp] = useState(false)
-  const [neType, setNeType] = useState('MONTHLY')
-  const [neDesc, setNeDesc] = useState('')
-  const [neAmount, setNeAmount] = useState('')
-  const [neSource, setNeSource] = useState(DEFAULT_SOURCE)
-  const [neDate, setNeDate] = useState('')
-
-  async function loadExpenses() {
-    const { data } = await supabase.from('fixed_cost_expenses').select('*').eq('supplier_id', id).order('created_at', { ascending: false })
-    setExpenses((data || []) as FixedExpense[])
-  }
-
   useEffect(() => {
     ;(async () => {
       const { data } = await supabase.from('fixed_cost_suppliers').select('*').eq('id', id).maybeSingle()
       setS((data || null) as FixedCostSupplier | null)
-      await loadExpenses()
       setLoading(false)
     })()
   }, [id])
-
-  async function addExpense() {
-    if (!neAmount) { alert('Please enter an amount'); return }
-    setSavingExp(true)
-    const { error } = await supabase.from('fixed_cost_expenses').insert([{
-      supplier_id: id,
-      type: neType,
-      description: neDesc || null,
-      amount: parseFloat(neAmount) || 0,
-      source: neSource || DEFAULT_SOURCE,
-      expense_date: (neType === 'SINGLE' && isValidDate(neDate)) ? neDate : null,
-    }])
-    setSavingExp(false)
-    if (error) { alert(error.message); return }
-    setNeType('MONTHLY'); setNeDesc(''); setNeAmount(''); setNeSource(DEFAULT_SOURCE); setNeDate(''); setAddOpen(false)
-    loadExpenses()
-  }
-
-  async function removeExpense(eid: string) {
-    await supabase.from('fixed_cost_expenses').delete().eq('id', eid)
-    loadExpenses()
-  }
 
   function openSend() { setSendStatus(''); setSendOpen(true) }
 
@@ -163,6 +118,7 @@ export default function FixedCostSupplierViewPage() {
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <Link href="/costs/fixed" className="text-gray-400 text-lg hover:text-white">← Fixed Cost Suppliers</Link>
         <div className="flex gap-3 flex-wrap">
+          <Link href={`/costs/fixed/${s.id}/expenses`} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-3 rounded-2xl text-lg font-bold">💵 EXPENSES</Link>
           <button onClick={openSend} className="bg-emerald-700 hover:bg-emerald-600 px-6 py-3 rounded-2xl text-lg font-bold">📤 SEND TO</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
         </div>
@@ -178,67 +134,7 @@ export default function FixedCostSupplierViewPage() {
         <Row label="Email" value={s.email} />
       </div>
 
-      {/* EXPENSES — recurring fixed costs for this supplier (TYPE drives recurrence). */}
-      <div id="expenses" className="mt-8 max-w-3xl scroll-mt-8">
-        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-          <h2 className="text-2xl font-bold">EXPENSES</h2>
-          <button onClick={() => setAddOpen(o => !o)} className="bg-green-700 hover:bg-green-600 px-5 py-2 rounded-2xl font-bold">{addOpen ? '✕ CANCEL' : '+ ADD EXPENSE'}</button>
-        </div>
-
-        {addOpen && (
-          <div className="bg-gray-900 border border-blue-700 rounded-3xl p-5 mb-4 space-y-3">
-            <div className="flex gap-3 flex-wrap">
-              <div className="flex-1 min-w-[8rem]">
-                <label className="block mb-1 text-xs text-gray-400">TYPE</label>
-                <select value={neType} onChange={(e) => setNeType(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2">
-                  {EXPENSE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div className="flex-[2] min-w-[12rem]">
-                <label className="block mb-1 text-xs text-gray-400">DESCRIPTION</label>
-                <input type="text" value={neDesc} onChange={(e) => setNeDesc(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2" placeholder="e.g. Rent, Internet…" />
-              </div>
-              <div className="w-32">
-                <label className="block mb-1 text-xs text-gray-400">AMOUNT</label>
-                <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                  <input type="text" inputMode="decimal" value={neAmount} onChange={(e) => { if (/^-?\d*\.?\d*$/.test(e.target.value)) setNeAmount(e.target.value) }} className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 pl-9" placeholder="0.00" />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-3 flex-wrap items-end">
-              <div className="flex-1 min-w-[10rem]">
-                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
-                <SourceSelect value={neSource} onChange={setNeSource} className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2" />
-              </div>
-              {neType === 'SINGLE' && (
-                <div className="flex-1 min-w-[14rem]">
-                  <DatePicker label="DATE" value={neDate} onChange={setNeDate} compact />
-                </div>
-              )}
-            </div>
-            <button onClick={addExpense} disabled={savingExp} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-2 rounded-2xl font-bold">{savingExp ? 'Saving…' : 'SAVE EXPENSE'}</button>
-          </div>
-        )}
-
-        {expenses.length === 0 ? (
-          <div className="bg-gray-900 border border-dashed border-gray-700 rounded-3xl p-8 text-gray-500 text-lg">No expenses yet. Use ADD EXPENSE to add one.</div>
-        ) : (
-          <div className="bg-gray-900 border border-gray-800 rounded-3xl divide-y divide-gray-800">
-            {expenses.map(e => (
-              <div key={e.id} className="flex items-center justify-between gap-4 px-5 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-700 text-gray-200">{e.type}</span>
-                    <span className="font-bold truncate">{e.description || '—'}</span>
-                  </div>
-                  <p className="text-sm text-gray-400">{formatUSD(e.amount)}{e.source ? ` · ${e.source}` : ''}{e.expense_date ? ` · ${fmtExpDate(e.expense_date)}` : ''}</p>
-                </div>
-                <button onClick={() => removeExpense(e.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-xl font-bold text-sm shrink-0">REMOVE</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <Link href={`/costs/fixed/${s.id}/expenses`} className="inline-block mt-8 bg-amber-600 hover:bg-amber-500 text-black px-6 py-3 rounded-2xl text-lg font-bold">💵 VIEW EXPENSES →</Link>
 
       {/* SEND TO box — who do you want to send to? */}
       {sendOpen && (
