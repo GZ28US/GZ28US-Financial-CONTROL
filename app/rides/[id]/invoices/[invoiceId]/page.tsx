@@ -30,6 +30,7 @@ type Client = {
   name: string
   email: string | null
   instagram: string | null
+  facebook: string | null
   phone: string | null
   address: string | null
   city: string | null
@@ -349,6 +350,24 @@ export default function ViewInvoicePage() {
         const handle = (client?.instagram || '').replace(/^@/, '').trim()
         window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
         alert('Invoice link copied to clipboard. Instagram opened — paste it into the client’s DM to send.')
+        setSending(false)
+        return
+      }
+
+      if (method === 'Facebook') {
+        // Facebook/Messenger has no document-send API — copy the invoice link and
+        // open the client's Facebook/Messenger to paste & send.
+        const linkText = `${clientCaption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
+        try { await navigator.clipboard.writeText(linkText) } catch {}
+        const fb = (client?.facebook || '').trim()
+        let url = 'https://www.facebook.com/messages/'
+        if (fb) {
+          if (/^https?:\/\//i.test(fb)) url = fb
+          else if (fb.includes('facebook.com')) url = `https://${fb.replace(/^\/+/, '')}`
+          else url = `https://www.facebook.com/${fb.replace(/^@/, '').trim()}`
+        }
+        window.open(url, '_blank')
+        alert('Invoice link copied to clipboard. Facebook/Messenger opened — paste it to the client to send.')
         setSending(false)
         return
       }
