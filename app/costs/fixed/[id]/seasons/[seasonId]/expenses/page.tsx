@@ -9,11 +9,9 @@ import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 
-type FixedExpense = { id: string; type: string; description: string | null; amount: number; source: string | null; expense_date: string | null }
-type Scanned = { type: string; description: string; amount: string; source: string; date: string }
+type FixedExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null }
+type Scanned = { description: string; amount: string; source: string; date: string }
 
-const TYPES = ['ALL', 'MONTHLY', 'WEEKLY', 'DAILY', 'SINGLE'] as const
-const EXPENSE_TYPES = ['MONTHLY', 'WEEKLY', 'DAILY', 'SINGLE']
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
 
@@ -25,7 +23,6 @@ export default function SeasonExpensesPage() {
   const [seasonCode, setSeasonCode] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<typeof TYPES[number]>('ALL')
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [scanned, setScanned] = useState<Scanned | null>(null)
@@ -48,7 +45,7 @@ export default function SeasonExpensesPage() {
   }
 
   // SCAN EXPENSE: read the receipt, extract supplier/date/items via the scan API, and
-  // open a review modal pre-filled as a one-off (SINGLE) expense.
+  // open a review modal pre-filled. Every season expense is a dated payment of the season.
   async function handleScan(file: File) {
     setScanning(true)
     try {
@@ -66,7 +63,6 @@ export default function SeasonExpensesPage() {
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); return }
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-      // Per-unit amount × quantity folds into the line total; note the qty in the name.
       const items = (parsed.items || []).map((i: any) => {
         const qty = parseFloat(i.quantity) || 1
         const lineTotal = (parseFloat(i.amount) || 0) * qty
@@ -75,7 +71,6 @@ export default function SeasonExpensesPage() {
       const total = items.reduce((s: number, it: any) => s + it.amount, 0)
       const desc = items.length > 0 ? items.map((i: any) => i.description).filter(Boolean).join(', ') : String(parsed.supplier || '')
       setScanned({
-        type: 'SINGLE',
         description: desc,
         amount: total ? total.toFixed(2) : '',
         source: DEFAULT_SOURCE,
@@ -95,11 +90,11 @@ export default function SeasonExpensesPage() {
     const { error } = await supabase.from('fixed_cost_expenses').insert([{
       supplier_id: id,
       season_id: seasonId,
-      type: scanned.type,
+      type: 'SINGLE',
       description: scanned.description || null,
       amount: parseFloat(scanned.amount) || 0,
       source: scanned.source || DEFAULT_SOURCE,
-      expense_date: (scanned.type === 'SINGLE' && isValidDate(scanned.date)) ? scanned.date : null,
+      expense_date: isValidDate(scanned.date) ? scanned.date : null,
     }])
     setSaving(false)
     if (error) { alert(error.message); return }
@@ -107,11 +102,7 @@ export default function SeasonExpensesPage() {
   }
 
   const q = search.trim().toLowerCase()
-  const filtered = rows.filter((r) => {
-    const typeOk = filter === 'ALL' || r.type === filter
-    const searchOk = !q || [r.description, r.source, r.type].some((v) => (v || '').toLowerCase().includes(q))
-    return typeOk && searchOk
-  })
+  const filtered = rows.filter((r) => !q || [r.description, r.source].some((v) => (v || '').toLowerCase().includes(q)))
   const total = filtered.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
   const modalInput = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2'
 
@@ -139,17 +130,9 @@ export default function SeasonExpensesPage() {
               <h2 className="text-2xl font-bold">REVIEW SCANNED EXPENSE</h2>
               <button onClick={() => setScanned(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
             </div>
-            <div className="flex gap-3 flex-wrap">
-              <div className="w-32">
-                <label className="block mb-1 text-xs text-gray-400">TYPE</label>
-                <select value={scanned.type} onChange={(e) => setScanned({ ...scanned, type: e.target.value })} className={modalInput}>
-                  {EXPENSE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div className="flex-1 min-w-[12rem]">
-                <label className="block mb-1 text-xs text-gray-400">DESCRIPTION</label>
-                <input type="text" value={scanned.description} onChange={(e) => setScanned({ ...scanned, description: e.target.value })} className={modalInput} />
-              </div>
+            <div>
+              <label className="block mb-1 text-xs text-gray-400">DESCRIPTION</label>
+              <input type="text" value={scanned.description} onChange={(e) => setScanned({ ...scanned, description: e.target.value })} className={modalInput} />
             </div>
             <div className="flex gap-3 flex-wrap items-end">
               <div className="w-40">
@@ -164,7 +147,7 @@ export default function SeasonExpensesPage() {
                 <SourceSelect value={scanned.source} onChange={(v) => setScanned({ ...scanned, source: v })} className={modalInput} />
               </div>
             </div>
-            {scanned.type === 'SINGLE' && <DatePicker label="DATE" value={scanned.date} onChange={(v) => setScanned({ ...scanned, date: v })} compact />}
+            <DatePicker label="DATE" value={scanned.date} onChange={(v) => setScanned({ ...scanned, date: v })} compact />
             <button onClick={confirmScanned} disabled={saving} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{saving ? 'Saving…' : 'SAVE EXPENSE'}</button>
           </div>
         </div>
@@ -172,14 +155,14 @@ export default function SeasonExpensesPage() {
 
       <Link href={`/costs/fixed/${id}/seasons`} className="text-gray-400 text-lg hover:text-white">← Seasons</Link>
 
-      <div className="flex items-center justify-between mt-3 mb-4 gap-4 flex-wrap">
+      <div className="flex items-center justify-between mt-3 mb-8 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">Season {seasonCode} — EXPENSES ({rows.length})</h1>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search description, payer, type…"
+            placeholder="Search description, payer…"
             className="w-56 sm:w-72 max-w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg"
           />
           <label className={`bg-purple-700 hover:bg-purple-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap cursor-pointer ${scanning ? 'opacity-60 pointer-events-none' : ''}`}>
@@ -188,18 +171,6 @@ export default function SeasonExpensesPage() {
           </label>
           <Link href={`/costs/fixed/${id}/seasons/${seasonId}/expenses/new`} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">+ ADD EXPENSE</Link>
         </div>
-      </div>
-
-      <div className="flex gap-2 mb-8 flex-wrap">
-        {TYPES.map((c) => (
-          <button
-            key={c}
-            onClick={() => setFilter(c)}
-            className={`px-4 py-2 rounded-full font-bold ${filter === c ? 'bg-blue-700' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
-          >
-            {c}
-          </button>
-        ))}
       </div>
 
       {loading ? (
@@ -212,10 +183,7 @@ export default function SeasonExpensesPage() {
             {filtered.map((r) => (
               <div key={r.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 mb-1 flex-wrap">
-                    <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700">{r.type}</span>
-                    <h2 className="text-2xl font-bold truncate">{r.description || '—'}</h2>
-                  </div>
+                  <h2 className="text-2xl font-bold truncate">{r.description || '—'}</h2>
                   <p className="text-lg text-gray-400">{formatUSD(Number(r.amount) || 0)}{r.source ? ` · ${r.source}` : ''}{r.expense_date ? ` · ${fmtDate(r.expense_date)}` : ''}</p>
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
@@ -224,7 +192,7 @@ export default function SeasonExpensesPage() {
               </div>
             ))}
           </div>
-          <p className="mt-6 text-xl font-bold text-gray-300">Total ({filter}): {formatUSD(total)}</p>
+          <p className="mt-6 text-xl font-bold text-gray-300">Total: {formatUSD(total)}</p>
         </>
       )}
     </main>

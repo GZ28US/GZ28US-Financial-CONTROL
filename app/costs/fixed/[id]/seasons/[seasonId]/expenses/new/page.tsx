@@ -8,7 +8,6 @@ import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 
-const EXPENSE_TYPES = ['MONTHLY', 'WEEKLY', 'DAILY', 'SINGLE']
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 
 export default function NewSeasonExpensePage() {
@@ -16,7 +15,6 @@ export default function NewSeasonExpensePage() {
   const router = useRouter()
   const id = String(params.id)
   const seasonId = String(params.seasonId)
-  const [type, setType] = useState('MONTHLY')
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [source, setSource] = useState(DEFAULT_SOURCE)
@@ -29,11 +27,11 @@ export default function NewSeasonExpensePage() {
     const { error } = await supabase.from('fixed_cost_expenses').insert([{
       supplier_id: id,
       season_id: seasonId,
-      type,
+      type: 'SINGLE',
       description: description || null,
       amount: parseFloat(amount) || 0,
       source: source || DEFAULT_SOURCE,
-      expense_date: (type === 'SINGLE' && isValidDate(date)) ? date : null,
+      expense_date: isValidDate(date) ? date : null,
     }])
     setSaving(false)
     if (error) { alert(error.message); return }
@@ -50,12 +48,6 @@ export default function NewSeasonExpensePage() {
 
       <div className="max-w-2xl space-y-5">
         <div>
-          <label className="block mb-2 text-lg font-bold">TYPE</label>
-          <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
-            {EXPENSE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-        <div>
           <label className="block mb-2 text-lg font-bold">DESCRIPTION</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="e.g. Rent, Internet…" />
         </div>
@@ -70,7 +62,7 @@ export default function NewSeasonExpensePage() {
           <label className="block mb-2 text-lg font-bold">PAID FROM</label>
           <SourceSelect value={source} onChange={setSource} className={inputClass} />
         </div>
-        {type === 'SINGLE' && <DatePicker label="DATE" value={date} onChange={setDate} />}
+        <DatePicker label="DATE" value={date} onChange={setDate} />
         <button onClick={save} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-8 py-4 rounded-2xl font-bold text-xl">{saving ? 'Saving…' : 'SAVE EXPENSE'}</button>
       </div>
     </main>
