@@ -212,7 +212,12 @@ export default function HomePage() {
     const allDatedIncome = income.filter(r => r.dated && !r.milestone && r.date)
     allDatedIncome.forEach(r => { if ((r.date as string) <= today) r.delayed = true })
     const datedIncome = allDatedIncome.filter(r => !r.delayed)
-    const datedExpense = expense.filter(r => r.dated && r.date)
+    // Mirror the income side: a dated bill whose date is today or past, still unpaid, is
+    // DELAYED — it stays in the DUE by GZ28 box (under its own DELAYED group, before
+    // UNDATED) and keeps counting. Only UPCOMING (future) dated bills go to the flow below.
+    const allDatedExpense = expense.filter(r => r.dated && r.date)
+    allDatedExpense.forEach(r => { if ((r.date as string) <= today) r.delayed = true })
+    const datedExpense = allDatedExpense.filter(r => !r.delayed)
     dueClients -= datedIncome.reduce((x, r) => x + r.amount, 0)
     dueGz += datedExpense.reduce((x, r) => x + r.amount, 0)
     // FLORIDA TAXES move to their own box below — drop them from the DUE by GZ28US total too.
