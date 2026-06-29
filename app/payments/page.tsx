@@ -36,6 +36,15 @@ export default function PaymentsPage() {
     ])
     // PAID by GZ28 — fixed-cost supplier payments (payment_date in window).
     const { data: fixedCostD } = await supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date').not('payment_date', 'is', null).gte('payment_date', cutoffDate)
+    // Inventory part sales — INCOME (money in -> PAID by CLIENTS) and EXPENSE (money out -> PAID by GZ28), by entry_date.
+    const { data: invSalesD } = await supabase.from('inventory_sales').select('id, inventory_id, kind, amount, entry_date, description').not('entry_date', 'is', null).gte('entry_date', cutoffDate)
+    const saleInvIds = [...new Set((invSalesD || []).map((s: any) => s.inventory_id))]
+    let saleInvRows: any[] = []
+    if (saleInvIds.length) { const { data } = await supabase.from('inventory').select('id, description').in('id', saleInvIds); saleInvRows = data || [] }
+    const saleInvName = new Map<string, string>(); saleInvRows.forEach((i: any) => saleInvName.set(i.id, i.description || ''))
+    const saleRow = (s: any): PayRow => { const name = saleInvName.get(s.inventory_id) || 'Inventory'; return { id: `invsale-${s.kind === 'INCOME' ? 'in' : 'ex'}-${s.id}`, date: s.entry_date, amount: parseFloat(s.amount) || 0, code: 'SALE', label2: name, tip: [name, s.description].filter(Boolean).join(' — '), href: `${BASE_PATH}/inventory/sell/${s.inventory_id}` } }
+    const saleIncomeRows: PayRow[] = (invSalesD || []).filter((s: any) => s.kind === 'INCOME').map(saleRow)
+    const saleExpenseRows: PayRow[] = (invSalesD || []).filter((s: any) => s.kind === 'EXPENSE').map(saleRow)
     // Group rows sharing a purchase_group into a single "purchase" row (scanned
     // receipts come in as many line items — show the purchase, not each item).
     const byPurchaseGroup = <T extends { purchase_group?: string | null; id: string }>(rs: T[]) => {
@@ -89,10 +98,11 @@ export default function PaymentsPage() {
     const paysReal = (pays || []).filter((p: any) => notQuote(p.invoice_id))
     const expsReal = (exps || []).filter((e: any) => notQuote(e.invoice_id))
 
-    const cRows: PayRow[] = paysReal.map((p: any) => {
+    const payRows: PayRow[] = paysReal.map((p: any) => {
       const m = invMeta(p.invoice_id)
       return { id: `pay-${p.id}`, date: (p.paid_at || '').slice(0, 10), amount: parseFloat(p.amount) || 0, code: m.code, label2: m.clientName || m.carName || '', tip: [m.clientName, m.carName, m.invoiceName].filter(Boolean).join(' — '), href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/${m.inv.id}` : '#' }
-    }).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    })
+    const cRows: PayRow[] = [...payRows, ...saleIncomeRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     // Consolidate every expense sharing the same INVOICE + SUPPLIER + PAYMENT DATE into a
     // single row — covers scanned-receipt groups AND separately-added lines alike. Expenses
@@ -138,7 +148,7 @@ export default function PaymentsPage() {
       href: `${BASE_PATH}/costs/fixed/${e.supplier_id}`,
     }))
 
-    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods'), ...fixedCostRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods'), ...fixedCostRows, ...saleExpenseRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     setClientRows(cRows)
     setGzRows(gRows)

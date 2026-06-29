@@ -120,10 +120,11 @@ export default function HomePage() {
     const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
-    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }] = await Promise.all([
+    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }] = await Promise.all([
       supabase.from('rides').select('id, project_name, model, version, client_id'),
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
+      supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
@@ -148,6 +149,15 @@ export default function HomePage() {
       metaById.set(inv.id, meta); metaByCode.set(inv.invoice_code, meta)
     }
     const metaFor = (id?: string, code?: string) => (id && metaById.get(id)) || (code && metaByCode.get(code)) || { href: '#', tip: code || '', carInvTip: code || '', clientName: '', carName: '', invoiceName: '' }
+
+    // Inventory part sales: paid (dated) incomes are money in, paid expenses money out.
+    let saleIncomePaid = 0, saleExpensePaid = 0
+    for (const sv of invSalesD || []) {
+      const amt = parseFloat(sv.amount) || 0
+      if (!amt) continue
+      if (sv.kind === 'INCOME') saleIncomePaid += amt
+      else if (sv.kind === 'EXPENSE') saleExpensePaid += amt
+    }
 
     let cashFlow = 0, dueClients = 0, markup = 0, dueGz = 0, sumExpPaid = 0, sumExpGlobal = 0
     for (const inv of invs || []) {
@@ -175,6 +185,9 @@ export default function HomePage() {
       sumExpPaid += expensesTotalPaid
       sumExpGlobal += expensesTotalGlobal
     }
+    // Fold inventory part-sale cash into the Cash FLOW stat (money in − money out).
+    cashFlow += saleIncomePaid - saleExpensePaid
+    sumExpPaid += saleExpensePaid
 
     // Detail rows below the boxes: only DUE (unpaid) rows — already-paid ones carry no DUE.
     // Income is PAID when paid_at is set; an unpaid income is DATED if it has a scheduled

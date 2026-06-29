@@ -99,6 +99,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
+  const [soldIds, setSoldIds] = useState<Set<string>>(new Set())
 
   useEffect(() => { loadInputs() }, [])
 
@@ -117,6 +118,14 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
     setLoading(false)
     // Purchases start collapsed; the user expands the ones they want to inspect.
     setExpandedGroups(new Set())
+    // STOCK: an item with any sale INCOME is SOLD (moves to the SOLD section at the bottom).
+    if (isStockMode) {
+      const ids = (data || []).map((i: Input) => i.id)
+      if (ids.length) {
+        const { data: sales } = await supabase.from('inventory_sales').select('inventory_id').eq('kind', 'INCOME').in('inventory_id', ids)
+        setSoldIds(new Set((sales || []).map((x: any) => x.inventory_id)))
+      } else setSoldIds(new Set())
+    }
   }
 
   async function removeInput(id: string) {
@@ -326,7 +335,9 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
 
   // STOCK rows with 0 quantity are hidden (sold out). CONSUMPTION rows always show.
   const visibleInputs = inputs.filter(i => !(isStockMode && i.quantity <= 0))
-  const total = visibleInputs.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+  // SOLD stock items (those with a sale income) move to their own section and no longer
+  // count toward the stock total.
+  const total = visibleInputs.filter(i => !soldIds.has(i.id)).reduce((s, i) => s + i.quantity * i.unit_price, 0)
 
   // Optional text search across description / supplier / notes / donor. Totals stay
   // on the full inventory; only the displayed rows are narrowed.
@@ -334,15 +345,17 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
   const filteredInputs = term
     ? visibleInputs.filter(i => [i.description, i.supplier, i.notes, i.donor].some(f => (f || '').toLowerCase().includes(term)))
     : visibleInputs
+  const activeFiltered = filteredInputs.filter(i => !soldIds.has(i.id))
+  const soldFiltered = filteredInputs.filter(i => soldIds.has(i.id))
 
-  // Build rows: group purchases together
+  // Build rows: group purchases together (active, non-sold items only)
   const rows: { type: 'single' | 'group'; input?: Input; groupId?: string; groupInputs?: Input[] }[] = []
   const seenGroups = new Set<string>()
-  filteredInputs.forEach(input => {
+  activeFiltered.forEach(input => {
     if (input.purchase_group) {
       if (!seenGroups.has(input.purchase_group)) {
         seenGroups.add(input.purchase_group)
-        const groupInputs = filteredInputs.filter(i => i.purchase_group === input.purchase_group)
+        const groupInputs = activeFiltered.filter(i => i.purchase_group === input.purchase_group)
         rows.push({ type: 'group', groupId: input.purchase_group, groupInputs })
       }
     } else {
@@ -603,6 +616,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
                             )}
                           </div>
                           <div className="flex gap-3 shrink-0">
+                            {isStockMode && <Link href={`/inventory/sell/${input.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-2xl font-bold text-sm">💲 SELL</Link>}
                             <Link href={`/inputs/${input.id}${itemQuery}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
                             <Link href={`/inputs/edit/${input.id}${itemQuery}`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
                             <button onClick={() => setConfirmId(input.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
@@ -639,6 +653,7 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
                     )}
                   </div>
                   <div className="flex gap-3 flex-wrap shrink-0">
+                    {isStockMode && <Link href={`/inventory/sell/${input.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold">💲 SELL</Link>}
                     <Link href={`/inputs/${input.id}${itemQuery}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                     <Link href={`/inputs/edit/${input.id}${itemQuery}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                     <button onClick={() => setConfirmId(input.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
@@ -648,6 +663,26 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
             }
             return null
           })}
+        </div>
+      )}
+
+      {isStockMode && soldFiltered.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-2xl font-bold mb-4 text-amber-400">SOLD ({soldFiltered.length})</h2>
+          <div className="space-y-3">
+            {soldFiltered.map((input) => (
+              <div key={input.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 flex items-center justify-between gap-4 flex-wrap opacity-90">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-xl font-bold truncate">{input.description}</h3>
+                    <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-700 text-black">SOLD</span>
+                  </div>
+                  <p className="text-gray-400">Qty: {input.quantity} × {formatUSD(input.unit_price)}{input.supplier ? ` · ${input.supplier}` : ''}</p>
+                </div>
+                <Link href={`/inventory/sell/${input.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold shrink-0">VIEW SALE</Link>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </main>
