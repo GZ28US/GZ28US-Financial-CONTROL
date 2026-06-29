@@ -16,6 +16,7 @@ function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Dat
 function fmtMonthYear(mk: string) { const dt = new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1); return `${dt.toLocaleDateString('en-US', { month: 'short' })}, ${dt.getFullYear()}` }
 function dayOf(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').getDate() : '' }
 function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+function daysLate(fromYmd: string, toYmd: string) { return Math.max(0, Math.floor((new Date(toYmd + 'T00:00:00').getTime() - new Date(fromYmd + 'T00:00:00').getTime()) / 86400000)) }
 
 export default function SeasonExpensesPage() {
   const params = useParams()
@@ -221,6 +222,7 @@ export default function SeasonExpensesPage() {
                   {pays.map((p) => {
                     const paid = isValidDate(p.payment_date)
                     const delayed = !paid && isValidDate(p.expense_date) && (p.expense_date as string) < td
+                    const daysDelayed = delayed ? daysLate(p.expense_date as string, td) : 0
                     return (
                       <div key={p.id} className="flex items-center justify-between gap-3 flex-wrap border-b border-gray-700/60 pb-3 last:border-0 last:pb-0">
                         <div className="min-w-0">
@@ -228,7 +230,7 @@ export default function SeasonExpensesPage() {
                             <span className="text-lg font-bold">{formatUSD(Number(p.amount) || 0)}</span>
                             <span className="text-gray-400 text-sm">day {dayOf(p.expense_date)}</span>
                             {paid ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
-                              : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED</span> : null}
+                              : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({daysDelayed} {daysDelayed === 1 ? 'day' : 'days'})</span> : null}
                           </div>
                           {paid && <p className="text-xs text-gray-500">Paid: {fmtDate(p.payment_date)}{p.receipt_url ? ' · 📎 receipt' : ''}</p>}
                         </div>
