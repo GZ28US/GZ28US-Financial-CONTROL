@@ -218,12 +218,18 @@ export default function FixedCostSupplierViewPage() {
   }
 
   const td = todayYmd()
-  const total = rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
   const modalInput = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2'
 
   const byMonth = new Map<string, FixedExpense[]>()
   for (const r of rows) { const k = (r.expense_date || '').slice(0, 7); if (!k) continue; if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k)!.push(r) }
-  const months = [...byMonth.keys()].sort((a, b) => b.localeCompare(a))
+  const allMonths = [...byMonth.keys()].sort((a, b) => b.localeCompare(a))
+  // This page lists only the PAST months + the NEXT upcoming one. Further-out months stay
+  // generated (for the HOME/reports) but aren't shown here.
+  let nextMonthKey: string | null = null
+  for (const r of rows) { if (isValidDate(r.expense_date) && (r.expense_date as string) > td) { const mk = (r.expense_date as string).slice(0, 7); if (!nextMonthKey || mk < nextMonthKey) nextMonthKey = mk } }
+  const months = nextMonthKey ? allMonths.filter(mk => mk <= (nextMonthKey as string)) : allMonths
+  const visibleCount = months.reduce((n, mk) => n + (byMonth.get(mk) || []).length, 0)
+  const total = months.reduce((sum, mk) => sum + (byMonth.get(mk) || []).reduce((s, r) => s + (Number(r.amount) || 0), 0), 0)
 
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   if (!s) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Not found.</p></main>
@@ -319,7 +325,7 @@ export default function FixedCostSupplierViewPage() {
       )}
 
       <div className="flex items-baseline gap-4 mb-6">
-        <h2 className="text-3xl font-bold">EXPENSES ({rows.length})</h2>
+        <h2 className="text-3xl font-bold">EXPENSES ({visibleCount})</h2>
         <span className="text-xl font-bold text-gray-300">Total: {formatUSD(total)}</span>
       </div>
 
