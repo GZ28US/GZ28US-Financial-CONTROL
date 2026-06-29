@@ -83,12 +83,10 @@ export default function FixedCostSupplierViewPage() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const start = new Date(sup.date_entry + 'T00:00:00')
     const end = sup.date_conclusion ? new Date(sup.date_conclusion + 'T00:00:00') : null
-    const lastDay = Math.max(...slots.map(x => x.day))
 
     const firstPayMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1)
-    const lastPayThisMonth = clampDay(today.getFullYear(), today.getMonth(), lastDay)
-    const targetBase = today > lastPayThisMonth ? new Date(today.getFullYear(), today.getMonth() + 1, 1) : new Date(today.getFullYear(), today.getMonth(), 1)
-    const targetEnd = new Date(targetBase.getFullYear(), targetBase.getMonth() + 1, 0)
+    // Always keep 6 months of payments generated ahead of the current month.
+    const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
 
     const { data: existing } = await supabase.from('fixed_cost_expenses').select('expense_date').eq('supplier_id', id)
     const existingDates = new Set((existing || []).map((e: any) => e.expense_date).filter(Boolean))

@@ -27,7 +27,7 @@ function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
 type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string; delayed?: boolean }
 // A dated cash-flow entry for the monthly-flow box: income is +, expense is −.
-type FlowItem = { date: string; code: string; label: string; href: string; signed: number }
+type FlowItem = { date: string; code: string; label: string; href: string; signed: number; tip?: string }
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
@@ -205,11 +205,20 @@ export default function HomePage() {
     // Fixed-cost supplier bills that are still UNPAID — money GZ28 owes. Each is dated on
     // its scheduled day, so a past-due one becomes DELAYED in the DUE by GZ28 box and an
     // upcoming one flows into the monthly box below (same treatment as invoice bills).
+    // Both unpaid payments of the same month + supplier show as ONE combined row (summed,
+    // dated on the later day). Once one is paid it leaves this list, so the other shows alone.
+    const fcByGroup = new Map<string, { amount: number; date: string; label: string; supplierId: string }>()
     for (const e of fixedCostExp || []) {
       const fcAmount = parseFloat(e.amount) || 0
       if (!fcAmount || !isValidDate(e.expense_date)) continue
-      expense.push({ code: 'FIXED', label: e.description || 'Fixed cost', amount: fcAmount, dated: true, date: e.expense_date, href: `${BASE_PATH}/costs/fixed/${e.supplier_id}`, tip: e.description || 'Fixed cost', labelTip: 'Fixed cost' })
       dueGz -= fcAmount
+      const key = `${e.supplier_id}|${(e.expense_date as string).slice(0, 7)}`
+      const g = fcByGroup.get(key)
+      if (g) { g.amount += fcAmount; if ((e.expense_date as string) > g.date) g.date = e.expense_date }
+      else fcByGroup.set(key, { amount: fcAmount, date: e.expense_date, label: e.description || 'Fixed cost', supplierId: e.supplier_id })
+    }
+    for (const g of fcByGroup.values()) {
+      expense.push({ code: 'FIXED', label: g.label, amount: g.amount, dated: true, date: g.date, href: `${BASE_PATH}/costs/fixed/${g.supplierId}`, tip: g.label, labelTip: 'Fixed cost' })
     }
     expense.sort(byDateThenAmount)
 
@@ -235,8 +244,8 @@ export default function HomePage() {
     // FLORIDA TAXES move to their own box below — drop them from the DUE by GZ28US total too.
     dueGz += tax.reduce((x, r) => x + r.amount, 0)
     const flowItems: FlowItem[] = [
-      ...datedIncome.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: r.amount })),
-      ...datedExpense.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: -r.amount })),
+      ...datedIncome.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: r.amount, tip: r.tip })),
+      ...datedExpense.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: -r.amount, tip: r.tip })),
     ].sort((a, b) => a.date.localeCompare(b.date))
     setFlow(flowItems)
 
@@ -363,7 +372,7 @@ function MonthlyFlow({ flow }: { flow: FlowItem[] }) {
             </div>
             {items.map((it, i) => (
               <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60">
-                <span className="text-gray-300 truncate">
+                <span className="text-gray-300 truncate" title={it.tip || undefined}>
                   {formatShortDate(it.date)} · <a href={it.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{it.code}</a> · {it.label}
                 </span>
                 <span className={`font-bold shrink-0 ${it.signed >= 0 ? 'text-green-400' : 'text-orange-400'}`}>{formatUSD(it.signed)}</span>
