@@ -3,10 +3,16 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
+import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
 const CONTACTS = ['WhatsApp', 'Email', 'Phone']
+const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'ANNUAL']
+const COST_TYPES = ['FIXED', 'VARIABLE']
+const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
+function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+function isNumeric(v: string) { return v === '' || /^-?\d*\.?\d*$/.test(v) }
 
 export default function EditFixedCostSupplierPage() {
   const router = useRouter()
@@ -18,6 +24,15 @@ export default function EditFixedCostSupplierPage() {
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [preferred, setPreferred] = useState('WhatsApp')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [periodicity, setPeriodicity] = useState('MONTHLY')
+  const [costType, setCostType] = useState('FIXED')
+  const [day1, setDay1] = useState('')
+  const [amount1, setAmount1] = useState('')
+  const [show2nd, setShow2nd] = useState(false)
+  const [day2, setDay2] = useState('')
+  const [amount2, setAmount2] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -33,6 +48,15 @@ export default function EditFixedCostSupplierPage() {
         setPhone(data.phone || '')
         setEmail(data.email || '')
         setPreferred(data.preferred_contact || 'WhatsApp')
+        setStartDate(data.date_entry || '')
+        setEndDate(data.date_conclusion || '')
+        setPeriodicity(data.periodicity || 'MONTHLY')
+        setCostType(data.cost_type || 'FIXED')
+        setDay1(data.payment_day_1 != null ? String(data.payment_day_1) : '')
+        setAmount1(data.amount_1 != null ? String(data.amount_1) : '')
+        setDay2(data.payment_day_2 != null ? String(data.payment_day_2) : '')
+        setAmount2(data.amount_2 != null ? String(data.amount_2) : '')
+        if (data.payment_day_2 != null || data.amount_2 != null) setShow2nd(true)
       }
       setLoading(false)
     })()
@@ -48,6 +72,14 @@ export default function EditFixedCostSupplierPage() {
       phone: phone.trim() || null,
       email: email.trim() || null,
       preferred_contact: preferred,
+      date_entry: isValidDate(startDate) ? startDate : null,
+      date_conclusion: isValidDate(endDate) ? endDate : null,
+      periodicity,
+      cost_type: costType,
+      payment_day_1: day1 !== '' ? (parseInt(day1, 10) || null) : null,
+      amount_1: amount1 !== '' ? (parseFloat(amount1) || 0) : null,
+      payment_day_2: (show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
+      amount_2: (show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
       updated_at: new Date().toISOString(),
     }).eq('id', id)
     if (error) { alert(error.message); setSaving(false); return }
@@ -65,13 +97,71 @@ export default function EditFixedCostSupplierPage() {
         <Field label="DESCRIPTION" value={description} onChange={setDescription} />
         <Field label="COMPANY" value={company} onChange={setCompany} />
         <Field label="MAIN CONTACT NAME" value={contactName} onChange={setContactName} />
-        <Field label="PHONE" value={phone} onChange={setPhone} />
+        <Field label="PHONE" value={phone} onChange={setPhone} placeholder="+1 555 000 0000" />
         <Field label="EMAIL" value={email} onChange={setEmail} type="email" />
         <div>
           <label className="block mb-2 text-lg font-bold">PREFERRED CONTACT</label>
           <select value={preferred} onChange={(e) => setPreferred(e.target.value)} className={inputClass}>
             {CONTACTS.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+        </div>
+
+        <div className="border-t border-gray-800 pt-5 mt-2">
+          <h2 className="text-2xl font-bold mb-4">PAYMENT SCHEDULE</h2>
+          <div className="grid grid-cols-1 gap-5">
+            <DatePicker label="START DATE" value={startDate} onChange={setStartDate} />
+            <div>
+              <label className="block mb-2 text-sm text-gray-400 font-bold">PAYMENT PERIODICITY</label>
+              <select value={periodicity} onChange={(e) => setPeriodicity(e.target.value)} className={inputClass}>
+                {PERIODICITY.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block mb-2 text-sm text-gray-400 font-bold">TYPE</label>
+              <select value={costType} onChange={(e) => setCostType(e.target.value)} className={inputClass}>
+                {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 space-y-4">
+              <div className="flex gap-3 items-end flex-wrap">
+                <div className="w-28">
+                  <label className="block mb-2 text-sm text-gray-400 font-bold">DAY</label>
+                  <select value={day1} onChange={(e) => setDay1(e.target.value)} className={inputClass}>
+                    <option value="">—</option>
+                    {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div className="flex-1 min-w-[10rem]">
+                  <label className="block mb-2 text-sm text-gray-400 font-bold">AMOUNT</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">$</span>
+                    <input type="text" inputMode="decimal" value={amount1} onChange={(e) => { if (isNumeric(e.target.value)) setAmount1(e.target.value) }} className={`${inputClass} pl-12`} placeholder="0.00" />
+                  </div>
+                </div>
+                {!show2nd && <button onClick={() => setShow2nd(true)} className="bg-blue-700 hover:bg-blue-600 px-5 py-4 rounded-2xl font-bold whitespace-nowrap">+ ADD 2ND</button>}
+              </div>
+              {show2nd && (
+                <div className="flex gap-3 items-end flex-wrap">
+                  <div className="w-28">
+                    <label className="block mb-2 text-sm text-gray-400 font-bold">DAY</label>
+                    <select value={day2} onChange={(e) => setDay2(e.target.value)} className={inputClass}>
+                      <option value="">—</option>
+                      {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[10rem]">
+                    <label className="block mb-2 text-sm text-gray-400 font-bold">AMOUNT</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">$</span>
+                      <input type="text" inputMode="decimal" value={amount2} onChange={(e) => { if (isNumeric(e.target.value)) setAmount2(e.target.value) }} className={`${inputClass} pl-12`} placeholder="0.00" />
+                    </div>
+                  </div>
+                  <button onClick={() => { setShow2nd(false); setDay2(''); setAmount2('') }} className="bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold whitespace-nowrap">Remove</button>
+                </div>
+              )}
+            </div>
+            <DatePicker label="END DATE" value={endDate} onChange={setEndDate} />
+          </div>
         </div>
       </div>
 
@@ -87,11 +177,11 @@ export default function EditFixedCostSupplierPage() {
   )
 }
 
-function Field({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
+function Field({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
   return (
     <div>
       <label className="block mb-2 text-lg font-bold">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl" />
+      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl" />
     </div>
   )
 }
