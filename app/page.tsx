@@ -4,10 +4,53 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
+import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
+
+// Generate every fixed-cost supplier's scheduled payment rows 6 months ahead (one row per
+// payment day per month, first payment the month after the start). Idempotent — only inserts
+// month-dates that don't already exist. Runs here so the rows exist on HOME without first
+// visiting each supplier page (which has the same generator).
+async function ensureFixedCostPayments() {
+  const { data: sups } = await supabase.from('fixed_cost_suppliers')
+    .select('id, description, company, date_entry, date_conclusion, periodicity, payment_day_1, amount_1, payment_day_2, amount_2')
+  if (!sups || sups.length === 0) return
+  const { data: existing } = await supabase.from('fixed_cost_expenses').select('supplier_id, expense_date')
+  const existsBySup = new Map<string, Set<string>>()
+  for (const e of existing || []) { if (!e.expense_date) continue; if (!existsBySup.has(e.supplier_id)) existsBySup.set(e.supplier_id, new Set()); existsBySup.get(e.supplier_id)!.add(e.expense_date) }
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const clampDay = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
+  const toInsert: any[] = []
+  for (const sup of sups as any[]) {
+    if (sup.periodicity !== 'MONTHLY' || !sup.date_entry) continue
+    const slots: { day: number; amount: number }[] = []
+    if (sup.payment_day_1 != null && sup.amount_1 != null) slots.push({ day: Number(sup.payment_day_1), amount: Number(sup.amount_1) })
+    if (sup.payment_day_2 != null && sup.amount_2 != null) slots.push({ day: Number(sup.payment_day_2), amount: Number(sup.amount_2) })
+    if (slots.length === 0) continue
+    const start = new Date(sup.date_entry + 'T00:00:00')
+    const end = sup.date_conclusion ? new Date(sup.date_conclusion + 'T00:00:00') : null
+    const supName = sup.description || sup.company || 'Payment'
+    const has = existsBySup.get(sup.id) || new Set<string>()
+    let cursor = new Date(start.getFullYear(), start.getMonth() + 1, 1)
+    while (cursor <= targetEnd) {
+      for (const slot of slots) {
+        const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), slot.day)
+        const key = ymd(pd)
+        if (!(end && pd > end) && pd <= targetEnd && !has.has(key)) {
+          toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key })
+          has.add(key)
+        }
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    }
+  }
+  if (toInsert.length > 0) await supabase.from('fixed_cost_expenses').insert(toInsert)
+}
 
 // Collapse any stored milestone label (incl. legacy long forms like
 // "Goods Arrival" / "Project Conclusion") to its canonical short code, so old
@@ -38,6 +81,7 @@ export default function HomePage() {
   useEffect(() => { void load() }, [])
 
   async function load() {
+    await ensureFixedCostPayments()
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
       supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
