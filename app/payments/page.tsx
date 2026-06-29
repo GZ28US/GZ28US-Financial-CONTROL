@@ -34,6 +34,8 @@ export default function PaymentsPage() {
       supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
       supabase.from('goods').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
     ])
+    // PAID by GZ28 — fixed-cost supplier payments (payment_date in window).
+    const { data: fixedCostD } = await supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date').not('payment_date', 'is', null).gte('payment_date', cutoffDate)
     // Group rows sharing a purchase_group into a single "purchase" row (scanned
     // receipts come in as many line items — show the purchase, not each item).
     const byPurchaseGroup = <T extends { purchase_group?: string | null; id: string }>(rs: T[]) => {
@@ -130,7 +132,13 @@ export default function PaymentsPage() {
       return { id: `staff-${e.id}`, date: e.expense_date, amount: parseFloat(e.amount) || 0, code: season?.season_code || 'STAFF', label2: staffName || (e.description || ''), tip: [staffName, e.description].filter(Boolean).join(' — '), href: season ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${e.season_id}/expenses` : '#' }
     })
 
-    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods')].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    const fixedCostRows: PayRow[] = (fixedCostD || []).map((e: any) => ({
+      id: `fixed-${e.id}`, date: e.payment_date, amount: parseFloat(e.amount) || 0,
+      code: 'FIXED', label2: e.description || 'Fixed cost', tip: e.description || 'Fixed cost',
+      href: `${BASE_PATH}/costs/fixed/${e.supplier_id}`,
+    }))
+
+    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods'), ...fixedCostRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     setClientRows(cRows)
     setGzRows(gRows)

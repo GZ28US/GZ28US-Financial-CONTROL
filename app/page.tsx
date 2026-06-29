@@ -76,9 +76,10 @@ export default function HomePage() {
     const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
-    const [{ data: ridesD }, { data: clientsD }] = await Promise.all([
+    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }] = await Promise.all([
       supabase.from('rides').select('id, project_name, model, version, client_id'),
       supabase.from('clients').select('id, name'),
+      supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
@@ -200,6 +201,17 @@ export default function HomePage() {
     const byDateThenAmount = (a: Row, b: Row) =>
       (a.date && b.date) ? (a.date.localeCompare(b.date) || b.amount - a.amount) : a.date ? -1 : b.date ? 1 : (b.amount - a.amount)
     income.sort(byDateThenAmount); expense.sort(byDateThenAmount); tax.sort(byDateThenAmount)
+
+    // Fixed-cost supplier bills that are still UNPAID — money GZ28 owes. Each is dated on
+    // its scheduled day, so a past-due one becomes DELAYED in the DUE by GZ28 box and an
+    // upcoming one flows into the monthly box below (same treatment as invoice bills).
+    for (const e of fixedCostExp || []) {
+      const fcAmount = parseFloat(e.amount) || 0
+      if (!fcAmount || !isValidDate(e.expense_date)) continue
+      expense.push({ code: 'FIXED', label: e.description || 'Fixed cost', amount: fcAmount, dated: true, date: e.expense_date, href: `${BASE_PATH}/costs/fixed/${e.supplier_id}`, tip: e.description || 'Fixed cost', labelTip: 'Fixed cost' })
+      dueGz -= fcAmount
+    }
+    expense.sort(byDateThenAmount)
 
     // Pull DATED income & expenses OUT of the DUE boxes into the monthly-flow box
     // below: income is money in (+), expense is money out (−). Adjust the box
