@@ -316,6 +316,16 @@ export default function HomePage() {
     setLoading(false)
   }
 
+  // Next-6-months series for the chart (current month + 5 ahead): incomes, expenses, balance.
+  const flowSeries = (() => {
+    const byM = new Map<string, { inc: number; exp: number }>()
+    for (const it of flow) { const k = it.date.slice(0, 7); const g = byM.get(k) || { inc: 0, exp: 0 }; if (it.signed >= 0) g.inc += it.signed; else g.exp += -it.signed; byM.set(k, g) }
+    const base = new Date()
+    const out: { mk: string; inc: number; exp: number; bal: number }[] = []
+    for (let i = 0; i < 6; i++) { const d = new Date(base.getFullYear(), base.getMonth() + i, 1); const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; const g = byM.get(mk) || { inc: 0, exp: 0 }; out.push({ mk, inc: g.inc, exp: g.exp, bal: g.inc - g.exp }) }
+    return out
+  })()
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
@@ -329,6 +339,12 @@ export default function HomePage() {
             <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor="text-green-400" rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
             <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor="text-orange-400" rows={rows.expense} undatedColor="text-orange-400" />
           </div>
+          {flow.length > 0 && (
+            <div className="mt-4 max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5">
+              <p className="text-sm font-bold text-gray-400 mb-2">NEXT 6 MONTHS</p>
+              <CashFlowChart series={flowSeries} />
+            </div>
+          )}
           {flow.length > 0 && <MonthlyFlow flow={flow} />}
           {rows.tax.length > 0 && (
             <div className="mt-4 max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5">
@@ -404,6 +420,66 @@ function RowGroup({ label, rows, color }: { label: string; rows: Row[]; color: s
 
 // All DATED income (+) and expenses (−) in one column, grouped by month, with a
 // running ("current") balance carried through each month.
+// Compact USD for axis labels: $254k, $1.5k, $300, -$2k.
+function compactUSD(v: number): string {
+  const a = Math.abs(v)
+  if (a >= 1000) return `${v < 0 ? '-' : ''}$${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k`
+  return `${v < 0 ? '-' : ''}$${a.toFixed(0)}`
+}
+function niceStep(x: number): number {
+  if (x <= 0) return 1
+  const p = Math.pow(10, Math.floor(Math.log10(x)))
+  const f = x / p
+  const n = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10
+  return n * p
+}
+
+// 3-line cashflow chart: RED expenses, BLUE incomes, GREEN balance.
+function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: number; bal: number }[] }) {
+  const W = 760, H = 300, padR = 14, padT = 30, padB = 42
+  const vals = series.flatMap(s => [s.inc, s.exp, s.bal])
+  const rawMax = Math.max(1, ...vals), rawMin = Math.min(0, ...vals)
+  const step = niceStep((rawMax - rawMin) / 4 || 1)
+  const maxV = Math.ceil(rawMax / step) * step
+  const minV = Math.floor(rawMin / step) * step
+  const padL = 16 + Math.max(compactUSD(maxV).length, compactUSD(minV).length) * 7
+  const x0 = padL, x1 = W - padR, yTop = padT, yBot = H - padB
+  const xFor = (i: number) => series.length <= 1 ? (x0 + x1) / 2 : x0 + (i / (series.length - 1)) * (x1 - x0)
+  const yFor = (v: number) => yBot - ((v - minV) / (maxV - minV || 1)) * (yBot - yTop)
+  const line = (k: 'inc' | 'exp' | 'bal') => series.map((s, i) => `${i ? 'L' : 'M'}${xFor(i).toFixed(1)},${yFor(s[k]).toFixed(1)}`).join(' ')
+  const ticks: number[] = []
+  for (let v = minV; v <= maxV + 0.001; v += step) ticks.push(v)
+  const mLabel = (mk: string) => new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'short' })
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+      <g fontSize="12" fontWeight="bold">
+        <rect x={x0} y={4} width="14" height="4" fill="#f87171" /><text x={x0 + 18} y={12} fill="#f87171">EXPENSES</text>
+        <rect x={x0 + 104} y={4} width="14" height="4" fill="#60a5fa" /><text x={x0 + 122} y={12} fill="#60a5fa">INCOMES</text>
+        <rect x={x0 + 198} y={4} width="14" height="4" fill="#4ade80" /><text x={x0 + 216} y={12} fill="#4ade80">BALANCE</text>
+      </g>
+      {ticks.map((t, i) => (
+        <g key={`t${i}`}>
+          <line x1={x0} y1={yFor(t)} x2={x1} y2={yFor(t)} stroke={Math.abs(t) < 0.001 ? '#4b5563' : '#1f2937'} strokeWidth="1" />
+          <text x={x0 - 6} y={yFor(t) + 4} textAnchor="end" fontSize="11" fill="#6b7280">{compactUSD(t)}</text>
+        </g>
+      ))}
+      {series.map((s, i) => (
+        <text key={`x${i}`} x={xFor(i)} y={yBot + 18} textAnchor="middle" fontSize="11" fill="#6b7280">{mLabel(s.mk)}</text>
+      ))}
+      <path d={line('exp')} fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d={line('inc')} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d={line('bal')} fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinejoin="round" />
+      {series.map((s, i) => (
+        <g key={`d${i}`}>
+          <circle cx={xFor(i)} cy={yFor(s.exp)} r="2.4" fill="#f87171" />
+          <circle cx={xFor(i)} cy={yFor(s.inc)} r="2.4" fill="#60a5fa" />
+          <circle cx={xFor(i)} cy={yFor(s.bal)} r="2.4" fill="#4ade80" />
+        </g>
+      ))}
+    </svg>
+  )
+}
+
 function MonthlyFlow({ flow }: { flow: FlowItem[] }) {
   const byMonth = new Map<string, FlowItem[]>()
   for (const it of flow) {
