@@ -263,6 +263,9 @@ export default function EditInvoicePage() {
   // part_number -> RETAIL FINAL (map_price + freight), so IMPORT FROM EXPENSES prices
   // items at the part's enrolled RETAIL instead of grossing the cost up by discount.
   const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
+  // HUNT part lookup keys ('PN:'+normPN / 'NM:'+item) -> store product URL, so a HUNTED
+  // expense shows a clickable link that opens the store page (to add it to the cart).
+  const [huntUrlMap, setHuntUrlMap] = useState<Map<string, string>>(new Map())
   const [showDbModal, setShowDbModal] = useState(false)
   const [dbItems, setDbItems] = useState<any[]>([])
   const [partExpandedKits, setPartExpandedKits] = useState<Set<string>>(new Set())
@@ -426,6 +429,17 @@ export default function EditInvoicePage() {
     setMapByPN(mp)
     setPnByItem(pm)
 
+    // HUNT store links — separate query so a missing product_url column (pre-migration)
+    // can't break the load above. Keyed by normalized PN, then item name.
+    const hu = new Map<string, string>()
+    const { data: huParts } = await supabase.from('parts_database').select('item, part_number, product_url').eq('source_type', 'HUNT')
+    for (const d of huParts || []) {
+      if (!d.product_url) continue
+      if (d.part_number) hu.set('PN:' + normPN(d.part_number), String(d.product_url))
+      hu.set('NM:' + (d.item || '').trim().toLowerCase(), String(d.product_url))
+    }
+    setHuntUrlMap(hu)
+
     setLoading(false)
   }
 
@@ -443,6 +457,11 @@ export default function EditInvoicePage() {
     return dbItems.find((d: any) => !d.is_kit && !d.part_number && (d.item || '').trim().toLowerCase() === nm)
   }
   function dbOurCost(d: any) { return d ? (Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0) : 0 }
+  // Store URL for a HUNTED expense (matched by part number, then item name); null otherwise.
+  function huntUrlFor(exp: Expense): string | null {
+    if (exp.part_number) { const u = huntUrlMap.get('PN:' + normPN(exp.part_number)); if (u) return u }
+    return huntUrlMap.get('NM:' + (exp.item || '').trim().toLowerCase()) || null
+  }
   function kitOurTotal(kit: any) { return (kit.kit_items || []).reduce((s: number, m: any) => s + dbOurCost(kitMemberRow(m)) * (Number(m.quantity) || 1), 0) }
   // Build a fresh expense from a parts_database row. HUNT parts carry dealer pricing
   // (our_cost/dealer_supplier/freight, tax-exempt, with the MAP→net discount % so the
@@ -2555,6 +2574,7 @@ export default function EditInvoicePage() {
                                     <div className="flex-1 min-w-0">
                                       {exp.supplier && <p className="text-sm font-bold truncate text-amber-300" title={exp.supplier}>{exp.supplier}: {(supplierIsVariable(exp.supplier) ? (parseFloat(exp.item_discount || '0') || 0) : (supplierDiscount(exp.supplier) || 0))}%</p>}
                                       <p className="text-sm font-bold truncate text-blue-300" title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
+                                      {huntUrlFor(exp) && <a href={huntUrlFor(exp)!} target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 Open store page ↗</a>}
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && <p className="text-xs text-gray-500">{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                       {exportStatusLine(exp, index)}
@@ -2666,6 +2686,7 @@ export default function EditInvoicePage() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                                {huntUrlFor(exp) && <a href={huntUrlFor(exp)!} target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 Open store page ↗</a>}
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className="text-sm text-gray-500">{isValidDate(exp.expense_date) ? formatDate(exp.expense_date) : 'No date'}{isPaid ? ` · Paid: ${formatDate(exp.payment_date)}` : ' · Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
