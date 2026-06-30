@@ -330,29 +330,22 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-1">CURRENT Flow</h1>
-      <p className="text-gray-400 mb-6">Everything, all time — no filters.</p>
+      <h1 className="text-4xl font-bold mb-1">FUTURE Flow</h1>
+      <p className="text-gray-400 mb-6">Scheduled income &amp; expenses ahead — next months.</p>
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor="text-green-400" rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
-            <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor="text-orange-400" rows={rows.expense} undatedColor="text-orange-400" />
-          </div>
-          {rows.tax.length > 0 && (
-            <div className="mt-4 max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5">
-              <p className="text-sm font-bold text-gray-400 mb-1">FLORIDA TAXES</p>
-              <p className="text-2xl font-bold text-orange-400">{formatUSD(rows.tax.reduce((x, r) => x + r.amount, 0))}</p>
-              <div className="mt-2">
-                {rows.tax.map((r, i) => (
-                  <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60 last:border-0">
-                    <span className="text-gray-300 truncate">{r.date ? `${formatShortDate(r.date)} · ` : ''}<a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · <span title={r.labelTip || undefined}>{r.label}</span></span>
-                    <span className="font-bold text-orange-400 shrink-0">{formatUSD(r.amount)}</span>
-                  </div>
-                ))}
+          {flow.length > 0 ? (
+            <>
+              <div className="max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5 mb-4">
+                <p className="text-sm font-bold text-gray-400 mb-2">NEXT 6 MONTHS</p>
+                <CashFlowChart series={flowSeries} />
               </div>
-            </div>
+              <MonthlyFlow flow={flow} />
+            </>
+          ) : (
+            <p className="text-gray-400 text-xl">No scheduled income or expenses ahead.</p>
           )}
         </>
       )}

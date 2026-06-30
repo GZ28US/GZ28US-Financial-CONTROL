@@ -14,8 +14,10 @@ const MENU: MenuItem[] = [
     type: 'dropdown',
     label: 'HOME',
     items: [
-      ['/', 'CURRENT Payments FLOW'],
-      ['/payments', 'PAST Payments FLOW'],
+      ['/', 'CURRENT Flow'],
+      ['/payments', 'PAST Flow'],
+      ['/future', 'FUTURE Flow'],
+      ['/gz-flow', 'GZ28US vs GZ28BR Flow'],
     ],
   },
   {
