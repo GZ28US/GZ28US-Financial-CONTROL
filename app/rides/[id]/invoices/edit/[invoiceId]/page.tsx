@@ -61,7 +61,10 @@ type ExpenseReportItem = { item: string; amount: string; quantity: string; tax: 
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
-const paymentSources = ['', ...PAID_VIA_OPTIONS]
+// Income PAID VIA = the payment method only. GZ28BR is NOT a method — it moved to its
+// own PAID TO field (GZ28US default / GZ28BR), so an income can be paid TO GZ28BR (which
+// then holds GZ28US's money). Expenses keep GZ28BR on their PAID FROM (the other direction).
+const paymentSources = ['', ...PAID_VIA_OPTIONS.filter(o => o !== 'GZ28BR')]
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 
@@ -325,7 +328,7 @@ export default function EditInvoicePage() {
       id: p.id,
       amount: String(p.amount),
       payment_date: p.payment_date || '',
-      source: (p.source === 'GZ28BR' || p.paid_to === 'GZ28BR') ? 'GZ28BR' : (p.source || ''),
+      source: p.source || '',
       paid_to: p.paid_to || 'GZ28US',
       amount_brl: p.amount_brl != null ? String(p.amount_brl) : '',
       receipt_url: p.receipt_url || '',
@@ -1369,7 +1372,7 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28US', amount_brl: editingPayment.source === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
@@ -1694,8 +1697,8 @@ export default function EditInvoicePage() {
         amount: parseFloat(p.amount),
         payment_date: isValidDate(p.payment_date) ? p.payment_date : null,
         source: p.source || null,
-        paid_to: p.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28US',
-        amount_brl: p.source === 'GZ28BR' ? (parseFloat(p.amount_brl || '') || null) : null,
+        paid_to: p.paid_to || 'GZ28US',
+        amount_brl: p.paid_to === 'GZ28BR' ? (parseFloat(p.amount_brl || '') || null) : null,
         receipt_url: p.receipt_url || null,
         description: p.description || null,
         date_label: p.date_label || null,
@@ -2026,8 +2029,15 @@ export default function EditInvoicePage() {
                         {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
+                    <div className="flex-1">
+                      <label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                      <select value={p.paid_to || 'GZ28US'} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], paid_to: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
+                        <option value="GZ28US">GZ28US</option>
+                        <option value="GZ28BR">GZ28BR</option>
+                      </select>
+                    </div>
                   </div>
-                  {p.source === 'GZ28BR' && (
+                  {p.paid_to === 'GZ28BR' && (
                     <div className="flex gap-3 items-end">
                       <div className="flex-1">
                         <label className="block mb-1 text-sm text-gray-400">AMOUNT (R$)</label>
@@ -2978,8 +2988,14 @@ export default function EditInvoicePage() {
                   {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                <select value={newPayment.paid_to || 'GZ28US'} onChange={(e) => setNewPayment({ ...newPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
+                  <option value="GZ28US">GZ28US</option>
+                  <option value="GZ28BR">GZ28BR</option>
+                </select>
+              </div>
             </div>
-            {newPayment.source === 'GZ28BR' && (
+            {newPayment.paid_to === 'GZ28BR' && (
               <div className="flex gap-3 items-end">
                 <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT (R$)</label>
                   <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">R$</span>
@@ -3029,8 +3045,14 @@ export default function EditInvoicePage() {
                                 {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </div>
+                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                              <select value={editingPayment.paid_to || 'GZ28US'} onChange={(e) => setEditingPayment({ ...editingPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
+                                <option value="GZ28US">GZ28US</option>
+                                <option value="GZ28BR">GZ28BR</option>
+                              </select>
+                            </div>
                           </div>
-                          {editingPayment.source === 'GZ28BR' && (
+                          {editingPayment.paid_to === 'GZ28BR' && (
                             <div className="flex gap-3 items-end">
                               <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">AMOUNT (R$)</label>
                                 <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">R$</span>
@@ -3062,7 +3084,7 @@ export default function EditInvoicePage() {
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < payments.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <p className={`text-base font-bold ${statusColor}`}>{formatUSD(parseFloat(payment.amount))} — {status}</p>
-                            <p className="text-sm text-gray-400">{payment.source}{payment.source === 'GZ28BR' && payment.amount_brl ? ` · R$ ${(parseFloat(payment.amount_brl) || 0).toFixed(2)}` : ''}{payment.date_label ? ` — ${payment.date_label}` : payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
+                            <p className="text-sm text-gray-400">{[payment.source, payment.paid_to === 'GZ28BR' ? '→ PAID TO GZ28BR' : ''].filter(Boolean).join(' · ')}{payment.paid_to === 'GZ28BR' && payment.amount_brl ? ` · R$ ${(parseFloat(payment.amount_brl) || 0).toFixed(2)}` : ''}{payment.date_label ? ` — ${payment.date_label}` : payment.payment_date ? ` — ${formatDate(payment.payment_date)}` : ''}</p>
                             {isPaid && <p className="text-sm text-green-400">Paid: {formatTsDate(payment.paid_at)}</p>}
                             {payment.description && <p className="text-sm text-gray-500 truncate" title={payment.description}>{payment.description}</p>}
                           </div>
