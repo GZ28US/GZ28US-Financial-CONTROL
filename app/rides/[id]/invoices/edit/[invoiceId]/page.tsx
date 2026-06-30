@@ -2544,30 +2544,33 @@ export default function EditInvoicePage() {
                             {orderedItems.map(({ index, expense: exp }, gi) => (
                               <div key={index} className={`px-4 py-2 pl-10 ${gi < orderedItems.length - 1 ? 'border-b border-gray-700' : ''}`}>
                                 {editingGroupItemIndex === index ? (
-                                  <div className="flex gap-2 items-center">
-                                    <input type="text" value={editingGroupItem.description} onChange={(e) => setEditingGroupItem({ ...editingGroupItem, description: e.target.value })} className={`${smallInputClass} flex-1`} placeholder="Description" />
-                                    <input type="text" inputMode="decimal" value={editingGroupItem.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, quantity: e.target.value }) }} className={`${smallInputClass} w-14 text-center`} placeholder="Qty" />
-                                    <div className="relative w-24">
-                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-7`} placeholder="0.00" />
-                                    </div>
-                                    <div className="relative w-24">
-                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Tax$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, tax: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} placeholder="0.00" />
-                                    </div>
-                                    <div className="relative w-28">
-                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
-                                      <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
-                                    </div>
-                                    {supplierIsVariable(exp.supplier) && (
+                                  <div className="flex flex-col gap-2">
+                                    {/* Line 1: full-width description. Line 2: smaller number fields + actions. */}
+                                    <input type="text" value={editingGroupItem.description} onChange={(e) => setEditingGroupItem({ ...editingGroupItem, description: e.target.value })} className={`${smallInputClass} w-full`} placeholder="Description" />
+                                    <div className="flex gap-2 items-center flex-wrap">
+                                      <input type="text" inputMode="decimal" value={editingGroupItem.quantity} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, quantity: e.target.value }) }} className={`${smallInputClass} w-12 text-center`} placeholder="Qty" />
                                       <div className="relative w-20">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-yellow-300 text-xs">Disc</span>
-                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">%</span>
-                                        <input type="text" inputMode="decimal" value={editingGroupItem.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, item_discount: e.target.value }) }} className={`${smallInputClass} w-full pl-9 pr-5`} placeholder="0" />
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                                        <input type="text" inputMode="decimal" value={editingGroupItem.amount} onChange={(e) => { if (isSignedNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, amount: e.target.value }) }} className={`${smallInputClass} w-full pl-6`} placeholder="0.00" />
                                       </div>
-                                    )}
-                                    <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-3 py-2 rounded-xl font-bold text-sm">SAVE</button>
-                                    <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
+                                      <div className="relative w-20">
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Tax$</span>
+                                        <input type="text" inputMode="decimal" value={editingGroupItem.tax} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, tax: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} placeholder="0.00" />
+                                      </div>
+                                      <div className="relative w-24">
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
+                                        <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
+                                      </div>
+                                      {supplierIsVariable(exp.supplier) && (
+                                        <div className="relative w-20">
+                                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-yellow-300 text-xs">Disc</span>
+                                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">%</span>
+                                          <input type="text" inputMode="decimal" value={editingGroupItem.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, item_discount: e.target.value }) }} className={`${smallInputClass} w-full pl-9 pr-5`} placeholder="0" />
+                                        </div>
+                                      )}
+                                      <button onClick={saveEditGroupItem} className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm">SAVE</button>
+                                      <button onClick={() => setEditingGroupItemIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm">✕</button>
+                                    </div>
                                   </div>
                                 ) : (
                                   <div className="flex items-center justify-between gap-4">
