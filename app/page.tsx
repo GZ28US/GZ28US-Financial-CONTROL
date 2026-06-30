@@ -436,7 +436,7 @@ function niceStep(x: number): number {
 
 // 3-line cashflow chart: RED expenses, BLUE incomes, GREEN balance.
 function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: number; bal: number }[] }) {
-  const W = 760, H = 300, padR = 14, padT = 30, padB = 42
+  const W = 760, H = 300, padR = 14, padT = 30, padB = 56
   const vals = series.flatMap(s => [s.inc, s.exp, s.bal])
   const rawMax = Math.max(1, ...vals), rawMin = Math.min(0, ...vals)
   const step = niceStep((rawMax - rawMin) / 4 || 1)
@@ -464,7 +464,10 @@ function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: num
         </g>
       ))}
       {series.map((s, i) => (
-        <text key={`x${i}`} x={xFor(i)} y={yBot + 18} textAnchor="middle" fontSize="11" fill="#6b7280">{mLabel(s.mk)}</text>
+        <g key={`x${i}`}>
+          <text x={xFor(i)} y={yBot + 18} textAnchor="middle" fontSize="11" fill="#6b7280">{mLabel(s.mk)}</text>
+          <text x={xFor(i)} y={yBot + 33} textAnchor="middle" fontSize="10.5" fontWeight="bold" fill={s.bal >= 0 ? '#60a5fa' : '#f87171'}>{compactUSD(s.bal)}</text>
+        </g>
       ))}
       <path d={line('exp')} fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinejoin="round" />
       <path d={line('inc')} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeLinejoin="round" />
