@@ -59,12 +59,17 @@ export default function NewRidePage() {
         .select('project_code')
         .eq('is_quote', isQuote)
         .not('project_code', 'is', null)
-      let maxNum = 0
+      // Suggest the LOWEST UNUSED number in this kind's sequence (not global max+1),
+      // so a deliberately high / pinned code (e.g. a themed US.170) doesn't drag every
+      // new ride up behind it — new rides keep filling the sequence (…035, 036).
+      const used = new Set<number>()
       for (const r of (rideData || [])) {
         const m = r.project_code?.match(/^(.+)\.(\d+)$/)
-        if (m) { const n = parseInt(m[2], 10); if (n > maxNum) maxNum = n }
+        if (m) used.add(parseInt(m[2], 10))
       }
-      setProjectCode(`${wantPrefix}.${pad3(maxNum + 1)}`)
+      let nextNum = 1
+      while (used.has(nextNum)) nextNum++
+      setProjectCode(`${wantPrefix}.${pad3(nextNum)}`)
     } catch (e) {
       console.error('Code generation failed', e)
       setProjectCode(`${wantPrefix}.${pad3(1)}`)
