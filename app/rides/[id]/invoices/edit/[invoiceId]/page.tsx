@@ -5,7 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX, partMatches } from '@/lib/utils'
+import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX, partMatches, toWaNumber } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
@@ -164,6 +164,11 @@ export default function EditInvoicePage() {
   const [projectName, setProjectName] = useState('')
   const [clientName, setClientName] = useState('')
   const [clientNumber, setClientNumber] = useState<number | null>(null)
+  // Client contact for the DELAYED-income payment reminder (WhatsApp).
+  const [clientPhone, setClientPhone] = useState('')
+  const [clientCountry, setClientCountry] = useState('')
+  const [remindingIndex, setRemindingIndex] = useState<number | null>(null)
+  const [remindedIndex, setRemindedIndex] = useState<number | null>(null)
   const [invoiceCode, setInvoiceCode] = useState('')
   // is_quote is the stored quote/invoice flag. A quote flips to an invoice on
   // SAVE once a valid HIRING DATE is present (handled in saveInvoice).
@@ -279,17 +284,26 @@ export default function EditInvoicePage() {
 
   async function loadData() {
     if (isClient) {
-      const { data: clientData } = await supabase.from('clients').select('name, client_number').eq('id', ownerId).single()
+      const { data: clientData } = await supabase.from('clients').select('name, client_number, phone, country').eq('id', ownerId).single()
       setClientName(clientData?.name || '')
       setClientNumber(clientData?.client_number ?? null)
+      setClientPhone(clientData?.phone || '')
+      setClientCountry(clientData?.country || '')
     } else {
-      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, model, year').eq('id', ownerId).single()
+      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, model, year, client_id').eq('id', ownerId).single()
       const pCode = rideData?.project_code || ''
       const pName = rideData?.project_name || ''
       setProjectCode(pCode)
       setProjectName(pName)
       setRideMatch({ manufacturer: rideData?.manufacturer || '', model: rideData?.model || '', year: rideData?.year != null ? String(rideData.year) : '' })
       rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
+      // Resolve the ride's client so the DELAYED-income reminder can reach them.
+      if (rideData?.client_id) {
+        const { data: c } = await supabase.from('clients').select('name, phone, country').eq('id', rideData.client_id).single()
+        setClientName(c?.name || '')
+        setClientPhone(c?.phone || '')
+        setClientCountry(c?.country || '')
+      }
     }
 
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
@@ -1379,6 +1393,44 @@ export default function EditInvoicePage() {
     setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
+
+  // REMIND — WhatsApp the client a friendly reminder about a DELAYED (overdue,
+  // still-unpaid) income. Sends via UltraMsg to the client's own number.
+  async function remindClient(payment: Payment, index: number) {
+    const to = toWaNumber(clientPhone, clientCountry)
+    if (!to) { alert('This client has no phone/WhatsApp on file.\nAdd a number first (client EDIT).'); return }
+    const amountStr = formatUSD(parseFloat(payment.amount) || 0)
+    const dueStr = payment.date_label ? payment.date_label : (isValidDate(payment.payment_date) ? formatDate(payment.payment_date) : '')
+    const vehicle = projectName || projectCode || ''
+    const invLbl = invoiceCode ? ` (Invoice ${invoiceCode})` : ''
+    const lines = [
+      '*Payment Reminder — GZ28US*',
+      '',
+      `Hi${clientName ? ` ${clientName}` : ''}, this is a friendly reminder about a pending payment${vehicle ? ` on your ${vehicle}` : ''}${invLbl}.`,
+      '',
+      `Amount due: *${amountStr}*`,
+    ]
+    if (dueStr) lines.push(`Due: ${dueStr}`)
+    if (payment.description) lines.push(`Ref: ${payment.description}`)
+    lines.push('', 'Please reach out if you have any questions. Thank you!')
+    setRemindingIndex(index)
+    try {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body: lines.join('\n') }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) {
+        const detail = typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`)
+        alert('Could not send the reminder:\n' + detail); return
+      }
+      setRemindedIndex(index); setTimeout(() => setRemindedIndex(v => (v === index ? null : v)), 4000)
+    } catch (err) {
+      alert('Could not send the reminder:\n' + String(err))
+    } finally {
+      setRemindingIndex(null)
+    }
+  }
 
   async function togglePaid(index: number) {
     const p = payments[index]
@@ -3090,6 +3142,16 @@ export default function EditInvoicePage() {
                           </div>
                           <div className="flex gap-2 shrink-0">
                             {payment.receipt_url && <a href={payment.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">DOC</a>}
+                            {status === 'DELAYED' && (
+                              <button
+                                onClick={() => remindClient(payment, index)}
+                                disabled={remindingIndex === index}
+                                title="Send the client a WhatsApp payment reminder"
+                                className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap disabled:opacity-60 ${remindedIndex === index ? 'bg-green-600' : 'bg-amber-600 hover:bg-amber-500'}`}
+                              >
+                                {remindingIndex === index ? '…' : remindedIndex === index ? '✓ SENT' : 'REMIND'}
+                              </button>
+                            )}
                             <button
                               onClick={() => togglePaid(index)}
                               className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${isPaid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-600 hover:bg-gray-500'}`}
