@@ -1420,9 +1420,13 @@ export default function EditInvoicePage() {
         body: JSON.stringify({ to, body: lines.join('\n') }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!data.ok) {
-        const detail = typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`)
-        alert('Could not send the reminder:\n' + detail); return
+      const r = data?.result
+      const trulySent = !!r && (r.sent === 'true' || r.sent === true)
+      if (!data.ok || !trulySent) {
+        const detail = !data.ok
+          ? (typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`))
+          : `UltraMsg accepted but did NOT send (sent=${r?.sent}). ${r?.message || ''} raw=${JSON.stringify(r)}`
+        alert(`Reminder NOT delivered.\nTo: ${to}\n\n${detail}`); return
       }
       setRemindedIndex(index); setTimeout(() => setRemindedIndex(v => (v === index ? null : v)), 4000)
     } catch (err) {
