@@ -25,8 +25,11 @@ const months = [
 ]
 
 const currentYear = new Date().getFullYear()
-// Newest year first (descending) in the dropdown.
-const years = Array.from({ length: currentYear - 2024 }, (_, i) => currentYear - i)
+// Range wide enough for backdated records AND future-scheduled dates (e.g. a
+// final payment due next year). Newest year first (descending) in the dropdown.
+const START_YEAR = 2023
+const END_YEAR = currentYear + 3
+const years = Array.from({ length: END_YEAR - START_YEAR + 1 }, (_, i) => END_YEAR - i)
 
 // Days in a given month/year. Falls back to 31 when the month is unset, and to a
 // leap year when the year is unset so Feb 29 stays available until a year is
