@@ -164,9 +164,14 @@ export default function EditInvoicePage() {
   const [projectName, setProjectName] = useState('')
   const [clientName, setClientName] = useState('')
   const [clientNumber, setClientNumber] = useState<number | null>(null)
-  // Client contact for the DELAYED-income payment reminder (WhatsApp).
+  // Client contact for the DELAYED-income payment reminder. Sent by the client's
+  // PREFERRED method (WhatsApp / SMS / E-Mail / Instagram / Facebook), never forced.
   const [clientPhone, setClientPhone] = useState('')
   const [clientCountry, setClientCountry] = useState('')
+  const [clientEmail, setClientEmail] = useState('')
+  const [clientMethod, setClientMethod] = useState('')
+  const [clientInstagram, setClientInstagram] = useState('')
+  const [clientFacebook, setClientFacebook] = useState('')
   const [remindingIndex, setRemindingIndex] = useState<number | null>(null)
   const [remindedIndex, setRemindedIndex] = useState<number | null>(null)
   const [invoiceCode, setInvoiceCode] = useState('')
@@ -283,12 +288,19 @@ export default function EditInvoicePage() {
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
+    const applyClientContact = (c: any) => {
+      setClientPhone(c?.phone || '')
+      setClientCountry(c?.country || '')
+      setClientEmail(c?.email || '')
+      setClientMethod(c?.preferred_message_method || '')
+      setClientInstagram(c?.instagram || '')
+      setClientFacebook(c?.facebook || '')
+    }
     if (isClient) {
-      const { data: clientData } = await supabase.from('clients').select('name, client_number, phone, country').eq('id', ownerId).single()
+      const { data: clientData } = await supabase.from('clients').select('name, client_number, phone, country, email, preferred_message_method, instagram, facebook').eq('id', ownerId).single()
       setClientName(clientData?.name || '')
       setClientNumber(clientData?.client_number ?? null)
-      setClientPhone(clientData?.phone || '')
-      setClientCountry(clientData?.country || '')
+      applyClientContact(clientData)
     } else {
       const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, model, year, client_id').eq('id', ownerId).single()
       const pCode = rideData?.project_code || ''
@@ -299,10 +311,9 @@ export default function EditInvoicePage() {
       rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
       // Resolve the ride's client so the DELAYED-income reminder can reach them.
       if (rideData?.client_id) {
-        const { data: c } = await supabase.from('clients').select('name, phone, country').eq('id', rideData.client_id).single()
+        const { data: c } = await supabase.from('clients').select('name, phone, country, email, preferred_message_method, instagram, facebook').eq('id', rideData.client_id).single()
         setClientName(c?.name || '')
-        setClientPhone(c?.phone || '')
-        setClientCountry(c?.country || '')
+        applyClientContact(c)
       }
     }
 
@@ -1394,11 +1405,13 @@ export default function EditInvoicePage() {
   }
   function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
 
-  // REMIND — WhatsApp the client a friendly reminder about a DELAYED (overdue,
-  // still-unpaid) income. Sends via UltraMsg to the client's own number.
-  async function remindClient(payment: Payment, index: number) {
-    const to = toWaNumber(clientPhone, clientCountry)
-    if (!to) { alert('This client has no phone/WhatsApp on file.\nAdd a number first (client EDIT).'); return }
+  // REMIND — send the client a friendly reminder about a DELAYED (overdue,
+  // still-unpaid) income. Delivered by the client's PREFERRED method — never
+  // forced onto WhatsApp (e.g. an SMS-only client won't get a WhatsApp):
+  //   WhatsApp -> automatic via UltraMsg (country-aware `to`)
+  //   SMS / E-Mail -> opens the local composer pre-filled
+  //   Instagram / Facebook -> copies the text + opens the client's DM
+  function buildReminder(payment: Payment) {
     const amountStr = formatUSD(parseFloat(payment.amount) || 0)
     const dueStr = payment.date_label ? payment.date_label : (isValidDate(payment.payment_date) ? formatDate(payment.payment_date) : '')
     const vehicle = projectName || projectCode || ''
@@ -1413,11 +1426,55 @@ export default function EditInvoicePage() {
     if (dueStr) lines.push(`Due: ${dueStr}`)
     if (payment.description) lines.push(`Ref: ${payment.description}`)
     lines.push('', 'Please reach out if you have any questions. Thank you!')
+    return lines.join('\n')
+  }
+
+  async function remindClient(payment: Payment, index: number) {
+    const method = clientMethod || 'WhatsApp'
+    const waBody = buildReminder(payment)
+    const plain = waBody.replace(/[*_]/g, '')
+    const flashDone = () => { setRemindedIndex(index); setTimeout(() => setRemindedIndex(v => (v === index ? null : v)), 4000) }
+
+    if (method === 'SMS') {
+      if (!clientPhone) { alert('This client is SMS-preferred but has no phone on file.\nAdd a number first (client EDIT).'); return }
+      window.location.href = `sms:${clientPhone}?&body=${encodeURIComponent(plain)}`
+      flashDone(); return
+    }
+    if (method === 'E-Mail') {
+      if (!clientEmail) { alert('This client is E-Mail-preferred but has no email on file.\nAdd an email first (client EDIT).'); return }
+      const subject = `Payment Reminder — ${projectName || projectCode || invoiceCode || 'GZ28US'}`
+      window.location.href = `mailto:${clientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
+      flashDone(); return
+    }
+    if (method === 'Instagram') {
+      try { await navigator.clipboard.writeText(plain) } catch {}
+      const handle = (clientInstagram || '').replace(/^@/, '').trim()
+      window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
+      alert('Reminder copied. Open the client’s Instagram DM and paste to send.')
+      flashDone(); return
+    }
+    if (method === 'Facebook') {
+      try { await navigator.clipboard.writeText(plain) } catch {}
+      const fb = (clientFacebook || '').trim()
+      let url = 'https://www.facebook.com/messages/'
+      if (fb) {
+        if (/^https?:\/\//i.test(fb)) url = fb
+        else if (fb.includes('facebook.com')) url = `https://${fb.replace(/^\/+/, '')}`
+        else url = `https://www.facebook.com/${fb.replace(/^@/, '').trim()}`
+      }
+      window.open(url, '_blank')
+      alert('Reminder copied. Open the client’s Facebook / Messenger and paste to send.')
+      flashDone(); return
+    }
+
+    // WhatsApp (default) — automatic via UltraMsg.
+    const to = toWaNumber(clientPhone, clientCountry)
+    if (!to) { alert('This client has no phone / WhatsApp number on file.\nAdd a number first (client EDIT).'); return }
     setRemindingIndex(index)
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, body: lines.join('\n') }),
+        body: JSON.stringify({ to, body: waBody }),
       })
       const data = await res.json().catch(() => ({}))
       const r = data?.result
@@ -1428,7 +1485,7 @@ export default function EditInvoicePage() {
           : `UltraMsg accepted but did NOT send (sent=${r?.sent}). ${r?.message || ''} raw=${JSON.stringify(r)}`
         alert(`Reminder NOT delivered.\nTo: ${to}\n\n${detail}`); return
       }
-      setRemindedIndex(index); setTimeout(() => setRemindedIndex(v => (v === index ? null : v)), 4000)
+      flashDone()
     } catch (err) {
       alert('Could not send the reminder:\n' + String(err))
     } finally {
@@ -3150,7 +3207,7 @@ export default function EditInvoicePage() {
                               <button
                                 onClick={() => remindClient(payment, index)}
                                 disabled={remindingIndex === index}
-                                title="Send the client a WhatsApp payment reminder"
+                                title="Send the client a payment reminder by their preferred method"
                                 className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap disabled:opacity-60 ${remindedIndex === index ? 'bg-green-600' : 'bg-amber-600 hover:bg-amber-500'}`}
                               >
                                 {remindingIndex === index ? '…' : remindedIndex === index ? '✓ SENT' : 'REMIND'}
