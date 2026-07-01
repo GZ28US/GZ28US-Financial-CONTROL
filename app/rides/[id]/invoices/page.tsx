@@ -13,6 +13,7 @@ type Invoice = {
   entry_date: string | null
   conclusion_date: string | null
   delivery_date: string | null
+  hiring_date: string | null
   mileage: number | null
   service: string | null
   florida_taxes: number | null
@@ -296,8 +297,9 @@ export default function InvoicesPage() {
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                     {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
-                  <p className="text-lg text-gray-400">Grand Total: {s ? formatUSD(s.grandTotal) : '—'}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
                   {invoice.service && <p className="text-lg text-gray-400">{invoice.service}</p>}
+                  <p className="text-lg font-bold text-gray-200">{s ? formatUSD(s.grandTotal) : '—'}</p>
+                  <p className="text-lg text-gray-400">{formatDate(invoice.hiring_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
                   {invoice.mileage && <p className="text-lg text-gray-400">{Number(invoice.mileage).toLocaleString('en-US')} mi</p>}
 
                   {s && (

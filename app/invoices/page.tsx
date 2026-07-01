@@ -18,6 +18,7 @@ type Stats = {
   currentProfit: number; currentProfitPct: number
   finalProfit: number; finalProfitPct: number
   expensesTotalPaid: number; expensesTotalGlobal: number
+  grandTotal: number
 }
 
 function getStatusBadge(inv: any) {
@@ -113,6 +114,9 @@ export default function InvoicesPage() {
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((s: number, e: any) => s + expenseLine(e), 0)
       const currentProfit = totalPaid - expensesTotalPaid
       const finalProfit = totalIncomeAll - expensesTotalGlobal
+      const servicesTotal = isv.reduce((s: number, sv: any) => s + (parseFloat(sv.price) || 0), 0)
+      const partsAndServicesTotal = partsSubTotal + flTaxAmount + servicesTotal
+      const grandTotal = partsAndServicesTotal - partsAndServicesTotal * ((inv.global_discount || 0) / 100)
       statsMap[inv.id] = {
         paymentsBalance: totalIncomeAll - totalPaid,
         expensesBalance: expensesTotalPaid - expensesTotalGlobal,
@@ -121,6 +125,7 @@ export default function InvoicesPage() {
         finalProfit,
         finalProfitPct: expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0,
         expensesTotalPaid, expensesTotalGlobal,
+        grandTotal,
       }
     }
     setStats(statsMap)
@@ -232,7 +237,8 @@ export default function InvoicesPage() {
                   </div>
                   {[ride?.project_code, ride?.project_name].some(Boolean) && <p className="text-lg text-gray-400">{inv.invoice_code}</p>}
                   {inv.service && <p className="text-lg text-gray-400">{inv.service}</p>}
-                  <p className="text-lg text-gray-400">Hiring: {fmtDate(inv.hiring_date)}{inv.delivery_date ? ` — Delivery: ${fmtDate(inv.delivery_date)}` : ''}</p>
+                  <p className="text-lg font-bold text-gray-200">{s ? formatUSD(s.grandTotal) : '—'}</p>
+                  <p className="text-lg text-gray-400">{fmtDate(inv.hiring_date)}{inv.delivery_date ? ` — Delivery: ${fmtDate(inv.delivery_date)}` : ''}</p>
 
                   {s && isRdy(inv) && (
                     <div className="flex gap-3 mt-3 flex-wrap">
