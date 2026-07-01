@@ -31,6 +31,8 @@ type InvoiceStats = {
   finalProfit: number
   finalProfitPct: number
   grandTotal: number
+  expensesTotalPaid: number
+  expensesTotalGlobal: number
 }
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -183,7 +185,7 @@ export default function InvoicesPage() {
       const finalProfit = markupIncome - expensesTotalGlobal
       const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
 
-      statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct, grandTotal }
+      statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct, grandTotal, expensesTotalPaid, expensesTotalGlobal }
     }))
 
     setStats(statsMap)
@@ -205,6 +207,24 @@ export default function InvoicesPage() {
   const invoicesLabel = isClient
     ? (ownerIsQuote ? 'SHOPPING QUOTES' : 'SHOPPING INVOICES')
     : (ownerIsQuote ? 'QUOTES' : 'INVOICES')
+
+  // Consolidated dash for this project — REPORT-READY (ONLINE/CLOSED) invoices only.
+  const isRdy = (r: any) => r.live_status === 'REALTIME' || r.live_status === 'CLOSED'
+  const readyInvoices = invoices.filter(isRdy)
+  const agg = readyInvoices.reduce((a, inv) => {
+    const s = stats[inv.id]; if (!s) return a
+    return {
+      currentProfit: a.currentProfit + s.currentProfit,
+      finalProfit: a.finalProfit + s.finalProfit,
+      paymentsBalance: a.paymentsBalance + s.paymentsBalance,
+      expensesBalance: a.expensesBalance + s.expensesBalance,
+      sumExpPaid: a.sumExpPaid + s.expensesTotalPaid,
+      sumExpGlobal: a.sumExpGlobal + s.expensesTotalGlobal,
+    }
+  }, { currentProfit: 0, finalProfit: 0, paymentsBalance: 0, expensesBalance: 0, sumExpPaid: 0, sumExpGlobal: 0 })
+  const aggCurrentPct = agg.sumExpPaid > 0 ? (agg.currentProfit / agg.sumExpPaid) * 100 : 0
+  const aggFinalPct = agg.sumExpGlobal > 0 ? (agg.finalProfit / agg.sumExpGlobal) * 100 : 0
+  const readyCount = readyInvoices.length
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -242,6 +262,18 @@ export default function InvoicesPage() {
           )}
         </div>
       </div>
+
+      {!loading && readyCount > 0 && (
+        <div className="bg-gray-900 border border-gray-700 rounded-3xl p-5 mb-6">
+          <p className="text-sm font-bold text-gray-400 mb-2">CONSOLIDATED — REPORT-READY ONLY ({readyCount})</p>
+          <div className="flex gap-3 flex-wrap">
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>CURRENT CASH FLOW: {formatUSD(agg.currentProfit)} / {aggCurrentPct.toFixed(1)}%</span>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.paymentsBalance > 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>DUE by CLIENTS: {formatUSD(agg.paymentsBalance)}</span>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.finalProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>FINAL MARKUP: {formatUSD(agg.finalProfit)} / {aggFinalPct.toFixed(1)}%</span>
+            <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.expensesBalance < 0 ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-300'}`}>DUE by GZ28US: {formatUSD(agg.expensesBalance)}</span>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
