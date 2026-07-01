@@ -225,8 +225,8 @@ export default function InvoicesPage() {
 
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-4xl font-bold">{headerTitle} — {invoicesLabel} ({invoices.length})</h1>
-          {headerSubtitle && <p className="text-xl text-gray-400 mt-1">{headerSubtitle}</p>}
+          <h1 className="text-4xl font-bold">{[headerTitle, headerSubtitle].filter(Boolean).join(' — ')}</h1>
+          <p className="text-xl text-gray-400 mt-1">{invoicesLabel} ({invoices.length})</p>
         </div>
         <div className="flex gap-4">
           <Link href={backPath} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
