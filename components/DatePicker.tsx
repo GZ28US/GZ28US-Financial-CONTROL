@@ -28,10 +28,15 @@ const currentYear = new Date().getFullYear()
 // Newest year first (descending) in the dropdown.
 const years = Array.from({ length: currentYear - 2024 }, (_, i) => currentYear - i)
 
-const days = Array.from({ length: 31 }, (_, i) => {
-  const d = String(i + 1).padStart(2, '0')
-  return { value: d, label: String(i + 1) }
-})
+// Days in a given month/year. Falls back to 31 when the month is unset, and to a
+// leap year when the year is unset so Feb 29 stays available until a year is
+// picked. Prevents building impossible dates like 2026-02-31 (which the DB rejects).
+function daysInMonth(month: string, year: string): number {
+  const m = parseInt(month, 10)
+  if (!m || m < 1 || m > 12) return 31
+  const y = parseInt(year, 10) || 2024
+  return new Date(y, m, 0).getDate()
+}
 
 export default function DatePicker({ label, value, onChange, compact }: Props) {
   const parsed = value && value.match(/^\d{4}-\d{2}-\d{2}$/) ? value.split('-') : ['', '', '']
@@ -41,6 +46,11 @@ export default function DatePicker({ label, value, onChange, compact }: Props) {
   const [internalDay, setInternalDay] = useState(parsed[2] || '')
 
   function update(newYear: string, newMonth: string, newDay: string) {
+    // Clamp the day to the chosen month/year so a leftover out-of-range pick
+    // (e.g. day 31 carried over from January when switching to February) can
+    // never form an invalid date string.
+    const max = daysInMonth(newMonth, newYear)
+    if (newDay && parseInt(newDay, 10) > max) newDay = String(max).padStart(2, '0')
     setInternalYear(newYear)
     setInternalMonth(newMonth)
     setInternalDay(newDay)
@@ -58,6 +68,11 @@ export default function DatePicker({ label, value, onChange, compact }: Props) {
     setInternalDay('')
     onChange('')
   }
+
+  const days = Array.from({ length: daysInMonth(internalMonth, internalYear) }, (_, i) => {
+    const d = String(i + 1).padStart(2, '0')
+    return { value: d, label: String(i + 1) }
+  })
 
   const selectClass = compact
     ? 'bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm flex-1'
