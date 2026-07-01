@@ -225,12 +225,13 @@ export default function InvoicesPage() {
               <div key={inv.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
-                    <h2 className="text-2xl font-bold">{inv.invoice_code}</h2>
+                    <h2 className="text-2xl font-bold">{[ride?.project_code, ride?.project_name].filter(Boolean).join(' — ') || inv.invoice_code}</h2>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                     {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
-                  <p className="text-lg text-gray-400">{[ride?.project_code, ride?.project_name].filter(Boolean).join(' — ') || '—'}</p>
+                  {[ride?.project_code, ride?.project_name].some(Boolean) && <p className="text-lg text-gray-400">{inv.invoice_code}</p>}
+                  {inv.service && <p className="text-lg text-gray-400">{inv.service}</p>}
                   <p className="text-lg text-gray-400">Hiring: {fmtDate(inv.hiring_date)}{inv.delivery_date ? ` — Delivery: ${fmtDate(inv.delivery_date)}` : ''}</p>
 
                   {s && isRdy(inv) && (
