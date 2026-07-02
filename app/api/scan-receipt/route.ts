@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     const purchasePrompt = `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
 {
   "supplier": "store/supplier name. If the header is only a generic greeting like 'WELCOME TO OUR STORE' with no business name, use the street address or city printed at the top instead (e.g. '9999 S Hwy 441, Orlando FL'). For a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
+  "currency": "ISO code of the currency the returned amounts are in (USD, BRL, ...) — see rule 15",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "paid": true or false boolean — see rule 11,
   "source": "the PAYER who SENT the money (a transfer/PIX 'pagador' / 'De' / 'Dados do pagador'); empty string if not shown — see rule 14",
@@ -54,7 +55,9 @@ Rules:
 11. paid: a boolean. true when the document shows the purchase is already paid, charged, or CONFIRMED — a receipt, a paid invoice, a "PAID" mark, an order/payment confirmation, a "Confirmed" / "Order Confirmed" status, or a balance due of 0. false ONLY when it is clearly an unpaid quote/estimate or shows an outstanding balance still due. When unsure, use true (a scanned purchase receipt is normally already paid).
 12. date: the TRANSACTION / SALE / PURCHASE date — on a store/POS receipt this is the timestamp usually printed at the BOTTOM next to the time (e.g. "6/26/26 7:32 PM"). IGNORE every unrelated date on the receipt: a date of birth or an "ID VERIFIED" age-check date, a "best by"/expiration date, store hours, or a loyalty/coupon date are NOT the purchase date. Return it as YYYY-MM-DD. If the document shows a date without a year (e.g. "Confirmed Jun 17"), infer the year so the date is the most recent one that is NOT in the future${todayISO ? ` relative to today, ${todayISO}` : ''}. Never return a date after today.
 13. PAYMENT / TRANSFER / PIX receipts (e.g. a "Comprovante do Pix", a bank transfer / TED / DOC / Zelle / wire confirmation) have NO itemized products. For these, IGNORE rule 1: set "supplier" to the RECIPIENT/payee (the "recebedor" / "Para" / "Dados do recebedor" — the party RECEIVING the money, never the bank, never the payer), set "paid" to true, set "grand_total" to the amount paid ("Valor pago" / "Valor"), set "tax" to 0 and "extras" to [], and return a SINGLE item whose description is a short label (the payee name, or "Pagamento") and whose line_total is that same amount. Never return an empty items array for a payment receipt.
-14. source: the PAYER — who SENT the money (the "pagador" / "De" / "Dados do pagador" / "from"). This is the person/company that paid, NOT the supplier/payee. Empty string if not shown.`
+14. source: the PAYER — who SENT the money (the "pagador" / "De" / "Dados do pagador" / "from"). This is the person/company that paid, NOT the supplier/payee. Empty string if not shown.
+15. CURRENCY — this system registers expenses in USD. Read carefully which currency each printed amount is in ("R$" / "BRL" = Brazilian real; "$" / "US$" / "USD" = US dollar; airline documents label amounts like "USD 350.00" or "BRL 1.839,48"). If the document shows amounts in USD anywhere — including an airline itinerary that prints the fare/total in USD while the card was charged in another currency — return ALL monetary fields (grand_total, tax, extras, line_total, list_price) in USD and set "currency" to "USD". When only some components are printed in USD, convert the rest using the exchange rate implied by any amount printed in BOTH currencies. ONLY if the document contains no USD amount at all: return the amounts exactly as printed in the document's own currency and set "currency" to its ISO code (e.g. "BRL") — never guess an exchange rate, and NEVER report a BRL/foreign amount as if it were USD.
+16. Brazilian number format: "1.839,48" means 1839.48 (dot = thousands separator, comma = decimals). Always output plain numbers with a dot as the decimal separator and no thousands separators.`
 
     const paymentPrompt = `You are scanning a PAYMENT PROOF of money RECEIVED by an auto shop (a bank transfer confirmation, a Zelle/ACH receipt, a check image, a card receipt, or a Brazilian "Comprovante de Pix" / PIX / TED). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -270,6 +273,10 @@ Rules:
           date: parsed.date || '',
           paid: parsed.paid !== false,
           source: parsed.source || '',
+          // Currency the amounts are in. 'USD' normally; a foreign ISO code (e.g.
+          // BRL) only when the document had no USD amount at all — consumers must
+          // warn instead of silently registering a foreign amount as dollars.
+          currency: String(parsed.currency || 'USD').toUpperCase().trim() || 'USD',
           items: processedItems,
         })
       }]

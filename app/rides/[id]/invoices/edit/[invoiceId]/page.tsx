@@ -1151,7 +1151,9 @@ export default function EditInvoicePage() {
   const pendingBalance = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - grandTotal
   // ONLINE is allowed only when there's no PENDING BALANCE still owed (>= 0).
   // While a pending balance is owed (negative), the invoice is locked OFFLINE.
-  const noPendingBalance = pendingBalance >= 0
+  // Half-cent tolerance: floating-point sums can leave a residue like -2e-12,
+  // which displays as $0.00 but would fail a bare >= 0 check and block CLOSED.
+  const noPendingBalance = pendingBalance >= -0.005
   // CLOSED also requires every income to carry a date — either a valid payment_date
   // or a milestone label (ARRIVAL / CONCLUSION).
   const allIncomesDated = payments.every(p => isValidDate(p.payment_date) || !!p.date_label)

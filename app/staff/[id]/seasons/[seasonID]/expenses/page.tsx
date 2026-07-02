@@ -195,6 +195,13 @@ export default function ExpensesPage() {
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
 
+      // Expenses register in USD. When the document shows USD anywhere the scan
+      // returns USD amounts; if it returned a foreign currency (no USD on the
+      // document at all), warn so a BRL total is never registered as dollars.
+      const scanCurrency = String(parsed.currency || 'USD').toUpperCase().trim()
+      if (scanCurrency && scanCurrency !== 'USD') {
+        alert(`⚠ This receipt only shows amounts in ${scanCurrency} — no USD amount was found on it.\nThe values below are ${scanCurrency}, NOT dollars. Fix them to USD in the review before confirming.`)
+      }
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => {
