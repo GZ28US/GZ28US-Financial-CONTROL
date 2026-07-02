@@ -41,6 +41,8 @@ export default function StaffDutiesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'TODO' | 'DONE'>('TODO')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
 
   useEffect(() => { void load() }, [])
 
@@ -91,6 +93,22 @@ export default function StaffDutiesPage() {
     setDuties(duties.map(d => d.id === duty.id ? { ...d, done: !d.done } : d))
   }
 
+  function startEdit(d: Duty) { setEditingId(d.id); setEditingDuty({ description: d.description, staff_id: d.staff_id || '', priority: d.priority || '1' }) }
+  async function saveEdit() {
+    if (!editingId) return
+    if (!editingDuty.description.trim()) { alert('Enter the duty description'); return }
+    if (!editingDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
+    const { error } = await supabase.from('invoice_duties').update({ description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', editingId)
+    if (error) { alert(error.message); return }
+    setDuties(duties.map(d => d.id === editingId ? { ...d, description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority } : d))
+    setEditingId(null)
+  }
+  async function removeDuty(d: Duty) {
+    const { error } = await supabase.from('invoice_duties').delete().eq('id', d.id)
+    if (error) { alert(error.message); return }
+    setDuties(duties.filter(x => x.id !== d.id))
+  }
+
   const q = search.trim().toLowerCase()
   const visible = duties.filter(d =>
     (filter === 'ALL' || (filter === 'TODO' ? !d.done : d.done)) &&
@@ -113,6 +131,8 @@ export default function StaffDutiesPage() {
 
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
   const openCount = duties.filter(d => !d.done).length
+  const dutySuggestions = [...new Set(duties.map(d => d.description.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const inputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -133,6 +153,7 @@ export default function StaffDutiesPage() {
         ))}
         <span className="self-center text-gray-400 text-sm font-bold ml-2">{openCount} open in total</span>
       </div>
+      <datalist id="duty-options">{dutySuggestions.map(d => <option key={d} value={d} />)}</datalist>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
@@ -147,18 +168,47 @@ export default function StaffDutiesPage() {
                 <p className="text-sm font-bold text-gray-400">{g.rows.filter(r => !r.done).length} TO DO · {g.rows.filter(r => r.done).length} DONE</p>
               </div>
               {g.rows.map((d, i) => (
-                <div key={d.id} className={`flex items-center justify-between gap-4 py-3 ${i < g.rows.length - 1 ? 'border-b border-gray-800/60' : ''}`}>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${dutyPriorityBadge(d.priority).cls}`}>{dutyPriorityBadge(d.priority).label}</span>
-                      <p className={`text-base font-bold truncate ${d.done ? 'text-green-400 line-through' : dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
+                <div key={d.id} className={i < g.rows.length - 1 ? 'border-b border-gray-800/60' : ''}>
+                  {editingId === d.id ? (
+                    <div className="p-4 my-2 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
+                      <input type="text" list="duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${inputClass} w-full`} />
+                      <div className="flex gap-3 flex-wrap">
+                        <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${inputClass} flex-1 min-w-[12rem]`}>
+                          <option value="">— STAFF —</option>
+                          {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                        <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={inputClass}>
+                          <option value="1">Priority 1</option>
+                          <option value="2">Priority 2</option>
+                          <option value="3">Priority 3</option>
+                          <option value="4">Priority 4</option>
+                          <option value="STANDBY">StandBy</option>
+                        </select>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={saveEdit} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                        <button onClick={() => setEditingId(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-400">
-                      <a href={`${BASE_PATH}${d.href}`} className="text-gray-500 hover:text-blue-400 hover:underline">{d.invoiceCode}</a>
-                      {d.carLabel ? ` · ${d.carLabel}` : ''}
-                    </p>
-                  </div>
-                  <button onClick={() => toggleDone(d)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap shrink-0 ${d.done ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'}`}>{d.done ? 'DONE' : 'TO DO'}</button>
+                  ) : (
+                    <div className="flex items-center justify-between gap-4 py-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${dutyPriorityBadge(d.priority).cls}`}>{dutyPriorityBadge(d.priority).label}</span>
+                          <p className={`text-base font-bold truncate ${d.done ? 'text-green-400 line-through' : dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
+                        </div>
+                        <p className="text-sm text-gray-400">
+                          <a href={`${BASE_PATH}${d.href}`} className="text-gray-500 hover:text-blue-400 hover:underline">{d.invoiceCode}</a>
+                          {d.carLabel ? ` · ${d.carLabel}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button onClick={() => toggleDone(d)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${d.done ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'}`}>{d.done ? 'DONE' : 'TO DO'}</button>
+                        <button onClick={() => startEdit(d)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                        <button onClick={() => removeDuty(d)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
