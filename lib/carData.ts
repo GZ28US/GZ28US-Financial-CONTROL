@@ -806,15 +806,21 @@ const lxChargerColorsByYear: Record<number, string[]> = {
   2010: ['Brilliant Black', 'Bright Silver', 'Stone White', 'Inferno Red', 'TorRed', 'Steel Blue', 'HEMI Orange', 'Deep Water Blue'],
 }
 
-// LD Charger (2011-2017) factory paint by year.
+// LD Charger (2011-2023) factory paint by year — the LD chassis ran through 2023.
 const ldChargerColorsByYear: Record<number, string[]> = {
-  2011: ['Pitch Black', 'Bright Silver', 'Bright White', 'Tungsten Metallic', 'Redline Red', 'Blackberry', 'Toxic Orange', 'Deep Water Blue', 'Sapphire Blue'],
-  2012: ['Pitch Black', 'Bright Silver', 'Bright White', 'Tungsten Metallic', 'Redline Red', 'Blackberry', 'Header Orange', 'Stinger Yellow', 'Blue Streak', 'Maximum Steel'],
-  2013: ['Pitch Black', 'Billet Silver', 'Bright White', 'Granite Crystal', 'Redline Red', 'Maximum Steel', 'Header Orange', 'Jazz Blue', 'Phantom Black', 'Plum Crazy'],
-  2014: ['Pitch Black', 'Billet Silver', 'Bright White', 'Granite Crystal', 'Redline Red', 'Maximum Steel', 'Header Orange', 'Jazz Blue', 'Phantom Black', 'High Octane Red', 'Plum Crazy'],
-  2015: ['Pitch Black', 'Granite Crystal', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Jazz Blue', 'Phantom Black', 'Go Mango'],
-  2016: ['Pitch Black', 'Granite', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go'],
-  2017: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket'],
+  2011: ['Pitch Black', 'Bright Silver', 'Bright White', 'Tungsten Metallic', 'Redline Red', 'Blackberry', 'Toxic Orange', 'Deep Water Blue', 'Sapphire Blue', 'White Gold'],
+  2012: ['Pitch Black', 'Bright Silver', 'Bright White', 'Tungsten Metallic', 'Redline Red', 'Blackberry', 'Header Orange', 'Stinger Yellow', 'Blue Streak', 'Maximum Steel', 'White Gold'],
+  2013: ['Pitch Black', 'Billet Silver', 'Bright White', 'Granite Crystal', 'Redline Red', 'Maximum Steel', 'Header Orange', 'Jazz Blue', 'Phantom Black', 'Plum Crazy', 'Copperhead', 'Ivory Tri-Coat', 'TorRed', 'White Gold'],
+  2014: ['Pitch Black', 'Billet Silver', 'Bright White', 'Granite Crystal', 'Redline Red', 'Maximum Steel', 'Header Orange', 'Jazz Blue', 'Phantom Black', 'High Octane Red', 'Plum Crazy', 'Ivory Tri-Coat', 'TorRed', 'White Gold'],
+  2015: ['Pitch Black', 'Granite Crystal', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Jazz Blue', 'Phantom Black', 'Go Mango', 'Ivory Tri-Coat'],
+  2016: ['Pitch Black', 'Granite', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Ivory Tri-Coat', 'Jazz Blue'],
+  2017: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket', 'Destroyer Gray'],
+  2018: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'Redline Red', 'B5 Blue', 'IndiGo Blue', 'Plum Crazy', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Yellow Jacket'],
+  2019: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'IndiGo Blue', 'Plum Crazy', 'Sublime', 'Go Mango', 'F8 Green', 'Destroyer Gray'],
+  2020: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'IndiGo Blue', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Smoke Show'],
+  2021: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'IndiGo Blue', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Smoke Show'],
+  2022: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'IndiGo Blue', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Smoke Show', 'Stinger Yellow'],
+  2023: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'IndiGo Blue', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Smoke Show', 'Destroyer Gray', 'B5 Blue', 'Plum Crazy', 'Sublime'],
 }
 
 // LC Challenger (2008-2014) factory paint by year.
@@ -830,14 +836,14 @@ const lcChallengerColorsByYear: Record<number, string[]> = {
 
 // LA Challenger refresh (2015-2023) factory paint by year — Dodge's high-impact palette.
 const challengerColorsByYear: Record<number, string[]> = {
-  2015: ['Pitch Black', 'Granite Crystal', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Jazz Blue', 'Sublime', 'Phantom Black', 'Go Mango', 'Plum Crazy'],
-  2016: ['Pitch Black', 'Granite', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket'],
-  2017: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket'],
-  2018: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'IndiGo Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'F8 Green', 'Destroyer Gray'],
-  2019: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'IndiGo Blue', 'Plum Crazy', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Frostbite'],
-  2020: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'IndiGo Blue', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Smoke Show'],
-  2021: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'Gold Rush', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Smoke Show'],
-  2022: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Sublime', 'TorRed', 'Octane Red', 'Frostbite', 'Plum Crazy', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'B5 Blue'],
+  2015: ['Pitch Black', 'Granite Crystal', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Jazz Blue', 'Sublime', 'Phantom Black', 'Go Mango', 'Plum Crazy', 'Ivory Tri-Coat'],
+  2016: ['Pitch Black', 'Granite', 'Billet Silver', 'Bright White', 'Maximum Steel', 'TorRed', 'Redline Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket', 'Ivory Tri-Coat', 'Jazz Blue'],
+  2017: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'Contusion Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'Yellow Jacket', 'Destroyer Gray', 'Redline Red'],
+  2018: ['Pitch Black', 'Granite', 'Billet Silver', 'White Knuckle', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'IndiGo Blue', 'Plum Crazy', 'Go Mango', 'Green Go', 'F8 Green', 'Destroyer Gray', 'Redline Red', 'Yellow Jacket'],
+  2019: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Maximum Steel', 'TorRed', 'Octane Red', 'B5 Blue', 'IndiGo Blue', 'Plum Crazy', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Frostbite', 'Sublime', 'Yellow Jacket'],
+  2020: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'IndiGo Blue', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Smoke Show', 'Gold Rush'],
+  2021: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Hellraisin', 'TorRed', 'Octane Red', 'Frostbite', 'Gold Rush', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'Smoke Show', 'IndiGo Blue'],
+  2022: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Sublime', 'TorRed', 'Octane Red', 'Frostbite', 'Plum Crazy', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'B5 Blue', 'Hellraisin', 'Smoke Show', 'IndiGo Blue', 'Stinger Yellow'],
   2023: ['Pitch Black', 'Triple Nickel', 'White Knuckle', 'Granite', 'Sublime', 'TorRed', 'Octane Red', 'Frostbite', 'Plum Crazy', 'Sinamon Stick', 'Go Mango', 'F8 Green', 'Destroyer Gray', 'B5 Blue'],
 }
 
