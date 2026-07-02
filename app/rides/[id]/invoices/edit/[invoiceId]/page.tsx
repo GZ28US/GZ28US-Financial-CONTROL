@@ -221,6 +221,9 @@ export default function EditInvoicePage() {
   const [newDuty, setNewDuty] = useState<{ description: string; staff_id: string }>({ description: '', staff_id: '' })
   const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
   const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string }>({ description: '', staff_id: '' })
+  // Every duty description ever written (all invoices, deduped) — powers the
+  // type-ahead datalist on the duty description fields, like the supplier field.
+  const [dutySuggestions, setDutySuggestions] = useState<string[]>([])
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
@@ -372,12 +375,14 @@ export default function EditInvoicePage() {
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
 
-    const [{ data: dutiesData }, { data: staffData }] = await Promise.all([
+    const [{ data: dutiesData }, { data: staffData }, { data: allDutyDescs }] = await Promise.all([
       supabase.from('invoice_duties').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
       supabase.from('staff').select('id, name').order('name'),
+      supabase.from('invoice_duties').select('description').order('created_at', { ascending: false }).limit(2000),
     ])
     if (dutiesData) setDuties(dutiesData.map((d: any) => ({ id: d.id, staff_id: d.staff_id, description: d.description || '', done: !!d.done })))
     if (staffData) setStaffList(staffData as { id: string; name: string }[])
+    if (allDutyDescs) setDutySuggestions([...new Set(allDutyDescs.map((d: any) => String(d.description || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) {
@@ -1577,6 +1582,7 @@ export default function EditInvoicePage() {
     const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: newDuty.staff_id, description: newDuty.description.trim(), done: false }]).select().single()
     if (error || !data) { alert(error?.message || 'Error adding duty'); return }
     setDuties([...duties, { id: data.id, staff_id: data.staff_id, description: data.description, done: false }])
+    if (!dutySuggestions.includes(data.description)) setDutySuggestions([...dutySuggestions, data.description].sort((a, b) => a.localeCompare(b)))
     setNewDuty({ description: '', staff_id: '' })
   }
   async function toggleDutyDone(index: number) {
@@ -3395,7 +3401,8 @@ export default function EditInvoicePage() {
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <p className="text-sm text-gray-400">Duties to be done on this invoice, each matched to the STAFF member who will execute it.</p>
             <div className="flex gap-3 flex-wrap">
-              <input type="text" placeholder="Duty description" value={newDuty.description} onChange={(e) => setNewDuty({ ...newDuty, description: e.target.value })} className={`${smallInputClass} flex-1 min-w-[14rem]`} />
+              <input type="text" list="duty-options" placeholder="Duty description — type to search" value={newDuty.description} onChange={(e) => setNewDuty({ ...newDuty, description: e.target.value })} className={`${smallInputClass} flex-1 min-w-[14rem]`} />
+              <datalist id="duty-options">{dutySuggestions.map(d => <option key={d} value={d} />)}</datalist>
               <select value={newDuty.staff_id} onChange={(e) => setNewDuty({ ...newDuty, staff_id: e.target.value })} className={`${selectClass} min-w-[12rem]`}>
                 <option value="">— STAFF —</option>
                 {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -3408,7 +3415,7 @@ export default function EditInvoicePage() {
                   <div key={d.id}>
                     {editingDutyIndex === index ? (
                       <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                        <input type="text" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${smallInputClass} w-full`} />
+                        <input type="text" list="duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${smallInputClass} w-full`} />
                         <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${selectClass} w-full`}>
                           <option value="">— STAFF —</option>
                           {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
