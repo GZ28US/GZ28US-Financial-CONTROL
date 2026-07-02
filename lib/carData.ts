@@ -532,6 +532,35 @@ Object.assign(specialEditions, {
   '2026-ESCALADE-V-6.2 V8 SC': ['None', 'ESV'],
 })
 
+// ── Chevrolet Avalanche, 2nd Gen (GMT900, 2007–2013) ────────────────────────────
+// One engine across the whole generation — the 5.3L Vortec V8 (320 hp); the 2500/8.1L
+// died with Gen1. Trims: LS / LT / LTZ (2007's 1LT/2LT/3LT collapse into LT). The Z71
+// off-road package (LT/LTZ) and the 2013 Black Diamond send-off edition live in
+// specialEditions per the special-editions rule.
+const avalancheGen2Colors = ['Black', 'Summit White', 'Victory Red', 'Sheer Silver Metallic', 'Silver Ice Metallic', 'Graystone Metallic', 'Taupe Gray Metallic', 'Blue Granite Metallic', 'Imperial Blue Metallic', 'Bermuda Blue Metallic', 'Dark Cherry Metallic', 'Deep Ruby Metallic', 'Crystal Red Tintcoat', 'Gold Mist Metallic', 'Mocha Steel Metallic', 'White Diamond Tricoat', 'Fairway Metallic']
+for (let y = 2007; y <= 2013; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('CHEVROLET')) brandsByManufacturerAndYear['GM'][y].push('CHEVROLET')
+  modelsByBrandAndYear['CHEVROLET'] = modelsByBrandAndYear['CHEVROLET'] || {}
+  modelsByBrandAndYear['CHEVROLET'][y] = modelsByBrandAndYear['CHEVROLET'][y] || []
+  if (!modelsByBrandAndYear['CHEVROLET'][y].includes('AVALANCHE')) modelsByBrandAndYear['CHEVROLET'][y].push('AVALANCHE')
+  modelsByBrandAndYear['CHEVROLET'][y].sort()
+  versionsByModelAndYear['AVALANCHE'] = versionsByModelAndYear['AVALANCHE'] || {}
+  versionsByModelAndYear['AVALANCHE'][y] = ['LS 5.3 V8', 'LT 5.3 V8', 'LTZ 5.3 V8']
+}
+years.sort((a, b) => a - b)
+for (let y = 2007; y <= 2013; y++) {
+  Object.assign(specialEditions, {
+    [`${y}-AVALANCHE-LT 5.3 V8`]: y === 2013 ? ['None', 'Z71', 'Black Diamond'] : ['None', 'Z71'],
+    [`${y}-AVALANCHE-LTZ 5.3 V8`]: y === 2013 ? ['None', 'Z71', 'Black Diamond'] : ['None', 'Z71'],
+    ...(y === 2013 ? { [`${y}-AVALANCHE-LS 5.3 V8`]: ['None', 'Black Diamond'] } : {}),
+  })
+}
+
 // ── Jeep Grand Cherokee — Hemi (WK 2005–2010 + WK2 2011–2021) ────────────────────
 // Hemi-powered Grand Cherokees only. Trims = the engine/performance variants (per the
 // special-editions rule): 5.7 V8 HEMI across both gens; SRT8 6.1 on the WK (2006–2010);
@@ -969,6 +998,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'MUSTANG' && mustangColorsByYear[year]) return mustangColorsByYear[year]
   if (model === 'CTS-V') return ctsV2Colors
   if (model === 'ESCALADE-V') return escaladeVColors
+  if (model === 'AVALANCHE') return avalancheGen2Colors
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
   if (model === 'DURANGO') return durangoColors
   if (model === 'GRAND CHEROKEE' && year <= 2004) return grandCherokeeZjColors
@@ -999,6 +1029,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
       CORVETTE: ['Base 6.0', 'Z06 7.0', 'Base 6.2', 'ZR1 6.2 SC', 'Grand Sport 6.2', 'Stingray 6.2', 'Z06 6.2', 'ZR1 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
       OPALA: ['Standard 2.5 4cyl', 'Especial 2.5 4cyl', 'Luxo 2.5 4cyl', 'Luxo 4.1 6cyl', 'Gran Luxo 4.1 6cyl', 'SS 4.1 6cyl'],
       D20: ['Maxion S4T Plus 4cyl Turbo Diesel'],
+      AVALANCHE: ['LS 5.3 V8', 'LT 5.3 V8', 'LTZ 5.3 V8'],
     },
   },
   FORD: {
