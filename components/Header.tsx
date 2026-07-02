@@ -18,6 +18,7 @@ const MENU: MenuItem[] = [
       ['/payments', 'PAST Flow'],
       ['/future', 'FUTURE Flow'],
       ['/gz-flow', 'GZ28US vs GZ28BR Flow'],
+      ['/duties', 'Staff DUTIES'],
     ],
   },
   {
