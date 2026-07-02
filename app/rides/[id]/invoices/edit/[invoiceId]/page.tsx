@@ -217,10 +217,10 @@ export default function EditInvoicePage() {
   // DUTIES — tasks on this invoice, each matched to the STAFF member who will
   // execute it. CRUD persists immediately (not deferred to SAVE CHANGES).
   const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([])
-  const [duties, setDuties] = useState<{ id: string; staff_id: string | null; description: string; done: boolean }[]>([])
-  const [newDuty, setNewDuty] = useState<{ description: string; staff_id: string }>({ description: '', staff_id: '' })
+  const [duties, setDuties] = useState<{ id: string; staff_id: string | null; description: string; done: boolean; priority: string }[]>([])
+  const [newDuty, setNewDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
   const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
-  const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string }>({ description: '', staff_id: '' })
+  const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
   // Every duty description ever written (all invoices, deduped) — powers the
   // type-ahead datalist on the duty description fields, like the supplier field.
   const [dutySuggestions, setDutySuggestions] = useState<string[]>([])
@@ -380,7 +380,7 @@ export default function EditInvoicePage() {
       supabase.from('staff').select('id, name').order('name'),
       supabase.from('invoice_duties').select('description').order('created_at', { ascending: false }).limit(2000),
     ])
-    if (dutiesData) setDuties(dutiesData.map((d: any) => ({ id: d.id, staff_id: d.staff_id, description: d.description || '', done: !!d.done })))
+    if (dutiesData) setDuties(sortDuties(dutiesData.map((d: any) => ({ id: d.id, staff_id: d.staff_id, description: d.description || '', done: !!d.done, priority: String(d.priority || '1') })), (staffData || []) as { id: string; name: string }[]))
     if (staffData) setStaffList(staffData as { id: string; name: string }[])
     if (allDutyDescs) setDutySuggestions([...new Set(allDutyDescs.map((d: any) => String(d.description || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
 
@@ -1576,14 +1576,39 @@ export default function EditInvoicePage() {
 
   // DUTIES — persisted immediately (independent from SAVE CHANGES).
   const staffName = (id: string | null) => staffList.find(s => s.id === id)?.name || '—'
+  // Priority: 1 (highest) → 4, then StandBy. Drives the row color and sort order.
+  const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
+  const dutyPriorityBadge = (p: string) => (
+    p === 'STANDBY' ? { label: 'STANDBY', cls: 'bg-gray-700 text-gray-300' }
+    : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
+    : p === '3' ? { label: 'P3', cls: 'bg-yellow-900 text-yellow-300' }
+    : p === '2' ? { label: 'P2', cls: 'bg-orange-900 text-orange-300' }
+    : { label: 'P1', cls: 'bg-red-900 text-red-300' })
+  const dutyTextColor = (p: string) => (
+    p === 'STANDBY' ? 'text-gray-400'
+    : p === '4' ? 'text-blue-300'
+    : p === '3' ? 'text-yellow-200'
+    : p === '2' ? 'text-orange-300'
+    : 'text-red-300')
+  // Keep each member's duties together (rows from different members are never
+  // mixed), then order by priority within the member.
+  const sortDuties = (list: { id: string; staff_id: string | null; description: string; done: boolean; priority: string }[], staff: { id: string; name: string }[]) => {
+    const rank = new Map<string, number>(staff.map((s, i) => [s.id, i]))
+    return [...list].sort((a, b) => {
+      const sa = a.staff_id && rank.has(a.staff_id) ? (rank.get(a.staff_id) as number) : 999
+      const sb = b.staff_id && rank.has(b.staff_id) ? (rank.get(b.staff_id) as number) : 999
+      if (sa !== sb) return sa - sb
+      return (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
+    })
+  }
   async function addDuty() {
     if (!newDuty.description.trim()) { alert('Enter the duty description'); return }
     if (!newDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
-    const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: newDuty.staff_id, description: newDuty.description.trim(), done: false }]).select().single()
+    const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: newDuty.staff_id, description: newDuty.description.trim(), done: false, priority: newDuty.priority }]).select().single()
     if (error || !data) { alert(error?.message || 'Error adding duty'); return }
-    setDuties([...duties, { id: data.id, staff_id: data.staff_id, description: data.description, done: false }])
+    setDuties(sortDuties([...duties, { id: data.id, staff_id: data.staff_id, description: data.description, done: false, priority: String(data.priority || '1') }], staffList))
     if (!dutySuggestions.includes(data.description)) setDutySuggestions([...dutySuggestions, data.description].sort((a, b) => a.localeCompare(b)))
-    setNewDuty({ description: '', staff_id: '' })
+    setNewDuty({ description: '', staff_id: '', priority: '1' })
   }
   async function toggleDutyDone(index: number) {
     const d = duties[index]
@@ -1591,15 +1616,15 @@ export default function EditInvoicePage() {
     if (error) { alert(error.message); return }
     const a = [...duties]; a[index] = { ...d, done: !d.done }; setDuties(a)
   }
-  function startEditDuty(index: number) { setEditingDutyIndex(index); setEditingDuty({ description: duties[index].description, staff_id: duties[index].staff_id || '' }) }
+  function startEditDuty(index: number) { setEditingDutyIndex(index); setEditingDuty({ description: duties[index].description, staff_id: duties[index].staff_id || '', priority: duties[index].priority || '1' }) }
   async function saveEditDuty() {
     if (editingDutyIndex === null) return
     if (!editingDuty.description.trim()) { alert('Enter the duty description'); return }
     if (!editingDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
     const d = duties[editingDutyIndex]
-    const { error } = await supabase.from('invoice_duties').update({ description: editingDuty.description.trim(), staff_id: editingDuty.staff_id }).eq('id', d.id)
+    const { error } = await supabase.from('invoice_duties').update({ description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', d.id)
     if (error) { alert(error.message); return }
-    const a = [...duties]; a[editingDutyIndex] = { ...d, description: editingDuty.description.trim(), staff_id: editingDuty.staff_id }; setDuties(a)
+    const a = [...duties]; a[editingDutyIndex] = { ...d, description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority }; setDuties(sortDuties(a, staffList))
     setEditingDutyIndex(null)
   }
   async function removeDuty(index: number) {
@@ -3407,6 +3432,13 @@ export default function EditInvoicePage() {
                 <option value="">— STAFF —</option>
                 {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
+              <select value={newDuty.priority} onChange={(e) => setNewDuty({ ...newDuty, priority: e.target.value })} className={selectClass} title="Priority">
+                <option value="1">Priority 1</option>
+                <option value="2">Priority 2</option>
+                <option value="3">Priority 3</option>
+                <option value="4">Priority 4</option>
+                <option value="STANDBY">StandBy</option>
+              </select>
             </div>
             <button onClick={addDuty} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD DUTY</button>
             {duties.length > 0 && (
@@ -3420,6 +3452,13 @@ export default function EditInvoicePage() {
                           <option value="">— STAFF —</option>
                           {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
+                        <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${selectClass} w-full`}>
+                          <option value="1">Priority 1</option>
+                          <option value="2">Priority 2</option>
+                          <option value="3">Priority 3</option>
+                          <option value="4">Priority 4</option>
+                          <option value="STANDBY">StandBy</option>
+                        </select>
                         <div className="flex gap-3">
                           <button onClick={saveEditDuty} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                           <button onClick={() => setEditingDutyIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -3428,7 +3467,10 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < duties.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-base font-bold ${d.done ? 'text-green-400 line-through' : 'text-gray-200'}`} title={d.description}>{d.description}</p>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${dutyPriorityBadge(d.priority).cls}`}>{dutyPriorityBadge(d.priority).label}</span>
+                            <p className={`text-base font-bold truncate ${d.done ? 'text-green-400 line-through' : dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
+                          </div>
                           <p className="text-sm text-purple-300">👤 {staffName(d.staff_id)}</p>
                         </div>
                         <div className="flex gap-2 shrink-0">
