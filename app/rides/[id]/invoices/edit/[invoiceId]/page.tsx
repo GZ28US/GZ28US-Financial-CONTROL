@@ -214,6 +214,13 @@ export default function EditInvoicePage() {
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState('')
+  // DUTIES — tasks on this invoice, each matched to the STAFF member who will
+  // execute it. CRUD persists immediately (not deferred to SAVE CHANGES).
+  const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([])
+  const [duties, setDuties] = useState<{ id: string; staff_id: string | null; description: string; done: boolean }[]>([])
+  const [newDuty, setNewDuty] = useState<{ description: string; staff_id: string }>({ description: '', staff_id: '' })
+  const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
+  const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string }>({ description: '', staff_id: '' })
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
@@ -364,6 +371,13 @@ export default function EditInvoicePage() {
 
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData.map(n => ({ id: n.id, note: n.note })))
+
+    const [{ data: dutiesData }, { data: staffData }] = await Promise.all([
+      supabase.from('invoice_duties').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('staff').select('id, name').order('name'),
+    ])
+    if (dutiesData) setDuties(dutiesData.map((d: any) => ({ id: d.id, staff_id: d.staff_id, description: d.description || '', done: !!d.done })))
+    if (staffData) setStaffList(staffData as { id: string; name: string }[])
 
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) {
@@ -1553,6 +1567,40 @@ export default function EditInvoicePage() {
     updated[index] = { ...updated[index], paid_at: paidAt }
     setPayments(updated)
     setPaidInConfirm(null)
+  }
+
+  // DUTIES — persisted immediately (independent from SAVE CHANGES).
+  const staffName = (id: string | null) => staffList.find(s => s.id === id)?.name || '—'
+  async function addDuty() {
+    if (!newDuty.description.trim()) { alert('Enter the duty description'); return }
+    if (!newDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
+    const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: newDuty.staff_id, description: newDuty.description.trim(), done: false }]).select().single()
+    if (error || !data) { alert(error?.message || 'Error adding duty'); return }
+    setDuties([...duties, { id: data.id, staff_id: data.staff_id, description: data.description, done: false }])
+    setNewDuty({ description: '', staff_id: '' })
+  }
+  async function toggleDutyDone(index: number) {
+    const d = duties[index]
+    const { error } = await supabase.from('invoice_duties').update({ done: !d.done }).eq('id', d.id)
+    if (error) { alert(error.message); return }
+    const a = [...duties]; a[index] = { ...d, done: !d.done }; setDuties(a)
+  }
+  function startEditDuty(index: number) { setEditingDutyIndex(index); setEditingDuty({ description: duties[index].description, staff_id: duties[index].staff_id || '' }) }
+  async function saveEditDuty() {
+    if (editingDutyIndex === null) return
+    if (!editingDuty.description.trim()) { alert('Enter the duty description'); return }
+    if (!editingDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
+    const d = duties[editingDutyIndex]
+    const { error } = await supabase.from('invoice_duties').update({ description: editingDuty.description.trim(), staff_id: editingDuty.staff_id }).eq('id', d.id)
+    if (error) { alert(error.message); return }
+    const a = [...duties]; a[editingDutyIndex] = { ...d, description: editingDuty.description.trim(), staff_id: editingDuty.staff_id }; setDuties(a)
+    setEditingDutyIndex(null)
+  }
+  async function removeDuty(index: number) {
+    const d = duties[index]
+    const { error } = await supabase.from('invoice_duties').delete().eq('id', d.id)
+    if (error) { alert(error.message); return }
+    setDuties(duties.filter((_, i) => i !== index))
   }
 
   function addNote() {
@@ -3340,6 +3388,55 @@ export default function EditInvoicePage() {
           </div>
         </div>
         )}
+
+        {/* DUTIES — tasks on this invoice matched to the STAFF member who executes them. */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">DUTIES</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <p className="text-sm text-gray-400">Duties to be done on this invoice, each matched to the STAFF member who will execute it.</p>
+            <div className="flex gap-3 flex-wrap">
+              <input type="text" placeholder="Duty description" value={newDuty.description} onChange={(e) => setNewDuty({ ...newDuty, description: e.target.value })} className={`${smallInputClass} flex-1 min-w-[14rem]`} />
+              <select value={newDuty.staff_id} onChange={(e) => setNewDuty({ ...newDuty, staff_id: e.target.value })} className={`${selectClass} min-w-[12rem]`}>
+                <option value="">— STAFF —</option>
+                {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <button onClick={addDuty} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD DUTY</button>
+            {duties.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {duties.map((d, index) => (
+                  <div key={d.id}>
+                    {editingDutyIndex === index ? (
+                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                        <input type="text" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${smallInputClass} w-full`} />
+                        <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${selectClass} w-full`}>
+                          <option value="">— STAFF —</option>
+                          {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                        <div className="flex gap-3">
+                          <button onClick={saveEditDuty} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                          <button onClick={() => setEditingDutyIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < duties.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-base font-bold ${d.done ? 'text-green-400 line-through' : 'text-gray-200'}`} title={d.description}>{d.description}</p>
+                          <p className="text-sm text-purple-300">👤 {staffName(d.staff_id)}</p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button onClick={() => toggleDutyDone(index)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${d.done ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'}`}>{d.done ? 'DONE' : 'TO DO'}</button>
+                          <button onClick={() => startEditDuty(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => removeDuty(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
       </div>
 
