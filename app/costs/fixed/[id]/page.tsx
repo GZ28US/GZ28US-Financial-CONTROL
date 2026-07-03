@@ -220,6 +220,27 @@ export default function FixedCostSupplierViewPage() {
   const td = todayYmd()
   const modalInput = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2'
 
+  // The SCHEDULED amount for a row comes from the supplier's payment-day slot
+  // (amount_1/amount_2) whose clamped day matches the row's expense day. Paying
+  // overwrites the row's `amount` with what was actually paid, so any amount
+  // paid ABOVE the scheduled slot value is a late fine.
+  const scheduledAmountFor = (r: FixedExpense): number | null => {
+    if (!s) return null
+    const slots: { day: number; amount: number }[] = []
+    if (s.payment_day_1 != null && s.amount_1 != null) slots.push({ day: Number(s.payment_day_1), amount: Number(s.amount_1) })
+    if (s.payment_day_2 != null && s.amount_2 != null) slots.push({ day: Number(s.payment_day_2), amount: Number(s.amount_2) })
+    if (slots.length === 0) return null
+    if (slots.length === 1 || !isValidDate(r.expense_date)) return slots[0].amount
+    const d = new Date(r.expense_date + 'T00:00:00')
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+    let best = slots[0], bestDist = Infinity
+    for (const sl of slots) {
+      const dist = Math.abs(Math.min(sl.day, lastDay) - d.getDate())
+      if (dist < bestDist) { bestDist = dist; best = sl }
+    }
+    return best.amount
+  }
+
   const byMonth = new Map<string, FixedExpense[]>()
   for (const r of rows) { const k = (r.expense_date || '').slice(0, 7); if (!k) continue; if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k)!.push(r) }
   const allMonths = [...byMonth.keys()].sort((a, b) => b.localeCompare(a))
@@ -347,6 +368,8 @@ export default function FixedCostSupplierViewPage() {
                     const paid = isValidDate(p.payment_date)
                     const delayed = !paid && isValidDate(p.expense_date) && (p.expense_date as string) < td
                     const daysDelayed = delayed ? daysLate(p.expense_date as string, td) : 0
+                    const sched = scheduledAmountFor(p)
+                    const fine = paid && sched != null ? (Number(p.amount) || 0) - sched : 0
                     return (
                       <div key={p.id} className="flex items-center justify-between gap-3 flex-wrap border-b border-gray-700/60 pb-3 last:border-0 last:pb-0">
                         <div className="min-w-0">
@@ -355,6 +378,7 @@ export default function FixedCostSupplierViewPage() {
                             <span className="text-gray-400 text-sm">day {dayOf(p.expense_date)}</span>
                             {paid ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
                               : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({daysDelayed} {daysDelayed === 1 ? 'day' : 'days'})</span> : null}
+                            {fine > 0.005 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300" title={`Scheduled ${formatUSD(sched || 0)} — paid ${formatUSD(Number(p.amount) || 0)}`}>FINES for Late: {formatUSD(fine)}</span>}
                           </div>
                           {paid && <p className="text-xs text-gray-500">Paid: {fmtDate(p.payment_date)}{p.receipt_url ? ' · 📎 receipt' : ''}</p>}
                         </div>
