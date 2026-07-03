@@ -252,6 +252,32 @@ export default function FixedCostSupplierViewPage() {
   const visibleCount = months.reduce((n, mk) => n + (byMonth.get(mk) || []).length, 0)
   const total = months.reduce((sum, mk) => sum + (byMonth.get(mk) || []).reduce((s, r) => s + (Number(r.amount) || 0), 0), 0)
 
+  // With a CONCLUSION date the agreement is finite: the heading splits into
+  // Total PAID (actually paid, fines included), Total DUE (every remaining
+  // scheduled payment through the conclusion — including months not yet
+  // generated) and Total FINAL (paid + due).
+  const paidTotal = rows.filter(r => isValidDate(r.payment_date)).reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
+  let dueTotal = 0
+  if (s && isValidDate(s.date_conclusion) && isValidDate(s.date_entry)) {
+    const slots: { day: number; amount: number }[] = []
+    if (s.payment_day_1 != null && s.amount_1 != null) slots.push({ day: Number(s.payment_day_1), amount: Number(s.amount_1) })
+    if (s.payment_day_2 != null && s.amount_2 != null) slots.push({ day: Number(s.payment_day_2), amount: Number(s.amount_2) })
+    const clampD = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
+    const toYmd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const start = new Date((s.date_entry as string) + 'T00:00:00')
+    const end = new Date((s.date_conclusion as string) + 'T00:00:00')
+    const paidDates = new Set(rows.filter(r => isValidDate(r.payment_date)).map(r => r.expense_date))
+    let cursor = new Date(start.getFullYear(), start.getMonth() + 1, 1)
+    while (cursor <= end) {
+      for (const slot of slots) {
+        const pd = clampD(cursor.getFullYear(), cursor.getMonth(), slot.day)
+        if (pd <= end && !paidDates.has(toYmd(pd))) dueTotal += slot.amount
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    }
+  }
+  const finalTotal = paidTotal + dueTotal
+
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   if (!s) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Not found.</p></main>
 
@@ -345,9 +371,19 @@ export default function FixedCostSupplierViewPage() {
         </div>
       )}
 
-      <div className="flex items-baseline gap-4 mb-6">
+      <div className="flex items-baseline gap-4 mb-6 flex-wrap">
         <h2 className="text-3xl font-bold">EXPENSES ({visibleCount})</h2>
-        <span className="text-xl font-bold text-gray-300">Total: {formatUSD(total)}</span>
+        {isValidDate(s.date_conclusion) ? (
+          <span className="text-xl font-bold flex gap-2 flex-wrap items-baseline">
+            <span className="text-green-400">Total PAID: {formatUSD(paidTotal)}</span>
+            <span className="text-gray-600">-</span>
+            <span className="text-orange-400">Total DUE: {formatUSD(dueTotal)}</span>
+            <span className="text-gray-600">-</span>
+            <span className="text-gray-300">Total FINAL: {formatUSD(finalTotal)}</span>
+          </span>
+        ) : (
+          <span className="text-xl font-bold text-gray-300">Total: {formatUSD(total)}</span>
+        )}
       </div>
 
       {months.length === 0 ? (
