@@ -4,7 +4,11 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatPhone } from '@/lib/utils'
+import { formatUSD } from '@/lib/utils'
+
+function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+function fmtDate(d: string) { return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) }
+function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 type FixedCostSupplier = {
   id: string
@@ -20,6 +24,8 @@ const CONTACTS = ['WhatsApp', 'Email', 'Phone'] as const
 
 export default function FixedCostSuppliersPage() {
   const [rows, setRows] = useState<FixedCostSupplier[]>([])
+  // supplier_id -> next payment still due (earliest unpaid expense: date + amount).
+  const [nextDue, setNextDue] = useState<Map<string, { date: string; amount: number }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'WhatsApp' | 'Email' | 'Phone'>('ALL')
@@ -34,6 +40,18 @@ export default function FixedCostSuppliersPage() {
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     setRows((data || []) as FixedCostSupplier[])
+    // Earliest UNPAID expense per supplier = the next payment due (overdue ones first).
+    const { data: exp } = await supabase
+      .from('fixed_cost_expenses')
+      .select('supplier_id, expense_date, amount')
+      .is('payment_date', null)
+      .order('expense_date', { ascending: true, nullsFirst: false })
+    const m = new Map<string, { date: string; amount: number }>()
+    for (const e of (exp || [])) {
+      if (!e.supplier_id || !isValidDate(e.expense_date)) continue
+      if (!m.has(e.supplier_id)) m.set(e.supplier_id, { date: e.expense_date, amount: Number(e.amount) || 0 })
+    }
+    setNextDue(m)
     setLoading(false)
   }
 
@@ -44,6 +62,7 @@ export default function FixedCostSuppliersPage() {
     load()
   }
 
+  const td = todayYmd()
   const q = search.trim().toLowerCase()
   const filtered = rows.filter((r) => {
     const contactOk = filter === 'ALL' || (r.preferred_contact || 'WhatsApp') === filter
@@ -108,7 +127,12 @@ export default function FixedCostSuppliersPage() {
                   <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700">{r.preferred_contact || 'WhatsApp'}</span>
                 </div>
                 <p className="text-lg text-gray-400">{[r.company, r.contact_name].filter(Boolean).join(' · ') || '—'}</p>
-                <p className="text-base text-gray-500">{[formatPhone(r.phone), r.email].filter(Boolean).join(' · ')}</p>
+                {(() => {
+                  const n = nextDue.get(r.id)
+                  if (!n) return <p className="text-base text-gray-500">All paid — nothing due</p>
+                  const late = n.date < td
+                  return <p className={`text-base font-bold ${late ? 'text-red-400' : 'text-gray-300'}`}>{fmtDate(n.date)} - {formatUSD(n.amount)}{late ? ' · DELAYED' : ''}</p>
+                })()}
               </Link>
               <div className="flex gap-3 flex-wrap shrink-0">
                 <Link href={`/costs/fixed/${r.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold">💵 EXPENSES</Link>
