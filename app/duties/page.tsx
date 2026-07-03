@@ -18,6 +18,22 @@ type Duty = {
   invoiceCode: string
   carLabel: string
   href: string
+  // Time tracking: accumulated seconds + the running segment's start (null when
+  // not running), plus the very first START and the final DONE timestamps.
+  time_seconds: number
+  time_started_at: string | null
+  work_started_at: string | null
+  work_ended_at: string | null
+}
+
+function fmtDur(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec))
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60
+  return h > 0 ? `${h}h ${m}m ${ss}s` : m > 0 ? `${m}m ${ss}s` : `${ss}s`
+}
+function fmtDT(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 // Priority: 1 (highest) → 4, then StandBy. Drives the row color and sort order.
@@ -43,6 +59,9 @@ export default function StaffDutiesPage() {
   const [filter, setFilter] = useState<'ALL' | 'TODO' | 'DONE'>('TODO')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
+  // 1s ticker so running timers count live on screen.
+  const [, setTick] = useState(0)
+  useEffect(() => { const t = setInterval(() => setTick(v => v + 1), 1000); return () => clearInterval(t) }, [])
 
   useEffect(() => { void load() }, [])
 
@@ -81,6 +100,10 @@ export default function StaffDutiesPage() {
         invoiceCode: inv?.invoice_code || '—',
         carLabel,
         href: inv ? `/${ownerSeg}/invoices/edit/${inv.id}` : '#',
+        time_seconds: Number(d.time_seconds) || 0,
+        time_started_at: d.time_started_at || null,
+        work_started_at: d.work_started_at || null,
+        work_ended_at: d.work_ended_at || null,
       }
     }))
     setStaffList((staffRows || []) as { id: string; name: string }[])
@@ -107,6 +130,45 @@ export default function StaffDutiesPage() {
     const { error } = await supabase.from('invoice_duties').delete().eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.filter(x => x.id !== d.id))
+  }
+
+  // ── Time tracking ──────────────────────────────────────────────────────────
+  // START begins (or resumes) the counter; starting a duty AUTO-PAUSES any other
+  // duty the same staff member has running. PAUSE banks the elapsed segment.
+  // DONE banks it, stamps the end time and marks the duty done.
+  const segSeconds = (startedAt: string) => Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
+
+  async function startDuty(d: Duty) {
+    const nowIso = new Date().toISOString()
+    const othersRunning = duties.filter(x => x.id !== d.id && x.staff_id === d.staff_id && x.time_started_at)
+    for (const r of othersRunning) {
+      const secs = (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string)
+      const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null }).eq('id', r.id)
+      if (error) { alert(error.message); return }
+    }
+    const { error } = await supabase.from('invoice_duties').update({ time_started_at: nowIso, work_started_at: d.work_started_at || nowIso, work_ended_at: null }).eq('id', d.id)
+    if (error) { alert(error.message); return }
+    setDuties(duties.map(x => {
+      if (x.id === d.id) return { ...x, time_started_at: nowIso, work_started_at: x.work_started_at || nowIso, work_ended_at: null }
+      if (othersRunning.some(r => r.id === x.id) && x.time_started_at) return { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null }
+      return x
+    }))
+  }
+
+  async function pauseDuty(d: Duty) {
+    if (!d.time_started_at) return
+    const secs = (Number(d.time_seconds) || 0) + segSeconds(d.time_started_at)
+    const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null }).eq('id', d.id)
+    if (error) { alert(error.message); return }
+    setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
+  }
+
+  async function finishDuty(d: Duty) {
+    const nowIso = new Date().toISOString()
+    const secs = (Number(d.time_seconds) || 0) + (d.time_started_at ? segSeconds(d.time_started_at) : 0)
+    const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true }).eq('id', d.id)
+    if (error) { alert(error.message); return }
+    setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
   }
 
   const q = search.trim().toLowerCase()
@@ -201,9 +263,28 @@ export default function StaffDutiesPage() {
                           <a href={`${BASE_PATH}${d.href}`} className="text-gray-500 hover:text-blue-400 hover:underline">{d.invoiceCode}</a>
                           {d.carLabel ? ` · ${d.carLabel}` : ''}
                         </p>
+                        {(d.time_started_at || d.time_seconds > 0 || d.work_started_at) && (
+                          <p className="text-sm">
+                            <span className={d.time_started_at ? 'text-amber-400 font-bold' : 'text-gray-400 font-bold'}>
+                              ⏱ {fmtDur((Number(d.time_seconds) || 0) + (d.time_started_at ? (Date.now() - new Date(d.time_started_at).getTime()) / 1000 : 0))}
+                              {d.time_started_at ? ' · running' : d.done ? '' : ' · paused'}
+                            </span>
+                            {d.work_started_at && <span className="text-gray-500"> · {fmtDT(d.work_started_at)}{d.work_ended_at ? ` → ${fmtDT(d.work_ended_at)}` : ''}</span>}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex gap-2 shrink-0">
-                        <button onClick={() => toggleDone(d)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${d.done ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'}`}>{d.done ? 'DONE' : 'TO DO'}</button>
+                      <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+                        {!d.done && !d.time_started_at && (
+                          <button onClick={() => startDuty(d)} className="bg-emerald-700 hover:bg-emerald-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">▶ START</button>
+                        )}
+                        {d.time_started_at ? (
+                          <>
+                            <button onClick={() => pauseDuty(d)} className="bg-amber-600 hover:bg-amber-500 text-black px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">⏸ PAUSE</button>
+                            <button onClick={() => finishDuty(d)} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">✅ DONE</button>
+                          </>
+                        ) : (
+                          <button onClick={() => toggleDone(d)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${d.done ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'}`}>{d.done ? 'DONE' : 'TO DO'}</button>
+                        )}
                         <button onClick={() => startEdit(d)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                         <button onClick={() => removeDuty(d)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                       </div>
