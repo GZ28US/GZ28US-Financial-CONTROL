@@ -62,7 +62,7 @@ export default function FixedCostSupplierViewPage() {
     setS((sup || null) as FixedCostSupplier | null)
     await ensureDuePayments(sup)
     const { data } = await supabase.from('fixed_cost_expenses').select('*').eq('supplier_id', id)
-      .order('expense_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+      .order('expense_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })
     setRows((data || []) as FixedExpense[])
     setLoading(false)
   }
