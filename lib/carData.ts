@@ -561,6 +561,29 @@ for (let y = 2007; y <= 2013; y++) {
   })
 }
 
+// ── Mitsubishi Eclipse Turbo, 2nd Gen (2G, 1995–1999) ───────────────────────────
+// TURBO models only — the 4G63T 2.0L turbo: GS-T (FWD, 210 hp) and GSX (AWD).
+// The Spyder GS-T convertible (1996+) lives in specialEditions per the
+// special-editions rule; the GSX never got a Spyder.
+const eclipse2gColors = ['Kalapana Black', 'Northstar White', 'Saronno Red', 'Caracas Red', 'Cayenne Red Pearl', 'Monarch Green Pearl', 'Polynesian Green Pearl', 'Magnetic Blue Pearl', 'Titanium Pearl', 'Minden Silver Pearl']
+for (let y = 1995; y <= 1999; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MITSUBISHI')) manufacturersByYear[y].push('MITSUBISHI')
+  brandsByManufacturerAndYear['MITSUBISHI'] = brandsByManufacturerAndYear['MITSUBISHI'] || {}
+  brandsByManufacturerAndYear['MITSUBISHI'][y] = brandsByManufacturerAndYear['MITSUBISHI'][y] || []
+  if (!brandsByManufacturerAndYear['MITSUBISHI'][y].includes('MITSUBISHI')) brandsByManufacturerAndYear['MITSUBISHI'][y].push('MITSUBISHI')
+  modelsByBrandAndYear['MITSUBISHI'] = modelsByBrandAndYear['MITSUBISHI'] || {}
+  modelsByBrandAndYear['MITSUBISHI'][y] = modelsByBrandAndYear['MITSUBISHI'][y] || []
+  if (!modelsByBrandAndYear['MITSUBISHI'][y].includes('ECLIPSE')) modelsByBrandAndYear['MITSUBISHI'][y].push('ECLIPSE')
+  versionsByModelAndYear['ECLIPSE'] = versionsByModelAndYear['ECLIPSE'] || {}
+  versionsByModelAndYear['ECLIPSE'][y] = ['GS-T 2.0 Turbo', 'GSX 2.0 Turbo AWD']
+}
+years.sort((a, b) => a - b)
+for (let y = 1996; y <= 1999; y++) {
+  Object.assign(specialEditions, { [`${y}-ECLIPSE-GS-T 2.0 Turbo`]: ['None', 'Spyder'] })
+}
+
 // ── Jeep Grand Cherokee — Hemi (WK 2005–2010 + WK2 2011–2021) ────────────────────
 // Hemi-powered Grand Cherokees only. Trims = the engine/performance variants (per the
 // special-editions rule): 5.7 V8 HEMI across both gens; SRT8 6.1 on the WK (2006–2010);
@@ -1005,6 +1028,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CTS-V') return ctsV2Colors
   if (model === 'ESCALADE-V') return escaladeVColors
   if (model === 'AVALANCHE') return avalancheGen2Colors
+  if (model === 'ECLIPSE') return eclipse2gColors
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
   if (model === 'DURANGO') return durangoColors
   if (model === 'GRAND CHEROKEE' && year <= 2004) return grandCherokeeZjColors
@@ -1054,6 +1078,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
 // every era's wheelbase+engine version (built from the year-keyed map above).
 carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
 carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())], M3: [...new Set(Object.values(versionsByModelAndYear['M3']).flat())] } }
+carData['MITSUBISHI'] = { MITSUBISHI: { ECLIPSE: ['GS-T 2.0 Turbo', 'GSX 2.0 Turbo AWD'] } }
 carData['PORSCHE'] = { PORSCHE: { '911': [...new Set(Object.values(versionsByModelAndYear['911']).flat())] } }
 // Camaro flat list = union of every era's versions (modern gen5+ entries already present).
 carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
