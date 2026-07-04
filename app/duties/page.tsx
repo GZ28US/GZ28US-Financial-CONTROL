@@ -65,6 +65,13 @@ export default function StaffDutiesPage() {
   const [listPopup, setListPopup] = useState<{ staffId: string; name: string; maxPriority: string } | null>(null)
   const [notifyPopup, setNotifyPopup] = useState<{ title: string; body: string } | null>(null)
   const [sendingWa, setSendingWa] = useState(false)
+  // Member groups start COLLAPSED; the user opens the one they want.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
+  const toggleGroup = (key: string) => setOpenGroups(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
   // 1s ticker so running timers count live on screen.
   const [, setTick] = useState(0)
   useEffect(() => { const t = setInterval(() => setTick(v => v + 1), 1000); return () => clearInterval(t) }, [])
@@ -286,8 +293,11 @@ export default function StaffDutiesPage() {
         <div className="space-y-6 max-w-4xl">
           {groups.map(g => (
             <div key={g.key} className="bg-gray-900 border border-gray-700 rounded-3xl p-5">
-              <div className="flex justify-between items-center gap-3 border-b border-gray-700 pb-2 mb-2 flex-wrap">
-                <h2 className="text-2xl font-bold text-purple-300">👤 {g.name}</h2>
+              <div className={`flex justify-between items-center gap-3 flex-wrap ${openGroups.has(g.key) ? 'border-b border-gray-700 pb-2 mb-2' : ''}`}>
+                <button onClick={() => toggleGroup(g.key)} className="flex items-center gap-2 text-left">
+                  <span className="text-gray-400 text-lg">{openGroups.has(g.key) ? '▾' : '▸'}</span>
+                  <h2 className="text-2xl font-bold text-purple-300 hover:text-purple-200">👤 {g.name}</h2>
+                </button>
                 <div className="flex items-center gap-3">
                   {g.key !== 'none' && (
                     <button onClick={() => setListPopup({ staffId: g.key, name: g.name, maxPriority: '4' })} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">📱 SEND WHATSAPP</button>
@@ -295,7 +305,7 @@ export default function StaffDutiesPage() {
                   <p className="text-sm font-bold text-gray-400">{g.rows.filter(r => !r.done).length} TO DO · {g.rows.filter(r => r.done).length} DONE</p>
                 </div>
               </div>
-              {g.rows.map((d, i) => (
+              {openGroups.has(g.key) && g.rows.map((d, i) => (
                 <div key={d.id} className={i < g.rows.length - 1 ? 'border-b border-gray-800/60' : ''}>
                   {editingId === d.id ? (
                     <div className="p-4 my-2 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
