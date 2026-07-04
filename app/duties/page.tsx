@@ -133,7 +133,7 @@ export default function StaffDutiesPage() {
   function staffMark(id: string | null): string {
     const s = staffList.find(x => x.id === id)
     const digits = (s?.phone || '').replace(/\D/g, '')
-    return digits ? `@${digits}` : `@${s?.name || 'Unassigned'}`
+    return digits ? `@+${digits}` : `@${s?.name || 'Unassigned'}`
   }
   async function sendWhats(body: string): Promise<void> {
     setSendingWa(true)
