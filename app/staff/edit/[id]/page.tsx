@@ -30,6 +30,7 @@ export default function EditStaffPage() {
   const [staffCode, setStaffCode] = useState('')
   const [name, setName] = useState('')
   const [position, setPosition] = useState('')
+  const [phone, setPhone] = useState('')
 
   useEffect(() => {
     loadStaff()
@@ -51,6 +52,7 @@ export default function EditStaffPage() {
     setStaffCode(data.staff_code || (await suggestStaffCode()))
     setName(data.name || '')
     setPosition(data.position || '')
+    setPhone(data.phone || '')
     setLoading(false)
   }
 
@@ -66,6 +68,7 @@ export default function EditStaffPage() {
         staff_code: staffCode.trim(),
         name,
         position,
+        phone: phone.trim() || null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', staffId)
@@ -121,6 +124,16 @@ export default function EditStaffPage() {
             value={position}
             onChange={(e) => setPosition(e.target.value)}
             className={inputClass}
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">WHATSAPP</label>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className={inputClass}
+            placeholder="Number with country code, e.g. 1 407 555 0100"
           />
         </div>
 

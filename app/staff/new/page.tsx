@@ -14,6 +14,7 @@ export default function NewStaffPage() {
   const [staffCode, setStaffCode] = useState('')
   const [name, setName] = useState('')
   const [position, setPosition] = useState('')
+  const [phone, setPhone] = useState('')
 
   useEffect(() => { suggestCode() }, [])
 
@@ -38,7 +39,7 @@ export default function NewStaffPage() {
 
     const { error } = await supabase
       .from('staff')
-      .insert([{ staff_code: staffCode.trim(), name, position }])
+      .insert([{ staff_code: staffCode.trim(), name, position, phone: phone.trim() || null }])
 
     if (error) {
       alert(error.message)
@@ -84,6 +85,16 @@ export default function NewStaffPage() {
             onChange={(e) => setPosition(e.target.value)}
             className={inputClass}
             placeholder="Job title or role"
+          />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">WHATSAPP</label>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className={inputClass}
+            placeholder="Number with country code, e.g. 1 407 555 0100"
           />
         </div>
 

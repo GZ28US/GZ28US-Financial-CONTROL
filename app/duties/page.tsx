@@ -52,13 +52,19 @@ const dutyTextColor = (p: string) => (
   : 'text-red-300')
 
 export default function StaffDutiesPage() {
-  const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([])
+  const [staffList, setStaffList] = useState<{ id: string; name: string; phone: string | null }[]>([])
   const [duties, setDuties] = useState<Duty[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'TODO' | 'DONE'>('TODO')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
+  // SEND WHATSAPP popups: the per-member duties-list send (asks up to which
+  // priority + destination) and the START/PAUSE/DONE notification (asks
+  // member / report group / both on every event).
+  const [listPopup, setListPopup] = useState<{ staffId: string; name: string; maxPriority: string } | null>(null)
+  const [notifyPopup, setNotifyPopup] = useState<{ title: string; body: string; staffId: string } | null>(null)
+  const [sendingWa, setSendingWa] = useState(false)
   // 1s ticker so running timers count live on screen.
   const [, setTick] = useState(0)
   useEffect(() => { const t = setInterval(() => setTick(v => v + 1), 1000); return () => clearInterval(t) }, [])
@@ -68,7 +74,7 @@ export default function StaffDutiesPage() {
   async function load() {
     const [{ data: dutyRows }, { data: staffRows }] = await Promise.all([
       supabase.from('invoice_duties').select('*').order('created_at', { ascending: true }),
-      supabase.from('staff').select('id, name').order('name'),
+      supabase.from('staff').select('id, name, phone').order('name'),
     ])
     const invoiceIds = [...new Set((dutyRows || []).map((d: any) => d.invoice_id).filter(Boolean))]
     let invs: any[] = []
@@ -106,8 +112,76 @@ export default function StaffDutiesPage() {
         work_ended_at: d.work_ended_at || null,
       }
     }))
-    setStaffList((staffRows || []) as { id: string; name: string }[])
+    setStaffList((staffRows || []) as { id: string; name: string; phone: string | null }[])
     setLoading(false)
+  }
+
+  // ── WhatsApp ───────────────────────────────────────────────────────────────
+  // MEMBER goes to the staff member's own number (staff.phone), GROUP to the
+  // configured reports group, BOTH to both. Delivery is only reported as SENT
+  // when UltraMsg confirms it.
+  function staffPhoneOf(id: string | null): string {
+    return staffList.find(s => s.id === id)?.phone || ''
+  }
+  async function sendWhats(dest: 'MEMBER' | 'GROUP' | 'BOTH', staffId: string, body: string): Promise<void> {
+    const targets: (string | null)[] = []
+    if (dest === 'MEMBER' || dest === 'BOTH') {
+      const digits = staffPhoneOf(staffId).replace(/\D/g, '')
+      if (!digits) {
+        alert('This staff member has no WhatsApp number.\nAdd it on the staff EDIT form first.')
+        if (dest === 'MEMBER') return
+      } else targets.push(digits)
+    }
+    if (dest === 'GROUP' || dest === 'BOTH') targets.push(null)
+    if (!targets.length) return
+    setSendingWa(true)
+    try {
+      const fails: string[] = []
+      for (const to of targets) {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(to ? { to, body } : { body }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data.error) fails.push(`${to ? 'member' : 'report group'}: ${data.error || `HTTP ${res.status}`}`)
+      }
+      if (fails.length) alert('WhatsApp send failed —\n' + fails.join('\n'))
+      else alert('WhatsApp SENT ✅')
+    } finally {
+      setSendingWa(false)
+    }
+  }
+
+  // The member's open duties list, ordered by priority, cut at the chosen
+  // priority (StandBy = include everything).
+  function buildListBody(staffId: string, name: string, maxPriority: string): string | null {
+    const maxRank = DUTY_PRIORITY_RANK[maxPriority] ?? 3
+    const rows = duties
+      .filter(d => d.staff_id === staffId && !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank)
+      .sort((a, b) => (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0))
+    if (!rows.length) return null
+    const lines = rows.map((d, i) =>
+      `${i + 1}. [${dutyPriorityBadge(d.priority).label}] ${d.description}${d.invoiceCode !== '—' ? ` (${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''})` : ''}`)
+    return `📋 DUTIES — ${name}\n${rows.length} open, by priority${maxPriority === 'STANDBY' ? '' : ` (up to P${maxPriority})`}:\n\n${lines.join('\n')}`
+  }
+
+  function dutyEventBody(action: 'STARTED' | 'PAUSED' | 'DONE', d: Duty, secs: number, endIso?: string): string {
+    const icon = action === 'STARTED' ? '▶' : action === 'PAUSED' ? '⏸' : '✅'
+    const where = `${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''}`
+    const lines = [
+      `${icon} DUTY ${action}`,
+      `👤 ${staffNameOf(d.staff_id)}`,
+      `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
+      where,
+    ]
+    if (action === 'STARTED') lines.push(`Started: ${fmtDT(new Date().toISOString())}`)
+    if (action === 'PAUSED') lines.push(`⏱ ${fmtDur(secs)} so far`)
+    if (action === 'DONE') {
+      lines.push(`⏱ Total time: ${fmtDur(secs)}`)
+      if (d.work_started_at) lines.push(`${fmtDT(d.work_started_at)} → ${fmtDT(endIso || new Date().toISOString())}`)
+    }
+    return lines.join('\n')
   }
 
   async function toggleDone(duty: Duty) {
@@ -153,6 +227,7 @@ export default function StaffDutiesPage() {
       if (othersRunning.some(r => r.id === x.id) && x.time_started_at) return { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null }
       return x
     }))
+    setNotifyPopup({ title: '▶ DUTY STARTED', body: dutyEventBody('STARTED', d, 0), staffId: d.staff_id || '' })
   }
 
   async function pauseDuty(d: Duty) {
@@ -161,6 +236,7 @@ export default function StaffDutiesPage() {
     const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null }).eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
+    setNotifyPopup({ title: '⏸ DUTY PAUSED', body: dutyEventBody('PAUSED', d, secs), staffId: d.staff_id || '' })
   }
 
   async function finishDuty(d: Duty) {
@@ -169,6 +245,7 @@ export default function StaffDutiesPage() {
     const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true }).eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
+    setNotifyPopup({ title: '✅ DUTY DONE', body: dutyEventBody('DONE', d, secs, nowIso), staffId: d.staff_id || '' })
   }
 
   const q = search.trim().toLowerCase()
@@ -225,9 +302,14 @@ export default function StaffDutiesPage() {
         <div className="space-y-6 max-w-4xl">
           {groups.map(g => (
             <div key={g.key} className="bg-gray-900 border border-gray-700 rounded-3xl p-5">
-              <div className="flex justify-between items-baseline border-b border-gray-700 pb-2 mb-2">
+              <div className="flex justify-between items-center gap-3 border-b border-gray-700 pb-2 mb-2 flex-wrap">
                 <h2 className="text-2xl font-bold text-purple-300">👤 {g.name}</h2>
-                <p className="text-sm font-bold text-gray-400">{g.rows.filter(r => !r.done).length} TO DO · {g.rows.filter(r => r.done).length} DONE</p>
+                <div className="flex items-center gap-3">
+                  {g.key !== 'none' && (
+                    <button onClick={() => setListPopup({ staffId: g.key, name: g.name, maxPriority: '4' })} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">📱 SEND WHATSAPP</button>
+                  )}
+                  <p className="text-sm font-bold text-gray-400">{g.rows.filter(r => !r.done).length} TO DO · {g.rows.filter(r => r.done).length} DONE</p>
+                </div>
               </div>
               {g.rows.map((d, i) => (
                 <div key={d.id} className={i < g.rows.length - 1 ? 'border-b border-gray-800/60' : ''}>
@@ -294,6 +376,58 @@ export default function StaffDutiesPage() {
               ))}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* SEND WHATSAPP — duties list for one member, cut at a chosen priority */}
+      {listPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 max-w-md w-full flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-green-300">📱 SEND DUTIES LIST — {listPopup.name}</h2>
+              <button onClick={() => setListPopup(null)} className="text-gray-400 hover:text-white text-xl font-bold px-1">✕</button>
+            </div>
+            <div>
+              <label className="block mb-1 text-xs font-bold text-gray-400">UP TO WHICH PRIORITY?</label>
+              <select value={listPopup.maxPriority} onChange={(e) => setListPopup({ ...listPopup, maxPriority: e.target.value })} className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-sm w-full">
+                <option value="1">Priority 1 only</option>
+                <option value="2">Up to Priority 2</option>
+                <option value="3">Up to Priority 3</option>
+                <option value="4">Up to Priority 4</option>
+                <option value="STANDBY">Everything (incl. StandBy)</option>
+              </select>
+            </div>
+            <pre className="bg-black/40 border border-gray-800 rounded-xl p-3 text-xs text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">{buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority) || 'No open duties up to that priority.'}</pre>
+            <div className="flex gap-2 flex-wrap">
+              {(['MEMBER', 'GROUP', 'BOTH'] as const).map(dest => (
+                <button key={dest} disabled={sendingWa || !buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority)}
+                  onClick={async () => { const body = buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority); if (!body) return; await sendWhats(dest, listPopup.staffId, body); setListPopup(null) }}
+                  className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
+                  {dest === 'MEMBER' ? '👤 MEMBER' : dest === 'GROUP' ? '📢 REPORT GROUP' : '👤+📢 BOTH'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* START / PAUSE / DONE notification — asks the destination on every event */}
+      {notifyPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 max-w-md w-full flex flex-col gap-3">
+            <h2 className="text-lg font-bold text-green-300">📱 Send WhatsApp — {notifyPopup.title}?</h2>
+            <pre className="bg-black/40 border border-gray-800 rounded-xl p-3 text-xs text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">{notifyPopup.body}</pre>
+            <div className="flex gap-2 flex-wrap">
+              {(['MEMBER', 'GROUP', 'BOTH'] as const).map(dest => (
+                <button key={dest} disabled={sendingWa}
+                  onClick={async () => { await sendWhats(dest, notifyPopup.staffId, notifyPopup.body); setNotifyPopup(null) }}
+                  className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
+                  {dest === 'MEMBER' ? '👤 MEMBER' : dest === 'GROUP' ? '📢 REPORT GROUP' : '👤+📢 BOTH'}
+                </button>
+              ))}
+              <button onClick={() => setNotifyPopup(null)} className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">DON'T SEND</button>
+            </div>
+          </div>
         </div>
       )}
     </main>
