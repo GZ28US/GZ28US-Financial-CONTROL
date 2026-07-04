@@ -55,6 +55,28 @@ function normalizeTo(raw: string | null | undefined): string {
 // lost their text. We send `caption` for media and, for safety against older
 // validation, also include `body` with the same text.
 
+// Resolve a group destination by its display NAME on the instance (e.g.
+// "GZ28US - STAFF") via UltraMsg's GET /groups. Cached per lambda instance so
+// repeated sends don't re-list the groups every time.
+const groupIdCache: Record<string, string> = {}
+async function resolveGroupByName(base: string, token: string, name: string): Promise<string> {
+  const key = name.trim().toLowerCase()
+  if (!key) return ''
+  if (groupIdCache[key]) return groupIdCache[key]
+  try {
+    const res = await fetch(`${base}/groups?token=${encodeURIComponent(token)}`)
+    const raw = await res.text()
+    let list: any[] = []
+    try { const j = JSON.parse(raw); list = Array.isArray(j) ? j : (Array.isArray(j?.groups) ? j.groups : []) } catch { /* not JSON */ }
+    const hit = list.find((g: any) => String(g.name || '').trim().toLowerCase() === key)
+    if (hit?.id) { groupIdCache[key] = String(hit.id); return groupIdCache[key] }
+    console.error('[whatsapp] group not found by name', { name, groupsSeen: list.length })
+  } catch (e) {
+    console.error('[whatsapp] groups lookup failed', e)
+  }
+  return ''
+}
+
 export async function POST(req: NextRequest) {
   const t0 = Date.now()
   try {
@@ -77,7 +99,16 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = await req.json().catch(() => ({}))
-    const to = normalizeTo(payload.to || defaultTo)
+    let to = normalizeTo(payload.to || defaultTo)
+    // toGroupName targets a group by its NAME (resolved to its chat id).
+    const toGroupName = typeof payload.toGroupName === 'string' ? payload.toGroupName.trim() : ''
+    if (toGroupName) {
+      const gid = await resolveGroupByName(`https://api.ultramsg.com/${instance}`, token, toGroupName)
+      if (!gid) {
+        return NextResponse.json({ error: `WhatsApp group "${toGroupName}" not found on this instance.` }, { status: 404 })
+      }
+      to = normalizeTo(gid)
+    }
     const body = withSignature(typeof payload.body === 'string' ? payload.body : '')
     const documentUrl = payload.documentUrl as string | undefined
     const imageUrl = payload.imageUrl as string | undefined

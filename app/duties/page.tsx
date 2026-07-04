@@ -60,10 +60,10 @@ export default function StaffDutiesPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
   // SEND WHATSAPP popups: the per-member duties-list send (asks up to which
-  // priority + destination) and the START/PAUSE/DONE notification (asks
-  // member / report group / both on every event).
+  // priority) and the START/PAUSE/DONE notification. Every duties message goes
+  // ONLY to the staff group, with the member @marked in the text.
   const [listPopup, setListPopup] = useState<{ staffId: string; name: string; maxPriority: string } | null>(null)
-  const [notifyPopup, setNotifyPopup] = useState<{ title: string; body: string; staffId: string } | null>(null)
+  const [notifyPopup, setNotifyPopup] = useState<{ title: string; body: string } | null>(null)
   const [sendingWa, setSendingWa] = useState(false)
   // 1s ticker so running timers count live on screen.
   const [, setTick] = useState(0)
@@ -117,37 +117,21 @@ export default function StaffDutiesPage() {
   }
 
   // ── WhatsApp ───────────────────────────────────────────────────────────────
-  // MEMBER goes to the staff member's own number (staff.phone), GROUP to the
-  // configured reports group, BOTH to both. Delivery is only reported as SENT
-  // when UltraMsg confirms it.
-  function staffPhoneOf(id: string | null): string {
-    return staffList.find(s => s.id === id)?.phone || ''
-  }
-  async function sendWhats(dest: 'MEMBER' | 'GROUP' | 'BOTH', staffId: string, body: string): Promise<void> {
-    const targets: (string | null)[] = []
-    if (dest === 'MEMBER' || dest === 'BOTH') {
-      const digits = staffPhoneOf(staffId).replace(/\D/g, '')
-      if (!digits) {
-        alert('This staff member has no WhatsApp number.\nAdd it on the staff EDIT form first.')
-        if (dest === 'MEMBER') return
-      } else targets.push(digits)
-    }
-    if (dest === 'GROUP' || dest === 'BOTH') targets.push(null)
-    if (!targets.length) return
+  // Every duties message goes ONLY to the staff group (resolved by NAME on the
+  // UltraMsg instance), with the member @marked in the text. Delivery is only
+  // reported as SENT when UltraMsg confirms it.
+  const STAFF_GROUP_NAME = 'GZ28US - STAFF'
+  async function sendWhats(body: string): Promise<void> {
     setSendingWa(true)
     try {
-      const fails: string[] = []
-      for (const to of targets) {
-        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(to ? { to, body } : { body }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok || data.error) fails.push(`${to ? 'member' : 'report group'}: ${data.error || `HTTP ${res.status}`}`)
-      }
-      if (fails.length) alert('WhatsApp send failed —\n' + fails.join('\n'))
-      else alert('WhatsApp SENT ✅')
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toGroupName: STAFF_GROUP_NAME, body }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) alert(`WhatsApp send failed — ${data.error || `HTTP ${res.status}`}`)
+      else alert(`WhatsApp SENT ✅ to "${STAFF_GROUP_NAME}"`)
     } finally {
       setSendingWa(false)
     }
@@ -163,7 +147,7 @@ export default function StaffDutiesPage() {
     if (!rows.length) return null
     const lines = rows.map((d, i) =>
       `${i + 1}. [${dutyPriorityBadge(d.priority).label}] ${d.description}${d.invoiceCode !== '—' ? ` (${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''})` : ''}`)
-    return `📋 DUTIES — ${name}\n${rows.length} open, by priority${maxPriority === 'STANDBY' ? '' : ` (up to P${maxPriority})`}:\n\n${lines.join('\n')}`
+    return `📋 DUTIES — @${name}\n${rows.length} open, by priority${maxPriority === 'STANDBY' ? '' : ` (up to P${maxPriority})`}:\n\n${lines.join('\n')}`
   }
 
   function dutyEventBody(action: 'STARTED' | 'PAUSED' | 'DONE', d: Duty, secs: number, endIso?: string): string {
@@ -171,7 +155,7 @@ export default function StaffDutiesPage() {
     const where = `${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''}`
     const lines = [
       `${icon} DUTY ${action}`,
-      `👤 ${staffNameOf(d.staff_id)}`,
+      `👤 @${staffNameOf(d.staff_id)}`,
       `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
       where,
     ]
@@ -227,7 +211,7 @@ export default function StaffDutiesPage() {
       if (othersRunning.some(r => r.id === x.id) && x.time_started_at) return { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null }
       return x
     }))
-    setNotifyPopup({ title: '▶ DUTY STARTED', body: dutyEventBody('STARTED', d, 0), staffId: d.staff_id || '' })
+    setNotifyPopup({ title: '▶ DUTY STARTED', body: dutyEventBody('STARTED', d, 0) })
   }
 
   async function pauseDuty(d: Duty) {
@@ -236,7 +220,7 @@ export default function StaffDutiesPage() {
     const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null }).eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
-    setNotifyPopup({ title: '⏸ DUTY PAUSED', body: dutyEventBody('PAUSED', d, secs), staffId: d.staff_id || '' })
+    setNotifyPopup({ title: '⏸ DUTY PAUSED', body: dutyEventBody('PAUSED', d, secs) })
   }
 
   async function finishDuty(d: Duty) {
@@ -245,7 +229,7 @@ export default function StaffDutiesPage() {
     const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true }).eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
-    setNotifyPopup({ title: '✅ DUTY DONE', body: dutyEventBody('DONE', d, secs, nowIso), staffId: d.staff_id || '' })
+    setNotifyPopup({ title: '✅ DUTY DONE', body: dutyEventBody('DONE', d, secs, nowIso) })
   }
 
   const q = search.trim().toLowerCase()
@@ -399,13 +383,12 @@ export default function StaffDutiesPage() {
             </div>
             <pre className="bg-black/40 border border-gray-800 rounded-xl p-3 text-xs text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">{buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority) || 'No open duties up to that priority.'}</pre>
             <div className="flex gap-2 flex-wrap">
-              {(['MEMBER', 'GROUP', 'BOTH'] as const).map(dest => (
-                <button key={dest} disabled={sendingWa || !buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority)}
-                  onClick={async () => { const body = buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority); if (!body) return; await sendWhats(dest, listPopup.staffId, body); setListPopup(null) }}
-                  className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
-                  {dest === 'MEMBER' ? '👤 MEMBER' : dest === 'GROUP' ? '📢 REPORT GROUP' : '👤+📢 BOTH'}
-                </button>
-              ))}
+              <button disabled={sendingWa || !buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority)}
+                onClick={async () => { const body = buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority); if (!body) return; await sendWhats(body); setListPopup(null) }}
+                className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
+                {sendingWa ? 'SENDING…' : `📢 SEND to "${STAFF_GROUP_NAME}"`}
+              </button>
+              <button onClick={() => setListPopup(null)} className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">CANCEL</button>
             </div>
           </div>
         </div>
@@ -418,13 +401,11 @@ export default function StaffDutiesPage() {
             <h2 className="text-lg font-bold text-green-300">📱 Send WhatsApp — {notifyPopup.title}?</h2>
             <pre className="bg-black/40 border border-gray-800 rounded-xl p-3 text-xs text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">{notifyPopup.body}</pre>
             <div className="flex gap-2 flex-wrap">
-              {(['MEMBER', 'GROUP', 'BOTH'] as const).map(dest => (
-                <button key={dest} disabled={sendingWa}
-                  onClick={async () => { await sendWhats(dest, notifyPopup.staffId, notifyPopup.body); setNotifyPopup(null) }}
-                  className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
-                  {dest === 'MEMBER' ? '👤 MEMBER' : dest === 'GROUP' ? '📢 REPORT GROUP' : '👤+📢 BOTH'}
-                </button>
-              ))}
+              <button disabled={sendingWa}
+                onClick={async () => { await sendWhats(notifyPopup.body); setNotifyPopup(null) }}
+                className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
+                {sendingWa ? 'SENDING…' : `📢 SEND to "${STAFF_GROUP_NAME}"`}
+              </button>
               <button onClick={() => setNotifyPopup(null)} className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">DON'T SEND</button>
             </div>
           </div>
