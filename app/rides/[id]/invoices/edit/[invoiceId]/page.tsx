@@ -2533,7 +2533,10 @@ export default function EditInvoicePage() {
       {showDbModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-teal-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto flex flex-col gap-3">
-            <h2 className="text-2xl font-bold text-teal-300">IMPORT FROM DATABASE</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-teal-300">IMPORT FROM DATABASE</h2>
+              <button onClick={() => setShowDbModal(false)} className="text-gray-400 hover:text-white text-2xl font-bold px-1">✕</button>
+            </div>
             <input value={dbSearch} onChange={(e) => setDbSearch(e.target.value)} placeholder="Search item or alias..." className={inputClass} />
             {(() => {
               const t = dbSearch.trim().toLowerCase()
