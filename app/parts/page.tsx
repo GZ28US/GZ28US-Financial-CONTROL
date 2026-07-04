@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
+import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
@@ -43,6 +44,14 @@ export default function PartsPage() {
   const [parts, setParts] = useState<Part[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
+  // REVIEW SCANNED ITEMS — every item read off the document, editable before
+  // anything is enrolled into the parts database.
+  const [scannedItems, setScannedItems] = useState<{
+    supplier: string
+    date: string
+    items: { item: string; part_number: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string }[]
+  } | null>(null)
+  const [enrolling, setEnrolling] = useState(false)
   const [search, setSearch] = useState('')
   const [costFilter, setCostFilter] = useState(false)
   // The part whose OUR cost is being filled, plus its editor fields.
@@ -296,23 +305,37 @@ export default function PartsPage() {
       const items = (parsed.items || []).map((i: any) => ({
         item: String(i.description || ''),
         part_number: String(i.part_number || ''),
-        supplier,
         unit_price: String(i.amount || '0'),
         quantity: String(i.quantity || '1'),
         tax: String(i.tax || '0'),
         extra: String(i.extra || '0'),
         item_discount: String(i.item_discount || '0'),
-        purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
       }))
       if (items.length === 0) { alert('No items found on that document.'); setScanning(false); return }
-      const n = await enrollParts(items)
-      await load()
-      alert(`Scanned ${items.length} item(s) — ${n} added/updated in the parts database.`)
+      // Open the review popup — nothing is enrolled until CONFIRM.
+      setScannedItems({ supplier, date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '', items })
     } catch (err) {
       console.error(err)
       alert('Failed to scan. Please try again.')
     }
     setScanning(false)
+  }
+
+  // CONFIRM on the review popup — enrolls the (possibly edited) items.
+  async function confirmScannedItems() {
+    if (!scannedItems) return
+    const valid = scannedItems.items.filter(i => (i.item || '').trim() || (i.part_number || '').trim())
+    if (valid.length === 0) { alert('Nothing to enroll — every item is empty.'); return }
+    setEnrolling(true)
+    const n = await enrollParts(valid.map(i => ({
+      ...i,
+      supplier: scannedItems.supplier,
+      purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedItems.date) ? scannedItems.date : null,
+    })))
+    setEnrolling(false)
+    setScannedItems(null)
+    await load()
+    alert(`${valid.length} item(s) confirmed — ${n} added/updated in the parts database.`)
   }
 
   const normSup = (s: any) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -351,6 +374,65 @@ export default function PartsPage() {
             <div className="flex gap-4">
               <button onClick={() => setEditPart(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
               <button onClick={saveCost} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-lg">SAVE COST</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REVIEW SCANNED ITEMS — everything read off the document, editable before enrolling */}
+      {scannedItems && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-4xl max-h-[90vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REVIEW SCANNED ITEMS ({scannedItems.items.length})</h2>
+              <button onClick={() => setScannedItems(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              <div className="flex gap-4 flex-wrap">
+                <div className="flex-1 min-w-[14rem]">
+                  <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
+                  <input type="text" value={scannedItems.supplier} onChange={(e) => setScannedItems({ ...scannedItems, supplier: e.target.value })} className={`${inputClass} w-full`} />
+                </div>
+                <div className="flex-1 min-w-[16rem]">
+                  <DatePicker label="PURCHASE DATE" value={scannedItems.date} onChange={(v) => setScannedItems({ ...scannedItems, date: v })} compact />
+                </div>
+              </div>
+              <div className="hidden md:flex gap-2 text-xs font-bold text-gray-500 uppercase px-1">
+                <span className="flex-1">Item</span>
+                <span className="w-32">Part #</span>
+                <span className="w-14">Qty</span>
+                <span className="w-24">Unit Price</span>
+                <span className="w-20">Tax</span>
+                <span className="w-20">Extra</span>
+                <span className="w-6"></span>
+              </div>
+              {scannedItems.items.map((it, i) => (
+                <div key={i} className="flex gap-2 items-center flex-wrap">
+                  <input type="text" value={it.item} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], item: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} flex-1 min-w-[12rem]`} placeholder="Item description" />
+                  <input type="text" value={it.part_number} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], part_number: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-32`} placeholder="Part #" />
+                  <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-14`} placeholder="1" />
+                  <div className="relative w-24">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0.00" />
+                  </div>
+                  <div className="relative w-20">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input type="text" inputMode="decimal" value={it.tax} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0" />
+                  </div>
+                  <div className="relative w-20">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input type="text" inputMode="decimal" value={it.extra} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0" />
+                  </div>
+                  <button onClick={() => setScannedItems({ ...scannedItems, items: scannedItems.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-1">✕</button>
+                </div>
+              ))}
+              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700 items-center">
+              <div className="flex-1 text-right text-gray-400 font-bold">
+                TOTAL: {formatUSD(scannedItems.items.reduce((s, i) => s + (parseFloat(i.unit_price) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0))}
+              </div>
+              <button onClick={confirmScannedItems} disabled={enrolling} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{enrolling ? 'ENROLLING…' : 'CONFIRM'}</button>
             </div>
           </div>
         </div>
