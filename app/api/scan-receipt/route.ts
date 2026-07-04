@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     { "description": "the receipt's own label for the charge, e.g. Shipping, Handling, Insurance, Freight, Surcharge", "amount": "number string like 12.50" }
   ],
   "items": [
-    { "description": "item name", "part_number": "manufacturer part number / SKU / MPN / item or catalog number printed for this line, else empty string", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0" }
+    { "description": "item name", "part_number": "manufacturer part number / SKU / MPN / item or catalog number printed for this line, else empty string", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0", "weight_lbs": "per-UNIT weight in pounds if the document prints a weight for this line, else 0" }
   ]
 }
 Rules:
@@ -46,6 +46,7 @@ Rules:
 2. quantity: read exactly from the Qty column. If there is no Qty column, look for a quantity multiplier printed for the item — usually on the line DIRECTLY BELOW the description, in the form "N x" / "N @" / "N X" (e.g. ALDI and other grocery receipts print "20 x" with the unit price beneath the item). That N is the quantity. Default to 1 only when no such multiplier is shown for that item.
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92. When the receipt has separate "List" and "Cost" (or "Price"/"Your Price") columns, use the COST/actual-paid column for line_total — never the List/retail column. On receipts that STACK the quantity (a "N x  unit_price" line below the item), the line_total is the EXTENDED amount printed on the item's OWN line (= N times unit_price — e.g. "Dog Entree ... 13.20" with "20 x 0.66" beneath it has line_total 13.20), NOT the small per-unit price on the sub-line. Never report the per-unit price as the line_total when a quantity multiplier is present.
 4. list_price: ONLY when the receipt shows a per-unit retail/list/MSRP price that is HIGHER than the actual unit price paid (e.g. an AutoZone-style "List" column next to a "Cost" column). Report that higher per-unit price here. If the receipt shows only one price, set this to 0.
+4b. weight_lbs: ONLY when the document prints a weight for that line (common on dealer/wholesale invoices and packing slips). Per UNIT, in POUNDS — if the document prints kg, convert (1 kg = 2.2046) and round to 2 decimals. Use 0 when no weight is printed; never estimate.
 5. tax: the SALES TAX total only, as a single number string. Sum all tax lines into this one value. Use 0 if there is no tax. Do NOT put tax in "extras".
 6. extras: every OTHER non-product charge line — shipping, handling, insurance, freight, surcharges, and any other fee — as its own entry, using the label printed on the receipt. Do NOT include tax here, and do NOT include discounts or coupons. Only include entries whose amount is greater than 0 (skip "Free" or $0.00 lines). If there are none, return an empty array.
 7. grand_total: the final total of the invoice.
@@ -197,7 +198,7 @@ Rules:
     }
     const scaledSubtotal = itemsSubtotal * itemScale
 
-    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string }[] = []
+    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[] = []
 
     if (separateExtras) {
       // Tax AND extra costs (shipping, handling, insurance, ...) are each split
@@ -242,6 +243,8 @@ Rules:
           tax: lineTax.toFixed(2),
           extra: lineExtra.toFixed(2),
           item_discount: String(itemDiscount),
+          list_price: listPrice > 0 ? String(listPrice) : '0',
+          weight_lbs: String(num(item.weight_lbs) || 0),
         })
       })
     } else {
@@ -254,6 +257,7 @@ Rules:
         const proportion = scaledSubtotal > 0 ? lineTotal / scaledSubtotal : (items.length ? 1 / items.length : 0)
         const allocatedExtra = extraCharges * proportion
         const unitPrice = quantity > 0 ? (lineTotal + allocatedExtra) / quantity : 0
+        const listPrice = num(item.list_price)
         processedItems.push({
           description: item.description || '',
           part_number: String(item.part_number || '').trim(),
@@ -262,6 +266,8 @@ Rules:
           tax: '0.00',
           extra: '0.00',
           item_discount: '0',
+          list_price: listPrice > 0 ? String(listPrice) : '0',
+          weight_lbs: String(num(item.weight_lbs) || 0),
         })
       })
     }

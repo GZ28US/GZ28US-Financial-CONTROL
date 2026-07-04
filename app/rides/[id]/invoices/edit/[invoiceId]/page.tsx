@@ -660,7 +660,7 @@ export default function EditInvoicePage() {
       // A scanned PURCHASE invoice is treated as already paid, so it always needs a
       // valid invoice date: the receipt's date when present, otherwise today.
       const date = isValidDate(rawDate) ? rawDate : todayStr()
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0') }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0'), list_price: String(i.list_price || '0'), weight_lbs: String(i.weight_lbs || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), items, receiptUrl, paid })
@@ -839,6 +839,9 @@ export default function EditInvoicePage() {
       quantity: it.quantity,
       item_discount: it.item_discount,
       purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedPurchase.date) ? scannedPurchase.date : null,
+      // MAP (printed List/Retail) + weight when the official-supplier invoice shows them.
+      list_price: (it as any).list_price,
+      weight_lbs: (it as any).weight_lbs,
     })))
     setScannedPurchase(null)
   }

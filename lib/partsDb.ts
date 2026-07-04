@@ -16,6 +16,10 @@ export type EnrollItem = {
   item_discount?: number | string
   purchase_date?: string | null
   receipt_url?: string | null
+  // Official-supplier invoices can print a List/Retail column (→ MAP) and
+  // per-line weights — both enroll when the scan finds them.
+  list_price?: number | string
+  weight_lbs?: number | string
 }
 
 // Part-number normalization for dedupe: uppercase, strip every non-alphanumeric
@@ -61,14 +65,18 @@ function withDerived(row: any, map: number | null, cost: number): any {
 // kept alias is preserved. Returns a status + supabase error for the caller.
 export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
   const { data } = await supabase.from('parts_database')
-    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price')
+    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   const key = keyOf(row)
   const existing = key ? rows.find((r: any) => keyOf(r) === key) : null
 
   if (!existing) {
-    const { error } = await supabase.from('parts_database').insert([row])
+    // A scanned MAP gets the derived delivered/discount fields computed on insert.
+    const toInsert = row.map_price != null && Number(row.map_price) > 0
+      ? withDerived(row, Number(row.map_price), ourCostOf(row))
+      : row
+    const { error } = await supabase.from('parts_database').insert([toInsert])
     return { status: 'inserted', error }
   }
   // MAP is constant: keep whichever MAP is already known (existing wins).
@@ -95,10 +103,26 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       handling: row.handling ?? null,
       source_type: row.source_type ?? existing.source_type ?? null,
       alias: existing.alias ?? row.alias ?? null,
+      // Weight only when the incoming scan carries one — never erase a known weight.
+      ...(row.weight_lbs != null && Number(row.weight_lbs) > 0 ? { weight_lbs: row.weight_lbs } : {}),
       updated_at: new Date().toISOString(),
     }
     const merged = withDerived(full, map, ourCostOf(row))
     const { error } = await supabase.from('parts_database').update(merged).eq('id', existing.id)
+    return { status: 'updated', error }
+  }
+  // Even when the existing (cheaper) row wins, fill in MAP and weight it lacks —
+  // an official-supplier scan is authoritative for both when nothing is on file.
+  const patch: any = {}
+  if ((existing.map_price == null || Number(existing.map_price) <= 0) && row.map_price != null && Number(row.map_price) > 0) {
+    Object.assign(patch, withDerived({ shipping: existing.shipping, handling: existing.handling }, Number(row.map_price), ourCostOf(existing)))
+  }
+  if ((existing.weight_lbs == null || Number(existing.weight_lbs) <= 0) && row.weight_lbs != null && Number(row.weight_lbs) > 0) {
+    patch.weight_lbs = row.weight_lbs
+  }
+  if (Object.keys(patch).length > 0) {
+    patch.updated_at = new Date().toISOString()
+    const { error } = await supabase.from('parts_database').update(patch).eq('id', existing.id)
     return { status: 'updated', error }
   }
   return { status: 'kept', error: null }
@@ -133,6 +157,11 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
       source_type: sourceType,
       updated_at: new Date().toISOString(),
     }
+    // Official-supplier extras: printed List/Retail price = the MAP; printed weight.
+    const listP = Number(raw.list_price) || 0
+    if (listP > 0) row.map_price = listP
+    const weight = Number(raw.weight_lbs) || 0
+    if (weight > 0) row.weight_lbs = weight
     const { status, error } = await enrollOne(row)
     if (!error && status !== 'kept') changed++
   }

@@ -49,7 +49,7 @@ export default function PartsPage() {
   const [scannedItems, setScannedItems] = useState<{
     supplier: string
     date: string
-    items: { item: string; part_number: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string }[]
+    items: { item: string; part_number: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
   } | null>(null)
   const [enrolling, setEnrolling] = useState(false)
   const [search, setSearch] = useState('')
@@ -310,6 +310,8 @@ export default function PartsPage() {
         tax: String(i.tax || '0'),
         extra: String(i.extra || '0'),
         item_discount: String(i.item_discount || '0'),
+        list_price: String(i.list_price || '0'),
+        weight_lbs: String(i.weight_lbs || '0'),
       }))
       if (items.length === 0) { alert('No items found on that document.'); setScanning(false); return }
       // Open the review popup — nothing is enrolled until CONFIRM.
@@ -405,6 +407,8 @@ export default function PartsPage() {
                 <span className="w-24">Unit Price</span>
                 <span className="w-20">Tax</span>
                 <span className="w-20">Extra</span>
+                <span className="w-24">MAP</span>
+                <span className="w-16">Lbs</span>
                 <span className="w-6"></span>
               </div>
               {scannedItems.items.map((it, i) => (
@@ -424,10 +428,15 @@ export default function PartsPage() {
                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
                     <input type="text" inputMode="decimal" value={it.extra} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0" />
                   </div>
+                  <div className="relative w-24" title="MAP / List price from the document">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input type="text" inputMode="decimal" value={it.list_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], list_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="MAP" />
+                  </div>
+                  <input type="text" inputMode="decimal" title="Weight (lbs) from the document" value={it.weight_lbs} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], weight_lbs: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-16`} placeholder="lbs" />
                   <button onClick={() => setScannedItems({ ...scannedItems, items: scannedItems.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-1">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0', list_price: '0', weight_lbs: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700 items-center">
               <div className="flex-1 text-right text-gray-400 font-bold">
