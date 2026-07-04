@@ -128,6 +128,13 @@ export default function StaffDutiesPage() {
   // UltraMsg instance), with the member @marked in the text. Delivery is only
   // reported as SENT when UltraMsg confirms it.
   const STAFF_GROUP_NAME = 'GZ28US - STAFF'
+  // The @mark uses the member's PHONE (WhatsApp mention format, @<digits>);
+  // falls back to the name when no phone is on file.
+  function staffMark(id: string | null): string {
+    const s = staffList.find(x => x.id === id)
+    const digits = (s?.phone || '').replace(/\D/g, '')
+    return digits ? `@${digits}` : `@${s?.name || 'Unassigned'}`
+  }
   async function sendWhats(body: string): Promise<void> {
     setSendingWa(true)
     try {
@@ -154,7 +161,7 @@ export default function StaffDutiesPage() {
     if (!rows.length) return null
     const lines = rows.map((d, i) =>
       `${i + 1}. [${dutyPriorityBadge(d.priority).label}] ${d.description}${d.invoiceCode !== '—' ? ` (${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''})` : ''}`)
-    return `📋 DUTIES — @${name}\n${rows.length} open, by priority${maxPriority === 'STANDBY' ? '' : ` (up to P${maxPriority})`}:\n\n${lines.join('\n')}`
+    return `📋 DUTIES — ${name} ${staffMark(staffId)}\n${rows.length} open, by priority${maxPriority === 'STANDBY' ? '' : ` (up to P${maxPriority})`}:\n\n${lines.join('\n')}`
   }
 
   function dutyEventBody(action: 'STARTED' | 'PAUSED' | 'DONE', d: Duty, secs: number, endIso?: string): string {
@@ -162,7 +169,7 @@ export default function StaffDutiesPage() {
     const where = `${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''}`
     const lines = [
       `${icon} DUTY ${action}`,
-      `👤 @${staffNameOf(d.staff_id)}`,
+      `👤 ${staffNameOf(d.staff_id)} ${staffMark(d.staff_id)}`,
       `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
       where,
     ]
