@@ -357,6 +357,8 @@ export default function PartsPage() {
   }
 
   const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg'
+  // Compact style for the REVIEW SCANNED ITEMS rows so a full line of fields fits the screen.
+  const scanInput = 'bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs'
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   return (
@@ -385,64 +387,64 @@ export default function PartsPage() {
       {/* REVIEW SCANNED ITEMS — everything read off the document, editable before enrolling */}
       {scannedItems && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-4xl max-h-[90vh] flex flex-col gap-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 w-full max-w-4xl max-h-[90vh] flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold">REVIEW SCANNED ITEMS ({scannedItems.items.length})</h2>
-              <button onClick={() => setScannedItems(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+              <h2 className="text-lg font-bold">REVIEW SCANNED ITEMS ({scannedItems.items.length})</h2>
+              <button onClick={() => setScannedItems(null)} className="text-gray-400 hover:text-white text-xl font-bold">✕</button>
             </div>
-            <div className="overflow-y-auto flex-1 space-y-3">
-              <div className="flex gap-4 flex-wrap">
-                <div className="flex-1 min-w-[14rem]">
-                  <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
-                  <input type="text" value={scannedItems.supplier} onChange={(e) => setScannedItems({ ...scannedItems, supplier: e.target.value })} className={`${inputClass} w-full`} />
+            <div className="overflow-y-auto flex-1 space-y-2">
+              <div className="flex gap-3 flex-wrap">
+                <div className="flex-1 min-w-[12rem]">
+                  <label className="block mb-1 text-xs text-gray-400">SUPPLIER</label>
+                  <input type="text" value={scannedItems.supplier} onChange={(e) => setScannedItems({ ...scannedItems, supplier: e.target.value })} className={`${scanInput} w-full`} />
                 </div>
-                <div className="flex-1 min-w-[16rem]">
+                <div className="flex-1 min-w-[14rem]">
                   <DatePicker label="PURCHASE DATE" value={scannedItems.date} onChange={(v) => setScannedItems({ ...scannedItems, date: v })} compact />
                 </div>
               </div>
-              <div className="hidden md:flex gap-2 text-xs font-bold text-gray-500 uppercase px-1">
+              <div className="hidden md:flex gap-1.5 text-[10px] font-bold text-gray-500 uppercase px-1">
                 <span className="flex-1">Item</span>
-                <span className="w-32">Part #</span>
-                <span className="w-14">Qty</span>
-                <span className="w-24">Unit Price</span>
-                <span className="w-20">Tax</span>
-                <span className="w-20">Extra</span>
-                <span className="w-24">MAP</span>
-                <span className="w-16">Lbs</span>
-                <span className="w-6"></span>
+                <span className="w-28">Part #</span>
+                <span className="w-10">Qty</span>
+                <span className="w-20">Unit Price</span>
+                <span className="w-16">Tax</span>
+                <span className="w-16">Extra</span>
+                <span className="w-20">MAP</span>
+                <span className="w-12">Lbs</span>
+                <span className="w-5"></span>
               </div>
               {scannedItems.items.map((it, i) => (
-                <div key={i} className="flex gap-2 items-center flex-wrap">
-                  <input type="text" value={it.item} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], item: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} flex-1 min-w-[12rem]`} placeholder="Item description" />
-                  <input type="text" value={it.part_number} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], part_number: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-32`} placeholder="Part #" />
-                  <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-14`} placeholder="1" />
-                  <div className="relative w-24">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                    <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0.00" />
-                  </div>
+                <div key={i} className="flex gap-1.5 items-center flex-wrap md:flex-nowrap">
+                  <input type="text" value={it.item} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], item: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} flex-1 min-w-[8rem]`} placeholder="Item description" />
+                  <input type="text" value={it.part_number} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], part_number: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-28`} placeholder="Part #" />
+                  <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-10`} placeholder="1" />
                   <div className="relative w-20">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                    <input type="text" inputMode="decimal" value={it.tax} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0" />
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0.00" />
                   </div>
-                  <div className="relative w-20">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                    <input type="text" inputMode="decimal" value={it.extra} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="0" />
+                  <div className="relative w-16">
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <input type="text" inputMode="decimal" value={it.tax} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0" />
                   </div>
-                  <div className="relative w-24" title="MAP / List price from the document">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                    <input type="text" inputMode="decimal" value={it.list_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], list_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-full pl-6`} placeholder="MAP" />
+                  <div className="relative w-16">
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <input type="text" inputMode="decimal" value={it.extra} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0" />
                   </div>
-                  <input type="text" inputMode="decimal" title="Weight (lbs) from the document" value={it.weight_lbs} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], weight_lbs: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${inputClass} w-16`} placeholder="lbs" />
-                  <button onClick={() => setScannedItems({ ...scannedItems, items: scannedItems.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-1">✕</button>
+                  <div className="relative w-20" title="MAP / List price from the document">
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <input type="text" inputMode="decimal" value={it.list_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], list_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="MAP" />
+                  </div>
+                  <input type="text" inputMode="decimal" title="Weight (lbs) from the document" value={it.weight_lbs} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], weight_lbs: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-12`} placeholder="lbs" />
+                  <button onClick={() => setScannedItems({ ...scannedItems, items: scannedItems.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-sm px-0.5">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0', list_price: '0', weight_lbs: '0' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0', list_price: '0', weight_lbs: '0' }] })} className="text-gray-400 hover:text-white text-xs font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700 items-center">
-              <div className="flex-1 text-right text-gray-400 font-bold">
+              <div className="flex-1 text-right text-gray-400 font-bold text-sm">
                 TOTAL: {formatUSD(scannedItems.items.reduce((s, i) => s + (parseFloat(i.unit_price) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0))}
               </div>
-              <button onClick={confirmScannedItems} disabled={enrolling} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{enrolling ? 'ENROLLING…' : 'CONFIRM'}</button>
+              <button onClick={confirmScannedItems} disabled={enrolling} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-4 py-2 rounded-xl font-bold text-sm">{enrolling ? 'ENROLLING…' : 'CONFIRM'}</button>
             </div>
           </div>
         </div>
