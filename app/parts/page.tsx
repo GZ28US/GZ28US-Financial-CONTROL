@@ -6,6 +6,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
+import { fileForScan } from '@/lib/scanFile'
 
 type Part = {
   id: string
@@ -284,16 +285,11 @@ export default function PartsPage() {
   async function handleScanItems(file: File) {
     setScanning(true)
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve((reader.result as string).split(',')[1])
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
+      const { base64, mediaType } = await fileForScan(file)
       const res = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true }),
+        body: JSON.stringify({ base64, mediaType, separateExtras: true }),
       })
       const data = await res.json()
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanning(false); return }

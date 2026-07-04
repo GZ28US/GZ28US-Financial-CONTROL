@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import { fileForScan } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
@@ -170,19 +171,14 @@ export default function GoodsPage() {
       const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
       const receiptUrl = urlData.publicUrl
 
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve((reader.result as string).split(',')[1])
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
+      const { base64, mediaType } = await fileForScan(file)
 
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // separateExtras keeps the item price clean and returns sales tax + shipping
         // separately (per item) so they can land as the good's extra cost lines.
-        body: JSON.stringify({ base64, mediaType: file.type, separateExtras: true, today: todayStr() }),
+        body: JSON.stringify({ base64, mediaType, separateExtras: true, today: todayStr() }),
       })
       const data = await response.json()
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanningPurchase(false); return }

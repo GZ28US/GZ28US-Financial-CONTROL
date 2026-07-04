@@ -8,6 +8,7 @@ import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
+import { fileForScan } from '@/lib/scanFile'
 
 const LANG: 'en' | 'pt' = 'en'
 
@@ -128,8 +129,8 @@ export default function FixedCostSupplierViewPage() {
       let receiptUrl = ''
       const { error: upErr } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (!upErr) receiptUrl = supabase.storage.from('expense-receipts').getPublicUrl(path).data.publicUrl
-      const base64 = await new Promise<string>((resolve, reject) => { const rd = new FileReader(); rd.onload = () => resolve((rd.result as string).split(',')[1]); rd.onerror = reject; rd.readAsDataURL(file) })
-      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType: file.type }) })
+      const { base64, mediaType } = await fileForScan(file)
+      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType }) })
       const data = await res.json()
       let amt = String(r.amount ?? ''); let dt = isValidDate(r.payment_date) ? (r.payment_date as string) : todayYmd()
       if (!data.error) {

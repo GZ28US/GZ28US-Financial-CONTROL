@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { fileForScan } from '@/lib/scanFile'
 
 type Item = { id: string; description: string | null; quantity: number; unit_price: number; supplier: string | null }
 type SaleEntry = { id: string; kind: string; amount: number; entry_date: string | null; description: string | null; receipt_url: string | null }
@@ -50,8 +51,8 @@ export default function SellInventoryPage() {
       let receiptUrl = ''
       const { error: upErr } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (!upErr) receiptUrl = supabase.storage.from('expense-receipts').getPublicUrl(path).data.publicUrl
-      const base64 = await new Promise<string>((resolve, reject) => { const rd = new FileReader(); rd.onload = () => resolve((rd.result as string).split(',')[1]); rd.onerror = reject; rd.readAsDataURL(file) })
-      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType: file.type }) })
+      const { base64, mediaType } = await fileForScan(file)
+      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType }) })
       const data = await res.json()
       let amt = ''; let dt = todayYmd(); let dsc = ''
       if (!data.error) {

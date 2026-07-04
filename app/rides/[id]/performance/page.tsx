@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import { fileForScan } from '@/lib/scanFile'
 
 const TABS = ['DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
@@ -104,11 +105,11 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     if (!file) return
     setScanning(true)
     try {
-      const base64 = await fileToBase64(file)
+      const { base64, mediaType } = await fileForScan(file)
       const res = await fetch(`${BASE_PATH}/api/scan-dyno`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mediaType: file.type || 'application/octet-stream' }),
+        body: JSON.stringify({ base64, mediaType: mediaType || 'application/octet-stream' }),
       })
       const data = await res.json()
       if (!res.ok || data.error) { alert(data.error || 'Scan failed.'); return }
