@@ -2504,13 +2504,13 @@ export default function EditInvoicePage() {
 
       {paidInConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
-            <h2 className="text-2xl font-bold mb-2">PAID IN?</h2>
-            <p className="text-gray-400 text-base mb-4">Enter the date this payment was received.</p>
-            <DatePicker label="PAID DATE" value={paidInConfirm.date} onChange={(v) => setPaidInConfirm({ ...paidInConfirm, date: v })} />
-            <div className="flex gap-3 pt-4">
-              <button onClick={() => setPaidInConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
-              <button onClick={confirmPaidIn} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">CONFIRM</button>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 max-w-sm w-full">
+            <h2 className="text-lg font-bold mb-1">PAID IN?</h2>
+            <p className="text-gray-400 text-sm mb-3">Enter the date this payment was received.</p>
+            <DatePicker label="PAID DATE" value={paidInConfirm.date} onChange={(v) => setPaidInConfirm({ ...paidInConfirm, date: v })} compact />
+            <div className="flex gap-3 pt-3">
+              <button onClick={() => setPaidInConfirm(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-xl font-bold text-sm">CANCEL</button>
+              <button onClick={confirmPaidIn} className="flex-1 bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm">CONFIRM</button>
             </div>
           </div>
         </div>
