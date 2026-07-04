@@ -1772,9 +1772,13 @@ export default function EditInvoicePage() {
     const { data: ride } = await supabase.from('rides').select('id, project_code, is_quote, client_id').eq('id', ownerId).single()
     if (!ride?.is_quote) return
     const { data: pr } = await supabase.from('rides').select('project_code').eq('is_quote', false).not('project_code', 'is', null)
-    let maxN = 0
-    for (const r of (pr || [])) { const m = r.project_code?.match(/\.(\d+)$/); if (m) { const n = parseInt(m[1], 10); if (n > maxN) maxN = n } }
-    const newRideCode = `${CODE_PREFIX}.${pad3(maxN + 1)}`
+    // Lowest UNUSED number (not max+1), so a deliberately high / pinned code
+    // (e.g. a themed US.170) doesn't drag converted quotes up behind it.
+    const usedNums = new Set<number>()
+    for (const r of (pr || [])) { const m = r.project_code?.match(/\.(\d+)$/); if (m) usedNums.add(parseInt(m[1], 10)) }
+    let nextN = 1
+    while (usedNums.has(nextN)) nextN++
+    const newRideCode = `${CODE_PREFIX}.${pad3(nextN)}`
     const oldRideCode = ride.project_code || ''
     await supabase.from('rides').update({ project_code: newRideCode, is_quote: false }).eq('id', ride.id)
     // Cascade: re-code every invoice on this ride from the old ride code to the new one.
