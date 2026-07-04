@@ -335,7 +335,8 @@ export default function PartsPage() {
     setEnrolling(false)
     setScannedItems(null)
     await load()
-    alert(`${valid.length} item(s) confirmed — ${n} added/updated in the parts database.`)
+    const kept = valid.length - n
+    alert(`${valid.length} item(s) confirmed — ${n} added/updated in the parts database.${kept > 0 ? `\n${kept} item(s) already existed with an equal or lower cost and were kept unchanged (a part number lives in the database only once — different part numbers always enroll separately).` : ''}`)
   }
 
   const normSup = (s: any) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
