@@ -135,17 +135,47 @@ export default function StaffDutiesPage() {
     const digits = (s?.phone || '').replace(/\D/g, '')
     return digits ? `@+${digits}` : `@${s?.name || 'Unassigned'}`
   }
+  async function waPost(payload: Record<string, string>): Promise<string | null> {
+    const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json().catch(() => ({}))
+    return !res.ok || data.error ? String(data.error || `HTTP ${res.status}`) : null
+  }
   async function sendWhats(body: string): Promise<void> {
     setSendingWa(true)
     try {
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toGroupName: STAFF_GROUP_NAME, body }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.error) alert(`WhatsApp send failed — ${data.error || `HTTP ${res.status}`}`)
+      const err = await waPost({ toGroupName: STAFF_GROUP_NAME, body })
+      if (err) alert(`WhatsApp send failed — ${err}`)
       else alert(`WhatsApp SENT ✅ to "${STAFF_GROUP_NAME}"`)
+    } finally {
+      setSendingWa(false)
+    }
+  }
+
+  // SEND WHATSAPP (duties list): the group gets the report AND the member gets
+  // his own duty-page link — he presses START/PAUSE/DONE there himself and each
+  // press reports back to the group automatically.
+  async function sendDutiesList(staffId: string, name: string, maxPriority: string) {
+    const body = buildListBody(staffId, name, maxPriority)
+    if (!body) return
+    setSendingWa(true)
+    try {
+      const results: string[] = []
+      const groupErr = await waPost({ toGroupName: STAFF_GROUP_NAME, body })
+      results.push(groupErr ? `❌ group: ${groupErr}` : `✅ sent to "${STAFF_GROUP_NAME}"`)
+      const digits = (staffList.find(s => s.id === staffId)?.phone || '').replace(/\D/g, '')
+      if (digits) {
+        const link = `${window.location.origin}${BASE_PATH}/duties/self/${staffId}${maxPriority !== 'STANDBY' ? `?max=${maxPriority}` : ''}`
+        const memberBody = `${body}\n\n▶ OPEN YOUR DUTY PAGE — press START / PAUSE / DONE there and GZ28 gets notified automatically:\n${link}`
+        const memberErr = await waPost({ to: digits, body: memberBody })
+        results.push(memberErr ? `❌ member: ${memberErr}` : `✅ duty-page link sent to ${name}`)
+      } else {
+        results.push(`⚠ ${name} has no WhatsApp number — add it on the staff EDIT form to send his duty-page link`)
+      }
+      alert(results.join('\n'))
     } finally {
       setSendingWa(false)
     }
@@ -407,9 +437,9 @@ export default function StaffDutiesPage() {
             <pre className="bg-black/40 border border-gray-800 rounded-xl p-3 text-xs text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">{buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority) || 'No open duties up to that priority.'}</pre>
             <div className="flex gap-2 flex-wrap">
               <button disabled={sendingWa || !buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority)}
-                onClick={async () => { const body = buildListBody(listPopup.staffId, listPopup.name, listPopup.maxPriority); if (!body) return; await sendWhats(body); setListPopup(null) }}
+                onClick={async () => { await sendDutiesList(listPopup.staffId, listPopup.name, listPopup.maxPriority); setListPopup(null) }}
                 className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">
-                {sendingWa ? 'SENDING…' : `📢 SEND to "${STAFF_GROUP_NAME}"`}
+                {sendingWa ? 'SENDING…' : `📢 SEND to GROUP + MEMBER's duty page`}
               </button>
               <button onClick={() => setListPopup(null)} className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-xl font-bold text-sm whitespace-nowrap">CANCEL</button>
             </div>
