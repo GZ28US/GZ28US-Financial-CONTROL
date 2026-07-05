@@ -257,14 +257,20 @@ export default function StaffDutiesPage() {
 
   // Group by staff, staff order = staff table order (by name); Unassigned last.
   // Within each member the duties are sorted by priority (1 → 4 → StandBy).
+  // Header counts come from ALL of the member's duties (not the filtered rows),
+  // so DONE doesn't read 0 just because the TO DO filter hides the done ones.
   const byPriority = (a: Duty, b: Duty) => (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
-  const groups: { key: string; name: string; rows: Duty[] }[] = []
+  const groups: { key: string; name: string; rows: Duty[]; todoCount: number; doneCount: number }[] = []
   for (const s of staffList) {
     const rows = visible.filter(d => d.staff_id === s.id).sort(byPriority)
-    if (rows.length) groups.push({ key: s.id, name: s.name, rows })
+    const all = duties.filter(d => d.staff_id === s.id)
+    if (rows.length) groups.push({ key: s.id, name: s.name, rows, todoCount: all.filter(d => !d.done).length, doneCount: all.filter(d => d.done).length })
   }
   const unassigned = visible.filter(d => !d.staff_id || !staffList.some(s => s.id === d.staff_id)).sort(byPriority)
-  if (unassigned.length) groups.push({ key: 'none', name: 'Unassigned', rows: unassigned })
+  if (unassigned.length) {
+    const allUn = duties.filter(d => !d.staff_id || !staffList.some(s => s.id === d.staff_id))
+    groups.push({ key: 'none', name: 'Unassigned', rows: unassigned, todoCount: allUn.filter(d => !d.done).length, doneCount: allUn.filter(d => d.done).length })
+  }
 
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
   const openCount = duties.filter(d => !d.done).length
@@ -309,7 +315,7 @@ export default function StaffDutiesPage() {
                   {g.key !== 'none' && (
                     <button onClick={() => setListPopup({ staffId: g.key, name: g.name, maxPriority: '4' })} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">📱 SEND WHATSAPP</button>
                   )}
-                  <p className="text-sm font-bold text-gray-400">{g.rows.filter(r => !r.done).length} TO DO · {g.rows.filter(r => r.done).length} DONE</p>
+                  <p className="text-sm font-bold text-gray-400">{g.todoCount} TO DO · {g.doneCount} DONE</p>
                 </div>
               </div>
               {openGroups.has(g.key) && g.rows.map((d, i) => (
