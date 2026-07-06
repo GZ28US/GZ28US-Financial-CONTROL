@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
 
-const TABS = ['DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
+const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
 
 const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet']
@@ -788,6 +788,11 @@ export default function RidePerformancePage() {
 
       {tab === 'DYNO' ? (
         <DynoSection rideId={rideId} rideTitle={title} />
+      ) : tab === 'BUILD SHEET' ? (
+        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
+          <h2 className="text-2xl font-bold mb-2">🚧 BUILD SHEET</h2>
+          <p className="text-xl text-gray-400">Under construction — the car&apos;s full build sheet is coming soon.</p>
+        </div>
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>
