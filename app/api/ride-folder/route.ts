@@ -111,12 +111,27 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!zone || !code || !['create', 'rename', 'upload'].includes(action)) {
-      return NextResponse.json({ error: 'Bad request: need action create|rename|upload, zone US|BR, code/newCode.' }, { status: 400 })
+    if (!zone || !code || !['create', 'rename', 'upload', 'find'].includes(action)) {
+      return NextResponse.json({ error: 'Bad request: need action create|rename|upload|find, zone US|BR, code/newCode.' }, { status: 400 })
     }
     const root = ROOTS[zone]
     const target = `${code}${name ? ' - ' + name : ''}`
     const token = await dbxAccessToken()
+
+    // find: list the files in the ride folder's subfolder (default HB Tuning),
+    // optionally filtered by a case-insensitive name match. Used for status display.
+    if (action === 'find') {
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
+      const match = String(body.match || '').toLowerCase()
+      const folder = await findFolderByCode(token, root, code)
+      if (!folder) return NextResponse.json({ ok: true, result: 'no-folder', files: [] })
+      const r = await dbx(token, 'files/list_folder', { path: `${root}/${folder}/${sub}`, recursive: false, limit: 1000 })
+      if (!r.ok) return NextResponse.json({ ok: true, result: 'no-subfolder', files: [] })
+      const files = (r.data.entries || [])
+        .filter((e: any) => e['.tag'] === 'file' && (!match || String(e.name).toLowerCase().includes(match)))
+        .map((e: any) => e.name)
+      return NextResponse.json({ ok: true, result: 'found', files })
+    }
 
     // upload: drop a file into the ride folder's subfolder (default HB Tuning),
     // overwriting any previous version. No self-heal folder creation — the file

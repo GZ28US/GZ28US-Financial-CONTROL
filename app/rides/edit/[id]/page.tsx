@@ -52,6 +52,10 @@ export default function EditRidePage() {
   const [photoUrl, setPhotoUrl] = useState('')
   const [uploading, setUploading] = useState(false)
 
+  // BoneStock TUNE file — lives in the car's Dropbox HB Tuning folder (both archives for common cars).
+  const [tuneExisting, setTuneExisting] = useState<string[]>([])
+  const [tuneUploading, setTuneUploading] = useState(false)
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -75,6 +79,7 @@ export default function EditRidePage() {
     if (clientsRes.data) setClients((clientsRes.data as any[]).filter(c => !!c.is_quote === !!r.is_quote) as Client[])
     setProjectCode(r.project_code || '')
     setProjectName(r.project_name || '')
+    void loadTuneStatus(r.project_code || '')
     setClientId(r.client_id || '')
     setYear(r.year ? String(r.year) : '')
     setManufacturer(r.manufacturer || '')
@@ -152,6 +157,49 @@ export default function EditRidePage() {
     const { data: urlData } = supabase.storage.from('ride-photos').getPublicUrl(path)
     setPhotoUrl(urlData.publicUrl)
     setUploading(false)
+  }
+
+  // Which BoneStock tune files already exist in the car's HB Tuning folder(s)?
+  async function loadTuneStatus(code: string) {
+    if (!code) return
+    const found = new Set<string>()
+    await Promise.all(['US', 'BR'].map(async (zone) => {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code, match: 'bonestock tune' }) })
+        const d = await res.json().catch(() => ({}))
+        for (const f of d.files || []) found.add(String(f))
+      } catch { /* status display only */ }
+    }))
+    setTuneExisting([...found].sort())
+  }
+
+  // Upload the BoneStock tune straight into the car's Dropbox HB Tuning folder(s), overwrite mode.
+  async function uploadTune(file: File) {
+    if (!projectCode) { alert('The ride needs a code before uploading the tune.'); return }
+    if (file.size > 3 * 1024 * 1024) { alert('Tune file too big (max 3 MB).'); return }
+    setTuneUploading(true)
+    try {
+      const b64: string = await new Promise((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(String(r.result).split(',')[1] || '')
+        r.onerror = reject
+        r.readAsDataURL(file)
+      })
+      const ext = file.name.split('.').pop() || 'hpt'
+      const filename = `${projectCode}${projectName ? ' - ' + projectName : ''} BoneStock Tune.${ext}`
+      let landed = 0
+      for (const zone of ['US', 'BR']) {
+        try {
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: projectCode, name: projectName, filename, contentBase64: b64 }) })
+          const d = await res.json().catch(() => ({}))
+          if (d.ok && d.result === 'uploaded') landed++
+        } catch { /* counted below */ }
+      }
+      if (!landed) alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.')
+      else await loadTuneStatus(projectCode)
+    } finally {
+      setTuneUploading(false)
+    }
   }
 
   async function saveChanges() {
@@ -371,6 +419,18 @@ export default function EditRidePage() {
           {photoUrl && (
             <button onClick={() => setPhotoUrl('')} className="ml-3 text-red-400 hover:text-red-300 font-bold text-lg">REMOVE</button>
           )}
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">BONESTOCK TUNE</label>
+          {tuneExisting.length > 0 && (
+            <p className="mb-2 text-green-400 font-bold">✅ {tuneExisting.join(' · ')}</p>
+          )}
+          <label className="inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold text-lg cursor-pointer">
+            {tuneUploading ? 'Uploading...' : tuneExisting.length ? '🔄 REPLACE BONESTOCK TUNE' : '⚙️ UPLOAD BONESTOCK TUNE'}
+            <input type="file" className="hidden" onChange={(e) => { if (e.target.files?.[0]) uploadTune(e.target.files[0]); e.target.value = '' }} />
+          </label>
+          <p className="mt-1 text-sm text-gray-500">Saved to the car&apos;s Dropbox HB Tuning folder.</p>
         </div>
 
         <button onClick={saveChanges} disabled={saving} className={`px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
