@@ -893,7 +893,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, buildNo }: { rideCod
     // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
     await syncSheetPdf()
     setBsSaving(false)
-    alert('Build sheet saved ✅')
+    // success is silent — errors alert above / inside the sync
   }
 
   // Render the build sheet as a portrait A4 PDF (modded specs in bold).
