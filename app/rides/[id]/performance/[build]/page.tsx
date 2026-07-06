@@ -864,7 +864,48 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, buildNo }: 
   const [bsLoading, setBsLoading] = useState(true)
   const [bsSaving, setBsSaving] = useState(false)
 
-  useEffect(() => { void loadSheet() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // BoneStock TUNE — picked here, uploaded to the car's Dropbox HB Tuning folder on SAVE.
+  const [tuneFile, setTuneFile] = useState<File | null>(null)
+  const [tuneExisting, setTuneExisting] = useState<string[]>([])
+
+  useEffect(() => { void loadSheet(); void loadTuneStatus() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Which BoneStock tune files already exist in the car's HB Tuning folder(s)?
+  async function loadTuneStatus() {
+    if (!rideCode) return
+    const found = new Set<string>()
+    await Promise.all(['US', 'BR'].map(async (zone) => {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code: rideCode, match: 'bonestock tune' }) })
+        const d = await res.json().catch(() => ({}))
+        for (const f of d.files || []) found.add(String(f))
+      } catch { /* status display only */ }
+    }))
+    setTuneExisting([...found].sort())
+  }
+
+  // Upload the picked BoneStock tune into the car's Dropbox HB Tuning folder(s), overwrite mode.
+  async function uploadTuneFile(file: File): Promise<boolean> {
+    if (file.size > 3 * 1024 * 1024) { alert('Tune file too big (max 3 MB).'); return false }
+    const b64: string = await new Promise((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(String(r.result).split(',')[1] || '')
+      r.onerror = reject
+      r.readAsDataURL(file)
+    })
+    const ext = file.name.split('.').pop() || 'hpt'
+    const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} BoneStock Tune.${ext}`
+    let landed = 0
+    for (const zone of ['US', 'BR']) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+        const d = await res.json().catch(() => ({}))
+        if (d.ok && d.result === 'uploaded') landed++
+      } catch { /* counted below */ }
+    }
+    if (!landed) { alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.'); return false }
+    return true
+  }
 
   async function loadSheet() {
     const { data } = await supabase.from('ride_build_sheets').select('*').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle()
@@ -892,6 +933,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, buildNo }: 
     if (error) { setBsSaving(false); alert(error.message); return }
     // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
     await syncSheetPdf()
+    // A picked BoneStock tune rides along on the same SAVE.
+    if (tuneFile && await uploadTuneFile(tuneFile)) { setTuneFile(null); await loadTuneStatus() }
     setBsSaving(false)
     // success is silent — errors alert above / inside the sync
   }
@@ -1005,9 +1048,18 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, buildNo }: 
           </div>
         ))}
       </div>
+      <div className="mt-6">
+        <label className="block mb-1 text-sm text-gray-400 font-bold">BONESTOCK TUNE</label>
+        {tuneExisting.length > 0 && <p className="mb-2 text-green-400 font-bold text-sm">✅ {tuneExisting.join(' · ')}</p>}
+        <label className="inline-flex items-center gap-2 bg-gray-800 border border-gray-700 hover:bg-gray-700 px-4 py-2 rounded-2xl font-bold cursor-pointer">
+          {tuneFile ? `📄 ${tuneFile.name}` : (tuneExisting.length ? '🔄 CHOOSE NEW BONESTOCK TUNE' : '⚙️ CHOOSE BONESTOCK TUNE')}
+          <input type="file" className="hidden" onChange={(e) => { setTuneFile(e.target.files?.[0] || null); e.target.value = '' }} />
+        </label>
+        {tuneFile && <span className="ml-3 text-gray-400 text-sm">uploads to HB Tuning when you press SAVE</span>}
+      </div>
       <div className="flex justify-end mt-6">
         <button onClick={saveSheet} disabled={bsSaving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
-          {bsSaving ? 'SAVING…' : 'SAVE BUILD SHEET'}
+          {bsSaving ? 'SAVING…' : 'SAVE BUILD SHEET and BONESTOCK TUNE'}
         </button>
       </div>
     </div>
