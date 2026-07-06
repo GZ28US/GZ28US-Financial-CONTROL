@@ -56,17 +56,30 @@ function applyLoss(wheel: string, loss: string): number | null {
 type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean }
 
 // BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
-// factor; this app shows corrected STD figures with torque in N·m. Convert once at load —
+// factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
 // everything downstream (table, gains, PDF, reports) then speaks the local dialect.
-const KGFM_TO_NM = 9.80665
+// Exception: BoneStock is the FACTORY baseline (SAE net ratings, e.g. 710 hp / 645 lb·ft) —
+// it gets unit conversion only, never the SAE→STD shuffle.
+const KGFM_TO_LBFT = 9.80665 / 1.3558179 // kgf·m → lb·ft
 const SAE_TO_STD = 1.04
 function toLocalDialect(p: DynoPull): DynoPull {
   if (p.origin !== 'BR') return p
   const r2 = (x: number) => Math.round(x * 100) / 100
-  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
   const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
+  if (isBoneStock(p)) {
+    const bhp = p.bhp
+    const bnm = p.bnm != null ? r2(p.bnm * KGFM_TO_LBFT) : null
+    return {
+      ...p,
+      bhp, bnm,
+      whp: bhp != null && denom != null ? r2(bhp * denom) : null,
+      wnm: bnm != null && denom != null ? r2(bnm * denom) : null,
+      foreign: true,
+    }
+  }
+  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
   const whp = p.whp != null ? r2(p.whp * cf) : null
-  const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_NM) : null
+  const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_LBFT) : null
   return {
     ...p,
     whp, wnm,
@@ -182,8 +195,9 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
     }
     const loss = lossStr === '' ? 15 : (parseFloat(lossStr) || 15)
     const lf = 1 - loss / 100
+    const lbft = nm != null ? nm / 1.3558179 : null // factory-specs API reports N·m; US stores lb·ft
     const whp = hp != null ? Math.round(hp * lf * 100) / 100 : null
-    const wnm = nm != null ? Math.round(nm * lf * 100) / 100 : null
+    const wnm = lbft != null ? Math.round(lbft * lf * 100) / 100 : null
     await supabase.from('dyno_pulls').insert([{
       ride_code: rideCode,
       origin: 'US',
@@ -191,7 +205,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
       whp, wnm,
       loss_pct: loss,
       bhp: hp, // factory crank hp
-      bnm: nm, // factory crank torque (N·m)
+      bnm: lbft != null ? Math.round(lbft * 100) / 100 : null, // factory crank torque (lb·ft)
       pull_date: null, dyno: null, document_url: null,
     }])
   }
@@ -203,7 +217,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
     const lf = 1 - v / 100
     for (const p of pulls) {
       // BR-recorded rows hold raw BR figures in the bank — the in-memory values here are the
-      // converted STD/N·m display. Only sync the shared loss %; never write converted numbers back.
+      // converted STD/lb·ft display. Only sync the shared loss %; never write converted numbers back.
       if (p.foreign) {
         await supabase.from('dyno_pulls').update({ loss_pct: v }).eq('id', p.id)
       } else if (isBoneStock(p)) {
@@ -309,10 +323,10 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
       rideTitle ? `*Ride:* ${rideTitle}` : null,
       p.pack ? `*Pack:* ${p.pack}` : null,
       p.whp != null ? `*WHP:* ${p.whp.toFixed(2)}` : null,
-      p.wnm != null ? `*WNM:* ${p.wnm.toFixed(2)} N·m` : null,
+      p.wnm != null ? `*WTQ:* ${p.wnm.toFixed(2)} lb·ft` : null,
       p.loss_pct != null ? `*Loss:* ${p.loss_pct}%` : null,
       p.bhp != null ? `*BHP:* ${p.bhp.toFixed(2)}` : null,
-      p.bnm != null ? `*BNM:* ${p.bnm.toFixed(2)} N·m` : null,
+      p.bnm != null ? `*BTQ:* ${p.bnm.toFixed(2)} lb·ft` : null,
       p.pull_date ? `*Date:* ${fmtDate(p.pull_date)}` : null,
       p.dyno ? `*Dyno:* ${p.dyno}` : null,
     ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
@@ -440,7 +454,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
     const REDFILL: [number, number, number] = [255, 0, 0], BLUEFILL: [number, number, number] = [36, 51, 194]
     const lighten = (c: [number, number, number]): [number, number, number] => [Math.round(c[0] + (255 - c[0]) * 0.55), Math.round(c[1] + (255 - c[1]) * 0.55), Math.round(c[2] + (255 - c[2]) * 0.55)]
     const f2 = (v: number | null | undefined) => (v == null ? '—' : Number(v).toFixed(2))
-    // WHP/WNM are the WHEEL columns (red); BHP/BNM are the ENGINE/crank columns (blue).
+    // WHP/WTQ are the WHEEL columns (red); BHP/BTQ are the ENGINE/crank columns (blue). Torque in lb·ft.
     const cols: Array<{ f: (p: DynoPull) => string; fill: [number, number, number] }> = [
       { f: (p) => f2(p.whp), fill: REDFILL },
       { f: (p) => f2(p.wnm), fill: REDFILL },
@@ -482,7 +496,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
       ],
       [
         { content: '', styles: { ...noBorder } },
-        'WHP', 'WNM', 'BHP', 'BNM',
+        'WHP', 'WTQ (lb·ft)', 'BHP', 'BTQ (lb·ft)',
       ],
     ]
 
@@ -526,7 +540,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
         sheetTitle() ? `*${sheetTitle()}*` : null,
         bs && latest ? `WHP: FROM ${f2(bs.whp)} TO *${f2(latest.whp)}* - GAIN: *${gain(latest.whp, bs.whp)}*` : null,
         bs && latest ? `BHP: FROM ${f2(bs.bhp)} TO *${f2(latest.bhp)}* - GAIN: *${gain(latest.bhp, bs.bhp)}*` : null,
-        bs && latest ? `BNM: FROM ${f2(bs.bnm)} TO *${f2(latest.bnm)}* - GAIN: *${gain(latest.bnm, bs.bnm)}*` : null,
+        bs && latest ? `BTQ (lb·ft): FROM ${f2(bs.bnm)} TO *${f2(latest.bnm)}* - GAIN: *${gain(latest.bnm, bs.bnm)}*` : null,
       ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
 
       const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: caption, documentUrl: url, filename }) })
@@ -609,7 +623,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
           <input value={form.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, whp: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
         <div className="w-28">
-          <label className="block mb-1 text-sm text-gray-400 font-bold">WNM</label>
+          <label className="block mb-1 text-sm text-gray-400 font-bold">WTQ (lb·ft)</label>
           <input value={form.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, wnm: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
         {pulls.length === 0 && (
@@ -688,9 +702,9 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
               <tr className="text-gray-400 text-sm border-b border-gray-700">
                 <th className="py-2 pr-4 font-bold">PACK</th>
                 <th className="py-2 pr-4 font-bold">WHP</th>
-                <th className="py-2 pr-4 font-bold">WNM</th>
+                <th className="py-2 pr-4 font-bold">WTQ (lb·ft)</th>
                 <th className="py-2 pr-4 font-bold">BHP</th>
-                <th className="py-2 pr-4 font-bold">BNM</th>
+                <th className="py-2 pr-4 font-bold">BTQ (lb·ft)</th>
                 <th className="py-2 pr-4 font-bold">DATE</th>
                 <th className="py-2 pr-4 font-bold">DYNO</th>
                 <th className="py-2 pr-4 font-bold">DOC</th>
@@ -736,11 +750,11 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
                 </tr>
               ) : (
                 <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
-                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / N·m">🇧🇷 BR</span> : null}</td>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
-                  <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} N·m` : '—'}</td>
+                  <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} lb·ft` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
-                  <td className="py-3 pr-4">{p.bnm != null ? `${p.bnm.toFixed(2)} N·m` : '—'}</td>
+                  <td className="py-3 pr-4">{p.bnm != null ? `${p.bnm.toFixed(2)} lb·ft` : '—'}</td>
                   <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
                   <td className="py-3 pr-4">{p.dyno || '—'}</td>
                   <td className="py-3 pr-4">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>

@@ -14,13 +14,13 @@ export async function POST(req: NextRequest) {
 {
   "pack": "the build/tune package or chart title if clearly shown on the sheet, else empty string",
   "whp": "peak wheel horsepower (the 'Max Power' value) as a number string like 911.55",
-  "wnm": "peak wheel torque in Newton-metres (the 'Max Torque' value) as a number string like 1137.52",
+  "wnm": "peak wheel torque in pound-feet / lb-ft (the 'Max Torque' value) as a number string like 838.99",
   "date": "the test date in YYYY-MM-DD format, or empty string if not found",
   "dyno": "the dyno operator. If a GZ28 or GZ28US logo/name appears, return 'GZ28US DynoJet'. If a DynoSolutions logo/name appears, return 'DynoSolutions DynoJet'. Otherwise empty string."
 }
 Rules:
 1. Numbers may use a comma as the decimal separator (e.g. 911,55 means 911.55). Convert every value to a dot decimal and remove any thousands separators. Output plain number strings only — no units, no commas.
-2. whp = peak wheel power in horsepower (HP). If the sheet reports power in "cv"/"CV" (metric horsepower), convert to HP by multiplying by 0.98632; if already HP/wHP/bhp, leave as-is. wnm = peak wheel torque CONVERTED to Newton-metres (N·m). Some dynos report torque in kgf·m (written "Kgf.m", "kgf.m", "Kgfm" or "kgfm") — convert to N·m by multiplying by 9.80665. If torque is in lb-ft, multiply by 1.35582. If already in N·m, leave as-is. Output the converted N·m value.
+2. whp = peak wheel power in horsepower (HP). If the sheet reports power in "cv"/"CV" (metric horsepower), convert to HP by multiplying by 0.98632; if already HP/wHP/bhp, leave as-is. wnm = peak wheel torque CONVERTED to pound-feet (lb-ft). Dynojet sheets already report lb-ft — leave those as-is. If torque is in Newton-metres (N·m/Nm), divide by 1.35582. If torque is in kgf·m (written "Kgf.m", "kgf.m", "Kgfm" or "kgfm"), multiply by 7.23301. Output the converted lb-ft value.
 3. date: parse any printed timestamp such as "11:23:49 PM, Tuesday, June 9, 2026" into "2026-06-09".
 4. dyno: inspect logos and any header/footer text. Prefer exactly 'GZ28US DynoJet' or 'DynoSolutions DynoJet'. Use empty string if you cannot tell.
 5. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
