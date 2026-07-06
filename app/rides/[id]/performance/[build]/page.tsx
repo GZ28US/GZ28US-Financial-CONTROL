@@ -1080,8 +1080,8 @@ export default function RidePerformancePage() {
   }, [])
 
   const title = ride ? `${ride.project_code || ''}${ride.project_name ? ` — ${ride.project_name}` : ''}` : ''
-  // "[brand] [model] [version] [year]" — the car identity line for the BuildSheet PDF + reports.
-  const carLine = ride ? [ride.brand, ride.model, ride.version, ride.year].filter(Boolean).join(' ') : ''
+  // "[brand] [model] [version] [transmission] [year]" — the car identity line for the BuildSheet PDF + reports.
+  const carLine = ride ? [ride.brand, ride.model, ride.version, ride.transmission, ride.year].filter(Boolean).join(' ') : ''
   // BoneStock tune filename prefix: "[manufacturer] [year] [brand] [model] [version] [transmission]".
   const tuneBase = ride ? [ride.manufacturer, ride.year, ride.brand, ride.model, ride.version, ride.transmission].filter(Boolean).join(' ') : ''
 
