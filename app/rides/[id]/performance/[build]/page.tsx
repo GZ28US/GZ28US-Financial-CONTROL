@@ -1,0 +1,988 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import { useParams } from 'next/navigation'
+import Link from 'next/link'
+import Header from '@/components/Header'
+import { supabase } from '@/lib/supabase'
+import { BASE_PATH } from '@/lib/utils'
+import { fileForScan } from '@/lib/scanFile'
+
+const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
+type Tab = typeof TABS[number]
+
+const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet', 'GZ28BR ServiTec', 'ArteCarros ServiTec', 'Absoluto']
+
+const MONTHS: [string, string][] = [
+  ['01', 'January'], ['02', 'February'], ['03', 'March'], ['04', 'April'], ['05', 'May'], ['06', 'June'],
+  ['07', 'July'], ['08', 'August'], ['09', 'September'], ['10', 'October'], ['11', 'November'], ['12', 'December'],
+]
+const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'))
+const YEARS = Array.from({ length: new Date().getFullYear() - 2025 + 1 }, (_, i) => String(new Date().getFullYear() - i))
+
+function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+// Normalize a stored phone string into the digits-only form UltraMsg expects.
+// US default: a bare 10-digit number gets a leading 1. Numbers that already
+// include a country code are passed through.
+function toWaNumber(phone: string | null | undefined): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) return '1' + digits
+  return digits
+}
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result).split(',')[1] || '')
+    r.onerror = reject
+    r.readAsDataURL(file)
+  })
+}
+function fmtDate(d: string | null) {
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+// Crank value = wheel value / (1 - loss%). e.g. 850 whp @ 15% loss => 1000 bhp (same for torque)
+function applyLoss(wheel: string, loss: string): number | null {
+  const w = parseFloat(wheel)
+  if (!isFinite(w)) return null
+  const l = loss === '' ? 0 : parseFloat(loss)
+  if (!isFinite(l)) return null
+  const denom = 1 - l / 100
+  if (denom <= 0) return null
+  return Math.round((w / denom) * 100) / 100
+}
+
+type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean }
+
+// BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
+// factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
+// everything downstream (table, gains, PDF, reports) then speaks the local dialect.
+// BoneStock included: US always shows STD, so even the factory baseline reads ×1.04 vs BR's SAE.
+const KGFM_TO_LBFT = 9.80665 / 1.3558179 // kgf·m → lb·ft
+const SAE_TO_STD = 1.04
+function toLocalDialect(p: DynoPull): DynoPull {
+  if (p.origin !== 'BR') return p
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
+  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
+  const whp = p.whp != null ? r2(p.whp * cf) : null
+  const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_LBFT) : null
+  return {
+    ...p,
+    whp, wnm,
+    bhp: whp != null && denom != null ? r2(whp / denom) : null,
+    bnm: wnm != null && denom != null ? r2(wnm / denom) : null,
+    foreign: true,
+  }
+}
+
+// The auto-created baseline row is identified by its PACK label.
+function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
+
+function DynoSection({ rideId, rideCode, rideTitle, buildNo }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number }) {
+  const [pulls, setPulls] = useState<DynoPull[]>([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+  const editBhp = applyLoss(editForm.whp, editForm.loss)
+  const editBnm = applyLoss(editForm.wnm, editForm.loss)
+  const [scanning, setScanning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [scannedFile, setScannedFile] = useState<File | null>(null)
+  const scanInputRef = useRef<HTMLInputElement>(null)
+  const [client, setClient] = useState<{ name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
+  const [sendingId, setSendingId] = useState<string | null>(null)
+  // After a pull is saved, ask whether to report it on WhatsApp (and optionally to the client).
+  const [reportPull, setReportPull] = useState<DynoPull | null>(null)
+  const [reportToClient, setReportToClient] = useState(false)
+  const [reporting, setReporting] = useState(false)
+  const [car, setCar] = useState<{ manufacturer: string | null; brand: string | null; model: string | null; version: string | null; year: number | null } | null>(null)
+  // "SEND DYNO DATA" — generate the full sheet PDF and WhatsApp it (group + optionally client).
+  const [dynoSendOpen, setDynoSendOpen] = useState(false)
+  const [dynoSendToClient, setDynoSendToClient] = useState(false)
+  const [dynoSending, setDynoSending] = useState(false)
+  // Loss (crank→wheel) is a per-ride CONSTANT — entered once, shown above the table, not a column.
+  const [editingLoss, setEditingLoss] = useState(false)
+  const [lossDraft, setLossDraft] = useState('')
+  const rideLoss = pulls.find((p) => p.loss_pct != null)?.loss_pct ?? null
+
+  useEffect(() => {
+    (async () => {
+      const { data: rideRow } = await supabase.from('rides').select('client_id, manufacturer, brand, model, version, year').eq('id', rideId).single()
+      if (rideRow) {
+        setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, year: rideRow.year })
+        if (rideRow.client_id) {
+          const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method').eq('id', rideRow.client_id).single()
+          if (c) setClient(c as typeof client)
+        }
+      }
+    })()
+  }, [])
+
+  async function handleScanFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setScanning(true)
+    try {
+      const { base64, mediaType } = await fileForScan(file)
+      const res = await fetch(`${BASE_PATH}/api/scan-dyno`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, mediaType: mediaType || 'application/octet-stream' }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) { alert(data.error || 'Scan failed.'); return }
+      const m = String(data.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      setForm((f) => ({
+        ...f,
+        pack: data.pack || f.pack,
+        whp: data.whp || f.whp,
+        wnm: data.wnm || f.wnm,
+        dmonth: m ? m[2] : f.dmonth,
+        dday: m ? m[3] : f.dday,
+        dyear: m ? m[1] : f.dyear,
+        dyno: data.dyno || f.dyno,
+      }))
+      setScannedFile(file)
+    } catch (err) {
+      alert('Scan failed: ' + String(err))
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    const { data } = await supabase
+      .from('dyno_pulls')
+      .select('*')
+      .eq('ride_code', rideCode)
+      .eq('build_no', buildNo)
+      .order('pull_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+    const rows = ((data || []) as DynoPull[]).map(toLocalDialect)
+    // BoneStock baseline is always pinned as the first row.
+    rows.sort((a, b) => (isBoneStock(b) ? 1 : 0) - (isBoneStock(a) ? 1 : 0))
+    setPulls(rows)
+    setLoading(false)
+  }
+
+  // Auto-create the BoneStock baseline (factory crank specs → wheel via the entered loss).
+  async function createBoneStock(lossStr: string) {
+    let hp: number | null = null, nm: number | null = null
+    if (car) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/factory-specs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car) })
+        const data = await res.json().catch(() => ({}))
+        if (Number.isFinite(Number(data.hp))) hp = Number(data.hp)
+        if (Number.isFinite(Number(data.nm))) nm = Number(data.nm)
+      } catch { /* leave null — still create the row so every table has a BoneStock */ }
+    }
+    const loss = lossStr === '' ? 15 : (parseFloat(lossStr) || 15)
+    const lf = 1 - loss / 100
+    // The factory baseline anchors on the CAR's home country: US.xxx cars are recorded in the
+    // US dialect (factory hp / lb·ft as-is), BR.xxx cars in the BR one (SAE raw + correction).
+    if (rideCode.startsWith('BR.')) {
+      const CORR = 1.11 // default SAE correction factor for a BR baseline
+      const kgfm = nm != null ? nm / 9.80665 : null
+      await supabase.from('dyno_pulls').insert([{
+        ride_code: rideCode,
+        build_no: buildNo,
+        origin: 'BR',
+        pack: 'BoneStock',
+        whp: hp != null ? Math.round((hp * lf / CORR) * 100) / 100 : null,
+        wnm: kgfm != null ? Math.round((kgfm * lf / CORR) * 100) / 100 : null,
+        loss_pct: loss,
+        correction_factor: CORR,
+        bhp: hp, // factory crank hp (SAE)
+        bnm: kgfm != null ? Math.round(kgfm * 100) / 100 : null, // factory crank torque (kgf·m)
+        pull_date: null, dyno: null, document_url: null,
+      }])
+      return
+    }
+    const lbft = nm != null ? nm / 1.3558179 : null // factory-specs API reports N·m; US stores lb·ft
+    const whp = hp != null ? Math.round(hp * lf * 100) / 100 : null
+    const wnm = lbft != null ? Math.round(lbft * lf * 100) / 100 : null
+    await supabase.from('dyno_pulls').insert([{
+      ride_code: rideCode,
+      build_no: buildNo,
+      origin: 'US',
+      pack: 'BoneStock',
+      whp, wnm,
+      loss_pct: loss,
+      bhp: hp, // factory crank hp
+      bnm: lbft != null ? Math.round(lbft * 100) / 100 : null, // factory crank torque (lb·ft)
+      pull_date: null, dyno: null, document_url: null,
+    }])
+  }
+
+  // Edit the ride-constant loss: re-peg BoneStock to factory crank, re-derive crank for measured pulls.
+  async function saveLoss() {
+    const v = parseFloat(lossDraft)
+    if (!Number.isFinite(v)) { alert('Enter a valid loss %.'); return }
+    const lf = 1 - v / 100
+    for (const p of pulls) {
+      // BR-recorded rows hold raw BR figures in the bank — the in-memory values here are the
+      // converted STD/lb·ft display. Only sync the shared loss %; never write converted numbers back.
+      if (p.foreign) {
+        await supabase.from('dyno_pulls').update({ loss_pct: v }).eq('id', p.id)
+      } else if (isBoneStock(p)) {
+        const whp = p.bhp != null ? Math.round(p.bhp * lf * 100) / 100 : p.whp
+        const wnm = p.bnm != null ? Math.round(p.bnm * lf * 100) / 100 : p.wnm
+        await supabase.from('dyno_pulls').update({ loss_pct: v, whp, wnm }).eq('id', p.id)
+      } else {
+        await supabase.from('dyno_pulls').update({ loss_pct: v, bhp: applyLoss(p.whp != null ? String(p.whp) : '', String(v)), bnm: applyLoss(p.wnm != null ? String(p.wnm) : '', String(v)) }).eq('id', p.id)
+      }
+    }
+    setEditingLoss(false)
+    load()
+  }
+
+  async function addPull() {
+    if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
+    // Loss is set ONCE for the whole ride (on the first pull) — required so the pull and the
+    // auto BoneStock share the exact same crank→wheel conversion.
+    if (pulls.length === 0 && !form.loss.trim()) { alert('Enter the crank→wheel LOSS % — it is set once for the whole ride.'); return }
+    setSaving(true)
+    try {
+      let documentUrl: string | null = null
+      if (scannedFile) {
+        const ext = scannedFile.name.split('.').pop() || 'pdf'
+        const path = `dyno/${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage.from('dyno-charts').upload(path, scannedFile, { upsert: true })
+        if (upErr) { alert('Document upload failed: ' + upErr.message); return }
+        const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
+        documentUrl = urlData.publicUrl
+      }
+      const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
+      // Loss is constant per ride: use what the user typed on the first pull, reuse it after.
+      const effLoss = pulls.length === 0 ? form.loss : (rideLoss != null ? String(rideLoss) : form.loss)
+      const { data: inserted, error } = await supabase.from('dyno_pulls').insert([{
+        ride_code: rideCode,
+        build_no: buildNo,
+        origin: 'US',
+        pack: form.pack.trim() || null,
+        whp: form.whp ? parseFloat(form.whp) : null,
+        wnm: form.wnm ? parseFloat(form.wnm) : null,
+        loss_pct: effLoss ? parseFloat(effLoss) : null,
+        bhp: applyLoss(form.whp, effLoss),
+        bnm: applyLoss(form.wnm, effLoss),
+        pull_date: pullDate,
+        dyno: form.dyno || null,
+        document_url: documentUrl,
+      }]).select().single()
+      if (error) { alert(error.message); return }
+
+      // Every ride's table leads with a BoneStock baseline row — create it once, on the first pull.
+      if (!pulls.some(isBoneStock)) { await createBoneStock(effLoss) }
+
+      setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+      setScannedFile(null)
+      load()
+      // Ask whether to report it (instead of auto-sending).
+      setReportToClient(false)
+      setReportPull(inserted as DynoPull)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function removePull(id: string) {
+    if (!window.confirm('Remove this pull?')) return
+    const { error } = await supabase.from('dyno_pulls').delete().eq('id', id)
+    if (error) { alert(error.message); return }
+    setPulls(prev => prev.filter(p => p.id !== id))
+  }
+
+  function startEdit(p: DynoPull) {
+    const m = (p.pull_date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    setEditForm({
+      pack: p.pack || '',
+      whp: p.whp != null ? String(p.whp) : '',
+      wnm: p.wnm != null ? String(p.wnm) : '',
+      loss: p.loss_pct != null ? String(p.loss_pct) : '',
+      dmonth: m ? m[2] : '', dday: m ? m[3] : '', dyear: m ? m[1] : '',
+      dyno: p.dyno || 'GZ28US DynoJet',
+    })
+    setEditingId(p.id)
+  }
+
+  async function saveEdit(id: string) {
+    const pullDate = editForm.dyear && editForm.dmonth && editForm.dday ? `${editForm.dyear}-${editForm.dmonth}-${editForm.dday}` : null
+    const { error } = await supabase.from('dyno_pulls').update({
+      pack: editForm.pack.trim() || null,
+      whp: editForm.whp ? parseFloat(editForm.whp) : null,
+      wnm: editForm.wnm ? parseFloat(editForm.wnm) : null,
+      loss_pct: editForm.loss ? parseFloat(editForm.loss) : null,
+      bhp: applyLoss(editForm.whp, editForm.loss),
+      bnm: applyLoss(editForm.wnm, editForm.loss),
+      pull_date: pullDate,
+      dyno: editForm.dyno || null,
+    }).eq('id', id)
+    if (error) { alert(error.message); return }
+    setEditingId(null)
+    load()
+  }
+
+  function pullReport(p: DynoPull): string {
+    return [
+      '🏁 *DYNO PULL*',
+      rideTitle ? `*Ride:* ${rideTitle}` : null,
+      p.pack ? `*Pack:* ${p.pack}` : null,
+      p.whp != null ? `*WHP:* ${p.whp.toFixed(2)}` : null,
+      p.wnm != null ? `*WTQ:* ${p.wnm.toFixed(2)} lb·ft` : null,
+      p.loss_pct != null ? `*Loss:* ${p.loss_pct}%` : null,
+      p.bhp != null ? `*BHP:* ${p.bhp.toFixed(2)}` : null,
+      p.bnm != null ? `*BTQ:* ${p.bnm.toFixed(2)} lb·ft` : null,
+      p.pull_date ? `*Date:* ${fmtDate(p.pull_date)}` : null,
+      p.dyno ? `*Dyno:* ${p.dyno}` : null,
+    ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
+  }
+
+  function docFilename(p: DynoPull) {
+    return `dyno-chart.${(p.document_url || '').split('?')[0].split('.').pop() || 'pdf'}`
+  }
+
+  // Post the report to the WhatsApp reports group. Returns true on success.
+  async function sendGroupReport(p: DynoPull): Promise<boolean> {
+    const payload: { body: string; documentUrl?: string; filename?: string } = { body: pullReport(p) }
+    if (p.document_url) { payload.documentUrl = p.document_url; payload.filename = docFilename(p) }
+    try {
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) { alert('WhatsApp report failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return false }
+      return true
+    } catch (e) { alert('WhatsApp report failed: ' + String(e)); return false }
+  }
+
+  // The "Report this pull?" dialog Send button.
+  async function confirmReport() {
+    if (!reportPull) return
+    setReporting(true)
+    try {
+      await sendGroupReport(reportPull)
+      if (reportToClient && client) await sendPull(reportPull)
+    } finally {
+      setReporting(false)
+      setReportPull(null)
+    }
+  }
+
+  async function sendPull(p: DynoPull) {
+    if (!client) { alert('This ride has no client on file to send to. Assign a client on the ride page first.'); return }
+    const method = client.preferred_message_method || 'WhatsApp'
+    const report = pullReport(p)
+    const plain = report.replace(/\*/g, '') + (p.document_url ? `\n\nChart: ${p.document_url}` : '')
+
+    if (method === 'WhatsApp') {
+      const to = toWaNumber(client.phone)
+      if (!to) { alert('This client has no phone number for WhatsApp.\nAdd a phone on the client page, or change their preferred method to SMS / E-Mail.'); return }
+      setSendingId(p.id)
+      try {
+        const payload: { to: string; body: string; documentUrl?: string; filename?: string } = { to, body: report }
+        if (p.document_url) {
+          payload.documentUrl = p.document_url
+          payload.filename = `dyno-chart.${(p.document_url.split('?')[0].split('.').pop() || 'pdf')}`
+        }
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!data.ok) {
+          const detailErr = data?.detail?.error
+          alert('WhatsApp send failed:\n' + (typeof detailErr === 'object' ? JSON.stringify(detailErr) : String(detailErr || data?.error || `HTTP ${res.status}`)))
+          return
+        }
+        alert(`Report sent to ${client.name || 'client'} via WhatsApp.`)
+      } finally {
+        setSendingId(null)
+      }
+      return
+    }
+
+    if (method === 'SMS') {
+      window.location.href = `sms:${client.phone || ''}?&body=${encodeURIComponent(plain)}`
+      return
+    }
+
+    if (method === 'E-Mail') {
+      const subject = `Dyno Pull${rideTitle ? ` — ${rideTitle}` : ''}`
+      window.location.href = `mailto:${client.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
+      return
+    }
+
+    // Instagram or any non-automated method: copy the text for manual paste.
+    try { await navigator.clipboard.writeText(plain) } catch { /* clipboard may be blocked */ }
+    alert(`This client prefers ${method}, which can't be sent automatically.\nThe report was copied to your clipboard — paste it into ${method}.`)
+  }
+
+  // Title for the dyno sheet, built from the car + ride (auto).
+  function sheetTitle(): string {
+    const carName = [car?.year, car?.brand, car?.model, car?.version].filter(Boolean).join(' ')
+    return [carName, rideTitle].filter((s) => s && String(s).trim()).join(' — ')
+  }
+
+  // Load the white-background GZ28 logo as a data URL (for embedding in the PDF). Null if it can't load.
+  async function loadLogo(): Promise<{ data: string; w: number; h: number } | null> {
+    try {
+      const img = new window.Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = `${BASE_PATH}/logo_gz28.jpg` })
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d'); if (!ctx) return null
+      ctx.drawImage(img, 0, 0)
+      return { data: canvas.toDataURL('image/jpeg', 0.92), w: img.naturalWidth, h: img.naturalHeight }
+    } catch { return null }
+  }
+
+  // Build the styled dyno-data sheet (landscape A4) and return it as a PDF Blob.
+  async function buildDynoPdf(): Promise<Blob> {
+    const { jsPDF } = await import('jspdf')
+    const autoTable = (await import('jspdf-autotable')).default
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const pageW = doc.internal.pageSize.getWidth()
+
+    const logo = await loadLogo()
+    if (logo) {
+      // NEVER distort: scale by the single smaller fit factor so width:height stays exact.
+      const maxW = 48, maxH = 17
+      const s = Math.min(maxW / logo.w, maxH / logo.h)
+      doc.addImage(logo.data, 'JPEG', 8, 5, logo.w * s, logo.h * s)
+    } else { doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); doc.setTextColor(225, 29, 29); doc.text('GZ', 8, 17); const gx = 8 + doc.getTextWidth('GZ'); doc.setTextColor(23, 70, 200); doc.text('28', gx, 17) }
+
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(13); doc.setTextColor(20, 20, 20)
+    doc.text(sheetTitle() || 'Dyno Data', pageW / 2, 13, { align: 'center', maxWidth: pageW - 120 })
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(20, 20, 20)
+    doc.text(`Crank → wheel LOSS:  ${rideLoss != null ? Number(rideLoss) : '—'}%`, pageW - 8, 9, { align: 'right' })
+
+    const REDFILL: [number, number, number] = [255, 0, 0], BLUEFILL: [number, number, number] = [36, 51, 194]
+    const lighten = (c: [number, number, number]): [number, number, number] => [Math.round(c[0] + (255 - c[0]) * 0.55), Math.round(c[1] + (255 - c[1]) * 0.55), Math.round(c[2] + (255 - c[2]) * 0.55)]
+    const f2 = (v: number | null | undefined) => (v == null ? '—' : Number(v).toFixed(2))
+    // WHP/WTQ are the WHEEL columns (red); BHP/BTQ are the ENGINE/crank columns (blue). Torque in lb·ft.
+    const cols: Array<{ f: (p: DynoPull) => string; fill: [number, number, number] }> = [
+      { f: (p) => f2(p.whp), fill: REDFILL },
+      { f: (p) => f2(p.wnm), fill: REDFILL },
+      { f: (p) => f2(p.bhp), fill: BLUEFILL },
+      { f: (p) => f2(p.bnm), fill: BLUEFILL },
+    ]
+    const bs = pulls.find(isBoneStock)
+    const others = pulls.filter((p) => !isBoneStock(p)).slice().reverse() // oldest -> newest
+    const ordered = [...(bs ? [bs] : []), ...others]
+    type Cell = { content: string; styles: Record<string, unknown> }
+    const WHITE: [number, number, number] = [255, 255, 255]
+    const body: Cell[][] = ordered.map((p) => {
+      const stock = isBoneStock(p)
+      const nameCell: Cell = { content: stock ? 'BoneStock' : (p.pack || '—'), styles: { halign: 'center', fontStyle: 'bold', textColor: (stock ? lighten([40, 40, 40]) : [40, 40, 40]), fillColor: WHITE } }
+      const cells: Cell[] = cols.map((col) => ({ content: col.f(p), styles: { textColor: WHITE, fontStyle: 'bold', fillColor: col.fill } }))
+      return [nameCell, ...cells]
+    })
+    // Always render at least 7 body rows — pad with empties that keep the red/blue column bands.
+    const MIN_ROWS = 7
+    while (body.length < MIN_ROWS) {
+      body.push([{ content: '', styles: { fillColor: WHITE } }, ...cols.map((col) => ({ content: '', styles: { fillColor: col.fill } } as Cell))])
+    }
+
+    // Gains: latest pull minus BoneStock (whole row black).
+    let foot: Array<{ content: string; styles: Record<string, unknown> }> | null = null
+    if (bs && others.length) {
+      const a = others[others.length - 1], b = bs
+      const n = (v: number | null | undefined) => v ?? 0
+      const gv = [f2(n(a.whp) - n(b.whp)), f2(n(a.wnm) - n(b.wnm)), f2(n(a.bhp) - n(b.bhp)), f2(n(a.bnm) - n(b.bnm))]
+      foot = [{ content: 'Gains', styles: { halign: 'left', fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [0, 0, 0] } }, ...gv.map((t) => ({ content: t, styles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold' } }))]
+    }
+
+    const noBorder = { fillColor: WHITE, lineWidth: 0 }
+    const head = [
+      [
+        { content: '', styles: { ...noBorder } },
+        { content: 'WHEEL', colSpan: 2, styles: { fillColor: [255, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
+        { content: 'ENGINE (Crank)', colSpan: 2, styles: { fillColor: [36, 51, 194], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
+      ],
+      [
+        { content: '', styles: { ...noBorder } },
+        'WHP', 'WTQ (lb·ft)', 'BHP', 'BTQ (lb·ft)',
+      ],
+    ]
+
+    autoTable(doc, {
+      startY: 22,
+      head: head as never,
+      body: body as never,
+      foot: (foot ? [foot] : undefined) as never,
+      theme: 'grid',
+      styles: { fontSize: 9, halign: 'center', valign: 'middle', cellPadding: 2.2, lineColor: [150, 150, 150], lineWidth: 0.2, textColor: [40, 40, 40] },
+      headStyles: { fillColor: [224, 224, 224], textColor: [55, 55, 55], fontStyle: 'bold', fontSize: 9, halign: 'center', lineColor: [120, 120, 120], lineWidth: 0.2 },
+      footStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [120, 120, 120], lineWidth: 0.2 },
+      columnStyles: { 0: { cellWidth: 60 } },
+      margin: { left: 8, right: 8 },
+    })
+
+    return doc.output('blob')
+  }
+
+  // SEND DYNO DATA dialog confirm: build the PDF, upload it, WhatsApp it to the group (+ client).
+  async function confirmSendDynoData() {
+    setDynoSending(true)
+    try {
+      const blob = await buildDynoPdf()
+      const rideLabel = (rideTitle || sheetTitle() || 'DynoData RECEIPT').replace(/\s*—\s*/g, ' ').trim()
+      const fileLabel = `GZ28 V8 SpeedShop DynoData RECEIPT - ${rideLabel}`
+      const filename = `${fileLabel}.pdf`
+      const slug = (fileLabel.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80)) || 'dyno-data'
+      const path = `reports/${rideId}/${slug}-${Date.now()}.pdf`
+      const { error: upErr } = await supabase.storage.from('dyno-charts').upload(path, blob, { upsert: true, contentType: 'application/pdf' })
+      if (upErr) { alert('PDF upload failed: ' + upErr.message); return }
+      const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
+      const url = urlData.publicUrl
+      // Receipt lines: BoneStock corrected → latest pull corrected (pulls are sorted newest first).
+      const bs = pulls.find(isBoneStock)
+      const latest = pulls.filter((p) => !isBoneStock(p))[0]
+      const f2 = (x: number | null) => (x == null ? '—' : x.toFixed(2))
+      const gain = (a: number | null, b: number | null) => (a != null && b != null ? (a - b).toFixed(2) : '—')
+      const caption = [
+        '🏁 *GZ28US · DynoData RECEIPT:*',
+        sheetTitle() ? `*${sheetTitle()}*` : null,
+        bs && latest ? `WHP: FROM ${f2(bs.whp)} TO *${f2(latest.whp)}* - GAIN: *${gain(latest.whp, bs.whp)}*` : null,
+        bs && latest ? `BHP: FROM ${f2(bs.bhp)} TO *${f2(latest.bhp)}* - GAIN: *${gain(latest.bhp, bs.bhp)}*` : null,
+        bs && latest ? `BTQ (lb·ft): FROM ${f2(bs.bnm)} TO *${f2(latest.bnm)}* - GAIN: *${gain(latest.bnm, bs.bnm)}*` : null,
+      ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
+
+      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: caption, documentUrl: url, filename }) })
+      const gd = await group.json().catch(() => ({}))
+      if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${group.status}`))); return }
+
+      if (dynoSendToClient) {
+        const to = client ? toWaNumber(client.phone) : null
+        if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the sheet was not sent to them.') }
+        else {
+          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: caption, documentUrl: url, filename }) })
+          const cd = await cli.json().catch(() => ({}))
+          if (!cd.ok) { alert('Sent to the group, but the client send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`))); return }
+          return
+        }
+      }
+    } catch (e) {
+      alert('Could not generate/send the dyno data: ' + String(e))
+    } finally {
+      setDynoSending(false)
+      setDynoSendOpen(false)
+    }
+  }
+
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
+  const editInput = 'bg-gray-800 border border-gray-700 rounded-xl px-2 py-1 text-base'
+
+  // Final GAINS row: latest pull minus the BoneStock baseline.
+  function gainsRow() {
+    const bs = pulls.find(isBoneStock)
+    const last = pulls.find((p) => !isBoneStock(p))
+    if (!bs || !last) return null
+    const n = (v: number | null | undefined) => v ?? 0
+    const cell = (v: number) => (
+      <td className={`py-3 pr-4 font-bold ${v >= 0 ? 'text-green-400' : 'text-red-400'}`}>{(v >= 0 ? '+' : '') + v.toFixed(2)}</td>
+    )
+    return (
+      <tr className="border-t-2 border-gray-600 bg-green-900/10">
+        <td className="py-3 pr-4 font-bold text-green-300">GAINS</td>
+        {cell(n(last.whp) - n(bs.whp))}
+        {cell(n(last.wnm) - n(bs.wnm))}
+        {cell(n(last.bhp) - n(bs.bhp))}
+        {cell(n(last.bnm) - n(bs.bnm))}
+        <td className="py-3 pr-4"></td>
+        <td className="py-3 pr-4"></td>
+        <td className="py-3 pr-4"></td>
+        <td className="py-3"></td>
+      </tr>
+    )
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      {/* REPORT THIS PULL TO WHATSAPP? */}
+      {reportPull && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
+            <h2 className="text-2xl font-bold">REPORT THIS PULL TO WHATSAPP?</h2>
+            <label className="flex items-center gap-3 text-lg cursor-pointer">
+              <input type="checkbox" checked={reportToClient} onChange={(e) => setReportToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
+              Send to the client too?
+            </label>
+            {reportToClient && !client && <p className="text-sm text-yellow-400">This ride has no client on file — only the group report will be sent.</p>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setReportPull(null)} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
+              <button onClick={confirmReport} disabled={reporting} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add a pull */}
+      <div className="flex flex-wrap gap-3 items-start mb-6">
+        <div className="flex-1 min-w-[160px]">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">PACK</label>
+          <input value={form.pack} onChange={(e) => setForm({ ...form, pack: e.target.value })} className={inputClass} placeholder="e.g. Stage 2" />
+        </div>
+        <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">WHP</label>
+          <input value={form.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, whp: e.target.value }) }} className={inputClass} placeholder="0" />
+        </div>
+        <div className="w-28">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">WTQ (lb·ft)</label>
+          <input value={form.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, wnm: e.target.value }) }} className={inputClass} placeholder="0" />
+        </div>
+        {pulls.length === 0 && (
+          <div className="w-28">
+            <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
+            <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
+          </div>
+        )}
+        <div className="min-w-[300px] flex-1">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">DATE</label>
+          <div className="flex gap-2">
+            <select value={form.dmonth} onChange={(e) => setForm({ ...form, dmonth: e.target.value })} className={inputClass}>
+              <option value="">Month</option>
+              {MONTHS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <select value={form.dday} onChange={(e) => setForm({ ...form, dday: e.target.value })} className={inputClass}>
+              <option value="">Day</option>
+              {DAYS.map((d) => <option key={d} value={d}>{parseInt(d, 10)}</option>)}
+            </select>
+            <select value={form.dyear} onChange={(e) => setForm({ ...form, dyear: e.target.value })} className={inputClass}>
+              <option value="">Year</option>
+              {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="min-w-[160px]">
+          <label className="block mb-1 text-sm text-gray-400 font-bold">DYNO</label>
+          <select value={form.dyno} onChange={(e) => setForm({ ...form, dyno: e.target.value })} className={inputClass}>
+            {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">ADD</label>
+          <button onClick={addPull} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{saving ? 'SAVING…' : '+ ADD PULL'}</button>
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">SCAN</label>
+          <button onClick={() => scanInputRef.current?.click()} disabled={scanning} className="bg-purple-700 hover:bg-purple-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{scanning ? 'SCANNING…' : 'SCAN PULL'}</button>
+          <input ref={scanInputRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleScanFile} />
+        </div>
+      </div>
+
+      {scannedFile && (
+        <p className="text-sm text-purple-300 mb-4">📎 Chart attached: <span className="font-bold">{scannedFile.name}</span> — saved with this pull on ADD.
+          <button onClick={() => setScannedFile(null)} className="ml-2 text-gray-400 hover:text-gray-200 underline">remove</button>
+        </p>
+      )}
+
+      {/* Loss is a per-ride constant — shown here once, never as a per-pull column. */}
+      <div className="flex items-center gap-3 mb-4 text-lg">
+        <span className="text-gray-400 font-bold">Crank → wheel loss:</span>
+        {editingLoss ? (
+          <>
+            <input value={lossDraft} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setLossDraft(e.target.value) }} className="w-20 bg-gray-800 border border-gray-700 rounded-xl px-3 py-1" placeholder="%" />
+            <button onClick={saveLoss} className="bg-green-700 hover:bg-green-600 px-4 py-1 rounded-xl font-bold text-sm">SAVE</button>
+            <button onClick={() => setEditingLoss(false)} className="bg-gray-600 hover:bg-gray-500 px-4 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+          </>
+        ) : (
+          <>
+            <span className="font-bold text-white">{rideLoss != null ? `${rideLoss}%` : '— (set on the first pull)'}</span>
+            {rideLoss != null && <button onClick={() => { setLossDraft(String(rideLoss)); setEditingLoss(true) }} className="bg-blue-700 hover:bg-blue-600 px-4 py-1 rounded-xl font-bold text-sm">EDIT</button>}
+          </>
+        )}
+      </div>
+
+      {/* Pulls table */}
+      {loading ? (
+        <p className="text-lg text-gray-400">Loading...</p>
+      ) : pulls.length === 0 ? (
+        <p className="text-lg text-gray-400">No pulls recorded yet.</p>
+      ) : (
+        <>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-gray-400 text-sm border-b border-gray-700">
+                <th className="py-2 pr-4 font-bold">PACK</th>
+                <th className="py-2 pr-4 font-bold">WHP</th>
+                <th className="py-2 pr-4 font-bold">WTQ (lb·ft)</th>
+                <th className="py-2 pr-4 font-bold">BHP</th>
+                <th className="py-2 pr-4 font-bold">BTQ (lb·ft)</th>
+                <th className="py-2 pr-4 font-bold">DATE</th>
+                <th className="py-2 pr-4 font-bold">DYNO</th>
+                <th className="py-2 pr-4 font-bold">DOC</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {pulls.map((p) => editingId === p.id ? (
+                <tr key={p.id} className="border-b border-gray-800 bg-gray-950/40">
+                  <td className="py-2 pr-2"><input value={editForm.pack} onChange={(e) => setEditForm({ ...editForm, pack: e.target.value })} className={`${editInput} w-full`} placeholder="PACK" /></td>
+                  <td className="py-2 pr-2"><input value={editForm.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, whp: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
+                  <td className="py-2 pr-2"><input value={editForm.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, wnm: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
+                  <td className="py-2 pr-2 text-gray-400">{editBhp != null ? editBhp.toFixed(2) : '—'}</td>
+                  <td className="py-2 pr-2 text-gray-400">{editBnm != null ? editBnm.toFixed(2) : '—'}</td>
+                  <td className="py-2 pr-2">
+                    <div className="flex gap-1">
+                      <select value={editForm.dmonth} onChange={(e) => setEditForm({ ...editForm, dmonth: e.target.value })} className={editInput}>
+                        <option value="">Mon</option>
+                        {MONTHS.map(([v, l]) => <option key={v} value={v}>{l.slice(0, 3)}</option>)}
+                      </select>
+                      <select value={editForm.dday} onChange={(e) => setEditForm({ ...editForm, dday: e.target.value })} className={editInput}>
+                        <option value="">Day</option>
+                        {DAYS.map((d) => <option key={d} value={d}>{parseInt(d, 10)}</option>)}
+                      </select>
+                      <select value={editForm.dyear} onChange={(e) => setEditForm({ ...editForm, dyear: e.target.value })} className={editInput}>
+                        <option value="">Year</option>
+                        {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+                      </select>
+                    </div>
+                  </td>
+                  <td className="py-2 pr-2">
+                    <select value={editForm.dyno} onChange={(e) => setEditForm({ ...editForm, dyno: e.target.value })} className={editInput}>
+                      {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-2 pr-2">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>
+                  <td className="py-2 text-right">
+                    <div className="flex gap-1 justify-end">
+                      <button onClick={() => saveEdit(p.id)} className="bg-green-700 hover:bg-green-600 px-3 py-1 rounded-xl font-bold text-sm">SAVE</button>
+                      <button onClick={() => setEditingId(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
+                  <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} lb·ft` : '—'}</td>
+                  <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
+                  <td className="py-3 pr-4">{p.bnm != null ? `${p.bnm.toFixed(2)} lb·ft` : '—'}</td>
+                  <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
+                  <td className="py-3 pr-4">{p.dyno || '—'}</td>
+                  <td className="py-3 pr-4">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>
+                  <td className="py-3 text-right">
+                    <div className="flex gap-2 justify-end">
+                      {!p.foreign && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
+                      {!p.foreign && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
+                      <button onClick={() => { setReportToClient(false); setReportPull(p) }} disabled={sendingId === p.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-1 rounded-xl font-bold text-sm">{sendingId === p.id ? 'SENDING…' : 'SEND'}</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {gainsRow()}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex justify-center mt-6">
+          <button onClick={() => { setDynoSendToClient(false); setDynoSendOpen(true) }} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SEND DYNO DATA</button>
+        </div>
+        </>
+      )}
+
+      {/* SEND DYNO DATA TO WHATSAPP? */}
+      {dynoSendOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
+            <h2 className="text-2xl font-bold">SEND DYNO DATA TO WHATSAPP?</h2>
+            <p className="text-sm text-gray-400">Generates the full dyno sheet (BoneStock + every pull + gains) as a PDF and sends it to the reports group.</p>
+            <label className="flex items-center gap-3 text-lg cursor-pointer">
+              <input type="checkbox" checked={dynoSendToClient} onChange={(e) => setDynoSendToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
+              Send to the client too?
+            </label>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setDynoSendOpen(false)} disabled={dynoSending} className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">SKIP</button>
+              <button onClick={confirmSendDynoData} disabled={dynoSending} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{dynoSending ? 'SENDING…' : 'SEND'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── BUILD SHEET ──────────────────────────────────────────────────────────────
+// The car's full mechanical spec. Every open field is [Stock/Other]: choosing
+// Other reveals a text input. Enum fields carry their own options. Fields
+// show/hide by Power Source (Roots: Snout instead of Intake Manifold; blower
+// fields only on SuperCharged sources). Saved one row per ride (upsert).
+const POWER_SOURCES = ['Naturally Aspirated', 'Roots SuperCharged', 'Centrifugal SuperCharger', 'Turbo']
+const BS_FUEL_OPTIONS = ['93', 'E85', '91']
+
+type BSField = { key: string; label: string; kind: 'so' | 'enum'; options?: string[]; show?: (ps: string) => boolean }
+const BS_FIELDS: BSField[] = [
+  { key: 'intake', label: 'Intake', kind: 'so' },
+  { key: 'throttle_body', label: 'Throttle-Body', kind: 'so' },
+  { key: 'intake_manifold', label: 'Intake Manifold', kind: 'so', show: (ps) => ps !== 'Roots SuperCharged' },
+  { key: 'snout', label: 'Snout', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' },
+  { key: 'supercharger', label: 'SuperCharger', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' || ps === 'Centrifugal SuperCharger' },
+  { key: 'fuel_rails', label: 'FuelRails', kind: 'so' },
+  { key: 'injectors', label: 'Injectors', kind: 'so' },
+  { key: 'spark_plugs', label: 'SparkPlugs + Gaps', kind: 'so' },
+  { key: 'map_sensor', label: 'MAP Sensor', kind: 'so' },
+  { key: 'heads', label: 'Heads', kind: 'so' },
+  { key: 'cam', label: 'Cam', kind: 'so' },
+  { key: 'displacement', label: 'Displacement', kind: 'so' },
+  { key: 'compression_ratio', label: 'Compression Ratio', kind: 'so' },
+  { key: 'headers', label: 'Headers', kind: 'so' },
+  { key: 'cats', label: 'Cats', kind: 'enum', options: ['Stock', 'HighFlow', 'CatDelete'] },
+  { key: 'catback', label: 'CatBack', kind: 'so' },
+  { key: 'fuel_pump', label: 'FuelPump', kind: 'so' },
+  { key: 'bap', label: 'BAP', kind: 'enum', options: ['NO', 'YES'] },
+  { key: 'fuel_line', label: 'FuelLine', kind: 'so' },
+  { key: 'fuel_press_regulator', label: 'FuelPress Regulator', kind: 'enum', options: ['Stock', 'External'] },
+  { key: 'flex_sensor', label: 'FlexSensor', kind: 'enum', options: ['Stock', 'ECU Wired', 'Gauge Wired', 'NO'] },
+  { key: 'fuel', label: 'Fuel', kind: 'enum', options: BS_FUEL_OPTIONS },
+  { key: 'transmission', label: 'Transmission', kind: 'so' },
+]
+
+function BuildSheetSection({ rideCode, buildNo }: { rideCode: string; buildNo: number }) {
+  const [sheet, setSheet] = useState<Record<string, string>>({})
+  const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
+  const [bsLoading, setBsLoading] = useState(true)
+  const [bsSaving, setBsSaving] = useState(false)
+
+  useEffect(() => { void loadSheet() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadSheet() {
+    const { data } = await supabase.from('ride_build_sheets').select('*').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle()
+    const s: Record<string, string> = {}
+    const om: Record<string, boolean> = {}
+    s.power_source = data?.power_source || POWER_SOURCES[0]
+    for (const f of BS_FIELDS) {
+      const v = data ? (data[f.key] ?? '') : ''
+      s[f.key] = v || (f.kind === 'so' ? 'Stock' : (f.options as string[])[0])
+      if (f.kind === 'so' && s[f.key] !== 'Stock' && v) om[f.key] = true
+    }
+    setSheet(s)
+    setOtherMode(om)
+    setBsLoading(false)
+  }
+
+  async function saveSheet() {
+    setBsSaving(true)
+    const payload: Record<string, unknown> = { ride_code: rideCode, build_no: buildNo, power_source: sheet.power_source, updated_at: new Date().toISOString() }
+    for (const f of BS_FIELDS) {
+      // Fields hidden by the current Power Source save as null (keeps rows clean).
+      payload[f.key] = f.show && !f.show(sheet.power_source) ? null : (sheet[f.key] || null)
+    }
+    const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_code,build_no' })
+    setBsSaving(false)
+    if (error) alert(error.message)
+    else alert('Build sheet saved ✅')
+  }
+
+  const sel = 'bg-gray-800 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
+  const inp = 'bg-gray-900 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
+
+  if (bsLoading) return <p className="text-xl text-gray-400">Loading…</p>
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div>
+          <label className="block mb-1 text-sm text-gray-400 font-bold">POWER SOURCE</label>
+          <select value={sheet.power_source} onChange={(e) => setSheet({ ...sheet, power_source: e.target.value })} className={sel}>
+            {POWER_SOURCES.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        {BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => (
+          <div key={f.key}>
+            <label className="block mb-1 text-sm text-gray-400 font-bold">{f.label.toUpperCase()}</label>
+            {f.kind === 'enum' ? (
+              <select value={sheet[f.key]} onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })} className={sel}>
+                {(f.options as string[]).map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : (
+              <div className="flex gap-2">
+                <select
+                  value={otherMode[f.key] ? 'Other' : 'Stock'}
+                  onChange={(e) => {
+                    if (e.target.value === 'Stock') { setOtherMode({ ...otherMode, [f.key]: false }); setSheet({ ...sheet, [f.key]: 'Stock' }) }
+                    else { setOtherMode({ ...otherMode, [f.key]: true }); setSheet({ ...sheet, [f.key]: sheet[f.key] === 'Stock' ? '' : sheet[f.key] }) }
+                  }}
+                  className={`${sel} ${otherMode[f.key] ? 'w-28 shrink-0' : ''}`}
+                  style={otherMode[f.key] ? { width: '7rem' } : undefined}
+                >
+                  <option value="Stock">Stock</option>
+                  <option value="Other">Other</option>
+                </select>
+                {otherMode[f.key] && (
+                  <input type="text" value={sheet[f.key] || ''} onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })} className={inp} placeholder={f.label} />
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end mt-6">
+        <button onClick={saveSheet} disabled={bsSaving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
+          {bsSaving ? 'SAVING…' : 'SAVE BUILD SHEET'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default function RidePerformancePage() {
+  const params = useParams()
+  const rideId = String(params.id)
+  const buildNo = Math.max(1, parseInt(String(params.build || '1'), 10) || 1)
+  const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
+  const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null } | null>(null)
+  const [tab, setTab] = useState<Tab>('DYNO')
+
+  useEffect(() => {
+    supabase.from('rides').select('project_code, project_name').eq('id', rideId).single().then(({ data }) => setRide(data))
+  }, [])
+
+  const title = ride ? `${ride.project_code || ''}${ride.project_name ? ` — ${ride.project_name}` : ''}` : ''
+
+  return (
+    <main className="min-h-screen bg-black text-white p-8">
+      <Header />
+
+      <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
+        <h1 className="text-4xl font-bold">PERFORMANCE — {buildLabel}</h1>
+        <div className="flex gap-3">
+          <Link href={`/rides/${rideId}/performance`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+          <Link href={`/rides/${rideId}`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">VIEW RIDE</Link>
+        </div>
+      </div>
+      {title && <p className="text-xl text-gray-400 mb-6">{title}</p>}
+
+      <div className="flex gap-2 flex-wrap mb-8">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-5 py-3 rounded-2xl font-bold ${tab === t ? 'bg-white text-black' : 'bg-gray-800 hover:bg-gray-700 text-gray-200'}`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {!ride ? (
+        <p className='text-xl text-gray-400'>Loading…</p>
+      ) : tab === 'DYNO' ? (
+        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} />
+      ) : tab === 'BUILD SHEET' ? (
+        <BuildSheetSection rideCode={ride.project_code || ''} buildNo={buildNo} />
+      ) : (
+        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
+          <h2 className="text-2xl font-bold mb-2">{tab}</h2>
+          <p className="text-xl text-gray-400">This section is under construction.</p>
+        </div>
+      )}
+    </main>
+  )
+}

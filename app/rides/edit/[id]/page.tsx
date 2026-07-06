@@ -200,6 +200,7 @@ export default function EditRidePage() {
     if (oldCode && oldCode !== newCode) {
       await supabase.from('dyno_pulls').update({ ride_code: newCode }).eq('ride_code', oldCode)
       await supabase.from('ride_build_sheets').update({ ride_code: newCode }).eq('ride_code', oldCode)
+      await supabase.from('ride_builds').update({ ride_code: newCode }).eq('ride_code', oldCode)
     }
 
     // COMMON cars live in BOTH apps under the SAME code (e.g. US.038). A rename
