@@ -938,7 +938,7 @@ export default function RidePerformancePage() {
   const buildNo = Math.max(1, parseInt(String(params.build || '1'), 10) || 1)
   const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
   const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null } | null>(null)
-  const [tab, setTab] = useState<Tab>('DYNO')
+  const [tab, setTab] = useState<Tab>('BUILD SHEET')
 
   useEffect(() => {
     supabase.from('rides').select('project_code, project_name').eq('id', rideId).single().then(({ data }) => setRide(data))
