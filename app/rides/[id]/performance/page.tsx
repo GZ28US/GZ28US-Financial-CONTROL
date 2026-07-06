@@ -507,8 +507,8 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
     setDynoSending(true)
     try {
       const blob = await buildDynoPdf()
-      const rideLabel = (rideTitle || sheetTitle() || 'Dyno Data').replace(/\s*—\s*/g, ' ').trim()
-      const fileLabel = `GZ28 V8 SpeedShop Dyno Data - ${rideLabel}`
+      const rideLabel = (rideTitle || sheetTitle() || 'DynoData RECEIPT').replace(/\s*—\s*/g, ' ').trim()
+      const fileLabel = `GZ28 V8 SpeedShop DynoData RECEIPT - ${rideLabel}`
       const filename = `${fileLabel}.pdf`
       const slug = (fileLabel.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80)) || 'dyno-data'
       const path = `reports/${rideId}/${slug}-${Date.now()}.pdf`
@@ -516,9 +516,16 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
       if (upErr) { alert('PDF upload failed: ' + upErr.message); return }
       const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
       const url = urlData.publicUrl
+      // Receipt lines: BoneStock corrected → latest pull corrected (pulls are sorted newest first).
+      const bs = pulls.find(isBoneStock)
+      const latest = pulls.filter((p) => !isBoneStock(p))[0]
+      const f2 = (x: number | null) => (x == null ? '—' : x.toFixed(2))
+      const gain = (a: number | null, b: number | null) => (a != null && b != null ? (a - b).toFixed(2) : '—')
       const caption = [
-        '🏁 *GZ28US · DYNO DATA*',
+        '🏁 *GZ28US · DynoData RECEIPT:*',
         sheetTitle() ? `*${sheetTitle()}*` : null,
+        bs && latest ? `WHP: FROM ${f2(bs.whp)} TO *${f2(latest.whp)}* - GAIN: *${gain(latest.whp, bs.whp)}*` : null,
+        bs && latest ? `Crank HP: FROM ${f2(bs.bhp)} TO *${f2(latest.bhp)}* - GAIN: *${gain(latest.bhp, bs.bhp)}*` : null,
       ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
 
       const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: caption, documentUrl: url, filename }) })
