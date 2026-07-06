@@ -296,6 +296,7 @@ export default function ViewRidePage() {
             <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
             <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
             <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
+            <Link href={`/rides/${rideId}/performance`} className="bg-red-700 hover:bg-red-600 px-6 py-4 rounded-2xl text-xl font-bold">PERFORMANCE</Link>
           </div>
         </div>
         <div className="flex gap-3 flex-wrap">
