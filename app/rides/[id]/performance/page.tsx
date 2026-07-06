@@ -749,6 +749,129 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
   )
 }
 
+// ── BUILD SHEET ──────────────────────────────────────────────────────────────
+// The car's full mechanical spec. Every open field is [Stock/Other]: choosing
+// Other reveals a text input. Enum fields carry their own options. Fields
+// show/hide by Power Source (Roots: Snout instead of Intake Manifold; blower
+// fields only on SuperCharged sources). Saved one row per ride (upsert).
+const POWER_SOURCES = ['Naturally Aspirated', 'Roots SuperCharged', 'Centrifugal SuperCharger', 'Turbo']
+const BS_FUEL_OPTIONS = ['93', 'E85', '91']
+
+type BSField = { key: string; label: string; kind: 'so' | 'enum'; options?: string[]; show?: (ps: string) => boolean }
+const BS_FIELDS: BSField[] = [
+  { key: 'intake', label: 'Intake', kind: 'so' },
+  { key: 'throttle_body', label: 'Throttle-Body', kind: 'so' },
+  { key: 'intake_manifold', label: 'Intake Manifold', kind: 'so', show: (ps) => ps !== 'Roots SuperCharged' },
+  { key: 'snout', label: 'Snout', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' },
+  { key: 'supercharger', label: 'SuperCharger', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' || ps === 'Centrifugal SuperCharger' },
+  { key: 'fuel_rails', label: 'FuelRails', kind: 'so' },
+  { key: 'injectors', label: 'Injectors', kind: 'so' },
+  { key: 'spark_plugs', label: 'SparkPlugs + Gaps', kind: 'so' },
+  { key: 'map_sensor', label: 'MAP Sensor', kind: 'so' },
+  { key: 'heads', label: 'Heads', kind: 'so' },
+  { key: 'cam', label: 'Cam', kind: 'so' },
+  { key: 'displacement', label: 'Displacement', kind: 'so' },
+  { key: 'compression_ratio', label: 'Compression Ratio', kind: 'so' },
+  { key: 'headers', label: 'Headers', kind: 'so' },
+  { key: 'cats', label: 'Cats', kind: 'enum', options: ['Stock', 'HighFlow', 'CatDelete'] },
+  { key: 'catback', label: 'CatBack', kind: 'so' },
+  { key: 'fuel_pump', label: 'FuelPump', kind: 'so' },
+  { key: 'bap', label: 'BAP', kind: 'enum', options: ['NO', 'YES'] },
+  { key: 'fuel_line', label: 'FuelLine', kind: 'so' },
+  { key: 'fuel_press_regulator', label: 'FuelPress Regulator', kind: 'enum', options: ['Stock', 'External'] },
+  { key: 'flex_sensor', label: 'FlexSensor', kind: 'enum', options: ['Stock', 'ECU Wired', 'Gauge Wired', 'NO'] },
+  { key: 'fuel', label: 'Fuel', kind: 'enum', options: BS_FUEL_OPTIONS },
+  { key: 'transmission', label: 'Transmission', kind: 'so' },
+]
+
+function BuildSheetSection({ rideId }: { rideId: string }) {
+  const [sheet, setSheet] = useState<Record<string, string>>({})
+  const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
+  const [bsLoading, setBsLoading] = useState(true)
+  const [bsSaving, setBsSaving] = useState(false)
+
+  useEffect(() => { void loadSheet() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadSheet() {
+    const { data } = await supabase.from('ride_build_sheets').select('*').eq('ride_id', rideId).maybeSingle()
+    const s: Record<string, string> = {}
+    const om: Record<string, boolean> = {}
+    s.power_source = data?.power_source || POWER_SOURCES[0]
+    for (const f of BS_FIELDS) {
+      const v = data ? (data[f.key] ?? '') : ''
+      s[f.key] = v || (f.kind === 'so' ? 'Stock' : (f.options as string[])[0])
+      if (f.kind === 'so' && s[f.key] !== 'Stock' && v) om[f.key] = true
+    }
+    setSheet(s)
+    setOtherMode(om)
+    setBsLoading(false)
+  }
+
+  async function saveSheet() {
+    setBsSaving(true)
+    const payload: Record<string, unknown> = { ride_id: rideId, power_source: sheet.power_source, updated_at: new Date().toISOString() }
+    for (const f of BS_FIELDS) {
+      // Fields hidden by the current Power Source save as null (keeps rows clean).
+      payload[f.key] = f.show && !f.show(sheet.power_source) ? null : (sheet[f.key] || null)
+    }
+    const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_id' })
+    setBsSaving(false)
+    if (error) alert(error.message)
+    else alert('Build sheet saved ✅')
+  }
+
+  const sel = 'bg-gray-800 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
+  const inp = 'bg-gray-900 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
+
+  if (bsLoading) return <p className="text-xl text-gray-400">Loading…</p>
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div>
+          <label className="block mb-1 text-sm text-gray-400 font-bold">POWER SOURCE</label>
+          <select value={sheet.power_source} onChange={(e) => setSheet({ ...sheet, power_source: e.target.value })} className={sel}>
+            {POWER_SOURCES.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        {BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => (
+          <div key={f.key}>
+            <label className="block mb-1 text-sm text-gray-400 font-bold">{f.label.toUpperCase()}</label>
+            {f.kind === 'enum' ? (
+              <select value={sheet[f.key]} onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })} className={sel}>
+                {(f.options as string[]).map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : (
+              <div className="flex gap-2">
+                <select
+                  value={otherMode[f.key] ? 'Other' : 'Stock'}
+                  onChange={(e) => {
+                    if (e.target.value === 'Stock') { setOtherMode({ ...otherMode, [f.key]: false }); setSheet({ ...sheet, [f.key]: 'Stock' }) }
+                    else { setOtherMode({ ...otherMode, [f.key]: true }); setSheet({ ...sheet, [f.key]: sheet[f.key] === 'Stock' ? '' : sheet[f.key] }) }
+                  }}
+                  className={`${sel} ${otherMode[f.key] ? 'w-28 shrink-0' : ''}`}
+                  style={otherMode[f.key] ? { width: '7rem' } : undefined}
+                >
+                  <option value="Stock">Stock</option>
+                  <option value="Other">Other</option>
+                </select>
+                {otherMode[f.key] && (
+                  <input type="text" value={sheet[f.key] || ''} onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })} className={inp} placeholder={f.label} />
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end mt-6">
+        <button onClick={saveSheet} disabled={bsSaving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
+          {bsSaving ? 'SAVING…' : 'SAVE BUILD SHEET'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function RidePerformancePage() {
   const params = useParams()
   const rideId = String(params.id)
@@ -789,10 +912,7 @@ export default function RidePerformancePage() {
       {tab === 'DYNO' ? (
         <DynoSection rideId={rideId} rideTitle={title} />
       ) : tab === 'BUILD SHEET' ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
-          <h2 className="text-2xl font-bold mb-2">🚧 BUILD SHEET</h2>
-          <p className="text-xl text-gray-400">Under construction — the car&apos;s full build sheet is coming soon.</p>
-        </div>
+        <BuildSheetSection rideId={rideId} />
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>
