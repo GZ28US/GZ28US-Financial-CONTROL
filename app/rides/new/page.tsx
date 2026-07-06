@@ -166,6 +166,22 @@ export default function NewRidePage() {
       is_quote: isQuote,
     }])
     if (error) { alert(error.message); return }
+
+    // Dropbox folder sync: every new PROJECT ride gets its physical folder
+    // ("CODE - Name") in GZ28US Rides. Quotes never get folders. Non-blocking.
+    if (!isQuote) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'create', zone: 'US', code: projectCode.trim(), name: projectName || '' }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data.error) alert('Ride saved, but the Dropbox folder could not be created:\n' + (data.error || `HTTP ${res.status}`))
+      } catch (e) {
+        alert('Ride saved, but the Dropbox folder could not be created:\n' + String(e))
+      }
+    }
     router.push(`/rides?mode=${isQuote ? 'quote' : 'project'}`)
   }
 

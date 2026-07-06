@@ -1760,7 +1760,7 @@ export default function EditInvoicePage() {
       }
       return
     }
-    const { data: ride } = await supabase.from('rides').select('id, project_code, is_quote, client_id').eq('id', ownerId).single()
+    const { data: ride } = await supabase.from('rides').select('id, project_code, project_name, is_quote, client_id').eq('id', ownerId).single()
     if (!ride?.is_quote) return
     const { data: pr } = await supabase.from('rides').select('project_code').eq('is_quote', false).not('project_code', 'is', null)
     // Lowest UNUSED number (not max+1), so a deliberately high / pinned code
@@ -1772,6 +1772,14 @@ export default function EditInvoicePage() {
     const newRideCode = `${CODE_PREFIX}.${pad3(nextN)}`
     const oldRideCode = ride.project_code || ''
     await supabase.from('rides').update({ project_code: newRideCode, is_quote: false }).eq('id', ride.id)
+    // Dropbox folder sync: the freshly converted PROJECT gets its physical folder.
+    try {
+      await fetch(`${BASE_PATH}/api/ride-folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', zone: 'US', code: newRideCode, name: ride.project_name || '' }),
+      })
+    } catch { /* non-blocking */ }
     // Cascade: re-code every invoice on this ride from the old ride code to the new one.
     const { data: invs } = await supabase.from('invoices').select('id, invoice_code').eq('ride_id', ride.id)
     for (const inv of (invs || [])) {

@@ -198,9 +198,11 @@ export default function EditRidePage() {
     // COMMON cars live in BOTH apps under the SAME code (e.g. US.038). A rename
     // here renames the BR system too: code, name and the BR invoices that carry
     // the code. Self-gating — if BR has no ride with this code, nothing happens.
+    let isCommonCar = false
     try {
       const { data: brRide } = await supabaseBR.from('rides').select('id').eq('project_code', oldCode).maybeSingle()
       if (brRide) {
+        isCommonCar = true
         await supabaseBR.from('rides').update({ project_code: newCode, project_name: projectName || null }).eq('id', brRide.id)
         if (oldCode !== newCode) {
           const { data: binvs } = await supabaseBR.from('invoices').select('id, invoice_code').eq('ride_id', brRide.id)
@@ -214,6 +216,23 @@ export default function EditRidePage() {
     } catch (e) {
       alert('Warning: this car also exists in the BR app but the rename could not be synced there — rename it in the BR app manually.\n' + String(e))
     }
+
+    // Dropbox folder sync: the physical ride folder follows every rename /
+    // renumber ("OLDCODE - x" -> "NEWCODE - NewName"). Common cars also update
+    // their folder in the BR archive. Non-blocking.
+    const folderFails: string[] = []
+    for (const zone of isCommonCar ? ['US', 'BR'] : ['US']) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'rename', zone, oldCode, newCode, name: projectName || '' }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data.error) folderFails.push(`${zone}: ${data.error || `HTTP ${res.status}`}`)
+      } catch (e) { folderFails.push(`${zone}: ${String(e)}`) }
+    }
+    if (folderFails.length) alert('Ride saved, but the Dropbox folder sync failed —\n' + folderFails.join('\n'))
 
     setSaving(false)
     router.push(`/rides/${rideId}`)
