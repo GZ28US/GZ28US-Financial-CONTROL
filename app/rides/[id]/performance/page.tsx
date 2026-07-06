@@ -11,7 +11,7 @@ import { fileForScan } from '@/lib/scanFile'
 const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
 
-const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet']
+const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet', 'GZ28BR ServiTec', 'ArteCarros ServiTec', 'Absoluto']
 
 const MONTHS: [string, string][] = [
   ['01', 'January'], ['02', 'February'], ['03', 'March'], ['04', 'April'], ['05', 'May'], ['06', 'June'],
@@ -53,12 +53,33 @@ function applyLoss(wheel: string, loss: string): number | null {
   return Math.round((w / denom) * 100) / 100
 }
 
-type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null }
+type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean }
+
+// BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
+// factor; this app shows corrected STD figures with torque in N·m. Convert once at load —
+// everything downstream (table, gains, PDF, reports) then speaks the local dialect.
+const KGFM_TO_NM = 9.80665
+const SAE_TO_STD = 1.04
+function toLocalDialect(p: DynoPull): DynoPull {
+  if (p.origin !== 'BR') return p
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
+  const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
+  const whp = p.whp != null ? r2(p.whp * cf) : null
+  const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_NM) : null
+  return {
+    ...p,
+    whp, wnm,
+    bhp: whp != null && denom != null ? r2(whp / denom) : null,
+    bnm: wnm != null && denom != null ? r2(wnm / denom) : null,
+    foreign: true,
+  }
+}
 
 // The auto-created baseline row is identified by its PACK label.
 function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
-function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string }) {
+function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode: string; rideTitle: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
@@ -138,10 +159,10 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     const { data } = await supabase
       .from('dyno_pulls')
       .select('*')
-      .eq('ride_id', rideId)
+      .eq('ride_code', rideCode)
       .order('pull_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-    const rows = (data || []) as DynoPull[]
+    const rows = ((data || []) as DynoPull[]).map(toLocalDialect)
     // BoneStock baseline is always pinned as the first row.
     rows.sort((a, b) => (isBoneStock(b) ? 1 : 0) - (isBoneStock(a) ? 1 : 0))
     setPulls(rows)
@@ -164,7 +185,8 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     const whp = hp != null ? Math.round(hp * lf * 100) / 100 : null
     const wnm = nm != null ? Math.round(nm * lf * 100) / 100 : null
     await supabase.from('dyno_pulls').insert([{
-      ride_id: rideId,
+      ride_code: rideCode,
+      origin: 'US',
       pack: 'BoneStock',
       whp, wnm,
       loss_pct: loss,
@@ -180,7 +202,11 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
     if (!Number.isFinite(v)) { alert('Enter a valid loss %.'); return }
     const lf = 1 - v / 100
     for (const p of pulls) {
-      if (isBoneStock(p)) {
+      // BR-recorded rows hold raw BR figures in the bank — the in-memory values here are the
+      // converted STD/N·m display. Only sync the shared loss %; never write converted numbers back.
+      if (p.foreign) {
+        await supabase.from('dyno_pulls').update({ loss_pct: v }).eq('id', p.id)
+      } else if (isBoneStock(p)) {
         const whp = p.bhp != null ? Math.round(p.bhp * lf * 100) / 100 : p.whp
         const wnm = p.bnm != null ? Math.round(p.bnm * lf * 100) / 100 : p.wnm
         await supabase.from('dyno_pulls').update({ loss_pct: v, whp, wnm }).eq('id', p.id)
@@ -212,7 +238,8 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
       // Loss is constant per ride: use what the user typed on the first pull, reuse it after.
       const effLoss = pulls.length === 0 ? form.loss : (rideLoss != null ? String(rideLoss) : form.loss)
       const { data: inserted, error } = await supabase.from('dyno_pulls').insert([{
-        ride_id: rideId,
+        ride_code: rideCode,
+        origin: 'US',
         pack: form.pack.trim() || null,
         whp: form.whp ? parseFloat(form.whp) : null,
         wnm: form.wnm ? parseFloat(form.wnm) : null,
@@ -701,7 +728,7 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                 </tr>
               ) : (
                 <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
-                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}</td>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / N·m">🇧🇷 BR</span> : null}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
                   <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} N·m` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
@@ -711,8 +738,8 @@ function DynoSection({ rideId, rideTitle }: { rideId: string; rideTitle: string 
                   <td className="py-3 pr-4">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>
                   <td className="py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
-                      <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                      {!p.foreign && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
+                      {!p.foreign && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
                       <button onClick={() => { setReportToClient(false); setReportPull(p) }} disabled={sendingId === p.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-1 rounded-xl font-bold text-sm">{sendingId === p.id ? 'SENDING…' : 'SEND'}</button>
                     </div>
                   </td>
@@ -784,7 +811,7 @@ const BS_FIELDS: BSField[] = [
   { key: 'transmission', label: 'Transmission', kind: 'so' },
 ]
 
-function BuildSheetSection({ rideId }: { rideId: string }) {
+function BuildSheetSection({ rideCode }: { rideCode: string }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
@@ -793,7 +820,7 @@ function BuildSheetSection({ rideId }: { rideId: string }) {
   useEffect(() => { void loadSheet() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadSheet() {
-    const { data } = await supabase.from('ride_build_sheets').select('*').eq('ride_id', rideId).maybeSingle()
+    const { data } = await supabase.from('ride_build_sheets').select('*').eq('ride_code', rideCode).maybeSingle()
     const s: Record<string, string> = {}
     const om: Record<string, boolean> = {}
     s.power_source = data?.power_source || POWER_SOURCES[0]
@@ -809,12 +836,12 @@ function BuildSheetSection({ rideId }: { rideId: string }) {
 
   async function saveSheet() {
     setBsSaving(true)
-    const payload: Record<string, unknown> = { ride_id: rideId, power_source: sheet.power_source, updated_at: new Date().toISOString() }
+    const payload: Record<string, unknown> = { ride_code: rideCode, power_source: sheet.power_source, updated_at: new Date().toISOString() }
     for (const f of BS_FIELDS) {
       // Fields hidden by the current Power Source save as null (keeps rows clean).
       payload[f.key] = f.show && !f.show(sheet.power_source) ? null : (sheet[f.key] || null)
     }
-    const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_id' })
+    const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_code' })
     setBsSaving(false)
     if (error) alert(error.message)
     else alert('Build sheet saved ✅')
@@ -909,10 +936,12 @@ export default function RidePerformancePage() {
         ))}
       </div>
 
-      {tab === 'DYNO' ? (
-        <DynoSection rideId={rideId} rideTitle={title} />
+      {!ride ? (
+        <p className='text-xl text-gray-400'>Loading…</p>
+      ) : tab === 'DYNO' ? (
+        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} />
       ) : tab === 'BUILD SHEET' ? (
-        <BuildSheetSection rideId={rideId} />
+        <BuildSheetSection rideCode={ride.project_code || ''} />
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>

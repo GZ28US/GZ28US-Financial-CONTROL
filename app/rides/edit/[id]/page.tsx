@@ -195,6 +195,13 @@ export default function EditRidePage() {
       }
     }
 
+    // Shared Performance DataBank (dyno pulls + build sheets, keyed by ride
+    // code in the US project): the rows follow a renumbered code.
+    if (oldCode && oldCode !== newCode) {
+      await supabase.from('dyno_pulls').update({ ride_code: newCode }).eq('ride_code', oldCode)
+      await supabase.from('ride_build_sheets').update({ ride_code: newCode }).eq('ride_code', oldCode)
+    }
+
     // COMMON cars live in BOTH apps under the SAME code (e.g. US.038). A rename
     // here renames the BR system too: code, name and the BR invoices that carry
     // the code. Self-gating — if BR has no ride with this code, nothing happens.
