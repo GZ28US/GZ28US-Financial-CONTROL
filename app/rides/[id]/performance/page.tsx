@@ -58,25 +58,13 @@ type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: numb
 // BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
 // factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
 // everything downstream (table, gains, PDF, reports) then speaks the local dialect.
-// Exception: BoneStock is the FACTORY baseline (SAE net ratings, e.g. 710 hp / 645 lb·ft) —
-// it gets unit conversion only, never the SAE→STD shuffle.
+// BoneStock included: US always shows STD, so even the factory baseline reads ×1.04 vs BR's SAE.
 const KGFM_TO_LBFT = 9.80665 / 1.3558179 // kgf·m → lb·ft
 const SAE_TO_STD = 1.04
 function toLocalDialect(p: DynoPull): DynoPull {
   if (p.origin !== 'BR') return p
   const r2 = (x: number) => Math.round(x * 100) / 100
   const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
-  if (isBoneStock(p)) {
-    const bhp = p.bhp
-    const bnm = p.bnm != null ? r2(p.bnm * KGFM_TO_LBFT) : null
-    return {
-      ...p,
-      bhp, bnm,
-      whp: bhp != null && denom != null ? r2(bhp * denom) : null,
-      wnm: bnm != null && denom != null ? r2(bnm * denom) : null,
-      foreign: true,
-    }
-  }
   const cf = (p.correction_factor ?? 1) * SAE_TO_STD
   const whp = p.whp != null ? r2(p.whp * cf) : null
   const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_LBFT) : null
