@@ -73,6 +73,18 @@ async function findFolderByCode(token: string, root: string, code: string): Prom
   return null
 }
 
+// Every ride folder carries these standard subfolders — ensured (idempotent) on
+// every create/rename so old folders self-heal too.
+const SUBFOLDERS = ['HB Tuning']
+async function ensureSubfolders(token: string, folderPath: string) {
+  for (const sub of SUBFOLDERS) {
+    const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
+    if (!r.ok && !r.text.includes('conflict')) {
+      console.error('[ride-folder] subfolder create failed', { path: `${folderPath}/${sub}`, err: r.text.slice(0, 200) })
+    }
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     if (!process.env.DROPBOX_REFRESH_TOKEN || !process.env.DROPBOX_APP_KEY) {
@@ -92,11 +104,15 @@ export async function POST(req: NextRequest) {
 
     if (action === 'create') {
       const existing = await findFolderByCode(token, root, code)
-      if (existing) return NextResponse.json({ ok: true, result: 'already-exists', folder: existing })
+      if (existing) {
+        await ensureSubfolders(token, `${root}/${existing}`)
+        return NextResponse.json({ ok: true, result: 'already-exists', folder: existing })
+      }
       const r = await dbx(token, 'files/create_folder_v2', { path: `${root}/${target}`, autorename: false })
       if (!r.ok && !r.text.includes('conflict')) {
         return NextResponse.json({ error: 'create failed: ' + r.text.slice(0, 200) }, { status: 502 })
       }
+      await ensureSubfolders(token, `${root}/${target}`)
       return NextResponse.json({ ok: true, result: 'created', folder: target })
     }
 
@@ -109,14 +125,19 @@ export async function POST(req: NextRequest) {
       if (!r.ok && !r.text.includes('conflict')) {
         return NextResponse.json({ error: 'create-on-rename failed: ' + r.text.slice(0, 200) }, { status: 502 })
       }
+      await ensureSubfolders(token, `${root}/${target}`)
       return NextResponse.json({ ok: true, result: 'created (no old folder found)', folder: target })
     }
-    if (from === target) return NextResponse.json({ ok: true, result: 'unchanged', folder: target })
+    if (from === target) {
+      await ensureSubfolders(token, `${root}/${target}`)
+      return NextResponse.json({ ok: true, result: 'unchanged', folder: target })
+    }
     const mv = await dbx(token, 'files/move_v2', { from_path: `${root}/${from}`, to_path: `${root}/${target}`, autorename: false })
     if (!mv.ok) {
       if (mv.text.includes('conflict')) return NextResponse.json({ ok: true, result: 'target-exists', folder: target })
       return NextResponse.json({ error: 'rename failed: ' + mv.text.slice(0, 200) }, { status: 502 })
     }
+    await ensureSubfolders(token, `${root}/${target}`)
     return NextResponse.json({ ok: true, result: 'renamed', from, folder: target })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
