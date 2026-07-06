@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { supabaseBR } from '@/lib/supabaseBR'
 import { BASE_PATH } from '@/lib/utils'
 import {
   years,
@@ -192,6 +193,26 @@ export default function EditRidePage() {
           await supabase.from('invoices').update({ invoice_code: newCode + inv.invoice_code.slice(oldCode.length) }).eq('id', inv.id)
         }
       }
+    }
+
+    // COMMON cars live in BOTH apps under the SAME code (e.g. US.038). A rename
+    // here renames the BR system too: code, name and the BR invoices that carry
+    // the code. Self-gating — if BR has no ride with this code, nothing happens.
+    try {
+      const { data: brRide } = await supabaseBR.from('rides').select('id').eq('project_code', oldCode).maybeSingle()
+      if (brRide) {
+        await supabaseBR.from('rides').update({ project_code: newCode, project_name: projectName || null }).eq('id', brRide.id)
+        if (oldCode !== newCode) {
+          const { data: binvs } = await supabaseBR.from('invoices').select('id, invoice_code').eq('ride_id', brRide.id)
+          for (const inv of (binvs || [])) {
+            if (inv.invoice_code?.startsWith(oldCode + '.')) {
+              await supabaseBR.from('invoices').update({ invoice_code: newCode + inv.invoice_code.slice(oldCode.length) }).eq('id', inv.id)
+            }
+          }
+        }
+      }
+    } catch (e) {
+      alert('Warning: this car also exists in the BR app but the rename could not be synced there — rename it in the BR app manually.\n' + String(e))
     }
 
     setSaving(false)
