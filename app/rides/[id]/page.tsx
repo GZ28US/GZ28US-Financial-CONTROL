@@ -31,6 +31,7 @@ type Ride = {
   model: string | null
   version: string | null
   special_edition: string | null
+  transmission: string | null
   color: string | null
   vin: string | null
   plate: string | null
@@ -331,6 +332,7 @@ export default function ViewRidePage() {
             {(ride.manufacturer || ride.brand) && <div className={rowClass}><span className={labelClass}>MAKE / BRAND</span><span className="font-bold">{[ride.manufacturer, ride.brand].filter(Boolean).join(' / ')}</span></div>}
             {ride.model && <div className={rowClass}><span className={labelClass}>MODEL</span><span className="font-bold">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
             {ride.year && <div className={rowClass}><span className={labelClass}>YEAR</span><span className="font-bold">{ride.year}</span></div>}
+            {ride.transmission && <div className={rowClass}><span className={labelClass}>TRANSMISSION</span><span className="font-bold">{ride.transmission}</span></div>}
             {ride.color && <div className={rowClass}><span className={labelClass}>COLOR</span><span className="font-bold">{ride.color}</span></div>}
             {ride.vin && <div className={rowClass}><span className={labelClass}>VIN</span><span className="font-bold">{ride.vin}</span></div>}
             {ride.plate && <div className={rowClass}><span className={labelClass}>PLATE</span><span className="font-bold">{ride.plate}</span></div>}

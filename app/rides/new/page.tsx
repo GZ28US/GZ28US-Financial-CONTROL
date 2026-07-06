@@ -14,6 +14,7 @@ import {
   specialEditions,
   getAvailableColors,
 } from '@/lib/carData'
+import { transmissionOptionsFor } from '@/lib/transmissions'
 
 type Client = { id: string; name: string; client_number: number | null }
 
@@ -38,6 +39,7 @@ export default function NewRidePage() {
   const [version, setVersion] = useState('')
   const [specialEdition, setSpecialEdition] = useState('')
   const [color, setColor] = useState('')
+  const [transmission, setTransmission] = useState('')
 
   const [vin, setVin] = useState('')
   const [plate, setPlate] = useState('')
@@ -143,6 +145,9 @@ export default function NewRidePage() {
     setUploading(false)
   }
 
+  // Factory transmission options for the currently selected car (empty = unknown → no picker).
+  const transmissionOptions = transmissionOptionsFor(year, brand, model, version)
+
   async function saveRide() {
     if (!projectCode.trim()) { alert('Please enter a project code'); return }
 
@@ -159,6 +164,8 @@ export default function NewRidePage() {
       model: model || null,
       version: version || null,
       special_edition: seValue,
+      // Single factory option → stamped automatically; multi-option cars use the picker.
+      transmission: transmissionOptions.length === 1 ? transmissionOptions[0] : (transmission || null),
       color: color || null,
       vin: vin || null,
       plate: plate || null,
@@ -265,6 +272,16 @@ export default function NewRidePage() {
             <select value={specialEdition} onChange={(e) => changeSpecialEdition(e.target.value)} className={selectClass}>
               <option value="">— Select —</option>
               {availableSpecialEditions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        )}
+
+        {transmissionOptions.length > 1 && (
+          <div>
+            <label className="block mb-2 text-lg font-bold">TRANSMISSION</label>
+            <select value={transmission} onChange={(e) => setTransmission(e.target.value)} className={selectClass}>
+              <option value="">— Select —</option>
+              {transmissionOptions.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
         )}

@@ -858,7 +858,7 @@ async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | n
   } catch { return null }
 }
 
-function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, buildNo }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; buildNo: number }) {
+function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
@@ -894,7 +894,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, buildNo }: 
       r.readAsDataURL(file)
     })
     const ext = file.name.split('.').pop() || 'hpt'
-    const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} BoneStock Tune.${ext}`
+    // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
+    const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} BoneStock Tune.${ext}`
     let landed = 0
     for (const zone of ['US', 'BR']) {
       try {
@@ -1071,16 +1072,18 @@ export default function RidePerformancePage() {
   const rideId = String(params.id)
   const buildNo = Math.max(1, parseInt(String(params.build || '1'), 10) || 1)
   const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
-  const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; brand: string | null; model: string | null; version: string | null; year: number | null } | null>(null)
+  const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; year: number | null; transmission: string | null } | null>(null)
   const [tab, setTab] = useState<Tab>('BUILD SHEET')
 
   useEffect(() => {
-    supabase.from('rides').select('project_code, project_name, brand, model, version, year').eq('id', rideId).single().then(({ data }) => setRide(data))
+    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, transmission').eq('id', rideId).single().then(({ data }) => setRide(data))
   }, [])
 
   const title = ride ? `${ride.project_code || ''}${ride.project_name ? ` — ${ride.project_name}` : ''}` : ''
   // "[brand] [model] [version] [year]" — the car identity line for the BuildSheet PDF + reports.
   const carLine = ride ? [ride.brand, ride.model, ride.version, ride.year].filter(Boolean).join(' ') : ''
+  // BoneStock tune filename prefix: "[manufacturer] [year] [brand] [model] [version] [transmission]".
+  const tuneBase = ride ? [ride.manufacturer, ride.year, ride.brand, ride.model, ride.version, ride.transmission].filter(Boolean).join(' ') : ''
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -1112,7 +1115,7 @@ export default function RidePerformancePage() {
       ) : tab === 'DYNO' ? (
         <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} />
       ) : tab === 'BUILD SHEET' ? (
-        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} buildNo={buildNo} />
+        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} />
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>

@@ -15,6 +15,7 @@ import {
   specialEditions,
   getAvailableColors,
 } from '@/lib/carData'
+import { transmissionOptionsFor } from '@/lib/transmissions'
 
 type Client = { id: string; name: string; client_number: number | null }
 
@@ -45,6 +46,7 @@ export default function EditRidePage() {
   const [model, setModel] = useState('')
   const [version, setVersion] = useState('')
   const [specialEdition, setSpecialEdition] = useState('')
+  const [transmission, setTransmission] = useState('')
   const [color, setColor] = useState('')
 
   const [vin, setVin] = useState('')
@@ -88,6 +90,7 @@ export default function EditRidePage() {
     setVersion(r.version || '')
     setSpecialEdition(r.special_edition || '')
     setColor(r.color || '')
+    setTransmission(r.transmission || '')
     setVin(r.vin || '')
     setPlate(r.plate || '')
     setPhotoUrl(r.photo_url || '')
@@ -186,7 +189,10 @@ export default function EditRidePage() {
         r.readAsDataURL(file)
       })
       const ext = file.name.split('.').pop() || 'hpt'
-      const filename = `${projectCode}${projectName ? ' - ' + projectName : ''} BoneStock Tune.${ext}`
+      // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
+      const trans = transmissionOptions.length === 1 ? transmissionOptions[0] : transmission
+      const prefix = [manufacturer, year, brand, model, version, trans].filter(Boolean).join(' ')
+      const filename = `${prefix ? prefix + ' ' : ''}${projectCode}${projectName ? ' - ' + projectName : ''} BoneStock Tune.${ext}`
       let landed = 0
       for (const zone of ['US', 'BR']) {
         try {
@@ -201,6 +207,9 @@ export default function EditRidePage() {
       setTuneUploading(false)
     }
   }
+
+  // Factory transmission options for the currently selected car (empty = unknown → no picker).
+  const transmissionOptions = transmissionOptionsFor(year, brand, model, version)
 
   async function saveChanges() {
     if (!projectCode.trim()) { alert('Please enter a project code'); return }
@@ -224,6 +233,8 @@ export default function EditRidePage() {
       model: model || null,
       version: version || null,
       special_edition: seValue,
+      // Single factory option → stamped automatically; multi-option cars use the picker.
+      transmission: transmissionOptions.length === 1 ? transmissionOptions[0] : (transmission || null),
       color: color || null,
       vin: vin || null,
       plate: plate || null,
@@ -383,6 +394,16 @@ export default function EditRidePage() {
             <select value={specialEdition} onChange={(e) => changeSpecialEdition(e.target.value)} className={selectClass}>
               <option value="">— Select —</option>
               {availableSpecialEditions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        )}
+
+        {transmissionOptions.length > 1 && (
+          <div>
+            <label className="block mb-2 text-lg font-bold">TRANSMISSION</label>
+            <select value={transmission} onChange={(e) => setTransmission(e.target.value)} className={selectClass}>
+              <option value="">— Select —</option>
+              {transmissionOptions.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
         )}
