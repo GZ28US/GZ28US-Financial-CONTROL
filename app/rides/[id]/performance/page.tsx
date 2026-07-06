@@ -525,7 +525,7 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
         '🏁 *GZ28US · DynoData RECEIPT:*',
         sheetTitle() ? `*${sheetTitle()}*` : null,
         bs && latest ? `WHP: FROM ${f2(bs.whp)} TO *${f2(latest.whp)}* - GAIN: *${gain(latest.whp, bs.whp)}*` : null,
-        bs && latest ? `Crank HP: FROM ${f2(bs.bhp)} TO *${f2(latest.bhp)}* - GAIN: *${gain(latest.bhp, bs.bhp)}*` : null,
+        bs && latest ? `BHP: FROM ${f2(bs.bhp)} TO *${f2(latest.bhp)}* - GAIN: *${gain(latest.bhp, bs.bhp)}*` : null,
       ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
 
       const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: caption, documentUrl: url, filename }) })
