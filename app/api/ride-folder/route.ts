@@ -73,6 +73,22 @@ async function findFolderByCode(token: string, root: string, code: string): Prom
   return null
 }
 
+// Upload a small file into a ride folder (content endpoint, overwrite mode) —
+// used to mirror the BUILD SHEET PDF into the car's HB Tuning folder.
+async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ ok: boolean; text: string }> {
+  const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Dropbox-API-Arg': JSON.stringify({ path, mode: 'overwrite', autorename: false, mute: true }),
+      'Content-Type': 'application/octet-stream',
+    },
+    body: bytes as unknown as BodyInit,
+  })
+  const text = await res.text()
+  return { ok: res.ok, text }
+}
+
 // Every ride folder carries these standard subfolders — ensured (idempotent) on
 // every create/rename so old folders self-heal too.
 const SUBFOLDERS = ['HB Tuning']
@@ -95,12 +111,30 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!zone || !code || !['create', 'rename'].includes(action)) {
-      return NextResponse.json({ error: 'Bad request: need action create|rename, zone US|BR, code/newCode.' }, { status: 400 })
+    if (!zone || !code || !['create', 'rename', 'upload'].includes(action)) {
+      return NextResponse.json({ error: 'Bad request: need action create|rename|upload, zone US|BR, code/newCode.' }, { status: 400 })
     }
     const root = ROOTS[zone]
     const target = `${code}${name ? ' - ' + name : ''}`
     const token = await dbxAccessToken()
+
+    // upload: drop a file into the ride folder's subfolder (default HB Tuning),
+    // overwriting any previous version. No self-heal folder creation — the file
+    // only lands where the car's folder actually exists (common cars: both zones).
+    if (action === 'upload') {
+      const filename = sanitize(String(body.filename || ''))
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
+      const b64 = String(body.contentBase64 || '')
+      if (!filename || !b64) {
+        return NextResponse.json({ error: 'Bad request: upload needs filename + contentBase64.' }, { status: 400 })
+      }
+      const folder = await findFolderByCode(token, root, code)
+      if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
+      await ensureSubfolders(token, `${root}/${folder}`)
+      const up = await dbxUpload(token, `${root}/${folder}/${sub}/${filename}`, Buffer.from(b64, 'base64'))
+      if (!up.ok) return NextResponse.json({ error: 'upload failed: ' + up.text.slice(0, 200) }, { status: 502 })
+      return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/${sub}/${filename}` })
+    }
 
     if (action === 'create') {
       const existing = await findFolderByCode(token, root, code)

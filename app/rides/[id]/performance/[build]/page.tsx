@@ -844,7 +844,21 @@ const BS_FIELDS: BSField[] = [
   { key: 'transmission', label: 'Transmission', kind: 'so' },
 ]
 
-function BuildSheetSection({ rideCode, buildNo }: { rideCode: string; buildNo: number }) {
+// GZ28 logo as a JPEG data-URI for the PDF header (canvas round-trip keeps jsPDF happy).
+async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | null> {
+  try {
+    const img = new window.Image()
+    img.crossOrigin = 'anonymous'
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = `${BASE_PATH}/logo_gz28.jpg` })
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d'); if (!ctx) return null
+    ctx.drawImage(img, 0, 0)
+    return { data: canvas.toDataURL('image/jpeg', 0.92), w: img.naturalWidth, h: img.naturalHeight }
+  } catch { return null }
+}
+
+function BuildSheetSection({ rideCode, rideName, rideTitle, buildNo }: { rideCode: string; rideName: string; rideTitle: string; buildNo: number }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
@@ -875,9 +889,76 @@ function BuildSheetSection({ rideCode, buildNo }: { rideCode: string; buildNo: n
       payload[f.key] = f.show && !f.show(sheet.power_source) ? null : (sheet[f.key] || null)
     }
     const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_code,build_no' })
+    if (error) { setBsSaving(false); alert(error.message); return }
+    // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
+    await syncSheetPdf()
     setBsSaving(false)
-    if (error) alert(error.message)
-    else alert('Build sheet saved ✅')
+    alert('Build sheet saved ✅')
+  }
+
+  // Render the build sheet as a portrait A4 PDF (modded specs in bold).
+  async function buildSheetPdf(): Promise<Blob> {
+    const { jsPDF } = await import('jspdf')
+    const autoTable = (await import('jspdf-autotable')).default
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const pageW = doc.internal.pageSize.getWidth()
+    const logo = await loadPdfLogo()
+    if (logo) {
+      const maxW = 40, maxH = 14
+      const s = Math.min(maxW / logo.w, maxH / logo.h)
+      doc.addImage(logo.data, 'JPEG', 8, 6, logo.w * s, logo.h * s)
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(0, 0, 0)
+    doc.text('BUILD SHEET', pageW - 8, 12, { align: 'right' })
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(90, 90, 90)
+    doc.text(rideTitle, pageW - 8, 18, { align: 'right' })
+    doc.text(`Build.${String(buildNo).padStart(2, '0')} · ${new Date().toLocaleDateString('en-US')}`, pageW - 8, 23, { align: 'right' })
+    const rows: Array<{ label: string; value: string; modded: boolean }> = [
+      { label: 'Power Source', value: sheet.power_source || '—', modded: false },
+      ...BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => {
+        const v = (sheet[f.key] || '').trim() || '—'
+        const stockVal = f.kind === 'so' ? 'Stock' : (f.options as string[])[0]
+        return { label: f.label, value: v, modded: v !== '—' && v !== stockVal }
+      }),
+    ]
+    autoTable(doc, {
+      startY: 28,
+      head: [['ITEM', 'SPEC']],
+      body: rows.map((r) => [r.label, r.value]),
+      theme: 'grid',
+      headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold' },
+      styles: { fontSize: 10, cellPadding: 2, textColor: [40, 40, 40] },
+      columnStyles: { 0: { cellWidth: 60, fontStyle: 'bold' } },
+      didParseCell: (h: any) => {
+        if (h.section === 'body' && h.column.index === 1 && rows[h.row.index]?.modded) h.cell.styles.fontStyle = 'bold'
+      },
+    })
+    return doc.output('blob')
+  }
+
+  // Upload the PDF into the car's folder(s) — common cars have a folder in BOTH
+  // archives, so try both zones; the route skips zones without a folder.
+  async function syncSheetPdf() {
+    try {
+      const blob = await buildSheetPdf()
+      const b64: string = await new Promise((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(String(r.result).split(',')[1] || '')
+        r.onerror = reject
+        r.readAsDataURL(blob)
+      })
+      const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} Build.${String(buildNo).padStart(2, '0')} BuildSheet.pdf`
+      const results = await Promise.all(['US', 'BR'].map(async (zone) => {
+        try {
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+          const d = await res.json().catch(() => ({}))
+          return d.ok ? String(d.result) : 'error'
+        } catch { return 'error' }
+      }))
+      if (!results.includes('uploaded')) alert('Build sheet saved, but the PDF could not be synced to the Dropbox HB Tuning folder.')
+    } catch (e) {
+      alert('Build sheet saved, but the PDF sync failed: ' + String(e))
+    }
   }
 
   const sel = 'bg-gray-800 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
@@ -976,7 +1057,7 @@ export default function RidePerformancePage() {
       ) : tab === 'DYNO' ? (
         <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} />
       ) : tab === 'BUILD SHEET' ? (
-        <BuildSheetSection rideCode={ride.project_code || ''} buildNo={buildNo} />
+        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} />
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>
