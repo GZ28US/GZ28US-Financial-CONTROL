@@ -183,6 +183,25 @@ function DynoSection({ rideId, rideCode, rideTitle }: { rideId: string; rideCode
     }
     const loss = lossStr === '' ? 15 : (parseFloat(lossStr) || 15)
     const lf = 1 - loss / 100
+    // The factory baseline anchors on the CAR's home country: US.xxx cars are recorded in the
+    // US dialect (factory hp / lb·ft as-is), BR.xxx cars in the BR one (SAE raw + correction).
+    if (rideCode.startsWith('BR.')) {
+      const CORR = 1.11 // default SAE correction factor for a BR baseline
+      const kgfm = nm != null ? nm / 9.80665 : null
+      await supabase.from('dyno_pulls').insert([{
+        ride_code: rideCode,
+        origin: 'BR',
+        pack: 'BoneStock',
+        whp: hp != null ? Math.round((hp * lf / CORR) * 100) / 100 : null,
+        wnm: kgfm != null ? Math.round((kgfm * lf / CORR) * 100) / 100 : null,
+        loss_pct: loss,
+        correction_factor: CORR,
+        bhp: hp, // factory crank hp (SAE)
+        bnm: kgfm != null ? Math.round(kgfm * 100) / 100 : null, // factory crank torque (kgf·m)
+        pull_date: null, dyno: null, document_url: null,
+      }])
+      return
+    }
     const lbft = nm != null ? nm / 1.3558179 : null // factory-specs API reports N·m; US stores lb·ft
     const whp = hp != null ? Math.round(hp * lf * 100) / 100 : null
     const wnm = lbft != null ? Math.round(lbft * lf * 100) / 100 : null
