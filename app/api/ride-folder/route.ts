@@ -73,6 +73,31 @@ async function findFolderByCode(token: string, root: string, code: string): Prom
   return null
 }
 
+// Find LEGACY-format folders for a code — "317 - Name" or "GZ28BR.317 - Name"
+// (pre-system naming, no zone prefix). Returns ALL candidates: adoption only
+// happens when exactly ONE matches, so duplicated legacy numbers (e.g.
+// "005 - Flash" + "005 - Thor") are never guessed.
+async function findLegacyFolders(token: string, root: string, zone: string, code: string): Promise<string[]> {
+  const mNum = code.match(/^(?:US|BR|GM)\.(\d+)$/)
+  if (!mNum) return []
+  const num = mNum[1]
+  const alt = `GZ28${zone}.${num}`
+  const hits: string[] = []
+  let cursor: string | null = null
+  do {
+    const r: any = cursor
+      ? await dbx(token, 'files/list_folder/continue', { cursor })
+      : await dbx(token, 'files/list_folder', { path: root, recursive: false, limit: 1000 })
+    if (!r.ok) return []
+    for (const e of r.data.entries || []) {
+      if (e['.tag'] !== 'folder') continue
+      if (e.name === num || e.name.startsWith(num + ' ') || e.name === alt || e.name.startsWith(alt + ' ')) hits.push(e.name)
+    }
+    cursor = r.data.has_more ? r.data.cursor : null
+  } while (cursor)
+  return hits
+}
+
 // Upload a small file into a ride folder (content endpoint, overwrite mode) —
 // used to mirror the BUILD SHEET PDF into the car's HB Tuning folder.
 async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ ok: boolean; text: string }> {
@@ -157,6 +182,17 @@ export async function POST(req: NextRequest) {
         await ensureSubfolders(token, `${root}/${existing}`)
         return NextResponse.json({ ok: true, result: 'already-exists', folder: existing })
       }
+      // A legacy folder for this number ("317 - Name") gets ADOPTED: renamed to the
+      // system format instead of duplicated. Only when exactly one candidate matches.
+      const legacy = await findLegacyFolders(token, root, zone, code)
+      if (legacy.length === 1) {
+        const mv = await dbx(token, 'files/move_v2', { from_path: `${root}/${legacy[0]}`, to_path: `${root}/${target}`, autorename: false })
+        if (mv.ok) {
+          await ensureSubfolders(token, `${root}/${target}`)
+          return NextResponse.json({ ok: true, result: 'adopted-legacy', from: legacy[0], folder: target })
+        }
+        // Adoption failed — fall through to a plain create so the ride still gets a folder.
+      }
       const r = await dbx(token, 'files/create_folder_v2', { path: `${root}/${target}`, autorename: false })
       if (!r.ok && !r.text.includes('conflict')) {
         return NextResponse.json({ error: 'create failed: ' + r.text.slice(0, 200) }, { status: 502 })
@@ -169,7 +205,16 @@ export async function POST(req: NextRequest) {
     const oldCode = sanitize(String(body.oldCode || ''))
     const from = oldCode ? await findFolderByCode(token, root, oldCode) : null
     if (!from) {
-      // Self-heal: no folder for the old code — just create the new one.
+      // Self-heal: no folder for the old code — adopt a legacy folder for the NEW code
+      // if exactly one exists, else just create the new one.
+      const legacy = await findLegacyFolders(token, root, zone, code)
+      if (legacy.length === 1) {
+        const mv = await dbx(token, 'files/move_v2', { from_path: `${root}/${legacy[0]}`, to_path: `${root}/${target}`, autorename: false })
+        if (mv.ok) {
+          await ensureSubfolders(token, `${root}/${target}`)
+          return NextResponse.json({ ok: true, result: 'adopted-legacy', from: legacy[0], folder: target })
+        }
+      }
       const r = await dbx(token, 'files/create_folder_v2', { path: `${root}/${target}`, autorename: false })
       if (!r.ok && !r.text.includes('conflict')) {
         return NextResponse.json({ error: 'create-on-rename failed: ' + r.text.slice(0, 200) }, { status: 502 })
