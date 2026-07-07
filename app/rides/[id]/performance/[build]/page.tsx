@@ -824,6 +824,7 @@ const BS_FIELDS: BSField[] = [
   { key: 'intake_manifold', label: 'Intake Manifold', kind: 'so', show: (ps) => ps !== 'Roots SuperCharged' },
   { key: 'snout', label: 'Snout', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' },
   { key: 'supercharger', label: 'SuperCharger', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' || ps === 'Centrifugal SuperCharger' },
+  { key: 'pulley_size', label: 'Pulley Size', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' || ps === 'Centrifugal SuperCharger' },
   { key: 'fuel_rails', label: 'FuelRails', kind: 'so' },
   { key: 'injectors', label: 'Injectors', kind: 'so' },
   { key: 'spark_plugs', label: 'SparkPlugs + Gaps', kind: 'so' },
