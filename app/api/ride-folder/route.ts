@@ -73,13 +73,16 @@ async function findFolderByCode(token: string, root: string, code: string): Prom
   return null
 }
 
-// Find LEGACY-format folders for a code — "317 - Name" or "GZ28BR.317 - Name"
-// (pre-system naming, no zone prefix). Returns ALL candidates: adoption only
-// happens when exactly ONE matches, so duplicated legacy numbers (e.g.
-// "005 - Flash" + "005 - Thor") are never guessed.
-async function findLegacyFolders(token: string, root: string, zone: string, code: string): Promise<string[]> {
+// Find LEGACY-format folders for a ride — "317 - HeartBeat" or "GZ28BR.317 - HeartBeat"
+// (pre-system naming, no zone prefix). Adoption requires BOTH the number AND the
+// name to match (name compared case/space/punctuation-insensitively), and still
+// only fires when exactly ONE candidate matches — never guesses.
+async function findLegacyFolders(token: string, root: string, zone: string, code: string, name: string): Promise<string[]> {
   const mNum = code.match(/^(?:US|BR|GM)\.(\d+)$/)
   if (!mNum) return []
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const want = norm(name)
+  if (!want) return [] // no ride name — nothing to safely match against
   const num = mNum[1]
   const alt = `GZ28${zone}.${num}`
   const hits: string[] = []
@@ -91,7 +94,10 @@ async function findLegacyFolders(token: string, root: string, zone: string, code
     if (!r.ok) return []
     for (const e of r.data.entries || []) {
       if (e['.tag'] !== 'folder') continue
-      if (e.name === num || e.name.startsWith(num + ' ') || e.name === alt || e.name.startsWith(alt + ' ')) hits.push(e.name)
+      let rest: string | null = null
+      if (e.name.startsWith(num + ' ')) rest = e.name.slice(num.length)
+      else if (e.name.startsWith(alt + ' ')) rest = e.name.slice(alt.length)
+      if (rest != null && norm(rest) === want) hits.push(e.name)
     }
     cursor = r.data.has_more ? r.data.cursor : null
   } while (cursor)
@@ -184,7 +190,7 @@ export async function POST(req: NextRequest) {
       }
       // A legacy folder for this number ("317 - Name") gets ADOPTED: renamed to the
       // system format instead of duplicated. Only when exactly one candidate matches.
-      const legacy = await findLegacyFolders(token, root, zone, code)
+      const legacy = await findLegacyFolders(token, root, zone, code, name)
       if (legacy.length === 1) {
         const mv = await dbx(token, 'files/move_v2', { from_path: `${root}/${legacy[0]}`, to_path: `${root}/${target}`, autorename: false })
         if (mv.ok) {
@@ -207,7 +213,7 @@ export async function POST(req: NextRequest) {
     if (!from) {
       // Self-heal: no folder for the old code — adopt a legacy folder for the NEW code
       // if exactly one exists, else just create the new one.
-      const legacy = await findLegacyFolders(token, root, zone, code)
+      const legacy = await findLegacyFolders(token, root, zone, code, name)
       if (legacy.length === 1) {
         const mv = await dbx(token, 'files/move_v2', { from_path: `${root}/${legacy[0]}`, to_path: `${root}/${target}`, autorename: false })
         if (mv.ok) {
