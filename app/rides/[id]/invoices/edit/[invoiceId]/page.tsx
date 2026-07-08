@@ -1020,8 +1020,9 @@ export default function EditInvoicePage() {
       if (mapFinal > 0) {
         marketBase = mapFinal
       } else {
-        const info = supplierInfo(e.supplier)
-        const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
+        // No typed supplier % anymore — the discount is per ITEM (printed on the
+        // real invoice / entered on the line), compared against open-market MAP.
+        const disc = parseFloat(e.item_discount || '0') || 0
         const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
         marketBase = amount / discFactor
       }
@@ -1087,14 +1088,15 @@ export default function EditInvoicePage() {
     if (!m) return null
     return { discount: m.discount, type: m.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' }
   }
-  // The fixed % for a FIXED-type supplier (null for VARIABLE or unregistered).
-  function supplierDiscount(name: string | undefined | null): number | null {
-    const i = supplierInfo(name)
-    return i && i.type === 'FIXED' ? i.discount : null
+  // DISCOUNT MODEL (2026-07-08): the typed supplier % is GONE. Every discount is
+  // per ITEM — printed on the real invoice or typed on the line — and the true
+  // discount lives in the Parts DB as OUR PRICE vs open-market MAP. These helpers
+  // stay for the UI wiring: no fixed % exists, and every item shows a Disc field.
+  function supplierDiscount(_name: string | undefined | null): number | null {
+    return null
   }
-  function supplierIsVariable(name: string | undefined | null): boolean {
-    const i = supplierInfo(name)
-    return !!i && i.type === 'VARIABLE'
+  function supplierIsVariable(_name: string | undefined | null): boolean {
+    return true
   }
   function formatMileage(value: string) {
     const clean = value.replace(/[^0-9.]/g, '')
@@ -2360,7 +2362,7 @@ export default function EditInvoicePage() {
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
                 {supplierIsVariable(scannedPurchase.supplier)
-                  ? <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: VARIABLE (enter % per item)</p>
+                  ? <p className="text-sm font-bold text-yellow-300 mt-1">★ Item discount: enter the % printed on the invoice</p>
                   : supplierDiscount(scannedPurchase.supplier) != null && <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: {supplierDiscount(scannedPurchase.supplier)}%</p>}
               </div>
               <div className="flex-1">
@@ -2735,7 +2737,7 @@ export default function EditInvoicePage() {
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.expense_date || firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
                             {supplierIsVariable(firstItem.supplier) ? (
-                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: VARIABLE (per item)</p>
+                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Item discounts: per item (from the invoice)</p>
                             ) : supplierDiscount(firstItem.supplier) != null && (
                               <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: {supplierDiscount(firstItem.supplier)}%</p>
                             )}
@@ -2907,7 +2909,7 @@ export default function EditInvoicePage() {
                                 {!isQuote && <p className="text-sm text-gray-500">{isValidDate(exp.expense_date) ? formatDate(exp.expense_date) : 'No date'}{isPaid ? ` · Paid: ${formatDate(exp.payment_date)}` : ' · Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
                                 {supplierIsVariable(exp.supplier)
-                                  ? <p className="text-sm font-bold text-yellow-300">★ Supplier discount: VARIABLE — item {parseFloat(exp.item_discount || '0') || 0}%</p>
+                                  ? <p className="text-sm font-bold text-yellow-300">★ Item discount: {parseFloat(exp.item_discount || '0') || 0}%</p>
                                   : supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
                               </div>

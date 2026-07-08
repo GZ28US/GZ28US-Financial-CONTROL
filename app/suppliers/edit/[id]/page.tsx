@@ -18,8 +18,6 @@ export default function EditSupplierPage() {
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')
   const [origName, setOrigName] = useState('')
-  const [discountType, setDiscountType] = useState<'FIXED' | 'VARIABLE'>('FIXED')
-  const [discount, setDiscount] = useState('')
   const [discountCode, setDiscountCode] = useState('')
   const [aliases, setAliases] = useState('')
   const [saving, setSaving] = useState(false)
@@ -33,8 +31,6 @@ export default function EditSupplierPage() {
     if (error || !data) { alert('Supplier not found'); router.push('/suppliers'); return }
     setName(data.name || '')
     setOrigName(data.name || '')
-    setDiscountType(data.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED')
-    setDiscount(data.discount != null ? String(data.discount) : '')
     setDiscountCode(data.discount_code || '')
     setAliases(data.aliases || '')
     setLoading(false)
@@ -43,10 +39,10 @@ export default function EditSupplierPage() {
   async function save() {
     if (!name.trim()) { alert('Please enter a supplier name'); return }
     setSaving(true)
+    // No typed discount: the real discount computes per item in the Parts DB
+    // (OUR PRICE vs open-market MAP). Only the checkout discount CODE is stored.
     const row = {
       name: name.trim(),
-      discount_type: discountType,
-      discount: discountType === 'VARIABLE' ? 0 : (discount ? parseFloat(discount) : 0),
       discount_code: discountCode.trim() || null,
       aliases: aliases.trim() || null,
       updated_at: new Date().toISOString(),
@@ -81,18 +77,7 @@ export default function EditSupplierPage() {
 
         <div>
           <label className="block mb-2 text-lg font-bold">DISCOUNT</label>
-          <div className="flex gap-3 mb-3">
-            <button type="button" onClick={() => setDiscountType('FIXED')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'FIXED' ? 'bg-yellow-600' : 'bg-gray-800 text-gray-400'}`}>FIXED %</button>
-            <button type="button" onClick={() => setDiscountType('VARIABLE')} className={`flex-1 px-5 py-3 rounded-2xl font-bold text-lg ${discountType === 'VARIABLE' ? 'bg-yellow-600' : 'bg-gray-800 text-gray-400'}`}>VARIABLE</button>
-          </div>
-          {discountType === 'FIXED' ? (
-            <div className="relative">
-              <input type="text" inputMode="decimal" value={discount} onChange={(e) => { if (isNumeric(e.target.value)) setDiscount(e.target.value) }} className={`${inputClass} pr-10`} placeholder="0" />
-              <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400">%</span>
-            </div>
-          ) : (
-            <p className="text-gray-400 text-base">Discount is entered per item on each purchase from this supplier.</p>
-          )}
+          <p className="text-gray-400 text-base">No typed discount — the real discount is computed per item from validated purchases (OUR PRICE vs open-market MAP) and shown on the suppliers list.</p>
         </div>
 
         <div>

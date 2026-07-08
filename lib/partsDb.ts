@@ -155,20 +155,18 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   return { status: 'kept', error: null }
 }
 
-// Registered-supplier directory (name + aliases → discount/dealer info). An
-// official supplier's purchase enrolls WITH the dealer identity and discount;
-// when the invoice prints no List price, the retail (MAP) is derived from the
-// supplier's fixed discount (paid ÷ (1 − disc%)).
-async function supplierDirectory(): Promise<Array<{ name: string; keys: string[]; discount: number; fixed: boolean; dealer: boolean }>> {
+// Registered-supplier directory (name + aliases). An official supplier's purchase
+// enrolls WITH the dealer identity. NO typed discount exists anymore: the discount
+// is always computed per item as OUR PRICE vs open-market MAP (MAP rule: eBay
+// first, else the official supplier's open-market price — recorded at HUNT time
+// or re-validated by a printed List price on a real invoice).
+async function supplierDirectory(): Promise<Array<{ name: string; keys: string[] }>> {
   const normSup = (s: string) => (s || '').toLowerCase().replace(/&/g, 'and').replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
   try {
-    const { data } = await supabase.from('suppliers').select('name, aliases, discount, discount_type, is_dealership')
+    const { data } = await supabase.from('suppliers').select('name, aliases')
     return (data || []).map((s: any) => ({
       name: s.name,
       keys: [s.name, ...String(s.aliases || '').split(/[\n,]/)].map(normSup).filter(Boolean),
-      discount: Number(s.discount) || 0,
-      fixed: s.discount_type !== 'VARIABLE',
-      dealer: !!s.is_dealership,
     }))
   } catch { return [] }
 }
@@ -209,16 +207,10 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
     if (listP > 0) row.map_price = listP
     const weight = Number(raw.weight_lbs) || 0
     if (weight > 0) row.weight_lbs = weight
-    // Official supplier: register the dealer identity + discount. No printed List
-    // price → derive the retail (MAP) from the supplier's registered fixed discount.
+    // Official supplier: register the dealer identity. The discount is NOT typed —
+    // it computes from OUR PRICE vs the stored open-market MAP (see enrollOne).
     const sup = raw.supplier && !row.is_extra ? directory.find(d => d.keys.includes(normSup(String(raw.supplier)))) : null
-    if (sup) {
-      row.dealer_supplier = sup.name
-      if (!(listP > 0) && sup.fixed && sup.discount > 0 && price > 0) {
-        row.map_price = Math.round((price / (1 - sup.discount / 100)) * 100) / 100
-        if (!row.item_discount) row.item_discount = sup.discount
-      }
-    }
+    if (sup) row.dealer_supplier = sup.name
     const { status, error } = await enrollOne(row)
     if (!error && status !== 'kept') changed++
   }

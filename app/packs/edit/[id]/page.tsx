@@ -269,8 +269,8 @@ export default function EditPackPage() {
       if (mapFinal > 0) {
         unitBase = mapFinal
       } else {
-        const info = supplierInfo(e.supplier)
-        const disc = info ? (info.type === 'VARIABLE' ? (parseFloat(e.item_discount || '0') || 0) : info.discount) : 0
+        // No typed supplier % — the discount is per ITEM (real invoice / line entry).
+        const disc = parseFloat(e.item_discount || '0') || 0
         const discFactor = (disc > 0 && disc < 100) ? (1 - disc / 100) : 1
         unitBase = amount / discFactor
       }
@@ -653,7 +653,7 @@ export default function EditPackPage() {
                         <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <p className="text-base font-bold truncate" title={e.item}>{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
-                            <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{info ? (info.type === 'VARIABLE' ? ' · VARIABLE' : ` · ${info.discount}% off`) : ''}</p>
+                            <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{(parseFloat(e.item_discount || '0') || 0) > 0 ? ` · ${parseFloat(e.item_discount || '0')}% off` : ''}</p>
                             {(() => { const st = e.export_status || 'FRESH'; const color = st === 'EXPORTED' ? 'text-green-400' : st === 'REMOVED' ? 'text-red-400' : 'text-gray-400'; return (
                               <p className="text-xs mt-0.5"><span className={`font-bold ${color}`}>{st}</span>{st !== 'FRESH' && !locked && <button onClick={() => resetExportStatus(index)} className="ml-2 text-gray-400 underline hover:text-white">RESET</button>}</p>
                             ) })()}

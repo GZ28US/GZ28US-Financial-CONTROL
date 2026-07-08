@@ -25,15 +25,16 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  // Per-supplier average HUNT discount % (a VARIABLE supplier shows this instead
-  // of a flat rate — see the hunt rules).
+  // Per-supplier REAL average discount % — computed from the Parts DB across every
+  // validated part (scans + hunts): OUR PRICE vs open-market MAP. No typed supplier
+  // discount exists anymore; this is the only discount figure shown.
   const [huntAvg, setHuntAvg] = useState<Record<string, { avg: number; count: number }>>({})
 
   useEffect(() => { loadSuppliers(); loadHuntAverages() }, [])
 
   async function loadHuntAverages() {
     const { data } = await supabase.from('parts_database')
-      .select('supplier, dealer_supplier, part_discount').eq('source_type', 'HUNT')
+      .select('supplier, dealer_supplier, part_discount')
     const agg: Record<string, { sum: number; count: number }> = {}
     for (const p of data || []) {
       const key = normName((p as any).dealer_supplier || (p as any).supplier)
@@ -107,9 +108,7 @@ export default function SuppliersPage() {
                   <h2 className="text-2xl font-bold">{supplier.name}</h2>
                   {isDealer && <span className="px-3 py-1 rounded-full text-sm font-bold bg-yellow-600 text-black">DEALERSHIP · D-{pad3(supplier.account_number)}</span>}
                 </div>
-                <p className="text-lg text-gray-400">Discount: {supplier.discount_type === 'VARIABLE'
-                  ? (() => { const hv = huntAvg[normName(supplier.name)]; return hv ? `VARIABLE · avg ${hv.avg.toFixed(1)}% (${hv.count} hunt${hv.count > 1 ? 's' : ''})` : 'VARIABLE (per item)' })()
-                  : `${supplier.discount || 0}%`}</p>
+                <p className="text-lg text-gray-400">Discount: {(() => { const hv = huntAvg[normName(supplier.name)]; return hv ? `avg ${hv.avg.toFixed(1)}% (${hv.count} validated part${hv.count > 1 ? 's' : ''})` : '— no validated parts yet' })()}</p>
                 {isDealer && supplier.website && (
                   <a href={withProtocol(supplier.website)} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-lg break-all">{supplier.website}</a>
                 )}
