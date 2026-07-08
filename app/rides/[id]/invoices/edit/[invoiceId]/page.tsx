@@ -229,6 +229,11 @@ export default function EditInvoicePage() {
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
+  // Parts-DB reference (MAP / OUR COST / % / WEIGHT) shown under every expense row.
+  const [dbRef, setDbRef] = useState<any[]>([])
+  useEffect(() => {
+    supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs').limit(3000).then(({ data }) => setDbRef(data || []))
+  }, [])
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
@@ -1088,6 +1093,30 @@ export default function EditInvoicePage() {
     if (!m) return null
     return { discount: m.discount, type: m.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED' }
   }
+  // The Parts-DB record for an expense (normalized PN match, suffix-tolerant; item-name fallback).
+  function dbRefFor(pn?: string | null, item?: string | null) {
+    const key = normPN(pn || '')
+    if (key) {
+      const hit = dbRef.find((p: any) => { const k = normPN(p.part_number || ''); if (!k) return false; const min = Math.min(k.length, key.length); return k === key || (min >= 6 && (k.endsWith(key) || key.endsWith(k))) })
+      if (hit) return hit
+    }
+    const nm = String(item || '').trim().toLowerCase()
+    return nm ? (dbRef.find((p: any) => String(p.item || '').trim().toLowerCase() === nm) || null) : null
+  }
+  // One-line DB reference: MAP · OUR COST · % · WEIGHT (USD — the bank's native currency).
+  function dbRefLine(pn?: string | null, item?: string | null) {
+    const di = dbRefFor(pn, item)
+    if (!di) return null
+    return (
+      <p className="text-xs text-teal-300">
+        DB: MAP {Number(di.map_price) > 0 ? `US$ ${Number(di.map_price).toFixed(2)}` : '—'}
+        {' · '}OUR COST {Number(di.unit_price) > 0 ? `US$ ${Number(di.unit_price).toFixed(2)}` : '—'}
+        {di.part_discount != null && Number(di.part_discount) !== 0 ? ` · ${Number(di.part_discount)}%` : ''}
+        {Number(di.weight_lbs) > 0 ? ` · ${Number(di.weight_lbs)} lbs` : ''}
+      </p>
+    )
+  }
+
   // DISCOUNT MODEL (2026-07-08): the typed supplier % is GONE. Every discount is
   // per ITEM — printed on the real invoice or typed on the line — and the true
   // discount lives in the Parts DB as OUR PRICE vs open-market MAP. These helpers
@@ -2792,6 +2821,7 @@ export default function EditInvoicePage() {
                                     <div className="flex-1 min-w-0">
                                       {exp.supplier && <p className="text-sm font-bold truncate text-amber-300" title={exp.supplier}>{exp.supplier}: {(supplierIsVariable(exp.supplier) ? (parseFloat(exp.item_discount || '0') || 0) : (supplierDiscount(exp.supplier) || 0))}%</p>}
                                       <p className="text-sm font-bold truncate text-blue-300" title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
+                                      {dbRefLine(exp.part_number, exp.item)}
                                       {huntUrlFor(exp) && <a href={huntUrlFor(exp)!} target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 Open store page ↗</a>}
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && <p className="text-xs text-gray-500">{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}

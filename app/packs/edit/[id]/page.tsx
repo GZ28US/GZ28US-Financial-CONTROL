@@ -80,6 +80,35 @@ export default function EditPackPage() {
 
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
 
+  // Parts-DB reference (MAP / OUR COST / % / WEIGHT) shown under every expense row.
+  const [dbRef, setDbRef] = useState<any[]>([])
+  useEffect(() => {
+    supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs').limit(3000).then(({ data }) => setDbRef(data || []))
+  }, [])
+  // The Parts-DB record for an expense (normalized PN match, suffix-tolerant; item-name fallback).
+  function dbRefFor(pn?: string | null, item?: string | null) {
+    const key = normPN(pn || '')
+    if (key) {
+      const hit = dbRef.find((p: any) => { const k = normPN(p.part_number || ''); if (!k) return false; const min = Math.min(k.length, key.length); return k === key || (min >= 6 && (k.endsWith(key) || key.endsWith(k))) })
+      if (hit) return hit
+    }
+    const nm = String(item || '').trim().toLowerCase()
+    return nm ? (dbRef.find((p: any) => String(p.item || '').trim().toLowerCase() === nm) || null) : null
+  }
+  // One-line DB reference: MAP · OUR COST · % · WEIGHT (USD — the bank's native currency).
+  function dbRefLine(pn?: string | null, item?: string | null) {
+    const di = dbRefFor(pn, item)
+    if (!di) return null
+    return (
+      <p className="text-xs text-teal-300">
+        DB: MAP {Number(di.map_price) > 0 ? `US$ ${Number(di.map_price).toFixed(2)}` : '—'}
+        {' · '}OUR COST {Number(di.unit_price) > 0 ? `US$ ${Number(di.unit_price).toFixed(2)}` : '—'}
+        {di.part_discount != null && Number(di.part_discount) !== 0 ? ` · ${Number(di.part_discount)}%` : ''}
+        {Number(di.weight_lbs) > 0 ? ` · ${Number(di.weight_lbs)} lbs` : ''}
+      </p>
+    )
+  }
+
   // IMPORT FROM PARTS DB picker
   const [showDbModal, setShowDbModal] = useState(false)
   const [dbItems, setDbItems] = useState<any[]>([])
@@ -654,6 +683,7 @@ export default function EditPackPage() {
                           <div className="flex-1 min-w-0">
                             <p className="text-base font-bold truncate" title={e.item}>{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
                             <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{(parseFloat(e.item_discount || '0') || 0) > 0 ? ` · ${parseFloat(e.item_discount || '0')}% off` : ''}</p>
+                            {dbRefLine(e.part_number, e.item)}
                             {(() => { const st = e.export_status || 'FRESH'; const color = st === 'EXPORTED' ? 'text-green-400' : st === 'REMOVED' ? 'text-red-400' : 'text-gray-400'; return (
                               <p className="text-xs mt-0.5"><span className={`font-bold ${color}`}>{st}</span>{st !== 'FRESH' && !locked && <button onClick={() => resetExportStatus(index)} className="ml-2 text-gray-400 underline hover:text-white">RESET</button>}</p>
                             ) })()}
