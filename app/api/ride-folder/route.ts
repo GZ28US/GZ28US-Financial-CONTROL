@@ -122,7 +122,7 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
 
 // Every ride folder carries these standard subfolders — ensured (idempotent) on
 // every create/rename so old folders self-heal too.
-const SUBFOLDERS = ['HB Tuning']
+const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance']
 async function ensureSubfolders(token: string, folderPath: string) {
   for (const sub of SUBFOLDERS) {
     const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
