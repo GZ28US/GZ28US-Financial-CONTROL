@@ -608,18 +608,17 @@ export default function PartsPage() {
                   </p>
                 ) : (
                   <>
+                    {/* One line, no redundancy: MAP / OUR COST / DISCOUNT (+ weight), then only
+                        the extras that add information — tax, shipping/handling, the LANDED cost
+                        when it differs from the unit price, and the purchase date. */}
                     <p className="text-sm text-gray-400">
                       MAP: <span className="text-gray-200 font-bold">{Number(p.map_price) > 0 ? formatUSD(Number(p.map_price)) : '—'}</span>
                       {' · '}OUR COST: <span className="text-green-400 font-bold">{formatUSD(Number(p.unit_price) || 0)}</span>
                       {' · '}DISCOUNT: <span className="text-yellow-300 font-bold">{Number(p.part_discount) > 0 ? `${Number(p.part_discount)}%` : '—'}</span>
                       {Number(p.weight_lbs) > 0 ? <> · {Number(p.weight_lbs)} lbs</> : null}
-                    </p>
-                    <p className="text-sm text-gray-400">
-                      {formatUSD(Number(p.unit_price) || 0)}
                       {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax))}` : ''}
                       {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra))}` : ''}
-                      {(Number(p.item_discount) || 0) > 0 ? ` · Disc ${p.item_discount}%` : ''}
-                      {(Number(p.base_cost) || 0) > 0 ? ` · Base ${formatUSD(Number(p.base_cost))}` : ''}
+                      {Math.abs((Number(p.base_cost) || 0) - (Number(p.unit_price) || 0)) >= 0.01 && (Number(p.base_cost) || 0) > 0 ? ` · Landed ${formatUSD(Number(p.base_cost))}` : ''}
                       {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
                     </p>
                     {(p.category || p.donor || p.notes) && (
