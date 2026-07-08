@@ -71,8 +71,18 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
+  // Two part numbers are the SAME part when the normalized forms match exactly OR
+  // one ends with the other (shorter side ≥ 6 chars) — catches brand-prefix
+  // variants the strip list doesn't know (e.g. "JLTCAI755184" vs "CAI755184").
+  const samePN = (a: string, b: string) => {
+    if (!a || !b) return false
+    if (a === b) return true
+    if (a.startsWith('NAME:') || b.startsWith('NAME:')) return false
+    const min = Math.min(a.length, b.length)
+    return min >= 6 && (a.endsWith(b) || b.endsWith(a))
+  }
   const key = keyOf(row)
-  const existing = key ? rows.find((r: any) => keyOf(r) === key) : null
+  const existing = key ? rows.find((r: any) => samePN(keyOf(r), key)) : null
 
   if (!existing) {
     // A scanned MAP gets the derived delivered/discount fields computed on insert.
