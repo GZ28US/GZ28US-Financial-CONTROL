@@ -20,6 +20,8 @@ export type EnrollItem = {
   // per-line weights — both enroll when the scan finds them.
   list_price?: number | string
   weight_lbs?: number | string
+  // Optional nickname typed on the review screen — a typed alias always wins.
+  alias?: string | null
 }
 
 // Part-number normalization for dedupe: uppercase, strip every non-alphanumeric
@@ -129,7 +131,8 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       shipping: row.shipping ?? null,
       handling: row.handling ?? null,
       source_type: row.source_type ?? existing.source_type ?? null,
-      alias: existing.alias ?? row.alias ?? null,
+      // A typed alias wins; otherwise the known alias is preserved.
+      alias: row.alias ?? existing.alias ?? null,
       // Weight only when the incoming scan carries one — never erase a known weight.
       ...(row.weight_lbs != null && Number(row.weight_lbs) > 0 ? { weight_lbs: row.weight_lbs } : {}),
       updated_at: new Date().toISOString(),
@@ -147,6 +150,8 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   if ((existing.weight_lbs == null || Number(existing.weight_lbs) <= 0) && row.weight_lbs != null && Number(row.weight_lbs) > 0) {
     patch.weight_lbs = row.weight_lbs
   }
+  // An alias typed on the review screen saves even when the existing row wins.
+  if (row.alias && row.alias !== existing.alias) patch.alias = row.alias
   if (Object.keys(patch).length > 0) {
     patch.updated_at = new Date().toISOString()
     const { error } = await supabase.from('parts_database').update(patch).eq('id', existing.id)
@@ -200,6 +205,7 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
       is_extra: EXTRA_WORDS.test(name),
       receipt_url: raw.receipt_url || null,
       source_type: sourceType,
+      alias: (typeof raw.alias === 'string' ? raw.alias.trim() : '') || null,
       updated_at: new Date().toISOString(),
     }
     // Official-supplier extras: printed List/Retail price = the MAP; printed weight.

@@ -33,6 +33,7 @@ type Part = {
   map_delivered: number | null
   cost_delivered: number | null
   part_discount: number | null
+  weight_lbs: number | null
   delivered_discount: number | null
   dealer_supplier: string | null
   is_kit?: boolean
@@ -50,7 +51,7 @@ export default function PartsPage() {
   const [scannedItems, setScannedItems] = useState<{
     supplier: string
     date: string
-    items: { item: string; part_number: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
+    items: { item: string; part_number: string; alias: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
   } | null>(null)
   const [enrolling, setEnrolling] = useState(false)
   const [search, setSearch] = useState('')
@@ -301,6 +302,7 @@ export default function PartsPage() {
       const items = (parsed.items || []).map((i: any) => ({
         item: String(i.description || ''),
         part_number: String(i.part_number || ''),
+        alias: '',
         unit_price: String(i.amount || '0'),
         quantity: String(i.quantity || '1'),
         tax: String(i.tax || '0'),
@@ -401,6 +403,7 @@ export default function PartsPage() {
               <div className="hidden md:flex gap-1.5 text-[10px] font-bold text-gray-500 uppercase px-1">
                 <span className="flex-1">Item</span>
                 <span className="w-28">Part #</span>
+                <span className="w-24">Alias</span>
                 <span className="w-10">Qty</span>
                 <span className="w-20">Unit Price</span>
                 <span className="w-16">Tax</span>
@@ -413,6 +416,7 @@ export default function PartsPage() {
                 <div key={i} className="flex gap-1.5 items-center flex-wrap md:flex-nowrap">
                   <input type="text" value={it.item} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], item: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} flex-1 min-w-[8rem]`} placeholder="Item description" />
                   <input type="text" value={it.part_number} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], part_number: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-28`} placeholder="Part #" />
+                  <input type="text" title="Alias (optional nickname for this part)" value={it.alias} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], alias: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-24`} placeholder="Alias" />
                   <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-10`} placeholder="1" />
                   <div className="relative w-20">
                     <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
@@ -434,7 +438,7 @@ export default function PartsPage() {
                   <button onClick={() => setScannedItems({ ...scannedItems, items: scannedItems.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-sm px-0.5">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0', list_price: '0', weight_lbs: '0' }] })} className="text-gray-400 hover:text-white text-xs font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedItems({ ...scannedItems, items: [...scannedItems.items, { item: '', part_number: '', alias: '', unit_price: '', quantity: '1', tax: '0', extra: '0', item_discount: '0', list_price: '0', weight_lbs: '0' }] })} className="text-gray-400 hover:text-white text-xs font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700 items-center">
               <div className="flex-1 text-right text-gray-400 font-bold text-sm">
@@ -604,6 +608,12 @@ export default function PartsPage() {
                   </p>
                 ) : (
                   <>
+                    <p className="text-sm text-gray-400">
+                      MAP: <span className="text-gray-200 font-bold">{Number(p.map_price) > 0 ? formatUSD(Number(p.map_price)) : '—'}</span>
+                      {' · '}OUR COST: <span className="text-green-400 font-bold">{formatUSD(Number(p.unit_price) || 0)}</span>
+                      {' · '}DISCOUNT: <span className="text-yellow-300 font-bold">{Number(p.part_discount) > 0 ? `${Number(p.part_discount)}%` : '—'}</span>
+                      {Number(p.weight_lbs) > 0 ? <> · {Number(p.weight_lbs)} lbs</> : null}
+                    </p>
                     <p className="text-sm text-gray-400">
                       {formatUSD(Number(p.unit_price) || 0)}
                       {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax))}` : ''}
