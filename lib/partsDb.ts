@@ -59,13 +59,16 @@ function withDerived(row: any, map: number | null, cost: number): any {
 
 // THE dedupe rule (hunt / scan / manual all funnel through here): a part number
 // lives in the DB only ONCE. Match on the normalized part number (or item name
-// when there's no PN). Insert when new; when it already exists, REPLACE only if
-// the incoming OUR COST is LOWER (keep the lowest), and always preserve the
-// existing MAP — the MAP is constant for a part across all three sources. The
-// kept alias is preserved. Returns a status + supabase error for the caller.
+// when there's no PN). Insert when new. When it already exists:
+//   REAL LIFE PREVAILS — a SCANNED invoice is the ground truth. The flow is
+//   hunt → quote → deal → purchase → real invoice, so a scan ALWAYS replaces
+//   whatever an earlier date put on file (hunt, manual, older scan); between
+//   two scans the NEWER purchase date wins; hunt/manual never beats a scan.
+//   Extras (shipping/tax rows) keep the CHEAPEST ever seen; hunt-vs-hunt keeps
+//   the lowest cost. The kept alias is preserved; a known weight is never erased.
 export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
   const { data } = await supabase.from('parts_database')
-    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs')
+    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   const key = keyOf(row)
@@ -79,9 +82,23 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     const { error } = await supabase.from('parts_database').insert([toInsert])
     return { status: 'inserted', error }
   }
-  // MAP is constant: keep whichever MAP is already known (existing wins).
-  const map = existing.map_price != null ? existing.map_price : (row.map_price ?? null)
-  if (ourCostOf(row) < ourCostOf(existing)) {
+
+  // Who wins the row?
+  const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
+  const isExtra = !!(row.is_extra || existing.is_extra)
+  let replace: boolean
+  if (isExtra) replace = ourCostOf(row) < ourCostOf(existing)                 // extras: cheapest ever
+  else if (row.source_type === 'SCAN') replace = existing.source_type !== 'SCAN' || dateOf(row) >= dateOf(existing) // real life prevails; newest scan wins
+  else if (existing.source_type === 'SCAN') replace = false                   // hunt/manual never beats a real invoice
+  else replace = ourCostOf(row) < ourCostOf(existing)                         // hunt vs hunt: lowest cost
+
+  // MAP: a winning SCAN that carries a retail (printed List or supplier-discount
+  // derived) overrides the stored MAP — real life re-validates it. Otherwise the
+  // known MAP stays constant.
+  const map = replace && row.source_type === 'SCAN' && Number(row.map_price) > 0
+    ? Number(row.map_price)
+    : (existing.map_price != null ? existing.map_price : (row.map_price ?? null))
+  if (replace) {
     // Write a COMPLETE, consistent payload so no stale fields linger when the
     // winning source differs from the one on file (e.g. scan beats a prior hunt).
     const full: any = {
@@ -111,8 +128,8 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     const { error } = await supabase.from('parts_database').update(merged).eq('id', existing.id)
     return { status: 'updated', error }
   }
-  // Even when the existing (cheaper) row wins, fill in MAP and weight it lacks —
-  // an official-supplier scan is authoritative for both when nothing is on file.
+  // Even when the existing row wins (newer scan on file / cheaper extra), fill in
+  // MAP and weight it lacks — an official-supplier scan is authoritative for both.
   const patch: any = {}
   if ((existing.map_price == null || Number(existing.map_price) <= 0) && row.map_price != null && Number(row.map_price) > 0) {
     Object.assign(patch, withDerived({ shipping: existing.shipping, handling: existing.handling }, Number(row.map_price), ourCostOf(existing)))
@@ -128,10 +145,30 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   return { status: 'kept', error: null }
 }
 
+// Registered-supplier directory (name + aliases → discount/dealer info). An
+// official supplier's purchase enrolls WITH the dealer identity and discount;
+// when the invoice prints no List price, the retail (MAP) is derived from the
+// supplier's fixed discount (paid ÷ (1 − disc%)).
+async function supplierDirectory(): Promise<Array<{ name: string; keys: string[]; discount: number; fixed: boolean; dealer: boolean }>> {
+  const normSup = (s: string) => (s || '').toLowerCase().replace(/&/g, 'and').replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
+  try {
+    const { data } = await supabase.from('suppliers').select('name, aliases, discount, discount_type, is_dealership')
+    return (data || []).map((s: any) => ({
+      name: s.name,
+      keys: [s.name, ...String(s.aliases || '').split(/[\n,]/)].map(normSup).filter(Boolean),
+      discount: Number(s.discount) || 0,
+      fixed: s.discount_type !== 'VARIABLE',
+      dealer: !!s.is_dealership,
+    }))
+  } catch { return [] }
+}
+
 // Enroll scanned items into parts_database (product code = PART NUMBER when
-// present, else item name). Each goes through enrollOne, so one row per part,
-// keeping the LOWEST OUR COST with the MAP held constant. Returns rows changed.
+// present, else item name). Each goes through enrollOne, so one row per part —
+// a SCAN (real-life invoice) overrides older data; see enrollOne. Returns rows changed.
 export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCAN'): Promise<number> {
+  const directory = await supplierDirectory()
+  const normSup = (s: string) => (s || '').toLowerCase().replace(/&/g, 'and').replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
   let changed = 0
   for (const raw of items) {
     const name = (raw.item || '').trim()
@@ -162,6 +199,16 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
     if (listP > 0) row.map_price = listP
     const weight = Number(raw.weight_lbs) || 0
     if (weight > 0) row.weight_lbs = weight
+    // Official supplier: register the dealer identity + discount. No printed List
+    // price → derive the retail (MAP) from the supplier's registered fixed discount.
+    const sup = raw.supplier && !row.is_extra ? directory.find(d => d.keys.includes(normSup(String(raw.supplier)))) : null
+    if (sup) {
+      row.dealer_supplier = sup.name
+      if (!(listP > 0) && sup.fixed && sup.discount > 0 && price > 0) {
+        row.map_price = Math.round((price / (1 - sup.discount / 100)) * 100) / 100
+        if (!row.item_discount) row.item_discount = sup.discount
+      }
+    }
     const { status, error } = await enrollOne(row)
     if (!error && status !== 'kept') changed++
   }
