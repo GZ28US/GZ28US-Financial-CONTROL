@@ -281,7 +281,7 @@ export default function RidesPage() {
         <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
         <div className="flex items-center gap-3 flex-wrap">
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search rides…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
-          <Link href={`/rides/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
+          <Link href={`/rides/new?mode=${mode}${clientParam ? `&client=${clientParam}` : ''}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
         </div>
       </div>
       <div className="flex items-center gap-4 flex-wrap mb-8">

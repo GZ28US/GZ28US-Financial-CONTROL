@@ -26,7 +26,8 @@ export default function NewRidePage() {
   // Identification fields.
   const [projectCode, setProjectCode] = useState('')
   const [projectName, setProjectName] = useState('')
-  const [clientId, setClientId] = useState('')
+  // ?client=<id> (from a client's filtered rides list) arrives pre-chosen.
+  const [clientId, setClientId] = useState(() => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('client')) || '')
   const [clients, setClients] = useState<Client[]>([])
   // Quote-area rides are quote rides (US.QT.###); project-area are US.###.
   const [isQuote] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'quote')
