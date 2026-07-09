@@ -29,7 +29,8 @@ export type EnrollItem = {
 // leading brand/supplier token. This makes "DOD 53021585AD" == "MOPAR 53021585AD"
 // and "gatK100579HD" == "K100579HD" so the same part can't enroll twice.
 export function normPN(pn?: string | null): string {
-  let x = String(pn || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  // A trailing quantity marker (" x 2", " X 4") is packaging, not part of the PN.
+  let x = String(pn || '').toUpperCase().replace(/\s+X\s*\d+\s*$/, '').replace(/[^A-Z0-9]/g, '')
   x = x.replace(/^(GATES|GAT|DODGE|DOD|MOPAR|NGK|ADO|IND)(?=[A-Z0-9])/, '')
   return x
 }
