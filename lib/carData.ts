@@ -1,6 +1,6 @@
 export const years = [
   1968, 1969, 1970,
-  1992, 1993, 1994, 1995,
+  1992, 1993, 1994, 1995, 1996,
   2005, 2006, 2007, 2008,
   2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017,
   2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
@@ -8,7 +8,7 @@ export const years = [
 
 export const manufacturersByYear: Record<number, string[]> = {
   1968: ['MOPAR'], 1969: ['MOPAR'], 1970: ['MOPAR'],
-  1992: ['MOPAR'], 1993: ['MOPAR'], 1994: ['MOPAR'], 1995: ['MOPAR'],
+  1992: ['MOPAR', 'GM'], 1993: ['MOPAR', 'GM'], 1994: ['MOPAR', 'GM'], 1995: ['MOPAR', 'GM'], 1996: ['GM'],
   2005: ['GM'], 2006: ['MOPAR', 'GM'], 2007: ['MOPAR', 'GM'], 2008: ['MOPAR', 'GM'],
   2009: ['MOPAR', 'GM'],
   2010: ['MOPAR', 'GM'], 2011: ['MOPAR', 'GM'], 2012: ['MOPAR', 'GM'], 2013: ['MOPAR', 'GM'],
@@ -39,6 +39,7 @@ export const brandsByManufacturerAndYear: Record<string, Record<number, string[]
     2024: ['DODGE'], 2025: ['DODGE'], 2026: ['DODGE'],
   },
   GM: {
+    1992: ['CHEVROLET'], 1993: ['CHEVROLET'], 1994: ['CHEVROLET'], 1995: ['CHEVROLET'], 1996: ['CHEVROLET'],
     2005: ['CHEVROLET'], 2006: ['CHEVROLET'], 2007: ['CHEVROLET'], 2008: ['CHEVROLET'], 2009: ['CHEVROLET'],
     2010: ['CHEVROLET'], 2011: ['CHEVROLET'], 2012: ['CHEVROLET'], 2013: ['CHEVROLET'],
     2014: ['CHEVROLET'], 2015: ['CHEVROLET'], 2016: ['CHEVROLET'], 2017: ['CHEVROLET'],
@@ -76,6 +77,8 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
     2009: ['1500'], 2015: ['1500'], 2016: ['1500'], 2017: ['1500'], 2018: ['1500'],
   },
   CHEVROLET: {
+    // C4 Corvette (1992-on: LT1 era; ZR-1 through 1995).
+    1992: ['CORVETTE'], 1993: ['CORVETTE'], 1994: ['CORVETTE'], 1995: ['CORVETTE'], 1996: ['CORVETTE'],
     2005: ['CORVETTE'], 2006: ['CORVETTE'], 2007: ['CORVETTE'], 2008: ['CORVETTE'], 2009: ['CORVETTE'],
     2010: ['CAMARO', 'CORVETTE'], 2011: ['CAMARO', 'CORVETTE'], 2012: ['CAMARO', 'CORVETTE'], 2013: ['CAMARO', 'CORVETTE'],
     2014: ['CAMARO', 'CORVETTE'], 2015: ['CAMARO', 'CORVETTE'],
@@ -165,6 +168,13 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     2024: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
   },
   CORVETTE: {
+    // C4 LT1 era. ZR-1 (LT5) through 1995. 1996 Grand Sport and Collector
+    // Edition are SPECIAL EDITIONS on the base trim (see specialEditions).
+    1992: ['Base 5.7', 'ZR-1 5.7'],
+    1993: ['Base 5.7', 'ZR-1 5.7'],
+    1994: ['Base 5.7', 'ZR-1 5.7'],
+    1995: ['Base 5.7', 'ZR-1 5.7'],
+    1996: ['Base 5.7'],
     2005: ['Base 6.0'],
     2006: ['Base 6.0', 'Z06 7.0'],
     2007: ['Base 6.0', 'Z06 7.0'],
@@ -236,6 +246,11 @@ export const specialEditions: Record<string, string[]> = {
   '2024-CAMARO-LT1 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-SS 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-ZL1 6.2': ['None', 'Panther Collector Edition'],
+  // C4 Corvette special editions.
+  '1993-CORVETTE-Base 5.7': ['None', '40th Anniversary'],
+  '1993-CORVETTE-ZR-1 5.7': ['None', '40th Anniversary'],
+  '1995-CORVETTE-Base 5.7': ['None', 'Indy 500 Pace Car'],
+  '1996-CORVETTE-Base 5.7': ['None', 'Grand Sport', 'Collector Edition'],
   '2023-CORVETTE-Stingray 6.2': ['None', '70th Anniversary'],
   '2023-CORVETTE-Z06 5.5': ['None', '70th Anniversary'],
   // Corvette C6 (2005-2013) special editions.
@@ -892,6 +907,12 @@ const gen6CamaroColorsByYear: Record<number, string[]> = {
 }
 
 const corvetteColorsByYear: Record<number, string[]> = {
+  // C4 LT1 era factory paint (per CorvetteActionCenter paint codes).
+  1992: ['White', 'Bright Red', 'Yellow', 'Black', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Black Rose Metallic', 'Dark Red Metallic', 'Quasar Blue Metallic'],
+  1993: ['White', 'Torch Red', 'Ruby Red', 'Black', 'Competition Yellow', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Black Rose Metallic', 'Dark Red Metallic', 'Quasar Blue Metallic'],
+  1994: ['White', 'Torch Red', 'Admiral Blue', 'Black', 'Competition Yellow', 'Copper Metallic', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Black Rose Metallic', 'Dark Red Metallic'],
+  1995: ['White', 'Torch Red', 'Admiral Blue', 'Black', 'Competition Yellow', 'Dark Purple Metallic', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Dark Red Metallic'],
+  1996: ['White', 'Torch Red', 'Admiral Blue', 'Black', 'Competition Yellow', 'Dark Purple Metallic', 'Sebring Silver Metallic', 'Bright Aqua Metallic', 'Polo Green Metallic'],
   2005: ['Arctic White', 'Black', 'Daytona Sunset Orange', 'LeMans Blue', 'Machine Silver', 'Magnetic Red', 'Millennium Yellow', 'Precision Red'],
   2006: ['Arctic White', 'Black', 'Daytona Sunset Orange', 'LeMans Blue', 'Machine Silver', 'Monterey Red', 'Velocity Yellow', 'Victory Red'],
   2007: ['Arctic White', 'Atomic Orange', 'Black', 'LeMans Blue', 'Machine Silver', 'Monterey Red', 'Velocity Yellow', 'Victory Red'],
@@ -964,6 +985,12 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2024-CAMARO-LT1 6.2-Panther Collector Edition': ['Panther Matte Black'],
   '2024-CAMARO-SS 6.2-Panther Collector Edition': ['Panther Matte Black'],
   '2024-CAMARO-ZL1 6.2-Panther Collector Edition': ['Panther Matte Black'],
+  // C4 special-edition forced colors.
+  '1993-CORVETTE-Base 5.7-40th Anniversary': ['Ruby Red'],
+  '1993-CORVETTE-ZR-1 5.7-40th Anniversary': ['Ruby Red'],
+  '1995-CORVETTE-Base 5.7-Indy 500 Pace Car': ['Dark Purple Metallic'],
+  '1996-CORVETTE-Base 5.7-Grand Sport': ['Admiral Blue'],
+  '1996-CORVETTE-Base 5.7-Collector Edition': ['Sebring Silver Metallic'],
   '2023-CORVETTE-Stingray 6.2-70th Anniversary': ['White Pearl', 'Carbon Flash'],
   '2023-CORVETTE-Z06 5.5-70th Anniversary': ['White Pearl', 'Carbon Flash'],
   // Corvette C6 special-edition forced colors.
@@ -1056,7 +1083,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   GM: {
     CHEVROLET: {
       CAMARO: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0', 'ZL1 6.2', 'ZL1 1LE 6.2', 'LT1 6.2'],
-      CORVETTE: ['Base 6.0', 'Z06 7.0', 'Base 6.2', 'ZR1 6.2 SC', 'Grand Sport 6.2', 'Stingray 6.2', 'Z06 6.2', 'ZR1 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
+      CORVETTE: ['Base 5.7', 'ZR-1 5.7', 'Base 6.0', 'Z06 7.0', 'Base 6.2', 'ZR1 6.2 SC', 'Grand Sport 6.2', 'Stingray 6.2', 'Z06 6.2', 'ZR1 6.2', 'Z06 5.5', 'E-Ray 6.2', 'ZR1 5.5TT'],
       OPALA: ['Standard 2.5 4cyl', 'Especial 2.5 4cyl', 'Luxo 2.5 4cyl', 'Luxo 4.1 6cyl', 'Gran Luxo 4.1 6cyl', 'SS 4.1 6cyl'],
       D20: ['Maxion S4T Plus 4cyl Turbo Diesel'],
       AVALANCHE: ['LS 5.3 V8', 'LT 5.3 V8', 'LTZ 5.3 V8'],

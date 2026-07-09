@@ -60,6 +60,11 @@ export function transmissionOptionsFor(
     if (y === 2014) return ['GM6L80 (Auto6)', 'TR6070 (Manual7)']
     if (y >= 2008 && y <= 2013) return has('ZR1') ? ['TR6060 (Manual6)'] : ['GM6L80 (Auto6)', 'TR6060 (Manual6)']
     if (y >= 2005 && y <= 2007) return ['GM6L80 (Auto6)', 'T56 (Manual6)']
+    // C4 LT1 era: 4L60 (92-93) / 4L60E (94-96) auto or ZF 6-speed; ZR-1 manual only.
+    if (y >= 1992 && y <= 1996) {
+      if (has('ZR-1') || has('ZR1')) return ['ZF S6-40 (Manual6)']
+      return [y >= 1994 ? 'GM4L60E (Auto4)' : 'GM4L60 (Auto4)', 'ZF S6-40 (Manual6)']
+    }
     return []
   }
   if (b === 'CHEVROLET' && m === 'OPALA') return ['Manual4', 'Manual3', 'Auto3']
