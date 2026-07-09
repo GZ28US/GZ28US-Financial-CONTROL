@@ -2640,8 +2640,10 @@ export default function EditInvoicePage() {
               if (liveStatus === 'INCOMPLETE') { setLiveStatus('REALTIME'); return }
               if (liveStatus === 'REALTIME') {
                 // ONLINE -> CLOSED requires no pending balance owed AND every income dated.
-                if (!noPendingBalance) { alert('CLOSED requires no PENDING BALANCE owed. Settle it first.'); return }
-                if (!allIncomesDated) { alert('CLOSED requires every income to have a date. Date them first.'); return }
+                // When CLOSED isn't allowed the cycle SKIPS it and lands on INCOMPLETE,
+                // so the button can never dead-end at ONLINE.
+                if (!noPendingBalance) { alert('CLOSED requires no PENDING BALANCE owed — skipped to INCOMPLETE.'); setLiveStatus('INCOMPLETE'); return }
+                if (!allIncomesDated) { alert('CLOSED requires every income to have a date — skipped to INCOMPLETE.'); setLiveStatus('INCOMPLETE'); return }
                 setLiveStatus('CLOSED'); return
               }
               setLiveStatus('INCOMPLETE')
