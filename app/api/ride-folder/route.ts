@@ -142,12 +142,53 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!zone || !code || !['create', 'rename', 'upload', 'find'].includes(action)) {
-      return NextResponse.json({ error: 'Bad request: need action create|rename|upload|find, zone US|BR, code/newCode.' }, { status: 400 })
+    if (!code || !['create', 'rename', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
+      return NextResponse.json({ error: 'Bad request: need action create|rename|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
     }
-    const root = ROOTS[zone]
+    const root = zone ? ROOTS[zone] : ''
     const target = `${code}${name ? ' - ' + name : ''}`
     const token = await dbxAccessToken()
+
+    // mirror: server-side copy of every file in one zone's ride subfolder into the
+    // other zone's same-code ride folder (created if missing). Used when a GZ28US
+    // car enters the BR system: its BoneStock TUNE + BuildSheet PDFs come along.
+    if (action === 'mirror') {
+      const fz = body.fromZone === 'US' ? 'US' : body.fromZone === 'BR' ? 'BR' : null
+      const tz = body.toZone === 'US' ? 'US' : body.toZone === 'BR' ? 'BR' : null
+      if (!fz || !tz || fz === tz) {
+        return NextResponse.json({ error: 'Bad request: mirror needs distinct fromZone/toZone (US|BR).' }, { status: 400 })
+      }
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
+      const srcFolder = await findFolderByCode(token, ROOTS[fz], code)
+      if (!srcFolder) return NextResponse.json({ ok: true, result: 'no-source-folder', copied: [] })
+      let dstFolder = await findFolderByCode(token, ROOTS[tz], code)
+      if (!dstFolder) {
+        dstFolder = target
+        const c = await dbx(token, 'files/create_folder_v2', { path: `${ROOTS[tz]}/${dstFolder}`, autorename: false })
+        if (!c.ok && !c.text.includes('conflict')) {
+          return NextResponse.json({ error: 'mirror target create failed: ' + c.text.slice(0, 200) }, { status: 502 })
+        }
+      }
+      await ensureSubfolders(token, `${ROOTS[tz]}/${dstFolder}`)
+      const list = await dbx(token, 'files/list_folder', { path: `${ROOTS[fz]}/${srcFolder}/${sub}`, recursive: false, limit: 1000 })
+      if (!list.ok) return NextResponse.json({ ok: true, result: 'no-source-subfolder', copied: [] })
+      const copied: string[] = []
+      for (const e of list.data.entries || []) {
+        if (e['.tag'] !== 'file') continue
+        const from_path = `${ROOTS[fz]}/${srcFolder}/${sub}/${e.name}`
+        const to_path = `${ROOTS[tz]}/${dstFolder}/${sub}/${e.name}`
+        let cp = await dbx(token, 'files/copy_v2', { from_path, to_path, autorename: false })
+        if (!cp.ok && cp.text.includes('conflict')) {
+          // Target already has the file — replace it with the source version.
+          await dbx(token, 'files/delete_v2', { path: to_path })
+          cp = await dbx(token, 'files/copy_v2', { from_path, to_path, autorename: false })
+        }
+        if (cp.ok) copied.push(e.name)
+      }
+      return NextResponse.json({ ok: true, result: 'mirrored', folder: dstFolder, copied })
+    }
+    // Every other action was validated to carry a zone.
+    if (!zone) return NextResponse.json({ error: 'Bad request: zone required.' }, { status: 400 })
 
     // find: list the files in the ride folder's subfolder (default HB Tuning),
     // optionally filtered by a case-insensitive name match. Used for status display.
