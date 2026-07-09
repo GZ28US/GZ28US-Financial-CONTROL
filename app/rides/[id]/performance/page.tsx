@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase'
 // BUILDS — every ride's performance data is grouped into builds (Build.01, Build.02…).
 // This page lists them; each opens the full performance page (BUILD SHEET / DYNO / times)
 // scoped to that build in the shared bank (ride_builds, keyed by ride_code + build_no).
-type Build = { id: string; build_no: number; created_at: string }
+type Build = { id: string; build_no: number; created_at: string; name?: string | null }
 const buildLabel = (n: number) => `Build.${String(n).padStart(2, '0')}`
 
 export default function RideBuildsPage() {
@@ -37,12 +37,21 @@ export default function RideBuildsPage() {
     setAdding(true)
     try {
       const next = builds.length ? Math.max(...builds.map((b) => b.build_no)) + 1 : 1
-      const { error } = await supabase.from('ride_builds').insert([{ ride_code: ride.project_code, build_no: next }])
+      const buildName = (prompt(`Name for ${buildLabel(next)} (optional):`) || '').trim()
+      const { error } = await supabase.from('ride_builds').insert([{ ride_code: ride.project_code, build_no: next, name: buildName || null }])
       if (error) { alert(error.message); return }
       await load()
     } finally {
       setAdding(false)
     }
+  }
+
+  async function renameBuild(b: Build) {
+    const nm = prompt(`Name for ${buildLabel(b.build_no)}:`, b.name || '')
+    if (nm === null) return
+    const { error } = await supabase.from('ride_builds').update({ name: nm.trim() || null }).eq('id', b.id)
+    if (error) { alert(error.message); return }
+    await load()
   }
 
   const title = ride ? `${ride.project_code || ''}${ride.project_name ? ` — ${ride.project_name}` : ''}` : ''
@@ -70,8 +79,15 @@ export default function RideBuildsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {builds.map((b) => (
             <Link key={b.id} href={`/rides/${rideId}/performance/${b.build_no}`} className="bg-gray-900 border border-gray-800 hover:border-gray-500 rounded-3xl p-6 block">
-              <p className="text-3xl font-bold">🏁 {buildLabel(b.build_no)}</p>
-              <p className="text-gray-400 mt-1">{new Date(b.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-gray-400">🏁 {buildLabel(b.build_no)} — {new Date(b.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</p>
+                <button
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); void renameBuild(b) }}
+                  title="Rename build"
+                  className="text-gray-500 hover:text-white text-lg leading-none"
+                >✏️</button>
+              </div>
+              <p className={`text-3xl font-bold mt-1 ${b.name ? '' : 'text-gray-600 italic'}`}>{b.name || 'Unnamed'}</p>
             </Link>
           ))}
         </div>
