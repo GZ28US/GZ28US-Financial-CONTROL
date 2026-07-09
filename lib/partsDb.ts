@@ -5,6 +5,10 @@ import { supabase } from '@/lib/supabase'
 // LAST purchase (most recent by date). Same list the parts importer skips.
 export const EXTRA_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 
+// Money movements are NOT parts: a scanned line matching these never enrolls in
+// the bank (word-bounded so "Balancer" or "wire harness" can't false-positive).
+export const PAYMENT_WORDS = /\b(payment|pagamento|deposit|down\s?payment|installment|parcela|entrada|balance\s?due|wire\s?transfer|refund|estorno|chargeback)\b/i
+
 export type EnrollItem = {
   item: string
   part_number?: string | null
@@ -188,6 +192,7 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
     const name = (raw.item || '').trim()
     const pn = (raw.part_number || '').trim()
     if (!name && !pn) continue
+    if (PAYMENT_WORDS.test(name)) continue
     const price = Number(raw.unit_price) || 0
     const qtyN = Number(raw.quantity) || 1
     // Landed unit cost = unit price + per-unit share of tax + extras.
