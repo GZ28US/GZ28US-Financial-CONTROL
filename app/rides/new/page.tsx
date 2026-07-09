@@ -20,6 +20,14 @@ type Client = { id: string; name: string; client_number: number | null }
 
 function pad3(n: number) { return String(n).padStart(3, '0') }
 
+// Add the current value into the dropdown list if it isn't already there.
+// Keeps prefilled ride data visible even when it doesn't fit the year-aware
+// catalog (e.g. a Panther Collector Edition car delivered in plain Black).
+function ensureIncluded(list: string[], value: string): string[] {
+  if (!value || list.includes(value)) return list
+  return [value, ...list]
+}
+
 export default function NewRidePage() {
   const router = useRouter()
 
@@ -95,24 +103,29 @@ export default function NewRidePage() {
     }
   }
 
-  // Derived dropdown options based on the year-aware carData maps.
+  // Derived dropdown options based on the year-aware carData maps. Every level is
+  // wrapped in ensureIncluded so a prefilled real-life value outside the catalog
+  // still shows and saves instead of rendering an empty select.
   const yearNum = year ? parseInt(year, 10) : 0
-  const availableManufacturers = yearNum ? (manufacturersByYear[yearNum] || []) : []
-  const availableBrands = (yearNum && manufacturer)
-    ? (brandsByManufacturerAndYear[manufacturer]?.[yearNum] || []) : []
-  const availableModels = (yearNum && brand)
-    ? (modelsByBrandAndYear[brand]?.[yearNum] || []) : []
-  const availableVersions = (yearNum && model)
-    ? (versionsByModelAndYear[model]?.[yearNum] || []) : []
+  const availableManufacturers = ensureIncluded(yearNum ? (manufacturersByYear[yearNum] || []) : [], manufacturer)
+  const availableBrands = ensureIncluded((yearNum && manufacturer)
+    ? (brandsByManufacturerAndYear[manufacturer]?.[yearNum] || []) : [], brand)
+  const availableModels = ensureIncluded((yearNum && brand)
+    ? (modelsByBrandAndYear[brand]?.[yearNum] || []) : [], model)
+  const availableVersions = ensureIncluded((yearNum && model)
+    ? (versionsByModelAndYear[model]?.[yearNum] || []) : [], version)
 
-  // SPECIAL EDITION is only shown when the catalog has one defined for this
-  // year+model+version combination.
+  // SPECIAL EDITION is shown when the catalog has one defined for this
+  // year+model+version combination, OR when the form already carries one.
   const specialEditionKey = `${yearNum}-${model}-${version}`
-  const availableSpecialEditions = specialEditions[specialEditionKey] || null
+  const catalogSpecialEditions = specialEditions[specialEditionKey] || null
+  const availableSpecialEditions = catalogSpecialEditions
+    ? ensureIncluded(catalogSpecialEditions, specialEdition)
+    : (specialEdition ? [specialEdition] : null)
 
-  const availableColors = (yearNum && brand && model && version)
+  const availableColors = ensureIncluded((yearNum && brand && model && version)
     ? getAvailableColors(yearNum, brand, model, version, specialEdition || 'None')
-    : []
+    : [], color)
 
   // Cascading resets: changing any level wipes everything below it so the
   // user can't end up with an impossible combination.
@@ -282,7 +295,7 @@ export default function NewRidePage() {
             <label className="block mb-2 text-lg font-bold">TRANSMISSION</label>
             <select value={transmission} onChange={(e) => setTransmission(e.target.value)} className={selectClass}>
               <option value="">— Select —</option>
-              {transmissionOptions.map(t => <option key={t} value={t}>{t}</option>)}
+              {ensureIncluded(transmissionOptions, transmission).map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
         )}

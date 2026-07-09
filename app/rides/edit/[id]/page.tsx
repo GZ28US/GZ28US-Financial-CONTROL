@@ -403,7 +403,7 @@ export default function EditRidePage() {
             <label className="block mb-2 text-lg font-bold">TRANSMISSION</label>
             <select value={transmission} onChange={(e) => setTransmission(e.target.value)} className={selectClass}>
               <option value="">— Select —</option>
-              {transmissionOptions.map(t => <option key={t} value={t}>{t}</option>)}
+              {ensureIncluded(transmissionOptions, transmission).map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
         )}
