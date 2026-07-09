@@ -166,7 +166,7 @@ export default function EditRidePage() {
   async function loadTuneStatus(code: string) {
     if (!code) return
     const found = new Set<string>()
-    await Promise.all(['US', 'BR'].map(async (zone) => {
+    await Promise.all(['US'].map(async (zone) => {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code, match: 'bonestock tune' }) })
         const d = await res.json().catch(() => ({}))
@@ -194,7 +194,7 @@ export default function EditRidePage() {
       const prefix = [manufacturer, year, brand, model, version, trans].filter(Boolean).join(' ')
       const filename = `${prefix ? prefix + ' ' : ''}${projectCode}${projectName ? ' - ' + projectName : ''} BoneStock Tune.${ext}`
       let landed = 0
-      for (const zone of ['US', 'BR']) {
+      for (const zone of ['US']) {
         try {
           const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: projectCode, name: projectName, filename, contentBase64: b64 }) })
           const d = await res.json().catch(() => ({}))

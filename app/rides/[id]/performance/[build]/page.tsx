@@ -880,7 +880,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   async function loadTuneStatus() {
     if (!rideCode) return
     const found = new Set<string>()
-    await Promise.all(['US', 'BR'].map(async (zone) => {
+    await Promise.all(['US'].map(async (zone) => {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code: rideCode, match: 'bonestock tune' }) })
         const d = await res.json().catch(() => ({}))
@@ -903,7 +903,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
     const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} BoneStock Tune.${ext}`
     let landed = 0
-    for (const zone of ['US', 'BR']) {
+    for (const zone of ['US']) {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
         const d = await res.json().catch(() => ({}))
@@ -920,7 +920,10 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const om: Record<string, boolean> = {}
     s.power_source = data?.power_source || POWER_SOURCES[0]
     for (const f of BS_FIELDS) {
-      const v = data ? (data[f.key] ?? '') : ''
+      let v = data ? (data[f.key] ?? '') : ''
+      // Regional fuel dialect: a sheet written in the BR app stores BR pump fuels —
+      // shown here as their US equivalents (Podium → 93 premium, Comum → 91 regular).
+      if (f.key === 'fuel') v = ({ 'Podium': '93', 'Comum': '91' } as Record<string, string>)[v] || v
       s[f.key] = v || (f.kind === 'so' ? 'Stock' : (f.options as string[])[0])
       if (f.kind === 'so' && s[f.key] !== 'Stock' && v) om[f.key] = true
     }
@@ -999,7 +1002,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         r.readAsDataURL(blob)
       })
       const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} Build.${String(buildNo).padStart(2, '0')} BuildSheet.pdf`
-      const results = await Promise.all(['US', 'BR'].map(async (zone) => {
+      const results = await Promise.all(['US'].map(async (zone) => {
         try {
           const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
           const d = await res.json().catch(() => ({}))
