@@ -864,12 +864,17 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
   const [bsSaving, setBsSaving] = useState(false)
+  // The build's given name (ride_builds.name) — printed on the BuildSheet PDF header.
+  const [buildName, setBuildName] = useState('')
 
   // BoneStock TUNE — picked here, uploaded to the car's Dropbox HB Tuning folder on SAVE.
   const [tuneFile, setTuneFile] = useState<File | null>(null)
   const [tuneExisting, setTuneExisting] = useState<string[]>([])
 
-  useEffect(() => { void loadSheet(); void loadTuneStatus() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void loadSheet(); void loadTuneStatus()
+    supabase.from('ride_builds').select('name').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle().then(({ data }) => setBuildName(data?.name || ''))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which BoneStock tune files already exist in the car's HB Tuning folder(s)?
   async function loadTuneStatus() {
@@ -958,7 +963,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(90, 90, 90)
     doc.text(rideTitle, pageW - 8, 18, { align: 'right' })
     if (carLine) doc.text(carLine, pageW - 8, 23, { align: 'right' })
-    doc.text(`Build.${String(buildNo).padStart(2, '0')} · ${new Date().toLocaleDateString('en-US')}`, pageW - 8, carLine ? 28 : 23, { align: 'right' })
+    doc.text(`Build.${String(buildNo).padStart(2, '0')}${buildName ? ` — ${buildName}` : ''} · ${new Date().toLocaleDateString('en-US')}`, pageW - 8, carLine ? 28 : 23, { align: 'right' })
     const rows: Array<{ label: string; value: string; modded: boolean }> = [
       { label: 'Power Source', value: sheet.power_source || '—', modded: false },
       ...BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => {
