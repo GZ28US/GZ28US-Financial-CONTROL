@@ -42,7 +42,7 @@ type Client = {
 
 type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null }
 type Service = { id: string; description: string; price: number }
-type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null }
+type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
 type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null }
 
@@ -637,7 +637,8 @@ export default function ViewInvoicePage() {
                 <tbody>
                   {payments.map(p => (
                     <tr key={p.id}>
-                      <td>{formatDate(p.payment_date)}</td>
+                      {/* Undated milestone incomes (ARRIVAL / CONCLUSION) print their label as the date. */}
+                      <td>{p.payment_date ? formatDate(p.payment_date) : (p.date_label || '—')}</td>
                       <td>{p.source || '—'}</td>
                       <td>{p.description || '—'}</td>
                       <td className="r">{formatUSD(p.amount)}</td>
