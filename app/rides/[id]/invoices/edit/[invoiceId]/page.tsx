@@ -2072,6 +2072,11 @@ export default function EditInvoicePage() {
     router.push(basePath)
   }
 
+  // DELIVERY DATE without CONCLUSION DATE = the PROMISED TO date — carried on
+  // every report and update, always.
+  function promisedLine(): string {
+    return isValidDate(deliveryDate) && !isValidDate(conclusionDate) ? `🗓 PROMISED TO: ${formatDate(deliveryDate)}` : ''
+  }
   function buildIncomeCaption(inc: IncomeReport) {
     const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
     const amountStr = formatUSD(parseFloat(inc.amount) || 0)
@@ -2080,6 +2085,7 @@ export default function EditInvoicePage() {
       '*INCOME*',
       `${invoiceCode}${ownerLbl ? ` — ${ownerLbl}` : ''}`,
       `${dateStr} — *${amountStr}*`,
+      ...(promisedLine() ? [promisedLine()] : []),
     ]
     if (inc.description && inc.description.trim()) lines.push(inc.description.trim())
 
@@ -2104,6 +2110,7 @@ export default function EditInvoicePage() {
       '*EXPENSE*',
       `${invoiceCode}${ownerLbl ? ` — ${ownerLbl}` : ''}`,
       `${dateStr} — *${amountStr}*`,
+      ...(promisedLine() ? [promisedLine()] : []),
     ]
     if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
     if (!isClient && feedOnline) {

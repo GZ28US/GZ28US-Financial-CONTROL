@@ -24,6 +24,12 @@ type Duty = {
   time_started_at: string | null
   work_started_at: string | null
   work_ended_at: string | null
+  // Invoice DELIVERY DATE with no CONCLUSION DATE = the PROMISED TO date —
+  // carried on every duties report and update.
+  promised: string | null
+}
+function fmtPromised(d: string): string {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function fmtDur(totalSec: number): string {
@@ -86,7 +92,7 @@ export default function StaffDutiesPage() {
     const invoiceIds = [...new Set((dutyRows || []).map((d: any) => d.invoice_id).filter(Boolean))]
     let invs: any[] = []
     if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id').in('id', invoiceIds)
+      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, delivery_date, conclusion_date').in('id', invoiceIds)
       invs = data || []
     }
     const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
@@ -117,6 +123,7 @@ export default function StaffDutiesPage() {
         time_started_at: d.time_started_at || null,
         work_started_at: d.work_started_at || null,
         work_ended_at: d.work_ended_at || null,
+        promised: inv?.delivery_date && !inv?.conclusion_date ? inv.delivery_date : null,
       }
     }))
     setStaffList((staffRows || []) as { id: string; name: string; phone: string | null }[])
@@ -190,7 +197,7 @@ export default function StaffDutiesPage() {
       .sort((a, b) => (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0))
     if (!rows.length) return null
     const lines = rows.map((d, i) =>
-      `${i + 1}. [${dutyPriorityBadge(d.priority).label}] ${d.description}${d.invoiceCode !== '—' ? ` (${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''})` : ''}`)
+      `${i + 1}. [${dutyPriorityBadge(d.priority).label}] ${d.description}${d.invoiceCode !== '—' ? ` (${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''})` : ''}${d.promised ? ` — 🗓 PROMISED TO ${fmtPromised(d.promised)}` : ''}`)
     return `📋 DUTIES — ${name} ${staffMark(staffId)}\n${rows.length} open, by priority${maxPriority === 'STANDBY' ? '' : ` (up to P${maxPriority})`}:\n\n${lines.join('\n')}`
   }
 
@@ -203,6 +210,7 @@ export default function StaffDutiesPage() {
       `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
       where,
     ]
+    if (d.promised) lines.push(`🗓 PROMISED TO: ${fmtPromised(d.promised)}`)
     if (action === 'STARTED') lines.push(`Started: ${fmtDT(new Date().toISOString())}`)
     if (action === 'PAUSED') lines.push(`⏱ ${fmtDur(secs)} so far`)
     if (action === 'DONE') {

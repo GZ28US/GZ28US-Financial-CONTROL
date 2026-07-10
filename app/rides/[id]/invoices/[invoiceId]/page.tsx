@@ -300,7 +300,11 @@ export default function ViewInvoicePage() {
       // A QUOTE message DIVERGES by destination: the CLIENT gets a courtesy line and
       // NEVER the markup; the REPORTS GROUP gets the markup and NEVER the courtesy
       // line. Invoices are identical for both.
-      const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}`
+      // DELIVERY DATE without CONCLUSION DATE = the PROMISED TO date — carried
+      // on every report, always.
+      const promisedLine = isValidDate(invoice.delivery_date) && !isValidDate(invoice.conclusion_date)
+        ? `\n🗓 PROMISED TO: *${formatDate(invoice.delivery_date)}*` : ''
+      const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}${promisedLine}`
       const markupLine = `MarkUp: *${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%*`
       const clientCaption = invoice.is_quote ? `${head}\n\nAt your disposal for any questions.` : head
       const groupCaption = invoice.is_quote ? `${head}\n${markupLine}` : head

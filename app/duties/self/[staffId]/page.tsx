@@ -22,6 +22,12 @@ type Duty = {
   time_started_at: string | null
   work_started_at: string | null
   work_ended_at: string | null
+  // Invoice DELIVERY DATE with no CONCLUSION DATE = the PROMISED TO date —
+  // carried on every update report.
+  promised: string | null
+}
+function fmtPromised(d: string): string {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
@@ -70,7 +76,7 @@ export default function StaffDutySelfPage() {
     const invoiceIds = [...new Set((dutyRows || []).map((d: any) => d.invoice_id).filter(Boolean))]
     let invs: any[] = []
     if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id').in('id', invoiceIds)
+      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, delivery_date, conclusion_date').in('id', invoiceIds)
       invs = data || []
     }
     const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
@@ -95,6 +101,7 @@ export default function StaffDutySelfPage() {
         time_started_at: d.time_started_at || null,
         work_started_at: d.work_started_at || null,
         work_ended_at: d.work_ended_at || null,
+        promised: inv?.delivery_date && !inv?.conclusion_date ? inv.delivery_date : null,
       }
     }))
     setLoading(false)
@@ -113,6 +120,7 @@ export default function StaffDutySelfPage() {
       `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
       `${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''}`,
     ]
+    if (d.promised) lines.push(`🗓 PROMISED TO: ${fmtPromised(d.promised)}`)
     if (action === 'STARTED' || action === 'RESUMED') lines.push(`At: ${fmtDT(new Date().toISOString())}`)
     if (action === 'PAUSED') lines.push(`⏱ ${fmtDur(secs)} so far`)
     if (action === 'FINISHED') {
