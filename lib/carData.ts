@@ -35,8 +35,10 @@ export const brandsByManufacturerAndYear: Record<string, Record<number, string[]
     2009: ['DODGE', 'RAM'],
     2010: ['DODGE'], 2011: ['DODGE'], 2012: ['DODGE'], 2013: ['DODGE'], 2014: ['DODGE'],
     2015: ['DODGE', 'RAM'], 2016: ['DODGE', 'RAM'], 2017: ['DODGE', 'RAM'], 2018: ['DODGE', 'RAM'],
-    2019: ['DODGE'], 2020: ['DODGE'], 2021: ['DODGE'], 2022: ['DODGE'], 2023: ['DODGE'],
-    2024: ['DODGE'], 2025: ['DODGE'], 2026: ['DODGE'],
+    2019: ['DODGE'], 2020: ['DODGE'],
+    // RAM back 2021-2024: the 1500 TRX years.
+    2021: ['DODGE', 'RAM'], 2022: ['DODGE', 'RAM'], 2023: ['DODGE', 'RAM'],
+    2024: ['DODGE', 'RAM'], 2025: ['DODGE'], 2026: ['DODGE'],
   },
   GM: {
     1992: ['CHEVROLET'], 1993: ['CHEVROLET'], 1994: ['CHEVROLET'], 1995: ['CHEVROLET'], 1996: ['CHEVROLET'],
@@ -75,6 +77,7 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
   },
   RAM: {
     2009: ['1500'], 2015: ['1500'], 2016: ['1500'], 2017: ['1500'], 2018: ['1500'],
+    2021: ['1500'], 2022: ['1500'], 2023: ['1500'], 2024: ['1500'],
   },
   CHEVROLET: {
     // C4 Corvette (1992-on: LT1 era; ZR-1 through 1995).
@@ -201,6 +204,8 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
   '1500': {
     2009: ['1500 5.7'], 2015: ['1500 5.7', '1500 Rebel 5.7'], 2016: ['1500 5.7', '1500 Rebel 5.7'],
     2017: ['1500 5.7', '1500 Rebel 5.7'], 2018: ['1500 5.7', '1500 Rebel 5.7'],
+    // TRX: 6.2L supercharged Hellcat V8, 702 hp (2021-2024; 2024 = last year).
+    2021: ['TRX 6.2 SC'], 2022: ['TRX 6.2 SC'], 2023: ['TRX 6.2 SC'], 2024: ['TRX 6.2 SC'],
   },
   F150: {
     2017: ['SuperSnake 5.0L SC'],
@@ -246,6 +251,11 @@ export const specialEditions: Record<string, string[]> = {
   '2024-CAMARO-LT1 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-SS 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-ZL1 6.2': ['None', 'Panther Collector Edition'],
+  // Ram 1500 TRX special editions (Level 1/Level 2 are equipment groups, NOT editions).
+  '2021-1500-TRX 6.2 SC': ['None', 'Launch Edition'],
+  '2022-1500-TRX 6.2 SC': ['None', 'Ignition Edition', 'Sandblast Edition'],
+  '2023-1500-TRX 6.2 SC': ['None', 'Havoc Edition', 'Lunar Edition'],
+  '2024-1500-TRX 6.2 SC': ['None', 'Final Edition'],
   // C4 Corvette special editions.
   '1993-CORVETTE-Base 5.7': ['None', '40th Anniversary'],
   '1993-CORVETTE-ZR-1 5.7': ['None', '40th Anniversary'],
@@ -961,7 +971,24 @@ const mustangColorsByYear: Record<number, string[]> = {
   2026: ['Oxford White', 'Shadow Black', 'Carbonized Gray', 'Iconic Silver', 'Race Red', 'Grabber Blue', 'Vapor Blue', 'Adriatic Blue', 'Orange Fury', 'Molten Magenta', 'Blue Ember'],
 }
 
+// Ram 1500 TRX factory palette per year (regular colors; edition exclusives are
+// forced via colorsByConfiguration). Hydro Blue dropped for 2024; 2024 added
+// Delmonico Red, Night Edge Blue and Harvest Sunrise.
+const trxColorsByYear: Record<number, string[]> = {
+  2021: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
+  2022: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
+  2023: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
+  2024: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic', 'Delmonico Red Pearl', 'Night Edge Blue', 'Harvest Sunrise'],
+}
+
 const colorsByConfiguration: Record<string, string[]> = {
+  // Ram 1500 TRX edition-exclusive (forced) colors.
+  '2021-1500-TRX 6.2 SC-Launch Edition': ['Anvil'],
+  '2022-1500-TRX 6.2 SC-Ignition Edition': ['Ignition Orange'],
+  '2022-1500-TRX 6.2 SC-Sandblast Edition': ['Mojave Sand'],
+  '2023-1500-TRX 6.2 SC-Havoc Edition': ['Baja Yellow'],
+  '2023-1500-TRX 6.2 SC-Lunar Edition': ['Ceramic Grey'],
+  '2024-1500-TRX 6.2 SC-Final Edition': ['Delmonico Red Pearl', 'Night Edge Blue', 'Harvest Sunrise'],
   '2010-CAMARO-SS 6.2-Synergy Green Edition': ['Synergy Green'],
   '2010-CAMARO-SS 1LE 6.2-Synergy Green Edition': ['Synergy Green'],
   '2010-CAMARO-SS 6.2-Transformers Edition': ['Rally Yellow'],
@@ -1060,6 +1087,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'DURANGO') return durangoColors
   if (model === 'GRAND CHEROKEE' && year <= 2004) return grandCherokeeZjColors
   if (model === 'GRAND CHEROKEE') return grandCherokeeColors
+  if (model === '1500' && version.includes('TRX') && trxColorsByYear[year]) return trxColorsByYear[year]
   if (brand === 'RAM') return ramColors
   if (model === 'F150' && year <= 2004) return svtLightningColors
   if (brand === 'FORD') return fordColors
@@ -1077,7 +1105,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
       MAGNUM: ['R/T 5.7', 'SRT8 6.1'],
     },
     RAM: {
-      1500: ['1500 5.7', '1500 Rebel 5.7'],
+      1500: ['1500 5.7', '1500 Rebel 5.7', 'TRX 6.2 SC'],
     },
   },
   GM: {
