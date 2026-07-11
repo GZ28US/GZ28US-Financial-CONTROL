@@ -124,6 +124,9 @@ export default function EditPackPage() {
   // to the price an ordinary buyer pays delivered (the pack's FL TAXES line then
   // adds the tax). This is above our cost; the bare MAP alone is not.
   const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
+  // MAP by item NAME — fallback for bank rows without a part number (e.g. Kong
+  // parts), so IMPORT ITEMS FROM EXPENSES still prices them at MAP, not cost.
+  const [mapByName, setMapByName] = useState<Map<string, number>>(new Map())
 
   useEffect(() => { if (id) load(id) }, [id])
 
@@ -155,18 +158,24 @@ export default function EditPackPage() {
     const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
+    const mn = new Map<string, number>()
     for (const d of dbParts || []) {
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
-      const pn = (d.part_number || '').trim().toLowerCase()
+      // Normalized PN key (same normPN as the dedupe) so formatting differences
+      // ("GM-12612350" vs "12612350") still hit the part's MAP.
+      const pn = normPN(d.part_number || '')
       // RULE: tax follows how WE bought it. HUNT parts are bought tax-exempt
       // (reseller), so they enter the parts table WITHOUT tax: MAP + freight only.
       // The pack's FL TAXES line then adds the CUSTOMER's tax. (A future "bought
       // with tax" flag from hunt/scan will switch this to a tax-inclusive base.)
       const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
       if (pn && mapFinal > 0) mp.set(pn, mapFinal)
+      const nm = (d.item || '').trim().toLowerCase()
+      if (nm && mapFinal > 0 && !mn.has(nm)) mn.set(nm, mapFinal)
     }
     setAliasMap(am)
     setMapByPN(mp)
+    setMapByName(mn)
 
     setLoading(false)
   }
@@ -292,8 +301,8 @@ export default function EditPackPage() {
       // give a NO-tax base (MAP + freight); the pack's FL TAXES line adds the
       // customer's tax. If the part isn't known, gross the cost up to market by
       // the supplier/item discount.
-      const pn = (e.part_number || '').trim().toLowerCase()
-      const mapFinal = pn ? (mapByPN.get(pn) || 0) : 0
+      const pn = normPN(e.part_number || '')
+      const mapFinal = (pn ? (mapByPN.get(pn) || 0) : 0) || mapByName.get(desc.toLowerCase()) || 0
       let unitBase: number
       if (mapFinal > 0) {
         unitBase = mapFinal
