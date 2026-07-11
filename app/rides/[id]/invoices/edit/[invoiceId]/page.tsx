@@ -292,6 +292,7 @@ export default function EditInvoicePage() {
   // part_number -> RETAIL FINAL (map_price + freight), so IMPORT FROM EXPENSES prices
   // items at the part's enrolled RETAIL instead of grossing the cost up by discount.
   const [mapByPN, setMapByPN] = useState<Map<string, number>>(new Map())
+  const [mapByName, setMapByName] = useState<Map<string, number>>(new Map())
   // HUNT part lookup keys ('PN:'+normPN / 'NM:'+item) -> store product URL, so a HUNTED
   // expense shows a clickable link that opens the store page (to add it to the cart).
   const [huntUrlMap, setHuntUrlMap] = useState<Map<string, string>>(new Map())
@@ -469,17 +470,25 @@ export default function EditInvoicePage() {
     const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
+    const mn = new Map<string, number>()
     const pm = new Map<string, string>()
     for (const d of dbParts || []) {
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
       if (d.part_number) pm.set((d.item || '').trim().toLowerCase(), String(d.part_number))
-      const pn = (d.part_number || '').trim().toLowerCase()
+      // Normalized PN key (same normPN as the dedupe) so formatting differences
+      // ("GM-12612350" vs "12612350") still hit the part's MAP.
+      const pn = normPN(d.part_number || '')
       // RETAIL = map_price + freight (no tax), as enrolled at hunt/scan/manual.
       const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
       if (pn && mapFinal > 0) mp.set(pn, mapFinal)
+      // MAP by item NAME — fallback for bank rows without a part number, so
+      // no-PN parts never import at OUR COST (zero margin) silently.
+      const nm = (d.item || '').trim().toLowerCase()
+      if (nm && mapFinal > 0 && !mn.has(nm)) mn.set(nm, mapFinal)
     }
     setAliasMap(am)
     setMapByPN(mp)
+    setMapByName(mn)
     setPnByItem(pm)
 
     // HUNT store links — separate query so a missing product_url column (pre-migration)
@@ -1019,8 +1028,8 @@ export default function EditInvoicePage() {
       // Sell-side base = the part's RETAIL (map_price + freight) matched by part number
       // in the Parts DB, as enrolled at hunt/scan/manual. If the part isn't known, fall
       // back to grossing the cost up to market by the supplier/item discount.
-      const pn = (e.part_number || '').trim().toLowerCase()
-      const mapFinal = pn ? (mapByPN.get(pn) || 0) : 0
+      const pn = normPN(e.part_number || '')
+      const mapFinal = ((pn ? (mapByPN.get(pn) || 0) : 0) || mapByName.get(desc.toLowerCase()) || 0)
       let marketBase: number
       if (mapFinal > 0) {
         marketBase = mapFinal
