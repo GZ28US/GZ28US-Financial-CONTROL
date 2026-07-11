@@ -6,7 +6,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
-import { fileForScan } from '@/lib/scanFile'
+import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
 type Part = {
   id: string
@@ -297,18 +297,24 @@ export default function PartsPage() {
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
+      // BRL-as-USD guard: the bank is USD — a foreign-currency document must never
+      // enroll its raw numbers as dollars. BRL converts at today's rate (confirmed
+      // by the user); any other currency aborts.
+      const fx = await scanCurrencyFx(parsed.currency)
+      if (fx == null) { setScanning(false); return }
+      const money = (v: any) => (((parseFloat(v) || 0) * fx)).toFixed(2)
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => ({
         item: String(i.description || ''),
         part_number: String(i.part_number || ''),
         alias: '',
-        unit_price: String(i.amount || '0'),
+        unit_price: money(i.amount),
         quantity: String(i.quantity || '1'),
-        tax: String(i.tax || '0'),
-        extra: String(i.extra || '0'),
+        tax: money(i.tax),
+        extra: money(i.extra),
         item_discount: String(i.item_discount || '0'),
-        list_price: String(i.list_price || '0'),
+        list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0',
         weight_lbs: String(i.weight_lbs || '0'),
       }))
       if (items.length === 0) { alert('No items found on that document.'); setScanning(false); return }

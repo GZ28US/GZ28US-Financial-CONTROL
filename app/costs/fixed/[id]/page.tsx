@@ -8,7 +8,7 @@ import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
-import { fileForScan } from '@/lib/scanFile'
+import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
 const LANG: 'en' | 'pt' = 'en'
 
@@ -136,7 +136,9 @@ export default function FixedCostSupplierViewPage() {
       if (!data.error) {
         const text = data.content?.map((c: any) => c.text || '').join('') || ''
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-        const t = (parsed.items || []).reduce((sum: number, i: any) => sum + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+        // BRL-as-USD guard: skip the amount prefill when the document is foreign-currency.
+        const fx = await scanCurrencyFx(parsed.currency)
+        const t = fx == null ? 0 : (parsed.items || []).reduce((sum: number, i: any) => sum + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0) * fx
         if (t > 0) amt = t.toFixed(2)
         if (/^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || ''))) dt = String(parsed.date)
       }

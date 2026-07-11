@@ -7,7 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX, partMatches, toWaNumber } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
-import { fileForScan } from '@/lib/scanFile'
+import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 
@@ -661,6 +661,13 @@ export default function EditInvoicePage() {
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
 
+      // BRL-as-USD guard: a foreign-currency document must never register its raw
+      // numbers as dollars. BRL converts at today's rate (user-confirmed); any
+      // other currency aborts the import.
+      const fx = await scanCurrencyFx(parsed.currency)
+      if (fx == null) { setScanningPurchase(false); return }
+      const money = (v: any) => (((parseFloat(v) || 0) * fx)).toFixed(2)
+
       const supplier = String(parsed.supplier || '').trim()
       const scannedSource = String(parsed.source || '').trim()
       const paid = parsed.paid !== false
@@ -670,7 +677,7 @@ export default function EditInvoicePage() {
       // A scanned PURCHASE invoice is treated as already paid, so it always needs a
       // valid invoice date: the receipt's date when present, otherwise today.
       const date = isValidDate(rawDate) ? rawDate : todayStr()
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: String(i.amount || '0'), quantity: String(i.quantity || '1'), tax: String(i.tax || '0'), extra: String(i.extra || '0'), item_discount: String(i.item_discount || '0'), list_price: String(i.list_price || '0'), weight_lbs: String(i.weight_lbs || '0') }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: money(i.amount), quantity: String(i.quantity || '1'), tax: money(i.tax), extra: money(i.extra), item_discount: String(i.item_discount || '0'), list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0', weight_lbs: String(i.weight_lbs || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), items, receiptUrl, paid })

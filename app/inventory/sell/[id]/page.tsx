@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
-import { fileForScan } from '@/lib/scanFile'
+import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
 type Item = { id: string; description: string | null; quantity: number; unit_price: number; supplier: string | null }
 type SaleEntry = { id: string; kind: string; amount: number; entry_date: string | null; description: string | null; receipt_url: string | null }
@@ -58,7 +58,9 @@ export default function SellInventoryPage() {
       if (!data.error) {
         const text = data.content?.map((c: any) => c.text || '').join('') || ''
         const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-        const t = (parsed.items || []).reduce((s: number, i: any) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+        // BRL-as-USD guard: skip the amount prefill when the document is foreign-currency.
+        const fx = await scanCurrencyFx(parsed.currency)
+        const t = fx == null ? 0 : (parsed.items || []).reduce((s: number, i: any) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0) * fx
         if (t > 0) amt = t.toFixed(2)
         if (/^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || ''))) dt = String(parsed.date)
         dsc = (parsed.items || []).map((i: any) => i.description).filter(Boolean).join(', ') || String(parsed.supplier || '')

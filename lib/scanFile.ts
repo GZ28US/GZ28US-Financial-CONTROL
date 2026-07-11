@@ -29,6 +29,34 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   })
 }
 
+// Currency guard for purchase-scan consumers. The scan API returns amounts in
+// USD unless the document had NO USD amount at all — then `currency` carries the
+// document's own ISO code (e.g. BRL) and importing the raw numbers as dollars
+// would inflate every cost ~5x (the BRL-as-USD bug). This asks the user to
+// convert a BRL document at today's commercial rate and BLOCKS any other
+// foreign currency. Returns the multiplier to apply to EVERY monetary field
+// (1 for USD), or null when the import must be aborted.
+export async function scanCurrencyFx(currency: string | undefined | null): Promise<number | null> {
+  const cur = String(currency || 'USD').toUpperCase().trim() || 'USD'
+  if (cur === 'USD') return 1
+  if (cur === 'BRL') {
+    let spot = 0
+    try {
+      const r = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL')
+      const j = await r.json()
+      spot = parseFloat(j?.USDBRL?.bid) || 0
+    } catch { /* rate unavailable */ }
+    if (!(spot > 0)) {
+      alert('⚠ This document is in BRL (R$) and today’s dollar rate could not be fetched.\nNOTHING was imported — convert the amounts to USD manually.')
+      return null
+    }
+    const ok = confirm(`⚠ This document is in BRL (R$), NOT dollars.\n\nConvert every amount to USD at today’s commercial rate (US$ 1 = R$ ${spot.toFixed(4)})?\n\nOK = convert · Cancel = import nothing`)
+    return ok ? 1 / spot : null
+  }
+  alert(`⚠ This document is in ${cur}, not USD.\nNOTHING was imported — convert the amounts to USD manually.`)
+  return null
+}
+
 export async function fileForScan(file: File): Promise<{ base64: string; mediaType: string }> {
   if (file.type === 'application/pdf') {
     return { base64: await toBase64(file), mediaType: 'application/pdf' }

@@ -6,7 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
-import { fileForScan } from '@/lib/scanFile'
+import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
 type Input = {
   id: string
@@ -193,11 +193,15 @@ export default function InputsManager({ mode, table }: { mode: 'CONSUMPTION' | '
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
 
+      // BRL-as-USD guard: foreign-currency documents never register raw numbers as dollars.
+      const fx = await scanCurrencyFx(parsed.currency)
+      if (fx == null) { setScanningPurchase(false); return }
+
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => ({
         description: String(i.description || ''),
-        amount: String(i.amount || '0'),
+        amount: (((parseFloat(i.amount) || 0) * fx)).toFixed(2),
         quantity: String(i.quantity || '1'),
       }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
