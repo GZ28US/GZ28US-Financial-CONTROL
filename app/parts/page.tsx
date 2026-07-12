@@ -38,6 +38,9 @@ type Part = {
   dealer_supplier: string | null
   is_kit?: boolean
   kit_items?: { part_number?: string | null; item?: string; quantity: number }[]
+  // GZ28 SHOP catalog rows: locked — not editable/removable in the app, and
+  // enrollOne never overrides them (no scan, no gap-fill, no alias change).
+  locked?: boolean
 }
 
 const numOf = (s: string) => { const n = parseFloat(String(s).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
@@ -582,8 +585,14 @@ export default function PartsPage() {
                   ) })()}
                 </div>
                 <div className="flex items-end gap-3 shrink-0">
-                  <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
-                  <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
+                  {p.locked ? (
+                    <span className="px-3 py-2 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 GZ28 SHOP — LOCKED</span>
+                  ) : (
+                    <>
+                      <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
+                      <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
+                    </>
+                  )}
                 </div>
               </div>
               {expandedKits.has(p.id) && (
@@ -600,6 +609,7 @@ export default function PartsPage() {
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-xl font-bold">{p.item}</h2>
                   {(() => { const b = sourceBadge(p); return <span className={`px-3 py-1 rounded-full text-xs font-bold ${b.cls}`}>{b.label}</span> })()}
+                  {p.locked && <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 GZ28 SHOP</span>}
                   {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
@@ -635,6 +645,11 @@ export default function PartsPage() {
                   </>
                 )}
               </div>
+              {p.locked ? (
+                <div className="flex items-end shrink-0">
+                  <span className="px-3 py-2 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 GZ28 SHOP — LOCKED</span>
+                </div>
+              ) : (
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
                 <div>
                   <label className="block mb-1 text-xs text-gray-400 font-bold">ALIAS</label>
@@ -649,6 +664,7 @@ export default function PartsPage() {
                 {isHunt(p) && <button onClick={() => openCostEditor(p)} className={`px-4 py-2 rounded-2xl font-bold text-sm ${isPending(p) ? 'bg-yellow-600 hover:bg-yellow-500 text-black' : 'bg-gray-600 hover:bg-gray-500'}`}>{isPending(p) ? 'FILL COST' : 'EDIT COST'}</button>}
                 <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
               </div>
+              )}
             </div>
           ))}
         </div>

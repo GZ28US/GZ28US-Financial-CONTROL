@@ -75,7 +75,7 @@ function withDerived(row: any, map: number | null, cost: number): any {
 //   the lowest cost. The kept alias is preserved; a known weight is never erased.
 export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
   const { data } = await supabase.from('parts_database')
-    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra')
+    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, locked')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   // Two part numbers are the SAME part when the normalized forms match exactly OR
@@ -99,6 +99,10 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     const { error } = await supabase.from('parts_database').insert([toInsert])
     return { status: 'inserted', error }
   }
+
+  // LOCKED rows (the GZ28 SHOP catalog) are untouchable: no scan override, no
+  // gap-filling, no alias change — REAL LIFE PREVAILS stops at the shop's door.
+  if (existing.locked) return { status: 'kept', error: null }
 
   // Who wins the row?
   const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
