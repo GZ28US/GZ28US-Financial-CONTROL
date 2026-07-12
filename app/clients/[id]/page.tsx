@@ -33,7 +33,12 @@ type Ride = {
   year: number | null
   color: string | null
   plate: string | null
+  client_id?: string | null
 }
+
+// Ownership badge per ride card: SOLD (a past era — the client no longer owns
+// the car) or SINCE <date> (owns it via a transfer). Plain current rides get none.
+type OwnBadge = { kind: 'sold'; from: string | null; to: string } | { kind: 'since'; from: string }
 
 type PersonalInvoice = {
   id: string
@@ -49,6 +54,7 @@ export default function ViewClientPage() {
   const [loading, setLoading] = useState(true)
   const [client, setClient] = useState<Client | null>(null)
   const [rides, setRides] = useState<Ride[]>([])
+  const [ownBadges, setOwnBadges] = useState<Record<string, OwnBadge>>({})
   const [personalInvoices, setPersonalInvoices] = useState<PersonalInvoice[]>([])
   const [sending, setSending] = useState(false)
   const [justSent, setJustSent] = useState(false)
@@ -138,10 +144,36 @@ export default function ViewClientPage() {
     const { data: clientData } = await supabase.from('clients').select('*').eq('id', clientId).single()
     if (clientData) setClient(clientData)
 
+    // Rides this client owns now + rides they owned in the past (ride_owners
+    // periods — ownership transfers). A sold car still shows here, badged SOLD;
+    // a car bought via transfer shows SINCE its transfer date.
     const { data: ridesData } = await supabase.from('rides').select('*').eq('client_id', clientId).order('project_code', { ascending: true })
-    if (ridesData) setRides(ridesData)
+    const current = (ridesData || []) as Ride[]
+    const badges: Record<string, OwnBadge> = {}
+    let all = [...current]
+    const { data: periods } = await supabase.from('ride_owners').select('ride_id, from_date, to_date').eq('client_id', clientId)
+    if (periods) {
+      const currentIds = new Set(current.map(r => r.id))
+      for (const p of periods) {
+        if (p.to_date === null && currentIds.has(p.ride_id)) badges[p.ride_id] = { kind: 'since', from: p.from_date }
+      }
+      const formerIds = [...new Set(periods.filter(p => p.to_date !== null && !currentIds.has(p.ride_id)).map(p => p.ride_id))]
+      if (formerIds.length) {
+        const { data: formerRides } = await supabase.from('rides').select('*').in('id', formerIds)
+        for (const r of (formerRides || []) as Ride[]) {
+          const per = periods.filter(p => p.ride_id === r.id && p.to_date !== null).sort((a, b) => (b.to_date || '').localeCompare(a.to_date || ''))[0]
+          badges[r.id] = { kind: 'sold', from: per?.from_date || null, to: per?.to_date || '' }
+          all.push(r)
+        }
+        all = all.sort((a, b) => (a.project_code || '').localeCompare(b.project_code || ''))
+      }
+    }
+    setRides(all)
+    setOwnBadges(badges)
 
-    const { data: invoicesData } = await supabase.from('invoices').select('id, invoice_code, service, entry_date').eq('client_id', clientId).order('invoice_code', { ascending: true })
+    // Shopping invoices only (ride_id null) — ride invoices also carry a
+    // client_id stamp (frozen owner) and must not leak into this list.
+    const { data: invoicesData } = await supabase.from('invoices').select('id, invoice_code, service, entry_date').eq('client_id', clientId).is('ride_id', null).order('invoice_code', { ascending: true })
     if (invoicesData) setPersonalInvoices(invoicesData)
 
     setLoading(false)
@@ -208,23 +240,32 @@ export default function ViewClientPage() {
             <p className="text-gray-400 text-xl">No rides linked to this client yet.</p>
           ) : (
             <div className={sectionClass}>
-              {rides.map((ride, index) => (
-                <Link
-                  key={ride.id}
-                  href={`/rides/${ride.id}/invoices`}
-                  className={`flex items-center justify-between gap-4 px-4 py-3 hover:bg-gray-800 transition-colors ${index < rides.length - 1 ? 'border-b border-gray-700' : ''}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base font-bold">{ride.project_code}{ride.project_name ? ` — ${ride.project_name}` : ''}</p>
-                    <p className="text-sm text-gray-400">
-                      {[ride.manufacturer, ride.brand, ride.model, ride.year].filter(Boolean).join(' ')}
-                      {ride.color ? ` — ${ride.color}` : ''}
-                      {ride.plate ? ` — ${ride.plate}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-gray-400 font-bold text-sm shrink-0">INVOICES →</span>
-                </Link>
-              ))}
+              {rides.map((ride, index) => {
+                const badge = ownBadges[ride.id]
+                const sold = badge?.kind === 'sold'
+                const fmt = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
+                return (
+                  <Link
+                    key={ride.id}
+                    href={`/rides/${ride.id}/invoices`}
+                    className={`flex items-center justify-between gap-4 px-4 py-3 hover:bg-gray-800 transition-colors ${index < rides.length - 1 ? 'border-b border-gray-700' : ''} ${sold ? 'opacity-60' : ''}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold flex items-center gap-2 flex-wrap">
+                        <span>{ride.project_code}{ride.project_name ? ` — ${ride.project_name}` : ''}</span>
+                        {sold && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-700 text-gray-300">SOLD {fmt(badge.to)}</span>}
+                        {badge?.kind === 'since' && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-900 text-purple-300">SINCE {fmt(badge.from)}</span>}
+                      </p>
+                      <p className="text-sm text-gray-400">
+                        {[ride.manufacturer, ride.brand, ride.model, ride.year].filter(Boolean).join(' ')}
+                        {ride.color ? ` — ${ride.color}` : ''}
+                        {ride.plate ? ` — ${ride.plate}` : ''}
+                      </p>
+                    </div>
+                    <span className="text-gray-400 font-bold text-sm shrink-0">INVOICES →</span>
+                  </Link>
+                )
+              })}
             </div>
           )}
         </div>

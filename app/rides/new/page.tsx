@@ -17,8 +17,10 @@ import {
 import { transmissionOptionsFor } from '@/lib/transmissions'
 
 type Client = { id: string; name: string; client_number: number | null }
+type TransferRide = { id: string; project_code: string; project_name: string | null; client_id: string | null; created_at: string }
 
 function pad3(n: number) { return String(n).padStart(3, '0') }
+function todayISO() { return new Date().toISOString().slice(0, 10) }
 
 // Add the current value into the dropdown list if it isn't already there.
 // Keeps prefilled ride data visible even when it doesn't fit the year-aware
@@ -39,6 +41,17 @@ export default function NewRidePage() {
   const [clients, setClients] = useState<Client[]>([])
   // Quote-area rides are quote rides (US.QT.###); project-area are US.###.
   const [isQuote] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'quote')
+
+  // EXISTING RIDE — ownership transfer. Picking an existing car for a client
+  // sells it to them from the chosen date on: the car keeps its number and its
+  // full history; past invoices stay with the previous owner (their client_id
+  // stamp), new ones belong to the new owner. Powered by ride_owners periods.
+  const [rideMode, setRideMode] = useState<'new' | 'existing'>('new')
+  const [allRides, setAllRides] = useState<TransferRide[]>([])
+  const [rideSearch, setRideSearch] = useState('')
+  const [transferRideId, setTransferRideId] = useState('')
+  const [transferDate, setTransferDate] = useState(todayISO())
+  const [transferring, setTransferring] = useState(false)
 
   // Year-driven cascading vehicle fields.
   const [year, setYear] = useState('')
@@ -100,6 +113,68 @@ export default function NewRidePage() {
       if (clientData) setClients(clientData as Client[])
     } catch (e) {
       console.error('Client load failed', e)
+    }
+
+    // Rides available for an ownership transfer (project rides only — quote
+    // rides are never sold between clients).
+    if (!isQuote) {
+      try {
+        const { data: rideRows } = await supabase
+          .from('rides')
+          .select('id, project_code, project_name, client_id, created_at')
+          .eq('is_quote', false)
+          .order('project_code', { ascending: true })
+        if (rideRows) setAllRides(rideRows as TransferRide[])
+      } catch (e) {
+        console.error('Rides load failed', e)
+      }
+    }
+  }
+
+  // Sell an existing ride to the chosen client. Records the ownership periods
+  // (ride_owners) and flips the ride's current owner. History stays put: old
+  // invoices keep the previous owner's client_id stamp.
+  async function transferRide() {
+    if (!clientId) { alert('Choose the NEW OWNER (client) first.'); return }
+    if (!transferRideId) { alert('Choose the ride being transferred.'); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(transferDate)) { alert('Set the transfer date.'); return }
+    const ride = allRides.find(r => r.id === transferRideId)
+    if (!ride) return
+    if (ride.client_id === clientId) { alert('This ride already belongs to that client.'); return }
+    setTransferring(true)
+    try {
+      // 1) Close any open ownership period at the transfer date.
+      const { data: openPeriods, error: histErr } = await supabase
+        .from('ride_owners')
+        .select('id, client_id')
+        .eq('ride_id', ride.id)
+        .is('to_date', null)
+      if (histErr) {
+        alert('Ownership history table missing (ride_owners) — run the migration SQL first.\n\n' + histErr.message)
+        setTransferring(false); return
+      }
+      if (openPeriods && openPeriods.length > 0) {
+        const { error } = await supabase.from('ride_owners').update({ to_date: transferDate }).eq('ride_id', ride.id).is('to_date', null)
+        if (error) { alert(error.message); setTransferring(false); return }
+      } else if (ride.client_id) {
+        // First-ever transfer: record the previous owner's era (since the ride
+        // was created) as a closed period.
+        const { error } = await supabase.from('ride_owners').insert([{
+          ride_id: ride.id, client_id: ride.client_id,
+          from_date: (ride.created_at || '').slice(0, 10) || transferDate, to_date: transferDate,
+        }])
+        if (error) { alert(error.message); setTransferring(false); return }
+      }
+      // 2) Open the new owner's period.
+      const { error: insErr } = await supabase.from('ride_owners').insert([{ ride_id: ride.id, client_id: clientId, from_date: transferDate, to_date: null }])
+      if (insErr) { alert(insErr.message); setTransferring(false); return }
+      // 3) The car is the new client's from now on.
+      const { error: updErr } = await supabase.from('rides').update({ client_id: clientId }).eq('id', ride.id)
+      if (updErr) { alert(updErr.message); setTransferring(false); return }
+      router.push(`/clients/${clientId}`)
+    } catch (e) {
+      alert('Transfer failed: ' + String(e))
+      setTransferring(false)
     }
   }
 
@@ -216,6 +291,71 @@ export default function NewRidePage() {
       <h1 className="text-4xl font-bold mb-8">ADD A NEW RIDE</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
+
+        {/* Brand-new car vs transferring an existing one to this client. */}
+        {!isQuote && (
+          <div className="flex gap-3">
+            <button type="button" onClick={() => setRideMode('new')} className={`flex-1 px-5 py-4 rounded-2xl text-lg font-bold border ${rideMode === 'new' ? 'bg-green-800 border-green-500' : 'bg-gray-900 border-gray-700 hover:border-gray-500'}`}>🚗 BRAND-NEW RIDE</button>
+            <button type="button" onClick={() => setRideMode('existing')} className={`flex-1 px-5 py-4 rounded-2xl text-lg font-bold border ${rideMode === 'existing' ? 'bg-purple-800 border-purple-500' : 'bg-gray-900 border-gray-700 hover:border-gray-500'}`}>🔁 EXISTING RIDE — NEW OWNER</button>
+          </div>
+        )}
+
+        {rideMode === 'existing' && !isQuote ? (
+          <>
+            <p className="text-gray-400 text-lg">
+              The car was sold to a new owner: it keeps its number and its whole history.
+              Everything up to the transfer date stays with the previous owner; from that
+              moment on, the ride and its new invoices belong to the new client.
+            </p>
+
+            <div>
+              <label className="block mb-2 text-lg font-bold">NEW OWNER</label>
+              <select value={clientId} onChange={(e) => setClientId(e.target.value)} className={selectClass}>
+                <option value="">— Select the client —</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.client_number != null ? `${pad3(c.client_number)} — ` : ''}{c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block mb-2 text-lg font-bold">RIDE BEING TRANSFERRED</label>
+              <input
+                type="text"
+                value={rideSearch}
+                onChange={(e) => setRideSearch(e.target.value)}
+                className={inputClass}
+                placeholder="Search by code or name…"
+              />
+              <select value={transferRideId} onChange={(e) => setTransferRideId(e.target.value)} className={`${selectClass} mt-3`}>
+                <option value="">— Select the ride —</option>
+                {allRides
+                  .filter(r => r.client_id !== clientId || !clientId)
+                  .filter(r => {
+                    const q = rideSearch.trim().toLowerCase()
+                    if (!q) return true
+                    return (r.project_code || '').toLowerCase().includes(q) || (r.project_name || '').toLowerCase().includes(q)
+                  })
+                  .map(r => (
+                    <option key={r.id} value={r.id}>{r.project_code}{r.project_name ? ` — ${r.project_name}` : ''}</option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block mb-2 text-lg font-bold">TRANSFER DATE</label>
+              <input type="date" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} className={inputClass} />
+            </div>
+
+            <button onClick={transferRide} disabled={transferring} className="bg-purple-700 hover:bg-purple-600 disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold">
+              {transferring ? 'TRANSFERRING…' : '🔁 TRANSFER OWNERSHIP'}
+            </button>
+            <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
+          </>
+        ) : (
+        <>
 
         <div>
           <label className="block mb-2 text-lg font-bold">PROJECT CODE</label>
@@ -336,6 +476,9 @@ export default function NewRidePage() {
 
         <button onClick={saveRide} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE RIDE</button>
         <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
+
+        </>
+        )}
       </div>
     </main>
   )

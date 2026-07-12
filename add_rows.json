@@ -1,0 +1,6 @@
+[
+ {"invoice_id":"7c80ff4f-33db-4f21-b782-5de4228b8224","supplier":"AutoZone","item":"NGK Iridium IX Spark Plug TR8IX","part_number":"TR8IX","price":87.79,"amount_usd":15.47,"quantity":8,"tax":0,"extra":0,"item_discount":0,"export_status":"FRESH","source":"GZ28BR","paid_to":"GZ28BR","position":12},
+ {"invoice_id":"7c80ff4f-33db-4f21-b782-5de4228b8224","supplier":"PowerTrade","item":"Importação — NGK Iridium IX Spark Plug TR8IX","part_number":null,"price":92.66,"amount_usd":16.33,"quantity":1,"tax":0,"extra":0,"item_discount":0,"export_status":"FRESH","source":"GZ28BR","paid_to":"GZ28BR","position":13},
+ {"invoice_id":"7c80ff4f-33db-4f21-b782-5de4228b8224","supplier":"AutoZone","item":"GM Genuine Parts Suspension Control Arm Bushing 92214164","part_number":"92214164","price":177.39,"amount_usd":31.26,"quantity":2,"tax":0,"extra":0,"item_discount":0,"export_status":"FRESH","source":"GZ28BR","paid_to":"GZ28BR","position":14},
+ {"invoice_id":"7c80ff4f-33db-4f21-b782-5de4228b8224","supplier":"PowerTrade","item":"Importação — GM Genuine Parts Suspension Control Arm Bushing 92214164","part_number":null,"price":540.55,"amount_usd":95.26,"quantity":1,"tax":0,"extra":0,"item_discount":0,"export_status":"FRESH","source":"GZ28BR","paid_to":"GZ28BR","position":15}
+]

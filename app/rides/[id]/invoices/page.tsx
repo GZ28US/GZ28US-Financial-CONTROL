@@ -22,6 +22,7 @@ type Invoice = {
   feed_status: string | null
   live_status: string | null
   is_quote: boolean | null
+  client_id?: string | null
 }
 
 type InvoiceStats = {
@@ -84,6 +85,10 @@ export default function InvoicesPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Whether this owner (client or ride) is a quote entity — drives label + create button.
   const [ownerIsQuote, setOwnerIsQuote] = useState(false)
+  // Ride mode: each invoice belongs to the client stamped on it (ownership
+  // transfers freeze history). Name per client id, for the owner chip.
+  const [ownerNames, setOwnerNames] = useState<Record<string, string>>({})
+  const [rideClientId, setRideClientId] = useState<string | null>(null)
 
   useEffect(() => {
     loadOwner()
@@ -118,14 +123,34 @@ export default function InvoicesPage() {
 
   async function loadInvoices() {
     const column = isClient ? 'client_id' : 'ride_id'
-    const { data } = await supabase
+    let query = supabase
       .from('invoices')
       .select('*')
       .eq(column, ownerId)
       .order('created_at', { ascending: false })
+    // Client mode: shopping invoices only — ride invoices also carry a
+    // client_id stamp (frozen owner) and must not leak into this list.
+    if (isClient) query = query.is('ride_id', null)
+    const { data } = await query
 
     const invoiceList = data || []
     setInvoices(invoiceList)
+
+    // Ride mode: resolve each invoice's owner name (stamp ?? ride's current
+    // client) so transferred cars read clearly — old rows previous owner,
+    // new rows the new one.
+    if (!isClient) {
+      const { data: rideRow } = await supabase.from('rides').select('client_id').eq('id', ownerId).single()
+      const curId = rideRow?.client_id || null
+      setRideClientId(curId)
+      const ids = [...new Set([...invoiceList.map((i: any) => i.client_id), curId].filter(Boolean))] as string[]
+      if (ids.length) {
+        const { data: cs } = await supabase.from('clients').select('id, name').in('id', ids)
+        const m: Record<string, string> = {}
+        for (const c of cs || []) m[c.id] = c.name || ''
+        setOwnerNames(m)
+      }
+    }
 
     // Stock-sale income per donor invoice (a donated part another car pulled from stock).
     const stockByCode = new Map<string, { all: number; paid: number }>()
@@ -293,6 +318,15 @@ export default function InvoicesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{invoice.invoice_code}</h2>
+                    {/* owner chip — the client this invoice belongs to (frozen at creation;
+                        purple when it's a previous owner after a transfer) */}
+                    {!isClient && (() => {
+                      const ownId = invoice.client_id || rideClientId
+                      const name = ownId ? ownerNames[ownId] : null
+                      if (!name) return null
+                      const former = !!invoice.client_id && !!rideClientId && invoice.client_id !== rideClientId
+                      return <span className={`px-3 py-1 rounded-full text-sm font-bold ${former ? 'bg-purple-900 text-purple-300' : 'bg-gray-700 text-gray-300'}`}>👤 {name}</span>
+                    })()}
                     {(!isClient || invoice.is_quote) && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                     {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}

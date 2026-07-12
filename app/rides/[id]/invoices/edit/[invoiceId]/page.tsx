@@ -326,9 +326,13 @@ export default function EditInvoicePage() {
       setProjectName(pName)
       setRideMatch({ manufacturer: rideData?.manufacturer || '', model: rideData?.model || '', year: rideData?.year != null ? String(rideData.year) : '' })
       rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
-      // Resolve the ride's client so the DELAYED-income reminder can reach them.
-      if (rideData?.client_id) {
-        const { data: c } = await supabase.from('clients').select('name, phone, country, email, preferred_message_method, instagram, facebook').eq('id', rideData.client_id).single()
+      // Resolve THIS invoice's client (its stamp wins — ownership transfers
+      // keep old invoices with the previous owner; the ride's current owner is
+      // the fallback) so reports/reminders reach the right person.
+      const { data: invOwner } = await supabase.from('invoices').select('client_id').eq('id', invoiceId).single()
+      const ownerClientId = invOwner?.client_id || rideData?.client_id
+      if (ownerClientId) {
+        const { data: c } = await supabase.from('clients').select('name, phone, country, email, preferred_message_method, instagram, facebook').eq('id', ownerClientId).single()
         setClientName(c?.name || '')
         applyClientContact(c)
       }

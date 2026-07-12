@@ -258,7 +258,13 @@ export default function NewInvoicePage() {
       row.import_margin = pack.import_margin ?? 0
     }
     if (isClient) row.client_id = ownerId
-    else row.ride_id = ownerId
+    else {
+      row.ride_id = ownerId
+      // Freeze the owner: stamp the ride's CURRENT client on the invoice, so a
+      // future ownership transfer never re-attributes this invoice's history.
+      const { data: r } = await supabase.from('rides').select('client_id').eq('id', ownerId).single()
+      row.client_id = r?.client_id ?? null
+    }
 
     const { data: invoice, error } = await supabase.from('invoices').insert([row]).select().single()
     if (error || !invoice) { alert(error?.message || `Error creating ${isQuote ? 'quote' : 'invoice'}`); setSaving(false); return }

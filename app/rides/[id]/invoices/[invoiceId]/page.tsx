@@ -154,8 +154,13 @@ export default function ViewInvoicePage() {
         setRide(rideData)
         setProjectCode(rideData.project_code || '')
         setProjectName(rideData.project_name || '')
-        if (rideData.client_id) {
-          const { data: clientData } = await supabase.from('clients').select('*').eq('id', rideData.client_id).single()
+        // The invoice's OWN client stamp wins (ownership transfers: old
+        // invoices stay with the previous owner); the ride's current owner is
+        // only the fallback for unstamped rows.
+        const { data: invOwner } = await supabase.from('invoices').select('client_id').eq('id', invoiceId).single()
+        const ownerClientId = invOwner?.client_id || rideData.client_id
+        if (ownerClientId) {
+          const { data: clientData } = await supabase.from('clients').select('*').eq('id', ownerClientId).single()
           if (clientData) setClient(clientData)
         }
       }
