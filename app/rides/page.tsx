@@ -61,6 +61,8 @@ export default function RidesPage() {
   const [mode, setMode] = useState<'project' | 'quote'>('project')
   // Optional ?client=<id> narrows the list to one client's rides (the clients-list RIDES button).
   const [clientParam, setClientParam] = useState('')
+  // Rides this client SOLD (ownership transfer): ride id → sale date, for the badge.
+  const [soldByRide, setSoldByRide] = useState<Record<string, string>>({})
 
   // Read mode/client from the URL AFTER mount (reliable across soft navigation), then load.
   useEffect(() => {
@@ -76,7 +78,16 @@ export default function RidesPage() {
     const { data, error } = await supabase.from('rides').select('*')
     if (error) { console.error(error); setLoading(false); return }
 
-    const ridesData = (data || []).filter((r: any) => !!r.is_quote === (m === 'quote') && (!c || r.client_id === c))
+    // A client's filtered list also shows the rides they SOLD (closed
+    // ride_owners period) — badged, grayed, history intact.
+    const soldDates: Record<string, string> = {}
+    if (c) {
+      const { data: periods } = await supabase.from('ride_owners').select('ride_id, to_date').eq('client_id', c).not('to_date', 'is', null)
+      for (const p of periods || []) soldDates[p.ride_id] = p.to_date
+    }
+    const ridesData = (data || []).filter((r: any) =>
+      !!r.is_quote === (m === 'quote') && (!c || r.client_id === c || (soldDates[r.id] && r.client_id !== c)))
+    setSoldByRide(soldDates)
 
     // Stock-sale income per donor invoice (a donated part another car pulled from stock). Computed once.
     const stockByCode = new Map<string, { all: number; paid: number }>()
@@ -343,6 +354,10 @@ export default function RidesPage() {
                 <div>
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
+                    {/* SOLD — this client's era ended (ownership transfer); shows only on a client-filtered list */}
+                    {clientParam && soldByRide[ride.id] && (ride as any).client_id !== clientParam && (
+                      <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">SOLD {new Date(soldByRide[ride.id] + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    )}
                     {mode === 'project' && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                     {mode === 'project' && feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
