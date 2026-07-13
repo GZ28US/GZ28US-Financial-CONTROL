@@ -545,6 +545,17 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       if (upErr) { alert('PDF upload failed: ' + upErr.message); return }
       const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
       const url = urlData.publicUrl
+      // Also save the DynoData PDF into the ride's Dropbox PERFORMANCE folder
+      // (best-effort — the WhatsApp send still goes out if this fails).
+      try {
+        const b64: string = await new Promise((resolve, reject) => {
+          const r = new FileReader()
+          r.onload = () => resolve(String(r.result).split(',')[1] || '')
+          r.onerror = reject
+          r.readAsDataURL(blob)
+        })
+        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone: 'US', code: rideCode, filename, subfolder: 'Performance', contentBase64: b64 }) })
+      } catch { /* non-fatal */ }
       // Receipt lines: BoneStock corrected → latest pull corrected (pulls are sorted newest first).
       const bs = pulls.find(isBoneStock)
       const latest = pulls.filter((p) => !isBoneStock(p))[0]
