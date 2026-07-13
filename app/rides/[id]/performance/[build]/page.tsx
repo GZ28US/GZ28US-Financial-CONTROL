@@ -846,6 +846,9 @@ const BS_FIELDS: BSField[] = [
   { key: 'transmission', label: 'Transmission', kind: 'so' },
 ]
 
+// The DataSheet WhatsApp report goes to this fixed group (technical crew).
+const DATASHEET_GROUP = 'GZ28US - Tcal'
+
 // GZ28 logo as a JPEG data-URI for the PDF header (canvas round-trip keeps jsPDF happy).
 async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | null> {
   try {
@@ -865,6 +868,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
   const [bsSaving, setBsSaving] = useState(false)
+  const [bsSending, setBsSending] = useState(false)
   // The build's given name (ride_builds.name) — printed on the BuildSheet PDF header.
   const [buildName, setBuildName] = useState('')
 
@@ -1016,6 +1020,64 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     }
   }
 
+  // WhatsApp the full build sheet to the technical group — every visible field,
+  // with the MODDED values (anything not Stock / not the field's stock default) in bold.
+  async function sendSheet() {
+    setBsSending(true)
+    try {
+      // The PDF file goes ATTACHED, regenerated from the on-screen sheet so no stale file goes out.
+      const blob = await buildSheetPdf()
+      const b64: string = await new Promise((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(String(r.result).split(',')[1] || '')
+        r.onerror = reject
+        r.readAsDataURL(blob)
+      })
+      const buildTag = `Build.${String(buildNo).padStart(2, '0')}`
+      const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${buildTag} BuildSheet.pdf`
+      // Re-sync to the Dropbox HB Tuning folder first — the caption reports where it landed.
+      const ROOT_LABEL = 'Dropbox\\001 - GZ28US\\GZ28US Rides'
+      const savedIn: string[] = []
+      for (const zone of ['US']) {
+        try {
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+          const d = await res.json().catch(() => ({}))
+          if (d.ok && d.result === 'uploaded' && typeof d.path === 'string') {
+            const folderOnly = d.path.split('/').slice(0, -1).join('\\')
+            savedIn.push(`${ROOT_LABEL}\\${folderOnly}`)
+          }
+        } catch { /* non-fatal — the WhatsApp send still goes out */ }
+      }
+      // Public URL for the WhatsApp attachment (storage upload, same flow as the dyno reports).
+      const storagePath = `buildsheets/${rideCode}/${buildTag}-${Date.now()}.pdf`
+      const { error: upErr } = await supabase.storage.from('dyno-charts').upload(storagePath, blob, { upsert: true, contentType: 'application/pdf' })
+      if (upErr) { alert('PDF upload failed: ' + upErr.message); return }
+      const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(storagePath)
+      const lines: string[] = [
+        `🔧 *GZ28US · DATASHEET — ${buildTag}${buildName ? ` · ${buildName}` : ''}*`,
+        ...(rideTitle ? [`*${rideTitle}*`] : []),
+        ...(carLine ? [carLine] : []),
+        '',
+        `Power Source: ${sheet.power_source}`,
+        ...BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => {
+          const v = (sheet[f.key] || '').trim() || '—'
+          const stockVal = f.kind === 'so' ? 'Stock' : (f.options as string[])[0]
+          const modded = v !== '—' && v !== stockVal
+          return `${f.label}: ${modded ? `*${v}*` : v}`
+        }),
+        ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${p}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
+      ]
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: DATASHEET_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`)))
+      // success is silent — the button state already showed SENDING…
+    } catch (e) {
+      alert('WhatsApp send failed: ' + String(e))
+    } finally {
+      setBsSending(false)
+    }
+  }
+
   const sel = 'bg-gray-800 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
   const inp = 'bg-gray-900 border border-gray-700 rounded-2xl px-3 py-3 text-base w-full'
 
@@ -1023,6 +1085,11 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      <div className="flex justify-end mb-4">
+        <button onClick={sendSheet} disabled={bsSending} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
+          {bsSending ? 'SENDING…' : 'SEND DATASHEET'}
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <div>
           <label className="block mb-1 text-sm text-gray-400 font-bold">POWER SOURCE</label>
