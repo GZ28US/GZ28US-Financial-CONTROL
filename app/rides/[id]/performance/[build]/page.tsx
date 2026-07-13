@@ -1150,10 +1150,16 @@ export default function RidePerformancePage() {
   const buildNo = Math.max(1, parseInt(String(params.build || '1'), 10) || 1)
   const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
   const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; year: number | null; transmission: string | null } | null>(null)
+  const [buildName, setBuildName] = useState('')
   const [tab, setTab] = useState<Tab>('BUILD SHEET')
 
   useEffect(() => {
-    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, transmission').eq('id', rideId).single().then(({ data }) => setRide(data))
+    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, transmission').eq('id', rideId).single().then(({ data }) => {
+      setRide(data)
+      if (data?.project_code) {
+        supabase.from('ride_builds').select('name').eq('ride_code', data.project_code).eq('build_no', buildNo).maybeSingle().then(({ data: b }) => setBuildName(b?.name || ''))
+      }
+    })
   }, [])
 
   const title = ride ? `${ride.project_code || ''}${ride.project_name ? ` — ${ride.project_name}` : ''}` : ''
@@ -1167,7 +1173,7 @@ export default function RidePerformancePage() {
       <Header />
 
       <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">PERFORMANCE — {buildLabel}</h1>
+        <h1 className="text-4xl font-bold">PERFORMANCE — {buildLabel}{buildName ? ` — ${buildName}` : ''}</h1>
         <div className="flex gap-3">
           <Link href={`/rides/${rideId}/performance`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           <Link href={`/rides/${rideId}`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">VIEW RIDE</Link>
