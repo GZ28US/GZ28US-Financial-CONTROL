@@ -864,12 +864,15 @@ async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | n
   } catch { return null }
 }
 
-function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number }) {
+function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; preferred_message_method: string | null } | null }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
   const [bsSaving, setBsSaving] = useState(false)
   const [bsSending, setBsSending] = useState(false)
+  // SEND DATASHEET confirm dialog + "also send to the client" choice.
+  const [sheetSendOpen, setSheetSendOpen] = useState(false)
+  const [sheetToClient, setSheetToClient] = useState(false)
   // The build's given name (ride_builds.name) — printed on the BuildSheet PDF header.
   const [buildName, setBuildName] = useState('')
 
@@ -1023,7 +1026,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
 
   // WhatsApp the full build sheet to the technical group — every visible field,
   // with the MODDED values (anything not Stock / not the field's stock default) in bold.
-  async function sendSheet() {
+  async function sendSheet(alsoClient: boolean) {
+    setSheetSendOpen(false)
     setBsSending(true)
     try {
       // The PDF file goes ATTACHED, regenerated from the on-screen sheet so no stale file goes out.
@@ -1070,7 +1074,17 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       ]
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
       const data = await res.json().catch(() => ({}))
-      if (!data.ok) alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`)))
+      if (!data.ok) { alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return }
+      // Optionally send the client their own copy of the DataSheet.
+      if (alsoClient) {
+        const to = client && (client.preferred_message_method || 'WhatsApp') === 'WhatsApp' ? toWaNumber(client.phone) : null
+        if (!to) alert('Sent to the group. The client has no WhatsApp number on file, so the DataSheet was not sent to them.')
+        else {
+          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: `🔧 *Your GZ28 Build Sheet*${rideTitle ? `\n${rideTitle}` : ''}`, documentUrl: urlData.publicUrl, filename }) })
+          const cd = await cli.json().catch(() => ({}))
+          if (!cd.ok) alert('Sent to the group, but the client send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`)))
+        }
+      }
       // success is silent — the button state already showed SENDING…
     } catch (e) {
       alert('WhatsApp send failed: ' + String(e))
@@ -1086,8 +1100,25 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+      {sheetSendOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
+            <h2 className="text-2xl font-bold mb-2">Send DataSheet</h2>
+            <p className="text-gray-400 mb-5">Goes to the <span className="font-bold text-gray-200">{REPORTS_GROUP}</span> group.</p>
+            <label className="flex items-center gap-3 mb-2 cursor-pointer">
+              <input type="checkbox" checked={sheetToClient} onChange={(e) => setSheetToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
+              <span className="text-lg">Also send to the client{client?.name ? ` (${client.name})` : ''}</span>
+            </label>
+            {sheetToClient && !client?.phone && <p className="text-sm text-yellow-400 mb-2">This ride has no client phone on file — only the group send will go out.</p>}
+            <div className="flex gap-4 mt-6">
+              <button onClick={() => setSheetSendOpen(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">CANCEL</button>
+              <button onClick={() => sendSheet(sheetToClient)} className="flex-1 bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">SEND</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex justify-end mb-4">
-        <button onClick={sendSheet} disabled={bsSending} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
+        <button onClick={() => { setSheetToClient(false); setSheetSendOpen(true) }} disabled={bsSending} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
           {bsSending ? 'SENDING…' : 'SEND DATASHEET'}
         </button>
       </div>
@@ -1152,13 +1183,17 @@ export default function RidePerformancePage() {
   const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
   const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null; transmission: string | null } | null>(null)
   const [buildName, setBuildName] = useState('')
+  const [client, setClient] = useState<{ name: string | null; phone: string | null; preferred_message_method: string | null } | null>(null)
   const [tab, setTab] = useState<Tab>('BUILD SHEET')
 
   useEffect(() => {
-    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, special_edition, year, transmission').eq('id', rideId).single().then(({ data }) => {
+    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, special_edition, year, transmission, client_id').eq('id', rideId).single().then(({ data }) => {
       setRide(data)
       if (data?.project_code) {
         supabase.from('ride_builds').select('name').eq('ride_code', data.project_code).eq('build_no', buildNo).maybeSingle().then(({ data: b }) => setBuildName(b?.name || ''))
+      }
+      if (data?.client_id) {
+        supabase.from('clients').select('name, phone, preferred_message_method').eq('id', data.client_id).single().then(({ data: c }) => setClient(c))
       }
     })
   }, [])
@@ -1210,7 +1245,7 @@ export default function RidePerformancePage() {
       ) : tab === 'DYNO' ? (
         <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} />
       ) : tab === 'BUILD SHEET' ? (
-        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} />
+        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} />
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
           <h2 className="text-2xl font-bold mb-2">{tab}</h2>
