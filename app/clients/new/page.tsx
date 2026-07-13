@@ -39,10 +39,13 @@ export default function NewClientPage() {
   // Preview the auto-assigned client code (US.### / US.QT.###) for this area.
   const [nextCode, setNextCode] = useState('')
   useEffect(() => {
-    const isQuote = new URLSearchParams(window.location.search).get('mode') === 'quote'
+    const m = new URLSearchParams(window.location.search).get('mode')
+    const isShop = m === 'shop', isQuote = m === 'quote'
     ;(async () => {
-      const { data: maxRow } = await supabase.from('clients').select('client_number').eq('is_quote', isQuote).order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
-      setNextCode(clientCode({ is_quote: isQuote, client_number: (maxRow?.client_number ?? 0) + 1 }))
+      let q = supabase.from('clients').select('client_number')
+      q = isShop ? q.eq('origin', 'SHOP') : q.eq('origin', 'PROJECT').eq('is_quote', isQuote)
+      const { data: maxRow } = await q.order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
+      setNextCode(clientCode({ is_quote: isQuote, origin: isShop ? 'SHOP' : 'PROJECT', client_number: (maxRow?.client_number ?? 0) + 1 }))
     })()
   }, [])
 
@@ -114,14 +117,11 @@ export default function NewClientPage() {
 
     // Quote-area clients are quote clients (US.QT.###); project-area are US.###.
     // Each kind has its own client_number sequence.
-    const isQuote = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'quote'
-    const { data: maxRow } = await supabase
-      .from('clients')
-      .select('client_number')
-      .eq('is_quote', isQuote)
-      .order('client_number', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle()
+    const m = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('mode') : null
+    const isShop = m === 'shop', isQuote = m === 'quote'
+    let numQuery = supabase.from('clients').select('client_number')
+    numQuery = isShop ? numQuery.eq('origin', 'SHOP') : numQuery.eq('origin', 'PROJECT').eq('is_quote', isQuote)
+    const { data: maxRow } = await numQuery.order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
     const nextNumber = (maxRow?.client_number ?? 0) + 1
 
     const { error } = await supabase
@@ -139,6 +139,7 @@ export default function NewClientPage() {
         zip: form.zip,
         client_number: nextNumber,
         is_quote: isQuote,
+        origin: isShop ? 'SHOP' : 'PROJECT',
         preferred_message_method: form.preferred_message_method,
       })
 
@@ -147,7 +148,7 @@ export default function NewClientPage() {
       return
     }
 
-    window.location.href = `${BASE_PATH}/clients?mode=${isQuote ? 'quote' : 'project'}`
+    window.location.href = `${BASE_PATH}/clients?mode=${m || 'project'}`
   }
 
   const stateOptions = form.country === 'USA' ? usaStates : brazilStates

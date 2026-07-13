@@ -57,8 +57,9 @@ export default function RidesPage() {
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
   const [search, setSearch] = useState('')
-  // Projects area shows is_quote=false rides; Quotes area shows is_quote=true.
-  const [mode, setMode] = useState<'project' | 'quote'>('project')
+  // PROJECTS = origin PROJECT + is_quote false; QUOTES = origin PROJECT +
+  // is_quote true; SHOP = origin SHOP (shop rides, kept fully separate).
+  const [mode, setMode] = useState<'project' | 'quote' | 'shop'>('project')
   // Optional ?client=<id> narrows the list to one client's rides (the clients-list RIDES button).
   const [clientParam, setClientParam] = useState('')
   // Rides this client SOLD (ownership transfer): ride id → sale date, for the badge.
@@ -67,14 +68,15 @@ export default function RidesPage() {
   // Read mode/client from the URL AFTER mount (reliable across soft navigation), then load.
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search)
-    const m = sp.get('mode') === 'quote' ? 'quote' : 'project'
+    const mp = sp.get('mode')
+    const m = mp === 'quote' ? 'quote' : mp === 'shop' ? 'shop' : 'project'
     const c = sp.get('client') || ''
     setMode(m)
     setClientParam(c)
     loadRides(m, c)
   }, [])
 
-  async function loadRides(m: 'project' | 'quote', c: string) {
+  async function loadRides(m: 'project' | 'quote' | 'shop', c: string) {
     const { data, error } = await supabase.from('rides').select('*')
     if (error) { console.error(error); setLoading(false); return }
 
@@ -85,8 +87,10 @@ export default function RidesPage() {
       const { data: periods } = await supabase.from('ride_owners').select('ride_id, to_date').eq('client_id', c).not('to_date', 'is', null)
       for (const p of periods || []) soldDates[p.ride_id] = p.to_date
     }
-    const ridesData = (data || []).filter((r: any) =>
-      !!r.is_quote === (m === 'quote') && (!c || r.client_id === c || (soldDates[r.id] && r.client_id !== c)))
+    const ridesData = (data || []).filter((r: any) => {
+      const modeOk = m === 'shop' ? r.origin === 'SHOP' : r.origin !== 'SHOP' && (!!r.is_quote === (m === 'quote'))
+      return modeOk && (!c || r.client_id === c || (soldDates[r.id] && r.client_id !== c))
+    })
     setSoldByRide(soldDates)
 
     // Stock-sale income per donor invoice (a donated part another car pulled from stock). Computed once.
@@ -267,7 +271,7 @@ export default function RidesPage() {
     return statusOk && liveOk && searchOk
   })
   // REPORT filter only when the current selection has both ready & not-ready (never on INCOMPLETE).
-  const showReportFilter = mode === 'project' && liveFilter !== 'INCOMPLETE' && baseFiltered.some(isReady) && baseFiltered.some(r => !isReady(r))
+  const showReportFilter = mode !== 'quote' && liveFilter !== 'INCOMPLETE' && baseFiltered.some(isReady) && baseFiltered.some(r => !isReady(r))
   const filteredRides = baseFiltered.filter(r => !showReportFilter || reportFilter === 'ALL' || (reportFilter === 'READY' ? isReady(r) : !isReady(r)))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
@@ -289,14 +293,14 @@ export default function RidesPage() {
       )}
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
+        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE RIDES' : mode === 'shop' ? 'SHOP RIDES' : 'PROJECT RIDES'} ({filteredRides.length})</h1>
         <div className="flex items-center gap-3 flex-wrap">
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search rides…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
           <Link href={`/rides/new?mode=${mode}${clientParam ? `&client=${clientParam}` : ''}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
         </div>
       </div>
       <div className="flex items-center gap-4 flex-wrap mb-8">
-        {mode === 'project' && (
+        {mode !== 'quote' && (
           <>
             <div className="flex gap-2 flex-wrap">
               {(['ALL', 'AWAITING CAR', 'ON DUTY', 'DONE', 'DELIVERED'] as const).map((f) => (
@@ -358,9 +362,9 @@ export default function RidesPage() {
                     {clientParam && soldByRide[ride.id] && (ride as any).client_id !== clientParam && (
                       <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">SOLD {new Date(soldByRide[ride.id] + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     )}
-                    {mode === 'project' && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
+                    {mode !== 'quote' && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
-                    {mode === 'project' && feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
+                    {mode !== 'quote' && feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}

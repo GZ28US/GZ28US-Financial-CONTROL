@@ -9,7 +9,7 @@ import { clientCode } from '@/lib/utils'
 // client's RIDES, then jump to that ride's invoice/quote creation page.
 //   type='invoice' -> project clients & project rides, creates an invoice
 //   type='quote'   -> any client & any of their rides, creates a quote (?mode=quote)
-export default function DocPicker({ type, onClose, duplicateFrom }: { type: 'invoice' | 'quote'; onClose: () => void; duplicateFrom?: string }) {
+export default function DocPicker({ type, onClose, duplicateFrom, origin }: { type: 'invoice' | 'quote'; onClose: () => void; duplicateFrom?: string; origin?: 'SHOP' }) {
   const router = useRouter()
   const [clients, setClients] = useState<any[]>([])
   const [rides, setRides] = useState<any[]>([])
@@ -18,25 +18,27 @@ export default function DocPicker({ type, onClose, duplicateFrom }: { type: 'inv
 
   useEffect(() => {
     void (async () => {
-      let q: any = supabase.from('clients').select('id, name, client_number, is_quote')
-      if (type === 'invoice') q = q.eq('is_quote', false)
+      let q: any = supabase.from('clients').select('id, name, client_number, is_quote, origin')
+      if (origin === 'SHOP') q = q.eq('origin', 'SHOP')
+      else { q = q.neq('origin', 'SHOP'); if (type === 'invoice') q = q.eq('is_quote', false) }
       // Project clients (is_quote=false) first, then quote clients — each by number.
       const { data } = await q.order('is_quote', { ascending: true }).order('client_number', { ascending: true })
       setClients(data || [])
     })()
-  }, [type])
+  }, [type, origin])
 
   useEffect(() => {
     setRideId('')
     if (!clientId) { setRides([]); return }
     void (async () => {
-      let q: any = supabase.from('rides').select('id, project_code, project_name, is_quote').eq('client_id', clientId)
-      if (type === 'invoice') q = q.eq('is_quote', false)
+      let q: any = supabase.from('rides').select('id, project_code, project_name, is_quote, origin').eq('client_id', clientId)
+      if (origin === 'SHOP') q = q.eq('origin', 'SHOP')
+      else { q = q.neq('origin', 'SHOP'); if (type === 'invoice') q = q.eq('is_quote', false) }
       // Project rides first, then quote rides — each by code.
       const { data } = await q.order('is_quote', { ascending: true }).order('project_code', { ascending: true })
       setRides(data || [])
     })()
-  }, [clientId, type])
+  }, [clientId, type, origin])
 
   function create() {
     if (!rideId) return

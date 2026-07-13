@@ -43,9 +43,10 @@ export const CODE_PREFIX = 'US'
 
 export function pad3(n: number): string { return String(n).padStart(3, '0') }
 
-// Display code for a client: US.### (project) / US.QT.### (quote).
-export function clientCode(c: { is_quote?: boolean | null; client_number: number | null }): string {
+// Display code for a client: US.### (project) / US.QT.### (quote) / SHP.### (shop).
+export function clientCode(c: { is_quote?: boolean | null; client_number: number | null; origin?: string | null }): string {
   const num = c.client_number != null ? pad3(c.client_number) : '—'
+  if (c.origin === 'SHOP') return `SHP.${num}`
   return `${CODE_PREFIX}.${c.is_quote ? 'QT.' : ''}${num}`
 }
 

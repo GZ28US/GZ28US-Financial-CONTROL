@@ -18,6 +18,7 @@ type Client = {
   zip: string | null
   client_number: number | null
   is_quote: boolean | null
+  origin: string | null
 }
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -30,10 +31,12 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  // Projects area shows is_quote=false clients; Quotes area shows is_quote=true.
-  const [mode] = useState<'project' | 'quote'>(() => {
+  // PROJECTS = origin PROJECT + is_quote false; QUOTES = origin PROJECT +
+  // is_quote true; SHOP = origin SHOP (shop customers, kept fully separate).
+  const [mode] = useState<'project' | 'quote' | 'shop'>(() => {
     if (typeof window === 'undefined') return 'project'
-    return new URLSearchParams(window.location.search).get('mode') === 'quote' ? 'quote' : 'project'
+    const m = new URLSearchParams(window.location.search).get('mode')
+    return m === 'quote' ? 'quote' : m === 'shop' ? 'shop' : 'project'
   })
   const [search, setSearch] = useState('')
 
@@ -45,7 +48,10 @@ export default function ClientsPage() {
       .select('*')
       .order('name', { ascending: true })
 
-    const clientList = (data || []).filter((c: any) => !!c.is_quote === (mode === 'quote'))
+    const clientList = (data || []).filter((c: any) =>
+      mode === 'shop'
+        ? c.origin === 'SHOP'
+        : c.origin !== 'SHOP' && (!!c.is_quote === (mode === 'quote')))
 
     // Stock-sale income per donor invoice (a donated part another car pulled from stock).
     const stockByCode = new Map<string, { all: number; paid: number }>()
@@ -215,7 +221,7 @@ export default function ClientsPage() {
       )}
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
+        <h1 className="text-4xl font-bold">{mode === 'quote' ? 'QUOTE' : mode === 'shop' ? 'SHOP' : 'PROJECT'} CLIENTS ({filtered.length})</h1>
         <div className="flex items-center gap-3 flex-wrap">
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search clients…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
           <Link href={`/clients/new?mode=${mode}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW CLIENT</Link>

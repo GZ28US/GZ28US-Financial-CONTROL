@@ -89,6 +89,7 @@ export default function NewInvoicePage() {
       const row: any = {
         invoice_code: newCode,
         ride_id: ownerId,
+        origin: src.origin || 'PROJECT',
         is_quote: src.is_quote,
         target_grand_total: src.target_grand_total ?? null,
         florida_taxes: src.florida_taxes ?? null,
@@ -257,13 +258,19 @@ export default function NewInvoicePage() {
       row.global_discount = pack.global_discount ?? null
       row.import_margin = pack.import_margin ?? 0
     }
-    if (isClient) row.client_id = ownerId
-    else {
+    // Invoices inherit their owner's origin (PROJECT vs SHOP) so shop invoices
+    // stay in the SHOP area and never mix into PROJECTS.
+    if (isClient) {
+      row.client_id = ownerId
+      const { data: c } = await supabase.from('clients').select('origin').eq('id', ownerId).single()
+      row.origin = c?.origin || 'PROJECT'
+    } else {
       row.ride_id = ownerId
       // Freeze the owner: stamp the ride's CURRENT client on the invoice, so a
       // future ownership transfer never re-attributes this invoice's history.
-      const { data: r } = await supabase.from('rides').select('client_id').eq('id', ownerId).single()
+      const { data: r } = await supabase.from('rides').select('client_id, origin').eq('id', ownerId).single()
       row.client_id = r?.client_id ?? null
+      row.origin = r?.origin || 'PROJECT'
     }
 
     const { data: invoice, error } = await supabase.from('invoices').insert([row]).select().single()

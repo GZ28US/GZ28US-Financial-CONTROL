@@ -48,6 +48,11 @@ export default function InvoicesPage() {
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
   const [picker, setPicker] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // SHOP area shows origin=SHOP invoices; the default (PROJECTS) shows origin=PROJECT.
+  const [mode] = useState<'project' | 'shop'>(() => {
+    if (typeof window === 'undefined') return 'project'
+    return new URLSearchParams(window.location.search).get('mode') === 'shop' ? 'shop' : 'project'
+  })
 
   useEffect(() => { load() }, [])
 
@@ -56,6 +61,7 @@ export default function InvoicesPage() {
       .from('invoices')
       .select('id, invoice_code, ride_id, is_quote, hiring_date, entry_date, conclusion_date, delivery_date, mileage, service, florida_taxes, global_discount, fl_tax_expense_date, feed_status, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', false)
+      .eq('origin', mode === 'shop' ? 'SHOP' : 'PROJECT')
       .not('ride_id', 'is', null)
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
@@ -184,7 +190,7 @@ export default function InvoicesPage() {
       )}
       <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
         <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-4xl font-bold">INVOICES ({filtered.length})</h1>
+          <h1 className="text-4xl font-bold">{mode === 'shop' ? 'SHOP ' : ''}INVOICES ({filtered.length})</h1>
           <div className="flex gap-2 flex-wrap">
             {(['ALL', 'INCOMPLETE', 'REALTIME', 'CLOSED'] as const).map((f) => (
               <button key={f} onClick={() => setLiveFilter(f)} className={chip(liveFilter === f)}>{f === 'REALTIME' ? 'ONLINE' : f}</button>
@@ -200,7 +206,7 @@ export default function InvoicesPage() {
         </div>
         <button onClick={() => setPicker(true)} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW INVOICE</button>
       </div>
-      {picker && <DocPicker type="invoice" onClose={() => setPicker(false)} />}
+      {picker && <DocPicker type="invoice" onClose={() => setPicker(false)} origin={mode === 'shop' ? 'SHOP' : undefined} />}
 
       {!loading && readyCount > 0 && (
         <div className="bg-gray-900 border border-gray-700 rounded-3xl p-5 mb-6">

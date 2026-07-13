@@ -27,6 +27,7 @@ export default function QuotesPage() {
       .from('invoices')
       .select('id, invoice_code, ride_id, is_quote, hiring_date, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', true)
+      .neq('origin', 'SHOP')
       .not('ride_id', 'is', null)
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })

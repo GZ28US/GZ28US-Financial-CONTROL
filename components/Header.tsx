@@ -23,6 +23,15 @@ const MENU: MenuItem[] = [
   },
   {
     type: 'dropdown',
+    label: 'SHOP',
+    items: [
+      ['/clients?mode=shop', 'CLIENTS'],
+      ['/rides?mode=shop', 'RIDES'],
+      ['/invoices?mode=shop', 'INVOICES'],
+    ],
+  },
+  {
+    type: 'dropdown',
     label: 'PROJECTS',
     items: [
       ['/clients?mode=project', 'CLIENTS'],

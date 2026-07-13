@@ -39,8 +39,15 @@ export default function NewRidePage() {
   // ?client=<id> (from a client's filtered rides list) arrives pre-chosen.
   const [clientId, setClientId] = useState(() => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('client')) || '')
   const [clients, setClients] = useState<Client[]>([])
-  // Quote-area rides are quote rides (US.QT.###); project-area are US.###.
-  const [isQuote] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'quote')
+  // Area determines the code series: US.### (project), US.QT.### (quote),
+  // SHP.### (shop). Each is its own independent sequence.
+  const [mode] = useState<'project' | 'quote' | 'shop'>(() => {
+    if (typeof window === 'undefined') return 'project'
+    const m = new URLSearchParams(window.location.search).get('mode')
+    return m === 'quote' ? 'quote' : m === 'shop' ? 'shop' : 'project'
+  })
+  const isQuote = mode === 'quote'
+  const isShop = mode === 'shop'
 
   // EXISTING RIDE — ownership transfer. Picking an existing car for a client
   // sells it to them from the chosen date on: the car keeps its number and its
@@ -71,18 +78,18 @@ export default function NewRidePage() {
   useEffect(() => { loadInitialData() }, [])
 
   async function loadInitialData() {
-    const wantPrefix = isQuote ? 'US.QT' : 'US'
+    const wantPrefix = isShop ? 'SHP' : isQuote ? 'US.QT' : 'US'
 
     // Code generation runs first and on its own, so a slow/failed client fetch can
     // never leave the PROJECT CODE blank. Auto-suggest the next code within this
     // kind's own sequence: US.### for project rides, US.QT.### for quote rides —
     // max trailing number among same-kind rides + 1, padded to 3 digits.
     try {
-      const { data: rideData } = await supabase
-        .from('rides')
-        .select('project_code')
-        .eq('is_quote', isQuote)
-        .not('project_code', 'is', null)
+      // Scope the sequence to this area's own origin so SHP.### and US.###
+      // never collide (the regex below only reads the trailing number).
+      let codeQuery = supabase.from('rides').select('project_code').not('project_code', 'is', null)
+      codeQuery = isShop ? codeQuery.eq('origin', 'SHOP') : codeQuery.eq('origin', 'PROJECT').eq('is_quote', isQuote)
+      const { data: rideData } = await codeQuery
       // Suggest the LOWEST UNUSED number in this kind's sequence (not global max+1),
       // so a deliberately high / pinned code (e.g. a themed US.170) doesn't drag every
       // new ride up behind it — new rides keep filling the sequence (…035, 036).
@@ -105,11 +112,9 @@ export default function NewRidePage() {
     // ride only lists quote clients and a project ride only project clients —
     // otherwise the two #001s, #002s… collide in the dropdown.
     try {
-      const { data: clientData } = await supabase
-        .from('clients')
-        .select('id, name, client_number')
-        .eq('is_quote', isQuote)
-        .order('client_number', { ascending: true, nullsFirst: false })
+      let clientQuery = supabase.from('clients').select('id, name, client_number')
+      clientQuery = isShop ? clientQuery.eq('origin', 'SHOP') : clientQuery.eq('origin', 'PROJECT').eq('is_quote', isQuote)
+      const { data: clientData } = await clientQuery.order('client_number', { ascending: true, nullsFirst: false })
       if (clientData) setClients(clientData as Client[])
     } catch (e) {
       console.error('Client load failed', e)
@@ -119,11 +124,9 @@ export default function NewRidePage() {
     // rides are never sold between clients).
     if (!isQuote) {
       try {
-        const { data: rideRows } = await supabase
-          .from('rides')
-          .select('id, project_code, project_name, client_id, created_at')
-          .eq('is_quote', false)
-          .order('project_code', { ascending: true })
+        let xQuery = supabase.from('rides').select('id, project_code, project_name, client_id, created_at')
+        xQuery = isShop ? xQuery.eq('origin', 'SHOP') : xQuery.eq('origin', 'PROJECT').eq('is_quote', false)
+        const { data: rideRows } = await xQuery.order('project_code', { ascending: true })
         if (rideRows) setAllRides(rideRows as TransferRide[])
       } catch (e) {
         console.error('Rides load failed', e)
@@ -260,12 +263,13 @@ export default function NewRidePage() {
       plate: plate || null,
       photo_url: photoUrl || null,
       is_quote: isQuote,
+      origin: isShop ? 'SHOP' : 'PROJECT',
     }])
     if (error) { alert(error.message); return }
 
     // Dropbox folder sync: every new PROJECT ride gets its physical folder
-    // ("CODE - Name") in GZ28US Rides. Quotes never get folders. Non-blocking.
-    if (!isQuote) {
+    // ("CODE - Name") in GZ28US Rides. Quotes and shop rides don't. Non-blocking.
+    if (mode === 'project') {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST',
@@ -278,7 +282,7 @@ export default function NewRidePage() {
         alert('Ride saved, but the Dropbox folder could not be created:\n' + String(e))
       }
     }
-    router.push(`/rides?mode=${isQuote ? 'quote' : 'project'}`)
+    router.push(`/rides?mode=${mode}`)
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
