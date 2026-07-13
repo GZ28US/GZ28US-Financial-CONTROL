@@ -80,10 +80,10 @@ function toLocalDialect(p: DynoPull): DynoPull {
 // The auto-created baseline row is identified by its PACK label.
 function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
-function DynoSection({ rideId, rideCode, rideTitle, buildNo }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number }) {
+function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number; defaultLoss: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+  const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: defaultLoss, dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const editBhp = applyLoss(editForm.whp, editForm.loss)
@@ -105,7 +105,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo }: { rideId: string;
   const [dynoSending, setDynoSending] = useState(false)
   // Loss (crank→wheel) is a per-ride CONSTANT — entered once, shown above the table, not a column.
   const [editingLoss, setEditingLoss] = useState(false)
-  const [lossDraft, setLossDraft] = useState('')
+  const [lossDraft, setLossDraft] = useState(defaultLoss)
   const rideLoss = pulls.find((p) => p.loss_pct != null)?.loss_pct ?? null
 
   useEffect(() => {
@@ -1149,12 +1149,12 @@ export default function RidePerformancePage() {
   const rideId = String(params.id)
   const buildNo = Math.max(1, parseInt(String(params.build || '1'), 10) || 1)
   const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
-  const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; year: number | null; transmission: string | null } | null>(null)
+  const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null; transmission: string | null } | null>(null)
   const [buildName, setBuildName] = useState('')
   const [tab, setTab] = useState<Tab>('BUILD SHEET')
 
   useEffect(() => {
-    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, transmission').eq('id', rideId).single().then(({ data }) => {
+    supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, special_edition, year, transmission').eq('id', rideId).single().then(({ data }) => {
       setRide(data)
       if (data?.project_code) {
         supabase.from('ride_builds').select('name').eq('ride_code', data.project_code).eq('build_no', buildNo).maybeSingle().then(({ data: b }) => setBuildName(b?.name || ''))
@@ -1167,6 +1167,18 @@ export default function RidePerformancePage() {
   const carLine = ride ? [ride.brand, ride.model, ride.version, ride.transmission, ride.year].filter(Boolean).join(' ') : ''
   // BoneStock tune filename prefix: "[manufacturer] [year] [brand] [model] [version] [transmission]".
   const tuneBase = ride ? [ride.manufacturer, ride.year, ride.brand, ride.model, ride.version, ride.transmission].filter(Boolean).join(' ') : ''
+  // Known drivetrain loss: Challenger/Charger Hellcat or Redeye WIDEBODY (NOT the
+  // SuperStock) dyno at ~18.5% crank→wheel loss — pre-filled, still editable.
+  const defaultLoss = (() => {
+    if (!ride) return ''
+    const modelTxt = (ride.model || '').toLowerCase()
+    const trimTxt = `${ride.version || ''} ${ride.special_edition || ''}`.toLowerCase()
+    const isCC = /\b(challenger|charger)\b/.test(modelTxt)
+    const isHellcatOrRedeye = /(hellcat|red\s*eye)/.test(trimTxt)
+    const isWidebody = /(wide\s*body)/.test(trimTxt)
+    const isSuperStock = /(super\s*stock)/.test(trimTxt)
+    return isCC && isHellcatOrRedeye && isWidebody && !isSuperStock ? '18.5' : ''
+  })()
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -1196,7 +1208,7 @@ export default function RidePerformancePage() {
       {!ride ? (
         <p className='text-xl text-gray-400'>Loading…</p>
       ) : tab === 'DYNO' ? (
-        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} />
+        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} />
       ) : tab === 'BUILD SHEET' ? (
         <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} />
       ) : (
