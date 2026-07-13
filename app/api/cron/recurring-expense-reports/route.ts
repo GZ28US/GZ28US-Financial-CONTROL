@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
+
+// This cron runs server-side with NO user session. Under RLS the bare anon key
+// is blocked, so it talks to Supabase with the SERVICE-ROLE key (bypasses RLS).
+// Falls back to anon if the key isn't set yet (pre-RLS) so a missing env never
+// hard-crashes the route. Requires SUPABASE_SERVICE_ROLE_KEY in Vercel.
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  { auth: { persistSession: false } },
+)
 
 // Vercel cron hits this route once a day (see vercel.json). Authenticates via
 // the CRON_SECRET env var. Two passes:

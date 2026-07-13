@@ -69,41 +69,25 @@ export default function StaffDutySelfPage() {
   }, [])
 
   async function load() {
-    const { data: st } = await supabase.from('staff').select('id, name, phone').eq('id', staffId).maybeSingle()
-    if (!st) { setNotFound(true); setLoading(false); return }
-    setStaff({ name: st.name, phone: st.phone })
-    const { data: dutyRows } = await supabase.from('invoice_duties').select('*').eq('staff_id', staffId).order('created_at', { ascending: true })
-    const invoiceIds = [...new Set((dutyRows || []).map((d: any) => d.invoice_id).filter(Boolean))]
-    let invs: any[] = []
-    if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, delivery_date, conclusion_date').in('id', invoiceIds)
-      invs = data || []
-    }
-    const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
-    const rideIds = [...new Set(invs.map((i: any) => i.ride_id).filter(Boolean))]
-    let rides: any[] = []
-    if (rideIds.length) {
-      const { data } = await supabase.from('rides').select('id, project_code, project_name').in('id', rideIds)
-      rides = data || []
-    }
-    const rideById = new Map<string, any>(); rides.forEach((r: any) => rideById.set(r.id, r))
-    setDuties((dutyRows || []).map((d: any) => {
-      const inv = invById.get(d.invoice_id)
-      const ride = inv?.ride_id ? rideById.get(inv.ride_id) : null
-      return {
-        id: d.id,
-        description: d.description || '',
-        done: !!d.done,
-        priority: String(d.priority || '1'),
-        invoiceCode: inv?.invoice_code || '—',
-        carLabel: ride ? [ride.project_code, ride.project_name].filter(Boolean).join(' — ') : '',
-        time_seconds: Number(d.time_seconds) || 0,
-        time_started_at: d.time_started_at || null,
-        work_started_at: d.work_started_at || null,
-        work_ended_at: d.work_ended_at || null,
-        promised: inv?.delivery_date && !inv?.conclusion_date ? inv.delivery_date : null,
-      }
-    }))
+    // One scoped SECURITY DEFINER RPC returns the staff + their duties joined to
+    // invoice_code / ride labels / promised-to — exposing ONLY those safe fields
+    // (never invoice pricing). anon has no direct access to staff/invoices/rides.
+    const { data } = await supabase.rpc('duties_self_load', { p_staff_id: staffId })
+    if (!data) { setNotFound(true); setLoading(false); return }
+    setStaff({ name: data.staff.name, phone: data.staff.phone })
+    setDuties((data.duties || []).map((d: any) => ({
+      id: d.id,
+      description: d.description || '',
+      done: !!d.done,
+      priority: String(d.priority || '1'),
+      invoiceCode: d.invoice_code || '—',
+      carLabel: [d.ride_project_code, d.ride_project_name].filter(Boolean).join(' — '),
+      time_seconds: Number(d.time_seconds) || 0,
+      time_started_at: d.time_started_at || null,
+      work_started_at: d.work_started_at || null,
+      work_ended_at: d.work_ended_at || null,
+      promised: d.delivery_date && !d.conclusion_date ? d.delivery_date : null,
+    })))
     setLoading(false)
   }
 
@@ -157,10 +141,10 @@ export default function StaffDutySelfPage() {
       const othersRunning = duties.filter(x => x.id !== d.id && x.time_started_at)
       for (const r of othersRunning) {
         const secs = (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string)
-        const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null }).eq('id', r.id)
+        const { error } = await supabase.rpc('duty_self_update', { p_id: r.id, p_time_seconds: secs, p_time_started_at: null, p_work_started_at: r.work_started_at, p_work_ended_at: r.work_ended_at, p_done: r.done })
         if (error) { alert(error.message); return }
       }
-      const { error } = await supabase.from('invoice_duties').update({ time_started_at: nowIso, work_started_at: d.work_started_at || nowIso, work_ended_at: null }).eq('id', d.id)
+      const { error } = await supabase.rpc('duty_self_update', { p_id: d.id, p_time_seconds: Number(d.time_seconds) || 0, p_time_started_at: nowIso, p_work_started_at: d.work_started_at || nowIso, p_work_ended_at: null, p_done: d.done })
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => {
         if (x.id === d.id) return { ...x, time_started_at: nowIso, work_started_at: x.work_started_at || nowIso, work_ended_at: null }
@@ -176,7 +160,7 @@ export default function StaffDutySelfPage() {
     if (!d.time_started_at || busyRef.current) return; busyRef.current = true
     try {
       const secs = (Number(d.time_seconds) || 0) + segSeconds(d.time_started_at)
-      const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null }).eq('id', d.id)
+      const { error } = await supabase.rpc('duty_self_update', { p_id: d.id, p_time_seconds: secs, p_time_started_at: null, p_work_started_at: d.work_started_at, p_work_ended_at: d.work_ended_at, p_done: d.done })
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
       void report(eventBody('PAUSED', d, secs))
@@ -188,7 +172,7 @@ export default function StaffDutySelfPage() {
     try {
       const nowIso = new Date().toISOString()
       const secs = (Number(d.time_seconds) || 0) + (d.time_started_at ? segSeconds(d.time_started_at) : 0)
-      const { error } = await supabase.from('invoice_duties').update({ time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true }).eq('id', d.id)
+      const { error } = await supabase.rpc('duty_self_update', { p_id: d.id, p_time_seconds: secs, p_time_started_at: null, p_work_started_at: d.work_started_at, p_work_ended_at: nowIso, p_done: true })
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
       void report(eventBody('FINISHED', d, secs))

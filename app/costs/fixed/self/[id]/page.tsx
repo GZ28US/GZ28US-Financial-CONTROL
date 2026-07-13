@@ -53,7 +53,8 @@ export default function FixedCostSupplierSelfForm() {
 
   useEffect(() => {
     ;(async () => {
-      const { data } = await supabase.from('fixed_cost_suppliers').select('*').eq('id', id).maybeSingle()
+      // Scoped SECURITY DEFINER RPC — anon has no direct table access.
+      const { data } = await supabase.rpc('fixed_supplier_self_get', { p_id: id })
       if (!data) { setNotFound(true); setLoading(false); return }
       setDescription(data.description || '')
       setForm({
@@ -68,11 +69,14 @@ export default function FixedCostSupplierSelfForm() {
     setError('')
     if (!form.company.trim() && !form.contact_name.trim()) { setError(LANG === 'pt' ? 'Informe ao menos a empresa ou o contato.' : 'Enter at least a company or a contact.'); return }
     setSaving(true)
-    const { error: e } = await supabase.from('fixed_cost_suppliers').update({
-      company: form.company.trim() || null, contact_name: form.contact_name.trim() || null,
-      phone: form.phone.trim() || null, email: form.email.trim() || null,
-      preferred_contact: form.preferred_contact, updated_at: new Date().toISOString(),
-    }).eq('id', id)
+    const { error: e } = await supabase.rpc('fixed_supplier_self_update', {
+      p_id: id,
+      p_company: form.company.trim() || null,
+      p_contact_name: form.contact_name.trim() || null,
+      p_phone: form.phone.trim() || null,
+      p_email: form.email.trim() || null,
+      p_preferred_contact: form.preferred_contact,
+    })
     setSaving(false)
     if (e) { setError(String(e.message || e)); return }
     setSaved(true)

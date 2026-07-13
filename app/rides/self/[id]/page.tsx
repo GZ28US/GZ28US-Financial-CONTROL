@@ -62,11 +62,9 @@ export default function RideSelfPhotoPage() {
 
   async function load(rideId: string) {
     setLoading(true)
-    const { data: ride, error } = await supabase
-      .from('rides')
-      .select('project_code, project_name, manufacturer, brand, model, version, year, client_id')
-      .eq('id', rideId)
-      .maybeSingle()
+    // Scoped SECURITY DEFINER RPC — anon has no direct access to `rides`/`clients`.
+    // Returns just this ride's labels + its client's name/country.
+    const { data: ride, error } = await supabase.rpc('ride_self_get', { p_id: rideId })
     if (error) { setError(error.message); setLoading(false); return }
     if (!ride) { setNotFound(true); setLoading(false); return }
 
@@ -75,9 +73,8 @@ export default function RideSelfPhotoPage() {
       || ride.project_code
     setCarName(car)
 
-    if (ride.client_id) {
-      const { data: client } = await supabase.from('clients').select('name, country').eq('id', ride.client_id).maybeSingle()
-      if (client) { setClientName(client.name || ''); setCountry(client.country || 'USA') }
+    if (ride.client_name || ride.client_country) {
+      setClientName(ride.client_name || ''); setCountry(ride.client_country || 'USA')
     }
     setLoading(false)
   }
@@ -103,7 +100,7 @@ export default function RideSelfPhotoPage() {
       if (upErr) { sendError = upErr.message }
       else {
         const { data: urlData } = supabase.storage.from('ride-photos').getPublicUrl(path)
-        const { error: updErr } = await supabase.from('rides').update({ photo_url: urlData.publicUrl, updated_at: new Date().toISOString() }).eq('id', id)
+        const { error: updErr } = await supabase.rpc('ride_self_set_photo', { p_id: id, p_photo_url: urlData.publicUrl })
         if (updErr) sendError = updErr.message
       }
     } catch (e) {

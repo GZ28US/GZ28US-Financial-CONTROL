@@ -109,11 +109,9 @@ export default function ClientSelfFormPage() {
 
   async function load(clientId: string) {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('id', clientId)
-      .maybeSingle()
+    // Scoped SECURITY DEFINER RPC — anon has no direct access to `clients`
+    // (protects every other client's CPF). Returns just this row's fields.
+    const { data, error } = await supabase.rpc('client_self_get', { p_id: clientId })
 
     if (error) { setError(error.message); setLoading(false); return }
     if (!data) { setNotFound(true); setLoading(false); return }
@@ -198,24 +196,21 @@ export default function ClientSelfFormPage() {
     // button stuck disabled — setSaving(false) always runs.
     let saveError: string | null = null
     try {
-      const { error } = await supabase
-        .from('clients')
-        .update({
-          name: form.name,
-          email: form.email,
-          instagram: form.instagram,
-          facebook: form.facebook,
-          country: form.country,
-          phone: form.phone,
-          cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
-          address: form.address,
-          city: form.city,
-          state: form.state,
-          zip: form.zip,
-          preferred_message_method: form.preferred_message_method,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
+      const { error } = await supabase.rpc('client_self_update', {
+        p_id: id,
+        p_name: form.name,
+        p_email: form.email,
+        p_instagram: form.instagram,
+        p_facebook: form.facebook,
+        p_country: form.country,
+        p_phone: form.phone,
+        p_cpf: form.country === 'BRAZIL' && form.cpf.trim() ? form.cpf.trim() : null,
+        p_address: form.address,
+        p_city: form.city,
+        p_state: form.state,
+        p_zip: form.zip,
+        p_preferred: form.preferred_message_method,
+      })
       if (error) saveError = error.message
     } catch (e) {
       saveError = String(e)
