@@ -1171,12 +1171,11 @@ export default function RidePerformancePage() {
   // SuperStock) dyno at ~18.5% crank→wheel loss — pre-filled, still editable.
   const defaultLoss = (() => {
     if (!ride) return ''
-    const modelTxt = (ride.model || '').toLowerCase()
-    const trimTxt = `${ride.version || ''} ${ride.special_edition || ''}`.toLowerCase()
-    const isCC = /\b(challenger|charger)\b/.test(modelTxt)
-    const isHellcatOrRedeye = /(hellcat|red\s*eye)/.test(trimTxt)
-    const isWidebody = /(wide\s*body)/.test(trimTxt)
-    const isSuperStock = /(super\s*stock)/.test(trimTxt)
+    const txt = [ride.brand, ride.model, ride.version, ride.special_edition].filter(Boolean).join(' ').toLowerCase()
+    const isCC = /(challenger|charger)/.test(txt)
+    const isHellcatOrRedeye = /(hellcat|red\s*eye)/.test(txt)
+    const isWidebody = /(wide\s*body)/.test(txt)
+    const isSuperStock = /(super\s*stock)/.test(txt)
     return isCC && isHellcatOrRedeye && isWidebody && !isSuperStock ? '18.5' : ''
   })()
 
