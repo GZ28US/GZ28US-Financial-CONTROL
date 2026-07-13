@@ -80,6 +80,10 @@ function toLocalDialect(p: DynoPull): DynoPull {
 // The auto-created baseline row is identified by its PACK label.
 function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
+// Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
+// this WhatsApp group ONLY — never the default group.
+const REPORTS_GROUP = 'GZ28US - Tcal'
+
 function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number; defaultLoss: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
@@ -349,7 +353,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
 
   // Post the report to the WhatsApp reports group. Returns true on success.
   async function sendGroupReport(p: DynoPull): Promise<boolean> {
-    const payload: { body: string; documentUrl?: string; filename?: string } = { body: pullReport(p) }
+    const payload: { toGroupName: string; body: string; documentUrl?: string; filename?: string } = { toGroupName: REPORTS_GROUP, body: pullReport(p) }
     if (p.document_url) { payload.documentUrl = p.document_url; payload.filename = docFilename(p) }
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -554,7 +558,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
         bs && latest ? `BTQ (lb·ft): FROM ${f2(bs.bnm)} TO *${f2(latest.bnm)}* - GAIN: *${gain(latest.bnm, bs.bnm)}*` : null,
       ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
 
-      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: caption, documentUrl: url, filename }) })
+      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: caption, documentUrl: url, filename }) })
       const gd = await group.json().catch(() => ({}))
       if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${group.status}`))); return }
 
@@ -846,9 +850,6 @@ const BS_FIELDS: BSField[] = [
   { key: 'transmission', label: 'Transmission', kind: 'so' },
 ]
 
-// The DataSheet WhatsApp report goes to this fixed group (technical crew).
-const DATASHEET_GROUP = 'GZ28US - Tcal'
-
 // GZ28 logo as a JPEG data-URI for the PDF header (canvas round-trip keeps jsPDF happy).
 async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | null> {
   try {
@@ -1067,7 +1068,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         }),
         ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${p}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
       ]
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: DATASHEET_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
       const data = await res.json().catch(() => ({}))
       if (!data.ok) alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`)))
       // success is silent — the button state already showed SENDING…
