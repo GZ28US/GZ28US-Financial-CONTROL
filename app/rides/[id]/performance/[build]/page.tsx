@@ -573,14 +573,28 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       const gd = await group.json().catch(() => ({}))
       if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${group.status}`))); return }
 
-      if (dynoSendToClient) {
-        const to = client ? toWaNumber(client.phone) : null
-        if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the sheet was not sent to them.') }
-        else {
-          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: caption, documentUrl: url, filename }) })
-          const cd = await cli.json().catch(() => ({}))
-          if (!cd.ok) { alert('Sent to the group, but the client send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`))); return }
-          return
+      if (dynoSendToClient && client) {
+        // Honor the client's preferred channel (SMS-only clients aren't on WhatsApp).
+        // SMS / E-Mail / manual channels can't attach the PDF, so they carry its public link.
+        const method = client.preferred_message_method || 'WhatsApp'
+        const plain = caption.replace(/\*/g, '') + `\n\nReceipt: ${url}`
+        if (method === 'WhatsApp') {
+          const to = toWaNumber(client.phone)
+          if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the receipt was not sent to them.') }
+          else {
+            const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: caption, documentUrl: url, filename }) })
+            const cd = await cli.json().catch(() => ({}))
+            if (!cd.ok) { alert('Sent to the group, but the client WhatsApp send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`))); return }
+          }
+        } else if (method === 'SMS') {
+          if (!client.phone) { alert('Sent to the group. The client has no phone number on file for SMS.') }
+          else { window.location.href = `sms:${client.phone}?&body=${encodeURIComponent(plain)}` }
+        } else if (method === 'E-Mail') {
+          const subject = `GZ28US DynoData RECEIPT${sheetTitle() ? ` — ${sheetTitle()}` : ''}`
+          window.location.href = `mailto:${client.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
+        } else {
+          try { await navigator.clipboard.writeText(plain) } catch { /* clipboard may be blocked */ }
+          alert(`Sent to the group. The client prefers ${method}, which can't be sent automatically — the receipt text (with the PDF link) was copied to your clipboard. Paste it into ${method}.`)
         }
       }
     } catch (e) {
