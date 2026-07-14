@@ -19,16 +19,22 @@ export default function QuotesPage() {
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'CLOSED'>('ALL')
   const [picker, setPicker] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // SHOP area shows origin=SHOP quotes; the default (QUOTES) shows origin=PROJECT.
+  const [mode] = useState<'project' | 'shop'>(() => {
+    if (typeof window === 'undefined') return 'project'
+    return new URLSearchParams(window.location.search).get('mode') === 'shop' ? 'shop' : 'project'
+  })
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const { data } = await supabase
+    let query = supabase
       .from('invoices')
       .select('id, invoice_code, ride_id, is_quote, hiring_date, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', true)
-      .neq('origin', 'SHOP')
       .not('ride_id', 'is', null)
+    query = mode === 'shop' ? query.eq('origin', 'SHOP') : query.neq('origin', 'SHOP')
+    const { data } = await query
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     setRows(data || [])

@@ -27,6 +27,7 @@ const MENU: MenuItem[] = [
     items: [
       ['/clients?mode=shop', 'CLIENTS'],
       ['/rides?mode=shop', 'RIDES'],
+      ['/quotes?mode=shop', 'QUOTES'],
       ['/invoices?mode=shop', 'INVOICES'],
     ],
   },
