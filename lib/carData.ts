@@ -412,6 +412,33 @@ for (let y = 2006; y <= 2010; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── BMW M5 F10 (S63TU 4.4 TT V8, 2011–2016 — sedan only) ───────────────────────
+// Base 560 hp; the ongoing Competition Package (575 hp, 2013+) and the limited
+// runs — 30 Jahre M5 (2014, 600 hp), US Pure Metal Silver Edition (2015), and the
+// final Competition Edition (2016, 600 hp) — all live in specialEditions on the
+// base F10 trim (per the special-editions rule).
+const bmwM5F10Colors = ['Alpine White', 'Black Sapphire', 'Jet Black', 'Carbon Black', 'Space Grey', 'Singapore Grey', 'Silverstone II', 'Monte Carlo Blue', 'San Marino Blue', 'Sakhir Orange', 'Frozen Black', 'Frozen Grey', 'Frozen Blue', 'Frozen Red', 'Pure Metal Silver']
+for (let y = 2011; y <= 2016; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('BMW')) manufacturersByYear[y].push('BMW')
+  brandsByManufacturerAndYear['BMW'] = brandsByManufacturerAndYear['BMW'] || {}
+  brandsByManufacturerAndYear['BMW'][y] = ['BMW']
+  modelsByBrandAndYear['BMW'] = modelsByBrandAndYear['BMW'] || {}
+  // M5 generations don't overlap by year, so each year maps to exactly one M5.
+  modelsByBrandAndYear['BMW'][y] = ['M5']
+  versionsByModelAndYear['M5'] = versionsByModelAndYear['M5'] || {}
+  versionsByModelAndYear['M5'][y] = ['F10 Sedan 4.4 TT V8']
+}
+years.sort((a, b) => a - b)
+// F10 M5 limited editions + the Competition Package — special editions on the base trim.
+Object.assign(specialEditions, {
+  '2013-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package'],
+  '2014-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package', '30 Jahre M5'],
+  '2015-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package', 'Pure Metal Silver Edition'],
+  '2016-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package', 'Competition Edition'],
+})
+
 // ── BMW M3 G80 (S58 3.0 TT I6, 2021– — sedan; CS from 2024) ─────────────────────
 // Trims = the powertrain variants (per the special-editions rule). The limited
 // M3 CS lives in specialEditions on the Competition xDrive it is built from.
@@ -1061,7 +1088,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   const key = `${year}-${model}-${version}-${specialEdition}`
   if (colorsByConfiguration[key]) return colorsByConfiguration[key]
   if (model === 'DEFENDER') return landRoverDefenderColors
-  if (model === 'M5') return bmwM5E60Colors
+  if (model === 'M5') return year >= 2011 ? bmwM5F10Colors : bmwM5E60Colors
   if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors
   if (model === '911') return porsche997TurboColors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]

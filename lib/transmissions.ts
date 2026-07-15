@@ -89,6 +89,7 @@ export function transmissionOptionsFor(
 
   // ---- Others ----
   if (b === 'BMW' && m === 'M5' && y >= 2005 && y <= 2010) return ['SMG III (SMG7)', 'Getrag (Manual6)']
+  if (b === 'BMW' && m === 'M5' && y >= 2011 && y <= 2016) return ['M-DCT Drivelogic (DCT7)', 'Getrag (Manual6)']
   if (b === 'BMW' && m === 'M3' && y >= 2021) return has('COMPETITION') ? ['ZF8HP76 (Auto8)'] : ['ZF8HP76 (Auto8)', 'Manual6']
   if (b === 'PORSCHE' && m === '911' && has('TURBO') && y >= 2006 && y <= 2009) return ['G97 (Manual6)', 'Tiptronic S (Auto5)']
   if (b === 'LAND ROVER' && m === 'DEFENDER') return y >= 2012 ? ['MT82 (Manual6)'] : ['R380 (Manual5)']
