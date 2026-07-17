@@ -127,3 +127,14 @@ export function isValidCPF(raw: string): boolean {
   if (d2 === 10) d2 = 0
   return d2 === parseInt(cpf[10], 10)
 }
+
+// Money-flow rows name the two GZ28 units by their SHORT CODE — GZ28BR / GZ28US — rather
+// than the full legal name ("GZ28 V8 SpeedShop BR Ltda"), so an inter-company payment
+// reads at a glance and both apps label it the same way. Display-only: invoices, reports
+// and documents keep the legal name.
+export function flowClientLabel(name: string | null | undefined): string {
+  const n = String(name || "").trim()
+  if (/gz28.*speed\s*shop.*\bbr\b/i.test(n)) return "GZ28BR"
+  if (/gz28.*speed\s*shop.*\bus\b/i.test(n)) return "GZ28US"
+  return n
+}

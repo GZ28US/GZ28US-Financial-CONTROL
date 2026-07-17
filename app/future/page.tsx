@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatShortDate } from '@/lib/utils'
+import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -137,7 +137,7 @@ export default function HomePage() {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
       codeById.set(inv.id, inv.invoice_code)
-      const clientName = cid ? (clientsById.get(cid) || '') : ''
+      const clientName = cid ? flowClientLabel(clientsById.get(cid) || '') : ''
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
       const invoiceName = inv.service || inv.invoice_code
       const ownerSeg = inv.ride_id ? `rides/${inv.ride_id}` : `clients/${cid}`
