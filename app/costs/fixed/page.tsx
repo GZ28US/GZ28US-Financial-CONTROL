@@ -20,7 +20,7 @@ type FixedCostSupplier = {
   preferred_contact: string | null
 }
 
-const CONTACTS = ['WhatsApp', 'Email', 'Phone'] as const
+const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone'] as const
 
 export default function FixedCostSuppliersPage() {
   const [rows, setRows] = useState<FixedCostSupplier[]>([])
@@ -28,7 +28,7 @@ export default function FixedCostSuppliersPage() {
   const [nextDue, setNextDue] = useState<Map<string, { date: string; amount: number }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'ALL' | 'WhatsApp' | 'Email' | 'Phone'>('ALL')
+  const [filter, setFilter] = useState<'ALL' | 'WhatsApp' | 'SMS' | 'Email' | 'Phone'>('ALL')
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])

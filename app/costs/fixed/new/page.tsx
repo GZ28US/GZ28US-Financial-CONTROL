@@ -7,7 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
-const CONTACTS = ['WhatsApp', 'Email', 'Phone']
+const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone']
 const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'ANNUAL']
 const COST_TYPES = ['FIXED', 'VARIABLE']
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)

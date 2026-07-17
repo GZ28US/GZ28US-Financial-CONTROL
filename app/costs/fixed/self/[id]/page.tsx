@@ -34,7 +34,7 @@ const T = {
     consent: `Ao enviar este formulário, você autoriza a ${BRAND} a coletar e usar seus dados apenas para o relacionamento comercial, conforme a LGPD (Lei nº 13.709/2018). Não compartilhamos seus dados com terceiros sem necessidade, e você pode pedir acesso, correção ou exclusão a qualquer momento.`,
   },
 }
-const CONTACTS = [{ v: 'WhatsApp', en: 'WhatsApp', pt: 'WhatsApp' }, { v: 'Email', en: 'Email', pt: 'E-mail' }, { v: 'Phone', en: 'Phone', pt: 'Telefone' }]
+const CONTACTS = [{ v: 'WhatsApp', en: 'WhatsApp', pt: 'WhatsApp' }, { v: 'SMS', en: 'SMS', pt: 'SMS' }, { v: 'Email', en: 'Email', pt: 'E-mail' }, { v: 'Phone', en: 'Phone', pt: 'Telefone' }]
 
 export default function FixedCostSupplierSelfForm() {
   const L = T[LANG]
