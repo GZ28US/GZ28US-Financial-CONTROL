@@ -9,6 +9,7 @@ import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX, partMatches,
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
+import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
@@ -1566,6 +1567,8 @@ export default function EditInvoicePage() {
       if (p.id) {
         const { error } = await supabase.from('invoice_payments').update({ paid_at: null }).eq('id', p.id)
         if (error) { alert(error.message); return }
+        // On a GZ28BR shopping invoice (US.006), the bill is owed again in BR too.
+        void mirrorUsInvoicePaidToBR(invoiceId, null)
       }
       const updated = [...payments]
       updated[index] = { ...updated[index], paid_at: '' }
@@ -1612,6 +1615,9 @@ export default function EditInvoicePage() {
     if (p.id) {
       const { error } = await supabase.from('invoice_payments').update({ paid_at: paidAt }).eq('id', p.id)
       if (error) { alert(error.message); return }
+      // GZ28BR shopping invoice (US.006): BR just settled this bill, so its GZ28US-owed
+      // expense lines go PAID in the BR app on the same date. No-op on other invoices.
+      void mirrorUsInvoicePaidToBR(invoiceId, /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr())
     }
     const updated = [...payments]
     updated[index] = { ...updated[index], paid_at: paidAt }
