@@ -1567,8 +1567,10 @@ export default function EditInvoicePage() {
       if (p.id) {
         const { error } = await supabase.from('invoice_payments').update({ paid_at: null }).eq('id', p.id)
         if (error) { alert(error.message); return }
-        // On a GZ28BR shopping invoice (US.006), the bill is owed again in BR too.
-        void mirrorUsInvoicePaidToBR(invoiceId, null)
+        // On a GZ28BR shopping invoice (US.006), the bill is owed again in BR — unless
+        // what's still marked paid covers the grand total on its own.
+        const paidAfter = payments.reduce((s, x, i) => s + ((i !== index && x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0) + stockSaleIncomePaid
+        if (paidAfter < grandTotal - 0.005) void mirrorUsInvoicePaidToBR(invoiceId, null)
       }
       const updated = [...payments]
       updated[index] = { ...updated[index], paid_at: '' }
@@ -1615,9 +1617,12 @@ export default function EditInvoicePage() {
     if (p.id) {
       const { error } = await supabase.from('invoice_payments').update({ paid_at: paidAt }).eq('id', p.id)
       if (error) { alert(error.message); return }
-      // GZ28BR shopping invoice (US.006): BR just settled this bill, so its GZ28US-owed
-      // expense lines go PAID in the BR app on the same date. No-op on other invoices.
-      void mirrorUsInvoicePaidToBR(invoiceId, /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr())
+      // GZ28BR shopping invoice (US.006): its BR expense lines only go PAID once GZ28BR
+      // has settled the WHOLE bill — a PARTIAL payment leaves them owed, since an expense
+      // line is paid or not, it can't be half paid. No-op on any non-mirrored invoice.
+      const paidAfter = payments.reduce((s, x, i) => s + ((i === index || x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0) + stockSaleIncomePaid
+      const settled = paidAfter >= grandTotal - 0.005
+      void mirrorUsInvoicePaidToBR(invoiceId, settled ? (/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr()) : null)
     }
     const updated = [...payments]
     updated[index] = { ...updated[index], paid_at: paidAt }
