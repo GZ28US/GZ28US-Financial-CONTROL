@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import SendToDialog, { type SendTarget } from '@/components/SendToDialog'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
@@ -55,6 +56,12 @@ export default function FixedCostSupplierViewPage() {
   const [payReceipt, setPayReceipt] = useState('')
   const [savingPay, setSavingPay] = useState(false)
   const [scanningId, setScanningId] = useState<string | null>(null)
+  // Per-row SEND TO (payment proof + receipt). justScanned drives the auto-prompt:
+  // the moment a receipt is scanned + saved, the same SEND TO box pops up.
+  const [sendRow, setSendRow] = useState<FixedExpense | null>(null)
+  const [sendBusy, setSendBusy] = useState(false)
+  const [sendRowStatus, setSendRowStatus] = useState('')
+  const [justScanned, setJustScanned] = useState(false)
 
   useEffect(() => { load() }, [id])
 
@@ -119,6 +126,7 @@ export default function FixedCostSupplierViewPage() {
     setPayAmount(String(r.amount ?? ''))
     setPaySource(r.source || DEFAULT_SOURCE)
     setPayReceipt(r.receipt_url || '')
+    setJustScanned(false)
   }
 
   async function handleScanForRow(r: FixedExpense, file: File) {
@@ -143,6 +151,7 @@ export default function FixedCostSupplierViewPage() {
         if (/^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || ''))) dt = String(parsed.date)
       }
       setPaying(r); setPayDate(dt); setPayAmount(amt); setPaySource(r.source || DEFAULT_SOURCE); setPayReceipt(receiptUrl)
+      setJustScanned(!!receiptUrl)
     } catch (err) {
       console.error(err); alert('Failed to scan receipt. Please try again.')
     } finally {
@@ -161,10 +170,93 @@ export default function FixedCostSupplierViewPage() {
     }).eq('id', paying.id)
     setSavingPay(false)
     if (error) { alert(error.message); return }
-    setPaying(null); load()
+    // The saved row, as-is, for the auto SEND TO prompt (no reload race).
+    const saved: FixedExpense = {
+      ...paying,
+      payment_date: isValidDate(payDate) ? payDate : null,
+      amount: parseFloat(payAmount) || 0,
+      source: paySource || DEFAULT_SOURCE,
+      receipt_url: payReceipt || null,
+    }
+    const wasScanned = justScanned
+    setPaying(null); setJustScanned(false); load()
+    // Whenever a receipt was just scanned, offer to send the proof — same SEND TO box.
+    if (wasScanned) openRowSend(saved)
+  }
+
+  // ── Per-row SEND TO: payment proof (report text + the receipt file if any) ──────
+  function openRowSend(r: FixedExpense) { setSendRowStatus(''); setSendRow(r) }
+
+  function paymentReport(r: FixedExpense): string {
+    const label = s?.company || s?.contact_name || s?.description || '—'
+    const sched = scheduledAmountFor(r)
+    const fine = isValidDate(r.payment_date) && sched != null ? (Number(r.amount) || 0) - sched : 0
+    return [
+      '🧾 *PAYMENT PROOF — FIXED COST*',
+      label,
+      r.description && r.description !== label ? r.description : null,
+      `Amount: *${formatUSD(Number(r.amount) || 0)}*`,
+      isValidDate(r.payment_date) ? `Paid: ${fmtDate(r.payment_date)}` : (isValidDate(r.expense_date) ? `Due: ${fmtDate(r.expense_date)}` : null),
+      fine > 0.005 ? `Late fine: ${formatUSD(fine)}` : null,
+      r.source ? `Paid from: ${r.source}` : null,
+      '\nSent by GZ28 Control App',
+    ].filter(Boolean).join('\n')
+  }
+
+  // Send the proof to the supplier via their preferred method. WhatsApp attaches the
+  // receipt file; SMS/Email/Phone can't attach, so they carry the receipt LINK instead.
+  async function sendProofToSupplier(report: string, receiptUrl: string, filename?: string): Promise<boolean> {
+    if (!s) return false
+    const method = s.preferred_contact || 'WhatsApp'
+    const plain = report.replace(/[*_]/g, '') + (receiptUrl ? `\n\nReceipt: ${receiptUrl}` : '')
+    if (method === 'Email') {
+      if (!s.email) { setSendRowStatus('No email on file (EDIT).'); return false }
+      window.location.href = `mailto:${s.email}?subject=${encodeURIComponent('Payment proof — GZ28 V8 SpeedShop')}&body=${encodeURIComponent(plain)}`
+      return true
+    }
+    if (method === 'SMS' || method === 'Phone') {
+      if (!s.phone) { setSendRowStatus('No phone on file (EDIT).'); return false }
+      window.location.href = `sms:${s.phone}?&body=${encodeURIComponent(plain)}`
+      return true
+    }
+    const to = (s.phone || '').replace(/\D/g, '')
+    if (!to) { setSendRowStatus('No WhatsApp / phone on file (EDIT).'); return false }
+    const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: report, ...(receiptUrl ? { documentUrl: receiptUrl, filename } : {}) }) })
+    const d = await res.json().catch(() => ({}))
+    return !!d.ok
+  }
+
+  async function handleRowSend(target: SendTarget) {
+    const r = sendRow
+    if (!r || target === 'skip') { setSendRow(null); return }
+    const report = paymentReport(r)
+    const receiptUrl = r.receipt_url || ''
+    const filename = receiptUrl ? `payment-proof.${(receiptUrl.split('?')[0].split('.').pop() || 'pdf')}` : undefined
+    setSendBusy(true); setSendRowStatus('Sending…')
+    try {
+      let okGroup = true, okSup = true
+      if (target === 'group' || target === 'both') {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: report, ...(receiptUrl ? { documentUrl: receiptUrl, filename } : {}) }) })
+        const d = await res.json().catch(() => ({})); okGroup = !!d.ok
+      }
+      if (target === 'supplier' || target === 'both') {
+        okSup = await sendProofToSupplier(report, receiptUrl, filename)
+      }
+      setSendRowStatus(okGroup && okSup ? '✓ Sent.' : 'Some sends failed — check the group / supplier contact (EDIT).')
+    } catch (e) {
+      setSendRowStatus('Could not send: ' + (e instanceof Error ? e.message : String(e)))
+    } finally { setSendBusy(false) }
   }
 
   function openSend() { setSendStatus(''); setSendOpen(true) }
+
+  // Page-level SEND TO (supplier onboarding): SUPPLIER = registration link, REPORT
+  // GROUP = the supplier's contact card, BOTH = both. Same SEND TO box as everywhere.
+  async function handlePageSend(target: SendTarget) {
+    if (target === 'skip') { setSendOpen(false); return }
+    if (target === 'supplier' || target === 'both') await sendToSupplier()
+    if (target === 'group' || target === 'both') await sendToGroup()
+  }
 
   async function sendToSupplier() {
     if (!s) return
@@ -335,24 +427,25 @@ export default function FixedCostSupplierViewPage() {
         </div>
       )}
 
-      {sendOpen && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50" onClick={() => setSendOpen(false)}>
-          <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-3xl p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-2xl font-bold mb-1">SEND TO</h2>
-            <p className="text-gray-400 mb-5">Who do you want to send to?</p>
-            <div className="grid grid-cols-1 gap-3">
-              <button onClick={sendToSupplier} disabled={sending} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 px-6 py-4 rounded-2xl text-lg font-bold text-left">
-                👤 SUPPLIER <span className="block text-sm font-normal text-emerald-100/80">Send a link to fill in their own details</span>
-              </button>
-              <button onClick={sendToGroup} disabled={sending} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-6 py-4 rounded-2xl text-lg font-bold text-left">
-                📣 REPORT GROUP <span className="block text-sm font-normal text-blue-100/80">Send this supplier's details to the team</span>
-              </button>
-            </div>
-            {sendStatus && <p className="mt-4 text-center text-gray-300">{sendStatus}</p>}
-            <button onClick={() => setSendOpen(false)} className="mt-5 w-full text-gray-400 hover:text-white py-2">Close</button>
-          </div>
-        </div>
-      )}
+      <SendToDialog
+        open={sendOpen}
+        onChoose={handlePageSend}
+        subtitle="Send this supplier to…"
+        supplierLabel="SUPPLIER"
+        supplierHint="A link to fill in their own details"
+        groupHint="This supplier's details to the team"
+        busy={sending}
+        status={sendStatus}
+      />
+
+      {/* Per-row SEND TO — payment proof (report + receipt file if any). */}
+      <SendToDialog
+        open={!!sendRow}
+        onChoose={handleRowSend}
+        subtitle="Send this payment proof to…"
+        busy={sendBusy}
+        status={sendRowStatus}
+      />
 
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <Link href="/costs/fixed" className="text-gray-400 text-lg hover:text-white">← Fixed Cost Suppliers</Link>
@@ -427,6 +520,7 @@ export default function FixedCostSupplierViewPage() {
                             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScanForRow(p, e.target.files[0]) }} />
                           </label>
                           <button onClick={() => openAddPayment(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1.5 rounded-xl font-bold text-xs">+ PAY</button>
+                          <button onClick={() => openRowSend(p)} className="bg-emerald-700 hover:bg-emerald-600 px-3 py-1.5 rounded-xl font-bold text-xs">📤 SEND</button>
                           <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-xl font-bold text-xs">✕</button>
                         </div>
                       </div>
