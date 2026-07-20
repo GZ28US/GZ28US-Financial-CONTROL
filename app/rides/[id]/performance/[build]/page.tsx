@@ -462,9 +462,12 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
     } else { doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); doc.setTextColor(225, 29, 29); doc.text('GZ', 8, 17); const gx = 8 + doc.getTextWidth('GZ'); doc.setTextColor(23, 70, 200); doc.text('28', gx, 17) }
 
     doc.setFont('helvetica', 'italic'); doc.setFontSize(13); doc.setTextColor(20, 20, 20)
-    doc.text(sheetTitle() || 'Dyno Data', pageW / 2, 13, { align: 'center', maxWidth: pageW - 120 })
+    doc.text(sheetTitle() || 'Dyno Data', pageW / 2, 12, { align: 'center', maxWidth: pageW - 120 })
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(120, 120, 120)
+    doc.text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), pageW / 2, 17.5, { align: 'center' })
+    // Encoding-safe label: jsPDF's standard fonts carry no Unicode arrow glyph (→ renders as garbage).
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(20, 20, 20)
-    doc.text(`Crank → wheel LOSS:  ${rideLoss != null ? Number(rideLoss) : '—'}%`, pageW - 8, 9, { align: 'right' })
+    doc.text(`Crank-to-Wheel LOSS:  ${rideLoss != null ? Number(rideLoss) : '—'}%`, pageW - 8, 9, { align: 'right' })
 
     const REDFILL: [number, number, number] = [255, 0, 0], BLUEFILL: [number, number, number] = [36, 51, 194]
     const lighten = (c: [number, number, number]): [number, number, number] => [Math.round(c[0] + (255 - c[0]) * 0.55), Math.round(c[1] + (255 - c[1]) * 0.55), Math.round(c[2] + (255 - c[2]) * 0.55)]
@@ -487,11 +490,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       const cells: Cell[] = cols.map((col) => ({ content: col.f(p), styles: { textColor: WHITE, fontStyle: 'bold', fillColor: col.fill } }))
       return [nameCell, ...cells]
     })
-    // Always render at least 7 body rows — pad with empties that keep the red/blue column bands.
-    const MIN_ROWS = 7
-    while (body.length < MIN_ROWS) {
-      body.push([{ content: '', styles: { fillColor: WHITE } }, ...cols.map((col) => ({ content: '', styles: { fillColor: col.fill } } as Cell))])
-    }
+    // Only real pulls are rendered — no empty placeholder rows (they read as unfinished).
 
     // Gains: latest pull minus BoneStock (whole row black).
     let foot: Array<{ content: string; styles: Record<string, unknown> }> | null = null
@@ -499,7 +498,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       const a = others[others.length - 1], b = bs
       const n = (v: number | null | undefined) => v ?? 0
       const gv = [f2(n(a.whp) - n(b.whp)), f2(n(a.wnm) - n(b.wnm)), f2(n(a.bhp) - n(b.bhp)), f2(n(a.bnm) - n(b.bnm))]
-      foot = [{ content: 'Gains', styles: { halign: 'left', fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [0, 0, 0] } }, ...gv.map((t) => ({ content: t, styles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold' } }))]
+      foot = [{ content: 'GAINS', styles: { halign: 'left', fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [0, 0, 0] } }, ...gv.map((t) => ({ content: t, styles: { fillColor: [0, 0, 0], textColor: [46, 204, 113], fontStyle: 'bold' } }))]
     }
 
     const noBorder = { fillColor: WHITE, lineWidth: 0 }
@@ -521,7 +520,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       body: body as never,
       foot: (foot ? [foot] : undefined) as never,
       theme: 'grid',
-      styles: { fontSize: 9, halign: 'center', valign: 'middle', cellPadding: 2.2, lineColor: [150, 150, 150], lineWidth: 0.2, textColor: [40, 40, 40] },
+      styles: { fontSize: 9, halign: 'center', valign: 'middle', cellPadding: 2.6, lineColor: [150, 150, 150], lineWidth: 0.2, textColor: [40, 40, 40] },
       headStyles: { fillColor: [224, 224, 224], textColor: [55, 55, 55], fontStyle: 'bold', fontSize: 9, halign: 'center', lineColor: [120, 120, 120], lineWidth: 0.2 },
       footStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [120, 120, 120], lineWidth: 0.2 },
       columnStyles: { 0: { cellWidth: 60 } },
