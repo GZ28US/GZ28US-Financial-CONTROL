@@ -513,7 +513,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
     const head = [
       [
         { content: '', styles: { ...noBorder } },
-        { content: 'WHEEL', colSpan: 2, styles: { fillColor: [255, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
+        { content: 'WHEELS', colSpan: 2, styles: { fillColor: [255, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
         { content: 'ENGINE (Crank)', colSpan: 2, styles: { fillColor: [36, 51, 194], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 } },
       ],
       [
