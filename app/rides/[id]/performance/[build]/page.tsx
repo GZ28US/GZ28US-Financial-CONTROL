@@ -111,6 +111,14 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
   const [editingLoss, setEditingLoss] = useState(false)
   const [lossDraft, setLossDraft] = useState(defaultLoss)
   const rideLoss = pulls.find((p) => p.loss_pct != null)?.loss_pct ?? null
+  // Display order = chronological: BoneStock (the baseline) first, then every other pull
+  // OLDEST → NEWEST. `pulls` itself stays newest-first so the "latest pull" logic (gains,
+  // receipt) keeps working; only what's shown/printed reads oldest-first.
+  const orderedPulls = (() => {
+    const bs = pulls.find(isBoneStock)
+    const others = pulls.filter((p) => !isBoneStock(p)).slice().reverse()
+    return [...(bs ? [bs] : []), ...others]
+  })()
 
   useEffect(() => {
     (async () => {
@@ -751,7 +759,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
               </tr>
             </thead>
             <tbody>
-              {pulls.map((p) => editingId === p.id ? (
+              {orderedPulls.map((p) => editingId === p.id ? (
                 <tr key={p.id} className="border-b border-gray-800 bg-gray-950/40">
                   <td className="py-2 pr-2"><input value={editForm.pack} onChange={(e) => setEditForm({ ...editForm, pack: e.target.value })} className={`${editInput} w-full`} placeholder="PACK" /></td>
                   <td className="py-2 pr-2"><input value={editForm.whp} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setEditForm({ ...editForm, whp: e.target.value }) }} className={`${editInput} w-20`} placeholder="0" /></td>
