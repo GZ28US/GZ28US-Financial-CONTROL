@@ -31,6 +31,16 @@ function fmtPromised(d: string): string {
 }
 
 const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
+
+// Same rule as the DUTIES list: priority first, then keep the SAME CAR's duties together
+// within a priority band, then by description.
+function dutyOrder(a: { priority: string; carLabel: string; description: string }, b: { priority: string; carLabel: string; description: string }): number {
+  const pr = (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
+  if (pr !== 0) return pr
+  const car = (a.carLabel || '').localeCompare(b.carLabel || '')
+  if (car !== 0) return car
+  return (a.description || '').localeCompare(b.description || '')
+}
 const dutyPriorityBadge = (p: string) => (
   p === 'STANDBY' ? { label: 'STANDBY', cls: 'bg-gray-700 text-gray-300' }
   : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
@@ -180,7 +190,7 @@ export default function StaffDutySelfPage() {
   }
 
   const maxRank = DUTY_PRIORITY_RANK[maxPriority] ?? 4
-  const byPriority = (a: Duty, b: Duty) => (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
+  const byPriority = (a: Duty, b: Duty) => dutyOrder(a, b)
   const open = duties.filter(d => !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank).sort(byPriority)
   const finished = duties.filter(d => d.done).sort(byPriority)
 

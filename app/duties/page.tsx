@@ -44,6 +44,17 @@ function fmtDT(iso: string): string {
 
 // Priority: 1 (highest) → 4, then StandBy. Drives the row color and sort order.
 const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
+
+// Ordering rule: PRIORITY first (P1 → StandBy); WITHIN the same priority, every duty of
+// the SAME CAR stays together (grouped by carLabel), then by description for a stable
+// order. So on a P1 (urgent) band, all of one car's duties show back-to-back.
+function dutyOrder(a: { priority: string; carLabel: string; description: string }, b: { priority: string; carLabel: string; description: string }): number {
+  const pr = (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
+  if (pr !== 0) return pr
+  const car = (a.carLabel || '').localeCompare(b.carLabel || '')
+  if (car !== 0) return car
+  return (a.description || '').localeCompare(b.description || '')
+}
 const dutyPriorityBadge = (p: string) => (
   p === 'STANDBY' ? { label: 'STANDBY', cls: 'bg-gray-700 text-gray-300' }
   : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
@@ -194,7 +205,7 @@ export default function StaffDutiesPage() {
     const maxRank = DUTY_PRIORITY_RANK[maxPriority] ?? 3
     const rows = duties
       .filter(d => d.staff_id === staffId && !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank)
-      .sort((a, b) => (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0))
+      .sort(dutyOrder)
     if (!rows.length) return null
     const lines = rows.map((d, i) =>
       `${i + 1}. [${dutyPriorityBadge(d.priority).label}] ${d.description}${d.invoiceCode !== '—' ? ` (${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''})` : ''}${d.promised ? ` — 🗓 PROMISED TO ${fmtPromised(d.promised)}` : ''}`)
@@ -297,7 +308,7 @@ export default function StaffDutiesPage() {
   // Within each member the duties are sorted by priority (1 → 4 → StandBy).
   // Header counts come from ALL of the member's duties (not the filtered rows),
   // so DONE doesn't read 0 just because the TO DO filter hides the done ones.
-  const byPriority = (a: Duty, b: Duty) => (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
+  const byPriority = (a: Duty, b: Duty) => dutyOrder(a, b)
   const groups: { key: string; name: string; rows: Duty[]; todoCount: number; doneCount: number }[] = []
   for (const s of staffList) {
     const rows = visible.filter(d => d.staff_id === s.id).sort(byPriority)
