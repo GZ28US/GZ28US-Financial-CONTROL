@@ -474,8 +474,9 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(120, 120, 120)
     doc.text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), pageW / 2, 17.5, { align: 'center' })
     // Encoding-safe label: jsPDF's standard fonts carry no Unicode arrow glyph (→ renders as garbage).
+    // Sits just above the table's top-right corner (table starts at y=22), right-aligned to its edge.
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(20, 20, 20)
-    doc.text(`Crank-to-Wheel LOSS:  ${rideLoss != null ? Number(rideLoss) : '—'}%`, pageW - 8, 9, { align: 'right' })
+    doc.text(`Crank-to-Wheel LOSS:  ${rideLoss != null ? Number(rideLoss) : '—'}%`, pageW - 8, 20, { align: 'right' })
 
     const REDFILL: [number, number, number] = [255, 0, 0], BLUEFILL: [number, number, number] = [36, 51, 194]
     const lighten = (c: [number, number, number]): [number, number, number] => [Math.round(c[0] + (255 - c[0]) * 0.55), Math.round(c[1] + (255 - c[1]) * 0.55), Math.round(c[2] + (255 - c[2]) * 0.55)]
@@ -506,7 +507,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       const a = others[others.length - 1], b = bs
       const n = (v: number | null | undefined) => v ?? 0
       const gv = [f2(n(a.whp) - n(b.whp)), f2(n(a.wnm) - n(b.wnm)), f2(n(a.bhp) - n(b.bhp)), f2(n(a.bnm) - n(b.bnm))]
-      foot = [{ content: 'GAINS', styles: { halign: 'left', fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [0, 0, 0] } }, ...gv.map((t) => ({ content: t, styles: { fillColor: [0, 0, 0], textColor: [46, 204, 113], fontStyle: 'bold' } }))]
+      foot = [{ content: 'GAINS', styles: { halign: 'center', fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [0, 0, 0] } }, ...gv.map((t) => ({ content: t, styles: { fillColor: [0, 0, 0], textColor: [46, 204, 113], fontStyle: 'bold' } }))]
     }
 
     const noBorder = { fillColor: WHITE, lineWidth: 0 }
