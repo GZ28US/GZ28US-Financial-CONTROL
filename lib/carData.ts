@@ -743,6 +743,43 @@ Object.assign(specialEditions, {
   '1969-CAMARO-COPO 9560 ZL1 7.0 V8':   ['None'],
 })
 
+// ── Corvette C3 (1968–1982) ─────────────────────────────────────────────────────
+// Trims = each year's ENGINE / RPO option (per the special-editions rule); the 1978
+// anniversary + pace car and the 1982 Collector Edition are specialEditions on the
+// trim they were built from. 1968 closes the 327 era, 1969 brings the 350, 1970 the
+// 454; big blocks end after 1974 and 1981–82 are single-engine years.
+const c3CorvetteVersions = (y: number): string[] => {
+  if (y === 1968) return ['Base 5.4 V8 (327)', 'L79 5.4 V8 (327)', 'L36 7.0 V8 (427)', 'L68 7.0 V8 (427)', 'L71 7.0 V8 (427)', 'L88 7.0 V8 (427)']
+  if (y === 1969) return ['Base 5.7 V8 (350)', 'L46 5.7 V8 (350)', 'L36 7.0 V8 (427)', 'L68 7.0 V8 (427)', 'L71 7.0 V8 (427)', 'L88 7.0 V8 (427)', 'ZL1 7.0 V8 (427)']
+  if (y === 1970) return ['Base 5.7 V8 (350)', 'L46 5.7 V8 (350)', 'LT-1 5.7 V8 (350)', 'LS5 7.4 V8 (454)']
+  if (y === 1971) return ['Base 5.7 V8 (350)', 'LT-1 5.7 V8 (350)', 'LS5 7.4 V8 (454)', 'LS6 7.4 V8 (454)']
+  if (y === 1972) return ['Base 5.7 V8 (350)', 'LT-1 5.7 V8 (350)', 'LS5 7.4 V8 (454)']
+  if (y === 1973 || y === 1974) return ['Base 5.7 V8 (350)', 'L82 5.7 V8 (350)', 'LS4 7.4 V8 (454)']
+  if (y >= 1975 && y <= 1979) return ['Base 5.7 V8 (350)', 'L82 5.7 V8 (350)']
+  if (y === 1980) return ['Base 5.7 V8 (350)', 'L82 5.7 V8 (350)', 'LG4 5.0 V8 (305)']
+  if (y === 1981) return ['L81 5.7 V8 (350)']
+  return ['L83 5.7 V8 Cross-Fire (350)'] // 1982 — Cross-Fire Injection, the only engine
+}
+for (let y = 1968; y <= 1982; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  // MERGE, never overwrite: 1968–69 already carry the 1st-gen Camaro.
+  brandsByManufacturerAndYear['GM'][y] = [...new Set([...(brandsByManufacturerAndYear['GM'][y] || []), 'CHEVROLET'])]
+  modelsByBrandAndYear['CHEVROLET'] = modelsByBrandAndYear['CHEVROLET'] || {}
+  modelsByBrandAndYear['CHEVROLET'][y] = [...new Set([...(modelsByBrandAndYear['CHEVROLET'][y] || []), 'CORVETTE'])]
+  versionsByModelAndYear['CORVETTE'] = versionsByModelAndYear['CORVETTE'] || {}
+  versionsByModelAndYear['CORVETTE'][y] = c3CorvetteVersions(y)
+}
+years.sort((a, b) => a - b)
+// C3 special editions — each on the trim it was built from.
+Object.assign(specialEditions, {
+  '1978-CORVETTE-Base 5.7 V8 (350)': ['None', '25th Anniversary', 'Indy 500 Pace Car'],
+  '1978-CORVETTE-L82 5.7 V8 (350)': ['None', '25th Anniversary', 'Indy 500 Pace Car'],
+  '1982-CORVETTE-L83 5.7 V8 Cross-Fire (350)': ['None', 'Collector Edition'],
+})
+
 // ── Camaro 3rd Gen — Z28 / IROC-Z (1985–1992) ───────────────────────────────────
 // The 3rd-gen performance Camaro. Trims by engine: Z28 5.0 V8 (305 — LB9 TPI; L69 HO
 // in '85) and Z28 5.7 V8 (350 L98 TPI, automatic, '87+). The IROC-Z (1985–1990) and
@@ -944,6 +981,22 @@ const gen6CamaroColorsByYear: Record<number, string[]> = {
 }
 
 const corvetteColorsByYear: Record<number, string[]> = {
+  // C3 factory paint, year by year (chrome-bumper years through the 1982 finale).
+  1968: ['Tuxedo Black', 'Polar White', 'Rally Red', 'LeMans Blue', 'Bridgehampton Blue', 'International Blue', 'British Green', 'Safari Yellow', 'Silverstone Silver', 'Cordovan Maroon', 'Corvette Bronze'],
+  1969: ['Tuxedo Black', 'Can-Am White', 'Monza Red', 'LeMans Blue', 'Riverside Gold', 'Fathom Green', 'Daytona Yellow', 'Cortez Silver', 'Burgundy', 'Monaco Orange'],
+  1970: ['Classic White', 'Monza Red', 'Marlboro Maroon', 'Mulsanne Blue', 'Bridgehampton Blue', 'Donnybrooke Green', 'Laguna Gray', 'Cortez Silver', 'Ontario Orange', 'Corvette Bronze'],
+  1971: ['Classic White', 'Nevada Silver', 'Mille Miglia Red', 'Mulsanne Blue', 'Bridgehampton Blue', 'Brands Hatch Green', 'Sunflower Yellow', 'War Bonnet Yellow', 'Ontario Orange', 'Steel Cities Gray'],
+  1972: ['Classic White', 'Pewter Silver', 'Bryar Blue', 'Targa Blue', 'Elkhart Green', 'Mille Miglia Red', 'Sunflower Yellow', 'War Bonnet Yellow', 'Ontario Orange', 'Steel Cities Gray'],
+  1973: ['Classic White', 'Silver', 'Medium Blue', 'Dark Blue', 'Blue-Green', 'Elkhart Green', 'Yellow', 'Yellow Metallic', 'Mille Miglia Red', 'Orange', 'Medium Orange'],
+  1974: ['Classic White', 'Silver Mist', 'Corvette Medium Blue', 'Dark Blue', 'Gray', 'Corvette Medium Red', 'Mille Miglia Red', 'Bright Yellow', 'Corvette Orange', 'Dark Green'],
+  1975: ['Classic White', 'Silver', 'Bright Blue', 'Steel Blue', 'Bright Green', 'Bright Yellow', 'Medium Saddle', 'Orange Flame', 'Dark Red', 'Mille Miglia Red'],
+  1976: ['Classic White', 'Silver', 'Bright Blue', 'Dark Green', 'Mahogany', 'Bright Yellow', 'Buckskin', 'Dark Brown', 'Red', 'Orange Flame'],
+  1977: ['Classic White', 'Silver', 'Black', 'Corvette Light Blue', 'Corvette Dark Blue', 'Corvette Chartreuse', 'Corvette Yellow', 'Corvette Orange', 'Medium Red', 'Corvette Dark Red'],
+  1978: ['Classic White', 'Silver Anniversary', 'Black', 'Silver / Black (Pace Car)', 'Corvette Light Beige', 'Frost Beige', 'Corvette Dark Blue', 'Corvette Light Blue', 'Corvette Yellow', 'Corvette Mahogany', 'Corvette Red', 'Dark Brown'],
+  1979: ['Classic White', 'Silver', 'Black', 'Corvette Light Blue', 'Corvette Dark Blue', 'Corvette Yellow', 'Corvette Light Beige', 'Corvette Dark Brown', 'Corvette Red', 'Corvette Dark Green'],
+  1980: ['Classic White', 'Silver', 'Black', 'Corvette Dark Blue', 'Frost Beige', 'Corvette Dark Brown', 'Corvette Red', 'Corvette Dark Claret', 'Corvette Yellow', 'Dark Green'],
+  1981: ['White', 'Silver', 'Black', 'Bright Blue', 'Dark Blue', 'Autumn Red', 'Maroon', 'Red', 'Beige', 'Mahogany Metallic', 'Silver / Dark Blue', 'Beige / Dark Bronze'],
+  1982: ['Classic White', 'Silver', 'Black', 'Silver Blue', 'Bright Blue', 'Silver Beige', 'Silver Green', 'Dark Claret', 'Red', 'Gold', 'Silver-Beige (Collector Edition)'],
   // C4 LT1 era factory paint (per CorvetteActionCenter paint codes).
   1992: ['White', 'Bright Red', 'Yellow', 'Black', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Black Rose Metallic', 'Dark Red Metallic', 'Quasar Blue Metallic'],
   1993: ['White', 'Torch Red', 'Ruby Red', 'Black', 'Competition Yellow', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Black Rose Metallic', 'Dark Red Metallic', 'Quasar Blue Metallic'],
@@ -1166,6 +1219,11 @@ carData['PORSCHE'] = { PORSCHE: { '911': [...new Set(Object.values(versionsByMod
 carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
   ...(carData['GM']['CHEVROLET']['CAMARO'] || []),
   ...Object.values(versionsByModelAndYear['CAMARO']).flat(),
+])]
+// Corvette flat list = union of every era's versions (C3 chrome-bumper years included).
+carData['GM']['CHEVROLET']['CORVETTE'] = [...new Set([
+  ...(carData['GM']['CHEVROLET']['CORVETTE'] || []),
+  ...Object.values(versionsByModelAndYear['CORVETTE']).flat(),
 ])]
 carData['GM']['CADILLAC'] = { 'CTS-V': ['CTS-V 6.2 V8 SC'], 'ESCALADE-V': ['6.2 V8 SC'] }
 // Jeep Grand Cherokee flat list = union of every Hemi year's versions.
