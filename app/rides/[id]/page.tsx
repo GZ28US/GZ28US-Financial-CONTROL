@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone } from '@/lib/utils'
+import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 
 // Normalize a phone to the digits-only `to` UltraMsg expects, by the client's country.
 // USA -> +1 (this app's default); BRAZIL -> +55.
@@ -35,6 +36,7 @@ type Ride = {
   color: string | null
   vin: string | null
   plate: string | null
+  plate_expiry: string | null
   year: number | null
   photo_url: string | null
   client_id: string | null
@@ -336,6 +338,19 @@ export default function ViewRidePage() {
             {ride.color && <div className={rowClass}><span className={labelClass}>COLOR</span><span className="font-bold">{ride.color}</span></div>}
             {ride.vin && <div className={rowClass}><span className={labelClass}>VIN</span><span className="font-bold">{ride.vin}</span></div>}
             {ride.plate && <div className={rowClass}><span className={labelClass}>PLATE</span><span className="font-bold">{ride.plate}</span></div>}
+            {/* Registration expiry + status; the renewal link shows once it's due or late. */}
+            {ride.plate_expiry && (() => { const st = plateStatus(ride.plate_expiry); return (
+              <div className={rowClass}>
+                <span className={labelClass}>PLATE EXPIRY</span>
+                <span className="font-bold flex items-center gap-2 flex-wrap justify-end">
+                  {fmtPlateExpiry(ride.plate_expiry)}
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
+                  {(st.state === 'due' || st.state === 'expired') && (
+                    <a href={PLATE_RENEWAL_URL} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline text-sm font-bold">RENEW</a>
+                  )}
+                </span>
+              </div>
+            ) })()}
             {ride.special_edition && <div className={rowClass}><span className={labelClass}>PACK</span><span className="font-bold">{ride.special_edition}</span></div>}
           </div>
         </div>

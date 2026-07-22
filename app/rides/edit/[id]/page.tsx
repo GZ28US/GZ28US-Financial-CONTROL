@@ -6,6 +6,8 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { supabaseBR } from '@/lib/supabaseBR'
 import { BASE_PATH } from '@/lib/utils'
+import DatePicker from '@/components/DatePicker'
+import { plateStatus } from '@/lib/plateExpiry'
 import {
   years,
   manufacturersByYear,
@@ -51,6 +53,7 @@ export default function EditRidePage() {
 
   const [vin, setVin] = useState('')
   const [plate, setPlate] = useState('')
+  const [plateExpiry, setPlateExpiry] = useState('')
   const [photoUrl, setPhotoUrl] = useState('')
   const [uploading, setUploading] = useState(false)
 
@@ -93,6 +96,7 @@ export default function EditRidePage() {
     setTransmission(r.transmission || '')
     setVin(r.vin || '')
     setPlate(r.plate || '')
+    setPlateExpiry(r.plate_expiry || '')
     setPhotoUrl(r.photo_url || '')
     setLoading(false)
   }
@@ -238,6 +242,7 @@ export default function EditRidePage() {
       color: color || null,
       vin: vin || null,
       plate: plate || null,
+      plate_expiry: plateExpiry || null,
       photo_url: photoUrl || null,
     }).eq('id', rideId)
 
@@ -424,6 +429,14 @@ export default function EditRidePage() {
         <div>
           <label className="block mb-2 text-lg font-bold">PLATE</label>
           <input type="text" value={plate} onChange={(e) => setPlate(e.target.value)} className={inputClass} placeholder="License plate" />
+        </div>
+
+        {/* Registration (tag) expiry — HOME warns before it lapses. */}
+        <div>
+          <DatePicker label="PLATE EXPIRY (registration)" value={plateExpiry} onChange={setPlateExpiry} />
+          {plateExpiry && (() => { const st = plateStatus(plateExpiry); return st.state === 'none' ? null : (
+            <p className="mt-2"><span className={`px-3 py-1 rounded-full text-sm font-bold ${st.cls}`}>{st.label}</span></p>
+          ) })()}
         </div>
 
         <div>

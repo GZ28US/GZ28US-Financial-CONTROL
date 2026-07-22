@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import DatePicker from '@/components/DatePicker'
 import {
   years,
   manufacturersByYear,
@@ -72,6 +73,7 @@ export default function NewRidePage() {
 
   const [vin, setVin] = useState('')
   const [plate, setPlate] = useState('')
+  const [plateExpiry, setPlateExpiry] = useState('')
   const [photoUrl, setPhotoUrl] = useState('')
   const [uploading, setUploading] = useState(false)
 
@@ -261,6 +263,7 @@ export default function NewRidePage() {
       color: color || null,
       vin: vin || null,
       plate: plate || null,
+      plate_expiry: plateExpiry || null,
       photo_url: photoUrl || null,
       is_quote: isQuote,
       origin: isShop ? 'SHOP' : 'PROJECT',
@@ -460,6 +463,11 @@ export default function NewRidePage() {
         <div>
           <label className="block mb-2 text-lg font-bold">PLATE</label>
           <input type="text" value={plate} onChange={(e) => setPlate(e.target.value)} className={inputClass} placeholder="License plate" />
+        </div>
+
+        {/* Registration (tag) expiry — HOME warns before it lapses. */}
+        <div>
+          <DatePicker label="PLATE EXPIRY (registration)" value={plateExpiry} onChange={setPlateExpiry} />
         </div>
 
         <div>

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
+import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL, PLATE_RENEWAL_COUNTY_URL, type PlateStatus } from '@/lib/plateExpiry'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -76,6 +77,8 @@ type FlowItem = { date: string; code: string; label: string; href: string; signe
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
   const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[]; loss: Row[] }>({ income: [], expense: [], tax: [], loss: [] })
+  // Rides whose registration is expired or about to expire (see lib/plateExpiry).
+  const [plateAlerts, setPlateAlerts] = useState<{ id: string; code: string; name: string; plate: string; expiry: string | null; st: PlateStatus }[]>([])
   const [flow, setFlow] = useState<FlowItem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -122,13 +125,26 @@ export default function HomePage() {
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
     const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }] = await Promise.all([
-      supabase.from('rides').select('id, project_name, model, version, client_id'),
+      supabase.from('rides').select('id, project_code, project_name, model, version, client_id, plate, plate_expiry'),
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
+    // Registration watch: only rides already expired or inside the warning window,
+    // soonest first (the late ones lead, since their days are negative).
+    setPlateAlerts((ridesD || [])
+      .map((r: any) => ({
+        id: r.id,
+        code: r.project_code || '—',
+        name: r.project_name || [r.model, r.version].filter(Boolean).join(' ') || '—',
+        plate: r.plate || '',
+        expiry: r.plate_expiry as string | null,
+        st: plateStatus(r.plate_expiry),
+      }))
+      .filter(r => r.st.state === 'due' || r.st.state === 'expired')
+      .sort((a, b) => a.st.days - b.st.days))
 
     const codeById = new Map<string, string>()
     const metaById = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string; carName: string; invoiceName: string }>()
@@ -332,6 +348,32 @@ export default function HomePage() {
       <Header />
       <h1 className="text-4xl font-bold mb-1">CURRENT Flow</h1>
       <p className="text-gray-400 mb-6">Everything, all time — no filters.</p>
+
+      {/* Registration (tag) watch — not money, so it sits outside the cash-flow boxes.
+          Lists only what is already expired or inside the warning window. */}
+      {plateAlerts.length > 0 && (
+        <div className="mb-6 max-w-3xl bg-gray-900 border border-amber-700/60 rounded-2xl p-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+            <p className="text-sm font-bold text-amber-400">🚗 PLATE / REGISTRATION RENEWAL ({plateAlerts.length})</p>
+            <span className="flex gap-3">
+              <a href={PLATE_RENEWAL_URL} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline text-sm font-bold">RENEW · FLHSMV</a>
+              <a href={PLATE_RENEWAL_COUNTY_URL} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline text-sm font-bold">Orange County</a>
+            </span>
+          </div>
+          {plateAlerts.map(r => (
+            <div key={r.id} className="flex justify-between gap-3 py-1.5 text-sm border-b border-gray-800/60 last:border-0">
+              <a href={`${BASE_PATH}/rides/${r.id}`} className="hover:text-blue-400 truncate">
+                <span className="text-gray-500">{r.code}</span> · <span className="font-bold">{r.name}</span>
+                {r.plate ? <span className="text-gray-500"> · {r.plate}</span> : null}
+              </a>
+              <span className="flex items-center gap-2 shrink-0">
+                <span className="text-gray-400">{fmtPlateExpiry(r.expiry)}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${r.st.cls}`}>{r.st.label}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
