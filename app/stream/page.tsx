@@ -78,13 +78,20 @@ export default function StreamPage() {
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
+    const today = todayYmd()
+    // Most critical first: LATE (ETA passed, not delivered) → BOUGHT (waiting
+    // shipment) → SHIPPED (moving) → DELIVERED (done); newest first inside each.
+    const rank = (r: StreamRow) => {
+      if (r.status !== 'DELIVERED' && r.eta && r.eta < today) return 0
+      return { BOUGHT: 1, SHIPPED: 2, DELIVERED: 3 }[r.status]
+    }
     return rows.filter(r => {
       if (chip !== 'ALL' && r.status !== chip) return false
       if (!q) return true
       const w = r.invoice_id ? where[r.invoice_id] : undefined
       return [r.item, r.supplier, r.order_number, r.tracking_number, r.carrier, w?.invoice_code, w?.ride_name]
         .some(v => (v || '').toLowerCase().includes(q))
-    })
+    }).sort((a, b) => rank(a) - rank(b) || (a.created_at < b.created_at ? 1 : -1))
   }, [rows, chip, search, where])
 
   // Save a tracking number, then hand the row to the automation: 17TRACK
