@@ -91,18 +91,25 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   const key = keyOf(row)
   const existing = key ? rows.find((r: any) => samePN(keyOf(r), key)) : null
 
+  // A SCAN from an OFFICIAL SUPPLIER (dealer contract → dealer_supplier set) is
+  // REAL LIFE at its most trusted: it re-validates any row and LOCKS the result.
+  const officialScan = row.source_type === 'SCAN' && !!row.dealer_supplier
+
   if (!existing) {
     // A scanned MAP gets the derived delivered/discount fields computed on insert.
-    const toInsert = row.map_price != null && Number(row.map_price) > 0
-      ? withDerived(row, Number(row.map_price), ourCostOf(row))
-      : row
+    const base = officialScan ? { ...row, locked: true } : row
+    const toInsert = base.map_price != null && Number(base.map_price) > 0
+      ? withDerived(base, Number(base.map_price), ourCostOf(base))
+      : base
     const { error } = await supabase.from('parts_database').insert([toInsert])
     return { status: 'inserted', error }
   }
 
-  // LOCKED rows (the GZ28 SHOP catalog) are untouchable: no scan override, no
-  // gap-filling, no alias change — REAL LIFE PREVAILS stops at the shop's door.
-  if (existing.locked) return { status: 'kept', error: null }
+  // LOCKED rows are the validated catalog (GZ28 SHOP items + every part already
+  // confirmed by an official-supplier purchase). They ignore HUNT/manual edits —
+  // but an official-supplier SCAN always re-validates, lock or no lock
+  // (user rule 2026-07-23: "Compra escaneada é a VIDA REAL").
+  if (existing.locked && !officialScan) return { status: 'kept', error: null }
 
   // Who wins the row?
   const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
@@ -144,6 +151,10 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       alias: row.alias ?? existing.alias ?? null,
       // Weight only when the incoming scan carries one — never erase a known weight.
       ...(row.weight_lbs != null && Number(row.weight_lbs) > 0 ? { weight_lbs: row.weight_lbs } : {}),
+      // An official-supplier purchase VALIDATES the row: it locks (and a locked
+      // row stays locked). From here on only real invoices can change it —
+      // the bank compiles itself into a purchase-proven catalog.
+      locked: officialScan ? true : (existing.locked ?? false),
       updated_at: new Date().toISOString(),
     }
     const merged = withDerived(full, map, ourCostOf(row))
