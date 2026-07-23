@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  const need = process.env.WHATSAPP_READ_KEY
+  if (need && req.nextUrl.searchParams.get('key') !== need) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const instance = process.env.ULTRAMSG_INSTANCE
   const token = process.env.ULTRAMSG_TOKEN
   if (!instance || !token) return NextResponse.json({ error: 'UltraMsg not configured' }, { status: 503 })
