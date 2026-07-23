@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
 {
   "supplier": "store/supplier name. If the header is only a generic greeting like 'WELCOME TO OUR STORE' with no business name, use the street address or city printed at the top instead (e.g. '9999 S Hwy 441, Orlando FL'). For a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
   "currency": "ISO code of the currency the returned amounts are in (USD, BRL, ...) — see rule 15",
+  "order_number": "the store's order / confirmation / sales-order number printed on the document (e.g. 'Order #123456', 'SO-98765', 'Confirmation 2AB4C'), else empty string",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "paid": true or false boolean — see rule 11,
   "source": "the PAYER who SENT the money (a transfer/PIX 'pagador' / 'De' / 'Dados do pagador'); empty string if not shown — see rule 14",
@@ -280,6 +281,8 @@ Rules:
           date: parsed.date || '',
           paid: parsed.paid !== false,
           source: parsed.source || '',
+          // Store order/confirmation number — seeds the STREAM tracker.
+          order_number: String(parsed.order_number || '').trim(),
           // Currency the amounts are in. 'USD' normally; a foreign ISO code (e.g.
           // BRL) only when the document had no USD amount at all — consumers must
           // warn instead of silently registering a foreign amount as dollars.

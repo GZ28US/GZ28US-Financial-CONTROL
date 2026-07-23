@@ -245,7 +245,10 @@ export default function EditInvoicePage() {
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; order_number?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
+  // STREAM ask — after a scanned purchase confirms, offer to follow the order
+  // on the STREAM board (BOUGHT → SHIPPED → DELIVERED, 17TRACK automation).
+  const [streamAsk, setStreamAsk] = useState<{ supplier: string; orderNumber: string; summary: string; group: string; count: number } | null>(null)
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
@@ -685,7 +688,7 @@ export default function EditInvoicePage() {
       const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: money(i.amount), quantity: String(i.quantity || '1'), tax: money(i.tax), extra: money(i.extra), item_discount: String(i.item_discount || '0'), list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0', weight_lbs: String(i.weight_lbs || '0') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
-      const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), items, receiptUrl, paid })
+      const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), order_number: String(parsed.order_number || '').trim(), items, receiptUrl, paid })
 
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
@@ -860,7 +863,34 @@ export default function EditInvoicePage() {
       list_price: (it as any).list_price,
       weight_lbs: (it as any).weight_lbs,
     })))
+    // Offer the STREAM follow-up (asked, never automatic — SKIP is one click).
+    const first = scannedPurchase.items[0]?.description || 'Purchase'
+    const extra = scannedPurchase.items.length - 1
+    setStreamAsk({
+      supplier: scannedPurchase.supplier,
+      orderNumber: scannedPurchase.order_number || '',
+      summary: extra > 0 ? `${first} +${extra} more` : first,
+      group: groupId,
+      count: scannedPurchase.items.length,
+    })
     setScannedPurchase(null)
+  }
+
+  // Enroll the scanned purchase on the STREAM board as BOUGHT (awaiting
+  // shipment). The tracking number is added later on /stream — from there,
+  // 17TRACK walks the status to SHIPPED and DELIVERED by itself.
+  async function confirmStreamAsk() {
+    if (!streamAsk) return
+    const { error } = await supabase.from('part_streams').insert([{
+      invoice_id: invoiceId,
+      purchase_group: streamAsk.group,
+      supplier: streamAsk.supplier || null,
+      item: streamAsk.summary,
+      order_number: streamAsk.orderNumber || null,
+      status: 'BOUGHT',
+    }])
+    if (error) alert('STREAM enroll failed: ' + error.message)
+    setStreamAsk(null)
   }
 
   function toggleGroup(groupId: string) {
@@ -2412,6 +2442,23 @@ export default function EditInvoicePage() {
               <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
                 {sendingReports ? 'SENDING...' : 'DONE'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {streamAsk && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">📦 FOLLOW ON STREAM?</h2>
+            <p className="text-gray-300 text-lg mb-1 break-words">{streamAsk.summary}</p>
+            <p className="text-gray-400 mb-8">
+              {[streamAsk.supplier, streamAsk.orderNumber ? `Order ${streamAsk.orderNumber}` : null, `${streamAsk.count} item${streamAsk.count === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
+              <br />Enrolls as 🛒 BOUGHT — add the tracking number on STREAM and the follow-up (SHIPPED / DELIVERED + WhatsApp reports) runs by itself.
+            </p>
+            <div className="flex gap-4">
+              <button onClick={() => setStreamAsk(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">SKIP</button>
+              <button onClick={confirmStreamAsk} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">TRACK</button>
             </div>
           </div>
         </div>
