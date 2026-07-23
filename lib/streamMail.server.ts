@@ -12,7 +12,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { guessCarrier, type StreamRow } from './stream'
 
 export const MAIL_REDIRECT = 'https://www.gz28us.com/ca/api/stream/mail-callback'
-const AUTHORITY = 'https://login.microsoftonline.com/common/oauth2/v2.0'
+// The Azure app is "Personal Microsoft accounts only" — those must authorize
+// through the /consumers authority (never /common).
+const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0'
 export const MAIL_SCOPE = 'offline_access Mail.Read'
 
 export type MailAuth = {
