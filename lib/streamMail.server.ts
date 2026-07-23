@@ -252,10 +252,14 @@ export async function organizeInbox(db: SupabaseClient, accessToken: string): Pr
   return { moved, doubts }
 }
 
-// Does this email plausibly belong to this stream row's supplier?
+// Does this email plausibly belong to this stream row's supplier? The BODY is
+// included because marketplace/PSP notifications (PayPal "your order shipped")
+// come from the PSP's address and only name the merchant in the text; the
+// space-squashed haystack catches "Polmax Racing" vs supplier "POLMAXRACING".
 export function supplierMatches(row: StreamRow, msg: MailMsg): boolean {
-  const hay = `${msg.fromAddr} ${msg.from.toLowerCase()} ${msg.subject.toLowerCase()}`
-  return normTok(row.supplier || '').some(tok => hay.includes(tok))
+  const hay = `${msg.fromAddr} ${msg.from} ${msg.subject} ${msg.text}`.toLowerCase()
+  const squash = hay.replace(/[^a-z0-9]/g, '')
+  return normTok(row.supplier || '').some(tok => hay.includes(tok) || squash.includes(tok))
 }
 
 // Match open stream rows against one email. Strongest first:
