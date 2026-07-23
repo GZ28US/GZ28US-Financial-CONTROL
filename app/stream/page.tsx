@@ -39,7 +39,15 @@ export default function StreamPage() {
   const [addForm, setAddForm] = useState({ supplier: '', item: '', order_number: '', tracking_number: '' })
   const [toast, setToast] = useState<string | null>(null)
 
-  useEffect(() => { void load() }, [])
+  useEffect(() => {
+    void load()
+    // Kick the mailbox watcher (throttled server-side): shipping emails from
+    // gz28us@hotmail.com auto-fill tracking numbers on open rows.
+    void fetch(`${BASE_PATH}/api/stream/mail-poll`, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => { if (d?.updated > 0) { flash(`📬 ${d.updated} tracking${d.updated === 1 ? '' : 's'} captured from email`); void load() } })
+      .catch(() => {})
+  }, [])
 
   function flash(msg: string) { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
