@@ -38,16 +38,22 @@ async function run(force: boolean): Promise<NextResponse> {
   const { data } = await db.from('part_streams').select('*').is('tracking_number', null).neq('status', 'DELIVERED')
   const open = (data as StreamRow[]) || []
   if (!open.length) return NextResponse.json({ ok: true, scanned: msgs.length, updated: 0 })
+  // Numbers already assigned to ANY row (delivered included) are spoken for —
+  // "Re:" threads quote old shipments' trackings forever, and without this a
+  // fresh BOUGHT row from the same supplier would re-capture the old number.
+  const { data: assigned } = await db.from('part_streams').select('tracking_number').not('tracking_number', 'is', null)
+  const taken = new Set((assigned || []).map(r => String(r.tracking_number)))
 
   let updated = 0
   const details: string[] = []
   for (const msg of msgs) {
-    const trackings = extractTrackings(`${msg.subject} ${msg.text}`)
+    const trackings = extractTrackings(`${msg.subject} ${msg.text}`).filter(t => !taken.has(t))
     if (!trackings.length) continue
     const rows = matchRows(open.filter(r => !r.tracking_number), msg)
-    for (let i = 0; i < rows.length; i++) {
+    for (let i = 0; i < rows.length && i < trackings.length; i++) {
       const row = rows[i]
-      const tracking = trackings[Math.min(i, trackings.length - 1)]
+      const tracking = trackings[i]
+      taken.add(tracking)
       await db.from('part_streams').update({ tracking_number: tracking, carrier: guessCarrier(tracking) }).eq('id', row.id)
       row.tracking_number = tracking
       await t17Register(tracking)
