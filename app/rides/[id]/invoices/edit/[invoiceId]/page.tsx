@@ -284,6 +284,9 @@ export default function EditInvoicePage() {
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
+  // Whether closing the report dialog should leave the editor: true on the
+  // post-save flow, false when it popped from a PAID toggle mid-edit.
+  const [reportsExitAfter, setReportsExitAfter] = useState(true)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
   const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string }>({ manufacturer: '', model: '', year: '' })
@@ -1638,6 +1641,18 @@ export default function EditInvoicePage() {
       }
       const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: payDate }; setExpenses(updated)
       setPaidInConfirm(null)
+      // An expense's report goes out when it's PAID (user rule 2026-07-23): the
+      // moment it flips to paid, offer the WhatsApp report for it.
+      if (!isQuote) {
+        setReportsExitAfter(false)
+        setExpenseReports([{
+          supplier: e.supplier,
+          date: payDate,
+          receipt_url: e.receipt_urls[0] || '',
+          items: [{ item: e.item, amount: e.amount, quantity: e.quantity || '1', tax: e.tax || '0', extra: e.extra || '0' }],
+          report: true,
+        }])
+      }
       return
     }
     const p = payments[index]
@@ -2092,7 +2107,9 @@ export default function EditInvoicePage() {
 
     const groupMap = new Map<string, ExpenseReport>()
     const pendingExpenses: ExpenseReport[] = []
-    newExpenses.forEach(ex => {
+    // Only PAID expenses are reportable — an unpaid line (no payment_date) is a
+    // forecast, not news; its report goes out when it's marked PAID.
+    newExpenses.filter(ex => isValidDate(ex.payment_date)).forEach(ex => {
       const item: ExpenseReportItem = { item: ex.item, amount: ex.amount, quantity: ex.quantity || '1', tax: ex.tax || '0', extra: ex.extra || '0' }
       if (ex.purchase_group) {
         const existing = groupMap.get(ex.purchase_group)
@@ -2242,7 +2259,10 @@ export default function EditInvoicePage() {
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.\n\nReason: ${errors.join(' | ')}`)
     setExpenseReports(null)
-    router.push(basePath)
+    // Leave the editor only on the post-save flow; a PAID-toggle report keeps
+    // the user editing.
+    if (reportsExitAfter) router.push(basePath)
+    else setReportsExitAfter(true)
   }
 
   const expenseRows: { type: 'single' | 'group'; index?: number; groupId?: string; groupExpenses?: { index: number; expense: Expense }[]; expense?: Expense }[] = []
