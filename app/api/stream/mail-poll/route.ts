@@ -71,7 +71,11 @@ async function run(force: boolean): Promise<NextResponse> {
   // flips to REFUNDED and reports it. Manual REFUNDED on the board stays as the
   // fallback for refunds that never email.
   const refunded: string[] = []
-  const REFUND_WORDS = /\b(refund(ed)?|refunds?\s+(issued|processed|sent|completed)|money\s*back|reembolso|estorno|estornad[oa])\b/i
+  // Only ISSUED-refund language flips the row. Cancellation acknowledgments
+  // ("Got it - you want to cancel", "you'll get a refund") merely PROMISE a
+  // refund — the first live run flipped on one of those, so future/conditional
+  // wording must never match; the money has to have actually moved.
+  const REFUND_WORDS = /(refund (has been|was|is) (issued|sent|processed|completed|credited|on its way)|refund (issued|processed|completed)|(issued|processed|sent) (your|a|the) refund|your refund of|(you have been|you've been|you were) refunded|reembolso (efetuado|realizado|conclu[ií]do)|estorno (efetuado|realizado)|compra estornada)/i
   const { data: cData } = await db.from('part_streams').select('*').eq('status', 'CANCELLED')
   const cancelled = (cData as StreamRow[]) || []
   if (msgs.length && cancelled.length) {
