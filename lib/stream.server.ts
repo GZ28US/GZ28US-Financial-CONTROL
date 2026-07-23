@@ -59,7 +59,9 @@ export async function sendStreamWhatsApp(body: string): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-const RANK: Record<StreamStatus, number> = { BOUGHT: 0, SHIPPED: 1, DELIVERED: 2, REPORTED_PT: 3, DELIVERED_BR: 4 }
+// CANCELLED/REFUNDED sit above every carrier-mapped status so a 17TRACK push
+// can never resurrect a cancelled order (applyTrackInfo also bails early).
+const RANK: Record<StreamStatus, number> = { BOUGHT: 0, SHIPPED: 1, DELIVERED: 2, REPORTED_PT: 3, DELIVERED_BR: 4, CANCELLED: 90, REFUNDED: 99 }
 
 function fmtDate(d: string | null | undefined): string {
   if (!d) return ''
@@ -69,7 +71,7 @@ function fmtDate(d: string | null | undefined): string {
 
 // Where the purchase lives — "US.042.2 · SublimeHell" — for the report line.
 // BR rows carry a pre-computed where_label (their invoice lives in the BR DB).
-async function whereLabel(db: SupabaseClient, row: StreamRow): Promise<string> {
+export async function whereLabel(db: SupabaseClient, row: StreamRow): Promise<string> {
   if (row.app === 'BR') return row.where_label || ''
   if (!row.invoice_id) return ''
   const { data: inv } = await db.from('invoices').select('invoice_code, ride_id').eq('id', row.invoice_id).maybeSingle()
@@ -82,7 +84,7 @@ async function whereLabel(db: SupabaseClient, row: StreamRow): Promise<string> {
 
 // BR rows report to the BR app's own WhatsApp instance (BR number + BR group);
 // US rows keep the UltraMsg env of this app.
-async function notify(row: StreamRow, body: string): Promise<void> {
+export async function notify(row: StreamRow, body: string): Promise<void> {
   if (row.app === 'BR') {
     try {
       await fetch('https://www.gz28br.com/ca/api/whatsapp', {
@@ -99,6 +101,9 @@ async function notify(row: StreamRow, body: string): Promise<void> {
 // downgrading), carrier name, ETA, last checkpoint — then report SHIPPED /
 // DELIVERED transitions to the REPORTS WhatsApp group.
 export async function applyTrackInfo(db: SupabaseClient, row: StreamRow, info: any): Promise<StreamRow> {
+  // A cancelled order is out of the delivery ladder — the only transition left
+  // is CANCELLED → REFUNDED (mail watcher / manual), never a carrier event.
+  if (row.status === 'CANCELLED' || row.status === 'REFUNDED') return row
   const latest = info?.latest_status?.status
   const mapped = statusFrom17Track(latest)
   const next: StreamStatus = mapped && RANK[mapped] > RANK[row.status] ? mapped : row.status

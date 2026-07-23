@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { streamDb, t17Register, t17GetInfo, applyTrackInfo } from '@/lib/stream.server'
+import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel } from '@/lib/stream.server'
 import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, matchRows, guessCarrier, organizeInbox } from '@/lib/streamMail.server'
 import type { StreamRow } from '@/lib/stream'
 
@@ -36,8 +36,9 @@ async function run(force: boolean): Promise<NextResponse> {
   // ── tracking capture ──────────────────────────────────────────────────────
   let updated = 0
   const details: string[] = []
-  // Open rows = still waiting for a tracking number.
-  const { data } = await db.from('part_streams').select('*').is('tracking_number', null).neq('status', 'DELIVERED')
+  // Open rows = still waiting for a tracking number (pre-delivery statuses only —
+  // cancelled/refunded/arrived rows never capture a tracking).
+  const { data } = await db.from('part_streams').select('*').is('tracking_number', null).in('status', ['BOUGHT', 'SHIPPED'])
   const open = (data as StreamRow[]) || []
   if (msgs.length && open.length) {
     // Numbers already assigned to ANY row (delivered included) are spoken for —
@@ -65,12 +66,37 @@ async function run(force: boolean): Promise<NextResponse> {
     }
   }
 
+  // ── refund watch — a CANCELLED row waits for the supplier's refund email;
+  // when one lands (matched by order number, else unambiguous supplier) the row
+  // flips to REFUNDED and reports it. Manual REFUNDED on the board stays as the
+  // fallback for refunds that never email.
+  const refunded: string[] = []
+  const REFUND_WORDS = /\b(refund(ed)?|refunds?\s+(issued|processed|sent|completed)|money\s*back|reembolso|estorno|estornad[oa])\b/i
+  const { data: cData } = await db.from('part_streams').select('*').eq('status', 'CANCELLED')
+  const cancelled = (cData as StreamRow[]) || []
+  if (msgs.length && cancelled.length) {
+    for (const msg of msgs) {
+      if (!REFUND_WORDS.test(`${msg.subject} ${msg.text}`)) continue
+      for (const row of matchRows(cancelled.filter(r => r.status === 'CANCELLED'), msg)) {
+        row.status = 'REFUNDED'
+        await db.from('part_streams').update({
+          status: 'REFUNDED',
+          last_event: `Refund confirmed — ${msg.subject.slice(0, 80)}`,
+          last_event_at: new Date().toISOString(),
+        }).eq('id', row.id)
+        const where = await whereLabel(db, row)
+        await notify(row, `💸 *STREAM — REFUNDED*\n${row.item}\n${[row.supplier, where].filter(Boolean).join(' · ')}${row.order_number ? `\nOrder ${row.order_number}` : ''}`)
+        refunded.push(row.item)
+      }
+    }
+  }
+
   // ── inbox organizer — purchase emails file into the car's Outlook folder
   // 10+ min after the user reads them; doubts stay put and get logged.
   let organizer: { moved: string[]; doubts: string[] } = { moved: [], doubts: [] }
   try { organizer = await organizeInbox(db, token) } catch (e) { console.error('[mail-organize]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, moved: organizer.moved, doubts: organizer.doubts })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts })
 }
 
 export async function POST() { return run(false) }

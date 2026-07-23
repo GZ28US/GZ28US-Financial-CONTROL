@@ -12,7 +12,7 @@ import { STREAM_STATUS_META, guessCarrier, carrierTrackUrl, type StreamRow, type
 // a tracking number is on the row.
 
 type Chip = 'ALL' | StreamStatus
-const CHIPS: Chip[] = ['ALL', 'BOUGHT', 'SHIPPED', 'DELIVERED']
+const CHIPS: Chip[] = ['ALL', 'BOUGHT', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']
 
 type WhereInfo = { invoice_code: string; ride_name: string; ride_id: string | null }
 
@@ -34,6 +34,7 @@ export default function StreamPage() {
   const [search, setSearch] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState<StreamRow | null>(null)
   const [editTracking, setEditTracking] = useState<{ id: string; value: string } | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ supplier: '', item: '', order_number: '', tracking_number: '' })
@@ -75,7 +76,7 @@ export default function StreamPage() {
   const counts = useMemo(() => {
     // O quadro US só recebe linhas app='US' (3 status); os status BR existem no
     // tipo compartilhado, então o mapa cobre todos.
-    const c: Record<Chip, number> = { ALL: rows.length, BOUGHT: 0, SHIPPED: 0, DELIVERED: 0, REPORTED_PT: 0, DELIVERED_BR: 0 } as Record<Chip, number>
+    const c: Record<Chip, number> = { ALL: rows.length, BOUGHT: 0, SHIPPED: 0, DELIVERED: 0, REPORTED_PT: 0, DELIVERED_BR: 0, CANCELLED: 0, REFUNDED: 0 } as Record<Chip, number>
     for (const r of rows) c[r.status] = (c[r.status] || 0) + 1
     return c
   }, [rows])
@@ -83,11 +84,12 @@ export default function StreamPage() {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     const today = todayYmd()
-    // Most critical first: LATE (ETA passed, not delivered) → BOUGHT (waiting
-    // shipment) → SHIPPED (moving) → DELIVERED (done); newest first inside each.
+    // Most critical first: LATE (ETA passed, still moving) → BOUGHT (waiting
+    // shipment) → SHIPPED (moving) → CANCELLED (money owed back) → DELIVERED →
+    // REFUNDED (fully closed); newest first inside each.
     const rank = (r: StreamRow) => {
-      if (r.status !== 'DELIVERED' && r.eta && r.eta < today) return 0
-      return { BOUGHT: 1, SHIPPED: 2, DELIVERED: 3, REPORTED_PT: 4, DELIVERED_BR: 5 }[r.status]
+      if ((r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today) return 0
+      return { BOUGHT: 1, SHIPPED: 2, CANCELLED: 3, DELIVERED: 4, REPORTED_PT: 5, DELIVERED_BR: 6, REFUNDED: 7 }[r.status]
     }
     return rows.filter(r => {
       if (chip !== 'ALL' && r.status !== chip) return false
@@ -150,6 +152,44 @@ export default function StreamPage() {
     void load()
   }
 
+  // Order cancelled at the supplier: the row leaves the delivery ladder and the
+  // mail watcher starts hunting the refund email (manual 💸 stays as fallback).
+  async function cancelRow(row: StreamRow) {
+    setBusyId(row.id)
+    const { error } = await supabase.from('part_streams').update({
+      status: 'CANCELLED',
+      last_event: 'Order cancelled — watching the inbox for the refund',
+      last_event_at: new Date().toISOString(),
+    }).eq('id', row.id)
+    setConfirmCancel(null)
+    if (error) { alert(error.message); setBusyId(null); return }
+    const w = row.invoice_id ? where[row.invoice_id] : undefined
+    void fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: `🚫 *STREAM — ORDER CANCELLED*\n${row.item}\n${[row.supplier, w?.invoice_code, w?.ride_name].filter(Boolean).join(' · ')}\nWatching for the refund.` }),
+    }).catch(() => {})
+    setBusyId(null)
+    void load()
+  }
+
+  // Manual REFUNDED — for refunds that arrive without an email the watcher can see.
+  async function markRefunded(row: StreamRow) {
+    setBusyId(row.id)
+    const { error } = await supabase.from('part_streams').update({
+      status: 'REFUNDED',
+      last_event: 'Refund confirmed (manual)',
+      last_event_at: new Date().toISOString(),
+    }).eq('id', row.id)
+    if (error) { alert(error.message); setBusyId(null); return }
+    const w = row.invoice_id ? where[row.invoice_id] : undefined
+    void fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: `💸 *STREAM — REFUNDED*\n${row.item}\n${[row.supplier, w?.invoice_code, w?.ride_name].filter(Boolean).join(' · ')}` }),
+    }).catch(() => {})
+    setBusyId(null)
+    void load()
+  }
+
   async function addManual() {
     if (!addForm.item.trim()) { alert('Enter at least the item'); return }
     const tracking = addForm.tracking_number.trim()
@@ -191,6 +231,20 @@ export default function StreamPage() {
             <div className="flex gap-4">
               <button onClick={() => setConfirmRemove(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => removeRow(confirmRemove)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmCancel && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">🚫 Order cancelled?</h2>
+            <p className="text-gray-400 text-lg mb-2 break-words">{confirmCancel.item}</p>
+            <p className="text-gray-400 text-lg mb-8">The row goes to CANCELLED and the system watches the inbox for the refund — it flips to REFUNDED automatically when the refund email lands. The invoice expense is not touched.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setConfirmCancel(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">BACK</button>
+              <button onClick={() => cancelRow(confirmCancel)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCELLED</button>
             </div>
           </div>
         </div>
@@ -254,7 +308,7 @@ export default function StreamPage() {
           {visible.map(r => {
             const meta = STREAM_STATUS_META[r.status]
             const w = r.invoice_id ? where[r.invoice_id] : undefined
-            const late = r.status !== 'DELIVERED' && r.eta && r.eta < today
+            const late = (r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today
             const editing = editTracking?.id === r.id
             return (
               <div key={r.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5">
@@ -300,16 +354,22 @@ export default function StreamPage() {
                       </>
                     ) : (
                       <>
-                        {r.status !== 'DELIVERED' && (
+                        {(r.status === 'BOUGHT' || r.status === 'SHIPPED') && (
                           <button onClick={() => setEditTracking({ id: r.id, value: r.tracking_number || '' })} className="bg-blue-800 hover:bg-blue-700 px-4 py-2 rounded-xl font-bold">
                             {r.tracking_number ? 'EDIT TRACKING' : '+ TRACKING'}
                           </button>
                         )}
-                        {r.tracking_number && r.status !== 'DELIVERED' && (
+                        {r.tracking_number && (r.status === 'BOUGHT' || r.status === 'SHIPPED') && (
                           <button onClick={() => refreshRow(r.id)} disabled={busyId === r.id} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">{busyId === r.id ? '…' : '⟳ REFRESH'}</button>
                         )}
                         {r.status === 'SHIPPED' && (
                           <button onClick={() => markDelivered(r)} disabled={busyId === r.id} className="bg-green-800 hover:bg-green-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">✓ DELIVERED</button>
+                        )}
+                        {(r.status === 'BOUGHT' || r.status === 'SHIPPED') && (
+                          <button onClick={() => setConfirmCancel(r)} disabled={busyId === r.id} className="bg-red-900 hover:bg-red-800 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">🚫 CANCELLED</button>
+                        )}
+                        {r.status === 'CANCELLED' && (
+                          <button onClick={() => markRefunded(r)} disabled={busyId === r.id} className="bg-green-800 hover:bg-green-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">💸 REFUNDED</button>
                         )}
                         <button onClick={() => setConfirmRemove(r.id)} className="bg-gray-800 hover:bg-red-900 px-4 py-2 rounded-xl font-bold text-gray-400">REMOVE</button>
                       </>

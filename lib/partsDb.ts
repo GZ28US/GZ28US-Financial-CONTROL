@@ -89,7 +89,26 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     return min >= 6 && (a.endsWith(b) || b.endsWith(a))
   }
   const key = keyOf(row)
-  const existing = key ? rows.find((r: any) => samePN(keyOf(r), key)) : null
+  let existing = key ? rows.find((r: any) => samePN(keyOf(r), key)) : null
+
+  // Fallback: listing titles (eBay etc.) often carry the real part number only in
+  // the item TEXT, while the PN field holds a marketplace item number (or nothing).
+  // Sweep the text for PN-looking tokens (≥6 alphanumerics with a digit) and match
+  // them against the known part numbers — same part must never enroll twice.
+  if (!existing) {
+    const tokensOf = (s: any) => (String(s || '').toUpperCase().match(/[A-Z0-9][A-Z0-9.\-\/]{4,}[A-Z0-9]/g) || [])
+      .map(t => normPN(t)).filter(t => t.length >= 6 && /\d/.test(t))
+    const mine = new Set([...tokensOf(row.item), ...tokensOf(row.part_number)])
+    if (mine.size) {
+      existing = rows.find((r: any) => {
+        const rpn = r.part_number ? normPN(r.part_number) : ''
+        if (rpn && rpn.length >= 6 && [...mine].some(t => samePN(t, rpn))) return true
+        // Mirror case: our PN appears inside the existing row's item text.
+        const k = keyOf(row)
+        return !k.startsWith('NAME:') && k.length >= 6 && tokensOf(r.item).some(t => samePN(t, k))
+      }) || null
+    }
+  }
 
   // A SCAN from an OFFICIAL SUPPLIER (dealer contract → dealer_supplier set) is
   // REAL LIFE at its most trusted: it re-validates any row and LOCKS the result.
