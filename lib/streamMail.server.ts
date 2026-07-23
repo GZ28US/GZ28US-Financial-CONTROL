@@ -18,7 +18,9 @@ const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0'
 // ReadWrite (includes read): the organizer files purchase emails into each
 // car's Outlook folder. Scope upgrades take effect after a fresh consent at
 // /api/stream/mail-auth.
-export const MAIL_SCOPE = 'offline_access Mail.ReadWrite'
+// Mail.Send added 2026-07-23: the assistant answers emails (with the user's
+// explicit go-ahead per message) — e.g. payment confirmations to Kravitz & Guerra.
+export const MAIL_SCOPE = 'offline_access Mail.ReadWrite Mail.Send'
 
 export type MailAuth = {
   id: number
