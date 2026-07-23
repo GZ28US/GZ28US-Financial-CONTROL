@@ -109,7 +109,9 @@ export async function POST(req: NextRequest) {
       }
       to = normalizeTo(gid)
     }
-    const body = withSignature(typeof payload.body === 'string' ? payload.body : '')
+    // personal: true -> a message in Márcio's own voice (no app signature).
+    const rawBody = typeof payload.body === 'string' ? payload.body : ''
+    const body = payload.personal === true ? rawBody : withSignature(rawBody)
     const documentUrl = payload.documentUrl as string | undefined
     const imageUrl = payload.imageUrl as string | undefined
     const filename = (payload.filename as string | undefined) || 'document'
