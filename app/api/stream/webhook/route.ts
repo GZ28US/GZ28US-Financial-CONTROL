@@ -19,15 +19,19 @@ export async function POST(req: NextRequest) {
   }
 
   const payload = await req.json().catch(() => null)
-  const number = payload?.data?.number
-  const info = payload?.data?.track_info
-  if (!number || !info) return NextResponse.json({ received: true })
+  // The push carries either one update ({data: {number, track_info}}) or a
+  // batch ({data: {accepted: [...]}} shape) — handle both defensively.
+  const d = payload?.data
+  const updates: { number?: string; track_info?: unknown }[] = d?.number ? [d] : Array.isArray(d?.accepted) ? d.accepted : []
 
   try {
     const db = streamDb()
-    const { data: rows } = await db.from('part_streams').select('*').eq('tracking_number', String(number))
-    for (const row of (rows as StreamRow[]) || []) {
-      await applyTrackInfo(db, row, info)
+    for (const u of updates) {
+      if (!u?.number || !u?.track_info) continue
+      const { data: rows } = await db.from('part_streams').select('*').eq('tracking_number', String(u.number))
+      for (const row of (rows as StreamRow[]) || []) {
+        await applyTrackInfo(db, row, u.track_info)
+      }
     }
   } catch (e) {
     console.error('[stream-webhook]', e)
