@@ -181,7 +181,9 @@ const READ_WAIT_MIN = 10
 // DOUBT and never moves.
 export async function organizeInbox(db: SupabaseClient, accessToken: string): Promise<{ moved: string[]; doubts: string[] }> {
   const moved: string[] = [], doubts: string[] = []
-  const { data: rowsData } = await db.from('part_streams').select('id, supplier, order_number, invoice_id').not('invoice_id', 'is', null)
+  // Organizer files into US car folders — BR rows (PowerTrade pipeline) have no
+  // folder here; their purchase emails stay put and never raise doubts.
+  const { data: rowsData } = await db.from('part_streams').select('id, supplier, order_number, invoice_id').not('invoice_id', 'is', null).eq('app', 'US')
   const rows = (rowsData || []) as { id: string; supplier: string | null; order_number: string | null; invoice_id: string }[]
   if (!rows.length) return { moved, doubts }
   const invIds = [...new Set(rows.map(r => r.invoice_id))]

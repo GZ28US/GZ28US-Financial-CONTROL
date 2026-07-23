@@ -7,10 +7,15 @@
 // number is registered once and 17TRACK pushes every status change to
 // /api/stream/webhook. This module is client-safe — no keys here.
 
-export type StreamStatus = 'BOUGHT' | 'SHIPPED' | 'DELIVERED'
+// US rows walk BOUGHT → SHIPPED → DELIVERED. BR rows (app='BR', shown only on
+// the BR app's board) continue: DELIVERED means "at PowerTrade" (the freight
+// forwarder's US warehouse), then REPORTED_PT (arrived at PowerTrade Paraguay)
+// and DELIVERED_BR (received at GZ28BR).
+export type StreamStatus = 'BOUGHT' | 'SHIPPED' | 'DELIVERED' | 'REPORTED_PT' | 'DELIVERED_BR'
 
 export type StreamRow = {
   id: string
+  app: 'US' | 'BR'
   invoice_id: string | null
   purchase_group: string | null
   supplier: string | null
@@ -24,13 +29,16 @@ export type StreamRow = {
   last_event_at: string | null
   shipped_at: string | null
   delivered_at: string | null
+  where_label: string | null
   created_at: string
 }
 
 export const STREAM_STATUS_META: Record<StreamStatus, { label: string; icon: string; cls: string }> = {
-  BOUGHT:    { label: 'BOUGHT — awaiting shipment', icon: '🛒', cls: 'bg-amber-900 text-amber-300' },
-  SHIPPED:   { label: 'SHIPPED',                    icon: '🚚', cls: 'bg-blue-900 text-blue-300' },
-  DELIVERED: { label: 'DELIVERED',                  icon: '✅', cls: 'bg-green-900 text-green-300' },
+  BOUGHT:       { label: 'BOUGHT — awaiting shipment', icon: '🛒', cls: 'bg-amber-900 text-amber-300' },
+  SHIPPED:      { label: 'SHIPPED',                    icon: '🚚', cls: 'bg-blue-900 text-blue-300' },
+  DELIVERED:    { label: 'DELIVERED',                  icon: '✅', cls: 'bg-green-900 text-green-300' },
+  REPORTED_PT:  { label: 'REPORTED BY POWERTRADE',     icon: '🛃', cls: 'bg-purple-900 text-purple-300' },
+  DELIVERED_BR: { label: 'DELIVERED at GZ28BR',        icon: '🏁', cls: 'bg-green-900 text-green-300' },
 }
 
 // Best-effort carrier guess from the tracking-number shape — display only.

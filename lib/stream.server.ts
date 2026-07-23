@@ -59,7 +59,7 @@ export async function sendStreamWhatsApp(body: string): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-const RANK: Record<StreamStatus, number> = { BOUGHT: 0, SHIPPED: 1, DELIVERED: 2 }
+const RANK: Record<StreamStatus, number> = { BOUGHT: 0, SHIPPED: 1, DELIVERED: 2, REPORTED_PT: 3, DELIVERED_BR: 4 }
 
 function fmtDate(d: string | null | undefined): string {
   if (!d) return ''
@@ -68,7 +68,9 @@ function fmtDate(d: string | null | undefined): string {
 }
 
 // Where the purchase lives — "US.042.2 · SublimeHell" — for the report line.
+// BR rows carry a pre-computed where_label (their invoice lives in the BR DB).
 async function whereLabel(db: SupabaseClient, row: StreamRow): Promise<string> {
+  if (row.app === 'BR') return row.where_label || ''
   if (!row.invoice_id) return ''
   const { data: inv } = await db.from('invoices').select('invoice_code, ride_id').eq('id', row.invoice_id).maybeSingle()
   if (!inv) return ''
@@ -76,6 +78,21 @@ async function whereLabel(db: SupabaseClient, row: StreamRow): Promise<string> {
     ? await db.from('rides').select('project_name').eq('id', inv.ride_id).maybeSingle()
     : { data: null }
   return [inv.invoice_code, ride?.project_name].filter(Boolean).join(' · ')
+}
+
+// BR rows report to the BR app's own WhatsApp instance (BR number + BR group);
+// US rows keep the UltraMsg env of this app.
+async function notify(row: StreamRow, body: string): Promise<void> {
+  if (row.app === 'BR') {
+    try {
+      await fetch('https://www.gz28br.com/ca/api/whatsapp', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      })
+    } catch { /* best-effort */ }
+    return
+  }
+  await sendStreamWhatsApp(body)
 }
 
 // Apply a 17TRACK track_info payload onto a stream row: status (never
@@ -107,13 +124,16 @@ export async function applyTrackInfo(db: SupabaseClient, row: StreamRow, info: a
 
   if (next !== row.status) {
     const where = await whereLabel(db, row)
+    // On a BR row, carrier-DELIVERED means "arrived at PowerTrade" (the US
+    // forwarder) — the Paraguay + GZ28BR legs come after, updated separately.
+    const deliveredLabel = row.app === 'BR' ? 'DELIVERED at PowerTrade' : 'DELIVERED'
     if (next === 'DELIVERED') {
-      await sendStreamWhatsApp(
-        `✅ *STREAM — DELIVERED*\n${row.item}\n${[row.supplier, where].filter(Boolean).join(' · ')}` +
+      await notify(row,
+        `✅ *STREAM — ${deliveredLabel}*\n${row.item}\n${[row.supplier, where].filter(Boolean).join(' · ')}` +
         `${updated.carrier || row.tracking_number ? `\n${[updated.carrier, row.tracking_number].filter(Boolean).join(' ')}` : ''}`,
       )
     } else if (next === 'SHIPPED') {
-      await sendStreamWhatsApp(
+      await notify(row,
         `🚚 *STREAM — SHIPPED*\n${row.item}\n${[row.supplier, where].filter(Boolean).join(' · ')}` +
         `\n${[updated.carrier, row.tracking_number].filter(Boolean).join(' ')}` +
         `${eta ? `\nETA ${fmtDate(eta)}` : ''}`,

@@ -52,7 +52,9 @@ export default function StreamPage() {
   function flash(msg: string) { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
   async function load() {
-    const { data } = await supabase.from('part_streams').select('*').order('created_at', { ascending: false })
+    // Only US purchases here — BR rows (app='BR', the PowerTrade pipeline) show
+    // exclusively on the BR app's own /stream board.
+    const { data } = await supabase.from('part_streams').select('*').eq('app', 'US').order('created_at', { ascending: false })
     const list = (data as StreamRow[]) || []
     setRows(list)
     const invIds = Array.from(new Set(list.map(r => r.invoice_id).filter((v): v is string => !!v)))
@@ -71,8 +73,10 @@ export default function StreamPage() {
   }
 
   const counts = useMemo(() => {
-    const c: Record<Chip, number> = { ALL: rows.length, BOUGHT: 0, SHIPPED: 0, DELIVERED: 0 }
-    for (const r of rows) c[r.status]++
+    // O quadro US só recebe linhas app='US' (3 status); os status BR existem no
+    // tipo compartilhado, então o mapa cobre todos.
+    const c: Record<Chip, number> = { ALL: rows.length, BOUGHT: 0, SHIPPED: 0, DELIVERED: 0, REPORTED_PT: 0, DELIVERED_BR: 0 } as Record<Chip, number>
+    for (const r of rows) c[r.status] = (c[r.status] || 0) + 1
     return c
   }, [rows])
 
@@ -83,7 +87,7 @@ export default function StreamPage() {
     // shipment) → SHIPPED (moving) → DELIVERED (done); newest first inside each.
     const rank = (r: StreamRow) => {
       if (r.status !== 'DELIVERED' && r.eta && r.eta < today) return 0
-      return { BOUGHT: 1, SHIPPED: 2, DELIVERED: 3 }[r.status]
+      return { BOUGHT: 1, SHIPPED: 2, DELIVERED: 3, REPORTED_PT: 4, DELIVERED_BR: 5 }[r.status]
     }
     return rows.filter(r => {
       if (chip !== 'ALL' && r.status !== chip) return false
