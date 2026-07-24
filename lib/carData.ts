@@ -488,6 +488,66 @@ for (let y = 2007; y <= 2009; y++) {
 }
 years.sort((a, b) => a - b)
 
+
+// ── F-body 4th Gen — Camaro Z28/SS + Firebird Formula/Trans Am (1993–2002, V8 only) ──
+// LT1 350 through 1997; LS1 5.7 from 1998. Camaro: Z28 every year, SLP-built SS from
+// 1996. Firebird: Formula and Trans Am; WS6 Ram Air, Firehawk (SLP) and the
+// anniversary cars live in specialEditions (per the special-editions rule). Shared
+// per-year GM F-body palette — best-effort, confirm if needed.
+const fbodyGen4ColorsByYear: Record<number, string[]> = {
+  1993: ['Arctic White', 'Black', 'Bright Red', 'Purple Pearl Metallic', 'Medium Quasar Blue Metallic', 'Dark Green-Gray Metallic'],
+  1994: ['Arctic White', 'Black', 'Bright Red', 'Purple Pearl Metallic', 'Polo Green Metallic', 'Bright Teal Metallic', 'Dark Green-Gray Metallic'],
+  1995: ['Arctic White', 'Black', 'Bright Red', 'Purple Pearl Metallic', 'Polo Green Metallic', 'Bright Teal Metallic', 'Dark Green-Gray Metallic', 'Sebring Silver Metallic', 'Mystic Teal Metallic'],
+  1996: ['Arctic White', 'Black', 'Bright Red', 'Polo Green Metallic', 'Bright Teal Metallic', 'Sebring Silver Metallic', 'Cayenne Red Metallic', 'Mystic Teal Metallic'],
+  1997: ['Arctic White', 'Black', 'Bright Red', 'Polo Green Metallic', 'Sebring Silver Metallic', 'Cayenne Red Metallic', 'Bright Purple Metallic'],
+  1998: ['Arctic White', 'Black', 'Bright Rally Red', 'Bright Purple Metallic', 'Navy Blue Metallic', 'Sebring Silver Metallic', 'Sport Gold Metallic'],
+  1999: ['Arctic White', 'Black', 'Bright Rally Red', 'Bright Purple Metallic', 'Navy Blue Metallic', 'Light Pewter Metallic', 'Hugger Gold Metallic'],
+  2000: ['Arctic White', 'Black', 'Bright Rally Red', 'Navy Blue Metallic', 'Light Pewter Metallic', 'Monterey Maroon Metallic', 'Mystic Teal Metallic'],
+  2001: ['Arctic White', 'Black', 'Bright Rally Red', 'Navy Blue Metallic', 'Light Pewter Metallic', 'Monterey Maroon Metallic', 'Sunset Orange Metallic'],
+  2002: ['Arctic White', 'Black', 'Bright Rally Red', 'Navy Blue Metallic', 'Light Pewter Metallic', 'Sunset Orange Metallic', 'Sebring Silver Metallic'],
+}
+const camaroGen4Versions = (y: number): string[] => {
+  const v = ['Z28 5.7 V8']           // LT1 through '97, LS1 from '98
+  if (y >= 1996) v.push('SS 5.7 V8') // SLP-built through '97, factory from '98
+  return v
+}
+const firebirdGen4Versions = (): string[] => ['Formula 5.7 V8', 'Trans Am 5.7 V8']
+for (let y = 1993; y <= 2002; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  for (const b of ['CHEVROLET', 'PONTIAC']) {
+    if (!brandsByManufacturerAndYear['GM'][y].includes(b)) brandsByManufacturerAndYear['GM'][y].push(b)
+  }
+  modelsByBrandAndYear['CHEVROLET'] = modelsByBrandAndYear['CHEVROLET'] || {}
+  modelsByBrandAndYear['CHEVROLET'][y] = modelsByBrandAndYear['CHEVROLET'][y] || []
+  if (!modelsByBrandAndYear['CHEVROLET'][y].includes('CAMARO')) modelsByBrandAndYear['CHEVROLET'][y].push('CAMARO')
+  modelsByBrandAndYear['PONTIAC'] = modelsByBrandAndYear['PONTIAC'] || {}
+  modelsByBrandAndYear['PONTIAC'][y] = modelsByBrandAndYear['PONTIAC'][y] || []
+  if (!modelsByBrandAndYear['PONTIAC'][y].includes('FIREBIRD')) modelsByBrandAndYear['PONTIAC'][y].push('FIREBIRD')
+  versionsByModelAndYear['CAMARO'] = versionsByModelAndYear['CAMARO'] || {}
+  versionsByModelAndYear['CAMARO'][y] = [...(versionsByModelAndYear['CAMARO'][y] || []), ...camaroGen4Versions(y)]
+  versionsByModelAndYear['FIREBIRD'] = versionsByModelAndYear['FIREBIRD'] || {}
+  versionsByModelAndYear['FIREBIRD'][y] = [...(versionsByModelAndYear['FIREBIRD'][y] || []), ...firebirdGen4Versions()]
+}
+years.sort((a, b) => a - b)
+// Camaro: 1LE track pkg; '97 30th and '02 35th Anniversary. Firebird: WS6 Ram Air
+// (Trans Am '96+), Firehawk (SLP, on the Formula), '94 25th and '99 30th Anniversary.
+for (let y = 1993; y <= 2002; y++) {
+  const camaroZ28SE = ['None', '1LE']
+  if (y === 1997) camaroZ28SE.push('30th Anniversary')
+  specialEditions[`${y}-CAMARO-Z28 5.7 V8`] = camaroZ28SE
+  if (y >= 1996) specialEditions[`${y}-CAMARO-SS 5.7 V8`] = y === 2002 ? ['None', '35th Anniversary'] : ['None']
+  const taSE = ['None']
+  if (y >= 1996) taSE.push('WS6 Ram Air')
+  if (y === 1994) taSE.push('25th Anniversary')
+  if (y === 1999) taSE.push('30th Anniversary')
+  specialEditions[`${y}-FIREBIRD-Trans Am 5.7 V8`] = taSE
+  specialEditions[`${y}-FIREBIRD-Formula 5.7 V8`] = ['None', 'Firehawk (SLP)']
+}
+
 // ── Mustang Shelby GT500, S197 generation (2007–2014) ───────────────────────────
 // Trim = supercharged engine package. 2007–2012 used the 5.4L SC; 2013–2014 the
 // 5.8L SC (662 hp). The GT500KR "King of the Road" (2008–2009) is a special
@@ -1146,6 +1206,8 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === '911') return porsche997TurboColors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
+  if (model === 'CAMARO' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
+  if (model === 'FIREBIRD' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]

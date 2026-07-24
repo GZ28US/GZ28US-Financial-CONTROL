@@ -47,11 +47,17 @@ export function transmissionOptionsFor(
   }
 
   // ---- GM ----
+  if (b === 'PONTIAC' && m === 'FIREBIRD') {
+    // 4th-gen F-body V8: 4L60 in '93, 4L60E from '94; T56 manual across the run.
+    if (y >= 1993 && y <= 2002) return [y >= 1994 ? 'GM4L60E (Auto4)' : 'GM4L60 (Auto4)', 'T56 (Manual6)']
+    return []
+  }
   if (b === 'CHEVROLET' && m === 'CAMARO') {
     if (has('Z/28')) return ['TR6060 (Manual6)']
     if (has('ZL1')) return y >= 2017 ? ['GM10L90 (Auto10)', 'TR6060 (Manual6)'] : ['GM6L90 (Auto6)', 'TR6060 (Manual6)']
     if (y >= 2016) return [y >= 2019 ? 'GM10L80 (Auto10)' : 'GM8L90 (Auto8)', 'TR6060 (Manual6)']
     if (y >= 2010 && y <= 2015) return ['GM6L80 (Auto6)', 'TR6060 (Manual6)']
+    if (y >= 1993 && y <= 2002) return [y >= 1994 ? 'GM4L60E (Auto4)' : 'GM4L60 (Auto4)', 'T56 (Manual6)']
     if (y >= 1982 && y <= 1992) return ['700R4 (Auto4)', 'T5 (Manual5)']
     if (y >= 1967 && y <= 1969) return ['Muncie M20 (Manual4)', 'Saginaw (Manual3)', 'Powerglide (Auto2)', 'TH350 (Auto3)']
     return []
