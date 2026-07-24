@@ -11,12 +11,17 @@ import { carLabel } from '@/lib/carData'
 // A pack's GRAND TOTAL = the QUOTE price: parts + services, less the global
 // discount. Florida tax is EXCLUDED — quotes are sold tax-exclusive (it's added
 // only on the invoice), matching the "Prices Exclude Florida Taxes" report line.
+// "Importação — ..." lines are the BR freight (PowerTrade) — a BR-only concept.
+// RULE (2026-07-23): the US version of a pack NEVER carries the importações.
+const IMPORT_RE = /^\s*importa[cç][aã]o\s*[—–-]/i
+
 function packGrandTotal(p: any): number {
   const num = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
-  const parts = Array.isArray(p.parts) ? p.parts : []
+  const parts = (Array.isArray(p.parts) ? p.parts : []).filter((x: any) => !IMPORT_RE.test(x.description || ''))
   const services = Array.isArray(p.services) ? p.services : []
-  const partsSub = parts.reduce((s: number, x: any) => s + num(x.unit_price) * num(x.quantity), 0)
-  const svc = services.reduce((s: number, x: any) => s + num(x.price), 0)
+  // BR-authored packs store BRL in unit_price/price and USD in *_usd — this app is USD-only.
+  const partsSub = parts.reduce((s: number, x: any) => s + (x.unit_price_usd != null ? num(x.unit_price_usd) : num(x.unit_price)) * num(x.quantity), 0)
+  const svc = services.reduce((s: number, x: any) => s + (x.price_usd != null ? num(x.price_usd) : num(x.price)), 0)
   const pas = partsSub + svc
   return pas - pas * (num(p.global_discount) / 100)
 }

@@ -28,9 +28,12 @@ export default function ViewPackPage() {
 
   const closed = (pack.status || 'DRAFT') === 'CLOSED'
   const cars = Array.isArray(pack.cars) ? pack.cars : []
-  const parts = pack.parts || []
+  // "Importação — ..." lines are the BR freight (PowerTrade) — a BR-only concept.
+  // RULE (2026-07-23): the US version of a pack NEVER shows or counts them.
+  const IMPORT_RE = /^\s*importa[cç][aã]o\s*[—–-]/i
+  const parts = (pack.parts || []).filter((p: any) => !IMPORT_RE.test(p.description || ''))
   const services = pack.services || []
-  const expenses = pack.expenses || []
+  const expenses = (pack.expenses || []).filter((e: any) => !IMPORT_RE.test(e.item || ''))
   const notes = pack.notes || []
 
   // Profit dash — same math as the invoice: revenue (parts + FL tax + services −

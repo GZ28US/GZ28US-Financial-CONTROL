@@ -290,19 +290,28 @@ export default function NewInvoicePage() {
   // dates are cleared and nothing is marked paid (no payments, no payment_date,
   // no fl_tax_expense_date) — the applied pack is a fresh, unpaid starting point.
   async function applyPack(invoiceId: string, pack: Pack) {
-    const partRows = (pack.parts || []).map((p: any) => ({
-      invoice_id: invoiceId,
-      description: p.description,
-      unit_price: Number(p.unit_price) || 0,
-      quantity: Number(p.quantity) || 0,
-      base_cost: (p.base_cost != null && p.base_cost !== '') ? Number(p.base_cost) : null,
-      kit_group: p.kit_group || null,
-      kit_name: p.kit_name || null,
-      source_item: p.source_item || null,
-    }))
+    // BR-authored packs store BRL in unit_price/amount/price with the USD original
+    // in *_usd — this app is USD-only, so always prefer the _usd side (BRL-only
+    // companions scale by the line's own rate). And "Importação — ..." lines are
+    // the BR freight (PowerTrade): RULE (2026-07-23) — the US version of a pack
+    // NEVER carries the importações.
+    const IMPORT_RE = /^\s*importa[cç][aã]o\s*[—–-]/i
+    const partRows = (pack.parts || []).filter((p: any) => !IMPORT_RE.test(p.description || '')).map((p: any) => {
+      const ratio = (p.unit_price_usd != null && Number(p.unit_price) > 0) ? Number(p.unit_price_usd) / Number(p.unit_price) : 1
+      return {
+        invoice_id: invoiceId,
+        description: p.description,
+        unit_price: (p.unit_price_usd != null ? Number(p.unit_price_usd) : Number(p.unit_price)) || 0,
+        quantity: Number(p.quantity) || 0,
+        base_cost: (p.base_cost != null && p.base_cost !== '') ? Number(p.base_cost) * ratio : null,
+        kit_group: p.kit_group || null,
+        kit_name: p.kit_name || null,
+        source_item: p.source_item || null,
+      }
+    })
     if (partRows.length > 0) await supabase.from('invoice_parts').insert(partRows)
 
-    let serviceRows = (pack.services || []).map((s: any) => ({ invoice_id: invoiceId, description: s.description, price: Number(s.price) || 0 }))
+    let serviceRows = (pack.services || []).map((s: any) => ({ invoice_id: invoiceId, description: s.description, price: (s.price_usd != null ? Number(s.price_usd) : Number(s.price)) || 0 }))
     // Always keep a Full Project Labor row so EDIT's auto-CALCULATE has its anchor.
     if (serviceRows.length === 0) serviceRows = [{ invoice_id: invoiceId, description: FULL_PROJECT_LABOR, price: 0 }]
     await supabase.from('invoice_services').insert(serviceRows)
@@ -311,20 +320,21 @@ export default function NewInvoicePage() {
     // purchase_group (uuid). Map each pack kit to a fresh uuid so kits land as
     // grouped expenses (matching how parts carry kit_group through).
     const expGroupMap = new Map<string, string>()
-    const expenseRows = (pack.expenses || []).map((e: any) => {
+    const expenseRows = (pack.expenses || []).filter((e: any) => !IMPORT_RE.test(e.item || '')).map((e: any) => {
       let purchaseGroup: string | null = null
       if (e.kit_group) {
         if (!expGroupMap.has(e.kit_group)) expGroupMap.set(e.kit_group, crypto.randomUUID())
         purchaseGroup = expGroupMap.get(e.kit_group)!
       }
+      const ratio = (e.amount_usd != null && Number(e.amount) > 0) ? Number(e.amount_usd) / Number(e.amount) : 1
       return {
         invoice_id: invoiceId,
         expense_date: null,
         supplier: e.supplier || null,
         item: e.item,
-        price: Number(e.amount) || 0,
-        tax: Number(e.tax) || 0,
-        extra: Number(e.extra) || 0,
+        price: (e.amount_usd != null ? Number(e.amount_usd) : Number(e.amount)) || 0,
+        tax: (Number(e.tax) || 0) * ratio,
+        extra: (Number(e.extra) || 0) * ratio,
         quantity: Number(e.quantity) || 1,
         item_discount: Number(e.item_discount) || 0,
         payment_date: null,
