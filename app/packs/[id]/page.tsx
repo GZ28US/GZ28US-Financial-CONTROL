@@ -36,12 +36,21 @@ export default function ViewPackPage() {
   // Profit dash — same math as the invoice: revenue (parts + FL tax + services −
   // global discount) minus cost (supplier expenses + the FL tax we owe).
   const num = (v: any) => Number(v) || 0
-  const partsSubTotal = parts.reduce((s: number, p: any) => s + num(p.unit_price) * num(p.quantity), 0)
+  // CURRENCY RULE: packs authored on the BR app store BRL in amount/unit_price/price
+  // and the USD original in *_usd. This app shows USD ONLY — always prefer the _usd
+  // field; BRL-only companions (tax/extra/base_cost) scale by the line's own rate.
+  const partSell = (p: any) => (p.unit_price_usd != null ? num(p.unit_price_usd) : num(p.unit_price))
+  const partRatio = (p: any) => (p.unit_price_usd != null && num(p.unit_price) > 0 ? num(p.unit_price_usd) / num(p.unit_price) : 1)
+  const partCost = (p: any) => (p.base_cost != null ? num(p.base_cost) * partRatio(p) : null)
+  const expRatio = (e: any) => (e.amount_usd != null && num(e.amount) > 0 ? num(e.amount_usd) / num(e.amount) : 1)
+  const expAmount = (e: any) => (e.amount_usd != null ? num(e.amount_usd) : num(e.amount))
+  const svcPrice = (sv: any) => (sv.price_usd != null ? num(sv.price_usd) : num(sv.price))
+  const partsSubTotal = parts.reduce((s: number, p: any) => s + partSell(p) * num(p.quantity), 0)
   const floridaTaxesAmount = partsSubTotal * (num(pack.florida_taxes) / 100)
-  const servicesTotal = services.reduce((s: number, sv: any) => s + num(sv.price), 0)
+  const servicesTotal = services.reduce((s: number, sv: any) => s + svcPrice(sv), 0)
   const partsAndServicesTotal = partsSubTotal + floridaTaxesAmount + servicesTotal
   const grandTotal = partsAndServicesTotal - partsAndServicesTotal * (num(pack.global_discount) / 100)
-  const expensesTotalGlobal = floridaTaxesAmount + expenses.reduce((s: number, e: any) => s + num(e.amount) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra), 0)
+  const expensesTotalGlobal = floridaTaxesAmount + expenses.reduce((s: number, e: any) => s + expAmount(e) * (num(e.quantity) || 1) + (num(e.tax) + num(e.extra)) * expRatio(e), 0)
   const finalProfit = grandTotal - expensesTotalGlobal
   const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
   const profitColor = finalProfit < 0 ? 'text-red-500' : 'text-blue-400'
@@ -79,7 +88,7 @@ export default function ViewPackPage() {
                   if (seen.has(p.kit_group)) return null
                   seen.add(p.kit_group)
                   const members = parts.filter((x: any) => x.kit_group === p.kit_group)
-                  const total = members.reduce((s: number, x: any) => s + num(x.unit_price) * num(x.quantity), 0)
+                  const total = members.reduce((s: number, x: any) => s + partSell(x) * num(x.quantity), 0)
                   return (
                     <div key={i} className="border border-teal-800 rounded-2xl overflow-hidden my-2">
                       <div className="bg-teal-900/40 px-3 py-2 flex items-center justify-between gap-2">
@@ -87,12 +96,12 @@ export default function ViewPackPage() {
                         <span className="font-bold text-white">{money(total)}</span>
                       </div>
                       <div className="pl-5 border-l-2 border-teal-800 ml-3 py-1 space-y-1">
-                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.description} — {money(m.unit_price)}{m.base_cost != null ? ` (cost ${money(m.base_cost)})` : ''}</p>)}
+                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.description} — {money(partSell(m))}{m.base_cost != null ? ` (cost ${money(partCost(m))})` : ''}</p>)}
                       </div>
                     </div>
                   )
                 }
-                return <p key={i}>{p.quantity}× {p.description} — {money(p.unit_price)}{p.base_cost != null ? ` (cost ${money(p.base_cost)})` : ''}</p>
+                return <p key={i}>{p.quantity}× {p.description} — {money(partSell(p))}{p.base_cost != null ? ` (cost ${money(partCost(p))})` : ''}</p>
               }) })()}
             </div>
           </div>
@@ -102,7 +111,7 @@ export default function ViewPackPage() {
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
             <h2 className="text-lg font-bold mb-3">SERVICES ({services.length})</h2>
             <div className="space-y-1 text-lg text-gray-300">
-              {services.map((s: any, i: number) => <p key={i}>{s.description} — {money(s.price)}</p>)}
+              {services.map((s: any, i: number) => <p key={i}>{s.description} — {money(svcPrice(s))}</p>)}
             </div>
           </div>
         )}
@@ -116,7 +125,7 @@ export default function ViewPackPage() {
                   if (seen.has(e.kit_group)) return null
                   seen.add(e.kit_group)
                   const members = expenses.filter((x: any) => x.kit_group === e.kit_group)
-                  const total = members.reduce((s: number, x: any) => s + num(x.amount) * (num(x.quantity) || 1) + num(x.tax) + num(x.extra), 0)
+                  const total = members.reduce((s: number, x: any) => s + expAmount(x) * (num(x.quantity) || 1) + (num(x.tax) + num(x.extra)) * expRatio(x), 0)
                   return (
                     <div key={i} className="border border-teal-800 rounded-2xl overflow-hidden my-2">
                       <div className="bg-teal-900/40 px-3 py-2 flex items-center justify-between gap-2">
@@ -124,12 +133,12 @@ export default function ViewPackPage() {
                         <span className="font-bold text-white">{money(total)}</span>
                       </div>
                       <div className="pl-5 border-l-2 border-teal-800 ml-3 py-1 space-y-1">
-                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.item}{m.supplier ? ` @ ${m.supplier}` : ''} — {money(m.amount)}</p>)}
+                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.item}{m.supplier ? ` @ ${m.supplier}` : ''} — {money(expAmount(m))}</p>)}
                       </div>
                     </div>
                   )
                 }
-                return <p key={i}>{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(e.amount)}</p>
+                return <p key={i}>{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(expAmount(e))}</p>
               }) })()}
             </div>
           </div>
