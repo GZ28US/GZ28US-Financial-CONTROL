@@ -40,10 +40,12 @@ export default function PacksPage() {
   useEffect(() => { load() }, [])
 
   async function load() {
+    // LEI (2026-07-23): o app US lista SÓ packs zone='US' (o BR lista os dois).
+    // Filtro no cliente para tolerar linhas antigas sem a coluna zone (= US).
     const { data } = await supabase.from('packs').select('*')
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-    setRows(data || [])
+    setRows((data || []).filter((p: any) => (p.zone ?? 'US') === 'US'))
     setLoading(false)
   }
 
