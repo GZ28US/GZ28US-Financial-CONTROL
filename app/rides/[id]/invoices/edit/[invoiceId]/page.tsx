@@ -1673,6 +1673,19 @@ export default function EditInvoicePage() {
     updated[index] = { ...updated[index], paid_at: paidAt }
     setPayments(updated)
     setPaidInConfirm(null)
+    // An income's report goes out when it's PAID too (user rule 2026-07-24, same
+    // as the expense toggle above): every financial movement offers its report.
+    if (!isQuote) {
+      setReportsExitAfter(false)
+      setIncomeReports([{
+        amount: p.amount,
+        source: p.source,
+        date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr(),
+        receipt_url: p.receipt_url || '',
+        description: p.description || '',
+        report: true,
+      }])
+    }
   }
 
   // DUTIES — persisted immediately (independent from SAVE CHANGES).
@@ -2227,7 +2240,12 @@ export default function EditInvoicePage() {
     setSendingReports(false)
     if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.\n\nReason: ${errors.join(' | ')}`)
     setIncomeReports(null)
-    if (!expenseReports) router.push(basePath)
+    // Leave the editor only on the post-save flow; a PAID-toggle report keeps
+    // the user editing (mirrors sendExpenseReports).
+    if (!expenseReports) {
+      if (reportsExitAfter) router.push(basePath)
+      else setReportsExitAfter(true)
+    }
   }
 
   async function sendExpenseReports() {
