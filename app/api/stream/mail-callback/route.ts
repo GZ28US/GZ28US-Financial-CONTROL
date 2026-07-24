@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, setMailAuth, exchangeCode } from '@/lib/streamMail.server'
 
-// STREAM mail hookup, step 2 — Microsoft redirects here after consent. The
-// code is exchanged (PKCE, no secret) and the refresh token is stored straight
-// into stream_mail_auth: it never travels through a chat, a file or an env
-// var. The page just says whether it worked.
+// Mail hookup, step 2 — Microsoft redirects here after consent. The code is
+// exchanged (PKCE, no secret) and the refresh token is stored straight into
+// stream_mail_auth: it never travels through a chat, a file or an env var.
+// Multi-account (2026-07-24): the state's "N." prefix picks the row, and the
+// connected mailbox is discovered via Graph /me and recorded on the row.
 
 export const dynamic = 'force-dynamic'
 
@@ -23,14 +24,24 @@ export async function GET(req: NextRequest) {
   const errDesc = req.nextUrl.searchParams.get('error_description')
   if (!code) return page('Mail hookup failed', errDesc || 'No code returned', false)
 
+  const slot = Math.max(1, parseInt((state || '').split('.')[0] || '1') || 1)
   const db = streamDb()
-  const auth = await getMailAuth(db)
+  const auth = await getMailAuth(db, slot)
   if (!auth?.client_id || !auth.pkce_verifier) return page('Mail hookup failed', 'No pending auth — start at /api/stream/mail-auth', false)
   if (!state || state !== auth.oauth_state) return page('Mail hookup failed', 'State mismatch — start again at /api/stream/mail-auth', false)
 
   const res = await exchangeCode(auth.client_id, code, auth.pkce_verifier)
   if (!res?.refresh_token) return page('Mail hookup failed', res?.error_description || 'Token exchange failed', false)
 
-  await setMailAuth(db, { refresh_token: res.refresh_token, pkce_verifier: null, oauth_state: null })
-  return page('STREAM mail connected', 'gz28us@hotmail.com is hooked up — shipping emails now feed the STREAM board automatically. You can close this tab.', true)
+  // Which mailbox did we just connect? Ask Graph — never assume.
+  let account: string | null = null
+  try {
+    const me = await (await fetch('https://graph.microsoft.com/v1.0/me?$select=userPrincipalName,mail', {
+      headers: { Authorization: `Bearer ${res.access_token}` },
+    })).json()
+    account = me?.mail || me?.userPrincipalName || null
+  } catch { /* best-effort */ }
+
+  await setMailAuth(db, { refresh_token: res.refresh_token, account, pkce_verifier: null, oauth_state: null }, slot)
+  return page('Mailbox connected', `${account || 'A conta'} está conectada (slot ${slot}). Pode fechar esta aba.`, true)
 }

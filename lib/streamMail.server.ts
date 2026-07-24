@@ -24,6 +24,7 @@ export const MAIL_SCOPE = 'offline_access Mail.ReadWrite Mail.Send'
 
 export type MailAuth = {
   id: number
+  account?: string | null
   client_id: string | null
   refresh_token: string | null
   pkce_verifier: string | null
@@ -31,12 +32,16 @@ export type MailAuth = {
   last_poll: string | null
 }
 
-export async function getMailAuth(db: SupabaseClient): Promise<MailAuth | null> {
-  const { data } = await db.from('stream_mail_auth').select('*').eq('id', 1).maybeSingle()
+// Multi-account (2026-07-24): one row per mailbox — id 1 = gz28us@hotmail.com
+// (the STREAM watcher's box, untouched default), id 2+ = the other accounts
+// (galpaoz28@hotmail.com, gz28br@hotmail.com, ...). `account` records which
+// mailbox the row's refresh token belongs to (filled by the callback via /me).
+export async function getMailAuth(db: SupabaseClient, id = 1): Promise<MailAuth | null> {
+  const { data } = await db.from('stream_mail_auth').select('*').eq('id', id).maybeSingle()
   return (data as MailAuth) || null
 }
-export async function setMailAuth(db: SupabaseClient, patch: Partial<MailAuth>): Promise<void> {
-  await db.from('stream_mail_auth').upsert([{ id: 1, ...patch, updated_at: new Date().toISOString() }])
+export async function setMailAuth(db: SupabaseClient, patch: Partial<MailAuth>, id = 1): Promise<void> {
+  await db.from('stream_mail_auth').upsert([{ id, ...patch, updated_at: new Date().toISOString() }])
 }
 
 // ── OAuth (public client + PKCE, all server-side) ───────────────────────────
@@ -81,7 +86,7 @@ export async function freshAccessToken(db: SupabaseClient, auth: MailAuth): Prom
   const res = await tokenRequest({ client_id: auth.client_id, grant_type: 'refresh_token', refresh_token: auth.refresh_token, scope: MAIL_SCOPE })
   if (!res?.access_token) return null
   if (res.refresh_token && res.refresh_token !== auth.refresh_token) {
-    await setMailAuth(db, { refresh_token: res.refresh_token })
+    await setMailAuth(db, { refresh_token: res.refresh_token }, auth.id || 1)
   }
   return res.access_token
 }
