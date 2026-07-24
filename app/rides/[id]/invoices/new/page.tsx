@@ -194,6 +194,8 @@ export default function NewInvoicePage() {
       return eq(c?.manufacturer, ride.manufacturer) && eq(c?.model, ride.model) && eq(c?.year, ride.year)
     }
     const matched = (data || []).filter((p: any) => {
+      // LAW (2026-07-23): the US quote picker only offers zone='US' packs.
+      if ((p.zone ?? 'US') !== 'US') return false
       if ((p.status || 'DRAFT') !== 'CLOSED') return false
       const carList = Array.isArray(p.cars) && p.cars.length ? p.cars : [{ manufacturer: p.manufacturer, model: p.model, year: p.year }]
       return carList.some(carMatches)
