@@ -33,13 +33,19 @@ export async function GET(req: NextRequest) {
   const res = await exchangeCode(auth.client_id, code, auth.pkce_verifier)
   if (!res?.refresh_token) return page('Mail hookup failed', res?.error_description || 'Token exchange failed', false)
 
-  // Which mailbox did we just connect? Ask Graph — never assume.
+  // Which mailbox did we just connect? Ask Graph — never assume. /me comes back
+  // empty without a User.Read scope on consumer accounts, so fall back to the
+  // recipients of the inbox's own messages (mail addressed to the account).
   let account: string | null = null
   try {
-    const me = await (await fetch('https://graph.microsoft.com/v1.0/me?$select=userPrincipalName,mail', {
-      headers: { Authorization: `Bearer ${res.access_token}` },
-    })).json()
+    const gh = { Authorization: `Bearer ${res.access_token}` }
+    const me = await (await fetch('https://graph.microsoft.com/v1.0/me?$select=userPrincipalName,mail', { headers: gh })).json()
     account = me?.mail || me?.userPrincipalName || null
+    if (!account) {
+      const inb = await (await fetch('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=5&$select=toRecipients', { headers: gh })).json()
+      const addrs = (inb?.value || []).flatMap((m: any) => (m.toRecipients || []).map((r: any) => String(r.emailAddress?.address || '').toLowerCase()))
+      account = addrs.find((x: string) => x.includes('@hotmail') || x.includes('@outlook') || x.includes('@gz28')) || addrs[0] || null
+    }
   } catch { /* best-effort */ }
 
   await setMailAuth(db, { refresh_token: res.refresh_token, account, pkce_verifier: null, oauth_state: null }, slot)
