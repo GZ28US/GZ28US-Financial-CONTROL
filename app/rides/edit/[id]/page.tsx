@@ -57,6 +57,18 @@ export default function EditRidePage() {
   const [photoUrl, setPhotoUrl] = useState('')
   const [uploading, setUploading] = useState(false)
 
+  // TITLE & DOCS (US-only): where this car's paperwork lives. USA = GZ28US fleet
+  // (title, plates and insurance tracked here); EXPORT = bought by GZ28US but
+  // never FL-titled — the endorsed title goes straight to the exporter (unless
+  // it DID get transferred with taxes paid, e.g. a dealership sale — Alcatraz);
+  // CLIENT = an American client's own car, the owner handles the paperwork.
+  const [titleScope, setTitleScope] = useState('')
+  const [titleTransferred, setTitleTransferred] = useState(false)
+  const [insCompany, setInsCompany] = useState('')
+  const [insPolicy, setInsPolicy] = useState('')
+  const [insExpiry, setInsExpiry] = useState('')
+  const [titleNotes, setTitleNotes] = useState('')
+
   // BoneStock TUNE file — lives in the car's Dropbox HB Tuning folder (both archives for common cars).
   const [tuneExisting, setTuneExisting] = useState<string[]>([])
   const [tuneUploading, setTuneUploading] = useState(false)
@@ -98,6 +110,12 @@ export default function EditRidePage() {
     setPlate(r.plate || '')
     setPlateExpiry(r.plate_expiry || '')
     setPhotoUrl(r.photo_url || '')
+    setTitleScope(r.title_scope || '')
+    setTitleTransferred(!!r.title_transferred)
+    setInsCompany(r.insurance_company || '')
+    setInsPolicy(r.insurance_policy || '')
+    setInsExpiry(r.insurance_expiry || '')
+    setTitleNotes(r.title_notes || '')
     setLoading(false)
   }
 
@@ -244,6 +262,12 @@ export default function EditRidePage() {
       plate: plate || null,
       plate_expiry: plateExpiry || null,
       photo_url: photoUrl || null,
+      title_scope: titleScope || null,
+      title_transferred: titleScope ? titleTransferred : null,
+      insurance_company: titleScope === 'USA' ? (insCompany || null) : null,
+      insurance_policy: titleScope === 'USA' ? (insPolicy || null) : null,
+      insurance_expiry: titleScope === 'USA' ? (insExpiry || null) : null,
+      title_notes: titleNotes || null,
     }).eq('id', rideId)
 
     if (error) { setSaving(false); alert(error.message); return }
@@ -437,6 +461,62 @@ export default function EditRidePage() {
           {plateExpiry && (() => { const st = plateStatus(plateExpiry); return st.state === 'none' ? null : (
             <p className="mt-2"><span className={`px-3 py-1 rounded-full text-sm font-bold ${st.cls}`}>{st.label}</span></p>
           ) })()}
+        </div>
+
+        {/* TITLE & DOCS — who handles this car's paperwork. */}
+        <div className="border-t border-gray-800 pt-5 mt-2">
+          <h2 className="text-2xl font-bold mb-4">TITLE &amp; DOCS</h2>
+          <label className="block mb-2 text-lg font-bold">CAR DESTINY</label>
+          <select value={titleScope} onChange={(e) => setTitleScope(e.target.value)} className={selectClass}>
+            <option value="">— Not set —</option>
+            <option value="USA">USA — GZ28US fleet (title, plates &amp; insurance here)</option>
+            <option value="EXPORT">EXPORT — bought by GZ28US, goes straight to the exporter</option>
+            <option value="CLIENT">OWNER HANDLES — the client takes care of their own docs</option>
+          </select>
+
+          {titleScope === 'USA' && (
+            <div className="mt-4 space-y-4">
+              <label className="flex items-center gap-3 text-lg font-bold cursor-pointer">
+                <input type="checkbox" checked={titleTransferred} onChange={(e) => setTitleTransferred(e.target.checked)} className="w-6 h-6" />
+                TITLED TO GZ28US LLC (transfer done)
+              </label>
+              <div>
+                <label className="block mb-2 text-lg font-bold">INSURANCE COMPANY</label>
+                <input type="text" value={insCompany} onChange={(e) => setInsCompany(e.target.value)} className={inputClass} placeholder="e.g. Progressive" />
+              </div>
+              <div>
+                <label className="block mb-2 text-lg font-bold">POLICY #</label>
+                <input type="text" value={insPolicy} onChange={(e) => setInsPolicy(e.target.value)} className={inputClass} placeholder="Policy number" />
+              </div>
+              <div>
+                <DatePicker label="INSURANCE EXPIRY" value={insExpiry} onChange={setInsExpiry} />
+                {insExpiry && (() => { const st = plateStatus(insExpiry); return st.state === 'none' ? null : (
+                  <p className="mt-2"><span className={`px-3 py-1 rounded-full text-sm font-bold ${st.cls}`}>{st.label}</span></p>
+                ) })()}
+              </div>
+            </div>
+          )}
+
+          {titleScope === 'EXPORT' && (
+            <div className="mt-4 space-y-3">
+              <label className="flex items-center gap-3 text-lg font-bold cursor-pointer">
+                <input type="checkbox" checked={titleTransferred} onChange={(e) => setTitleTransferred(e.target.checked)} className="w-6 h-6" />
+                TITLE WAS TRANSFERRED ANYWAY (taxes paid — e.g. dealership charged them in the sale)
+              </label>
+              {!titleTransferred && (
+                <p className="text-gray-400">No FL title: the endorsed title stays on file and goes straight to the exporter at shipping time. No use tax paid.</p>
+              )}
+            </div>
+          )}
+
+          {titleScope === 'CLIENT' && (
+            <p className="mt-3 text-gray-400">The owner handles title, registration and insurance — nothing tracked here.</p>
+          )}
+
+          <div className="mt-4">
+            <label className="block mb-2 text-lg font-bold">DOCS NOTES</label>
+            <textarea value={titleNotes} onChange={(e) => setTitleNotes(e.target.value)} rows={2} className={inputClass} placeholder="Anything about title, taxes, exporter, insurance…" />
+          </div>
         </div>
 
         <div>

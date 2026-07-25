@@ -40,6 +40,12 @@ type Ride = {
   year: number | null
   photo_url: string | null
   client_id: string | null
+  title_scope: string | null
+  title_transferred: boolean | null
+  insurance_company: string | null
+  insurance_policy: string | null
+  insurance_expiry: string | null
+  title_notes: string | null
 }
 
 type Client = {
@@ -354,6 +360,51 @@ export default function ViewRidePage() {
             {ride.special_edition && <div className={rowClass}><span className={labelClass}>PACK</span><span className="font-bold">{ride.special_edition}</span></div>}
           </div>
         </div>
+
+        {/* TITLE & DOCS — who handles this car's paperwork (US-only feature).
+            USA = GZ28US fleet car (title/plates/insurance tracked); EXPORT = bought
+            by GZ28US, endorsed title goes straight to the exporter (unless it did
+            get transferred with taxes paid — the Alcatraz case); CLIENT = the
+            American client's own car, owner handles everything. */}
+        {ride.title_scope && (
+          <div>
+            <label className="block mb-3 text-lg font-bold">TITLE &amp; DOCS</label>
+            <div className={sectionClass}>
+              <div className={rowClass}>
+                <span className={labelClass}>CAR DESTINY</span>
+                <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride.title_scope === 'USA' ? 'bg-blue-900 text-blue-300' : ride.title_scope === 'EXPORT' ? 'bg-purple-900 text-purple-300' : 'bg-gray-700 text-gray-300'}`}>
+                  {ride.title_scope === 'USA' ? 'USA — GZ28US FLEET' : ride.title_scope === 'EXPORT' ? 'EXPORT' : 'OWNER HANDLES'}
+                </span>
+              </div>
+              {ride.title_scope !== 'CLIENT' && (
+                <div className={rowClass}>
+                  <span className={labelClass}>TITLE</span>
+                  <span className="font-bold">
+                    {ride.title_transferred
+                      ? 'Titled to GZ28US LLC (taxes paid)'
+                      : ride.title_scope === 'EXPORT' ? 'Not transferred — endorsed title goes to the exporter' : 'Transfer pending'}
+                  </span>
+                </div>
+              )}
+              {ride.title_scope === 'USA' && (ride.insurance_company || ride.insurance_policy) && (
+                <div className={rowClass}>
+                  <span className={labelClass}>INSURANCE</span>
+                  <span className="font-bold">{[ride.insurance_company, ride.insurance_policy ? `#${ride.insurance_policy}` : null].filter(Boolean).join(' ')}</span>
+                </div>
+              )}
+              {ride.title_scope === 'USA' && ride.insurance_expiry && (() => { const st = plateStatus(ride.insurance_expiry); return (
+                <div className={rowClass}>
+                  <span className={labelClass}>INSURANCE EXPIRY</span>
+                  <span className="font-bold flex items-center gap-2 flex-wrap justify-end">
+                    {fmtPlateExpiry(ride.insurance_expiry)}
+                    {st.state !== 'none' && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>}
+                  </span>
+                </div>
+              ) })()}
+              {ride.title_notes && <div className={rowClass}><span className={labelClass}>NOTES</span><span className="font-bold text-right">{ride.title_notes}</span></div>}
+            </div>
+          </div>
+        )}
 
         {/* CLIENT */}
         {client && (

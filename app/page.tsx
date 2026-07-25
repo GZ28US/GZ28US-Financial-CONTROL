@@ -95,6 +95,8 @@ export default function HomePage() {
   const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[]; loss: Row[] }>({ income: [], expense: [], tax: [], loss: [] })
   // Rides whose registration is expired or about to expire (see lib/plateExpiry).
   const [plateAlerts, setPlateAlerts] = useState<{ id: string; code: string; name: string; plate: string; expiry: string | null; st: PlateStatus }[]>([])
+  // USA-fleet cars whose insurance is expiring/expired (rides.insurance_expiry).
+  const [insuranceAlerts, setInsuranceAlerts] = useState<{ id: string; code: string; name: string; company: string; expiry: string | null; st: PlateStatus }[]>([])
   const [flow, setFlow] = useState<FlowItem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -141,7 +143,7 @@ export default function HomePage() {
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
     const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }] = await Promise.all([
-      supabase.from('rides').select('id, project_code, project_name, model, version, client_id, plate, plate_expiry'),
+      supabase.from('rides').select('id, project_code, project_name, model, version, client_id, plate, plate_expiry, title_scope, insurance_company, insurance_expiry'),
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
@@ -158,6 +160,20 @@ export default function HomePage() {
         plate: r.plate || '',
         expiry: r.plate_expiry as string | null,
         st: plateStatus(r.plate_expiry),
+      }))
+      .filter(r => r.st.state === 'due' || r.st.state === 'expired')
+      .sort((a, b) => a.st.days - b.st.days))
+    // Insurance watch — USA-fleet cars only (title_scope 'USA'); same window logic
+    // as the plates, driven by rides.insurance_expiry.
+    setInsuranceAlerts((ridesD || [])
+      .filter((r: any) => r.title_scope === 'USA' && r.insurance_expiry)
+      .map((r: any) => ({
+        id: r.id,
+        code: r.project_code || '—',
+        name: r.project_name || [r.model, r.version].filter(Boolean).join(' ') || '—',
+        company: r.insurance_company || '',
+        expiry: r.insurance_expiry as string | null,
+        st: plateStatus(r.insurance_expiry),
       }))
       .filter(r => r.st.state === 'due' || r.st.state === 'expired')
       .sort((a, b) => a.st.days - b.st.days))
@@ -381,6 +397,26 @@ export default function HomePage() {
               <a href={`${BASE_PATH}/rides/${r.id}`} className="hover:text-blue-400 truncate">
                 <span className="text-gray-500">{r.code}</span> · <span className="font-bold">{r.name}</span>
                 {r.plate ? <span className="text-gray-500"> · {r.plate}</span> : null}
+              </a>
+              <span className="flex items-center gap-2 shrink-0">
+                <span className="text-gray-400">{fmtPlateExpiry(r.expiry)}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${r.st.cls}`}>{r.st.label}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Insurance watch — USA-fleet cars (rides.title_scope 'USA') whose policy is
+          expiring or already lapsed. Same window logic as the plates. */}
+      {insuranceAlerts.length > 0 && (
+        <div className="mb-6 max-w-3xl bg-gray-900 border border-red-700/60 rounded-2xl p-5">
+          <p className="text-sm font-bold text-red-400 mb-2">🛡️ INSURANCE RENEWAL ({insuranceAlerts.length})</p>
+          {insuranceAlerts.map(r => (
+            <div key={r.id} className="flex justify-between gap-3 py-1.5 text-sm border-b border-gray-800/60 last:border-0">
+              <a href={`${BASE_PATH}/rides/${r.id}`} className="hover:text-blue-400 truncate">
+                <span className="text-gray-500">{r.code}</span> · <span className="font-bold">{r.name}</span>
+                {r.company ? <span className="text-gray-500"> · {r.company}</span> : null}
               </a>
               <span className="flex items-center gap-2 shrink-0">
                 <span className="text-gray-400">{fmtPlateExpiry(r.expiry)}</span>
