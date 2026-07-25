@@ -79,7 +79,10 @@ export default function FixedCostSupplierViewPage() {
   // First payment falls the month AFTER the supplier's start date; pre-creates next month
   // once the current month's last payment day passes. Inserts only missing dates. MONTHLY.
   async function ensureDuePayments(sup: any) {
-    if (!sup || sup.periodicity !== 'MONTHLY' || !sup.date_entry) return
+    // APP subscriptions generate on their own page (/costs/apps/[id]) — never here,
+    // or a direct link to this page would backfill past-dated scheduled rows.
+    if (!sup || sup.cost_type === 'APP') return
+    if (sup.periodicity !== 'MONTHLY' || !sup.date_entry) return
     const slots: { day: number; amount: number }[] = []
     if (sup.payment_day_1 != null && sup.amount_1 != null) slots.push({ day: Number(sup.payment_day_1), amount: Number(sup.amount_1) })
     if (sup.payment_day_2 != null && sup.amount_2 != null) slots.push({ day: Number(sup.payment_day_2), amount: Number(sup.amount_2) })

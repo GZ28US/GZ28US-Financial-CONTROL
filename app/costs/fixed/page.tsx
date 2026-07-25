@@ -34,9 +34,11 @@ export default function FixedCostSuppliersPage() {
   useEffect(() => { load() }, [])
 
   async function load() {
+    // APP subscriptions live on their own page (COSTS → APPS) — hidden here.
     const { data } = await supabase
       .from('fixed_cost_suppliers')
       .select('*')
+      .or('cost_type.is.null,cost_type.neq.APP')
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     setRows((data || []) as FixedCostSupplier[])

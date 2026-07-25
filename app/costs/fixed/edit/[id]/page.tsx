@@ -9,7 +9,7 @@ import { BASE_PATH } from '@/lib/utils'
 
 const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone']
 const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'ANNUAL']
-const COST_TYPES = ['FIXED', 'VARIABLE']
+const COST_TYPES = ['FIXED', 'VARIABLE', 'APP']
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function isNumeric(v: string) { return v === '' || /^-?\d*\.?\d*$/.test(v) }
@@ -83,7 +83,7 @@ export default function EditFixedCostSupplierPage() {
       updated_at: new Date().toISOString(),
     }).eq('id', id)
     if (error) { alert(error.message); setSaving(false); return }
-    router.push(`/costs/fixed/${id}`)
+    router.push(costType === 'APP' ? `/costs/apps/${id}` : `/costs/fixed/${id}`)
   }
 
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>

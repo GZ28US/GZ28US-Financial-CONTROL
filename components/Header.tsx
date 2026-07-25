@@ -66,6 +66,7 @@ const MENU: MenuItem[] = [
     items: [
       ['/costs/fixed', 'FIXED'],
       ['/costs/variable', 'VARIABLE'],
+      ['/costs/apps', 'APPS'],
       ['/goods', 'GOODS'],
       ['/inputs', 'INPUTS'],
       ['/staff', 'STAFF'],

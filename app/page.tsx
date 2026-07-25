@@ -18,11 +18,20 @@ function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 // visiting each supplier page (which has the same generator).
 async function ensureFixedCostPayments() {
   const { data: sups } = await supabase.from('fixed_cost_suppliers')
-    .select('id, description, company, date_entry, date_conclusion, periodicity, payment_day_1, amount_1, payment_day_2, amount_2')
+    .select('id, description, company, date_entry, date_conclusion, periodicity, cost_type, payment_day_1, amount_1, payment_day_2, amount_2')
   if (!sups || sups.length === 0) return
   const { data: existing } = await supabase.from('fixed_cost_expenses').select('supplier_id, expense_date')
   const existsBySup = new Map<string, Set<string>>()
-  for (const e of existing || []) { if (!e.expense_date) continue; if (!existsBySup.has(e.supplier_id)) existsBySup.set(e.supplier_id, new Set()); existsBySup.get(e.supplier_id)!.add(e.expense_date) }
+  // APP subscriptions schedule at most ONE row per month (real charges arrive from
+  // the Gmail receipts at whatever day they land) — so track months too.
+  const monthsBySup = new Map<string, Set<string>>()
+  for (const e of existing || []) {
+    if (!e.expense_date) continue
+    if (!existsBySup.has(e.supplier_id)) existsBySup.set(e.supplier_id, new Set())
+    existsBySup.get(e.supplier_id)!.add(e.expense_date)
+    if (!monthsBySup.has(e.supplier_id)) monthsBySup.set(e.supplier_id, new Set())
+    monthsBySup.get(e.supplier_id)!.add(String(e.expense_date).slice(0, 7))
+  }
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const clampDay = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -38,14 +47,21 @@ async function ensureFixedCostPayments() {
     const end = sup.date_conclusion ? new Date(sup.date_conclusion + 'T00:00:00') : null
     const supName = sup.description || sup.company || 'Payment'
     const has = existsBySup.get(sup.id) || new Set<string>()
+    const hasMonth = monthsBySup.get(sup.id) || new Set<string>()
+    const isApp = sup.cost_type === 'APP'
+    // APP rows never backfill scheduled dates into the past — history is what
+    // the Gmail receipts actually registered.
     let cursor = new Date(start.getFullYear(), start.getMonth() + 1, 1)
+    if (isApp && cursor < new Date(today.getFullYear(), today.getMonth(), 1)) cursor = new Date(today.getFullYear(), today.getMonth(), 1)
     while (cursor <= targetEnd) {
       for (const slot of slots) {
         const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), slot.day)
         const key = ymd(pd)
-        if (!(end && pd > end) && pd <= targetEnd && !has.has(key)) {
+        const monthTaken = isApp && hasMonth.has(key.slice(0, 7))
+        if (!(end && pd > end) && pd <= targetEnd && !has.has(key) && !(isApp && pd < today) && !monthTaken) {
           toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key })
           has.add(key)
+          hasMonth.add(key.slice(0, 7))
         }
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)

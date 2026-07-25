@@ -9,7 +9,7 @@ import { BASE_PATH } from '@/lib/utils'
 
 const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone']
 const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'ANNUAL']
-const COST_TYPES = ['FIXED', 'VARIABLE']
+const COST_TYPES = ['FIXED', 'VARIABLE', 'APP']
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function isNumeric(v: string) { return v === '' || /^-?\d*\.?\d*$/.test(v) }
@@ -25,7 +25,8 @@ export default function NewFixedCostSupplierPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [periodicity, setPeriodicity] = useState('MONTHLY')
-  const [costType, setCostType] = useState('FIXED')
+  // ?type=APP (vindo da página APPS) pré-seleciona o tipo e devolve pra lá.
+  const [costType, setCostType] = useState(() => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('type') === 'APP') ? 'APP' : 'FIXED')
   const [day1, setDay1] = useState('')
   const [amount1, setAmount1] = useState('')
   const [show2nd, setShow2nd] = useState(false)
@@ -56,7 +57,7 @@ export default function NewFixedCostSupplierPage() {
       updated_at: new Date().toISOString(),
     })
     if (error) { alert(error.message); setSaving(false); return }
-    router.push('/costs/fixed')
+    router.push(costType === 'APP' ? '/costs/apps' : '/costs/fixed')
   }
 
   return (
