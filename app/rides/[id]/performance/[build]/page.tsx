@@ -869,6 +869,7 @@ const BS_FIELDS: BSField[] = [
   { key: 'map_sensor', label: 'MAP Sensor', kind: 'so' },
   { key: 'heads', label: 'Heads', kind: 'so' },
   { key: 'cam', label: 'Cam', kind: 'so' },
+  { key: 'vvt', label: 'VVT', kind: 'so' },
   { key: 'displacement', label: 'Displacement', kind: 'so' },
   { key: 'compression_ratio', label: 'Compression Ratio', kind: 'so' },
   { key: 'headers', label: 'Headers', kind: 'so' },
