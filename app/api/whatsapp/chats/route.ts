@@ -20,7 +20,8 @@ export async function GET(req: NextRequest) {
     id: c.id,
     name: c.name || null,
     isGroup: String(c.id || '').endsWith('@g.us'),
-    time: c.time ? new Date(c.time * 1000).toISOString() : null,
+    time: (c.time ?? c.timestamp) ? new Date((c.time ?? c.timestamp) * 1000).toISOString() : null,
+    unread: c.unread ?? c.unreadCount ?? null,
     last: typeof c.last_message === 'string' ? c.last_message.slice(0, 120) : (c.last_message?.body ? String(c.last_message.body).slice(0, 120) : null),
   }))
   return NextResponse.json({ count: chats.length, chats })
