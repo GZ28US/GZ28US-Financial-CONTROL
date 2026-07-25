@@ -26,6 +26,8 @@ const APP_ALIASES: { match: RegExp; app: string; domains?: string[] }[] = [
   { match: /skywork/i, app: 'Skywork AI', domains: ['skywork.ai'] },
   { match: /recraft/i, app: 'Recraft', domains: ['recraft.ai'] },
   { match: /candy\.?\s?ai/i, app: 'Candy.ai', domains: ['candy.ai'] },
+  // O UltraMsg fatura como SWIFT TECH TRADING LLC no Stripe.
+  { match: /swift tech trading/i, app: 'UltraMsg', domains: ['ultramsg.com'] },
   { match: /dropbox/i, app: 'Dropbox', domains: ['dropbox.com'] },
   { match: /openai|chatgpt/i, app: 'ChatGPT', domains: ['openai.com'] },
   { match: /github/i, app: 'GitHub', domains: ['github.com'] },
@@ -292,10 +294,17 @@ export async function runAppsSweep(db: SupabaseClient, opts: { full?: boolean } 
         apps.push(row)
         out.newApps.push(appName)
         if (!opts.full) await sendStreamWhatsApp(`🆕 *NEW APP DETECTED — ${appName}*\n${cls.vendor || ''}\nFirst charge: *${fmtUSD(amount ?? 0)}* — ${fmtDate(payDate)}\nRegistered under COSTS → APPS.`)
-      } else if (amount != null) {
-        // O preço mensal acompanha a última cobrança (assinaturas mudam de valor).
-        await db.from('fixed_cost_suppliers').update({ amount_1: amount }).eq('id', row.id)
-        row.amount_1 = amount
+      } else {
+        // O preço acompanha a cobrança mais recente POR DATA (o backfill processa
+        // fora de ordem); recibo mais antigo que o cadastro puxa o date_entry.
+        const { data: latest } = await db.from('fixed_cost_expenses').select('payment_date')
+          .eq('supplier_id', row.id).not('payment_date', 'is', null)
+          .order('payment_date', { ascending: false }).limit(1)
+        const latestDate = latest?.[0]?.payment_date || ''
+        const patch: Record<string, unknown> = {}
+        if (amount != null && payDate >= latestDate) { patch.amount_1 = amount; row.amount_1 = amount }
+        if (row.date_entry && payDate < row.date_entry) { patch.date_entry = payDate; patch.payment_day_1 = Number(payDate.slice(8, 10)); row.date_entry = payDate }
+        if (Object.keys(patch).length) await db.from('fixed_cost_suppliers').update(patch).eq('id', row.id)
       }
       await rememberDomains(db, row, domains)
 

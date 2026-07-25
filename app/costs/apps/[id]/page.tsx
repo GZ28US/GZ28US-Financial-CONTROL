@@ -209,7 +209,7 @@ export default function AppViewPage() {
       </p>
       <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3 max-w-3xl mb-8">
         <p className="text-sm font-bold text-gray-300">
-          {formatUSD(Number(s.amount_1) || 0)} / month{s.payment_day_1 != null ? ` · charge day ${s.payment_day_1}` : ''}
+          {formatUSD(Number(s.amount_1) || 0)} / {s.periodicity === 'ANNUAL' ? 'year' : 'month'}{s.payment_day_1 != null ? ` · charge day ${s.payment_day_1}` : ''}
         </p>
         {isValidDate(s.date_entry) && <p className="text-xs text-gray-500 mt-1">Subscribed {fmtDate(s.date_entry)} → {isValidDate(s.date_conclusion) ? fmtDate(s.date_conclusion) : 'Active'}</p>}
       </div>

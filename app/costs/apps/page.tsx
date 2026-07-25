@@ -24,6 +24,7 @@ type AppRow = {
   date_conclusion: string | null
   amount_1: number | null
   payment_day_1: number | null
+  periodicity: string | null
 }
 
 export default function AppsPage() {
@@ -83,7 +84,8 @@ export default function AppsPage() {
     const searchOk = !q || [r.description, r.company, r.email].some((v) => (v || '').toLowerCase().includes(q))
     return statusOk && searchOk
   })
-  const monthlyTotal = filtered.reduce((s, r) => s + (isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td ? 0 : Number(r.amount_1) || 0), 0)
+  // ANNUAL subscriptions enter the monthly chip at 1/12 of the yearly charge.
+  const monthlyTotal = filtered.reduce((s, r) => s + (isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td ? 0 : (Number(r.amount_1) || 0) / (r.periodicity === 'ANNUAL' ? 12 : 1)), 0)
   const spentTotal = filtered.reduce((s, r) => s + (spent.get(r.id) || 0), 0)
 
   return (
@@ -158,7 +160,7 @@ export default function AppsPage() {
                 </Link>
                 <div className="text-right shrink-0">
                   <p className="text-2xl font-bold text-green-400">{formatUSD(spent.get(r.id) || 0)}</p>
-                  <p className="text-base text-gray-400">{formatUSD(Number(r.amount_1) || 0)} / month</p>
+                  <p className="text-base text-gray-400">{formatUSD(Number(r.amount_1) || 0)} / {r.periodicity === 'ANNUAL' ? 'year' : 'month'}</p>
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
                   <Link href={`/costs/apps/${r.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold">💵 PAYMENTS</Link>
