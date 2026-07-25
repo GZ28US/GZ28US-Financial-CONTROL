@@ -69,10 +69,16 @@ type Kind =
   | { kind: 'failure'; vendor: string }
   | { kind: 'vendor-mail' }
 
-function classify(subject: string): Kind {
+// Lojas/marketplaces NÃO são apps — confirmação de compra deles é peça/ingresso,
+// nunca assinatura (o backfill 2026-07-25 pescou eBay e Tixr por engano).
+const NOT_AN_APP = /ebay|tixr|amazon|mercado\s?livre|aliexpress|rockauto|summit\s?racing|jegs|paypal|walmart|bestbuy/i
+
+function classify(subject: string, from: string): Kind {
+  if (NOT_AN_APP.test(from)) return { kind: 'vendor-mail' }
   const s = subject.trim()
-  let m = s.match(/^Your receipt from (.+?)(?:\s+#([\d-]+))?$/i)
-  if (m) return { kind: 'receipt', vendor: m[1].trim(), receiptNo: m[2] || null }
+  // "Your receipt from Apple." — o ponto final não faz parte do nome.
+  let m = s.match(/^Your receipt from (.+?)(?:\s+#([\d-]+))?\.?$/i)
+  if (m) return { kind: 'receipt', vendor: m[1].trim().replace(/[.,;]+$/, ''), receiptNo: m[2] || null }
   m = s.match(/^New invoice from (.+?)\s*\(/i)
   if (m) return { kind: 'bill', vendor: m[1].trim() }
   m = s.match(/payment to (.+?) was unsuccessful/i)
@@ -297,7 +303,7 @@ async function gmailSweep(db: SupabaseClient, apps: AppRow[], out: AppsSweepResu
       const hasAppLabel = labelIds.some(l => { const name = [...labels.entries()].find(([, v]) => v === l)?.[0] || ''; return name === 'Apps' || name.startsWith('Apps/') })
       if (hasAppLabel) continue
 
-      const cls = classify(subject)
+      const cls = classify(subject, from)
       if (cls.kind === 'vendor-mail') {
         const app = domainToApp(apps).get(senderDomain(from))
         if (!app) continue
@@ -405,7 +411,7 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
       const date = m.receivedDateTime ? ymdET(new Date(m.receivedDateTime).getTime()) : ymdET(Date.now())
       const inSent = m.parentFolderId === sentId
 
-      const cls = classify(subject)
+      const cls = classify(subject, from)
       if (cls.kind === 'vendor-mail') {
         // No cron o fluxo de 3 dias traz de tudo; só arquivamos correio de
         // fornecedor conhecido, e nunca tiramos nada dos Itens Enviados.
