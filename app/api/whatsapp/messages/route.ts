@@ -15,8 +15,15 @@ export async function GET(req: NextRequest) {
   const chatId = (req.nextUrl.searchParams.get('chatId') || '').trim()
   if (!chatId.includes('@')) return NextResponse.json({ error: 'invalid chatId (expected ...@c.us / ...@g.us)' }, { status: 400 })
   const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || '50') || 50, 200)
-  const r = await fetch(`https://api.ultramsg.com/${instance}/chats/messages?token=${encodeURIComponent(token)}&chatId=${encodeURIComponent(chatId)}&limit=${limit}`)
-  const data = await r.json().catch(() => null)
+  // ?log=1 lê do log da instância (/messages) em vez do histórico do chat —
+  // é o único endpoint da UltraMsg que traz o LINK DE MÍDIA das imagens/docs.
+  const useLog = req.nextUrl.searchParams.get('log') === '1'
+  const url = useLog
+    ? `https://api.ultramsg.com/${instance}/messages?token=${encodeURIComponent(token)}&chatId=${encodeURIComponent(chatId)}&limit=${limit}&status=all&sort=desc&page=1`
+    : `https://api.ultramsg.com/${instance}/chats/messages?token=${encodeURIComponent(token)}&chatId=${encodeURIComponent(chatId)}&limit=${limit}`
+  const r = await fetch(url)
+  let data = await r.json().catch(() => null)
+  if (useLog && data && Array.isArray(data.messages)) data = data.messages.filter((m: any) => (m.chatId || m.from || m.to || '').includes(chatId.split('@')[0]))
   if (!Array.isArray(data)) return NextResponse.json({ error: 'unexpected UltraMsg response', raw: data }, { status: 502 })
   const messages = data.map((m: any) => ({
     fromMe: !!m.fromMe,
