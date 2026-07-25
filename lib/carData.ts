@@ -548,6 +548,37 @@ for (let y = 1993; y <= 2002; y++) {
   specialEditions[`${y}-FIREBIRD-Formula 5.7 V8`] = ['None', 'Firehawk (SLP)']
 }
 
+// ── Chrysler 300C — V8 only, LX (2005–2010) & LD (2011–2023) ────────────────────
+// LX: 300C 5.7 HEMI todos os anos + SRT8 6.1 (2005–2010). LD: 5.7 até 2023,
+// SRT8 6.4 (2012–2014) e o 392 Final Edition fechando a linha em 2023. Paletas
+// por geração — best-effort, confirmar se precisar. John Varvatos vive em
+// specialEditions (regra das edições especiais).
+const c300LXColors = ['Bright Silver Metallic', 'Brilliant Black Crystal Pearl', 'Cool Vanilla', 'Inferno Red Crystal Pearl', 'Magnesium Pearl', 'Midnight Blue Pearl', 'Stone White', 'Steel Blue Metallic', 'Deep Water Blue Pearl', 'Dark Titanium Metallic']
+const c300LDColors = ['Bright White', 'Gloss Black', 'Billet Silver Metallic', 'Granite Crystal Metallic', 'Maximum Steel Metallic', 'Velvet Red Pearl', 'Ocean Blue Metallic', 'Ceramic Grey', 'Amethyst Pearl', 'Redline Red']
+const c300ColorsByYear = (y: number): string[] => (y <= 2010 ? c300LXColors : c300LDColors)
+const c300Versions = (y: number): string[] => {
+  const v = ['5.7 V8']
+  if (y >= 2005 && y <= 2010) v.push('SRT8 6.1 V8')
+  if (y >= 2012 && y <= 2014) v.push('SRT8 6.4 V8')
+  if (y === 2023) v.push('392 6.4 V8 (Final Edition)')
+  return v
+}
+for (let y = 2005; y <= 2023; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MOPAR')) manufacturersByYear[y].push('MOPAR')
+  brandsByManufacturerAndYear['MOPAR'] = brandsByManufacturerAndYear['MOPAR'] || {}
+  brandsByManufacturerAndYear['MOPAR'][y] = brandsByManufacturerAndYear['MOPAR'][y] || []
+  if (!brandsByManufacturerAndYear['MOPAR'][y].includes('CHRYSLER')) brandsByManufacturerAndYear['MOPAR'][y].push('CHRYSLER')
+  modelsByBrandAndYear['CHRYSLER'] = modelsByBrandAndYear['CHRYSLER'] || {}
+  modelsByBrandAndYear['CHRYSLER'][y] = modelsByBrandAndYear['CHRYSLER'][y] || []
+  if (!modelsByBrandAndYear['CHRYSLER'][y].includes('300C')) modelsByBrandAndYear['CHRYSLER'][y].push('300C')
+  versionsByModelAndYear['300C'] = versionsByModelAndYear['300C'] || {}
+  versionsByModelAndYear['300C'][y] = [...(versionsByModelAndYear['300C'][y] || []), ...c300Versions(y)]
+  specialEditions[`${y}-300C-5.7 V8`] = (y === 2013 || y === 2014) ? ['None', 'John Varvatos Limited Edition'] : ['None']
+}
+years.sort((a, b) => a - b)
+
 // ── Mustang Shelby GT500, S197 generation (2007–2014) ───────────────────────────
 // Trim = supercharged engine package. 2007–2012 used the 5.4L SC; 2013–2014 the
 // 5.8L SC (662 hp). The GT500KR "King of the Road" (2008–2009) is a special
@@ -1208,6 +1239,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
   if (model === 'CAMARO' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
   if (model === 'FIREBIRD' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
+  if (model === '300C') return c300ColorsByYear(year)
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]
   if (model === 'CAMARO' && gen6CamaroColorsByYear[year]) return gen6CamaroColorsByYear[year]
   if (model === 'CHARGER' && classicChargerColorsByYear[year]) return classicChargerColorsByYear[year]

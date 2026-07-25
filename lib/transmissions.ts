@@ -47,6 +47,14 @@ export function transmissionOptionsFor(
   }
 
   // ---- GM ----
+  if (b === 'CHRYSLER' && m === '300C') {
+    // V8 sempre automático: NAG1 (W5A580) até 2014; TorqueFlite ZF 8HP70 de 2015+.
+    if (has('SRT8 6.1') || has('SRT8 6.4')) return ['NAG1 W5A580 (Auto5)']
+    if (has('392')) return ['ZF8HP70 (Auto8)']
+    if (y >= 2005 && y <= 2014) return ['NAG1 W5A580 (Auto5)']
+    if (y >= 2015 && y <= 2023) return ['ZF8HP70 (Auto8)']
+    return []
+  }
   if (b === 'PONTIAC' && m === 'FIREBIRD') {
     // 4th-gen F-body V8: 4L60 in '93, 4L60E from '94; T56 manual across the run.
     if (y >= 1993 && y <= 2002) return [y >= 1994 ? 'GM4L60E (Auto4)' : 'GM4L60 (Auto4)', 'T56 (Manual6)']
