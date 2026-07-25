@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   if (!Array.isArray(data)) return NextResponse.json({ error: 'unexpected UltraMsg response', raw: data }, { status: 502 })
   const messages = data.map((m: any) => ({
     fromMe: !!m.fromMe,
-    time: m.time ? new Date(m.time * 1000).toISOString() : null,
+    time: (m.time ?? m.timestamp) ? new Date((m.time ?? m.timestamp) * 1000).toISOString() : null,
     type: m.type || 'chat',
     body: typeof m.body === 'string' ? m.body.slice(0, 2000) : '',
     media: m.media || null,
