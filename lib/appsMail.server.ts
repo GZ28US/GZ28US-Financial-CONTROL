@@ -115,6 +115,8 @@ async function labelMap(token: string): Promise<Map<string, string>> {
 async function ensureLabel(token: string, labels: Map<string, string>, name: string): Promise<string> {
   const have = labels.get(name)
   if (have) return have
+  // O Gmail só aninha "Apps/X" debaixo de "Apps" se o marcador-pai existir.
+  if (name.includes('/')) await ensureLabel(token, labels, name.split('/')[0])
   const res = await (await fetch(`${API}/labels`, {
     method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }),
