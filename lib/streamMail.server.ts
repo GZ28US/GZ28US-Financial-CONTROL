@@ -282,4 +282,53 @@ export function matchRows(open: StreamRow[], msg: MailMsg): StreamRow[] {
   return suppliers.size === 1 && bySupplier.length === 1 ? bySupplier : []
 }
 
+// ── Spam auto-clean (regra do Márcio 2026-07-24: "apague logo que chegar") ──
+// Cada passada do mail-poll varre Caixa de Entrada + Lixo Eletrônico das 3
+// contas Hotmail conectadas e manda os remetentes de marketing/junk conhecidos
+// para os Itens Excluídos (soft delete — recuperável). A lista é curada: só
+// remetentes puramente promocionais/golpe; transacionais nunca entram aqui.
+const SPAM_SENDERS: RegExp[] = [
+  /zanvis\.com/i, /quickreliablecoverage/i, /insideapple\.apple\.com/i,
+  /alstspecials\.com/i, /newvisionbooking\.com/i, /searshomeservices\.com/i,
+  /acordocerto\.com\.br/i, /acerto\.com\.br/i, /ephysioassociates\.com/i,
+  /centraldecampanhas\.com\.br/i, /centraldeboletos\.com\.br/i,
+  /newsletter\.volotea\.com/i, /e\.sixt\.com/i, /hello@eaze\.com/i,
+  /marketing\.jetblue\.com/i, /shopyourwayrewards\.com/i, /dpny\.com\.br/i,
+  /e\.localiza\.com/i, /e-cotaragora\.com/i, /mkt\.americanas\.com/i,
+  /elements\.envato\.com/i, /intelbras-info\.com/i, /emkt\.intercityhoteis/i,
+  /novidades@reserva\.ink/i, /minibardelivery\.com/i, /emails\.pbr\.com/i,
+  /boutique@toleman\.com\.br/i, /premiereplay\.globo\.com/i,
+  /sistemadeinfracao/i, /mcdonalds.*privaterelay\.appleid\.com/i,
+]
+// Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
+const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
+
+export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[] }> {
+  const deleted: string[] = []
+  for (const slot of [1, 2, 3]) {
+    try {
+      const auth = await getMailAuth(db, slot)
+      if (!auth?.refresh_token) continue
+      const token = await freshAccessToken(db, auth)
+      if (!token) continue
+      for (const folder of ['inbox', 'junkemail']) {
+        const r = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${folder}/messages?$top=30&$select=id,subject,from`, { headers: graphH(token) })
+        const data = await r.json().catch(() => null)
+        for (const m of data?.value || []) {
+          const addr = String(m.from?.emailAddress?.address || '')
+          const subj = String(m.subject || '')
+          const hit = SPAM_SENDERS.some(re => re.test(addr)) || (/facebookmail\.com/i.test(addr) && SPAM_FB_SUBJECT.test(subj))
+          if (!hit) continue
+          const mv = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/move`, {
+            method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ destinationId: 'deleteditems' }),
+          })
+          if (mv.ok) deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+        }
+      }
+    } catch (e) { console.error('[spam-sweep]', slot, e) }
+  }
+  return { deleted }
+}
+
 export { guessCarrier }

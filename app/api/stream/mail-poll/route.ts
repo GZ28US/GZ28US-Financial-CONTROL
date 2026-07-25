@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel } from '@/lib/stream.server'
-import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, matchRows, guessCarrier, organizeInbox } from '@/lib/streamMail.server'
+import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, matchRows, guessCarrier, organizeInbox, sweepSpam } from '@/lib/streamMail.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
@@ -100,7 +100,12 @@ async function run(force: boolean): Promise<NextResponse> {
   let organizer: { moved: string[]; doubts: string[] } = { moved: [], doubts: [] }
   try { organizer = await organizeInbox(db, token) } catch (e) { console.error('[mail-organize]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts })
+  // ── spam auto-clean — toda passada varre as 3 caixas e apaga o marketing
+  // conhecido na hora (regra 2026-07-24: "apague logo que chegar").
+  let spam: { deleted: string[] } = { deleted: [] }
+  try { spam = await sweepSpam(db) } catch (e) { console.error('[spam-sweep]', e) }
+
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted })
 }
 
 export async function POST() { return run(false) }
