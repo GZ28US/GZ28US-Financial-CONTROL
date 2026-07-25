@@ -299,6 +299,8 @@ const SPAM_SENDERS: RegExp[] = [
   /novidades@reserva\.ink/i, /minibardelivery\.com/i, /emails\.pbr\.com/i,
   /boutique@toleman\.com\.br/i, /premiereplay\.globo\.com/i,
   /sistemadeinfracao/i, /mcdonalds.*privaterelay\.appleid\.com/i,
+  // newsletter da RockAuto — NUNCA incluir noreply@rockauto.com (carrinhos!)
+  /newsletter@list\.rockauto\.com/i,
 ]
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
