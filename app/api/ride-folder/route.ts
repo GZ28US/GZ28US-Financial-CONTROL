@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { streamDb } from '@/lib/stream.server'
+import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 
 // RIDE FOLDER SYNC — keeps the physical Dropbox ride folders in step with the
 // system: every ride create / rename / renumber updates the folder via the
@@ -122,13 +124,51 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
 
 // Every ride folder carries these standard subfolders — ensured (idempotent) on
 // every create/rename so old folders self-heal too.
-const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance']
+const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation']
 async function ensureSubfolders(token: string, folderPath: string) {
   for (const sub of SUBFOLDERS) {
     const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
     if (!r.ok && !r.text.includes('conflict')) {
       console.error('[ride-folder] subfolder create failed', { path: `${folderPath}/${sub}`, err: r.text.slice(0, 200) })
     }
+  }
+}
+
+// MAIL FOLDER SYNC — the gz28us@hotmail mailbox mirrors the ride archive under
+// its "Rides" parent folder ("Rides/US.028 - GenesiZ"). Ride create/rename keeps
+// that folder in step too (zone US only — BR cars have no mail-folder convention
+// yet). Best-effort: a Graph hiccup never fails the Dropbox sync.
+async function syncMailFolder(action: 'create' | 'rename', code: string, name: string, oldCode?: string) {
+  try {
+    const db = streamDb()
+    const auth = await getMailAuth(db, 1)
+    if (!auth?.refresh_token) return
+    const token = await freshAccessToken(db, auth)
+    if (!token) return
+    const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    const top = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders?$top=100', { headers: H }).then(r => r.json()).catch(() => null)
+    const rides = (top?.value || []).find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
+    if (!rides) return
+    const kids = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders?$top=200`, { headers: H }).then(r => r.json()).catch(() => null)
+    const target = `${code}${name ? ' - ' + name : ''}`
+    const byCode = (c: string) => (kids?.value || []).find((f: any) => {
+      const dn = String(f.displayName || '')
+      return dn === c || dn.startsWith(c + ' ')
+    })
+    const existing = byCode(code) || (action === 'rename' && oldCode ? byCode(oldCode) : null)
+    if (existing) {
+      if (existing.displayName !== target) {
+        await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(existing.id)}`, {
+          method: 'PATCH', headers: H, body: JSON.stringify({ displayName: target }),
+        })
+      }
+      return
+    }
+    await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders`, {
+      method: 'POST', headers: H, body: JSON.stringify({ displayName: target }),
+    })
+  } catch (err) {
+    console.error('[ride-folder] mail folder sync failed', String(err).slice(0, 200))
   }
 }
 
@@ -221,6 +261,11 @@ export async function POST(req: NextRequest) {
       const up = await dbxUpload(token, `${root}/${folder}/${sub}/${filename}`, Buffer.from(b64, 'base64'))
       if (!up.ok) return NextResponse.json({ error: 'upload failed: ' + up.text.slice(0, 200) }, { status: 502 })
       return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/${sub}/${filename}` })
+    }
+
+    // Mail-folder mirror rides along with create/rename (US mailbox only).
+    if (zone === 'US' && (action === 'create' || action === 'rename')) {
+      await syncMailFolder(action, code, name, sanitize(String(body.oldCode || '')) || undefined)
     }
 
     if (action === 'create') {
