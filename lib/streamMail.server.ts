@@ -301,6 +301,13 @@ const SPAM_SENDERS: RegExp[] = [
   /sistemadeinfracao/i, /mcdonalds.*privaterelay\.appleid\.com/i,
   // newsletter da RockAuto — NUNCA incluir noreply@rockauto.com (carrinhos!)
   /newsletter@list\.rockauto\.com/i,
+  // Faxina inbox-zero 2026-07-25 — puramente promocionais:
+  /infoemails\.microsoft\.com/i, /promomail\.microsoft\.com/i,
+  /mail\.nordvpn\.com/i, /em\.autozone\.com/i, /email\.bestbuy\.com/i,
+  /bounce\.17track\.net/i, /hamia@17track\.com/i, /mm\.simpletire\.com/i,
+  /e\.stripe\.com/i, /meuacerto\.com\.br/i, /jcsjunioradvogados\.com\.br/i,
+  /ciaathletica\.com\.br/i, /announce@winzip\.com/i, /photos@onedrive\.com/i,
+  /uberone@uber\.com/i, /jegs@e\.jegs\.com/i, /emanualonline\.com/i,
 ]
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
