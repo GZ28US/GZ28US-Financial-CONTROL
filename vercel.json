@@ -1,15 +1,15 @@
 {
   "crons": [
     {
-      "path": "/api/cron/recurring-expense-reports",
+      "path": "/ca/api/cron/recurring-expense-reports",
       "schedule": "0 15 * * *"
     },
     {
-      "path": "/api/stream/mail-poll",
+      "path": "/ca/api/stream/mail-poll",
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/daily-report",
+      "path": "/ca/api/cron/daily-report",
       "schedule": "0 8 * * *"
     }
   ],
