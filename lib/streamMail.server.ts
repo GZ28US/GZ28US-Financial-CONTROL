@@ -327,7 +327,7 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
         for (const m of data?.value || []) {
           const addr = String(m.from?.emailAddress?.address || '')
           const subj = String(m.subject || '')
-          const hit = SPAM_SENDERS.some(re => re.test(addr)) || (/facebookmail\.com/i.test(addr) && SPAM_FB_SUBJECT.test(subj))
+          const hit = SPAM_SENDERS.some(re => re.test(addr)) || (/facebookmail\.com/i.test(addr) && SPAM_FB_SUBJECT.test(subj)) || /^Lembrete: Anivers/i.test(subj)
           if (!hit) continue
           const mv = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/move`, {
             method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
