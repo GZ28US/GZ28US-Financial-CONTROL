@@ -4,6 +4,7 @@ import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extrac
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet } from '@/lib/expenseReportNet.server'
+import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
@@ -118,8 +119,10 @@ async function run(force: boolean): Promise<NextResponse> {
   try { staffTravel = await runStaffTravelSweep(db) } catch (e) { console.error('[staff-travel]', e) }
   let reportNet: { reported: string[] } = { reported: [] }
   try { reportNet = await runExpenseReportNet(db) } catch (e) { console.error('[report-net]', e) }
+  let purchases: { captured: string[] } = { captured: [] }
+  try { purchases = await runPurchaseCapture(db) } catch (e) { console.error('[purchase-capture]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases })
 }
 
 export async function POST() { return run(false) }
