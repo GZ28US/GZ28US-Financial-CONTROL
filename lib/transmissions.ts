@@ -108,6 +108,7 @@ export function transmissionOptionsFor(
   if (b === 'PORSCHE' && m === '911' && has('TURBO') && y >= 2006 && y <= 2009) return ['G97 (Manual6)', 'Tiptronic S (Auto5)']
   if (b === 'LAND ROVER' && m === 'DEFENDER') return y >= 2012 ? ['MT82 (Manual6)'] : ['R380 (Manual5)']
   if (b === 'MITSUBISHI' && m === 'ECLIPSE') return ['F5M33 (Manual5)', 'INVECS-II (Auto4)']
+  if (b === 'MERCEDES-BENZ' && m === '300 SEL') return ['W3A 040 K4A 050 (Auto4)']
 
   return []
 }

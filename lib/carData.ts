@@ -1343,3 +1343,17 @@ export function carLabel(c: any): string {
     : (c.year != null && c.year !== '' ? String(c.year) : '')
   return yrs ? `${head} — ${yrs}` : head
 }
+// ── Mercedes-Benz 300 SEL 6.3 (W109, motor M100 6.3 V8 — produção 1968–1972) ────
+// O sedã "Q-ship" original: 6.332cc, 250 hp DIN, único câmbio de fábrica (Auto4).
+for (let y = 1968; y <= 1972; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MERCEDES-BENZ')) manufacturersByYear[y].push('MERCEDES-BENZ')
+  brandsByManufacturerAndYear['MERCEDES-BENZ'] = brandsByManufacturerAndYear['MERCEDES-BENZ'] || {}
+  brandsByManufacturerAndYear['MERCEDES-BENZ'][y] = ['MERCEDES-BENZ']
+  modelsByBrandAndYear['MERCEDES-BENZ'] = modelsByBrandAndYear['MERCEDES-BENZ'] || {}
+  modelsByBrandAndYear['MERCEDES-BENZ'][y] = ['300 SEL']
+  versionsByModelAndYear['300 SEL'] = versionsByModelAndYear['300 SEL'] || {}
+  versionsByModelAndYear['300 SEL'][y] = ['6.3 (M100 V8)']
+}
+years.sort((a, b) => a - b)
