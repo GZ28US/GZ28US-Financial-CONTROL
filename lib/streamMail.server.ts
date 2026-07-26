@@ -308,7 +308,7 @@ const SPAM_SENDERS: RegExp[] = [
   /e\.stripe\.com/i, /meuacerto\.com\.br/i, /jcsjunioradvogados\.com\.br/i,
   /ciaathletica\.com\.br/i, /announce@winzip\.com/i, /photos@onedrive\.com/i,
   /uberone@uber\.com/i, /jegs@e\.jegs\.com/i, /emanualonline\.com/i,
-  /touchupdirect\.com/i,
+  /touchupdirect\.com/i, /koshergoods\.net/i, /negociar\.acerto\.com\.br/i,
 ]
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
@@ -337,6 +337,43 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
         }
       }
     } catch (e) { console.error('[spam-sweep]', slot, e) }
+  }
+  return { deleted }
+}
+
+// MARKETING SWEEP — kills promotional mail from senders we've never listed:
+// a message with a List-Unsubscribe header whose sender/subject carries no
+// transactional signal is bulk marketing by definition. Transactional senders
+// and anything order/payment/doc-shaped NEVER matches (inbox-zero, 2026-07-26).
+const SAFE_SENDER = /rockauto\.com|titanmotorsports|hptuners|texas-speed|summitracing|paypal|ups\.com|fedex|usps|dhl|17track|shop\.app|shopify|anthropic|supabase|vercel|regions|c6bank|sunpass|progressive|dukeenergy|speedpay|docusign|d4sign|e-notariado|registrocivil|autotagsandtitle|bssparts|vstar|kooksheaders|halltech|modernmuscle|tirerack|discounttire|graph|microsoft\.com|google\.com|apple\.com|sema\.org/i
+const SAFE_SUBJECT = /order|track|invoice|receipt|payment|paid|ship|deliver|cart|carrinho|quote|or[çc]amento|confirm|refund|return|rma|appointment|statement|security|verify|c[óo]digo|code|password|sign|assinatura|contrato|nf-?e|boleto|fatura|ipva|guia/i
+
+export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: string[] }> {
+  const deleted: string[] = []
+  for (const slot of [1, 2, 3]) {
+    try {
+      const auth = await getMailAuth(db, slot)
+      if (!auth?.refresh_token) continue
+      const token = await freshAccessToken(db, auth)
+      if (!token) continue
+      const r = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from`, { headers: graphH(token) })
+      const data = await r.json().catch(() => null)
+      for (const m of data?.value || []) {
+        const addr = String(m.from?.emailAddress?.address || '')
+        const subj = String(m.subject || '')
+        if (SAFE_SENDER.test(addr) || SAFE_SUBJECT.test(subj)) continue
+        // header check costs one GET per candidate — only non-safe mail gets here.
+        const h = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders`, { headers: graphH(token) })
+        const hd = await h.json().catch(() => null)
+        const unsub = (hd?.internetMessageHeaders || []).some((x: any) => /^list-unsubscribe$/i.test(String(x.name)))
+        if (!unsub) continue
+        const mv = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/move`, {
+          method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destinationId: 'deleteditems' }),
+        })
+        if (mv.ok) deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+      }
+    } catch (e) { console.error('[marketing-sweep]', slot, e) }
   }
   return { deleted }
 }
