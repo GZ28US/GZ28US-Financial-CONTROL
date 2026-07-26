@@ -32,6 +32,9 @@ export default function AppsPage() {
   // supplier_id -> lifetime paid total + next scheduled (unpaid) charge.
   const [spent, setSpent] = useState<Map<string, number>>(new Map())
   const [nextDue, setNextDue] = useState<Map<string, { date: string; amount: number }>>(new Map())
+  // supplier_id -> most recent charge activity (paid or scheduled) + distinct paid months.
+  const [lastAct, setLastAct] = useState<Map<string, string>>(new Map())
+  const [payMonths, setPayMonths] = useState<Map<string, number>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'ENDED'>('ALL')
@@ -54,17 +57,27 @@ export default function AppsPage() {
         .in('supplier_id', apps.map(a => a.id))
       const paid = new Map<string, number>()
       const due = new Map<string, { date: string; amount: number }>()
+      const act = new Map<string, string>()
+      const monthSets = new Map<string, Set<string>>()
+      const td = todayYmd()
       for (const e of (exp || [])) {
         if (!e.supplier_id) continue
         if (isValidDate(e.payment_date)) {
           paid.set(e.supplier_id, (paid.get(e.supplier_id) || 0) + (Number(e.amount) || 0))
+          if (!monthSets.has(e.supplier_id)) monthSets.set(e.supplier_id, new Set())
+          monthSets.get(e.supplier_id)!.add((e.payment_date as string).slice(0, 7))
         } else if (isValidDate(e.expense_date)) {
           const cur = due.get(e.supplier_id)
           if (!cur || e.expense_date < cur.date) due.set(e.supplier_id, { date: e.expense_date, amount: Number(e.amount) || 0 })
         }
+        // last activity = newest paid/scheduled date already in the past.
+        const d = isValidDate(e.payment_date) ? (e.payment_date as string) : (isValidDate(e.expense_date) && (e.expense_date as string) <= td ? (e.expense_date as string) : null)
+        if (d && d > (act.get(e.supplier_id) || '')) act.set(e.supplier_id, d)
       }
       setSpent(paid)
       setNextDue(due)
+      setLastAct(act)
+      setPayMonths(new Map([...monthSets].map(([k, v]) => [k, v.size])))
     }
     setLoading(false)
   }
@@ -78,14 +91,23 @@ export default function AppsPage() {
 
   const td = todayYmd()
   const q = search.trim().toLowerCase()
-  const filtered = rows.filter((r) => {
-    const ended = isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td
-    const statusOk = filter === 'ALL' || (filter === 'ENDED' ? ended : !ended)
-    const searchOk = !q || [r.description, r.company, r.email].some((v) => (v || '').toLowerCase().includes(q))
-    return statusOk && searchOk
-  })
-  // ANNUAL subscriptions enter the monthly chip at 1/12 of the yearly charge.
-  const monthlyTotal = filtered.reduce((s, r) => s + (isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td ? 0 : (Number(r.amount_1) || 0) / (r.periodicity === 'ANNUAL' ? 12 : 1)), 0)
+  // Monthly figure = REAL average: lifetime paid ÷ distinct months with a charge
+  // (falls back to the subscription price while there's no payment history).
+  const avgMonthly = (r: AppRow) => {
+    const months = payMonths.get(r.id) || 0
+    if (months > 0) return (spent.get(r.id) || 0) / months
+    return (Number(r.amount_1) || 0) / (r.periodicity === 'ANNUAL' ? 12 : 1)
+  }
+  const filtered = rows
+    .filter((r) => {
+      const ended = isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td
+      const statusOk = filter === 'ALL' || (filter === 'ENDED' ? ended : !ended)
+      const searchOk = !q || [r.description, r.company, r.email].some((v) => (v || '').toLowerCase().includes(q))
+      return statusOk && searchOk
+    })
+    // Most recent charge activity first; apps with no history sink to the bottom.
+    .sort((a, b) => (lastAct.get(b.id) || '').localeCompare(lastAct.get(a.id) || ''))
+  const monthlyTotal = filtered.reduce((s, r) => s + (isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td ? 0 : avgMonthly(r)), 0)
   const spentTotal = filtered.reduce((s, r) => s + (spent.get(r.id) || 0), 0)
 
   return (
@@ -129,7 +151,7 @@ export default function AppsPage() {
             {c}
           </button>
         ))}
-        <span className="ml-2 text-lg font-bold text-gray-300">Monthly: {formatUSD(monthlyTotal)}</span>
+        <span className="ml-2 text-lg font-bold text-gray-300">Monthly (avg): {formatUSD(monthlyTotal)}</span>
         <span className="text-gray-600">·</span>
         <span className="text-lg font-bold text-gray-300">All-time spent: {formatUSD(spentTotal)}</span>
       </div>
@@ -160,7 +182,8 @@ export default function AppsPage() {
                 </Link>
                 <div className="text-right shrink-0">
                   <p className="text-2xl font-bold text-green-400">{formatUSD(spent.get(r.id) || 0)}</p>
-                  <p className="text-base text-gray-400">{formatUSD(Number(r.amount_1) || 0)} / {r.periodicity === 'ANNUAL' ? 'year' : 'month'}</p>
+                  <p className="text-base text-gray-400">{formatUSD(avgMonthly(r))} avg / month</p>
+                  {lastAct.get(r.id) && <p className="text-sm text-gray-500">last charge {fmtDate(lastAct.get(r.id) as string)}</p>}
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
                   <Link href={`/costs/apps/${r.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold">💵 PAYMENTS</Link>

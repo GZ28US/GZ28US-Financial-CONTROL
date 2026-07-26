@@ -308,6 +308,7 @@ const SPAM_SENDERS: RegExp[] = [
   /e\.stripe\.com/i, /meuacerto\.com\.br/i, /jcsjunioradvogados\.com\.br/i,
   /ciaathletica\.com\.br/i, /announce@winzip\.com/i, /photos@onedrive\.com/i,
   /uberone@uber\.com/i, /jegs@e\.jegs\.com/i, /emanualonline\.com/i,
+  /touchupdirect\.com/i,
 ]
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
