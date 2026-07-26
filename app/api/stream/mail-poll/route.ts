@@ -5,6 +5,7 @@ import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
+import { runInboxZero } from '@/lib/inboxZero.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
@@ -122,7 +123,12 @@ async function run(force: boolean): Promise<NextResponse> {
   let purchases: { captured: string[] } = { captured: [] }
   try { purchases = await runPurchaseCapture(db) } catch (e) { console.error('[purchase-capture]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases })
+  // ── inbox zero net — depois de todos os sweeps, o que sobrou (>15 min) ganha
+  // destino por regra; sem regra → TRIAGEM (Claudinha) + pergunta no grupo.
+  let inboxZero: { actions: string[] } = { actions: [] }
+  try { inboxZero = await runInboxZero(db) } catch (e) { console.error('[inbox-zero]', e) }
+
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero })
 }
 
 export async function POST() { return run(false) }
