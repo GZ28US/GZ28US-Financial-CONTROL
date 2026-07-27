@@ -39,11 +39,11 @@ async function msToken(db: SupabaseClient, account: string): Promise<string | nu
   return tk.access_token
 }
 
-// Regras por conta: retorno = nome de pasta ('Pai/Filha' cria a filha), 'DELETE',
+// Regras por conta: retorno = nome de pasta ('Pai/Filha' aponta subpasta), 'DELETE',
 // ou null (→ TRIAGEM). Mantidas alinhadas às decisões do Márcio de 26/jul.
 function ruleSlot1(subj: string, from: string): string | null {
   if (/verification code|c[óo]digo de verifica/i.test(subj)) return 'DELETE'
-  if (/united\.com|latam|delta\.com|aa\.com|copaair|voegol|azul/i.test(from)) return 'Trips'
+  if (/united\.com|latam|delta\.com|aa\.com|copaair|voegol|azul/i.test(from)) return 'Businesses/Trips'
   if (/delivery attempted|out for delivery|delivered/i.test(subj)) return 'Shopping'
   if (/order (receipt|confirm)|receipt #|USD$/i.test(subj)) return 'Shopping'
   if (/sign.?in confirmation|new device|security alert/i.test(subj)) return 'Arquivo Morto'
@@ -64,8 +64,17 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
   if (!token) return
   const top = await fetch(`${G}/me/mailFolders?$top=200`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
   if (!top?.value) return
+  // Mapa inclui as FILHAS como 'Pai/Filha' — regras podem apontar subpastas
+  // (bug 27/jul: 'Trips' na verdade é 'Businesses/Trips' e o e-mail da United
+  // ficou parado na inbox porque o lookup só via o nível de cima).
   const folders: Record<string, string> = {}
-  for (const f of top.value) folders[f.displayName] = f.id
+  for (const f of top.value) {
+    folders[f.displayName] = f.id
+    if (f.childFolderCount > 0) {
+      const ch = await fetch(`${G}/me/mailFolders/${f.id}/childFolders?$top=100`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+      for (const c of ch?.value || []) folders[`${f.displayName}/${c.displayName}`] = c.id
+    }
+  }
   if (!folders['TRIAGEM (Claudinha)']) {
     const c = await fetch(`${G}/me/mailFolders`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: 'TRIAGEM (Claudinha)' }) }).then(r => r.json())
     if (c?.id) folders['TRIAGEM (Claudinha)'] = c.id
