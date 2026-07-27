@@ -25,6 +25,9 @@ export async function GET(req: NextRequest) {
   let data = await r.json().catch(() => null)
   if (useLog && data && Array.isArray(data.messages)) data = data.messages.filter((m: any) => (m.chatId || m.from || m.to || '').includes(chatId.split('@')[0]))
   if (!Array.isArray(data)) return NextResponse.json({ error: 'unexpected UltraMsg response', raw: data }, { status: 502 })
+  // ?raw=1 devolve os objetos completos da UltraMsg (chave exigida) — usado pra
+  // achar links de mídia de tipos que o mapeamento enxuto abaixo não carrega.
+  if (req.nextUrl.searchParams.get('raw') === '1') return NextResponse.json({ chatId, count: data.length, messages: data })
   const messages = data.map((m: any) => ({
     fromMe: !!m.fromMe,
     time: (m.time ?? m.timestamp) ? new Date((m.time ?? m.timestamp) * 1000).toISOString() : null,
