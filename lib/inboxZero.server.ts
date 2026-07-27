@@ -89,9 +89,9 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
     out.push(`${account}: ${dest} ← ${String(m.subject).slice(0, 40)}`)
     if (dest === 'TRIAGEM (Claudinha)') triaged.push(String(m.subject || '(sem assunto)').slice(0, 60))
   }
-  if (triaged.length) {
-    await report([`📥 *INBOX ZERO — TRIAGEM (${account.split('@')[0]})*`, '', 'Sem destino claro, movi pra TRIAGEM (Claudinha):', ...triaged.map(s => `• ${s}`), '', '*Me digam o destino de cada um.*'].join('\n'))
-  }
+  // Sem report no grupo (ordem do Márcio, 27/jul): o que cair na TRIAGEM é
+  // levantado pela Claudinha diretamente com ele no chat, não pelo WhatsApp.
+  void triaged
 }
 
 async function zeroGmail(db: SupabaseClient, out: string[]): Promise<void> {
