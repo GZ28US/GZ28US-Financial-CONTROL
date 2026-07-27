@@ -202,7 +202,9 @@ export default function StaffDutiesPage() {
   // The member's open duties list, ordered by priority, cut at the chosen
   // priority (StandBy = include everything).
   function buildListBody(staffId: string, name: string, maxPriority: string): string | null {
-    const maxRank = DUTY_PRIORITY_RANK[maxPriority] ?? 3
+    // P1 AND P2 always go to the member (Márcio, 27/jul/2026) — the cut can
+    // narrow P3/P4/StandBy, never below Priority 2.
+    const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? 3, DUTY_PRIORITY_RANK['2'])
     const rows = duties
       .filter(d => d.staff_id === staffId && !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank)
       .sort(dutyOrder)
@@ -446,8 +448,7 @@ export default function StaffDutiesPage() {
             <div>
               <label className="block mb-1 text-xs font-bold text-gray-400">UP TO WHICH PRIORITY?</label>
               <select value={listPopup.maxPriority} onChange={(e) => setListPopup({ ...listPopup, maxPriority: e.target.value })} className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-sm w-full">
-                <option value="1">Priority 1 only</option>
-                <option value="2">Up to Priority 2</option>
+                <option value="2">Up to Priority 2 (minimum — P1+P2 always go)</option>
                 <option value="3">Up to Priority 3</option>
                 <option value="4">Up to Priority 4</option>
                 <option value="STANDBY">Everything (incl. StandBy)</option>

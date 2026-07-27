@@ -189,7 +189,9 @@ export default function StaffDutySelfPage() {
     } finally { busyRef.current = false }
   }
 
-  const maxRank = DUTY_PRIORITY_RANK[maxPriority] ?? 4
+  // P1 AND P2 always reach the member (Márcio, 27/jul/2026) — the ?max= filter
+  // from old links can narrow P3/P4/StandBy, but never below Priority 2.
+  const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? 4, DUTY_PRIORITY_RANK['2'])
   const byPriority = (a: Duty, b: Duty) => dutyOrder(a, b)
   const open = duties.filter(d => !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank).sort(byPriority)
   const finished = duties.filter(d => d.done).sort(byPriority)
