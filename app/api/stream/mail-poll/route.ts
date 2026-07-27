@@ -6,6 +6,7 @@ import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import { runInboxZero } from '@/lib/inboxZero.server'
+import { runStreamAnswers } from '@/lib/streamAnswers.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
@@ -127,8 +128,12 @@ async function run(force: boolean): Promise<NextResponse> {
   // destino por regra; sem regra → TRIAGEM (Claudinha) + pergunta no grupo.
   let inboxZero: { actions: string[] } = { actions: [] }
   try { inboxZero = await runInboxZero(db) } catch (e) { console.error('[inbox-zero]', e) }
+  // A resposta do grupo à pergunta "a que carro/invoice pertence?" vira destino
+  // no STREAM automaticamente (ordem 27/jul) — inclui acertar app US/BR.
+  let streamAnswers: { applied: string[] } = { applied: [] }
+  try { streamAnswers = await runStreamAnswers(db) } catch (e) { console.error('[stream-answers]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers })
 }
 
 export async function POST() { return run(false) }
