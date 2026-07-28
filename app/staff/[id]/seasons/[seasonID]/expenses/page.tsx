@@ -514,6 +514,10 @@ export default function ExpensesPage() {
           <div className="bg-red-700 rounded-3xl p-6 flex-1 min-w-64">
             <p className="text-xl font-bold">{totalLabel}</p>
             <p className="text-5xl font-bold">{formatUSD(gz28Total)}</p>
+            {/* Previsto fica FORA do gasto real: é conta que ainda vai vencer. */}
+            {gz28Scheduled > 0 && (
+              <p className="text-lg font-bold mt-1 text-yellow-300">+ {formatUSD(gz28Scheduled)} scheduled — not paid yet</p>
+            )}
             {!isConcluded && <p className="text-sm mt-2 opacity-80">Running — updated daily until conclusion</p>}
           </div>
           {personalTotal > 0 && (
