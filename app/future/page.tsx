@@ -53,6 +53,47 @@ async function ensureFixedCostPayments() {
   if (toInsert.length > 0) await supabase.from('fixed_cost_expenses').insert(toInsert)
 }
 
+// FOLHA RECORRENTE DE STAFF no Future Flow (ordem do Márcio, 28/jul/2026:
+// "quero abrir o Future Flow e ver TODAS AS CONTAS PREVISTAS, SEM EXCEÇÃO").
+// A season carrega a taxa (pay_type / pay_rate / pay_weekday) e aqui nascem, com
+// antecedência, as linhas EM ABERTO de cada período até ~3 meses à frente — do
+// mesmo jeito que ensureFixedCostPayments faz com a conta fixa mensal. Sem isso o
+// salário só apareceria no dia do pagamento e sumiria da previsão.
+async function ensureStaffPayments() {
+  const { data: seasons } = await supabase.from('seasons')
+    .select('id, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_weekday')
+    .is('date_conclusion', null).not('pay_type', 'is', null)
+  if (!seasons || seasons.length === 0) return
+  const { data: existing } = await supabase.from('expenses').select('season_id, type, expense_date')
+  const has = new Set((existing || []).map((e: any) => `${e.season_id}|${e.type}|${e.expense_date}`))
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const limit = new Date(today); limit.setMonth(limit.getMonth() + 3)
+  const toInsert: any[] = []
+  for (const s of seasons as any[]) {
+    const rate = Number(s.pay_rate) || 0
+    if (rate <= 0) continue
+    const cursor = new Date(today)
+    if (s.pay_type === 'WEEKLY') {
+      const dia = s.pay_weekday ?? 5
+      while (cursor.getDay() !== dia) cursor.setDate(cursor.getDate() + 1)
+      for (; cursor <= limit; cursor.setDate(cursor.getDate() + 7)) {
+        const key = ymd(cursor)
+        if (has.has(`${s.id}|WEEKLY|${key}`)) continue
+        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: rate, expense_date: key, payment_date: null, source: 'GZ28US', description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto` })
+      }
+    } else if (s.pay_type === 'MONTHLY') {
+      const c = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+      for (; c <= limit; c.setMonth(c.getMonth() + 2, 0)) {
+        const key = ymd(c)
+        if (has.has(`${s.id}|MONTHLY|${key}`)) continue
+        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: rate, expense_date: key, payment_date: null, source: 'GZ28US', description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto` })
+      }
+    }
+  }
+  if (toInsert.length > 0) await supabase.from('expenses').insert(toInsert)
+}
+
 // Collapse any stored milestone label (incl. legacy long forms like
 // "Goods Arrival" / "Project Conclusion") to its canonical short code, so old
 // and new rows land in the SAME group.
@@ -83,6 +124,7 @@ export default function HomePage() {
 
   async function load() {
     await ensureFixedCostPayments()
+    await ensureStaffPayments()
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
       supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
@@ -121,11 +163,14 @@ export default function HomePage() {
     const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
-    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }] = await Promise.all([
+    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }, { data: staffExp }, { data: seasonsD }, { data: staffD }] = await Promise.all([
       supabase.from('rides').select('id, project_name, model, version, client_id'),
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
+      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
+      supabase.from('seasons').select('id, staff_id'),
+      supabase.from('staff').select('id, name'),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
@@ -277,6 +322,24 @@ export default function HomePage() {
     }
     for (const g of fcByGroup.values()) {
       expense.push({ code: 'FIXED', label: g.label, amount: g.amount, dated: true, date: g.date, href: `${BASE_PATH}/costs/fixed/${g.supplierId}`, tip: g.label, labelTip: 'Fixed cost' })
+    }
+
+    // FOLHA DE STAFF — pagamento recorrente ainda EM ABERTO é conta que a GZ28
+    // deve, igual à conta fixa: entra no DUE by GZ28 se já venceu e no fluxo do
+    // mês se está por vir. Sem isso o salário sumia da previsão inteira.
+    const staffById = new Map<string, string>(); (staffD || []).forEach((x: any) => staffById.set(x.id, x.name || ''))
+    const seasonStaff = new Map<string, string>(); (seasonsD || []).forEach((x: any) => seasonStaff.set(x.id, x.staff_id))
+    for (const e of staffExp || []) {
+      const amount = parseFloat(e.amount) || 0
+      if (!amount || !isValidDate(e.expense_date)) continue
+      dueGz -= amount
+      const staffId = seasonStaff.get(e.season_id) || ''
+      const nome = staffById.get(staffId) || 'Staff'
+      const periodo = e.type === 'WEEKLY' ? `semana ${String(e.expense_date).slice(8, 10)}/${String(e.expense_date).slice(5, 7)}` : String(e.type).toLowerCase()
+      expense.push({
+        code: 'STAFF', label: `${nome} — ${periodo}`, amount, dated: true, date: e.expense_date,
+        href: `${BASE_PATH}/staff/${staffId}/seasons`, tip: e.description || nome, labelTip: 'Staff payment',
+      })
     }
     expense.sort(byDateThenAmount)
 
