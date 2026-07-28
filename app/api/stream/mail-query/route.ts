@@ -9,6 +9,10 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 //   op=list&folder=<id|name>    → newest messages in a folder
 //   op=search&q=<text>          → $search across the mailbox
 //   op=msg&id=<messageId>       → one message with its full text body
+//   op=attachments&id=<msgId>   → the message's attachments (name, type, size)
+//   op=attach&id=<msgId>&att=<attachmentId> → one attachment as base64, ready to
+//                                 hand to /api/read-doc (o documento anexado é a
+//                                 verdade — nota, invoice, boleto, contrato)
 
 export const dynamic = 'force-dynamic'
 
@@ -149,6 +153,30 @@ export async function GET(req: NextRequest) {
     if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'not found' }, { status: 404 })
     const text = String(m.body?.content || '').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim()
     return NextResponse.json({ account: auth.account, message: { ...slim(m), hasAttachments: m.hasAttachments, text } })
+  }
+
+  // O anexo é o documento REAL — invoice, boleto, contrato. Devolvido em base64
+  // pra seguir direto pro /api/read-doc sem passar por download manual.
+  if (op === 'attachments' || op === 'attach') {
+    const id = p.get('id')
+    if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+    const att = p.get('att')
+    const url = att
+      ? `${G}/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(att)}`
+      : `${G}/me/messages/${encodeURIComponent(id)}/attachments?$select=id,name,contentType,size`
+    const r = await fetch(url, { headers: gh(token) })
+    const d = await r.json().catch(() => null)
+    if (!d || d.error) return NextResponse.json({ error: d?.error?.message || 'attachments failed' }, { status: 502 })
+    if (!att) {
+      return NextResponse.json({
+        account: auth.account,
+        attachments: (d.value || []).map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size })),
+      })
+    }
+    return NextResponse.json({
+      account: auth.account,
+      attachment: { id: d.id, name: d.name, contentType: d.contentType, size: d.size, base64: d.contentBytes || null },
+    })
   }
 
   return NextResponse.json({ error: `unknown op ${op}` }, { status: 400 })
