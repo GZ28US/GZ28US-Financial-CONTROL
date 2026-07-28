@@ -27,25 +27,13 @@ type StaffMember = {
   name: string
 }
 
+// Total da season = SOMA DOS PAGAMENTOS REAIS (ordem do Márcio, 28/jul/2026).
+// A taxa recorrente vive na season (pay_type/pay_rate) e cada pagamento é uma
+// linha com data própria — nada de projetar valor × dias.
 function calculateSeasonTotal(expenses: Expense[], season: Season): number {
-  const start = season.date_entry ? new Date(season.date_entry + 'T00:00:00') : null
-  const end = season.date_conclusion
-    ? new Date(season.date_conclusion + 'T00:00:00')
-    : new Date()
-
   return expenses
     .filter(e => e.season_id === season.id)
-    .reduce((sum, e) => {
-      const amount = Number(e.amount)
-      if (e.type === 'SINGLE') return sum + amount
-      if (!start) return sum
-      const diffMs = end.getTime() - start.getTime()
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-      if (e.type === 'DAILY') return sum + amount * diffDays
-      if (e.type === 'WEEKLY') return sum + amount * (diffDays / 7)
-      if (e.type === 'MONTHLY') return sum + amount * (diffDays / 30)
-      return sum
-    }, 0)
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
 }
 
 // Days worked in the season (entry -> conclusion, or entry -> today if still open).

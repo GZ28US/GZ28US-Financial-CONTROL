@@ -7,6 +7,7 @@ import { runExpenseReportNet } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import { runInboxZero } from '@/lib/inboxZero.server'
 import { runStreamAnswers } from '@/lib/streamAnswers.server'
+import { runStaffPayroll } from '@/lib/staffPayroll.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
@@ -133,6 +134,11 @@ async function run(force: boolean): Promise<NextResponse> {
   let streamAnswers: { applied: string[] } = { applied: [] }
   try { streamAnswers = await runStreamAnswers(db) } catch (e) { console.error('[stream-answers]', e) }
 
+  // ── Folha recorrente de staff: no dia do pagamento, a linha da semana nasce
+  // EM ABERTO e fica visível como pendente até alguém dar baixa.
+  let payroll: { created: string[] } = { created: [] }
+  try { payroll = await runStaffPayroll(db) } catch (e) { console.error('[staff-payroll]', e) }
+
   // ── FINANCEIRO 24/7 — o grupo mais importante do BR (ordem 27/jul). O webhook
   // deste app enfileira cada post; quem sabe lançar é o app BR, então esta
   // batida de 5 min acorda o robô de lá. Fila e cadência ficam no mesmo relógio.
@@ -144,7 +150,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers, financeiro })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }

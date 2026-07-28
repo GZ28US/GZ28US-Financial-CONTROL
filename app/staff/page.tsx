@@ -54,22 +54,15 @@ export default function StaffPage() {
       expensesData = data || []
     }
 
-    function calcSeasonTotal(seasonId: string, dateEntry: string | null, dateConclusion: string | null): number {
-      const start = dateEntry ? new Date(dateEntry + 'T00:00:00') : null
-      const end = dateConclusion ? new Date(dateConclusion + 'T00:00:00') : new Date()
-      const expenses = expensesData.filter(e => e.season_id === seasonId)
-
-      return expenses.reduce((sum, e) => {
-        const amount = Number(e.amount)
-        if (e.type === 'SINGLE') return sum + amount
-        if (!start) return sum
-        const diffMs = end.getTime() - start.getTime()
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-        if (e.type === 'DAILY') return sum + amount * diffDays
-        if (e.type === 'WEEKLY') return sum + amount * (diffDays / 7)
-        if (e.type === 'MONTHLY') return sum + amount * (diffDays / 30)
-        return sum
-      }, 0)
+    // Custo da season = SOMA DOS PAGAMENTOS REAIS (ordem do Márcio, 28/jul/2026).
+    // Antes, uma linha WEEKLY era uma TAXA e a página projetava valor × dias÷7 pra
+    // sempre — o Kaue aparecia custando um número que ninguém conseguia conferir,
+    // sem data e sem comprovante. Agora a taxa vive na season (pay_type/pay_rate)
+    // e cada pagamento é uma linha com data própria, paga ou em aberto.
+    function calcSeasonTotal(seasonId: string): number {
+      return expensesData
+        .filter(e => e.season_id === seasonId)
+        .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
     }
 
     const staffWithData: StaffMember[] = staffData.map((member) => {
@@ -89,7 +82,7 @@ export default function StaffPage() {
         .sort((a, b) => b.localeCompare(a))
       const latestEntry = entries[0] || null
 
-      const totalExpenses = memberSeasons.reduce((sum, s) => sum + calcSeasonTotal(s.id, s.date_entry, s.date_conclusion), 0)
+      const totalExpenses = memberSeasons.reduce((sum, s) => sum + calcSeasonTotal(s.id), 0)
 
       return {
         ...member,

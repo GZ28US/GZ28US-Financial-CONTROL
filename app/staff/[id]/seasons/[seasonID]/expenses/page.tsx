@@ -41,43 +41,20 @@ type ExpenseReport = {
 }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
-function calculateRunningTotal(expense: Expense, season: Season): number {
-  const amount = Number(expense.amount)
-  if (expense.type === 'SINGLE') return amount
-
-  const start = season.date_entry ? new Date(season.date_entry + 'T00:00:00') : null
-  if (!start) return 0
-
-  const end = season.date_conclusion
-    ? new Date(season.date_conclusion + 'T00:00:00')
-    : new Date()
-
-  const diffMs = end.getTime() - start.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  if (expense.type === 'DAILY') return amount * diffDays
-  if (expense.type === 'WEEKLY') return amount * (diffDays / 7)
-  if (expense.type === 'MONTHLY') return amount * (diffDays / 30)
-
-  return amount
+// Cada linha vale o PRÓPRIO valor: DAILY/WEEKLY/MONTHLY deixaram de ser taxa
+// projetada e passaram a ser um pagamento com data (ordem do Márcio, 28/jul/2026).
+function calculateRunningTotal(expense: Expense): number {
+  return Number(expense.amount) || 0
 }
 
-function formatRunningLabel(expense: Expense, season: Season): string {
-  const start = season.date_entry ? new Date(season.date_entry + 'T00:00:00') : null
-  const end = season.date_conclusion
-    ? new Date(season.date_conclusion + 'T00:00:00')
-    : new Date()
-
-  if (!start) return ''
-
-  const diffMs = end.getTime() - start.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  const round1 = (n: number) => { const r = Math.round(n * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1) }
-  if (expense.type === 'DAILY') return `${diffDays} days`
-  if (expense.type === 'WEEKLY') return `${round1(diffDays / 7)} weeks`
-  if (expense.type === 'MONTHLY') return `${round1(diffDays / 30)} months`
-
+// Etiqueta do período que o pagamento cobre — o dia/semana/mês da data da despesa.
+function formatRunningLabel(expense: Expense): string {
+  const d = expense.expense_date ? new Date(expense.expense_date + 'T00:00:00') : null
+  if (!d) return ''
+  const dm = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
+  if (expense.type === 'WEEKLY') return `week of ${dm}`
+  if (expense.type === 'MONTHLY') return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  if (expense.type === 'DAILY') return `day ${dm}`
   return ''
 }
 
@@ -344,11 +321,11 @@ export default function ExpensesPage() {
   }
 
   const gz28Total = season
-    ? expenses.filter(e => !e.origin || e.origin === 'GZ28US').reduce((sum, e) => sum + calculateRunningTotal(e, season), 0)
+    ? expenses.filter(e => !e.origin || e.origin === 'GZ28US').reduce((sum, e) => sum + calculateRunningTotal(e), 0)
     : 0
 
   const personalTotal = season
-    ? expenses.filter(e => e.origin === 'PERSONAL').reduce((sum, e) => sum + calculateRunningTotal(e, season), 0)
+    ? expenses.filter(e => e.origin === 'PERSONAL').reduce((sum, e) => sum + calculateRunningTotal(e), 0)
     : 0
 
   const isConcluded = !!season?.date_conclusion
@@ -556,10 +533,10 @@ export default function ExpensesPage() {
                   ) : (
                     <>
                       <h2 className="text-2xl font-bold">
-                        {season ? formatUSD(calculateRunningTotal(expense, season)) : 'USD 0.00'}
+                        {season ? formatUSD(calculateRunningTotal(expense)) : 'USD 0.00'}
                       </h2>
                       <p className="text-lg text-gray-400">
-                        {formatUSD(Number(expense.amount))} / {expense.type.toLowerCase()} × {season ? formatRunningLabel(expense, season) : ''}
+                        {formatUSD(Number(expense.amount))} / {expense.type.toLowerCase()} × {season ? formatRunningLabel(expense) : ''}
                       </p>
                     </>
                   )}
