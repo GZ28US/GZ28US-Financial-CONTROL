@@ -36,7 +36,6 @@ const APP_ALIASES: { match: RegExp; app: string; domains?: string[] }[] = [
   { match: /17track/i, app: '17TRACK', domains: ['17track.net'] },
   // Auditoria 2026-07-27: 8 assinaturas viviam fora do módulo porque não usam o
   // formato Stripe. Ficam registradas aqui pelo NOME do faturador real.
-  { match: /openai/i, app: 'ChatGPT', domains: ['openai.com'] },
   { match: /teamviewer/i, app: 'TeamViewer', domains: ['teamviewer.com'] },
   { match: /autoauth/i, app: 'AutoAuth', domains: ['autoauth.com'] },
   // O NordVPN cobra como Lagosec Inc. e escreve do nordaccount.com.
@@ -50,11 +49,13 @@ const APP_ALIASES: { match: RegExp; app: string; domains?: string[] }[] = [
 type AppRow = {
   id: string; description: string | null; company: string | null; email: string | null
   date_entry: string | null; payment_day_1: number | null; amount_1: number | null
+  date_conclusion?: string | null
   mail_match?: string | null
 }
 export type AppsSweepResult = {
   payments: { app: string; amount: number; date: string; box: string }[]
   newApps: string[]
+  cancelled: string[]
   billsFiled: number
   failures: string[]
   filed: number
@@ -78,6 +79,7 @@ type Kind =
   | { kind: 'receipt'; vendor: string; receiptNo: string | null }
   | { kind: 'bill'; vendor: string }
   | { kind: 'failure'; vendor: string }
+  | { kind: 'cancel'; vendor: string }
   | { kind: 'vendor-mail' }
 
 // Lojas/marketplaces NÃO são apps — confirmação de compra deles é peça/ingresso,
@@ -123,12 +125,30 @@ function classify(subject: string, from: string): Kind {
   m = s.match(/sua compra d[oa]\s+(.+?)\s+foi processada/i)
   if (m) return { kind: 'receipt', vendor: m[1].trim(), receiptNo: null }
 
+  // CANCELAMENTO (ordem 27/jul: "any activity of a bought app goes to this page
+  // — new one, cancellation, payments, anything"). Fim de assinatura em qualquer
+  // das formas que os fornecedores escrevem, nos dois idiomas. Só vale pra app
+  // conhecido: "order canceled" de loja não encerra assinatura nenhuma.
+  if (CANCEL_WORDS.test(s) && knownApp(`${s} ${from}`)) {
+    return { kind: 'cancel', vendor: aliasName(`${s} ${from}`) || '' }
+  }
+
   return { kind: 'vendor-mail' }
 }
 
-// O texto cita algum app do catálogo de apelidos?
+// Cancelamento CONSUMADO — nada de "clique aqui para cancelar" ou aviso de que
+// a renovação está chegando; a assinatura tem que ter acabado de verdade.
+// O nome do app costuma entrar no meio da frase ("Your *Recraft* plan has
+// ended", "Sua assinatura *do CorelDRAW* foi cancelada"), por isso os trechos
+// curinga entre as palavras-chave.
+const CANCEL_WORDS = /(subscription (has been |was |is )?cancel(l)?ed|cancel(l)?ed your subscription|(will not|won'?t) (be )?renew|auto[- ]?renew(al)? (is )?(off|disabled|turned off)|your (\S+\s){0,3}(plan|subscription|membership) (has )?ended|assinatura[^.!?]{0,40}?(foi )?cancelada|cancelamento (da|de sua) assinatura|n[ãa]o ser[áa] renovad|renova[çc][ãa]o autom[áa]tica (foi )?(desativada|cancelada))/i
+
+// O texto cita algum app do catálogo de apelidos? Vale pelo NOME ou pelo
+// DOMÍNIO do remetente — o Cleverbridge escreve "Sua assinatura foi cancelada"
+// sem dizer que é o CorelDRAW, e só o domínio identifica o app.
 function aliasName(text: string): string | null {
   for (const a of APP_ALIASES) if (a.match.test(text)) return a.app
+  for (const a of APP_ALIASES) if ((a.domains || []).some(d => text.toLowerCase().includes(d))) return a.app
   return null
 }
 const knownApp = (text: string) => aliasName(text) !== null
@@ -273,6 +293,22 @@ async function handleFailure(appName: string, subject: string, out: AppsSweepRes
   if (notifyEach) await sendStreamWhatsApp(`⚠️ *APP PAYMENT FAILED — ${appName}*\n${subject}\nCheck the card on file.`)
 }
 
+// Encerra o app na página: `date_conclusion` é o que vira o selo ENDED e tira o
+// custo da média mensal. Nunca reabre nem mexe no histórico de pagamentos — o
+// que foi pago continua pago, e a cobrança futura agendada é apagada porque
+// deixou de existir.
+async function handleCancel(db: SupabaseClient, row: AppRow | null, appName: string, subject: string, date: string, out: AppsSweepResult, notifyEach: boolean): Promise<void> {
+  if (!row) { out.errors.push(`cancel sem app cadastrado: ${appName} — ${subject}`); return }
+  if (row.date_conclusion) return // já encerrado numa passada anterior
+  const { error } = await db.from('fixed_cost_suppliers').update({ date_conclusion: date }).eq('id', row.id)
+  if (error) { out.errors.push(`cancel ${appName}: ${error.message}`); return }
+  await db.from('fixed_cost_expenses').delete().eq('supplier_id', row.id).is('payment_date', null)
+  out.cancelled.push(`${row.description || appName} (${date})`)
+  if (notifyEach) {
+    await sendStreamWhatsApp(`🛑 *APP CANCELLED — ${row.description || appName}*\n${subject}\nEnded on ${fmtDate(date)} — it stops counting in the monthly cost.`)
+  }
+}
+
 // ═══ GMAIL (slot 4) ═════════════════════════════════════════════════════════
 async function gmailToken(db: SupabaseClient): Promise<string | null> {
   const clientId = process.env.GOOGLE_CLIENT_ID, clientSecret = process.env.GOOGLE_CLIENT_SECRET
@@ -359,6 +395,12 @@ async function gmailSweep(db: SupabaseClient, apps: AppRow[], out: AppsSweepResu
         const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
         if (row) { await fileUnder(m.id, await ensureLabel(`Apps/${row.description || row.company}`)); out.filed++ }
         await handleFailure(appName, subject, out, !opts.full)
+        continue
+      }
+      if (cls.kind === 'cancel') {
+        const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
+        if (row) { await fileUnder(m.id, await ensureLabel(`Apps/${row.description || row.company}`)); out.filed++ }
+        await handleCancel(db, row, appName, subject, date, out, !opts.full)
         continue
       }
       if (cls.kind === 'bill') {
@@ -471,6 +513,12 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
         await handleFailure(appName, subject, out, !opts.full)
         continue
       }
+      if (cls.kind === 'cancel') {
+        const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
+        if (row && !inSent) { await moveTo(m.id, await ensureFolder(String(row.description || row.company))); out.filed++ }
+        await handleCancel(db, row, appName, subject, date, out, !opts.full)
+        continue
+      }
       if (cls.kind === 'bill') {
         const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
         if (row && !inSent) { await moveTo(m.id, await ensureFolder(String(row.description || row.company))); out.billsFiled++; out.filed++ }
@@ -498,7 +546,7 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
 // full=true varre tudo (backfill/resync) e manda UM resumo; full=false (cron)
 // varre os últimos dias e reporta cada movimento na hora.
 export async function runAppsSweep(db: SupabaseClient, opts: { full?: boolean } = {}): Promise<AppsSweepResult> {
-  const out: AppsSweepResult = { payments: [], newApps: [], billsFiled: 0, failures: [], filed: 0, errors: [] }
+  const out: AppsSweepResult = { payments: [], newApps: [], cancelled: [], billsFiled: 0, failures: [], filed: 0, errors: [] }
   const apps = await loadApps(db)
   try { await gmailSweep(db, apps, out, opts) } catch (e) { out.errors.push('gmail: ' + (e instanceof Error ? e.message : String(e))) }
   for (const slot of OUTLOOK_SLOTS) {
