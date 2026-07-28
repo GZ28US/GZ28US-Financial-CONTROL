@@ -334,6 +334,20 @@ export default function ExpensesPage() {
     ? expenses.filter(e => e.origin === 'PERSONAL' && e.payment_date).reduce((sum, e) => sum + calculateRunningTotal(e), 0)
     : 0
 
+  // A listagem para na PRÓXIMA conta (ordem do Márcio, 28/jul): as semanas
+  // seguintes existem no banco pro Future Flow, mas não poluem a season — só
+  // interessa aqui o que já foi pago, o que está vencido e a próxima a vencer.
+  const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const nextDueDate = expenses
+    .filter(e => !e.payment_date && e.expense_date && e.expense_date > todayET)
+    .reduce<string | null>((min, e) => (!min || e.expense_date! < min ? e.expense_date! : min), null)
+  const visibleExpenses = expenses.filter(e => {
+    if (e.payment_date) return true
+    if (!e.expense_date) return true
+    if (e.expense_date <= todayET) return true
+    return e.expense_date === nextDueDate
+  })
+
   const isConcluded = !!season?.date_conclusion
   const totalLabel = isConcluded ? 'FINAL GZ28US EXPENSES' : 'ACTUAL GZ28US EXPENSES'
   const personalLabel = isConcluded ? 'FINAL PERSONAL EXPENSES' : 'ACTUAL PERSONAL EXPENSES'
@@ -494,7 +508,7 @@ export default function ExpensesPage() {
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div>
           <h1 className="text-4xl font-bold">{staffName} — {season?.season_code}</h1>
-          <p className="text-xl text-gray-400 mt-1">EXPENSES ({expenses.length})</p>
+          <p className="text-xl text-gray-400 mt-1">EXPENSES ({visibleExpenses.length})</p>
         </div>
         <div className="flex gap-3 flex-wrap">
           <Link href={`/staff/${staffId}/seasons`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
@@ -529,7 +543,7 @@ export default function ExpensesPage() {
         <p className="text-2xl text-gray-400">No expenses yet.</p>
       ) : (
         <div className="space-y-5">
-          {expenses.map((expense) => {
+          {visibleExpenses.map((expense) => {
             const receiptUrls = parseReceiptUrls(expense.receipt_url)
             return (
               <div key={expense.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-4">
