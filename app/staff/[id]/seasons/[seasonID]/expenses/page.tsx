@@ -17,6 +17,9 @@ type Expense = {
   source: string | null
   origin: string | null
   expense_date: string | null
+  // Preenchidos quando o dinheiro realmente saiu — previsão fica com os dois vazios.
+  payment_date: string | null
+  paid_via: string | null
   receipt_url: string | null
 }
 
@@ -319,12 +322,19 @@ export default function ExpensesPage() {
     setExpenseReports(null)
   }
 
+  // GASTO REAL = só o que já foi PAGO. A semana futura, gerada pelo app, é
+  // previsão e não pode entrar no total gasto (ordem do Márcio, 28/jul) — ela
+  // aparece à parte, como "ainda por pagar".
   const gz28Total = season
-    ? expenses.filter(e => !e.origin || e.origin === 'GZ28US').reduce((sum, e) => sum + calculateRunningTotal(e), 0)
+    ? expenses.filter(e => (!e.origin || e.origin === 'GZ28US') && e.payment_date).reduce((sum, e) => sum + calculateRunningTotal(e), 0)
+    : 0
+
+  const gz28Scheduled = season
+    ? expenses.filter(e => (!e.origin || e.origin === 'GZ28US') && !e.payment_date).reduce((sum, e) => sum + calculateRunningTotal(e), 0)
     : 0
 
   const personalTotal = season
-    ? expenses.filter(e => e.origin === 'PERSONAL').reduce((sum, e) => sum + calculateRunningTotal(e), 0)
+    ? expenses.filter(e => e.origin === 'PERSONAL' && e.payment_date).reduce((sum, e) => sum + calculateRunningTotal(e), 0)
     : 0
 
   const isConcluded = !!season?.date_conclusion
@@ -527,17 +537,19 @@ export default function ExpensesPage() {
             return (
               <div key={expense.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-4">
                 <div className="flex-1 min-w-0">
-                  {expense.type === 'SINGLE' ? (
+                  <div className="flex items-center gap-3 flex-wrap">
                     <h2 className="text-2xl font-bold">{formatUSD(Number(expense.amount))}</h2>
-                  ) : (
-                    <>
-                      <h2 className="text-2xl font-bold">
-                        {season ? formatUSD(calculateRunningTotal(expense)) : 'USD 0.00'}
-                      </h2>
-                      <p className="text-lg text-gray-400">
-                        {formatUSD(Number(expense.amount))} / {expense.type.toLowerCase()} × {season ? formatRunningLabel(expense) : ''}
-                      </p>
-                    </>
+                    {/* Pago x previsto: a data de pagamento e a prova de que o dinheiro saiu. */}
+                    {expense.payment_date ? (
+                      <span className="bg-green-700 text-white text-sm font-bold px-3 py-1 rounded-full">
+                        PAID {String(expense.payment_date).slice(5, 10).split('-').reverse().join('/')}{expense.paid_via ? ' - ' + expense.paid_via : ''}
+                      </span>
+                    ) : (
+                      <span className="bg-yellow-600 text-black text-sm font-bold px-3 py-1 rounded-full">NOT PAID</span>
+                    )}
+                  </div>
+                  {expense.type !== 'SINGLE' && (
+                    <p className="text-lg text-gray-400">{formatRunningLabel(expense)}</p>
                   )}
                   {expense.description && <p className="text-lg text-white">{expense.description}</p>}
                   <p className="text-lg text-gray-400">{expense.type}</p>
