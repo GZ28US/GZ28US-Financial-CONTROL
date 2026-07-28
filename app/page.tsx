@@ -142,11 +142,14 @@ export default function HomePage() {
     const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
-    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }] = await Promise.all([
+    const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }, { data: staffExp }, { data: seasonsD }, { data: staffD }] = await Promise.all([
       supabase.from('rides').select('id, project_code, project_name, model, version, client_id, plate, plate_expiry, title_scope, insurance_company, insurance_expiry'),
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
+      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
+      supabase.from('seasons').select('id, staff_id'),
+      supabase.from('staff').select('id, name'),
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
@@ -325,6 +328,21 @@ export default function HomePage() {
     }
     for (const g of fcByGroup.values()) {
       expense.push({ code: 'FIXED', label: g.label, amount: g.amount, dated: true, date: g.date, href: `${BASE_PATH}/costs/fixed/${g.supplierId}`, tip: g.label, labelTip: 'Fixed cost' })
+    }
+
+    // FOLHA DE STAFF — pagamento recorrente em aberto é conta que a GZ28 deve,
+    // igual à conta fixa (ordem do Márcio, 28/jul: TODAS as telas de fluxo têm
+    // que listar absolutamente tudo).
+    const staffById = new Map<string, string>(); (staffD || []).forEach((x: any) => staffById.set(x.id, x.name || ''))
+    const seasonStaff = new Map<string, string>(); (seasonsD || []).forEach((x: any) => seasonStaff.set(x.id, x.staff_id))
+    for (const e of staffExp || []) {
+      const amount = parseFloat(e.amount) || 0
+      if (!amount || !isValidDate(e.expense_date)) continue
+      dueGz -= amount
+      const staffId = seasonStaff.get(e.season_id) || ''
+      const nome = staffById.get(staffId) || 'Staff'
+      const periodo = e.type === 'WEEKLY' ? `week ${String(e.expense_date).slice(8, 10)}/${String(e.expense_date).slice(5, 7)}` : String(e.type).toLowerCase()
+      expense.push({ code: 'STAFF', label: `${nome} — ${periodo}`, amount, dated: true, date: e.expense_date, href: `${BASE_PATH}/staff/${staffId}/seasons`, tip: e.description || nome, labelTip: 'Staff payment' })
     }
     expense.sort(byDateThenAmount)
 

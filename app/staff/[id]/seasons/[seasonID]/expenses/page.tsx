@@ -121,16 +121,15 @@ export default function ExpensesPage() {
   async function loadExpenses() {
     const { data } = await supabase.from('expenses').select('*').eq('season_id', seasonID)
 
+    // SEMPRE do mais recente pro mais antigo (ordem do Márcio, 28/jul/2026) —
+    // recorrente e avulso na mesma lista, porque agora todos são pagamentos com
+    // data. Linha sem data vai pro fim.
     if (data) {
-      const ongoing = data.filter(e => e.type !== 'SINGLE')
-      const singles = data
-        .filter(e => e.type === 'SINGLE')
-        .sort((a, b) => {
-          if (!a.expense_date) return 1
-          if (!b.expense_date) return -1
-          return b.expense_date.localeCompare(a.expense_date)
-        })
-      setExpenses([...ongoing, ...singles])
+      setExpenses([...data].sort((a, b) => {
+        if (!a.expense_date) return 1
+        if (!b.expense_date) return -1
+        return b.expense_date.localeCompare(a.expense_date)
+      }))
     } else {
       setExpenses([])
     }

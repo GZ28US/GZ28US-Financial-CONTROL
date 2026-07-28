@@ -27,9 +27,11 @@ export default function PaymentsPage() {
       supabase.from('invoice_payments').select('id, invoice_id, amount, paid_at, source').not('paid_at', 'is', null).gte('paid_at', cutoffISO),
       // PAID by GZ28US — invoice expenses paid (payment_date in window).
       supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
-      // PAID by GZ28US — staff expenses (no paid flag in this app; a recorded staff
-      // expense is money already spent, like inputs/goods). Use expense_date in window.
-      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date').not('expense_date', 'is', null).gte('expense_date', cutoffDate),
+      // PAGO pela GZ28 — pagamento de staff. Desde 28/jul/2026 cada linha é um
+      // pagamento com data própria e `payment_date` só existe quando o dinheiro
+      // saiu — então o PAST lista pelo PAGAMENTO, nunca pela previsão (antes
+      // qualquer linha contava como gasta, e a semana futura entraria aqui).
+      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date, payment_date, paid_via').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
       // PAID by GZ28US — inputs & goods are always paid; use purchase_date.
       supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
       supabase.from('goods').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
@@ -139,7 +141,8 @@ export default function PaymentsPage() {
     const staffRows: PayRow[] = (staffExps || []).map((e: any) => {
       const season = seasonById.get(e.season_id)
       const staffName = season ? (staffNameById.get(season.staff_id) || '') : ''
-      return { id: `staff-${e.id}`, date: e.expense_date, amount: parseFloat(e.amount) || 0, code: season?.season_code || 'STAFF', label2: staffName || (e.description || ''), tip: [staffName, e.description].filter(Boolean).join(' — '), href: season ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${e.season_id}/expenses` : '#' }
+      // A data do PAST é a do PAGAMENTO (quando o dinheiro saiu), não a do período.
+      return { id: `staff-${e.id}`, date: e.payment_date || e.expense_date, amount: parseFloat(e.amount) || 0, code: season?.season_code || 'STAFF', label2: staffName || (e.description || ''), tip: [staffName, e.description, e.paid_via].filter(Boolean).join(' — '), href: season ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${e.season_id}/expenses` : '#' }
     })
 
     const fixedCostRows: PayRow[] = (fixedCostD || []).map((e: any) => ({

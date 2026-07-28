@@ -79,10 +79,19 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
     const c = await fetch(`${G}/me/mailFolders`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: 'TRIAGEM (Claudinha)' }) }).then(r => r.json())
     if (c?.id) folders['TRIAGEM (Claudinha)'] = c.id
   }
-  const inbox = await fetch(`${G}/me/mailFolders/inbox/messages?$top=25&$select=id,subject,from,receivedDateTime`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+  // LIXO ELETRÔNICO TAMBÉM É VARRIDO (ordem do Márcio, 28/jul/2026: 'tem email
+  // nas pastas de lixo eletrônico, também tem que ser vistos e processados').
+  // O filtro da Microsoft erra e joga fornecedor, banco e cliente no junk — o que
+  // cai lá e tem regra volta pro lugar certo; o resto vai pra TRIAGEM.
+  const boxes = ['inbox', 'junkemail']
+  const msgs: any[] = []
+  for (const box of boxes) {
+    const r = await fetch(`${G}/me/mailFolders/${box}/messages?$top=25&$select=id,subject,from,receivedDateTime`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    for (const m of r?.value || []) msgs.push(m)
+  }
   const cutoff = Date.now() - GRACE_MIN * 60_000
   const triaged: string[] = []
-  for (const m of inbox?.value || []) {
+  for (const m of msgs) {
     if (new Date(m.receivedDateTime).getTime() > cutoff) continue // recente demais — outros sweeps ainda vão agir
     const dest = rule(String(m.subject || ''), String(m.from?.emailAddress?.address || '')) || 'TRIAGEM (Claudinha)'
     if (dest === 'DELETE') {
@@ -113,7 +122,13 @@ async function zeroGmail(db: SupabaseClient, out: string[]): Promise<void> {
   }).then(r => r.json()).catch(() => null)
   if (!tk?.access_token) return
   const ghg = { Authorization: `Bearer ${tk.access_token}`, 'Content-Type': 'application/json' }
-  const list = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=25', { headers: ghg }).then(r => r.json()).catch(() => null)
+  // No Gmail a mesma lei vale pro SPAM (28/jul): o que o filtro do Google jogou
+  // no lixo eletrônico é lido e processado igual ao que chega na caixa.
+  const list = { messages: [] as any[] }
+  for (const lbl of ['INBOX', 'SPAM']) {
+    const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=${lbl}&maxResults=25`, { headers: ghg }).then(r => r.json()).catch(() => null)
+    for (const m of r?.messages || []) list.messages.push(m)
+  }
   const ids: string[] = []
   const cutoff = Date.now() - GRACE_MIN * 60_000
   for (const m of list?.messages || []) {
