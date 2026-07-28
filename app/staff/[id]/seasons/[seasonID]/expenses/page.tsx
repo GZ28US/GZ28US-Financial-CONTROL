@@ -323,14 +323,11 @@ export default function ExpensesPage() {
   }
 
   // GASTO REAL = só o que já foi PAGO. A semana futura, gerada pelo app, é
-  // previsão e não pode entrar no total gasto (ordem do Márcio, 28/jul) — ela
-  // aparece à parte, como "ainda por pagar".
+  // previsão e não pode entrar no total gasto (ordem do Márcio, 28/jul). E não
+  // existe total de previsto: enquanto o funcionário estiver na casa a conta é
+  // infinita, e ninguém sabe a data do fim — somar isso seria inventar número.
   const gz28Total = season
     ? expenses.filter(e => (!e.origin || e.origin === 'GZ28US') && e.payment_date).reduce((sum, e) => sum + calculateRunningTotal(e), 0)
-    : 0
-
-  const gz28Scheduled = season
-    ? expenses.filter(e => (!e.origin || e.origin === 'GZ28US') && !e.payment_date).reduce((sum, e) => sum + calculateRunningTotal(e), 0)
     : 0
 
   const personalTotal = season
@@ -514,10 +511,6 @@ export default function ExpensesPage() {
           <div className="bg-red-700 rounded-3xl p-6 flex-1 min-w-64">
             <p className="text-xl font-bold">{totalLabel}</p>
             <p className="text-5xl font-bold">{formatUSD(gz28Total)}</p>
-            {/* Previsto fica FORA do gasto real: é conta que ainda vai vencer. */}
-            {gz28Scheduled > 0 && (
-              <p className="text-lg font-bold mt-1 text-yellow-300">+ {formatUSD(gz28Scheduled)} scheduled — not paid yet</p>
-            )}
             {!isConcluded && <p className="text-sm mt-2 opacity-80">Running — updated daily until conclusion</p>}
           </div>
           {personalTotal > 0 && (
