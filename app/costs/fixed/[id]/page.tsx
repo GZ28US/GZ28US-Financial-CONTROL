@@ -348,7 +348,6 @@ export default function FixedCostSupplierViewPage() {
   for (const r of rows) { if (isValidDate(r.expense_date) && (r.expense_date as string) > td) { const mk = (r.expense_date as string).slice(0, 7); if (!nextMonthKey || mk < nextMonthKey) nextMonthKey = mk } }
   const months = nextMonthKey ? allMonths.filter(mk => mk <= (nextMonthKey as string)) : allMonths
   const visibleCount = months.reduce((n, mk) => n + (byMonth.get(mk) || []).length, 0)
-  const total = months.reduce((sum, mk) => sum + (byMonth.get(mk) || []).reduce((s, r) => s + (Number(r.amount) || 0), 0), 0)
 
   // With a CONCLUSION date the agreement is finite: the heading splits into
   // Total PAID (actually paid, fines included), Total DUE (every remaining
@@ -481,7 +480,10 @@ export default function FixedCostSupplierViewPage() {
             <span className="text-gray-300">Total FINAL: {formatUSD(finalTotal)}</span>
           </span>
         ) : (
-          <span className="text-xl font-bold text-gray-300">Total: {formatUSD(total)}</span>
+          // Open-ended agreement: the total is what actually LEFT the account. A
+          // generated, not-yet-due installment is a forecast and must not count
+          // as real spend — same rule as the staff season page.
+          <span className="text-xl font-bold text-gray-300">Total PAID: {formatUSD(paidTotal)}</span>
         )}
       </div>
 
