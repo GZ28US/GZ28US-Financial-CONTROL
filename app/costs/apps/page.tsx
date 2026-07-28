@@ -31,7 +31,7 @@ export default function AppsPage() {
   const [rows, setRows] = useState<AppRow[]>([])
   // supplier_id -> lifetime paid total + next scheduled (unpaid) charge.
   const [spent, setSpent] = useState<Map<string, number>>(new Map())
-  const [nextDue, setNextDue] = useState<Map<string, { date: string; amount: number }>>(new Map())
+  const [nextDue, setNextDue] = useState<Map<string, { date: string; amount: number; failed: boolean }>>(new Map())
   // supplier_id -> most recent charge activity (paid or scheduled) + distinct paid months.
   const [lastAct, setLastAct] = useState<Map<string, string>>(new Map())
   const [payMonths, setPayMonths] = useState<Map<string, number>>(new Map())
@@ -53,10 +53,10 @@ export default function AppsPage() {
     if (apps.length) {
       const { data: exp } = await supabase
         .from('fixed_cost_expenses')
-        .select('supplier_id, amount, expense_date, payment_date')
+        .select('supplier_id, amount, expense_date, payment_date, description')
         .in('supplier_id', apps.map(a => a.id))
       const paid = new Map<string, number>()
-      const due = new Map<string, { date: string; amount: number }>()
+      const due = new Map<string, { date: string; amount: number; failed: boolean }>()
       const act = new Map<string, string>()
       const monthSets = new Map<string, Set<string>>()
       const td = todayYmd()
@@ -68,7 +68,9 @@ export default function AppsPage() {
           monthSets.get(e.supplier_id)!.add((e.payment_date as string).slice(0, 7))
         } else if (isValidDate(e.expense_date)) {
           const cur = due.get(e.supplier_id)
-          if (!cur || e.expense_date < cur.date) due.set(e.supplier_id, { date: e.expense_date, amount: Number(e.amount) || 0 })
+          // Linha em aberto com ⚠️ na descrição = cobrança RECUSADA pelo cartão
+          // (o watcher grava assim), e a página mostra isso em vermelho.
+          if (!cur || e.expense_date < cur.date) due.set(e.supplier_id, { date: e.expense_date, amount: Number(e.amount) || 0, failed: String(e.description || '').startsWith('⚠️') })
         }
         // last activity = newest paid/scheduled date already in the past.
         const d = isValidDate(e.payment_date) ? (e.payment_date as string) : (isValidDate(e.expense_date) && (e.expense_date as string) <= td ? (e.expense_date as string) : null)
@@ -180,8 +182,11 @@ export default function AppsPage() {
                   </p>
                   <p className="text-base text-gray-500">
                     {isValidDate(r.date_entry) ? `Subscribed ${fmtDate(r.date_entry as string)}` : 'Subscription date unknown'}
-                    {n ? ` · next charge ${fmtDate(n.date)}${n.amount ? ` (${formatUSD(n.amount)})` : ''}` : ''}
+                    {n && !n.failed ? ` · next charge ${fmtDate(n.date)}${n.amount ? ` (${formatUSD(n.amount)})` : ''}` : ''}
                   </p>
+                  {n?.failed && (
+                    <p className="text-base font-bold text-red-400">⚠️ PAYMENT DECLINED — {formatUSD(n.amount)} still due since {fmtDate(n.date)}</p>
+                  )}
                 </Link>
                 <div className="text-right shrink-0">
                   <p className="text-2xl font-bold text-green-400">{formatUSD(spent.get(r.id) || 0)}</p>

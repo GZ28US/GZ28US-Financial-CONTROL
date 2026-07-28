@@ -311,8 +311,35 @@ async function registerReceipt(
   return { row, registered: true }
 }
 
-async function handleFailure(appName: string, subject: string, out: AppsSweepResult, notifyEach: boolean): Promise<void> {
+// Pagamento recusado (ordem do Márcio, 27/jul: falha tem que APARECER na página,
+// não só tocar no WhatsApp). Vira uma linha EM ABERTO do mês — o dinheiro não
+// saiu, então é cobrança pendente de verdade. Quando a retentativa passa, o
+// recibo casa com essa mesma linha (registerReceipt liquida a linha aberta do
+// mês) e ela deixa de aparecer sozinha. Foi o caso da Vercel: recusa e cobrança
+// no mesmo dia, três meses seguidos.
+async function handleFailure(
+  db: SupabaseClient, apps: AppRow[], appName: string, vendor: string, from: string,
+  subject: string, text: string, date: string, out: AppsSweepResult, notifyEach: boolean,
+): Promise<void> {
   out.failures.push(`${appName} — ${subject}`)
+  const row = matchApp(apps, appName, vendor, senderDomain(from))
+  const amount = parseAmount(subject) ?? parseAmount(text) ?? null
+  if (row) {
+    const monthKey = date.slice(0, 7)
+    const { data: open } = await db.from('fixed_cost_expenses').select('id')
+      .eq('supplier_id', row.id).is('payment_date', null)
+      .gte('expense_date', monthKey + '-01').lte('expense_date', monthKey + '-31')
+    const desc = `⚠️ Pagamento recusado — ${subject.slice(0, 120)}`
+    if (open?.length) {
+      await db.from('fixed_cost_expenses').update({ description: desc, amount: amount ?? undefined }).eq('id', open[0].id)
+    } else {
+      await db.from('fixed_cost_expenses').insert({
+        supplier_id: row.id, type: 'SINGLE', description: desc,
+        amount: amount ?? (Number(row.amount_1) || 0), source: 'GZ28US',
+        expense_date: date, payment_date: null,
+      })
+    }
+  }
   if (notifyEach) await sendStreamWhatsApp(`⚠️ *APP PAYMENT FAILED — ${appName}*\n${subject}\nCheck the card on file.`)
 }
 
@@ -417,7 +444,7 @@ async function gmailSweep(db: SupabaseClient, apps: AppRow[], out: AppsSweepResu
       if (cls.kind === 'failure') {
         const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
         if (row) { await fileUnder(m.id, await ensureLabel(`Apps/${row.description || row.company}`)); out.filed++ }
-        await handleFailure(appName, subject, out, !opts.full)
+        await handleFailure(db, apps, appName, cls.vendor, from, subject, '', date, out, !opts.full)
         continue
       }
       if (cls.kind === 'cancel') {
@@ -533,7 +560,7 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
       if (cls.kind === 'failure') {
         const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
         if (row && !inSent) { await moveTo(m.id, await ensureFolder(String(row.description || row.company))); out.filed++ }
-        await handleFailure(appName, subject, out, !opts.full)
+        await handleFailure(db, apps, appName, cls.vendor, from, subject, '', date, out, !opts.full)
         continue
       }
       if (cls.kind === 'cancel') {
