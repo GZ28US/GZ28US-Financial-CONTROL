@@ -94,9 +94,12 @@ export default function AppsPage() {
   // Monthly figure = REAL average: lifetime paid ÷ distinct months with a charge
   // (falls back to the subscription price while there's no payment history).
   const avgMonthly = (r: AppRow) => {
+    // Assinatura ANUAL nunca entra pelo histórico: uma cobrança de US$ 610,80 em
+    // maio não é "US$ 610,80 por mês" — o custo mensal dela é o preço ÷ 12.
+    if (r.periodicity === 'ANNUAL') return (Number(r.amount_1) || 0) / 12
     const months = payMonths.get(r.id) || 0
     if (months > 0) return (spent.get(r.id) || 0) / months
-    return (Number(r.amount_1) || 0) / (r.periodicity === 'ANNUAL' ? 12 : 1)
+    return Number(r.amount_1) || 0
   }
   const filtered = rows
     .filter((r) => {
