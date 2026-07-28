@@ -34,6 +34,17 @@ const APP_ALIASES: { match: RegExp; app: string; domains?: string[] }[] = [
   { match: /github/i, app: 'GitHub', domains: ['github.com'] },
   { match: /google (one|workspace|storage)/i, app: 'Google One' },
   { match: /17track/i, app: '17TRACK', domains: ['17track.net'] },
+  // Auditoria 2026-07-27: 8 assinaturas viviam fora do módulo porque não usam o
+  // formato Stripe. Ficam registradas aqui pelo NOME do faturador real.
+  { match: /openai/i, app: 'ChatGPT', domains: ['openai.com'] },
+  { match: /teamviewer/i, app: 'TeamViewer', domains: ['teamviewer.com'] },
+  { match: /autoauth/i, app: 'AutoAuth', domains: ['autoauth.com'] },
+  // O NordVPN cobra como Lagosec Inc. e escreve do nordaccount.com.
+  { match: /nordvpn|nord security|lagosec|nordaccount/i, app: 'NordVPN', domains: ['nordaccount.com', 'nordvpn.com'] },
+  { match: /microsoft 365|microsoft do brasil/i, app: 'Microsoft 365 Family', domains: ['microsoft.com'] },
+  // CorelDRAW é faturado pelo revendedor Cleverbridge, em reais.
+  { match: /coreldraw|corel/i, app: 'CorelDRAW', domains: ['cleverbridge.com'] },
+  { match: /fox digital/i, app: 'Fox Digital', domains: ['fox.com'] },
 ]
 
 type AppRow = {
@@ -87,8 +98,40 @@ function classify(subject: string, from: string): Kind {
   if (/^(purchase|payment|order) confirmation/i.test(s) || /^receipt for your (payment|purchase)/i.test(s)) {
     return { kind: 'receipt', vendor: '', receiptNo: null }
   }
+
+  // ── Formatos que NÃO são Stripe (auditoria 2026-07-27) ────────────────────
+  // O PayPal anuncia o lojista no próprio assunto: "Lagosec Inc.: $94.23 USD".
+  // Só vira recibo de APP quando esse lojista é um app conhecido — senão seria
+  // peça de fornecedor (eBay, Summit, Temu) entrando como assinatura.
+  m = s.match(/^(.{2,60}?)\.{0,3}:\s*\$[\d,]+\.\d{2}\s*USD$/i)
+  if (m && knownApp(m[1])) return { kind: 'receipt', vendor: m[1].replace(/\.{2,}$/, '').trim(), receiptNo: null }
+
+  // Recibos com nome próprio: Nord ("Your payment confirmation and receipt"),
+  // AutoAuth ("AutoAuth Annual Payment Receipt"), TeamViewer ("Your TeamViewer
+  // Payment Confirmation – AccID ...").
+  if (/(payment confirmation and receipt|annual payment receipt|payment confirmation\b)/i.test(s) && knownApp(`${s} ${from}`)) {
+    return { kind: 'receipt', vendor: aliasName(`${s} ${from}`) || '', receiptNo: null }
+  }
+
+  // Cleverbridge (revendedor, em português): "N° de referência 519904391: Sua
+  // assinatura do Assinatura (365 dias) do CorelDRAW".
+  if (/cleverbridge/i.test(from) && /(sua assinatura|seu pedido)/i.test(s)) {
+    return { kind: 'receipt', vendor: aliasName(s) || 'Cleverbridge', receiptNo: (s.match(/refer[êe]ncia\s*(\d+)/i) || [])[1] || null }
+  }
+
+  // Microsoft: "Sua compra do Microsoft 365 Family foi processada".
+  m = s.match(/sua compra d[oa]\s+(.+?)\s+foi processada/i)
+  if (m) return { kind: 'receipt', vendor: m[1].trim(), receiptNo: null }
+
   return { kind: 'vendor-mail' }
 }
+
+// O texto cita algum app do catálogo de apelidos?
+function aliasName(text: string): string | null {
+  for (const a of APP_ALIASES) if (a.match.test(text)) return a.app
+  return null
+}
+const knownApp = (text: string) => aliasName(text) !== null
 
 function parseAmount(text: string): number | null {
   const pats = [
