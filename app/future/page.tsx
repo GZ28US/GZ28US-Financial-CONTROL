@@ -11,6 +11,15 @@ function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: '
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
+// JANELA DO FUTURE FLOW (ordem do Márcio, 28/jul/2026): "mês corrente + os
+// próximos 6 meses, só" — e dentro dela TODAS as contas da oficina, sem exceção.
+// Uma coisa depende da outra: o gerador precisa criar linha até o fim da janela
+// (staff, conta fixa) e a tela precisa cortar o que passa dela (renovação anual
+// de 2028, por exemplo). Os dois lados leem daqui.
+const HORIZON_MONTHS = 6
+function horizonEnd() { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + HORIZON_MONTHS + 1, 0) }
+function horizonEndYmd() { const d = horizonEnd(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+
 // Generate every fixed-cost supplier's scheduled payment rows 6 months ahead (one row per
 // payment day per month, first payment the month after the start). Idempotent — only inserts
 // month-dates that don't already exist. Runs here so the rows exist on HOME without first
@@ -25,7 +34,7 @@ async function ensureFixedCostPayments() {
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const clampDay = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
+  const targetEnd = horizonEnd()
   const toInsert: any[] = []
   for (const sup of sups as any[]) {
     if (sup.periodicity !== 'MONTHLY' || !sup.date_entry) continue
@@ -56,9 +65,11 @@ async function ensureFixedCostPayments() {
 // FOLHA RECORRENTE DE STAFF no Future Flow (ordem do Márcio, 28/jul/2026:
 // "quero abrir o Future Flow e ver TODAS AS CONTAS PREVISTAS, SEM EXCEÇÃO").
 // A season carrega a taxa (pay_type / pay_rate / pay_weekday) e aqui nascem, com
-// antecedência, as linhas EM ABERTO de cada período até ~3 meses à frente — do
+// antecedência, as linhas EM ABERTO de cada período até o fim da janela — do
 // mesmo jeito que ensureFixedCostPayments faz com a conta fixa mensal. Sem isso o
-// salário só apareceria no dia do pagamento e sumiria da previsão.
+// salário só apareceria no dia do pagamento e sumiria da previsão. Enquanto o
+// funcionário está na casa o custo é infinito: o que fecha a conta não é uma data
+// de fim, é a janela de 6 meses.
 async function ensureStaffPayments() {
   const { data: seasons } = await supabase.from('seasons')
     .select('id, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_weekday')
@@ -68,7 +79,7 @@ async function ensureStaffPayments() {
   const has = new Set((existing || []).map((e: any) => `${e.season_id}|${e.type}|${e.expense_date}`))
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const limit = new Date(today); limit.setMonth(limit.getMonth() + 3)
+  const limit = horizonEnd()
   const toInsert: any[] = []
   for (const s of seasons as any[]) {
     const rate = Number(s.pay_rate) || 0
@@ -364,10 +375,13 @@ export default function HomePage() {
     dueGz += datedExpense.reduce((x, r) => x + r.amount, 0)
     // FLORIDA TAXES move to their own box below — drop them from the DUE by GZ28US total too.
     dueGz += tax.reduce((x, r) => x + r.amount, 0)
+    // A projeção para no fim da janela: renovação anual de 2027/2028 continua no
+    // banco e na página do fornecedor, mas não polui o fluxo dos 6 meses.
+    const horizon = horizonEndYmd()
     const flowItems: FlowItem[] = [
       ...datedIncome.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: r.amount, tip: r.tip })),
       ...datedExpense.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: -r.amount, tip: r.tip })),
-    ].sort((a, b) => a.date.localeCompare(b.date))
+    ].filter(it => it.date <= horizon).sort((a, b) => a.date.localeCompare(b.date))
     setFlow(flowItems)
 
     setS({
@@ -380,13 +394,13 @@ export default function HomePage() {
     setLoading(false)
   }
 
-  // Next-6-months series for the chart (current month + 5 ahead): incomes, expenses, balance.
+  // Gráfico na MESMA janela da lista — mês corrente + os próximos 6.
   const flowSeries = (() => {
     const byM = new Map<string, { inc: number; exp: number }>()
     for (const it of flow) { const k = it.date.slice(0, 7); const g = byM.get(k) || { inc: 0, exp: 0 }; if (it.signed >= 0) g.inc += it.signed; else g.exp += -it.signed; byM.set(k, g) }
     const base = new Date()
     const out: { mk: string; inc: number; exp: number; bal: number }[] = []
-    for (let i = 0; i < 6; i++) { const d = new Date(base.getFullYear(), base.getMonth() + i, 1); const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; const g = byM.get(mk) || { inc: 0, exp: 0 }; out.push({ mk, inc: g.inc, exp: g.exp, bal: g.inc - g.exp }) }
+    for (let i = 0; i <= HORIZON_MONTHS; i++) { const d = new Date(base.getFullYear(), base.getMonth() + i, 1); const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; const g = byM.get(mk) || { inc: 0, exp: 0 }; out.push({ mk, inc: g.inc, exp: g.exp, bal: g.inc - g.exp }) }
     return out
   })()
 
@@ -394,7 +408,7 @@ export default function HomePage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-1">FUTURE Flow</h1>
-      <p className="text-gray-400 mb-6">Scheduled income &amp; expenses ahead — next months.</p>
+      <p className="text-gray-400 mb-6">Scheduled income &amp; expenses — this month + the next {HORIZON_MONTHS} months, everything included.</p>
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
@@ -402,7 +416,7 @@ export default function HomePage() {
           {flow.length > 0 ? (
             <>
               <div className="max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5 mb-4">
-                <p className="text-sm font-bold text-gray-400 mb-2">NEXT 6 MONTHS</p>
+                <p className="text-sm font-bold text-gray-400 mb-2">THIS MONTH + NEXT {HORIZON_MONTHS} MONTHS</p>
                 <CashFlowChart series={flowSeries} />
               </div>
               <MonthlyFlow flow={flow} />
