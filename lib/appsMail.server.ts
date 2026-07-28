@@ -116,8 +116,10 @@ function classify(subject: string, from: string): Kind {
   }
 
   // Cleverbridge (revendedor, em português): "N° de referência 519904391: Sua
-  // assinatura do Assinatura (365 dias) do CorelDRAW".
-  if (/cleverbridge/i.test(from) && /(sua assinatura|seu pedido)/i.test(s)) {
+  // assinatura do Assinatura (365 dias) do CorelDRAW". Só a mensagem da
+  // ASSINATURA vale — "Seu pedido" e "Informações para pagamento" são etapas do
+  // checkout, não recibo (registravam a mesma anuidade várias vezes, zerada).
+  if (/cleverbridge/i.test(from) && /sua assinatura/i.test(s) && !/informa[çc][õo]es para pagamento/i.test(s)) {
     return { kind: 'receipt', vendor: aliasName(s) || 'Cleverbridge', receiptNo: (s.match(/refer[êe]ncia\s*(\d+)/i) || [])[1] || null }
   }
 
@@ -153,6 +155,10 @@ function aliasName(text: string): string | null {
 }
 const knownApp = (text: string) => aliasName(text) !== null
 
+// Taxa da casa pra recibo em reais (CorelDRAW/Cleverbridge, Microsoft do Brasil).
+// O módulo APPS é todo em USD; sem isso o recibo entrava valendo ZERO.
+const BRL_USD = Number(process.env.BRL_USD_RATE) || 5.2785
+
 function parseAmount(text: string): number | null {
   const pats = [
     /amount (?:paid|charged|due)\D{0,20}\$\s?([\d,]+(?:\.\d{1,2})?)/i,
@@ -162,6 +168,15 @@ function parseAmount(text: string): number | null {
   for (const p of pats) {
     const m = text.match(p)
     if (m) { const v = parseFloat(m[1].replace(/,/g, '')); if (v > 0) return v }
+  }
+  // Reais: "R$ 1.600,00" / "BRL 599.00" — milhar com ponto e decimal com vírgula.
+  const br = text.match(/(?:R\$|BRL)\s?([\d.]+,\d{2}|[\d,]+\.\d{2})/i)
+  if (br) {
+    const raw = br[1]
+    const v = raw.includes(',') && raw.lastIndexOf(',') > raw.lastIndexOf('.')
+      ? parseFloat(raw.replace(/\./g, '').replace(',', '.'))
+      : parseFloat(raw.replace(/,/g, ''))
+    if (v > 0) return Math.round((v / BRL_USD) * 100) / 100
   }
   return null
 }
@@ -224,7 +239,15 @@ async function registerReceipt(
     if (dupNo?.length) return { row, registered: false }
   }
   if (row && !info.receiptNo && info.amount != null) {
-    const { data: dupAmt } = await db.from('fixed_cost_expenses').select('id').eq('supplier_id', row.id).eq('payment_date', info.payDate).eq('amount', info.amount).limit(1)
+    // Janela de ±2 dias, não data exata: o recibo carimba a data no fuso de
+    // Orlando e um lançamento feito à mão (ou o e-mail que chega 20h+) cai no
+    // dia anterior — foi assim que o AutoAuth nasceu duplicado em 27/jul.
+    const day = 86_400_000
+    const from = new Date(new Date(info.payDate + 'T00:00:00Z').getTime() - 2 * day).toISOString().slice(0, 10)
+    const to = new Date(new Date(info.payDate + 'T00:00:00Z').getTime() + 2 * day).toISOString().slice(0, 10)
+    const { data: dupAmt } = await db.from('fixed_cost_expenses').select('id')
+      .eq('supplier_id', row.id).eq('amount', info.amount)
+      .gte('payment_date', from).lte('payment_date', to).limit(1)
     if (dupAmt?.length) return { row, registered: false }
   }
 
