@@ -133,7 +133,18 @@ async function run(force: boolean): Promise<NextResponse> {
   let streamAnswers: { applied: string[] } = { applied: [] }
   try { streamAnswers = await runStreamAnswers(db) } catch (e) { console.error('[stream-answers]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers })
+  // ── FINANCEIRO 24/7 — o grupo mais importante do BR (ordem 27/jul). O webhook
+  // deste app enfileira cada post; quem sabe lançar é o app BR, então esta
+  // batida de 5 min acorda o robô de lá. Fila e cadência ficam no mesmo relógio.
+  let financeiro: unknown = null
+  try {
+    financeiro = await fetch(`${process.env.GZ28BR_BASE_URL || 'https://www.gz28br.com/ca'}/api/cron/financeiro`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: process.env.FINANCEIRO_KEY }),
+    }).then(r => r.json())
+  } catch (e) { console.error('[financeiro-ping]', e) }
+
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers, financeiro })
 }
 
 export async function POST() { return run(false) }
