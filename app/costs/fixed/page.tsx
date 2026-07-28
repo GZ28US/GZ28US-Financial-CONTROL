@@ -38,7 +38,9 @@ export default function FixedCostSuppliersPage() {
     const { data } = await supabase
       .from('fixed_cost_suppliers')
       .select('*')
-      .or('cost_type.is.null,cost_type.neq.APP')
+      // FIXED lists only recurring bills: APP has its own page, and ASSET /
+      // MARKETING live in ASSETS & MARKETING (same tables, different cost_type).
+      .or('cost_type.is.null,and(cost_type.neq.APP,cost_type.neq.ASSET,cost_type.neq.MARKETING)')
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     setRows((data || []) as FixedCostSupplier[])
