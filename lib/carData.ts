@@ -726,6 +726,55 @@ Object.assign(specialEditions, {
   '2026-ESCALADE-V-6.2 V8 SC': ['None', 'ESV'],
 })
 
+// ── RAM 1500, 5th gen "DT" — the V8 range (2019–2024 + 2026) ───────────────────
+// Every trim here is the 5.7L HEMI (395 hp, eTorque optional), named with the
+// engine like the rest of the file. The TRX (6.2L supercharged, 702 hp) is already
+// declared for 2021–2024 and is left alone — this block only appends what is
+// missing, so the TRX keeps heading the list on those years.
+//
+// 2025 is DELIBERATELY ABSENT: that year Ram dropped the V8 altogether for the
+// Hurricane inline-six and the TRX gave way to the RHO, so there is no V8 DT to
+// register. The HEMI returns for 2026, hence the gap in the middle.
+//
+// Lone Star is the Texas name for Big Horn, not a separate trim, so it is not
+// listed. Warlock, Backcountry, Built to Serve and G/T are appearance packages ON
+// a trim, so they live in specialEditions — never as versions of their own.
+const ramDtColors = ['Bright White', 'Diamond Black Crystal', 'Billet Silver Metallic', 'Granite Crystal Metallic', 'Flame Red', 'Delmonico Red Pearl', 'Patriot Blue Pearl', 'Hydro Blue Pearl', 'Maximum Steel Metallic', 'Ivory White Tri-Coat', 'Ceramic Grey']
+const ramDtV8Versions = ['Tradesman 5.7', 'Big Horn 5.7', 'Rebel 5.7', 'Laramie 5.7', 'Longhorn 5.7', 'Limited 5.7']
+for (const y of [2019, 2020, 2021, 2022, 2023, 2024, 2026]) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MOPAR')) manufacturersByYear[y].push('MOPAR')
+  brandsByManufacturerAndYear['MOPAR'] = brandsByManufacturerAndYear['MOPAR'] || {}
+  brandsByManufacturerAndYear['MOPAR'][y] = brandsByManufacturerAndYear['MOPAR'][y] || []
+  if (!brandsByManufacturerAndYear['MOPAR'][y].includes('RAM')) brandsByManufacturerAndYear['MOPAR'][y].push('RAM')
+  modelsByBrandAndYear['RAM'] = modelsByBrandAndYear['RAM'] || {}
+  modelsByBrandAndYear['RAM'][y] = modelsByBrandAndYear['RAM'][y] || []
+  if (!modelsByBrandAndYear['RAM'][y].includes('1500')) modelsByBrandAndYear['RAM'][y].push('1500')
+  versionsByModelAndYear['1500'] = versionsByModelAndYear['1500'] || {}
+  const dtExisting = versionsByModelAndYear['1500'][y] || []
+  versionsByModelAndYear['1500'][y] = [
+    ...dtExisting,
+    ...ramDtV8Versions.filter((v) => !dtExisting.includes(v)),
+  ]
+}
+years.sort((a, b) => a - b)
+Object.assign(specialEditions, {
+  '2019-1500-Big Horn 5.7': ['None', 'Warlock'],
+  '2020-1500-Big Horn 5.7': ['None', 'Warlock', 'Built to Serve'],
+  '2021-1500-Big Horn 5.7': ['None', 'Warlock', 'Built to Serve'],
+  '2022-1500-Big Horn 5.7': ['None', 'Warlock', 'Built to Serve', 'Backcountry'],
+  '2023-1500-Big Horn 5.7': ['None', 'Warlock', 'Backcountry'],
+  '2021-1500-Rebel 5.7': ['None', 'Built to Serve'],
+  '2022-1500-Rebel 5.7': ['None', 'Built to Serve', 'G/T'],
+  '2023-1500-Rebel 5.7': ['None', 'G/T'],
+  '2024-1500-Rebel 5.7': ['None', 'G/T'],
+  '2022-1500-Laramie 5.7': ['None', 'G/T'],
+  '2023-1500-Laramie 5.7': ['None', 'G/T'],
+  '2024-1500-Laramie 5.7': ['None', 'G/T'],
+  '2021-1500-Longhorn 5.7': ['None', '10th Anniversary'],
+})
+
 // ── Chevrolet Avalanche, 2nd Gen (GMT900, 2007–2013) ────────────────────────────
 // One engine across the whole generation — the 5.3L Vortec V8 (320 hp); the 2500/8.1L
 // died with Gen1. Trims: LS / LT / LTZ (2007's 1LT/2LT/3LT collapse into LT). The Z71
@@ -1316,6 +1365,9 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'GRAND CHEROKEE' && year <= 2004) return grandCherokeeZjColors
   if (model === 'GRAND CHEROKEE') return grandCherokeeColors
   if (model === '1500' && version.includes('TRX') && trxColorsByYear[year]) return trxColorsByYear[year]
+  // 5th-gen DT (2019+) runs its own palette — the 4th-gen colours above it are
+  // a different era and would offer paint that truck never came in.
+  if (model === '1500' && year >= 2019) return ramDtColors
   if (brand === 'RAM') return ramColors
   if (model === 'F150' && year <= 2004) return svtLightningColors
   if (brand === 'FORD') return fordColors
