@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
@@ -39,6 +40,7 @@ type Row = {
 export default function AssetsPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [spent, setSpent] = useState<Map<string, number>>(new Map())
+  const [owed, setOwed] = useState<Map<string, number>>(new Map())
   const [receipt, setReceipt] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -59,14 +61,19 @@ export default function AssetsPage() {
         .from('fixed_cost_expenses')
         .select('supplier_id, amount, payment_date, receipt_url')
         .in('supplier_id', list.map(a => a.id))
+      // PAID vs PENDING never get mixed: an instalment that has not left the
+      // account yet is a bill, not spend. `payment_date` is the PAID flag.
       const paid = new Map<string, number>()
+      const due = new Map<string, number>()
       const rec = new Map<string, string>()
       for (const e of exp || []) {
         if (!e.supplier_id) continue
-        paid.set(e.supplier_id, (paid.get(e.supplier_id) || 0) + (Number(e.amount) || 0))
+        const bucket = e.payment_date ? paid : due
+        bucket.set(e.supplier_id, (bucket.get(e.supplier_id) || 0) + (Number(e.amount) || 0))
         if (e.receipt_url && !rec.has(e.supplier_id)) rec.set(e.supplier_id, String(e.receipt_url))
       }
       setSpent(paid)
+      setOwed(due)
       setReceipt(rec)
     }
     setLoading(false)
@@ -79,6 +86,7 @@ export default function AssetsPage() {
     return kindOk && searchOk
   })
   const total = filtered.reduce((s, r) => s + (spent.get(r.id) || 0), 0)
+  const pending = filtered.reduce((s, r) => s + (owed.get(r.id) || 0), 0)
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -106,6 +114,7 @@ export default function AssetsPage() {
           </button>
         ))}
         <span className="text-xl text-gray-400 ml-2">Total invested: <b className="text-green-400">{formatUSD(total)}</b></span>
+        {pending > 0.005 && <span className="text-xl text-gray-400">Still to pay: <b className="text-orange-400">{formatUSD(pending)}</b></span>}
       </div>
 
       {loading ? (
@@ -115,7 +124,7 @@ export default function AssetsPage() {
       ) : (
         <div className="space-y-5">
           {filtered.map(r => (
-            <div key={r.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6 flex-wrap">
+            <Link key={r.id} href={`/costs/assets/${r.id}`} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-3xl p-6 flex items-center justify-between gap-6 flex-wrap">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-2xl font-bold">{r.description || r.company || '—'}</h2>
@@ -130,11 +139,12 @@ export default function AssetsPage() {
               </div>
               <div className="text-right shrink-0">
                 <p className="text-2xl font-bold text-green-400">{formatUSD(spent.get(r.id) || Number(r.amount_1) || 0)}</p>
-                {receipt.get(r.id) && (
-                  <a href={receipt.get(r.id)} target="_blank" rel="noopener noreferrer" className="text-base text-blue-400 hover:text-blue-300">📎 receipt</a>
+                {(owed.get(r.id) || 0) > 0.005 && (
+                  <p className="text-lg font-bold text-orange-400">+ {formatUSD(owed.get(r.id) || 0)} to pay</p>
                 )}
+                {receipt.get(r.id) && <p className="text-base text-blue-400">📎 receipt</p>}
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}
