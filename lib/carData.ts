@@ -248,6 +248,9 @@ export const specialEditions: Record<string, string[]> = {
   '2014-CAMARO-SS 6.2': ['None', 'Spring Edition'],
   '2015-CAMARO-SS 6.2': ['None', 'Green Flash Edition', 'Commemorative Edition'],
   '2015-CAMARO-SS 1LE 6.2': ['None', 'Green Flash Edition'],
+  // "Fifty" package for the Camaro's 50th anniversary (2017 only) — Nightfall Gray
+  // with orange accents. It was an appearance package on 2SS, never sold on the 1LE.
+  '2017-CAMARO-SS 6.2': ['None', '50th Anniversary'],
   '2024-CAMARO-LT1 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-SS 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-ZL1 6.2': ['None', 'Panther Collector Edition'],
