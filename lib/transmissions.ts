@@ -110,6 +110,9 @@ export function transmissionOptionsFor(
   if (b === 'BMW' && m === 'M5' && y >= 2005 && y <= 2010) return ['SMG III (SMG7)', 'Getrag (Manual6)']
   if (b === 'BMW' && m === 'M5' && y >= 2011 && y <= 2016) return ['M-DCT Drivelogic (DCT7)', 'Getrag (Manual6)']
   if (b === 'BMW' && m === 'M3' && y >= 2021) return has('COMPETITION') ? ['ZF8HP76 (Auto8)'] : ['ZF8HP76 (Auto8)', 'Manual6']
+  // X6 G06/F96: automatic only across the range. The M cars run the reinforced
+  // M Steptronic (8HP75); the M50i/M60i the standard 8HP76.
+  if (b === 'BMW' && m === 'X6' && y >= 2020) return has(' M ') || v.startsWith('M ') || has('M COMPETITION') ? ['ZF8HP75 (Auto8)'] : ['ZF8HP76 (Auto8)']
   if (b === 'PORSCHE' && m === '911' && has('TURBO') && y >= 2006 && y <= 2009) return ['G97 (Manual6)', 'Tiptronic S (Auto5)']
   if (b === 'LAND ROVER' && m === 'DEFENDER') return y >= 2012 ? ['MT82 (Manual6)'] : ['R380 (Manual5)']
   if (b === 'MITSUBISHI' && m === 'ECLIPSE') return ['F5M33 (Manual5)', 'INVECS-II (Auto4)']

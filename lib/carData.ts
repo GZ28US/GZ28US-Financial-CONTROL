@@ -474,6 +474,41 @@ Object.assign(specialEditions, {
   '2026-M3-Competition xDrive 3.0 TT I6': ['None', 'CS'],
 })
 
+// ── BMW X6, last generation (G06 2020– ; X6 M is the F96) ──────────────────────
+// The V8 range only — the 40i/xDrive40i is the 3.0 turbo six and the M50d a diesel,
+// neither belongs in a V8 shop's book.
+//
+//   M50i        4.4 TT V8 (N63), 523 hp — 2020–2022
+//   M60i        4.4 TT V8 (S68) mild hybrid, 523 hp — from the 2023 LCI on
+//   M           4.4 TT V8 (S63), 600 hp — F96, until the LCI dropped it
+//   M Competition  same S63 at 617 hp (625 after the LCI) — runs the whole range
+//
+// Appends instead of assigning: the M3 G80 block above SETS modelsByBrandAndYear
+// for these same years, so overwriting here would wipe the M3 off the dropdown.
+const bmwX6G06Colors = ['Alpine White', 'Black Sapphire', 'Carbon Black', 'Mineral White', 'Dravit Grey', 'Manhattan Metallic', 'Phytonic Blue', 'Marina Bay Blue', 'Tanzanite Blue', 'Ametrin', 'Toronto Red', 'Donington Grey', 'Frozen Marina Bay Blue', 'Frozen Black']
+const bmwX6V8Versions = (y: number): string[] => {
+  const v: string[] = []
+  if (y >= 2020 && y <= 2022) v.push('M50i 4.4 TT V8')
+  if (y >= 2023) v.push('M60i 4.4 TT V8')
+  if (y >= 2020 && y <= 2023) v.push('M 4.4 TT V8')
+  v.push('M Competition 4.4 TT V8')
+  return v
+}
+for (let y = 2020; y <= 2026; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('BMW')) manufacturersByYear[y].push('BMW')
+  brandsByManufacturerAndYear['BMW'] = brandsByManufacturerAndYear['BMW'] || {}
+  brandsByManufacturerAndYear['BMW'][y] = brandsByManufacturerAndYear['BMW'][y] || []
+  if (!brandsByManufacturerAndYear['BMW'][y].includes('BMW')) brandsByManufacturerAndYear['BMW'][y].push('BMW')
+  modelsByBrandAndYear['BMW'] = modelsByBrandAndYear['BMW'] || {}
+  modelsByBrandAndYear['BMW'][y] = modelsByBrandAndYear['BMW'][y] || []
+  if (!modelsByBrandAndYear['BMW'][y].includes('X6')) modelsByBrandAndYear['BMW'][y].push('X6')
+  versionsByModelAndYear['X6'] = versionsByModelAndYear['X6'] || {}
+  versionsByModelAndYear['X6'][y] = bmwX6V8Versions(y)
+}
+years.sort((a, b) => a - b)
+
 // ── Porsche 911 (997.1) Turbo (2007–2009) ───────────────────────────────────────
 // 3.6L twin-turbo flat-6 (480 hp). Coupe from 2007, Cabriolet added 2008. There is no
 // 997.1 Turbo S (the Turbo S arrives with the 997.2). Era's Porsche colour palette.
@@ -1340,6 +1375,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'DEFENDER') return landRoverDefenderColors
   if (model === 'M5') return year >= 2011 ? bmwM5F10Colors : bmwM5E60Colors
   if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors
+  if (model === 'X6') return bmwX6G06Colors
   if (model === '911') return porsche997TurboColors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
@@ -1415,7 +1451,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
 // The pack builder reads the flat carData version list; fill DEFENDER with the union of
 // every era's wheelbase+engine version (built from the year-keyed map above).
 carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(versionsByModelAndYear['DEFENDER']).flat())]
-carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())], M3: [...new Set(Object.values(versionsByModelAndYear['M3']).flat())] } }
+carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())], M3: [...new Set(Object.values(versionsByModelAndYear['M3']).flat())], X6: [...new Set(Object.values(versionsByModelAndYear['X6']).flat())] } }
 carData['MITSUBISHI'] = { MITSUBISHI: { ECLIPSE: ['GS-T 2.0 Turbo', 'GSX 2.0 Turbo AWD'] } }
 carData['PORSCHE'] = { PORSCHE: { '911': [...new Set(Object.values(versionsByModelAndYear['911']).flat())] } }
 // Camaro flat list = union of every era's versions (modern gen5+ entries already present).
