@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, clientCode } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
 import {
   years,
@@ -17,7 +17,7 @@ import {
 } from '@/lib/carData'
 import { transmissionOptionsFor } from '@/lib/transmissions'
 
-type Client = { id: string; name: string; client_number: number | null }
+type Client = { id: string; name: string; client_number: number | null; is_quote?: boolean | null; origin?: string | null }
 type TransferRide = { id: string; project_code: string; project_name: string | null; client_id: string | null; created_at: string }
 
 function pad3(n: number) { return String(n).padStart(3, '0') }
@@ -108,15 +108,26 @@ export default function NewRidePage() {
       setProjectCode(`${wantPrefix}.${pad3(1)}`)
     }
 
-    // Clients load independently (ordered by client_number for a predictable list);
-    // a failure here logs but never touches the code above. Quote clients and
-    // project clients are separate sequences (each numbered from 1), so a quote
-    // ride only lists quote clients and a project ride only project clients —
-    // otherwise the two #001s, #002s… collide in the dropdown.
+    // Clients load independently (ordered for a predictable list); a failure here
+    // logs but never touches the code above.
+    //
+    // A PROJECT ride lists only project clients. A QUOTE ride lists BOTH quote and
+    // project clients: quoting a NEW CAR for an EXISTING (project) client is the
+    // common case, and hiding him here forced the car to be created as a project
+    // ride first — burning a real US.### number on a job that may never close.
+    // Quote and project clients each number from 1, so the label uses clientCode()
+    // (US.001 vs US.QT.001) to keep the two #001s apart. Project clients sort first.
     try {
-      let clientQuery = supabase.from('clients').select('id, name, client_number')
-      clientQuery = isShop ? clientQuery.eq('origin', 'SHOP') : clientQuery.eq('origin', 'PROJECT').eq('is_quote', isQuote)
-      const { data: clientData } = await clientQuery.order('client_number', { ascending: true, nullsFirst: false })
+      let clientQuery = supabase.from('clients').select('id, name, client_number, is_quote, origin')
+      if (isShop) {
+        clientQuery = clientQuery.eq('origin', 'SHOP')
+      } else {
+        clientQuery = clientQuery.eq('origin', 'PROJECT')
+        if (!isQuote) clientQuery = clientQuery.eq('is_quote', false)
+      }
+      const { data: clientData } = await clientQuery
+        .order('is_quote', { ascending: true })
+        .order('client_number', { ascending: true, nullsFirst: false })
       if (clientData) setClients(clientData as Client[])
     } catch (e) {
       console.error('Client load failed', e)
@@ -321,7 +332,7 @@ export default function NewRidePage() {
                 <option value="">— Select the client —</option>
                 {clients.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.client_number != null ? `${pad3(c.client_number)} — ` : ''}{c.name}
+                    {clientCode(c)} — {c.name}
                   </option>
                 ))}
               </select>
@@ -380,7 +391,7 @@ export default function NewRidePage() {
             <option value="">— No client —</option>
             {clients.map(c => (
               <option key={c.id} value={c.id}>
-                {c.client_number != null ? `${pad3(c.client_number)} — ` : ''}{c.name}
+                {clientCode(c)} — {c.name}
               </option>
             ))}
           </select>
