@@ -97,6 +97,11 @@ export function transmissionOptionsFor(
     if (has('GT500') && y >= 2007 && y <= 2014) return ['TR6060 (Manual6)']
     if (has('GT500') && y >= 2020) return ['TR9070 (DCT7)']
     if (has('MACH 1')) return ['10R80 (Auto10)', 'TR3160 (Manual6)']
+    // S197: the Boss 302 was manual-only; the Shelby GT and the GT took either box.
+    // 2005–2010 ran the TR-3650 five-speed / 5R55S; 2011–2014 the MT82 / 6R80.
+    if (has('BOSS 302')) return ['MT82 (Manual6)']
+    if (y >= 2011 && y <= 2014) return ['MT82 (Manual6)', '6R80 (Auto6)']
+    if (y >= 2005 && y <= 2010) return ['TR-3650 (Manual5)', '5R55S (Auto5)']
     if (y >= 2018) return ['10R80 (Auto10)', 'MT82 (Manual6)']
     return []
   }

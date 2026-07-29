@@ -579,6 +579,57 @@ for (let y = 2005; y <= 2023; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── Ford Mustang S197 V8, the naturally aspirated range (2005–2014) ─────────────
+// The GT500 block below covers the supercharged Shelbys; this covers every OTHER
+// V8 S197 sold:
+//   GT           4.6L Modular (2005–2010) then 5.0L Coyote (2011–2014)
+//   Shelby GT    4.6L, built by Shelby American (2007–2008)
+//   Boss 302     5.0L "Roadrunner" (2012–2013)
+// V6 cars are deliberately left out — this shop only takes V8s.
+// Special editions ride on their base trim, never as their own version: California
+// Special and Bullitt on the GT, Laguna Seca on the Boss, GT-H on the Shelby GT.
+// Runs BEFORE the GT500 block so the GT (the volume car) heads the dropdown.
+// Colours come from mustangColorsByYear.
+const s197V8Versions = (y: number): string[] => {
+  const v: string[] = []
+  if (y >= 2005 && y <= 2010) v.push('GT 4.6')
+  if (y >= 2011 && y <= 2014) v.push('GT 5.0')
+  if (y >= 2007 && y <= 2008) v.push('Shelby GT 4.6')
+  if (y >= 2012 && y <= 2013) v.push('Boss 302 5.0')
+  return v
+}
+for (let y = 2005; y <= 2014; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('FORD')) manufacturersByYear[y].push('FORD')
+  brandsByManufacturerAndYear['FORD'] = brandsByManufacturerAndYear['FORD'] || {}
+  brandsByManufacturerAndYear['FORD'][y] = brandsByManufacturerAndYear['FORD'][y] || []
+  if (!brandsByManufacturerAndYear['FORD'][y].includes('FORD')) brandsByManufacturerAndYear['FORD'][y].push('FORD')
+  modelsByBrandAndYear['FORD'] = modelsByBrandAndYear['FORD'] || {}
+  modelsByBrandAndYear['FORD'][y] = modelsByBrandAndYear['FORD'][y] || []
+  if (!modelsByBrandAndYear['FORD'][y].includes('MUSTANG')) modelsByBrandAndYear['FORD'][y].push('MUSTANG')
+  versionsByModelAndYear['MUSTANG'] = versionsByModelAndYear['MUSTANG'] || {}
+  const s197Existing = versionsByModelAndYear['MUSTANG'][y] || []
+  versionsByModelAndYear['MUSTANG'][y] = [
+    ...s197Existing,
+    ...s197V8Versions(y).filter((v) => !s197Existing.includes(v)),
+  ]
+}
+years.sort((a, b) => a - b)
+Object.assign(specialEditions, {
+  '2007-MUSTANG-GT 4.6': ['None', 'California Special'],
+  '2008-MUSTANG-GT 4.6': ['None', 'California Special', 'Bullitt'],
+  '2009-MUSTANG-GT 4.6': ['None', 'California Special', 'Bullitt'],
+  '2011-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2012-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2013-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2014-MUSTANG-GT 5.0': ['None', 'California Special'],
+  '2007-MUSTANG-Shelby GT 4.6': ['None', 'GT-H (Hertz)'],
+  '2008-MUSTANG-Shelby GT 4.6': ['None', 'GT-H (Hertz)'],
+  '2012-MUSTANG-Boss 302 5.0': ['None', 'Laguna Seca'],
+  '2013-MUSTANG-Boss 302 5.0': ['None', 'Laguna Seca'],
+})
+
 // ── Mustang Shelby GT500, S197 generation (2007–2014) ───────────────────────────
 // Trim = supercharged engine package. 2007–2012 used the 5.4L SC; 2013–2014 the
 // 5.8L SC (662 hp). The GT500KR "King of the Road" (2008–2009) is a special
@@ -1119,6 +1170,9 @@ const corvetteColorsByYear: Record<number, string[]> = {
 }
 
 const mustangColorsByYear: Record<number, string[]> = {
+  // S197 launch years (2005–2006) — the GT palette, before any Shelby existed.
+  2005: ['Performance White', 'Black', 'Satin Silver', 'Redfire', 'Torch Red', 'Legend Lime', 'Screaming Yellow', 'Windveil Blue', 'Mineral Grey'],
+  2006: ['Performance White', 'Black', 'Satin Silver', 'Redfire', 'Torch Red', 'Screaming Yellow', 'Windveil Blue', 'Tungsten Grey', 'Vista Blue'],
   // S197 GT500 era (2007–2014) — best-effort GT500 palettes.
   2007: ['Performance White', 'Black', 'Tungsten Grey', 'Vista Blue', 'Torch Red', 'Alloy', 'Grabber Orange'],
   2008: ['Performance White', 'Black', 'Vapor Silver', 'Vista Blue', 'Torch Red', 'Dark Candy Apple Red', 'Brilliant Silver'],
@@ -1294,7 +1348,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   FORD: {
     FORD: {
       F150: ['SVT Lightning 5.4 V8 SC', 'SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
-      MUSTANG: ['GT 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.4 SC', 'Shelby GT500 5.8 SC', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
+      MUSTANG: ['GT 4.6', 'GT 5.0', 'Shelby GT 4.6', 'Boss 302 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.4 SC', 'Shelby GT500 5.8 SC', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
     },
   },
   'LAND ROVER': {
