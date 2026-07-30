@@ -18,6 +18,26 @@ type FixedCostSupplier = {
   phone: string | null
   email: string | null
   preferred_contact: string | null
+  periodicity: string | null
+  amount_1: number | null
+  amount_2: number | null
+  date_conclusion: string | null
+}
+
+// True monthly cost of one supplier: the full period charge (both payment slots)
+// normalized to a month. SINGLE is a one-off — it has no monthly weight; ended
+// suppliers are excluded by the caller. DAILY/WEEKLY use the yearly average
+// (×365/12, ×52/12), not "30 days" — that's the number that survives a year.
+function monthlyOf(r: FixedCostSupplier): number {
+  const perPeriod = (Number(r.amount_1) || 0) + (Number(r.amount_2) || 0)
+  // Old rows carry lowercase periodicity ("monthly") — normalize before matching.
+  switch ((r.periodicity || '').toUpperCase()) {
+    case 'MONTHLY': return perPeriod
+    case 'ANNUAL': return perPeriod / 12
+    case 'WEEKLY': return (perPeriod * 52) / 12
+    case 'DAILY': return (perPeriod * 365) / 12
+    default: return 0 // SINGLE / unknown: no recurring monthly weight
+  }
 }
 
 const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone'] as const
@@ -73,6 +93,9 @@ export default function FixedCostSuppliersPage() {
     const searchOk = !q || [r.description, r.company, r.contact_name, r.phone, r.email].some((v) => (v || '').toLowerCase().includes(q))
     return contactOk && searchOk
   })
+  // Sum only costs still running (no conclusion date, or one still in the future).
+  const monthlyTotal = filtered.reduce((sum, r) =>
+    sum + (isValidDate(r.date_conclusion) && (r.date_conclusion as string) < td ? 0 : monthlyOf(r)), 0)
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -105,7 +128,7 @@ export default function FixedCostSuppliersPage() {
         </div>
       </div>
 
-      <div className="flex gap-2 mb-8 flex-wrap">
+      <div className="flex items-center gap-2 mb-8 flex-wrap">
         {(['ALL', ...CONTACTS] as const).map((c) => (
           <button
             key={c}
@@ -115,6 +138,7 @@ export default function FixedCostSuppliersPage() {
             {c}
           </button>
         ))}
+        <span className="ml-2 text-lg font-bold text-gray-300">Monthly: {formatUSD(monthlyTotal)}</span>
       </div>
 
       {loading ? (

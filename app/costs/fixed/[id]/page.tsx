@@ -517,7 +517,12 @@ export default function FixedCostSupplierViewPage() {
                               : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({daysDelayed} {daysDelayed === 1 ? 'day' : 'days'})</span> : null}
                             {fine > 0.005 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300" title={`Scheduled ${formatUSD(sched || 0)} — paid ${formatUSD(Number(p.amount) || 0)}`}>FINES for Late: {formatUSD(fine)}</span>}
                           </div>
-                          {paid && <p className="text-xs text-gray-500">Paid: {fmtDate(p.payment_date)}{p.receipt_url ? ' · 📎 receipt' : ''}</p>}
+                          {paid && (
+                            <p className="text-xs text-gray-500">
+                              Paid: {fmtDate(p.payment_date)}
+                              {p.receipt_url ? <> · <a href={p.receipt_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">📎 receipt</a></> : null}
+                            </p>
+                          )}
                         </div>
                         <div className="flex gap-2 shrink-0">
                           <label className={`bg-purple-700 hover:bg-purple-600 px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${scanningId === p.id ? 'opacity-60 pointer-events-none' : ''}`}>
