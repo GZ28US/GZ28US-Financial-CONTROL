@@ -51,31 +51,34 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   const sent = await recentSentBodies()
   const alreadySent = (amount: number) => sent.some((b) => b.includes(usd(amount)))
 
-  // 1) invoice_expenses — QUOTES NÃO REPORTAM (lei das quotes + caso US.044.2,
-  // 30/jul: montar uma quote com packs inundou o grupo com um report por peça).
+  // 1) invoice_expenses — regra do Márcio (30/jul): reporta SÓ QUANDO PAGA
+  // (payment_date preenchido), nunca no cadastro nem na exclusão. Linhas não
+  // pagas ficam SEM marca — quando forem pagas, o report sai naquele momento.
+  // Quotes nunca reportam (lei das quotes + enchente US.044.2).
   const { data: ie } = await db.from('invoice_expenses')
-    .select('id, item, price, expense_date, created_at, invoices(invoice_code, is_quote)')
-    .gte('created_at', EPOCH).order('created_at')
+    .select('id, item, price, payment_date, created_at, invoices(invoice_code, is_quote)')
+    .gte('created_at', EPOCH).not('payment_date', 'is', null).order('created_at')
   for (const e of (ie || []) as any[]) {
     const key = `ern:ie:${e.id}`
     if (seenSet.has(key)) continue
-    if (e.invoices?.is_quote) { await mark(key, `QUOTE-SKIP ${e.invoices?.invoice_code || ''}`); continue }
+    if (e.invoices?.is_quote) continue
     const label = `EXPENSE ${e.invoices?.invoice_code || '—'} ${usd(e.price)}`
     if (!alreadySent(Number(e.price))) {
-      await sendReport([`*EXPENSE* ${e.invoices?.invoice_code || '—'}`, `${e.expense_date || ''} — *${usd(e.price)}*`, String(e.item || '').slice(0, 160)].join('\n'))
+      await sendReport([`*EXPENSE PAID* ${e.invoices?.invoice_code || '—'}`, `${e.payment_date || ''} — *${usd(e.price)}*`, String(e.item || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
     await mark(key, label)
   }
 
-  // 2) invoice_payments (incomes) — pagamentos de quote também ficam fora.
+  // 2) invoice_payments (incomes) — mesma regra: só quando o dinheiro ENTROU
+  // (payment_date preenchido); previsões não reportam; quotes nunca reportam.
   const { data: ip } = await db.from('invoice_payments')
     .select('id, amount, payment_date, description, created_at, invoices(invoice_code, is_quote)')
-    .gte('created_at', EPOCH).order('created_at')
+    .gte('created_at', EPOCH).not('payment_date', 'is', null).order('created_at')
   for (const p of (ip || []) as any[]) {
     const key = `ern:ip:${p.id}`
     if (seenSet.has(key)) continue
-    if (p.invoices?.is_quote) { await mark(key, `QUOTE-SKIP ${p.invoices?.invoice_code || ''}`); continue }
+    if (p.invoices?.is_quote) continue
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
     if (!alreadySent(Number(p.amount))) {
       await sendReport([`*INCOME* ${p.invoices?.invoice_code || '—'}`, `${p.payment_date || ''} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
@@ -84,17 +87,17 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     await mark(key, label)
   }
 
-  // 3) expenses (staff seasons)
+  // 3) expenses (staff seasons) — mesma regra: reporta só quando PAGA.
   const { data: se } = await db.from('expenses')
-    .select('id, amount, expense_date, description, created_at, seasons(season_code, staff(name))')
-    .gte('created_at', EPOCH).order('created_at')
+    .select('id, amount, payment_date, description, created_at, seasons(season_code, staff(name))')
+    .gte('created_at', EPOCH).not('payment_date', 'is', null).order('created_at')
   for (const s of (se || []) as any[]) {
     const key = `ern:se:${s.id}`
     if (seenSet.has(key)) continue
     const who = s.seasons?.staff?.name || '—'
     const label = `EXPENSE STAFF ${s.seasons?.season_code || ''} ${usd(s.amount)}`
     if (!alreadySent(Number(s.amount))) {
-      await sendReport([`*EXPENSE — STAFF* ${s.seasons?.season_code || '—'} — ${who}`, `${s.expense_date || ''} — *${usd(s.amount)}*`, String(s.description || '').slice(0, 160)].join('\n'))
+      await sendReport([`*EXPENSE PAID — STAFF* ${s.seasons?.season_code || '—'} — ${who}`, `${s.payment_date || ''} — *${usd(s.amount)}*`, String(s.description || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
     await mark(key, label)
