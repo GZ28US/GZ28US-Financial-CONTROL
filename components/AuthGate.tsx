@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { ensureBRBridgeSession, clearBRBridgeSession } from '@/lib/supabaseBR'
 
 // Routes that are PUBLIC by design — no login. The client self-service form
 // (/clients/self/[id]) is sent to clients so they fill in their own info;
@@ -23,11 +24,22 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setStatus(data.session ? 'in' : 'out')
-    })
+    // The cross-project BR client (supabaseBR) must be authenticated before any
+    // BR-backed write (suppliers/PAID mirrors, common-ride rename) — the BR
+    // tables are behind RLS. Mint/attach the bridge session on login; drop it
+    // on logout. Best-effort with a timeout so a bridge hiccup never blocks
+    // the US app itself. (Mirror of the BR AuthGate's US-bridge wiring.)
+    const onSession = async (session: unknown) => {
+      if (session) {
+        await Promise.race([ensureBRBridgeSession(), new Promise((r) => setTimeout(r, 8000))])
+      } else {
+        void clearBRBridgeSession()
+      }
+      if (mounted) setStatus(session ? 'in' : 'out')
+    }
+    supabase.auth.getSession().then(({ data }) => onSession(data.session))
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setStatus(session ? 'in' : 'out')
+      void onSession(session)
     })
     return () => { mounted = false; sub.subscription.unsubscribe() }
   }, [])
