@@ -313,7 +313,9 @@ const SPAM_SENDERS: RegExp[] = [
   /e\.stripe\.com/i, /meuacerto\.com\.br/i, /jcsjunioradvogados\.com\.br/i,
   /ciaathletica\.com\.br/i, /announce@winzip\.com/i, /photos@onedrive\.com/i,
   /uberone@uber\.com/i, /jegs@e\.jegs\.com/i, /emanualonline\.com/i,
-  /touchupdirect\.com/i, /koshergoods\.net/i, /negociar\.acerto\.com\.br/i,
+  // touchupdirect REMOVIDO 30/jul: virou fornecedor real (pedido $131.05 via
+  // PayPal) — as notificações de pedido/envio dele são transacionais agora.
+  /koshergoods\.net/i, /negociar\.acerto\.com\.br/i,
 ]
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
