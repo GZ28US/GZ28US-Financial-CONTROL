@@ -94,15 +94,14 @@ export default function FixedCostSuppliersPage() {
     const searchOk = !q || [r.description, r.company, r.contact_name, r.phone, r.email].some((v) => (v || '').toLowerCase().includes(q))
     return contactOk && searchOk
   })
-  // Monthly total of the CURRENT month (Márcio, 30/jul/2026): every cost ALIVE
-  // in this calendar month counts at its monthly value, paid or not — a cost
-  // concluded before this month or starting only next month never counts.
+  // Monthly Average total of the CURRENT month (Márcio, 30/jul/2026): every
+  // ENROLLED cost counts at its monthly average, paid or not — a signed contract
+  // is alive and its clock is counting even before the first charge (start date
+  // is irrelevant). A cancelled contract keeps counting through the month of its
+  // "vigência" end (date_conclusion) and only leaves the sum the month after.
   const monthStart = td.slice(0, 7) + '-01'
-  const monthEndDate = new Date(Number(td.slice(0, 4)), Number(td.slice(5, 7)), 0)
-  const monthEnd = `${td.slice(0, 7)}-${String(monthEndDate.getDate()).padStart(2, '0')}`
   const aliveThisMonth = (r: FixedCostSupplier) =>
-    (!isValidDate(r.date_entry) || (r.date_entry as string) <= monthEnd) &&
-    (!isValidDate(r.date_conclusion) || (r.date_conclusion as string) >= monthStart)
+    !isValidDate(r.date_conclusion) || (r.date_conclusion as string) >= monthStart
   const monthlyTotal = filtered.reduce((sum, r) => sum + (aliveThisMonth(r) ? monthlyOf(r) : 0), 0)
   const monthLabel = new Date(td + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 
