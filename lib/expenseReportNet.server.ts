@@ -51,13 +51,15 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   const sent = await recentSentBodies()
   const alreadySent = (amount: number) => sent.some((b) => b.includes(usd(amount)))
 
-  // 1) invoice_expenses
+  // 1) invoice_expenses — QUOTES NÃO REPORTAM (lei das quotes + caso US.044.2,
+  // 30/jul: montar uma quote com packs inundou o grupo com um report por peça).
   const { data: ie } = await db.from('invoice_expenses')
-    .select('id, item, price, expense_date, created_at, invoices(invoice_code)')
+    .select('id, item, price, expense_date, created_at, invoices(invoice_code, is_quote)')
     .gte('created_at', EPOCH).order('created_at')
   for (const e of (ie || []) as any[]) {
     const key = `ern:ie:${e.id}`
     if (seenSet.has(key)) continue
+    if (e.invoices?.is_quote) { await mark(key, `QUOTE-SKIP ${e.invoices?.invoice_code || ''}`); continue }
     const label = `EXPENSE ${e.invoices?.invoice_code || '—'} ${usd(e.price)}`
     if (!alreadySent(Number(e.price))) {
       await sendReport([`*EXPENSE* ${e.invoices?.invoice_code || '—'}`, `${e.expense_date || ''} — *${usd(e.price)}*`, String(e.item || '').slice(0, 160)].join('\n'))
@@ -66,13 +68,14 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     await mark(key, label)
   }
 
-  // 2) invoice_payments (incomes)
+  // 2) invoice_payments (incomes) — pagamentos de quote também ficam fora.
   const { data: ip } = await db.from('invoice_payments')
-    .select('id, amount, payment_date, description, created_at, invoices(invoice_code)')
+    .select('id, amount, payment_date, description, created_at, invoices(invoice_code, is_quote)')
     .gte('created_at', EPOCH).order('created_at')
   for (const p of (ip || []) as any[]) {
     const key = `ern:ip:${p.id}`
     if (seenSet.has(key)) continue
+    if (p.invoices?.is_quote) { await mark(key, `QUOTE-SKIP ${p.invoices?.invoice_code || ''}`); continue }
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
     if (!alreadySent(Number(p.amount))) {
       await sendReport([`*INCOME* ${p.invoices?.invoice_code || '—'}`, `${p.payment_date || ''} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
