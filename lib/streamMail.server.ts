@@ -205,6 +205,11 @@ export async function organizeInbox(db: SupabaseClient, accessToken: string): Pr
   let folders: Map<string, { id: string; name: string }> | null = null
 
   for (const msg of inbox) {
+    // PROTECTED senders never get filed by the organizer (30/jul/2026: Jordan's
+    // Auto Tags quote uses titan.email hosting — the "titan" token in the
+    // signature false-matched the Titan Motorsports purchases and the e-mail
+    // was filed into a ride folder; Progressive/e-sign mail suffered the same).
+    if (/autotagsandtitle|echosign|adobesign|docusign|e\.progressive\.com/i.test(msg.fromAddr)) continue
     const hay = `${msg.subject} ${msg.text}`
     // Which purchase rows does this email touch?
     const byOrder = rows.filter(r => r.order_number && r.order_number.length >= 4 && hay.includes(r.order_number))
