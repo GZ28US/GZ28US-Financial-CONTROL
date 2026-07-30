@@ -40,8 +40,14 @@ async function msToken(db: SupabaseClient, account: string): Promise<string | nu
 }
 
 // Regras por conta: retorno = nome de pasta ('Pai/Filha' aponta subpasta), 'DELETE',
-// ou null (→ TRIAGEM). Mantidas alinhadas às decisões do Márcio de 26/jul.
+// 'KEEP' (fica na caixa de entrada, intocado), ou null (→ TRIAGEM).
+// Mantidas alinhadas às decisões do Márcio de 26/jul.
+// LEI (Márcio, 30/jul/2026, caso EchoSign/Progressive): pedido de ASSINATURA
+// eletrônica NUNCA sai da caixa de entrada — ele precisa ver e assinar.
+const ESIGN_FROM = /echosign|adobesign|docusign|hellosign|sign\.dropbox|pandadoc|esign@/i
+const ESIGN_SUBJ = /signature requested|review and sign|aguarda(ndo)? sua assinatura|assinatura pendente/i
 function ruleSlot1(subj: string, from: string): string | null {
+  if (ESIGN_FROM.test(from) || ESIGN_SUBJ.test(subj)) return 'KEEP'
   if (/verification code|c[óo]digo de verifica/i.test(subj)) return 'DELETE'
   if (/united\.com|latam|delta\.com|aa\.com|copaair|voegol|azul/i.test(from)) return 'Businesses/Trips'
   if (/delivery attempted|out for delivery|delivered/i.test(subj)) return 'Shopping'
@@ -50,6 +56,7 @@ function ruleSlot1(subj: string, from: string): string | null {
   return null
 }
 function ruleSlot2(subj: string, from: string): string | null {
+  if (ESIGN_FROM.test(from) || ESIGN_SUBJ.test(subj)) return 'KEEP'
   if (/pre.o do seu voo monitorado|Suas lembran.as desse dia|aniversari/i.test(subj)) return 'DELETE'
   if (/rockauto/i.test(from) || /sent a message about|sent a question about|Order to Ship|Order Confirmation|Inventory Update/i.test(subj)) return '01 - Compras'
   if (/aguarda sua assinatura|Assinatura Eletr.nica|NFS-e|Nota Fiscal|Boleto|DEPOSITO IDENTIFICADO|Compromisso Mensal|ADIANTAMENTO SALARIAL|Simples Nacional|Contrato Social/i.test(subj)) return 'Documentos'
@@ -94,6 +101,7 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
   for (const m of msgs) {
     if (new Date(m.receivedDateTime).getTime() > cutoff) continue // recente demais — outros sweeps ainda vão agir
     const dest = rule(String(m.subject || ''), String(m.from?.emailAddress?.address || '')) || 'TRIAGEM (Claudinha)'
+    if (dest === 'KEEP') continue // ação do Márcio pendente — fica na caixa, intocado
     if (dest === 'DELETE') {
       await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}`, { method: 'DELETE', headers: gh(token) })
       out.push(`${account}: DELETE ${String(m.subject).slice(0, 40)}`)
@@ -132,8 +140,12 @@ async function zeroGmail(db: SupabaseClient, out: string[]): Promise<void> {
   const ids: string[] = []
   const cutoff = Date.now() - GRACE_MIN * 60_000
   for (const m of list?.messages || []) {
-    const full = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject`, { headers: ghg }).then(r => r.json()).catch(() => null)
-    if (full && Number(full.internalDate) < cutoff) ids.push(m.id)
+    const full = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`, { headers: ghg }).then(r => r.json()).catch(() => null)
+    if (!full || Number(full.internalDate) >= cutoff) continue
+    const hdr = (n: string) => String(full.payload?.headers?.find((h: any) => h.name === n)?.value || '')
+    // Mesma lei do 30/jul: pedido de assinatura eletrônica fica na caixa.
+    if (ESIGN_FROM.test(hdr('From')) || ESIGN_SUBJ.test(hdr('Subject'))) continue
+    ids.push(m.id)
   }
   if (ids.length) {
     await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify', { method: 'POST', headers: ghg, body: JSON.stringify({ ids, removeLabelIds: ['INBOX'] }) })
