@@ -46,8 +46,12 @@ async function msToken(db: SupabaseClient, account: string): Promise<string | nu
 // eletrônica NUNCA sai da caixa de entrada — ele precisa ver e assinar.
 const ESIGN_FROM = /echosign|adobesign|docusign|hellosign|sign\.dropbox|pandadoc|esign@/i
 const ESIGN_SUBJ = /signature requested|review and sign|aguarda(ndo)? sua assinatura|assinatura pendente/i
+// Despachante (Auto Tags / Jordan, caso 30/jul: quote do RAMbo achado nos Itens
+// Excluídos): o thread da frota fica na caixa de entrada, intocado, sempre.
+const DESPACHANTE_FROM = /autotagsandtitle/i
 function ruleSlot1(subj: string, from: string): string | null {
   if (ESIGN_FROM.test(from) || ESIGN_SUBJ.test(subj)) return 'KEEP'
+  if (DESPACHANTE_FROM.test(from)) return 'KEEP'
   if (/verification code|c[óo]digo de verifica/i.test(subj)) return 'DELETE'
   if (/united\.com|latam|delta\.com|aa\.com|copaair|voegol|azul/i.test(from)) return 'Businesses/Trips'
   if (/delivery attempted|out for delivery|delivered/i.test(subj)) return 'Shopping'
