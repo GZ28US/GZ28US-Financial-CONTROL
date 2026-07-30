@@ -147,7 +147,7 @@ export default function FixedCostSuppliersPage() {
             {c}
           </button>
         ))}
-        <span className="ml-2 text-lg font-bold text-gray-300">Monthly ({monthLabel}): {formatUSD(monthlyTotal)}</span>
+        <span className="ml-2 text-lg font-bold text-gray-300">Monthly Average ({monthLabel}): {formatUSD(monthlyTotal)}</span>
       </div>
 
       {loading ? (
@@ -164,6 +164,7 @@ export default function FixedCostSuppliersPage() {
                   <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700">{r.preferred_contact || 'WhatsApp'}</span>
                 </div>
                 <p className="text-lg text-gray-400">{[r.company, r.contact_name].filter(Boolean).join(' · ') || '—'}</p>
+                <p className="text-base text-gray-400">{formatUSD(monthlyOf(r))} avg / month</p>
                 {(() => {
                   const n = nextDue.get(r.id)
                   if (!n) return <p className="text-base text-gray-500">All paid — nothing due</p>
