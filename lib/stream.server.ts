@@ -39,20 +39,33 @@ async function t17(path: string, body: unknown): Promise<any> {
   }
 }
 
+// ROOT CAUSE da auditoria 30/jul: o auto-detect do 17TRACK falhava em TODOS os
+// nossos números (-18019903 "Carrier cannot be detected") e o register morria em
+// silêncio — nenhuma linha nunca foi registrada, logo zero updates de entrega.
+// A cura é mandar o carrier explícito (o app já sabe qual é via guessCarrier).
+const T17_CARRIER: Record<string, number> = { FedEx: 100003, UPS: 100002, USPS: 21051, DHL: 100001 }
+export function t17CarrierCode(tracking: string, carrier?: string | null): number | undefined {
+  const name = carrier || guessCarrier(tracking) || ''
+  for (const [k, v] of Object.entries(T17_CARRIER)) if (new RegExp(k, 'i').test(name)) return v
+  return undefined
+}
+
 // Register a tracking number with 17TRACK (idempotent — "already registered"
 // rejections are fine). Returns false only on a hard failure.
-export async function t17Register(tracking: string): Promise<boolean> {
+export async function t17Register(tracking: string, carrier?: string | null): Promise<boolean> {
   if (!t17Key()) return false
-  const res = await t17('register', [{ number: tracking }])
+  const code = t17CarrierCode(tracking, carrier)
+  const res = await t17('register', [{ number: tracking, ...(code ? { carrier: code } : {}) }])
   if (res?.code !== 0) return false
   const rejected = res?.data?.rejected?.[0]
   // -18019901 = already registered — that's success for our purposes.
   return !rejected || rejected?.error?.code === -18019901
 }
 
-export async function t17GetInfo(tracking: string): Promise<any | null> {
+export async function t17GetInfo(tracking: string, carrier?: string | null): Promise<any | null> {
   if (!t17Key()) return null
-  const res = await t17('gettrackinfo', [{ number: tracking }])
+  const code = t17CarrierCode(tracking, carrier)
+  const res = await t17('gettrackinfo', [{ number: tracking, ...(code ? { carrier: code } : {}) }])
   return res?.code === 0 ? (res?.data?.accepted?.[0]?.track_info ?? null) : null
 }
 
@@ -127,15 +140,21 @@ export async function refreshAllTracking(db: SupabaseClient): Promise<{ checked:
   let reRegistered = 0
   for (let i = 0; i < rows.length; i += 40) {
     const chunk = rows.slice(i, i + 40)
-    const res = await t17('gettrackinfo', chunk.map(r => ({ number: r.tracking_number })))
+    const withCarrier = (r: StreamRow) => {
+      const code = t17CarrierCode(String(r.tracking_number), r.carrier)
+      return { number: r.tracking_number, ...(code ? { carrier: code } : {}) }
+    }
+    const res = await t17('gettrackinfo', chunk.map(withCarrier))
     if (res?.code !== 0) {
       return { checked: i, updated, reRegistered, error: `17TRACK gettrackinfo failed — ${JSON.stringify(t17Last?.body ?? t17Last).slice(0, 300)}` }
     }
     // Números que o 17TRACK não conhece (registro perdido/nunca feito) são
-    // re-registrados na hora; o próximo ciclo de 5min já os atualiza.
+    // re-registrados na hora — SEMPRE com carrier explícito; o próximo ciclo de
+    // 5min já os atualiza.
     const rejected: any[] = res?.data?.rejected || []
     if (rejected.length) {
-      const reg = await t17('register', rejected.map(x => ({ number: x.number })))
+      const rejRows = rejected.map(x => chunk.find(r => r.tracking_number === x.number)).filter(Boolean) as StreamRow[]
+      const reg = await t17('register', rejRows.map(withCarrier))
       if (reg?.code === 0) reRegistered += (reg?.data?.accepted || []).length
     }
     for (const acc of res?.data?.accepted || []) {

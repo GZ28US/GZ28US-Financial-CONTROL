@@ -63,8 +63,8 @@ async function run(force: boolean): Promise<NextResponse> {
         taken.add(tracking)
         await db.from('part_streams').update({ tracking_number: tracking, carrier: guessCarrier(tracking) }).eq('id', row.id)
         row.tracking_number = tracking
-        await t17Register(tracking)
-        const info = (await t17GetInfo(tracking)) || { latest_status: { status: 'InTransit' } }
+        await t17Register(tracking, row.carrier)
+        const info = (await t17GetInfo(tracking, row.carrier)) || { latest_status: { status: 'InTransit' } }
         if (!info.latest_status?.status) info.latest_status = { status: 'InTransit' }
         await applyTrackInfo(db, row, info)
         updated++

@@ -24,19 +24,19 @@ export async function POST(req: NextRequest) {
   if (!stream.tracking_number) return NextResponse.json({ error: 'row has no tracking number' }, { status: 400 })
 
   if (action === 'register') {
-    const registered = await t17Register(stream.tracking_number)
+    const registered = await t17Register(stream.tracking_number, stream.carrier)
     const regDiag = t17Last // snapshot BEFORE gettrackinfo overwrites it
     // Fresh numbers often have no events yet — the synthetic InTransit flips the
     // row to SHIPPED (never downgrades) and fires the WhatsApp report; real
     // 17TRACK info refines carrier/ETA when available.
-    const info = (await t17GetInfo(stream.tracking_number)) || { latest_status: { status: 'InTransit' } }
+    const info = (await t17GetInfo(stream.tracking_number, stream.carrier)) || { latest_status: { status: 'InTransit' } }
     if (!info.latest_status?.status) info.latest_status = { status: 'InTransit' }
     const updated = await applyTrackInfo(db, stream, info)
     return NextResponse.json({ ok: true, registered, t17: registered ? undefined : regDiag, row: updated })
   }
 
   if (action === 'refresh') {
-    const info = await t17GetInfo(stream.tracking_number)
+    const info = await t17GetInfo(stream.tracking_number, stream.carrier)
     if (!info) return NextResponse.json({ ok: false, reason: 'no tracking info', t17: t17Last, row: stream })
     const updated = await applyTrackInfo(db, stream, info)
     return NextResponse.json({ ok: true, row: updated })
