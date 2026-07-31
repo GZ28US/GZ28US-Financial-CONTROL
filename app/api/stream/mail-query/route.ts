@@ -91,6 +91,23 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
     const base = await meta(id)
     return NextResponse.json({ account: auth.account, provider: 'gmail', message: { ...base, hasAttachments: JSON.stringify(m.payload || {}).includes('"filename":"') && /"filename":"[^"]/.test(JSON.stringify(m.payload)), text: text.replace(/\s+/g, ' ').trim() } })
   }
+  // O e-mail EM SI é o comprovante (regra 31/jul) — corpo HTML original intacto.
+  if (op === 'msghtml') {
+    const id = p.get('id')
+    if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+    const m = await (await fetch(`${API}/messages/${id}?format=full`, { headers: GH })).json()
+    if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'not found' }, { status: 404 })
+    const b64 = (s: string) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    let html = ''
+    const walkH = (part: any) => {
+      if (!part) return
+      if (part.mimeType === 'text/html' && part.body?.data && !html) html = b64(part.body.data)
+      for (const sp of part.parts || []) walkH(sp)
+    }
+    walkH(m.payload)
+    const base = await meta(id)
+    return NextResponse.json({ account: auth.account, provider: 'gmail', id: m.id, subject: base.subject, from: base.from, received: base.received, contentType: 'html', html })
+  }
   return NextResponse.json({ error: `unknown op ${op}` }, { status: 400 })
 }
 
@@ -153,6 +170,18 @@ export async function GET(req: NextRequest) {
     if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'not found' }, { status: 404 })
     const text = String(m.body?.content || '').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim()
     return NextResponse.json({ account: auth.account, message: { ...slim(m), hasAttachments: m.hasAttachments, text } })
+  }
+
+  // O e-mail EM SI é o comprovante (regra 31/jul: "use always the email as the
+  // proof") — devolve o corpo HTML original intacto pra virar o arquivo de
+  // receipt no bucket expense-receipts.
+  if (op === 'msghtml') {
+    const id = p.get('id')
+    if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+    const r = await fetch(`${G}/me/messages/${encodeURIComponent(id)}?$select=id,subject,from,receivedDateTime,body`, { headers: gh(token) })
+    const m = await r.json().catch(() => null)
+    if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'not found' }, { status: 404 })
+    return NextResponse.json({ account: auth.account, id: m.id, subject: m.subject, from: m.from?.emailAddress?.address, received: m.receivedDateTime, contentType: m.body?.contentType, html: m.body?.content || '' })
   }
 
   // O anexo é o documento REAL — invoice, boleto, contrato. Devolvido em base64
