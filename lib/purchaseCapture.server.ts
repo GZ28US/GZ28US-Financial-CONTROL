@@ -95,7 +95,9 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
   const store = storeNameOf(msg.fromAddr, msg.fromName, msg.subject)
   const text = msg.text
   // Nº do pedido: padrões comuns + Transaction ID (PayPal).
-  let orders = [...new Set([...text.matchAll(/(?:Order(?:\s*(?:ID|Number|No\.?))?|Pedido|Invoice|Transaction(?:\s*ID)?|Confirmation(?:\s*(?:number|#))?)\s*[#:：]?\s*([A-Z]{0,3}[-#]?[A-Z0-9][A-Z0-9-]{4,28})/gi)].map((x) => x[1]).filter((o) => /\d/.test(o)))].slice(0, 5)
+  // Nº normalizado SEM '#' — o dup-check compara com linhas manuais (o '#' fez
+  // a captura Walmart duplicar a linha dos pneus Atturo, 30/jul).
+  let orders = [...new Set([...text.matchAll(/(?:Order(?:\s*(?:ID|Number|No\.?))?|Pedido|Invoice|Transaction(?:\s*ID)?|Confirmation(?:\s*(?:number|#))?)\s*[#:：]?\s*([A-Z]{0,3}[-#]?[A-Z0-9][A-Z0-9-]{4,28})/gi)].map((x) => x[1].replace(/^#+/, '')).filter((o) => /\d/.test(o)))].slice(0, 5)
   const totals = [...text.matchAll(/(?:Order\s*|Grand\s*)?[Tt]otal[^$]{0,20}\$\s*([\d,]+\.\d{2})/g)].map((x) => Number(x[1].replace(/,/g, '')))
   // Sem nº de pedido mas com total → nº sintético (LOJA-DATA-VALOR), padrão que
   // já usávamos à mão. Sem pedido E sem total → skip REGISTRADO, nunca mudo.
