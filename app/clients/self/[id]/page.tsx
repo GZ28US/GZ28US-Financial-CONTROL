@@ -29,7 +29,7 @@ const brazilStates = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
 
-const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram']
+const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram', 'Facebook']
 
 const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 const labelClass = 'block mb-2 text-sm font-bold text-gray-400'

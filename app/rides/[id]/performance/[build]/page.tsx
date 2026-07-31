@@ -96,7 +96,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
   const [saving, setSaving] = useState(false)
   const [scannedFile, setScannedFile] = useState<File | null>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
-  const [client, setClient] = useState<{ name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
+  const [client, setClient] = useState<{ name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null; instagram: string | null; facebook: string | null } | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
   // After a pull is saved, ask whether to report it on WhatsApp (and optionally to the client).
   const [reportPull, setReportPull] = useState<DynoPull | null>(null)
@@ -126,7 +126,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       if (rideRow) {
         setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, year: rideRow.year })
         if (rideRow.client_id) {
-          const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method').eq('id', rideRow.client_id).single()
+          const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method, instagram, facebook').eq('id', rideRow.client_id).single()
           if (c) setClient(c as typeof client)
         }
       }
@@ -429,9 +429,35 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       return
     }
 
-    // Instagram or any non-automated method: copy the text for manual paste.
+    // Instagram / Facebook: copy the text and open the client's DM to paste.
+    // Any other method: plain copy for manual paste.
+    await openSocialOrCopy(method, plain)
+  }
+
+  // Honor the client's preferred SOCIAL channel: copy the text, then open the
+  // client's Instagram profile / Facebook page (or the DM inbox as fallback)
+  // so the paste is one tap away. Unknown methods just copy.
+  async function openSocialOrCopy(method: string, plain: string) {
     try { await navigator.clipboard.writeText(plain) } catch { /* clipboard may be blocked */ }
-    alert(`This client prefers ${method}, which can't be sent automatically.\nThe report was copied to your clipboard — paste it into ${method}.`)
+    if (method === 'Instagram') {
+      const handle = (client?.instagram || '').replace(/^@/, '').trim()
+      window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
+      alert('Text copied. Open the client’s Instagram DM and paste to send.')
+      return
+    }
+    if (method === 'Facebook') {
+      const fb = (client?.facebook || '').trim()
+      let url = 'https://www.facebook.com/messages/'
+      if (fb) {
+        if (/^https?:\/\//i.test(fb)) url = fb
+        else if (fb.includes('facebook.com')) url = `https://${fb.replace(/^\/+/, '')}`
+        else url = `https://www.facebook.com/${fb.replace(/^@/, '').trim()}`
+      }
+      window.open(url, '_blank')
+      alert('Text copied. Open the client’s Facebook / Messenger and paste to send.')
+      return
+    }
+    alert(`This client prefers ${method}, which can't be sent automatically.\nThe text was copied to your clipboard — paste it into ${method}.`)
   }
 
   // Title for the dyno sheet, built from the car + ride (auto).
@@ -601,8 +627,9 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
           const subject = `GZ28US DynoData RECEIPT${sheetTitle() ? ` — ${sheetTitle()}` : ''}`
           window.location.href = `mailto:${client.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
         } else {
-          try { await navigator.clipboard.writeText(plain) } catch { /* clipboard may be blocked */ }
-          alert(`Sent to the group. The client prefers ${method}, which can't be sent automatically — the receipt text (with the PDF link) was copied to your clipboard. Paste it into ${method}.`)
+          // Instagram / Facebook open the client's DM with the text copied;
+          // anything else copies for manual paste.
+          await openSocialOrCopy(method, plain)
         }
       }
     } catch (e) {

@@ -54,6 +54,7 @@ type Client = {
   email: string | null
   phone: string | null
   instagram: string | null
+  facebook: string | null
   address: string | null
   city: string | null
   state: string | null
@@ -150,6 +151,19 @@ export default function ViewRidePage() {
       const handle = (client.instagram || '').replace(/^@/, '').trim()
       window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
       alert('Link copied. Open the client’s Instagram DM and paste to send.')
+      notifyGroup(); flashSent(); return
+    }
+    if (method === 'Facebook') {
+      try { await navigator.clipboard.writeText(plain) } catch {}
+      const fb = (client.facebook || '').trim()
+      let url = 'https://www.facebook.com/messages/'
+      if (fb) {
+        if (/^https?:\/\//i.test(fb)) url = fb
+        else if (fb.includes('facebook.com')) url = `https://${fb.replace(/^\/+/, '')}`
+        else url = `https://www.facebook.com/${fb.replace(/^@/, '').trim()}`
+      }
+      window.open(url, '_blank')
+      alert('Link copied. Open the client’s Facebook / Messenger and paste to send.')
       notifyGroup(); flashSent(); return
     }
 
