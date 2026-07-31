@@ -14,7 +14,9 @@ import { supabaseBR } from '@/lib/supabaseBR'
 const CORE = ['name', 'discount', 'discount_type', 'aliases'] as const
 // Extra columns that exist only after MIGRATION_suppliers_parity.sql has been run
 // in the BR project. If they're not there yet, the write falls back to CORE.
-const EXTRA = ['is_dealership', 'account_number', 'website', 'instagram', 'seller', 'phone', 'email', 'ordering_method', 'discount_code'] as const
+// `is_dealership` is deliberately NOT mirrored: dealership agreements belong to
+// one shop only (US or BR) and must never propagate across projects.
+const EXTRA = ['account_number', 'website', 'instagram', 'seller', 'phone', 'email', 'ordering_method', 'discount_code'] as const
 
 function pick(row: Record<string, unknown>, keys: readonly string[]) {
   const out: Record<string, unknown> = {}
