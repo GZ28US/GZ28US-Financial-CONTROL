@@ -37,6 +37,7 @@ type Client = {
   state: string | null
   zip: string | null
   client_number: number | null
+  country: string | null
   preferred_message_method: string | null
 }
 
@@ -462,6 +463,28 @@ export default function ViewInvoicePage() {
   const labelClass = 'text-gray-400 font-bold'
   const sectionClass = 'bg-gray-900 border border-gray-700 rounded-2xl overflow-hidden'
 
+  // Regra do Márcio (31/jul/2026, caso Sidney Penna): cliente do BRASIL recebe a
+  // fatura IMPRESSA/ENVIADA em PORTUGUÊS — os rótulos do print viram PT pelo
+  // client.country; a tela do app segue em inglês.
+  const ptPrint = client?.country === 'BRAZIL'
+  const T = ptPrint ? {
+    quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
+    clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
+    vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Pack / Serviço',
+    items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Impostos Flórida', itemsTotal: 'Total dos Itens',
+    services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
+    payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
+    notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA',
+  } : {
+    quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery',
+    clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail', noClient: 'No client linked',
+    vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Pack / Service',
+    items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Taxes', itemsTotal: 'Items Total',
+    services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
+    payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
+    notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY',
+  }
+
   return (
     <>
       <style>{`
@@ -537,43 +560,43 @@ export default function ViewInvoicePage() {
                 <div className="pi-company-sub">IG: @gz28us / @gz28br · FB: Dema De Maria</div>
               </div>
               <div className="pi-inv-box">
-                <div className="pi-inv-label">{invoice.is_quote ? 'Quote #' : 'Invoice #'}</div>
+                <div className="pi-inv-label">{invoice.is_quote ? T.quoteNo : T.invoiceNo}</div>
                 <div className="pi-inv-num">{invoice.invoice_code}</div>
-                <div className="pi-inv-date">Hiring: {formatDate(invoice.hiring_date)}</div>
-                <div className="pi-inv-date">Entry: {formatDate(invoice.entry_date)}</div>
-                {invoice.delivery_date && <div className="pi-inv-date">Delivery: {formatDate(invoice.delivery_date)}</div>}
+                <div className="pi-inv-date">{T.hiring}: {formatDate(invoice.hiring_date)}</div>
+                <div className="pi-inv-date">{T.entry}: {formatDate(invoice.entry_date)}</div>
+                {invoice.delivery_date && <div className="pi-inv-date">{T.deliveryHdr}: {formatDate(invoice.delivery_date)}</div>}
               </div>
             </div>
 
             <div className="pi-two-col">
               <div className="pi-info-block">
-                <div className="pi-info-title">Client</div>
+                <div className="pi-info-title">{T.clientT}</div>
                 {client ? <>
-                  <div className="pi-info-row"><span className="pi-info-label">Name:</span><span className="pi-info-value">{client.name}</span></div>
-                  {client.address && <div className="pi-info-row"><span className="pi-info-label">Address:</span><span className="pi-info-value">{client.address}</span></div>}
-                  {(client.city || client.state) && <div className="pi-info-row"><span className="pi-info-label">City/ST:</span><span className="pi-info-value">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}
-                  {client.phone && <div className="pi-info-row"><span className="pi-info-label">Phone:</span><span className="pi-info-value">{formatPhone(client.phone)}</span></div>}
-                  {client.email && <div className="pi-info-row"><span className="pi-info-label">E-Mail:</span><span className="pi-info-value">{client.email}</span></div>}
-                </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>No client linked</div>}
+                  <div className="pi-info-row"><span className="pi-info-label">{T.name}:</span><span className="pi-info-value">{client.name}</span></div>
+                  {client.address && <div className="pi-info-row"><span className="pi-info-label">{T.address}:</span><span className="pi-info-value">{client.address}</span></div>}
+                  {(client.city || client.state) && <div className="pi-info-row"><span className="pi-info-label">{T.cityst}:</span><span className="pi-info-value">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}
+                  {client.phone && <div className="pi-info-row"><span className="pi-info-label">{T.phone}:</span><span className="pi-info-value">{formatPhone(client.phone)}</span></div>}
+                  {client.email && <div className="pi-info-row"><span className="pi-info-label">{T.email}:</span><span className="pi-info-value">{client.email}</span></div>}
+                </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>{T.noClient}</div>}
               </div>
               {!isClient && <div className="pi-info-block">
-                <div className="pi-info-title">Vehicle{ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}</div>
-                {(ride?.manufacturer || ride?.brand) && <div className="pi-info-row"><span className="pi-info-label">Make / Brand:</span><span className="pi-info-value">{[ride?.manufacturer, ride?.brand].filter(Boolean).join(' / ')}</span></div>}
-                {ride?.model && <div className="pi-info-row"><span className="pi-info-label">Model:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
-                {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">Year / VIN:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
-                {(ride?.color || ride?.plate || invoice.mileage) && <div className="pi-info-row"><span className="pi-info-label">Color / Plate / Mi:</span><span className="pi-info-value">{[ride?.color, ride?.plate, invoice.mileage ? Number(invoice.mileage).toLocaleString('en-US') : null].filter(Boolean).join(' — ')}</span></div>}
-                {(ride?.special_edition || invoice.service) && <div className="pi-info-row"><span className="pi-info-label">Pack / Service:</span><span className="pi-info-value">{[ride?.special_edition, invoice.service].filter(Boolean).join(' — ')}</span></div>}
+                <div className="pi-info-title">{T.vehicle}{ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}</div>
+                {(ride?.manufacturer || ride?.brand) && <div className="pi-info-row"><span className="pi-info-label">{T.make}:</span><span className="pi-info-value">{[ride?.manufacturer, ride?.brand].filter(Boolean).join(' / ')}</span></div>}
+                {ride?.model && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
+                {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">{T.yearvin}:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
+                {(ride?.color || ride?.plate || invoice.mileage) && <div className="pi-info-row"><span className="pi-info-label">{T.colorplate}:</span><span className="pi-info-value">{[ride?.color, ride?.plate, invoice.mileage ? Number(invoice.mileage).toLocaleString('en-US') : null].filter(Boolean).join(' — ')}</span></div>}
+                {(ride?.special_edition || invoice.service) && <div className="pi-info-row"><span className="pi-info-label">{T.pack}:</span><span className="pi-info-value">{[ride?.special_edition, invoice.service].filter(Boolean).join(' — ')}</span></div>}
               </div>}
             </div>
 
             {parts.length > 0 && <div className="pi-sec">
-              <div className="pi-sec-title">Items</div>
+              <div className="pi-sec-title">{T.items}</div>
               <table className="pi-table">
                 <thead><tr>
-                  <th style={{width:'56%'}}>Description</th>
-                  <th className="r" style={{width:'16%'}}>Unit Price</th>
-                  <th className="r" style={{width:'8%'}}>Qt</th>
-                  <th className="r" style={{width:'20%'}}>Total</th>
+                  <th style={{width:'56%'}}>{T.desc}</th>
+                  <th className="r" style={{width:'16%'}}>{T.unit}</th>
+                  <th className="r" style={{width:'8%'}}>{T.qt}</th>
+                  <th className="r" style={{width:'20%'}}>{T.total}</th>
                 </tr></thead>
                 <tbody>
                   {(() => {
@@ -589,43 +612,43 @@ export default function ViewInvoicePage() {
                         rows.push(
                           <tr key={`k-${p.kit_group}`} style={{ background: '#eef2f2' }}>
                             <td colSpan={3} style={{ fontWeight: 700 }}>📦 {p.kit_name || 'Kit'}</td>
-                            <td className="r" style={{ fontWeight: 700 }}>{kitTotal === 0 ? 'COURTESY' : formatUSD(kitTotal)}</td>
+                            <td className="r" style={{ fontWeight: 700 }}>{kitTotal === 0 ? T.courtesy : formatUSD(kitTotal)}</td>
                           </tr>
                         )
                       }
                       rows.push(
                         <tr key={p.id}>
                           <td style={p.kit_group ? { paddingLeft: '16px' } : undefined}>{p.description}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
-                          <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price)}</td>
+                          <td className="r">{p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price)}</td>
                           <td className="r">{p.quantity}</td>
-                          <td className="r">{p.unit_price === 0 ? 'COURTESY' : formatUSD(p.unit_price * p.quantity)}</td>
+                          <td className="r">{p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price * p.quantity)}</td>
                         </tr>
                       )
                     })
                     return rows
                   })()}
-                  <tr className="pi-subtotal"><td colSpan={3} className="r">Sub-Total</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
-                  {(invoice.florida_taxes || 0) > 0 && <tr className="pi-taxes"><td colSpan={3} className="r">Florida Taxes {invoice.florida_taxes}%</td><td className="r">{formatUSD(floridaTaxesAmount)}</td></tr>}
-                  <tr className="pi-ptotal"><td colSpan={3} className="r">Items Total</td><td className="r">{formatUSD(partsTotal)}</td></tr>
+                  <tr className="pi-subtotal"><td colSpan={3} className="r">{T.subtotal}</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
+                  {(invoice.florida_taxes || 0) > 0 && <tr className="pi-taxes"><td colSpan={3} className="r">{T.flTax} {invoice.florida_taxes}%</td><td className="r">{formatUSD(floridaTaxesAmount)}</td></tr>}
+                  <tr className="pi-ptotal"><td colSpan={3} className="r">{T.itemsTotal}</td><td className="r">{formatUSD(partsTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
 
             {services.length > 0 && <div className="pi-sec">
-              <div className="pi-sec-title">Services</div>
+              <div className="pi-sec-title">{T.services}</div>
               <table className="pi-table">
                 <thead><tr>
-                  <th style={{width:'80%'}}>Description</th>
-                  <th className="r" style={{width:'20%'}}>Total</th>
+                  <th style={{width:'80%'}}>{T.desc}</th>
+                  <th className="r" style={{width:'20%'}}>{T.total}</th>
                 </tr></thead>
                 <tbody>
                   {services.map(sv => (
                     <tr key={sv.id}>
                       <td>{sv.description}</td>
-                      <td className="r">{sv.price === 0 ? 'COURTESY' : formatUSD(sv.price)}</td>
+                      <td className="r">{sv.price === 0 ? T.courtesy : formatUSD(sv.price)}</td>
                     </tr>
                   ))}
-                  <tr className="pi-stotal"><td className="r">Services Total</td><td className="r">{formatUSD(servicesTotal)}</td></tr>
+                  <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{formatUSD(servicesTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -633,22 +656,22 @@ export default function ViewInvoicePage() {
             <div className="pi-totals-wrap">
               <table className="pi-totals-tbl">
                 <tbody>
-                  <tr className="pi-psrow"><td>Items + Services</td><td className="r">{formatUSD(partsAndServicesTotal)}</td></tr>
-                  {hasDiscount && <tr className="pi-discrow"><td>Discount ({invoice.global_discount}%)</td><td className="r">— {formatUSD(globalDiscountAmount)}</td></tr>}
-                  <tr className="pi-grandrow"><td>Grand Total</td><td className="r">{formatUSD(grandTotal)}</td></tr>
+                  <tr className="pi-psrow"><td>{T.itemsServices}</td><td className="r">{formatUSD(partsAndServicesTotal)}</td></tr>
+                  {hasDiscount && <tr className="pi-discrow"><td>{T.discount} ({invoice.global_discount}%)</td><td className="r">— {formatUSD(globalDiscountAmount)}</td></tr>}
+                  <tr className="pi-grandrow"><td>{T.grand}</td><td className="r">{formatUSD(grandTotal)}</td></tr>
                 </tbody>
               </table>
             </div>
 
             {payments.length > 0 && <div className="pi-sec">
-              <div className="pi-sec-title">Payments</div>
+              <div className="pi-sec-title">{T.payments}</div>
               <table className="pi-table">
                 <thead><tr>
-                  <th style={{width: hasBrlIncome ? '14%' : '16%'}}>Date</th>
-                  <th style={{width: hasBrlIncome ? '18%' : '22%'}}>Source</th>
-                  <th style={{width: hasBrlIncome ? '34%' : '42%'}}>Description</th>
-                  <th className="r" style={{width: hasBrlIncome ? '17%' : '20%'}}>Amount{hasBrlIncome ? ' (US$)' : ''}</th>
-                  {hasBrlIncome && <th className="r" style={{width:'17%'}}>Amount (R$)</th>}
+                  <th style={{width: hasBrlIncome ? '14%' : '16%'}}>{T.date}</th>
+                  <th style={{width: hasBrlIncome ? '18%' : '22%'}}>{T.source}</th>
+                  <th style={{width: hasBrlIncome ? '34%' : '42%'}}>{T.desc}</th>
+                  <th className="r" style={{width: hasBrlIncome ? '17%' : '20%'}}>{T.amount}{hasBrlIncome ? ' (US$)' : ''}</th>
+                  {hasBrlIncome && <th className="r" style={{width:'17%'}}>{T.amount} (R$)</th>}
                 </tr></thead>
                 <tbody>
                   {payments.map(p => (
@@ -661,20 +684,20 @@ export default function ViewInvoicePage() {
                       {hasBrlIncome && <td className="r">{Number(p.amount_brl) > 0 ? `R$ ${Number(p.amount_brl).toFixed(2)}` : '—'}</td>}
                     </tr>
                   ))}
-                  <tr className="pi-pay-subtotal"><td colSpan={3} className="r">Total Paid</td><td className="r">{formatUSD(totalPaid)}</td>{hasBrlIncome && <td className="r">{`R$ ${totalPaidBrl.toFixed(2)}`}</td>}</tr>
-                  <tr className="pi-balance"><td colSpan={3} className="r">Balance</td><td className="r">{balance === 0 ? '$ —' : formatUSD(balance)}</td>{hasBrlIncome && <td className="r"></td>}</tr>
+                  <tr className="pi-pay-subtotal"><td colSpan={3} className="r">{T.totalPaidL}</td><td className="r">{formatUSD(totalPaid)}</td>{hasBrlIncome && <td className="r">{`R$ ${totalPaidBrl.toFixed(2)}`}</td>}</tr>
+                  <tr className="pi-balance"><td colSpan={3} className="r">{T.balance}</td><td className="r">{balance === 0 ? '$ —' : formatUSD(balance)}</td>{hasBrlIncome && <td className="r"></td>}</tr>
                 </tbody>
               </table>
             </div>}
 
             {notes.length > 0 && <div className="pi-notes">
-              <div className="pi-notes-title">Notes</div>
+              <div className="pi-notes-title">{T.notesT}</div>
               {notes.map(n => <p key={n.id}>{n.note}</p>)}
             </div>}
 
             <div className="pi-sig">
-              <div className="pi-sig-block"><div className="pi-sig-line"></div><div className="pi-sig-label">Delivery Date</div></div>
-              <div className="pi-sig-block"><div className="pi-sig-line"></div><div className="pi-sig-label">Client — Printed Name</div></div>
+              <div className="pi-sig-block"><div className="pi-sig-line"></div><div className="pi-sig-label">{T.deliverySig}</div></div>
+              <div className="pi-sig-block"><div className="pi-sig-line"></div><div className="pi-sig-label">{T.clientSig}</div></div>
             </div>
           </div>
         </div>
