@@ -73,6 +73,32 @@ async function run(force: boolean): Promise<NextResponse> {
     }
   }
 
+  // ── delivered-email safety net (auditoria 30/jul) — USPS é "Special Carrier"
+  // no 17TRACK (registro bloqueado sem quota extra), então linhas USPS/Temu não
+  // recebem push. Quando o e-mail do vendedor/transportadora anuncia a ENTREGA
+  // (casado por tracking no texto, senão matchRows), a linha vira DELIVERED.
+  const DELIVERED_WORDS = /(was|has been|got) delivered|delivered (today|on |at )|your (package|order|item) (was|has been) delivered|entrega (realizada|conclu[ií]da)|foi entregue/i
+  if (msgs.length) {
+    const { data: sData } = await db.from('part_streams').select('*').eq('status', 'SHIPPED')
+    const shipped = (sData as StreamRow[]) || []
+    for (const msg of msgs) {
+      const blob = `${msg.subject} ${msg.text}`
+      if (!DELIVERED_WORDS.test(blob)) continue
+      const byTracking = shipped.filter(r => r.tracking_number && blob.includes(String(r.tracking_number)))
+      const hits = byTracking.length ? byTracking : matchRows(shipped, msg)
+      for (const row of hits) {
+        if ((row as StreamRow).status !== 'SHIPPED') continue
+        await applyTrackInfo(db, row, {
+          latest_status: { status: 'Delivered' },
+          latest_event: { description: `Delivered (e-mail) — ${msg.subject.slice(0, 70)}`, time_iso: new Date().toISOString() },
+        })
+        ;(row as StreamRow).status = 'DELIVERED'
+        updated++
+        details.push(`${row.item} → DELIVERED via e-mail (${msg.subject.slice(0, 50)})`)
+      }
+    }
+  }
+
   // ── refund watch — a CANCELLED row waits for the supplier's refund email;
   // when one lands (matched by order number, else unambiguous supplier) the row
   // flips to REFUNDED and reports it. Manual REFUNDED on the board stays as the

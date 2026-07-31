@@ -33,6 +33,7 @@ export type StreamRow = {
   shipped_at: string | null
   delivered_at: string | null
   where_label: string | null
+  ship_to: string | null
   created_at: string
 }
 

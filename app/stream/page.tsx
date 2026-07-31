@@ -334,6 +334,11 @@ export default function StreamPage() {
                       {r.eta && !late && <> · ETA <span className="text-gray-200 font-bold">{fmtD(r.eta)}</span></>}
                       {r.last_event && <> · {r.last_event}</>}
                     </p>
+                    {r.ship_to && (
+                      <p className={`mt-1 text-sm ${/11320|space\s*blvd/i.test(r.ship_to) ? 'text-gray-500' : 'text-red-400 font-bold'}`}>
+                        📍 {r.ship_to}{/11320|space\s*blvd/i.test(r.ship_to) ? '' : ' — NOT the shop!'}
+                      </p>
+                    )}
                     <p className="text-gray-600 text-xs mt-1">
                       Bought {fmtD(r.created_at)}{r.shipped_at ? ` · Shipped ${fmtD(r.shipped_at)}` : ''}{r.delivered_at ? ` · Delivered ${fmtD(r.delivered_at)}` : ''}
                     </p>
