@@ -77,7 +77,7 @@ async function run(force: boolean): Promise<NextResponse> {
   // no 17TRACK (registro bloqueado sem quota extra), então linhas USPS/Temu não
   // recebem push. Quando o e-mail do vendedor/transportadora anuncia a ENTREGA
   // (casado por tracking no texto, senão matchRows), a linha vira DELIVERED.
-  const DELIVERED_WORDS = /(was|has been|got) delivered|delivered (today|on |at )|your (package|order|item) (was|has been) delivered|entrega (realizada|conclu[ií]da)|foi entregue/i
+  const DELIVERED_WORDS = /(was|has been|got) delivered|delivered (today|on |at )|delivered notification|your (package|order|item) (was|has been) delivered|entrega (realizada|conclu[ií]da)|foi entregue/i
   if (msgs.length) {
     const { data: sData } = await db.from('part_streams').select('*').eq('status', 'SHIPPED')
     const shipped = (sData as StreamRow[]) || []
