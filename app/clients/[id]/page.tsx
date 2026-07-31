@@ -92,10 +92,20 @@ export default function ViewClientPage() {
       notifyGroup(); flashSent(); return
     }
     if (method === 'E-Mail') {
+      // Sent BY THE APP (Graph, HTML with a clickable button) — mailto: made
+      // plain-text emails with dead links (31/jul, Johnny/NiteKing case).
       if (!client.email) { alert('This client has no email on file.\nAdd an email first (EDIT).'); return }
-      const subject = isBR ? 'Complete seu cadastro — GZ28 V8 SpeedShop' : 'Complete your details — GZ28 V8 SpeedShop'
-      window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
-      notifyGroup(); flashSent(); return
+      setSending(true)
+      try {
+        const r = await fetch(`${BASE_PATH}/api/mail/client`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'client-form', id: clientId }),
+        })
+        const d = await r.json().catch(() => ({}))
+        if (!d.ok) { alert('E-mail send failed:\n' + (d.error || `HTTP ${r.status}`)); return }
+        notifyGroup(); flashSent()
+      } finally { setSending(false) }
+      return
     }
     if (method === 'Instagram') {
       try { await navigator.clipboard.writeText(plain) } catch {}

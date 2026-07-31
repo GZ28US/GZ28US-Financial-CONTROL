@@ -141,10 +141,20 @@ export default function ViewRidePage() {
       notifyGroup(); flashSent(); return
     }
     if (method === 'E-Mail') {
+      // Sent BY THE APP (Graph, HTML with a clickable button) — mailto: made
+      // plain-text emails with dead links (31/jul, Johnny/NiteKing case).
       if (!client.email) { alert('This client has no email on file.\nAdd an email first (client EDIT).'); return }
-      const subject = isBR ? 'Sua foto do carro — GZ28 V8 SpeedShop' : 'Your car photo — GZ28 V8 SpeedShop'
-      window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plain)}`
-      notifyGroup(); flashSent(); return
+      setSendingPic(true)
+      try {
+        const r = await fetch(`${BASE_PATH}/api/mail/client`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'car-photo', id: rideId }),
+        })
+        const d = await r.json().catch(() => ({}))
+        if (!d.ok) { alert('E-mail send failed:\n' + (d.error || `HTTP ${r.status}`)); return }
+        notifyGroup(); flashSent()
+      } finally { setSendingPic(false) }
+      return
     }
     if (method === 'Instagram') {
       try { await navigator.clipboard.writeText(plain) } catch {}
