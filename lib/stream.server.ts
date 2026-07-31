@@ -17,13 +17,26 @@ export function streamDb(): SupabaseClient {
 const T17 = 'https://api.17track.net/track/v2.2'
 const t17Key = () => process.env.TRACK17_API_KEY || ''
 
+// Última resposta crua do 17TRACK — diagnóstico exposto pelo /api/stream/track
+// (auditoria 30/jul: falhas eram engolidas e o STREAM morria em silêncio).
+export let t17Last: { path: string; httpStatus: number; body: any } | null = null
+
 async function t17(path: string, body: unknown): Promise<any> {
-  const r = await fetch(`${T17}/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', '17token': t17Key() },
-    body: JSON.stringify(body),
-  })
-  return r.json().catch(() => null)
+  try {
+    const r = await fetch(`${T17}/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', '17token': t17Key() },
+      body: JSON.stringify(body),
+    })
+    const j = await r.json().catch(() => null)
+    t17Last = { path, httpStatus: r.status, body: j }
+    if (j?.code !== 0) console.error('[17track]', path, r.status, JSON.stringify(j).slice(0, 400))
+    return j
+  } catch (e) {
+    t17Last = { path, httpStatus: 0, body: String(e) }
+    console.error('[17track]', path, e)
+    return null
+  }
 }
 
 // Register a tracking number with 17TRACK (idempotent — "already registered"
@@ -95,6 +108,45 @@ export async function notify(row: StreamRow, body: string): Promise<void> {
     return
   }
   await sendStreamWhatsApp(body)
+}
+
+// Periodic batch refresh (auditoria 30/jul): o webhook do 17TRACK era o ÚNICO
+// caminho de atualização de entrega — se ele falha, o board congela (tires do
+// Walmart entregues e paradas em SHIPPED). Agora todo mail-poll consulta o
+// 17TRACK em lote (até 40 números por chamada) para TODA linha aberta com
+// tracking, re-registrando as rejeitadas. Erros voltam no retorno, nunca mudos.
+export async function refreshAllTracking(db: SupabaseClient): Promise<{ checked: number; updated: string[]; reRegistered: number; error?: string }> {
+  if (!t17Key()) return { checked: 0, updated: [], reRegistered: 0, error: 'TRACK17_API_KEY missing' }
+  const { data } = await db.from('part_streams').select('*')
+    .in('status', ['BOUGHT', 'SHIPPED'])
+    .not('tracking_number', 'is', null)
+  const rows = ((data as StreamRow[]) || []).filter(r => r.tracking_number)
+  if (!rows.length) return { checked: 0, updated: [], reRegistered: 0 }
+
+  const updated: string[] = []
+  let reRegistered = 0
+  for (let i = 0; i < rows.length; i += 40) {
+    const chunk = rows.slice(i, i + 40)
+    const res = await t17('gettrackinfo', chunk.map(r => ({ number: r.tracking_number })))
+    if (res?.code !== 0) {
+      return { checked: i, updated, reRegistered, error: `17TRACK gettrackinfo failed — ${JSON.stringify(t17Last?.body ?? t17Last).slice(0, 300)}` }
+    }
+    // Números que o 17TRACK não conhece (registro perdido/nunca feito) são
+    // re-registrados na hora; o próximo ciclo de 5min já os atualiza.
+    const rejected: any[] = res?.data?.rejected || []
+    if (rejected.length) {
+      const reg = await t17('register', rejected.map(x => ({ number: x.number })))
+      if (reg?.code === 0) reRegistered += (reg?.data?.accepted || []).length
+    }
+    for (const acc of res?.data?.accepted || []) {
+      const row = chunk.find(r => r.tracking_number === acc.number)
+      if (!row || !acc.track_info) continue
+      const before = row.status
+      const after = await applyTrackInfo(db, row, acc.track_info)
+      if (after.status !== before) updated.push(`${row.item}: ${before}→${after.status}`)
+    }
+  }
+  return { checked: rows.length, updated, reRegistered }
 }
 
 // Apply a 17TRACK track_info payload onto a stream row: status (never

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { streamDb, t17Register, t17GetInfo, applyTrackInfo } from '@/lib/stream.server'
+import { streamDb, t17Register, t17GetInfo, applyTrackInfo, t17Last } from '@/lib/stream.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM tracking actions, called by the /stream page:
@@ -31,12 +31,12 @@ export async function POST(req: NextRequest) {
     const info = (await t17GetInfo(stream.tracking_number)) || { latest_status: { status: 'InTransit' } }
     if (!info.latest_status?.status) info.latest_status = { status: 'InTransit' }
     const updated = await applyTrackInfo(db, stream, info)
-    return NextResponse.json({ ok: true, registered, row: updated })
+    return NextResponse.json({ ok: true, registered, t17: registered ? undefined : t17Last, row: updated })
   }
 
   if (action === 'refresh') {
     const info = await t17GetInfo(stream.tracking_number)
-    if (!info) return NextResponse.json({ ok: false, reason: 'no tracking info (TRACK17_API_KEY set?)', row: stream })
+    if (!info) return NextResponse.json({ ok: false, reason: 'no tracking info', t17: t17Last, row: stream })
     const updated = await applyTrackInfo(db, stream, info)
     return NextResponse.json({ ok: true, row: updated })
   }

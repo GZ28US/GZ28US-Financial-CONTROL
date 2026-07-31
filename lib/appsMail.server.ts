@@ -372,6 +372,11 @@ async function gmailToken(db: SupabaseClient): Promise<string | null> {
   return tk?.access_token || null
 }
 
+// Reuso externo (purchase capture varre o Gmail também — auditoria 30/jul).
+export async function gmailAccessToken(db: SupabaseClient): Promise<string | null> {
+  return gmailToken(db)
+}
+
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
 
 async function gmailSweep(db: SupabaseClient, apps: AppRow[], out: AppsSweepResult, opts: { full?: boolean }): Promise<void> {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel } from '@/lib/stream.server'
+import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel, refreshAllTracking } from '@/lib/stream.server'
 import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, matchRows, guessCarrier, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
@@ -102,6 +102,18 @@ async function run(force: boolean): Promise<NextResponse> {
     }
   }
 
+  // ── 17TRACK batch refresh (auditoria 30/jul) — o webhook deixou de ser o
+  // único caminho: toda batida consulta o 17TRACK para TODA linha aberta com
+  // tracking. Se o 17TRACK recusar, o erro sai no retorno (nunca mudo).
+  let trackRefresh: { checked: number; updated: string[]; reRegistered: number; error?: string } = { checked: 0, updated: [], reRegistered: 0 }
+  try { trackRefresh = await refreshAllTracking(db) } catch (e) { console.error('[track-refresh]', e); trackRefresh.error = String(e) }
+
+  // ── purchase capture ANTES dos sweeps que apagam/movem e-mail (auditoria
+  // 30/jul: o sweep de marketing comia a confirmação de compra antes da captura
+  // rodar — caso TouchUpDirect). Agora a compra é capturada primeiro.
+  let purchases: { captured: string[] } = { captured: [] }
+  try { purchases = await runPurchaseCapture(db) } catch (e) { console.error('[purchase-capture]', e) }
+
   // ── inbox organizer — purchase emails file into the car's Outlook folder
   // 10+ min after the user reads them; doubts stay put and get logged.
   let organizer: { moved: string[]; doubts: string[] } = { moved: [], doubts: [] }
@@ -122,8 +134,6 @@ async function run(force: boolean): Promise<NextResponse> {
   try { staffTravel = await runStaffTravelSweep(db) } catch (e) { console.error('[staff-travel]', e) }
   let reportNet: { reported: string[] } = { reported: [] }
   try { reportNet = await runExpenseReportNet(db) } catch (e) { console.error('[report-net]', e) }
-  let purchases: { captured: string[] } = { captured: [] }
-  try { purchases = await runPurchaseCapture(db) } catch (e) { console.error('[purchase-capture]', e) }
 
   // ── inbox zero net — depois de todos os sweeps, o que sobrou (>15 min) ganha
   // destino por regra; sem regra → TRIAGEM (Claudinha) + pergunta no grupo.
@@ -150,7 +160,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }
