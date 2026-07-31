@@ -1705,14 +1705,15 @@ export default function EditInvoicePage() {
     : p === '2' ? 'text-orange-300'
     : 'text-red-300')
   // Keep each member's duties together (rows from different members are never
-  // mixed), then order by priority within the member.
+  // mixed), then ALPHANUMERICAL by description within the member (Márcio,
+  // 31/jul/2026 — replaced the old priority ordering).
   const sortDuties = (list: { id: string; staff_id: string | null; description: string; done: boolean; priority: string }[], staff: { id: string; name: string }[]) => {
     const rank = new Map<string, number>(staff.map((s, i) => [s.id, i]))
     return [...list].sort((a, b) => {
       const sa = a.staff_id && rank.has(a.staff_id) ? (rank.get(a.staff_id) as number) : 999
       const sb = b.staff_id && rank.has(b.staff_id) ? (rank.get(b.staff_id) as number) : 999
       if (sa !== sb) return sa - sb
-      return (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
+      return (a.description || '').localeCompare(b.description || '', undefined, { numeric: true, sensitivity: 'base' })
     })
   }
   async function addDuty() {
