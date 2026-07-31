@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { BASE_PATH, formatUSD, toWaNumber } from '@/lib/utils'
 
 type StaffMember = {
   id: string
   staff_code: string | null
   name: string
   position: string
+  phone: string | null
   latestConclusion: string | null
   latestEntry: string | null
   hasActiveSeason: boolean
@@ -23,6 +24,49 @@ export default function StaffPage() {
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [globalTotal, setGlobalTotal] = useState(0)
+  const [sendChooserFor, setSendChooserFor] = useState<StaffMember | null>(null)
+  const [sendingId, setSendingId] = useState<string | null>(null)
+  const [sentId, setSentId] = useState<string | null>(null)
+
+  // 📲 SEND — WhatsApp the member a link to their OWN self-service form
+  // (/staff/self/[id]) so they fill in their data and save (US port of the BR
+  // feature, 31/jul/2026). The chooser picks who gets it: the member, the
+  // internal REPORTS group, or both. The invite is bilingual — the crew is
+  // mostly Brazilian.
+  async function handleSendForm(member: StaffMember, target: 'MEMBER' | 'REPORTS' | 'BOTH') {
+    setSendChooserFor(null)
+    const link = `${window.location.origin}${BASE_PATH}/staff/self/${member.id}`
+    const firstName = (member.name || '').split(' ')[0]
+    const memberBody = `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo complete your registration at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\n_Para concluir seu cadastro, preencha seus dados neste link e toque em *SALVAR*._\n\nThank you! / Obrigado!`
+    const groupBody = `📋 *STAFF FORM — MEMBER LINK*\n${member.name || '—'}\nSelf-service form link:\n${link}`
+    setSendingId(member.id)
+    try {
+      if (target === 'REPORTS' || target === 'BOTH') {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: groupBody }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!data.ok) { alert('Failed to send to the REPORTS group.'); setSendingId(null); return }
+        if (target === 'REPORTS') { setSentId(member.id); setTimeout(() => setSentId(null), 3000); setSendingId(null); return }
+      }
+      const to = toWaNumber(member.phone)
+      if (!to) { alert('This staff member has no phone / WhatsApp on file.\nAdd a number first (EDIT).'); setSendingId(null); return }
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body: memberBody }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data.ok) {
+        const detail = typeof data?.detail?.error === 'object' ? JSON.stringify(data.detail.error) : String(data?.detail?.error || data?.error || `HTTP ${res.status}`)
+        alert('Could not send the link:\n' + detail); setSendingId(null); return
+      }
+      setSentId(member.id); setTimeout(() => setSentId(null), 3000)
+    } catch (e) {
+      alert('Failed to send: ' + String(e))
+    }
+    setSendingId(null)
+  }
 
   useEffect(() => {
     loadStaff()
@@ -147,6 +191,21 @@ export default function StaffPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
+      {sendChooserFor && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">Send the form link</h2>
+            <p className="text-gray-400 text-lg mb-6">{sendChooserFor.name} — who should receive the self-service form link?</p>
+            <div className="flex flex-col gap-3">
+              <button onClick={() => handleSendForm(sendChooserFor, 'MEMBER')} className="bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">📲 THE MEMBER (WhatsApp)</button>
+              <button onClick={() => handleSendForm(sendChooserFor, 'REPORTS')} className="bg-blue-700 hover:bg-blue-600 px-5 py-4 rounded-2xl font-bold text-xl">📋 REPORTS GROUP</button>
+              <button onClick={() => handleSendForm(sendChooserFor, 'BOTH')} className="bg-purple-700 hover:bg-purple-600 px-5 py-4 rounded-2xl font-bold text-xl">BOTH</button>
+              <button onClick={() => setSendChooserFor(null)} className="bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmId && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
@@ -213,6 +272,14 @@ export default function StaffPage() {
               </div>
 
               <div className="flex gap-3 flex-wrap">
+                <button
+                  onClick={() => setSendChooserFor(member)}
+                  disabled={sendingId === member.id || sentId === member.id}
+                  className={`disabled:opacity-60 px-5 py-3 rounded-2xl font-bold ${sentId === member.id ? 'bg-green-600' : 'bg-green-700 hover:bg-green-600'}`}
+                >
+                  {sendingId === member.id ? 'SENDING…' : sentId === member.id ? '✓ SENT' : '📲 SEND'}
+                </button>
+
                 <Link
                   href={`/staff/edit/${member.id}`}
                   className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold"

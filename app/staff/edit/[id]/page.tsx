@@ -31,6 +31,15 @@ export default function EditStaffPage() {
   const [name, setName] = useState('')
   const [position, setPosition] = useState('')
   const [phone, setPhone] = useState('')
+  // Fields the member can also fill via the self-service form (/staff/self/[id]).
+  const [email, setEmail] = useState('')
+  const [instagram, setInstagram] = useState('')
+  const [cpf, setCpf] = useState('')
+  const [zip, setZip] = useState('')
+  const [address, setAddress] = useState('')
+  const [city, setCity] = useState('')
+  const [stateUf, setStateUf] = useState('')
+  const [preferred, setPreferred] = useState('WhatsApp')
 
   useEffect(() => {
     loadStaff()
@@ -53,6 +62,14 @@ export default function EditStaffPage() {
     setName(data.name || '')
     setPosition(data.position || '')
     setPhone(data.phone || '')
+    setEmail(data.email || '')
+    setInstagram(data.instagram || '')
+    setCpf(data.cpf || '')
+    setZip(data.zip || '')
+    setAddress(data.address || '')
+    setCity(data.city || '')
+    setStateUf(data.state || '')
+    setPreferred(data.preferred_message_method || 'WhatsApp')
     setLoading(false)
   }
 
@@ -69,6 +86,14 @@ export default function EditStaffPage() {
         name,
         position,
         phone: phone.trim() || null,
+        email: email.trim() || null,
+        instagram: instagram.trim() || null,
+        cpf: cpf.trim() || null,
+        zip: zip.trim() || null,
+        address: address.trim() || null,
+        city: city.trim() || null,
+        state: stateUf.trim() || null,
+        preferred_message_method: preferred || null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', staffId)
@@ -135,6 +160,48 @@ export default function EditStaffPage() {
             className={inputClass}
             placeholder="Number with country code, e.g. 1 407 555 0100"
           />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">E-MAIL</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="member@example.com" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">INSTAGRAM</label>
+          <input value={instagram} onChange={(e) => setInstagram(e.target.value)} className={inputClass} placeholder="@username" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">CPF / SSN / ITIN</label>
+          <input value={cpf} onChange={(e) => setCpf(e.target.value)} className={inputClass} placeholder="000.000.000-00 / 000-00-0000" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">ADDRESS</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} className={inputClass} placeholder="Street, number, apt" />
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="block mb-2 text-lg font-bold">CITY</label>
+            <input value={city} onChange={(e) => setCity(e.target.value)} className={inputClass} placeholder="Orlando" />
+          </div>
+          <div>
+            <label className="block mb-2 text-lg font-bold">STATE</label>
+            <input value={stateUf} onChange={(e) => setStateUf(e.target.value)} className={inputClass} placeholder="FL" />
+          </div>
+          <div>
+            <label className="block mb-2 text-lg font-bold">ZIP</label>
+            <input value={zip} onChange={(e) => setZip(e.target.value)} className={inputClass} placeholder="32837" />
+          </div>
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">PREFERRED MESSAGE METHOD</label>
+          <select value={preferred} onChange={(e) => setPreferred(e.target.value)} className={inputClass}>
+            {['WhatsApp', 'SMS', 'E-Mail', 'Instagram', 'Facebook'].map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
         </div>
 
         <button
