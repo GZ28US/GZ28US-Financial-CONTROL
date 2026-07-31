@@ -352,7 +352,7 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
 // a message with a List-Unsubscribe header whose sender/subject carries no
 // transactional signal is bulk marketing by definition. Transactional senders
 // and anything order/payment/doc-shaped NEVER matches (inbox-zero, 2026-07-26).
-const SAFE_SENDER = /rockauto\.com|titanmotorsports|hptuners|texas-speed|summitracing|paypal|ups\.com|fedex|usps|dhl|17track|shop\.app|shopify|anthropic|supabase|vercel|regions|c6bank|sunpass|progressive|dukeenergy|speedpay|docusign|echosign|adobesign|hellosign|pandadoc|d4sign|e-notariado|registrocivil|autotagsandtitle|bssparts|vstar|kooksheaders|halltech|modernmuscle|tirerack|discounttire|graph|microsoft\.com|google\.com|apple\.com|sema\.org/i
+const SAFE_SENDER = /rockauto\.com|titanmotorsports|hptuners|texas-speed|summitracing|paypal|ups\.com|fedex|usps|dhl|17track|shop\.app|shopify|anthropic|supabase|vercel|regions|c6bank|sunpass|progressive|dukeenergy|speedpay|docusign|echosign|adobesign|hellosign|pandadoc|d4sign|e-notariado|registrocivil|autotagsandtitle|bssparts|vstar|kooksheaders|halltech|modernmuscle|tirerack|discounttire|graph|microsoft\.com|google\.com|apple\.com|sema\.org|classic\.com/i
 const SAFE_SUBJECT = /order|track|invoice|receipt|payment|paid|ship|deliver|cart|carrinho|quote|or[çc]amento|confirm|refund|return|rma|appointment|statement|security|verify|c[óo]digo|code|password|sign|assinatura|contrato|nf-?e|boleto|fatura|ipva|guia/i
 
 export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: string[] }> {
