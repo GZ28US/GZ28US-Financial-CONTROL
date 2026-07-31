@@ -344,9 +344,16 @@ export default function ViewInvoicePage() {
       }
 
       if (method === 'E-Mail') {
-        const subject = fname.replace(/\.pdf$/, '')
-        const body = `Hello${client?.name ? ` ${client.name}` : ''},\n\nPlease find your ${invoice.is_quote ? 'quote' : 'invoice'} ${invoice.invoice_code} at the link below:\n${pdfUrl}\n\nThank you,\nGZ28 V8 SpeedShop`
-        window.location.href = `mailto:${client?.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+        // Sent BY THE APP: HTML e-mail with the PDF ATTACHED + button link —
+        // mailto: made plain-text emails with dead links (Johnny/NiteKing, 31/jul).
+        if (!client?.email) { alert('This client has no email on file.\nAdd an email first (client EDIT).'); setSending(false); return }
+        const res = await fetch(`${BASE_PATH}/api/mail/client`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'invoice-pdf', id: invoiceId, pdfUrl, filename: fname }),
+        })
+        const d = await res.json().catch(() => ({}))
+        if (!d.ok) { alert('E-mail send failed:\n' + (d.error || `HTTP ${res.status}`)) }
+        else { alert(`${docNoun} emailed to ${client.email} with the PDF attached.`) }
         setSending(false)
         return
       }
