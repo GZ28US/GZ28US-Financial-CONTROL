@@ -1705,14 +1705,15 @@ export default function EditInvoicePage() {
     : p === '2' ? 'text-orange-300'
     : 'text-red-300')
   // Keep each member's duties together (rows from different members are never
-  // mixed), then ALPHANUMERICAL by description within the member (Márcio,
-  // 31/jul/2026 — replaced the old priority ordering).
+  // mixed); within the member: TO DO first, DONE after, each block in
+  // ALPHANUMERICAL order by description (Márcio, 31/jul/2026).
   const sortDuties = (list: { id: string; staff_id: string | null; description: string; done: boolean; priority: string }[], staff: { id: string; name: string }[]) => {
     const rank = new Map<string, number>(staff.map((s, i) => [s.id, i]))
     return [...list].sort((a, b) => {
       const sa = a.staff_id && rank.has(a.staff_id) ? (rank.get(a.staff_id) as number) : 999
       const sb = b.staff_id && rank.has(b.staff_id) ? (rank.get(b.staff_id) as number) : 999
       if (sa !== sb) return sa - sb
+      if (a.done !== b.done) return a.done ? 1 : -1
       return (a.description || '').localeCompare(b.description || '', undefined, { numeric: true, sensitivity: 'base' })
     })
   }
@@ -1729,7 +1730,7 @@ export default function EditInvoicePage() {
     const d = duties[index]
     const { error } = await supabase.from('invoice_duties').update({ done: !d.done }).eq('id', d.id)
     if (error) { alert(error.message); return }
-    const a = [...duties]; a[index] = { ...d, done: !d.done }; setDuties(a)
+    const a = [...duties]; a[index] = { ...d, done: !d.done }; setDuties(sortDuties(a, staffList))
   }
   function startEditDuty(index: number) { setEditingDutyIndex(index); setEditingDuty({ description: duties[index].description, staff_id: duties[index].staff_id || '', priority: duties[index].priority || '1' }) }
   async function saveEditDuty() {
