@@ -58,9 +58,12 @@ type StockItem = {
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
-type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean }
+// rowIds: DB ids das linhas por trás do report — no fechamento do diálogo TODAS
+// são "mutadas" na rede de segurança (report-net), enviadas ou recusadas, para o
+// NÃO do usuário valer também no cron (incidente 31/jul/2026).
+type IncomeReport = { amount: string; source: string; date: string; receipt_url: string; description: string; report: boolean; rowIds?: string[] }
 type ExpenseReportItem = { item: string; amount: string; quantity: string; tax: string; extra: string }
-type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean }
+type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean; rowIds?: string[] }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
 // Income PAID VIA = the payment method only. GZ28BR is NOT a method — it moved to its
@@ -1651,6 +1654,7 @@ export default function EditInvoicePage() {
           receipt_url: e.receipt_urls[0] || '',
           items: [{ item: e.item, amount: e.amount, quantity: e.quantity || '1', tax: e.tax || '0', extra: e.extra || '0' }],
           report: true,
+          rowIds: e.id ? [e.id] : [],
         }])
       }
       return
@@ -1684,6 +1688,7 @@ export default function EditInvoicePage() {
         receipt_url: p.receipt_url || '',
         description: p.description || '',
         report: true,
+        rowIds: p.id ? [p.id] : [],
       }])
     }
   }
@@ -2014,7 +2019,9 @@ export default function EditInvoicePage() {
     }
     const newPayments = payments.filter(p => !p.id)
     if (newPayments.length > 0) {
-      const { error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({
+      // .select('id') devolve as linhas na ordem do insert — os ids alimentam o
+      // mute da report-net no diálogo de reports (o NÃO do usuário vale no cron).
+      const { data: insPay, error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({
         invoice_id: invoiceId,
         amount: parseFloat(p.amount),
         payment_date: isValidDate(p.payment_date) ? p.payment_date : null,
@@ -2025,8 +2032,9 @@ export default function EditInvoicePage() {
         description: p.description || null,
         date_label: p.date_label || null,
         paid_at: p.paid_at || null,
-      })))
+      }))).select('id')
       if (e) { alert(e.message); return }
+      ;(insPay || []).forEach((row: any, i: number) => { if (newPayments[i]) newPayments[i].id = row.id })
     }
     const newNotes = notes.filter(n => !n.id)
     if (newNotes.length > 0) {
@@ -2035,7 +2043,7 @@ export default function EditInvoicePage() {
     }
     const newExpenses = expenses.filter(e => !e.id)
     if (newExpenses.length > 0) {
-      const { error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({
+      const { data: insExp, error: e } = await supabase.from('invoice_expenses').insert(newExpenses.map(ex => ({
         invoice_id: invoiceId, expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
         supplier: ex.supplier || null, item: ex.item,
         part_number: ex.part_number || null,
@@ -2053,8 +2061,9 @@ export default function EditInvoicePage() {
         kit_name: ex.kit_name || null,
         source: ex.source || DEFAULT_SOURCE,
         position: expenses.indexOf(ex),
-      })))
+      }))).select('id')
       if (e) { alert(e.message); return }
+      ;(insExp || []).forEach((row: any, i: number) => { if (newExpenses[i]) newExpenses[i].id = row.id })
     }
 
     // Persist export_status changes (IMPORT -> EXPORTED, part removal -> REMOVED,
@@ -2118,6 +2127,7 @@ export default function EditInvoicePage() {
         receipt_url: p.receipt_url || '',
         description: p.description || '',
         report: true,
+        rowIds: p.id ? [p.id] : [],
       }))
 
     const groupMap = new Map<string, ExpenseReport>()
@@ -2130,6 +2140,7 @@ export default function EditInvoicePage() {
         const existing = groupMap.get(ex.purchase_group)
         if (existing) {
           existing.items.push(item)
+          if (ex.id) existing.rowIds!.push(ex.id)
         } else {
           const rep: ExpenseReport = {
             supplier: ex.supplier,
@@ -2137,6 +2148,7 @@ export default function EditInvoicePage() {
             receipt_url: ex.receipt_urls[0] || '',
             items: [item],
             report: true,
+            rowIds: ex.id ? [ex.id] : [],
           }
           groupMap.set(ex.purchase_group, rep)
           pendingExpenses.push(rep)
@@ -2148,6 +2160,7 @@ export default function EditInvoicePage() {
           receipt_url: ex.receipt_urls[0] || '',
           items: [item],
           report: true,
+          rowIds: ex.id ? [ex.id] : [],
         })
       }
     })
@@ -2213,7 +2226,20 @@ export default function EditInvoicePage() {
     return lines.join('\n') + '\n\nSent by GZ28 Control App'
   }
 
+  // Fechou o diálogo (enviando ou recusando) = TODAS as linhas listadas foram
+  // tratadas pela UI — a rede de segurança (expenseReportNet) não pode reenviar
+  // nem "corrigir" um NÃO do usuário. Fire-and-forget: falha aqui não trava a UI.
+  function muteReportNet(kind: 'ie' | 'ip', reports: Array<{ rowIds?: string[] }> | null) {
+    const keys = (reports || []).flatMap(r => (r.rowIds || []).map(id => `${kind}:${id}`))
+    if (keys.length === 0) return
+    void fetch(`${BASE_PATH}/api/report-net/mute`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys }),
+    }).catch(() => {})
+  }
+
   async function sendIncomeReports() {
+    muteReportNet('ip', incomeReports)
     const chosen = (incomeReports || []).filter(r => r.report)
     setSendingReports(true)
     let failures = 0
@@ -2251,6 +2277,7 @@ export default function EditInvoicePage() {
   }
 
   async function sendExpenseReports() {
+    muteReportNet('ie', expenseReports)
     const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
     let failures = 0
