@@ -96,9 +96,12 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // (payment_date preenchido), nunca no cadastro nem na exclusão. Linhas não
   // pagas ficam SEM marca — quando forem pagas, o report sai naquele momento.
   // Quotes nunca reportam (lei das quotes + enchente US.044.2).
+  // Filtro por updated_at, não created_at (buraco achado 01/ago): linha ANTIGA
+  // que vira paga hoje é dinheiro saindo hoje — "TODO E QUALQUER DINHEIRO QUE
+  // DE FATO ENTRA OU SAI TEM QUE TER REPORT NO GRUPO."
   const { data: ie } = await db.from('invoice_expenses')
     .select('id, item, price, payment_date, created_at, invoices(invoice_code, is_quote)')
-    .gte('created_at', EPOCH).not('payment_date', 'is', null).order('created_at')
+    .gte('updated_at', EPOCH).not('payment_date', 'is', null).order('created_at')
   for (const e of (ie || []) as any[]) {
     const key = `ern:ie:${e.id}`
     if (seenSet.has(key)) continue
@@ -116,7 +119,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // a data PREVISTA — quem marca "recebido" é paid_at. Previsões nunca reportam.
   const { data: ip } = await db.from('invoice_payments')
     .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote)')
-    .gte('created_at', EPOCH).not('paid_at', 'is', null).order('created_at')
+    .gte('updated_at', EPOCH).not('paid_at', 'is', null).order('created_at')
   for (const p of (ip || []) as any[]) {
     const key = `ern:ip:${p.id}`
     if (seenSet.has(key)) continue
@@ -133,7 +136,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // 3) expenses (staff seasons) — mesma regra: reporta só quando PAGA.
   const { data: se } = await db.from('expenses')
     .select('id, amount, payment_date, description, created_at, seasons(season_code, staff(name))')
-    .gte('created_at', EPOCH).not('payment_date', 'is', null).order('created_at')
+    .gte('updated_at', EPOCH).not('payment_date', 'is', null).order('created_at')
   for (const s of (se || []) as any[]) {
     const key = `ern:se:${s.id}`
     if (seenSet.has(key)) continue
