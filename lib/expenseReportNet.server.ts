@@ -70,18 +70,20 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     await mark(key, label)
   }
 
-  // 2) invoice_payments (incomes) — mesma regra: só quando o dinheiro ENTROU
-  // (payment_date preenchido); previsões não reportam; quotes nunca reportam.
+  // 2) invoice_payments (incomes) — mesma regra: só quando o dinheiro ENTROU.
+  // ATENÇÃO ao modelo (incidente QuickSilver 31/jul): em incomes, payment_date é
+  // a data PREVISTA — quem marca "recebido" é paid_at. Previsões nunca reportam.
   const { data: ip } = await db.from('invoice_payments')
-    .select('id, amount, payment_date, description, created_at, invoices(invoice_code, is_quote)')
-    .gte('created_at', EPOCH).not('payment_date', 'is', null).order('created_at')
+    .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote)')
+    .gte('created_at', EPOCH).not('paid_at', 'is', null).order('created_at')
   for (const p of (ip || []) as any[]) {
     const key = `ern:ip:${p.id}`
     if (seenSet.has(key)) continue
     if (p.invoices?.is_quote) continue
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
     if (!alreadySent(Number(p.amount))) {
-      await sendReport([`*INCOME* ${p.invoices?.invoice_code || '—'}`, `${p.payment_date || ''} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
+      const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
+      await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}`, `${paidOn} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
     await mark(key, label)
