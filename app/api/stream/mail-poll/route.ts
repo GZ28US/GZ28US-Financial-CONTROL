@@ -3,7 +3,7 @@ import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel, 
 import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, matchRows, guessCarrier, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
-import { runExpenseReportNet } from '@/lib/expenseReportNet.server'
+import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import { runInboxZero } from '@/lib/inboxZero.server'
 import { runStreamAnswers } from '@/lib/streamAnswers.server'
@@ -158,6 +158,10 @@ async function run(force: boolean): Promise<NextResponse> {
   try { const r = await runAppsSweep(db); appsPayments = r.payments.length } catch (e) { console.error('[apps-sweep]', e) }
   let staffTravel: { opened: string[]; closed: string[] } = { opened: [], closed: [] }
   try { staffTravel = await runStaffTravelSweep(db) } catch (e) { console.error('[staff-travel]', e) }
+  // LEI 01/ago: comprovante anexado ⇒ expense PAGA — roda antes da rede de
+  // reports para o report de PAGA sair no mesmo ciclo.
+  let receiptPaid = 0
+  try { receiptPaid = (await enforceReceiptPaid(db)).fixed } catch (e) { console.error('[receipt-paid]', e) }
   let reportNet: { reported: string[] } = { reported: [] }
   try { reportNet = await runExpenseReportNet(db) } catch (e) { console.error('[report-net]', e) }
 
@@ -186,7 +190,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, reportNet, purchases, inboxZero, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }

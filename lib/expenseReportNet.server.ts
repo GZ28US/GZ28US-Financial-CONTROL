@@ -41,6 +41,47 @@ async function recentSentBodies(): Promise<string[]> {
   } catch { return [] }
 }
 
+// LEI do Márcio (01/ago/2026, após 47 linhas órfãs): "Se tem comprovante, está
+// PAGA." Qualquer expense com receipt anexado e sem payment_date é marcada paga
+// (payment_date = expense_date; sem expense_date, a data do lançamento entra nos
+// dois campos). Roda ANTES da rede de reports para o report de PAGA sair junto.
+// Quotes ficam fora (anexos de quote são referência de preço, não comprovante).
+export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: number }> {
+  let fixed = 0
+  const dateOf = (e: { expense_date?: string | null; created_at?: string | null }) =>
+    e.expense_date || String(e.created_at || '').slice(0, 10)
+  const patch = (e: { expense_date?: string | null }, d: string) =>
+    e.expense_date ? { payment_date: d } : { payment_date: d, expense_date: d }
+
+  const { data: se } = await db.from('expenses')
+    .select('id, expense_date, created_at').not('receipt_url', 'is', null).is('payment_date', null)
+  for (const e of (se || []) as any[]) {
+    const d = dateOf(e); if (!d) continue
+    const { error } = await db.from('expenses').update(patch(e, d)).eq('id', e.id)
+    if (!error) fixed++
+  }
+
+  const { data: ie } = await db.from('invoice_expenses')
+    .select('id, expense_date, created_at, receipt_url, invoices!inner(is_quote)')
+    .not('receipt_url', 'is', null).is('payment_date', null).eq('invoices.is_quote', false)
+  for (const e of (ie || []) as any[]) {
+    if (!e.receipt_url || e.receipt_url === '[]') continue
+    const d = dateOf(e); if (!d) continue
+    const { error } = await db.from('invoice_expenses').update(patch(e, d)).eq('id', e.id)
+    if (!error) fixed++
+  }
+
+  const { data: fc } = await db.from('fixed_cost_expenses')
+    .select('id, expense_date, created_at').not('receipt_url', 'is', null).is('payment_date', null)
+  for (const e of (fc || []) as any[]) {
+    const d = dateOf(e); if (!d) continue
+    const { error } = await db.from('fixed_cost_expenses').update({ payment_date: d }).eq('id', e.id)
+    if (!error) fixed++
+  }
+
+  return { fixed }
+}
+
 export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reported: string[] }> {
   const out: string[] = []
   const { data: seen } = await db.from('stream_mail_moves').select('message_id').eq('from_addr', 'expense-report-net')
