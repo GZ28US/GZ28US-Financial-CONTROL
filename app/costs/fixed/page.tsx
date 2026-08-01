@@ -29,7 +29,17 @@ type FixedCostSupplier = {
 // normalized to a month. SINGLE is a one-off — it has no monthly weight; ended
 // suppliers are excluded by the caller. DAILY/WEEKLY use the yearly average
 // (×365/12, ×52/12), not "30 days" — that's the number that survives a year.
-function monthlyOf(r: FixedCostSupplier): number {
+//
+// CONTRATO ENCERRADO (Márcio, 01/ago/2026): a média deixa de ser a contratual e
+// vira o retrato final — TODOS os pagamentos registrados (mesmo os feitos depois
+// do cancelamento; refunds entram como pagamento negativo e corrigem sozinhos)
+// divididos pelo período de vigência (date_entry → date_conclusion).
+function monthlyOf(r: FixedCostSupplier, paidTotal?: number): number {
+  if (isValidDate(r.date_conclusion) && isValidDate(r.date_entry) && paidTotal !== undefined) {
+    const days = (new Date(r.date_conclusion + 'T00:00:00').getTime() - new Date(r.date_entry + 'T00:00:00').getTime()) / 86400e3
+    const months = Math.max(days / 30.4375, 1 / 30.4375)
+    return paidTotal / months
+  }
   const perPeriod = (Number(r.amount_1) || 0) + (Number(r.amount_2) || 0)
   // Old rows carry lowercase periodicity ("monthly") — normalize before matching.
   switch ((r.periodicity || '').toUpperCase()) {
@@ -50,6 +60,8 @@ export default function FixedCostSuppliersPage() {
   const [rows, setRows] = useState<FixedCostSupplier[]>([])
   // supplier_id -> next payment still due (earliest unpaid expense: date + amount).
   const [nextDue, setNextDue] = useState<Map<string, { date: string; amount: number }>>(new Map())
+  // supplier_id -> soma de TODOS os pagamentos registrados (média final dos encerrados).
+  const [paidTotals, setPaidTotals] = useState<Map<string, number>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'WhatsApp' | 'SMS' | 'Email' | 'Phone'>('ALL')
@@ -80,6 +92,15 @@ export default function FixedCostSuppliersPage() {
       if (!m.has(e.supplier_id)) m.set(e.supplier_id, { date: e.expense_date, amount: Number(e.amount) || 0 })
     }
     setNextDue(m)
+    // Soma de todos os pagamentos por fornecedor — alimenta a média final dos
+    // contratos encerrados (pagamentos ÷ vigência), incluindo refunds negativos.
+    const { data: allExp } = await supabase.from('fixed_cost_expenses').select('supplier_id, amount')
+    const totals = new Map<string, number>()
+    for (const e of (allExp || [])) {
+      if (!e.supplier_id) continue
+      totals.set(e.supplier_id, (totals.get(e.supplier_id) || 0) + (Number(e.amount) || 0))
+    }
+    setPaidTotals(totals)
     setLoading(false)
   }
 
@@ -92,20 +113,23 @@ export default function FixedCostSuppliersPage() {
 
   const td = todayYmd()
   const q = search.trim().toLowerCase()
-  const filtered = rows.filter((r) => {
-    const contactOk = filter === 'ALL' || (r.preferred_contact || 'WhatsApp') === filter
-    const searchOk = !q || [r.description, r.company, r.contact_name, r.phone, r.email].some((v) => (v || '').toLowerCase().includes(q))
-    return contactOk && searchOk
-  })
-  // Monthly Average total of the CURRENT month (Márcio, 30/jul/2026): every
-  // ENROLLED cost counts at its monthly average, paid or not — a signed contract
-  // is alive and its clock is counting even before the first charge (start date
-  // is irrelevant). A cancelled contract keeps counting through the month of its
-  // "vigência" end (date_conclusion) and only leaves the sum the month after.
+  // VISIBILIDADE = VIGÊNCIA (Márcio, 01/ago/2026): o card nasce com o contrato e
+  // SOME no primeiro mês sem vigência — mesmo que ainda existam pagamentos
+  // registrados (esses seguem no banco e no Future Flow; aqui é custo fixo VIVO).
   const monthStart = td.slice(0, 7) + '-01'
   const aliveThisMonth = (r: FixedCostSupplier) =>
     !isValidDate(r.date_conclusion) || (r.date_conclusion as string) >= monthStart
-  const monthlyTotal = filtered.reduce((sum, r) => sum + (aliveThisMonth(r) ? monthlyOf(r) : 0), 0)
+  const filtered = rows.filter((r) => {
+    const contactOk = filter === 'ALL' || (r.preferred_contact || 'WhatsApp') === filter
+    const searchOk = !q || [r.description, r.company, r.contact_name, r.phone, r.email].some((v) => (v || '').toLowerCase().includes(q))
+    return aliveThisMonth(r) && contactOk && searchOk
+  })
+  // Monthly Average total of the CURRENT month (Márcio, 30/jul/2026): every
+  // ENROLLED cost counts at its monthly average, paid or not — a signed contract
+  // is alive and its clock is counting even before the first charge. Encerrados
+  // contam pela média final (pagamentos ÷ vigência) enquanto ainda visíveis.
+  const avgOf = (r: FixedCostSupplier) => monthlyOf(r, isValidDate(r.date_conclusion) ? (paidTotals.get(r.id) || 0) : undefined)
+  const monthlyTotal = filtered.reduce((sum, r) => sum + avgOf(r), 0)
   const monthLabel = new Date(td + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 
   return (
@@ -126,7 +150,7 @@ export default function FixedCostSuppliersPage() {
       )}
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">FIXED COST SUPPLIERS ({rows.length})</h1>
+        <h1 className="text-4xl font-bold">FIXED COST SUPPLIERS ({rows.filter(aliveThisMonth).length})</h1>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
@@ -166,7 +190,7 @@ export default function FixedCostSuppliersPage() {
                   <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700">{r.preferred_contact || 'WhatsApp'}</span>
                 </div>
                 <p className="text-lg text-gray-400">{[r.company, r.contact_name].filter(Boolean).join(' · ') || '—'}</p>
-                <p className="text-base text-gray-400">{formatUSD(monthlyOf(r))} avg / month</p>
+                <p className="text-base text-gray-400">{formatUSD(avgOf(r))} avg / month</p>
                 {(() => {
                   const n = nextDue.get(r.id)
                   if (!n) return <p className="text-base text-gray-500">All paid — nothing due</p>
