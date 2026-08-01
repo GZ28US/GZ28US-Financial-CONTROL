@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -80,7 +81,8 @@ export default function EditGoodPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
-  const [source, setSource] = useState('')
+  // Universal payment block — PAID FROM here also feeds the legacy `source` column.
+  const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
@@ -108,7 +110,9 @@ export default function EditGoodPage() {
     setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
-    setSource(data.source || DEFAULT_SOURCE)
+    // Initialize the payment block from the row; legacy rows fall back to `source`
+    // for PAID FROM so an untouched save round-trips the same value.
+    setPayment(paymentFromRow({ ...data, paid_from: data.paid_from || data.source }))
     setGoodReceiptUrls(parseReceiptUrls(data.receipt_url))
 
     const { data: expensesData } = await supabase.from('good_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
@@ -230,8 +234,9 @@ export default function EditGoodPage() {
       description, quantity: qty || 1, unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
-      source,
+      source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
+      ...paymentToRow(payment, purchaseDate),
       updated_at: new Date().toISOString(),
     }).eq('id', goodId)
     if (error) { alert(error.message); return }
@@ -272,11 +277,6 @@ export default function EditGoodPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
-        </div>
-
-        <div>
-          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-          <SourceSelect value={source} onChange={setSource} className={inputClass} />
         </div>
 
         <div className="flex gap-4">
@@ -461,6 +461,9 @@ export default function EditGoodPage() {
             <span className="text-3xl font-bold">{formatUSD(grandTotal)}</span>
           </div>
         </div>
+
+        {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
+        <PaymentFields value={payment} onChange={setPayment} />
 
         <button onClick={saveGood} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         <a href={`${BASE_PATH}/goods`} className="text-gray-400 text-xl">Cancel</a>

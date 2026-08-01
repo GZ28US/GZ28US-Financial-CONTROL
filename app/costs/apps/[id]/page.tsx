@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 
@@ -26,7 +27,7 @@ type AppSupplier = {
   payment_day_1: number | null
   amount_1: number | null
 }
-type AppExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null }
+type AppExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
@@ -44,7 +45,8 @@ export default function AppViewPage() {
   const [paying, setPaying] = useState<AppExpense | null>(null)
   const [payDate, setPayDate] = useState('')
   const [payAmount, setPayAmount] = useState('')
-  const [paySource, setPaySource] = useState(DEFAULT_SOURCE)
+  // Universal payment block — PAID FROM also feeds the legacy `source` column.
+  const [payPayment, setPayPayment] = useState<PaymentInfo>(defaultPayment())
   const [savingPay, setSavingPay] = useState(false)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [sendStatus, setSendStatus] = useState('')
@@ -100,7 +102,7 @@ export default function AppViewPage() {
     setPaying(r)
     setPayDate(isValidDate(r.payment_date) ? (r.payment_date as string) : todayYmd())
     setPayAmount(String(r.amount ?? ''))
-    setPaySource(r.source || DEFAULT_SOURCE)
+    setPayPayment(paymentFromRow({ ...r, paid_from: r.paid_from || r.source }))
   }
 
   async function savePayment() {
@@ -109,7 +111,10 @@ export default function AppViewPage() {
     const { error } = await supabase.from('fixed_cost_expenses').update({
       payment_date: isValidDate(payDate) ? payDate : null,
       amount: parseFloat(payAmount) || 0,
-      source: paySource || DEFAULT_SOURCE,
+      source: payPayment.paidFrom || DEFAULT_SOURCE, // legacy write-through
+      payment_method: payPayment.method || null,
+      paid_from: payPayment.paidFrom || null,
+      paid_to: payPayment.paidTo || null,
     }).eq('id', paying.id)
     setSavingPay(false)
     if (error) { alert(error.message); return }
@@ -184,11 +189,9 @@ export default function AppViewPage() {
                   <input type="text" inputMode="decimal" value={payAmount} onChange={(e) => { if (/^-?\d*\.?\d*$/.test(e.target.value)) setPayAmount(e.target.value) }} className={`${modalInput} pl-9`} placeholder="0.00" />
                 </div>
               </div>
-              <div className="flex-1 min-w-[10rem]">
-                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
-                <SourceSelect value={paySource} onChange={setPaySource} className={modalInput} />
-              </div>
             </div>
+            {/* UNIVERSAL PAYMENT BLOCK — recording a payment is PAID by definition */}
+            <PaymentFields value={payPayment} onChange={setPayPayment} hidePaidToggle />
             <DatePicker label="PAYMENT DATE" value={payDate} onChange={setPayDate} compact />
             <button onClick={savePayment} disabled={savingPay} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{savingPay ? 'Saving…' : 'SAVE PAYMENT'}</button>
           </div>

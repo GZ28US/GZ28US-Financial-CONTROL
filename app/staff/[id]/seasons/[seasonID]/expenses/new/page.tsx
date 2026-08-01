@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { defaultPayment, paymentToRow, type PaymentInfo } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
@@ -55,7 +55,8 @@ export default function NewExpensePage() {
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [origin, setOrigin] = useState('GZ28US')
-  const [source, setSource] = useState(DEFAULT_SOURCE)
+  const [supplier, setSupplier] = useState('')
+  const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [expenseDate, setExpenseDate] = useState(getTodayString())
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -107,13 +108,22 @@ export default function NewExpensePage() {
   async function saveExpense() {
     if (!amount) { alert('Please enter an amount'); return }
 
+    // Recurring rows (DAILY/WEEKLY/MONTHLY) are payroll/forecast definitions,
+    // not actual payments — they never carry a payment_date.
+    const paymentCols = paymentToRow(payment, type === 'SINGLE' ? expenseDate : null)
+    if (type !== 'SINGLE') paymentCols.payment_date = null
+
     const { error } = await supabase.from('expenses').insert([{
       season_id: seasonID,
       type,
       description: description || null,
       amount: parseFloat(amount),
       origin,
-      source,
+      supplier: supplier.trim() || null,
+      ...paymentCols,
+      // Legacy write-through (older screens still read these):
+      source: payment.paidFrom,
+      paid_via: payment.method,
       expense_date: type === 'SINGLE' ? expenseDate : null,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
     }])
@@ -122,7 +132,7 @@ export default function NewExpensePage() {
 
     // Queue the optional WhatsApp report for this expense.
     const report: ExpenseReport = {
-      supplier: source,
+      supplier: supplier.trim() || payment.paidFrom,
       date: type === 'SINGLE' ? expenseDate : '',
       receipt_url: receiptUrls[0] || '',
       description,
@@ -264,9 +274,11 @@ export default function NewExpensePage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-          <SourceSelect value={source} onChange={setSource} className={selectClass} />
+          <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
+          <input type="text" value={supplier} onChange={(e) => setSupplier(e.target.value)} className={inputClass} placeholder="Who received the money" />
         </div>
+
+        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle={type !== 'SINGLE'} />
 
         <div>
           <label className="block mb-2 text-lg font-bold">RECEIPT</label>

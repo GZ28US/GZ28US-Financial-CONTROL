@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { defaultPayment, paymentFromRow, paymentToRow, type PaymentInfo } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
@@ -30,7 +30,8 @@ export default function EditExpensePage() {
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [origin, setOrigin] = useState('GZ28US')
-  const [source, setSource] = useState(DEFAULT_SOURCE)
+  const [supplier, setSupplier] = useState('')
+  const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [expenseDate, setExpenseDate] = useState('')
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -73,7 +74,8 @@ export default function EditExpensePage() {
     setDescription(data.description || '')
     setAmount(String(data.amount || ''))
     setOrigin(data.origin || 'GZ28US')
-    setSource(data.source || DEFAULT_SOURCE)
+    setSupplier(data.supplier || '')
+    setPayment(paymentFromRow(data))
     setExpenseDate(data.expense_date || '')
     setReceiptUrls(parseReceiptUrls(data.receipt_url))
     setLoading(false)
@@ -104,12 +106,22 @@ export default function EditExpensePage() {
   async function saveExpense() {
     if (!amount) { alert('Please enter an amount'); return }
 
+    // Recurring rows (DAILY/WEEKLY/MONTHLY) are payroll/forecast definitions,
+    // not actual payments — they never carry a payment_date. No expenseDate
+    // override here so an untouched save round-trips the stored payment_date.
+    const paymentCols = paymentToRow(payment)
+    if (type !== 'SINGLE') paymentCols.payment_date = null
+
     const { error } = await supabase.from('expenses').update({
       type,
       description: description || null,
       amount: parseFloat(amount),
       origin,
-      source,
+      supplier: supplier.trim() || null,
+      ...paymentCols,
+      // Legacy write-through (older screens still read these):
+      source: payment.paidFrom,
+      paid_via: payment.method,
       expense_date: type === 'SINGLE' ? expenseDate : null,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       updated_at: new Date().toISOString(),
@@ -167,9 +179,11 @@ export default function EditExpensePage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-          <SourceSelect value={source} onChange={setSource} className={selectClass} />
+          <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
+          <input type="text" value={supplier} onChange={(e) => setSupplier(e.target.value)} className={inputClass} placeholder="Who received the money" />
         </div>
+
+        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle={type !== 'SINGLE'} />
 
         <div>
           <label className="block mb-2 text-lg font-bold">RECEIPT</label>

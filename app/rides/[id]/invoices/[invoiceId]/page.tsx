@@ -45,7 +45,7 @@ type Part = { id: string; description: string; unit_price: number; quantity: num
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
-type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null }
+type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
@@ -1017,7 +1017,7 @@ export default function ViewInvoicePage() {
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                           <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}{((exp.tax || 0) > 0 || (exp.extra || 0) > 0) ? ` · TOTAL: ${formatUSD(exp.price * (exp.quantity || 1) + (exp.tax || 0) + (exp.extra || 0))}` : ''}</p>
-                          {!invoice.is_quote && <p className="text-sm text-gray-500">{isValidDate(exp.expense_date) ? formatDate(exp.expense_date) : 'No date'}{isPaid ? ` · Paid: ${formatDate(exp.payment_date)}` : ' · Not paid yet'}</p>}
+                          {!invoice.is_quote && <p className="text-sm text-gray-500">{isValidDate(exp.expense_date) ? formatDate(exp.expense_date) : 'No date'}{isPaid ? ` · Paid: ${formatDate(exp.payment_date)}` : ' · Not paid yet'}{exp.payment_method ? ` · ${exp.payment_method}` : ''}{(exp.paid_from || exp.paid_to) ? ` · ${exp.paid_from || 'GZ28US'} → ${exp.paid_to || 'GZ28US'}` : ''}</p>}
                         </div>
                         {receiptUrls.length > 0 && (
                           <div className="relative shrink-0">

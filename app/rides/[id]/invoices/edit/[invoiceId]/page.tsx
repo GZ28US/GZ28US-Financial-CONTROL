@@ -5,19 +5,20 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, PAID_VIA_OPTIONS, pad3, CODE_PREFIX, partMatches, toWaNumber } from '@/lib/utils'
+import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS } from '@/components/PaymentFields'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 // date_label: a milestone marker ("ARRIVAL" / "CONCLUSION") used
 // INSTEAD of a calendar payment_date. Empty = a real date (or undated) is used.
-type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
+type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_from: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
 type Note = { id?: string; note: string }
 // stock_source_type / stock_donor are the lineage carriers: when an item is
 // pulled FROM STOCK into this expense list, we copy the stock row's source_type
@@ -44,7 +45,14 @@ type Expense = {
   export_status?: string
   item_discount?: string
   kit_name?: string
+  // Legacy who-paid marker — kept in sync with paid_from on every save.
   source: string
+  // Universal payment block (01/ago/2026): PAID FROM = who paid, PAID TO = whose
+  // bill it is (SUPPLIER = who received, its own field). FROM ≠ TO feeds the
+  // GZ28US↔GZ28BR flow.
+  payment_method: string
+  paid_from: string
+  paid_to: string
 }
 type StockItem = {
   id: string
@@ -57,7 +65,7 @@ type StockItem = {
   donor: string | null
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
-type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
+type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_from: string; paid_to: string; date: string; receipt_url: string; description: string }
 // rowIds: DB ids das linhas por trás do report — no fechamento do diálogo TODAS
 // são "mutadas" na rede de segurança (report-net), enviadas ou recusadas, para o
 // NÃO do usuário valer também no cron (incidente 31/jul/2026).
@@ -66,10 +74,11 @@ type ExpenseReportItem = { item: string; amount: string; quantity: string; tax: 
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean; rowIds?: string[] }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
-// Income PAID VIA = the payment method only. GZ28BR is NOT a method — it moved to its
-// own PAID TO field (GZ28US default / GZ28BR), so an income can be paid TO GZ28BR (which
-// then holds GZ28US's money). Expenses keep GZ28BR on their PAID FROM (the other direction).
-const paymentSources = ['', ...PAID_VIA_OPTIONS.filter(o => o !== 'GZ28BR')]
+// Income PAYMENT METHOD (stored in the legacy `source` column) = the universal
+// PAYMENT_METHODS list. GZ28BR is NOT a method — it moved to its own PAID TO field
+// (GZ28US default / GZ28BR), so an income can be paid TO GZ28BR (which then holds
+// GZ28US's money). A stored legacy value not in the list stays selectable.
+const paymentSources: string[] = ['', ...PAYMENT_METHODS]
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 
@@ -208,9 +217,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   // paidInConfirm: clicking UNPAID (to mark PAID) opens a "PAID IN?" date box,
   // defaulting to today. The chosen date sets paid_at; payment_date is untouched.
   // Going PAID -> UNPAID just clears paid_at with no box.
@@ -238,9 +247,9 @@ export default function EditInvoicePage() {
   useEffect(() => {
     supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs').limit(3000).then(({ data }) => setDbRef(data || []))
   }, [])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -385,6 +394,7 @@ export default function EditInvoicePage() {
       amount: String(p.amount),
       payment_date: p.payment_date || '',
       source: p.source || '',
+      paid_from: p.paid_from || 'GZ28US',
       paid_to: p.paid_to || 'GZ28US',
       amount_brl: p.amount_brl != null ? String(p.amount_brl) : '',
       receipt_url: p.receipt_url || '',
@@ -434,6 +444,11 @@ export default function EditInvoicePage() {
         export_status: e.export_status || 'FRESH',
         kit_name: e.kit_name || undefined,
         source: e.source || DEFAULT_SOURCE,
+        // Universal payment fields — legacy rows fall back to `source` (the old
+        // who-paid marker) for PAID FROM and to the defaults for the rest.
+        payment_method: e.payment_method || 'CASH',
+        paid_from: e.paid_from || e.source || DEFAULT_SOURCE,
+        paid_to: e.paid_to || 'GZ28US',
       })))
       setExpandedGroups(new Set())
     }
@@ -552,7 +567,7 @@ export default function EditInvoicePage() {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
       expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
-      source: DEFAULT_SOURCE,
+      source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US',
     }
   }
   // Insert a parts-database item as a fresh, unpaid expense. A KIT expands into a
@@ -640,6 +655,9 @@ export default function EditInvoicePage() {
       export_status: 'FRESH',
       item_discount: '0',
       source: DEFAULT_SOURCE,
+      payment_method: 'CASH',
+      paid_from: DEFAULT_SOURCE,
+      paid_to: 'GZ28US',
     }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -754,13 +772,14 @@ export default function EditInvoicePage() {
       const list: ScannedPayment[] = (parsed.payments || []).map((p: any) => ({
         amount: String(p.amount || ''),
         source: String(p.source || ''),
+        paid_from: 'GZ28US',
         paid_to: 'GZ28US',
         date: String(p.date || ''),
         receipt_url: receiptUrl,
         // The payer (who SENT the money) becomes the income note.
         description: String(p.payer || ''),
       }))
-      if (list.length === 0) list.push({ amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
+      if (list.length === 0) list.push({ amount: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
 
       const openReview = () => setScannedPayments(list)
 
@@ -807,7 +826,7 @@ export default function EditInvoicePage() {
       const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
         ? new Date(p.date + 'T12:00:00Z').toISOString()
         : new Date().toISOString()
-      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
+      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_from: p.paid_from || 'GZ28US', paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
     })
     setPayments(prev => sortByDateAsc([...prev, ...newRows], incomeOrderDate))
     setScannedPayments(null)
@@ -832,6 +851,10 @@ export default function EditInvoicePage() {
       export_status: 'FRESH',
       item_discount: item.item_discount || '0',
       source: scannedPurchase.source || DEFAULT_SOURCE,
+      payment_method: 'CASH',
+      // The scanned payer (matched to GZ28US/GZ28BR) is who PAID the invoice.
+      paid_from: scannedPurchase.source || DEFAULT_SOURCE,
+      paid_to: 'GZ28US',
     }))
     // Override: an official purchase replaces the matching quote estimate. Match by
     // part number (or item name when a line has no PN); drop those lines before adding
@@ -926,7 +949,7 @@ export default function EditInvoicePage() {
   async function confirmEditPurchase() {
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, expense_date: editingPurchaseDate, source: editingPurchaseSource }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: editingPurchaseDate, source: editingPurchaseSource, paid_from: editingPurchaseSource }
         : e
     ))
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
@@ -936,6 +959,7 @@ export default function EditInvoicePage() {
           supplier: editingPurchaseSupplier || null,
           expense_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
           source: editingPurchaseSource || DEFAULT_SOURCE,
+          paid_from: editingPurchaseSource || DEFAULT_SOURCE,
         }).eq('id', exp.id)
       }
     }
@@ -1479,7 +1503,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments(sortByDateAsc([...payments, newPayment], incomeOrderDate)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+    setPayments(sortByDateAsc([...payments, newPayment], incomeOrderDate)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
   // Add the outstanding PENDING BALANCE (grand total − listed income) as a new income —
   // undated and unpaid, since it has no scheduled date or payment yet.
@@ -1487,7 +1511,7 @@ export default function EditInvoicePage() {
     if (amount <= 0.005) return
     // Keep FULL precision (not toFixed(2)) so the listed income exactly matches the grand
     // total — rounding to cents would leave the balance fractionally negative.
-    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', date_label: '', paid_at: '' }
+    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', date_label: '', paid_at: '' }
     setPayments(sortByDateAsc([...payments, row], incomeOrderDate))
   }
   function removePayment(index: number) {
@@ -1500,13 +1524,13 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_from: editingPayment.paid_from || 'GZ28US', paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
 
   // REMIND — send the client a friendly reminder about a DELAYED (overdue,
   // still-unpaid) income. Delivered by the client's PREFERRED method — never
@@ -1800,7 +1824,15 @@ export default function EditInvoicePage() {
   async function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
     await ensureSupplier(newExpense.supplier)
-    setExpenses([...expenses, newExpense]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
+    // Universal rule (01/ago/2026): enrolling an expense means it's PAID by default —
+    // payment_date = expense_date (today when no date was set). The PAID/UNPAID
+    // toggle on the row unmarks it. Quotes stay forecast-only, never auto-paid.
+    const row = { ...newExpense }
+    if (!isQuote) {
+      if (!isValidDate(row.expense_date)) row.expense_date = todayStr()
+      if (!isValidDate(row.payment_date)) row.payment_date = row.expense_date
+    }
+    setExpenses([...expenses, row]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   }
   function removeExpense(index: number) {
     const exp = expenses[index]
@@ -1826,14 +1858,18 @@ export default function EditInvoicePage() {
         item_discount: parseFloat(editingExpense.item_discount || '0') || 0,
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
-        source: editingExpense.source || DEFAULT_SOURCE,
+        payment_method: editingExpense.payment_method || 'CASH',
+        paid_from: editingExpense.paid_from || DEFAULT_SOURCE,
+        paid_to: editingExpense.paid_to || 'GZ28US',
+        // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
+        source: editingExpense.paid_from || editingExpense.source || DEFAULT_SOURCE,
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE })
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, source: editingExpense.paid_from || editingExpense.source || DEFAULT_SOURCE, id: exp.id }; setExpenses(updated)
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' }) }
 
   // Before a quote converts to an invoice, archive its full content exactly as
   // currently stored (invoice row + line items, payments, notes) into
@@ -2026,6 +2062,7 @@ export default function EditInvoicePage() {
         amount: parseFloat(p.amount),
         payment_date: isValidDate(p.payment_date) ? p.payment_date : null,
         source: p.source || null,
+        paid_from: p.paid_from || 'GZ28US',
         paid_to: p.paid_to || 'GZ28US',
         amount_brl: p.paid_to === 'GZ28BR' ? (parseFloat(p.amount_brl || '') || null) : null,
         receipt_url: p.receipt_url || null,
@@ -2059,7 +2096,11 @@ export default function EditInvoicePage() {
         stock_donor: ex.stock_donor || null,
         export_status: ex.export_status || 'FRESH',
         kit_name: ex.kit_name || null,
-        source: ex.source || DEFAULT_SOURCE,
+        payment_method: ex.payment_method || 'CASH',
+        paid_from: ex.paid_from || DEFAULT_SOURCE,
+        paid_to: ex.paid_to || 'GZ28US',
+        // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
+        source: ex.paid_from || ex.source || DEFAULT_SOURCE,
         position: expenses.indexOf(ex),
       }))).select('id')
       if (e) { alert(e.message); return }
@@ -2390,16 +2431,24 @@ export default function EditInvoicePage() {
                   </div>
                   <div className="flex gap-3">
                     <div className="flex-1">
-                      <label className="block mb-1 text-sm text-gray-400">PAID VIA</label>
+                      <label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                       <select value={p.source} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], source: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
                         {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                        {p.source && !paymentSources.includes(p.source) && <option value={p.source}>{p.source}</option>}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+                      <select value={p.paid_from || 'GZ28US'} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], paid_from: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
+                        {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        {p.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(p.paid_from) && <option value={p.paid_from}>{p.paid_from}</option>}
                       </select>
                     </div>
                     <div className="flex-1">
                       <label className="block mb-1 text-sm text-gray-400">PAID TO</label>
                       <select value={p.paid_to || 'GZ28US'} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], paid_to: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
-                        <option value="GZ28US">GZ28US</option>
-                        <option value="GZ28BR">GZ28BR</option>
+                        {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        {p.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(p.paid_to) && <option value={p.paid_to}>{p.paid_to}</option>}
                       </select>
                     </div>
                   </div>
@@ -2421,7 +2470,7 @@ export default function EditInvoicePage() {
                   </div>
                 </div>
               ))}
-              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
+              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">
@@ -2842,14 +2891,34 @@ export default function EditInvoicePage() {
                 <datalist id="supplier-options">{suppliers.map(s => <option key={s.name} value={s.name} />)}</datalist>
               </div>
               <div className="flex-1 min-w-[10rem]">
-                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
-                <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={`${smallInputClass} w-full`} />
-              </div>
-              <div className="flex-1 min-w-[10rem]">
                 <label className="block mb-1 text-xs text-gray-400">ITEM</label>
                 <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={smallInputClass + ' w-full'} />
               </div>
               <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
+            </div>
+            {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid) / PAID TO (whose bill). */}
+            <div className="flex gap-2 flex-wrap">
+              <div className="flex-1 min-w-[8rem]">
+                <label className="block mb-1 text-xs text-gray-400">PAYMENT METHOD</label>
+                <select value={newExpense.payment_method} onChange={(e) => setNewExpense({ ...newExpense, payment_method: e.target.value })} className={`${smallInputClass} w-full`}>
+                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  {newExpense.payment_method && !(PAYMENT_METHODS as readonly string[]).includes(newExpense.payment_method) && <option value={newExpense.payment_method}>{newExpense.payment_method}</option>}
+                </select>
+              </div>
+              <div className="flex-1 min-w-[8rem]">
+                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
+                <select value={newExpense.paid_from} onChange={(e) => setNewExpense({ ...newExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full`}>
+                  {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {newExpense.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(newExpense.paid_from) && <option value={newExpense.paid_from}>{newExpense.paid_from}</option>}
+                </select>
+              </div>
+              <div className="flex-1 min-w-[8rem]">
+                <label className="block mb-1 text-xs text-gray-400">PAID TO</label>
+                <select value={newExpense.paid_to} onChange={(e) => setNewExpense({ ...newExpense, paid_to: e.target.value })} className={`${smallInputClass} w-full`}>
+                  {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {newExpense.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(newExpense.paid_to) && <option value={newExpense.paid_to}>{newExpense.paid_to}</option>}
+                </select>
+              </div>
             </div>
             <div className="flex gap-2 flex-wrap">
               <div className="flex-1 min-w-[5rem]"><label className="block mb-1 text-xs text-gray-400">AMOUNT</label>
@@ -3014,10 +3083,6 @@ export default function EditInvoicePage() {
                                 <input type="text" list="supplier-options" placeholder="Supplier — type to search" value={editingExpense.supplier} onChange={(e) => setEditingExpense({ ...editingExpense, supplier: e.target.value })} className={smallInputClass + ' w-full'} />
                               </div>
                               <div className="flex-1 min-w-[10rem]">
-                                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
-                                <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={`${smallInputClass} w-full`} />
-                              </div>
-                              <div className="flex-1 min-w-[10rem]">
                                 <label className="block mb-1 text-xs text-gray-400">ITEM</label>
                                 <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={smallInputClass + ' w-full'} />
                               </div>
@@ -3050,6 +3115,30 @@ export default function EditInvoicePage() {
                                   </div>
                                 </div>
                               )}
+                            </div>
+                            {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid) / PAID TO (whose bill). */}
+                            <div className="flex gap-2 flex-wrap">
+                              <div className="flex-1 min-w-[8rem]">
+                                <label className="block mb-1 text-xs text-gray-400">PAYMENT METHOD</label>
+                                <select value={editingExpense.payment_method} onChange={(e) => setEditingExpense({ ...editingExpense, payment_method: e.target.value })} className={`${smallInputClass} w-full`}>
+                                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                                  {editingExpense.payment_method && !(PAYMENT_METHODS as readonly string[]).includes(editingExpense.payment_method) && <option value={editingExpense.payment_method}>{editingExpense.payment_method}</option>}
+                                </select>
+                              </div>
+                              <div className="flex-1 min-w-[8rem]">
+                                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
+                                <select value={editingExpense.paid_from} onChange={(e) => setEditingExpense({ ...editingExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full`}>
+                                  {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                  {editingExpense.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(editingExpense.paid_from) && <option value={editingExpense.paid_from}>{editingExpense.paid_from}</option>}
+                                </select>
+                              </div>
+                              <div className="flex-1 min-w-[8rem]">
+                                <label className="block mb-1 text-xs text-gray-400">PAID TO</label>
+                                <select value={editingExpense.paid_to} onChange={(e) => setEditingExpense({ ...editingExpense, paid_to: e.target.value })} className={`${smallInputClass} w-full`}>
+                                  {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                  {editingExpense.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(editingExpense.paid_to) && <option value={editingExpense.paid_to}>{editingExpense.paid_to}</option>}
+                                </select>
+                              </div>
                             </div>
                             <div className="flex gap-4 items-start flex-wrap">
                               <div className="flex-1 min-w-[14rem]">
@@ -3371,16 +3460,23 @@ export default function EditInvoicePage() {
                 </div>
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID VIA</label>
+            <div className="flex gap-3 flex-wrap">
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                 <select value={newPayment.source} onChange={(e) => setNewPayment({ ...newPayment, source: e.target.value })} className={`${selectClass} w-full`}>
                   {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                  {newPayment.source && !paymentSources.includes(newPayment.source) && <option value={newPayment.source}>{newPayment.source}</option>}
                 </select>
               </div>
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+                <select value={newPayment.paid_from || 'GZ28US'} onChange={(e) => setNewPayment({ ...newPayment, paid_from: e.target.value })} className={`${selectClass} w-full`}>
+                  {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {newPayment.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(newPayment.paid_from) && <option value={newPayment.paid_from}>{newPayment.paid_from}</option>}
+                </select>
+              </div>
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
                 <select value={newPayment.paid_to || 'GZ28US'} onChange={(e) => setNewPayment({ ...newPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
-                  <option value="GZ28US">GZ28US</option>
-                  <option value="GZ28BR">GZ28BR</option>
+                  {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {newPayment.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(newPayment.paid_to) && <option value={newPayment.paid_to}>{newPayment.paid_to}</option>}
                 </select>
               </div>
             </div>
@@ -3428,16 +3524,23 @@ export default function EditInvoicePage() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex gap-3">
-                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID VIA</label>
+                          <div className="flex gap-3 flex-wrap">
+                            <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                               <select value={editingPayment.source} onChange={(e) => setEditingPayment({ ...editingPayment, source: e.target.value })} className={`${selectClass} w-full`}>
                                 {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
+                                {editingPayment.source && !paymentSources.includes(editingPayment.source) && <option value={editingPayment.source}>{editingPayment.source}</option>}
                               </select>
                             </div>
-                            <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                            <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+                              <select value={editingPayment.paid_from || 'GZ28US'} onChange={(e) => setEditingPayment({ ...editingPayment, paid_from: e.target.value })} className={`${selectClass} w-full`}>
+                                {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                {editingPayment.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(editingPayment.paid_from) && <option value={editingPayment.paid_from}>{editingPayment.paid_from}</option>}
+                              </select>
+                            </div>
+                            <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
                               <select value={editingPayment.paid_to || 'GZ28US'} onChange={(e) => setEditingPayment({ ...editingPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
-                                <option value="GZ28US">GZ28US</option>
-                                <option value="GZ28BR">GZ28BR</option>
+                                {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                {editingPayment.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(editingPayment.paid_to) && <option value={editingPayment.paid_to}>{editingPayment.paid_to}</option>}
                               </select>
                             </div>
                           </div>

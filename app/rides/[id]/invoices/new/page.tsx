@@ -129,6 +129,8 @@ export default function NewInvoicePage() {
         export_status: e.export_status || 'FRESH', purchase_group: e.purchase_group, kit_group: e.kit_group,
         kit_name: e.kit_name, stock_source_type: e.stock_source_type, stock_donor: e.stock_donor,
         payment_date: e.payment_date, receipt_url: e.receipt_url,
+        // Universal payment fields + legacy who-paid marker travel with the clone.
+        source: e.source, payment_method: e.payment_method, paid_from: e.paid_from, paid_to: e.paid_to,
       }))
       if (expRows.length) { const { error: ee } = await supabase.from('invoice_expenses').insert(expRows); if (ee) throw new Error('expenses: ' + ee.message) }
 
@@ -140,7 +142,7 @@ export default function NewInvoicePage() {
       const { data: pays } = await supabase.from('invoice_payments').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
       const payRows = (pays || []).map((p: any) => ({
         invoice_id: inv.id, amount: p.amount, amount_brl: p.amount_brl, payment_date: p.payment_date,
-        source: p.source, paid_to: p.paid_to, receipt_url: p.receipt_url,
+        source: p.source, paid_from: p.paid_from, paid_to: p.paid_to, receipt_url: p.receipt_url,
         description: p.description, paid_at: p.paid_at,
       }))
       if (payRows.length) { const { error: pae } = await supabase.from('invoice_payments').insert(payRows); if (pae) throw new Error('incomes: ' + pae.message) }

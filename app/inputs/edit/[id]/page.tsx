@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -69,6 +70,8 @@ export default function EditInputPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [source, setSource] = useState('')
+  // Universal payment block (inputs keep their own `source` field — no write-through).
+  const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
@@ -98,6 +101,8 @@ export default function EditInputPage() {
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
     setSource(data.source || DEFAULT_SOURCE)
+    // Initialize the payment block from the row so an untouched save round-trips.
+    setPayment(paymentFromRow(data))
     setReceiptUrls(parseReceiptUrls(data.receipt_url))
     setLoading(false)
   }
@@ -147,6 +152,7 @@ export default function EditInputPage() {
       supplier: supplier.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
+      ...paymentToRow(payment, purchaseDate),
       updated_at: new Date().toISOString(),
     }).eq('id', inputId)
     if (error) { alert(error.message); return }
@@ -242,6 +248,9 @@ export default function EditInputPage() {
             )}
           </div>
         </div>
+
+        {/* UNIVERSAL PAYMENT BLOCK — payment date = purchase date when PAID */}
+        <PaymentFields value={payment} onChange={setPayment} />
 
         <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         <a href={`${BASE_PATH}${category === 'STOCK' ? '/inventory' : '/inputs'}`} className="text-gray-400 text-xl">Cancel</a>

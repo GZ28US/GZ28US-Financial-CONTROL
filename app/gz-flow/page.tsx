@@ -24,21 +24,35 @@ export default function GzFlowPage() {
 
   async function load() {
     const GZ = 'GZ28BR'
-    // PAID FROM GZ28BR comes from EVERY expense table that carries a `source`:
-    // invoice expenses, goods, good-expenses, inputs, inventory (stock), fixed costs, staff.
+    // Universal fields (01/ago/2026): paid_from = quem pagou, paid_to = de quem
+    // é a conta. A linha entra no flow quando GZ28BR aparece em qualquer lado:
+    //   paid_from GZ28BR + conta do US  → GZ28BR PAID (abate a dívida)
+    //   paid_from US/…  + paid_to GZ28BR → GZ28US pagou conta do BR (aumenta)
+    //   paid_from GZ28BR + paid_to GZ28BR → interna do BR, fora do flow.
+    // `source` continua no filtro para linhas legadas/automatizadas sem paid_from.
+    const FLOW = `paid_from.eq.${GZ},source.eq.${GZ},paid_to.eq.${GZ}`
     const [
       { data: pays }, { data: invExps }, { data: goods }, { data: goodExps },
       { data: inputs }, { data: inventory }, { data: fixed }, { data: staff },
     ] = await Promise.all([
       supabase.from('invoice_payments').select('id, invoice_id, amount, payment_date, paid_at, description').eq('paid_to', GZ),
-      supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, payment_date, expense_date, item').eq('source', GZ),
-      supabase.from('goods').select('id, description, unit_price, quantity, purchase_date').eq('source', GZ),
-      supabase.from('good_expenses').select('id, good_id, description, amount, expense_date').eq('source', GZ),
-      supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date').eq('source', GZ),
-      supabase.from('inventory').select('id, description, unit_price, quantity, purchase_date').eq('source', GZ),
-      supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date, expense_date').eq('source', GZ),
-      supabase.from('expenses').select('id, type, description, amount, expense_date').eq('source', GZ),
+      supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, payment_date, expense_date, item, paid_from, paid_to, source').or(FLOW),
+      supabase.from('goods').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('good_expenses').select('id, good_id, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('inventory').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date, expense_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('expenses').select('id, type, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
     ])
+    // Classify one expense row: 'PAID' (BR paid a non-BR bill), 'GOT' (someone
+    // else paid a BR bill — BR owes us more), or null (BR internal / unrelated).
+    const flowSide = (r: any): 'PAID' | 'GOT' | null => {
+      const by = r.paid_from || r.source || ''
+      const bill = r.paid_to || ''
+      if (bill === GZ && by !== GZ) return 'GOT'
+      if (by === GZ && bill !== GZ) return 'PAID'
+      return null
+    }
     const invoiceIds = [...new Set([...(pays || []).map((p: any) => p.invoice_id), ...(invExps || []).map((e: any) => e.invoice_id)])].filter(Boolean)
     let invs: any[] = []
     if (invoiceIds.length) { const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id').in('id', invoiceIds); invs = data || [] }
@@ -63,22 +77,27 @@ export default function GzFlowPage() {
       const date = p.payment_date || (p.paid_at || '').slice(0, 10) || ''
       return { id: `got-${p.id}`, date, amount: num(p.amount), code: m.code, label: m.car || p.description || '', href: m.href, tip: [m.car, p.description].filter(Boolean).join(' — ') }
     }).filter((r: Row) => r.date)
-    // PAID side — union of every GZ28BR-paid source.
+    // Expense rows land on PAID (BR paid our bill) or GOT (we paid a BR bill).
     const paid: Row[] = []
+    const push = (r: any, row: Row) => {
+      const side = flowSide(r)
+      if (side === 'PAID') paid.push(row)
+      else if (side === 'GOT') got.push({ ...row, id: `us-${row.id}`, label: `US paid BR bill · ${row.label}`, tip: `GZ28US paid a GZ28BR bill — ${row.tip || row.label}` })
+    }
     for (const e of (invExps || [])) {
       const m = meta(e.invoice_id)
       const date = e.payment_date || e.expense_date || ''
       const amt = num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra)
-      paid.push({ id: `ie-${e.id}`, date, amount: amt, code: m.code, label: m.car ? `${m.car} · ${e.item}` : (e.item || ''), href: m.href, tip: [m.car, e.item].filter(Boolean).join(' — ') })
+      push(e, { id: `ie-${e.id}`, date, amount: amt, code: m.code, label: m.car ? `${m.car} · ${e.item}` : (e.item || ''), href: m.href, tip: [m.car, e.item].filter(Boolean).join(' — ') })
     }
-    for (const g of (goods || [])) paid.push({ id: `gd-${g.id}`, date: g.purchase_date || '', amount: num(g.unit_price) * (num(g.quantity) || 1), code: 'GOODS', label: g.description || '', href: `${US_BASE}/goods/${g.id}`, tip: `GOODS — ${g.description || ''}` })
-    for (const x of (goodExps || [])) paid.push({ id: `ge-${x.id}`, date: x.expense_date || '', amount: num(x.amount), code: 'GOODS', label: x.description || '', href: `${US_BASE}/goods/${x.good_id}`, tip: `GOODS expense — ${x.description || ''}` })
-    for (const x of (inputs || [])) paid.push({ id: `in-${x.id}`, date: x.purchase_date || '', amount: num(x.unit_price) * (num(x.quantity) || 1), code: 'INPUT', label: x.description || '', href: `${US_BASE}/inputs`, tip: `INPUT — ${x.description || ''}` })
-    for (const x of (inventory || [])) paid.push({ id: `iv-${x.id}`, date: x.purchase_date || '', amount: num(x.unit_price) * (num(x.quantity) || 1), code: 'STOCK', label: x.description || '', href: `${US_BASE}/inventory`, tip: `STOCK — ${x.description || ''}` })
-    for (const x of (fixed || [])) paid.push({ id: `fx-${x.id}`, date: x.payment_date || x.expense_date || '', amount: num(x.amount), code: 'FIXED', label: x.description || '', href: x.supplier_id ? `${US_BASE}/costs/fixed/${x.supplier_id}` : `${US_BASE}/costs`, tip: `FIXED COST — ${x.description || ''}` })
-    for (const x of (staff || [])) paid.push({ id: `st-${x.id}`, date: x.expense_date || '', amount: num(x.amount), code: 'STAFF', label: x.description || x.type || '', href: `${US_BASE}/staff`, tip: `STAFF — ${x.description || x.type || ''}` })
+    for (const g of (goods || [])) push(g, { id: `gd-${g.id}`, date: g.purchase_date || '', amount: num(g.unit_price) * (num(g.quantity) || 1), code: 'GOODS', label: g.description || '', href: `${US_BASE}/goods/${g.id}`, tip: `GOODS — ${g.description || ''}` })
+    for (const x of (goodExps || [])) push(x, { id: `ge-${x.id}`, date: x.expense_date || '', amount: num(x.amount), code: 'GOODS', label: x.description || '', href: `${US_BASE}/goods/${x.good_id}`, tip: `GOODS expense — ${x.description || ''}` })
+    for (const x of (inputs || [])) push(x, { id: `in-${x.id}`, date: x.purchase_date || '', amount: num(x.unit_price) * (num(x.quantity) || 1), code: 'INPUT', label: x.description || '', href: `${US_BASE}/inputs`, tip: `INPUT — ${x.description || ''}` })
+    for (const x of (inventory || [])) push(x, { id: `iv-${x.id}`, date: x.purchase_date || '', amount: num(x.unit_price) * (num(x.quantity) || 1), code: 'STOCK', label: x.description || '', href: `${US_BASE}/inventory`, tip: `STOCK — ${x.description || ''}` })
+    for (const x of (fixed || [])) push(x, { id: `fx-${x.id}`, date: x.payment_date || x.expense_date || '', amount: num(x.amount), code: 'FIXED', label: x.description || '', href: x.supplier_id ? `${US_BASE}/costs/fixed/${x.supplier_id}` : `${US_BASE}/costs`, tip: `FIXED COST — ${x.description || ''}` })
+    for (const x of (staff || [])) push(x, { id: `st-${x.id}`, date: x.expense_date || '', amount: num(x.amount), code: 'STAFF', label: x.description || x.type || '', href: `${US_BASE}/staff`, tip: `STAFF — ${x.description || x.type || ''}` })
     const paidF = paid.filter((r: Row) => r.date)
-    setGotRows(got.sort((a, b) => b.date.localeCompare(a.date)))
+    setGotRows(got.filter((r: Row) => r.date).sort((a, b) => b.date.localeCompare(a.date)))
     setPaidRows(paidF.sort((a, b) => b.date.localeCompare(a.date)))
     setLoading(false)
   }
@@ -109,7 +128,7 @@ export default function GzFlowPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-1">GZ28US vs GZ28BR Flow</h1>
-      <p className="text-gray-400 mb-6">All money GZ28BR holds for us (GOT) vs everything GZ28BR paid for us (PAID) — invoices, goods, inputs, stock, fixed costs &amp; staff.</p>
+      <p className="text-gray-400 mb-6">All money GZ28BR holds for us + GZ28US-paid GZ28BR bills (GOT) vs everything GZ28BR paid for us (PAID) — invoices, goods, inputs, stock, fixed costs &amp; staff.</p>
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
