@@ -20,6 +20,12 @@ export default function EditSupplierPage() {
   const [origName, setOrigName] = useState('')
   const [discountCode, setDiscountCode] = useState('')
   const [aliases, setAliases] = useState('')
+  const [isCarDealer, setIsCarDealer] = useState(false)
+  const [seller, setSeller] = useState('')
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  const [website, setWebsite] = useState('')
+  const [address, setAddress] = useState('')
   const [saving, setSaving] = useState(false)
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -33,6 +39,12 @@ export default function EditSupplierPage() {
     setOrigName(data.name || '')
     setDiscountCode(data.discount_code || '')
     setAliases(data.aliases || '')
+    setIsCarDealer(!!data.is_car_dealer)
+    setSeller(data.seller || '')
+    setPhone(data.phone || '')
+    setEmail(data.email || '')
+    setWebsite(data.website || '')
+    setAddress(data.ordering_method || '')
     setLoading(false)
   }
 
@@ -45,6 +57,12 @@ export default function EditSupplierPage() {
       name: name.trim(),
       discount_code: discountCode.trim() || null,
       aliases: aliases.trim() || null,
+      is_car_dealer: isCarDealer,
+      seller: seller.trim() || null,
+      phone: phone.trim() || null,
+      email: email.trim() || null,
+      website: website.trim() || null,
+      ordering_method: address.trim() || null,
       updated_at: new Date().toISOString(),
     }
     const { error } = await updateSupplier(supplierId, row)
@@ -85,6 +103,35 @@ export default function EditSupplierPage() {
           <input type="text" value={discountCode} onChange={(e) => setDiscountCode(e.target.value)} className={inputClass} placeholder="e.g. DLR20" />
           <p className="text-gray-400 text-sm mt-1">Code to enter at checkout to get our dealer price (after logging in with our account). Leave blank if none.</p>
         </div>
+
+        <button type="button" onClick={() => setIsCarDealer(v => !v)} className={`w-full px-5 py-4 rounded-2xl text-xl font-bold text-left ${isCarDealer ? 'bg-gradient-to-r from-slate-300 to-slate-100 text-black' : 'bg-gray-900 border border-gray-700 text-gray-400'}`}>
+          🏆 CAR DEALER {isCarDealer ? '— ON' : '— OFF'}
+        </button>
+        {isCarDealer && (
+          <>
+            <p className="text-gray-400 text-sm -mt-2">A car store we have real prestige with. Contacts below show on the suppliers list.</p>
+            <div>
+              <label className="block mb-2 text-lg font-bold">CONTACT PERSON(S)</label>
+              <input type="text" value={seller} onChange={(e) => setSeller(e.target.value)} className={inputClass} placeholder="e.g. Chris Norris (sales) + Kyle Kent (Finance)" />
+            </div>
+            <div>
+              <label className="block mb-2 text-lg font-bold">PHONE</label>
+              <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} placeholder="(555) 555-5555" />
+            </div>
+            <div>
+              <label className="block mb-2 text-lg font-bold">EMAIL</label>
+              <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="contact@dealer.com" />
+            </div>
+            <div>
+              <label className="block mb-2 text-lg font-bold">WEBSITE</label>
+              <input type="text" value={website} onChange={(e) => setWebsite(e.target.value)} className={inputClass} placeholder="https://dealer.com" />
+            </div>
+            <div>
+              <label className="block mb-2 text-lg font-bold">ADDRESS</label>
+              <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} className={inputClass} placeholder="Street, City, ST ZIP" />
+            </div>
+          </>
+        )}
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">

@@ -12,8 +12,13 @@ type Supplier = {
   discount: number | null
   discount_type: string | null
   is_dealership: boolean | null
+  is_car_dealer: boolean | null
   account_number: number | null
   website: string | null
+  seller: string | null
+  phone: string | null
+  email: string | null
+  ordering_method: string | null
 }
 
 function pad3(n: number | null) { return n != null ? String(n).padStart(3, '0') : '—' }
@@ -107,9 +112,18 @@ export default function SuppliersPage() {
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-2xl font-bold">{supplier.name}</h2>
                   {isDealer && <span className="px-3 py-1 rounded-full text-sm font-bold bg-yellow-600 text-black">DEALERSHIP · D-{pad3(supplier.account_number)}</span>}
+                  {supplier.is_car_dealer && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gradient-to-r from-slate-300 to-slate-100 text-black">🏆 CAR DEALER</span>}
                 </div>
-                <p className="text-lg text-gray-400">Discount: {(() => { const hv = huntAvg[normName(supplier.name)]; return hv ? `avg ${hv.avg.toFixed(1)}% (${hv.count} validated part${hv.count > 1 ? 's' : ''})` : '— no validated parts yet' })()}</p>
-                {isDealer && supplier.website && (
+                {supplier.is_car_dealer ? (
+                  <>
+                    {supplier.seller && <p className="text-lg text-gray-300">{supplier.seller}</p>}
+                    <p className="text-lg text-gray-400">{[supplier.phone, supplier.email].filter(Boolean).join(' · ')}</p>
+                    {supplier.ordering_method && <p className="text-base text-gray-500">{supplier.ordering_method}</p>}
+                  </>
+                ) : (
+                  <p className="text-lg text-gray-400">Discount: {(() => { const hv = huntAvg[normName(supplier.name)]; return hv ? `avg ${hv.avg.toFixed(1)}% (${hv.count} validated part${hv.count > 1 ? 's' : ''})` : '— no validated parts yet' })()}</p>
+                )}
+                {(isDealer || supplier.is_car_dealer) && supplier.website && (
                   <a href={withProtocol(supplier.website)} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-lg break-all">{supplier.website}</a>
                 )}
               </div>
