@@ -92,6 +92,18 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   const sent = await recentSentBodies()
   const alreadySent = (amount: number) => sent.some((b) => b.includes(usd(amount)))
 
+  // UNIVERSAL (Márcio, 01/ago/2026): "ENTROU ou SAIU $? REPORT. Alterações,
+  // atualizações ou criação de RETROATIVO? Nada de report — não entrou nem
+  // saiu $, é só controle." O termômetro é a DATA DO DINHEIRO: pagamento dos
+  // últimos dias = movimento real → reporta; data antiga = registro de
+  // histórico → marca em silêncio e cala.
+  const RECENT_DAYS = 3
+  const isRecentMoney = (d: string | null | undefined) => {
+    if (!d) return false
+    const t = new Date(String(d).slice(0, 10) + 'T00:00:00Z').getTime()
+    return Number.isFinite(t) && Date.now() - t < RECENT_DAYS * 86400e3
+  }
+
   // 1) invoice_expenses — regra do Márcio (30/jul): reporta SÓ QUANDO PAGA
   // (payment_date preenchido), nunca no cadastro nem na exclusão. Linhas não
   // pagas ficam SEM marca — quando forem pagas, o report sai naquele momento.
@@ -107,7 +119,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     if (seenSet.has(key)) continue
     if (e.invoices?.is_quote) continue
     const label = `EXPENSE ${e.invoices?.invoice_code || '—'} ${usd(e.price)}`
-    if (!alreadySent(Number(e.price))) {
+    if (!alreadySent(Number(e.price)) && isRecentMoney(e.payment_date)) {
       await sendReport([`*EXPENSE PAID* ${e.invoices?.invoice_code || '—'}`, `${e.payment_date || ''} — *${usd(e.price)}*`, String(e.item || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
@@ -125,8 +137,8 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     if (seenSet.has(key)) continue
     if (p.invoices?.is_quote) continue
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
-    if (!alreadySent(Number(p.amount))) {
-      const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
+    const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
+    if (!alreadySent(Number(p.amount)) && isRecentMoney(paidOn)) {
       await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}`, `${paidOn} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
@@ -142,7 +154,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     if (seenSet.has(key)) continue
     const who = s.seasons?.staff?.name || '—'
     const label = `EXPENSE STAFF ${s.seasons?.season_code || ''} ${usd(s.amount)}`
-    if (!alreadySent(Number(s.amount))) {
+    if (!alreadySent(Number(s.amount)) && isRecentMoney(s.payment_date)) {
       await sendReport([`*EXPENSE PAID — STAFF* ${s.seasons?.season_code || '—'} — ${who}`, `${s.payment_date || ''} — *${usd(s.amount)}*`, String(s.description || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
