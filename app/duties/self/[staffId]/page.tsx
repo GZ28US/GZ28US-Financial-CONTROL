@@ -108,11 +108,14 @@ export default function StaffDutySelfPage() {
   }
   function eventBody(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'FINISHED', d: Duty, secs: number, extra?: string): string {
     const icon = action === 'PAUSED' ? '⏸' : action === 'FINISHED' ? '✅' : '▶'
+    // Formato do Márcio (01/ago/2026): nome em negrito sem @menção, e uma linha
+    // "Carro - Tarefa" (só o nome do carro, sem códigos, sem badge [P1]/numeração).
+    const carName = d.carLabel ? (d.carLabel.split(' — ').pop() || '') : ''
+    const desc = d.description.replace(/^\s*\d+[.)]\s*/, '')
     const lines = [
       `${icon} DUTY ${action}`,
-      `👤 ${staff?.name || ''} ${mark()}`,
-      `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
-      `${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''}`,
+      `👤 *${staff?.name || ''}*`,
+      `${carName ? `${carName} - ` : ''}${desc}`,
     ]
     if (d.promised) lines.push(`🗓 PROMISED TO: ${fmtPromised(d.promised)}`)
     if (action === 'STARTED' || action === 'RESUMED') lines.push(`At: ${fmtDT(new Date().toISOString())}`)

@@ -89,14 +89,19 @@ export default function PaymentFields({ value, onChange, hidePaidToggle }: {
         </select>
       </div>
       {!hidePaidToggle && (
-        <div className="sm:col-span-3 flex items-end gap-4 flex-wrap">
-          <button
-            type="button"
-            onClick={() => set({ paid: !value.paid })}
-            className={`px-6 py-4 rounded-2xl text-xl font-bold ${value.paid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
-          >
-            {value.paid ? 'PAID ✓' : 'NOT PAID'}
-          </button>
+        <div className="sm:col-span-3 flex items-start gap-4 flex-wrap">
+          {/* Invisible label keeps the button on the same line as the date selects
+              (the DatePicker carries its own label + a "Clear date" line below). */}
+          <div>
+            <label className="block mb-2 text-lg font-bold">&nbsp;</label>
+            <button
+              type="button"
+              onClick={() => set({ paid: !value.paid })}
+              className={`px-6 py-4 rounded-2xl text-xl font-bold ${value.paid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+            >
+              {value.paid ? 'PAID ✓' : 'NOT PAID'}
+            </button>
+          </div>
           {value.paid && (
             <div className="flex-1 min-w-[14rem]">
               <DatePicker label="PAYMENT DATE" value={value.paymentDate} onChange={(d) => set({ paymentDate: d })} />

@@ -216,12 +216,14 @@ export default function StaffDutiesPage() {
 
   function dutyEventBody(action: 'STARTED' | 'PAUSED' | 'DONE', d: Duty, secs: number, endIso?: string): string {
     const icon = action === 'STARTED' ? '▶' : action === 'PAUSED' ? '⏸' : '✅'
-    const where = `${d.invoiceCode}${d.carLabel ? ' · ' + d.carLabel : ''}`
+    // Formato do Márcio (01/ago/2026): nome em negrito sem @menção, e uma linha
+    // "Carro - Tarefa" (só o nome do carro, sem códigos, sem badge [P1]/numeração).
+    const carName = d.carLabel ? (d.carLabel.split(' — ').pop() || '') : ''
+    const desc = d.description.replace(/^\s*\d+[.)]\s*/, '')
     const lines = [
       `${icon} DUTY ${action}`,
-      `👤 ${staffNameOf(d.staff_id)} ${staffMark(d.staff_id)}`,
-      `[${dutyPriorityBadge(d.priority).label}] ${d.description}`,
-      where,
+      `👤 *${staffNameOf(d.staff_id)}*`,
+      `${carName ? `${carName} - ` : ''}${desc}`,
     ]
     if (d.promised) lines.push(`🗓 PROMISED TO: ${fmtPromised(d.promised)}`)
     if (action === 'STARTED') lines.push(`Started: ${fmtDT(new Date().toISOString())}`)
