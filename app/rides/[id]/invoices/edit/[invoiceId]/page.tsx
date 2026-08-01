@@ -232,9 +232,9 @@ export default function EditInvoicePage() {
   // execute it. CRUD persists immediately (not deferred to SAVE CHANGES).
   const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([])
   const [duties, setDuties] = useState<{ id: string; staff_id: string | null; description: string; done: boolean; priority: string }[]>([])
-  const [newDuty, setNewDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
+  const [newDuty, setNewDuty] = useState<{ order: string; description: string; staff_id: string; priority: string }>({ order: '', description: '', staff_id: '', priority: '1' })
   const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
-  const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
+  const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; staff_id: string; priority: string }>({ order: '', description: '', staff_id: '', priority: '1' })
   // Every duty description ever written (all invoices, deduped) — powers the
   // type-ahead datalist on the duty description fields, like the supplier field.
   const [dutySuggestions, setDutySuggestions] = useState<string[]>([])
@@ -1746,14 +1746,21 @@ export default function EditInvoicePage() {
       return (a.description || '').localeCompare(b.description || '', undefined, { numeric: true, sensitivity: 'base' })
     })
   }
+  // Ordem visual das duties (Márcio, 01/ago/2026): o dropdown 01–15 vira o
+  // prefixo "NN. " da descrição — a ordenação alfanumérica existente faz o resto.
+  const dutyOrderOf = (desc: string) => { const m = /^(\d{1,2})[.)]\s/.exec(desc || ''); return m ? m[1].padStart(2, '0') : '' }
+  const stripDutyOrder = (desc: string) => (desc || '').replace(/^\d{1,2}[.)]\s*/, '')
+  const withDutyOrder = (order: string, desc: string) => order ? `${order}. ${stripDutyOrder(desc).trim()}` : desc.trim()
+
   async function addDuty() {
     if (!newDuty.description.trim()) { alert('Enter the duty description'); return }
     if (!newDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
-    const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: newDuty.staff_id, description: newDuty.description.trim(), done: false, priority: newDuty.priority }]).select().single()
+    const desc = withDutyOrder(newDuty.order, newDuty.description)
+    const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: newDuty.staff_id, description: desc, done: false, priority: newDuty.priority }]).select().single()
     if (error || !data) { alert(error?.message || 'Error adding duty'); return }
     setDuties(sortDuties([...duties, { id: data.id, staff_id: data.staff_id, description: data.description, done: false, priority: String(data.priority || '1') }], staffList))
     if (!dutySuggestions.includes(data.description)) setDutySuggestions([...dutySuggestions, data.description].sort((a, b) => a.localeCompare(b)))
-    setNewDuty({ description: '', staff_id: '', priority: '1' })
+    setNewDuty({ order: '', description: '', staff_id: '', priority: '1' })
   }
   async function toggleDutyDone(index: number) {
     const d = duties[index]
@@ -1761,15 +1768,21 @@ export default function EditInvoicePage() {
     if (error) { alert(error.message); return }
     const a = [...duties]; a[index] = { ...d, done: !d.done }; setDuties(sortDuties(a, staffList))
   }
-  function startEditDuty(index: number) { setEditingDutyIndex(index); setEditingDuty({ description: duties[index].description, staff_id: duties[index].staff_id || '', priority: duties[index].priority || '1' }) }
+  function startEditDuty(index: number) {
+    const desc = duties[index].description
+    const order = dutyOrderOf(desc)
+    setEditingDutyIndex(index)
+    setEditingDuty({ order, description: order ? stripDutyOrder(desc) : desc, staff_id: duties[index].staff_id || '', priority: duties[index].priority || '1' })
+  }
   async function saveEditDuty() {
     if (editingDutyIndex === null) return
     if (!editingDuty.description.trim()) { alert('Enter the duty description'); return }
     if (!editingDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
     const d = duties[editingDutyIndex]
-    const { error } = await supabase.from('invoice_duties').update({ description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', d.id)
+    const desc = withDutyOrder(editingDuty.order, editingDuty.description)
+    const { error } = await supabase.from('invoice_duties').update({ description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', d.id)
     if (error) { alert(error.message); return }
-    const a = [...duties]; a[editingDutyIndex] = { ...d, description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority }; setDuties(sortDuties(a, staffList))
+    const a = [...duties]; a[editingDutyIndex] = { ...d, description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority }; setDuties(sortDuties(a, staffList))
     setEditingDutyIndex(null)
   }
   async function removeDuty(index: number) {
@@ -3724,6 +3737,10 @@ export default function EditInvoicePage() {
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
             <p className="text-sm text-gray-400">Duties to be done on this invoice, each matched to the STAFF member who will execute it.</p>
             <div className="flex gap-3 flex-wrap">
+              <select value={newDuty.order} onChange={(e) => setNewDuty({ ...newDuty, order: e.target.value })} className={selectClass} title="Order (01–15)">
+                <option value="">—</option>
+                {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
               <input type="text" list="duty-options" placeholder="Duty description — type to search" value={newDuty.description} onChange={(e) => setNewDuty({ ...newDuty, description: e.target.value })} className={`${smallInputClass} flex-1 min-w-[14rem]`} />
               <datalist id="duty-options">{dutySuggestions.map(d => <option key={d} value={d} />)}</datalist>
               <select value={newDuty.staff_id} onChange={(e) => setNewDuty({ ...newDuty, staff_id: e.target.value })} className={`${selectClass} min-w-[12rem]`}>
@@ -3731,11 +3748,11 @@ export default function EditInvoicePage() {
                 {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <select value={newDuty.priority} onChange={(e) => setNewDuty({ ...newDuty, priority: e.target.value })} className={selectClass} title="Priority">
-                <option value="1">Priority 1</option>
-                <option value="2">Priority 2</option>
-                <option value="3">Priority 3</option>
-                <option value="4">Priority 4</option>
-                <option value="STANDBY">StandBy</option>
+                <option value="1">Block Priority 1</option>
+                <option value="2">Block Priority 2</option>
+                <option value="3">Block Priority 3</option>
+                <option value="4">Block Priority 4</option>
+                <option value="STANDBY">Block StandBy</option>
               </select>
             </div>
             <button onClick={addDuty} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD DUTY</button>
@@ -3745,18 +3762,26 @@ export default function EditInvoicePage() {
                   <div key={d.id}>
                     {editingDutyIndex === index ? (
                       <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
-                        <input type="text" list="duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${smallInputClass} w-full`} />
-                        <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${selectClass} w-full`}>
-                          <option value="">— STAFF —</option>
-                          {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                        <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${selectClass} w-full`}>
-                          <option value="1">Priority 1</option>
-                          <option value="2">Priority 2</option>
-                          <option value="3">Priority 3</option>
-                          <option value="4">Priority 4</option>
-                          <option value="STANDBY">StandBy</option>
-                        </select>
+                        <div className="flex gap-3">
+                          <select value={editingDuty.order} onChange={(e) => setEditingDuty({ ...editingDuty, order: e.target.value })} className={`${selectClass} shrink-0`} title="Order (01–15)">
+                            <option value="">—</option>
+                            {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                          <input type="text" list="duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${smallInputClass} flex-1`} />
+                        </div>
+                        <div className="flex gap-3">
+                          <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${selectClass} flex-1 min-w-0`}>
+                            <option value="">— STAFF —</option>
+                            {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                          <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${selectClass} shrink-0`}>
+                            <option value="1">Block Priority 1</option>
+                            <option value="2">Block Priority 2</option>
+                            <option value="3">Block Priority 3</option>
+                            <option value="4">Block Priority 4</option>
+                            <option value="STANDBY">Block StandBy</option>
+                          </select>
+                        </div>
                         <div className="flex gap-3">
                           <button onClick={saveEditDuty} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                           <button onClick={() => setEditingDutyIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>

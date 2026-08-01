@@ -143,6 +143,15 @@ export default function StaffDutySelfPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // duty_events: o sistema guarda TODO evento por conta própria (Márcio,
+  // 01/ago/2026) — o grupo é aviso, o banco é a memória. Fire-and-forget.
+  function logDutyEvent(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'DONE', d: Duty, secs: number | null) {
+    void fetch(`${BASE_PATH}/api/duty-events`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duty_id: d.id, staff_id: staffId, staff_name: staff?.name || '', action, seconds_banked: secs, description: d.description, car_label: d.carLabel, invoice_code: d.invoiceCode }),
+    }).catch(() => {})
+  }
+
   // ── timer actions (same rules as the shop's DUTIES page) ───────────────────
   const segSeconds = (startedAt: string) => Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
 
@@ -166,6 +175,8 @@ export default function StaffDutySelfPage() {
       }))
       const extra = othersRunning.length ? `⏸ auto-paused: ${othersRunning.map(r => r.description).join(', ')}` : undefined
       void report(eventBody(resumed ? 'RESUMED' : 'STARTED', d, 0, extra))
+      for (const r of othersRunning) logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string))
+      logDutyEvent(resumed ? 'RESUMED' : 'STARTED', d, null)
     } finally { busyRef.current = false }
   }
 
@@ -177,6 +188,7 @@ export default function StaffDutySelfPage() {
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
       void report(eventBody('PAUSED', d, secs))
+      logDutyEvent('PAUSED', d, secs)
     } finally { busyRef.current = false }
   }
 
@@ -189,6 +201,7 @@ export default function StaffDutySelfPage() {
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
       void report(eventBody('FINISHED', d, secs))
+      logDutyEvent('DONE', d, secs)
     } finally { busyRef.current = false }
   }
 

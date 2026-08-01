@@ -75,7 +75,7 @@ export default function StaffDutiesPage() {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'TODO' | 'DONE'>('TODO')
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingDuty, setEditingDuty] = useState<{ description: string; staff_id: string; priority: string }>({ description: '', staff_id: '', priority: '1' })
+  const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; staff_id: string; priority: string }>({ order: '', description: '', staff_id: '', priority: '1' })
   // SEND WHATSAPP popups: the per-member duties-list send (asks up to which
   // priority) and the START/PAUSE/DONE notification. Every duties message goes
   // ONLY to the staff group, with the member @marked in the text.
@@ -241,20 +241,40 @@ export default function StaffDutiesPage() {
     setDuties(duties.map(d => d.id === duty.id ? { ...d, done: !d.done } : d))
   }
 
-  function startEdit(d: Duty) { setEditingId(d.id); setEditingDuty({ description: d.description, staff_id: d.staff_id || '', priority: d.priority || '1' }) }
+  // Ordem visual das duties (Márcio, 01/ago/2026): o dropdown 01–15 vira o
+  // prefixo "NN. " da descrição — a ordenação alfanumérica existente faz o resto.
+  const dutyOrderOf = (desc: string) => { const m = /^(\d{1,2})[.)]\s/.exec(desc || ''); return m ? m[1].padStart(2, '0') : '' }
+  const stripDutyOrder = (desc: string) => (desc || '').replace(/^\d{1,2}[.)]\s*/, '')
+  const withDutyOrder = (order: string, desc: string) => order ? `${order}. ${stripDutyOrder(desc).trim()}` : desc.trim()
+
+  function startEdit(d: Duty) {
+    const order = dutyOrderOf(d.description)
+    setEditingId(d.id)
+    setEditingDuty({ order, description: order ? stripDutyOrder(d.description) : d.description, staff_id: d.staff_id || '', priority: d.priority || '1' })
+  }
   async function saveEdit() {
     if (!editingId) return
     if (!editingDuty.description.trim()) { alert('Enter the duty description'); return }
     if (!editingDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
-    const { error } = await supabase.from('invoice_duties').update({ description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', editingId)
+    const desc = withDutyOrder(editingDuty.order, editingDuty.description)
+    const { error } = await supabase.from('invoice_duties').update({ description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', editingId)
     if (error) { alert(error.message); return }
-    setDuties(duties.map(d => d.id === editingId ? { ...d, description: editingDuty.description.trim(), staff_id: editingDuty.staff_id, priority: editingDuty.priority } : d))
+    setDuties(duties.map(d => d.id === editingId ? { ...d, description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority } : d))
     setEditingId(null)
   }
   async function removeDuty(d: Duty) {
     const { error } = await supabase.from('invoice_duties').delete().eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.filter(x => x.id !== d.id))
+  }
+
+  // duty_events: o sistema guarda TODO evento por conta própria (Márcio,
+  // 01/ago/2026) — o grupo é aviso, o banco é a memória. Fire-and-forget.
+  function logDutyEvent(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'DONE', d: Duty, secs: number | null) {
+    void fetch(`${BASE_PATH}/api/duty-events`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duty_id: d.id, staff_id: d.staff_id, staff_name: staffNameOf(d.staff_id), action, seconds_banked: secs, description: d.description, car_label: d.carLabel, invoice_code: d.invoiceCode }),
+    }).catch(() => {})
   }
 
   // ── Time tracking ──────────────────────────────────────────────────────────
@@ -279,6 +299,8 @@ export default function StaffDutiesPage() {
       return x
     }))
     setNotifyPopup({ title: '▶ DUTY STARTED', body: dutyEventBody('STARTED', d, 0) })
+    for (const r of othersRunning) logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string))
+    logDutyEvent(d.work_started_at ? 'RESUMED' : 'STARTED', d, null)
   }
 
   async function pauseDuty(d: Duty) {
@@ -288,6 +310,7 @@ export default function StaffDutiesPage() {
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
     setNotifyPopup({ title: '⏸ DUTY PAUSED', body: dutyEventBody('PAUSED', d, secs) })
+    logDutyEvent('PAUSED', d, secs)
   }
 
   async function finishDuty(d: Duty) {
@@ -297,6 +320,7 @@ export default function StaffDutiesPage() {
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
     setNotifyPopup({ title: '✅ DUTY DONE', body: dutyEventBody('DONE', d, secs, nowIso) })
+    logDutyEvent('DONE', d, secs)
   }
 
   const q = search.trim().toLowerCase()
@@ -375,18 +399,24 @@ export default function StaffDutiesPage() {
                 <div key={d.id} className={i < g.rows.length - 1 ? 'border-b border-gray-800/60' : ''}>
                   {editingId === d.id ? (
                     <div className="p-4 my-2 space-y-3 bg-gray-800 border-l-4 border-blue-600 rounded-2xl">
-                      <input type="text" list="duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${inputClass} w-full`} />
-                      <div className="flex gap-3 flex-wrap">
-                        <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${inputClass} flex-1 min-w-[12rem]`}>
+                      <div className="flex gap-3">
+                        <select value={editingDuty.order} onChange={(e) => setEditingDuty({ ...editingDuty, order: e.target.value })} className={`${inputClass} shrink-0`} title="Order (01–15)">
+                          <option value="">—</option>
+                          {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                        <input type="text" list="duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${inputClass} flex-1 min-w-0`} />
+                      </div>
+                      <div className="flex gap-3">
+                        <select value={editingDuty.staff_id} onChange={(e) => setEditingDuty({ ...editingDuty, staff_id: e.target.value })} className={`${inputClass} flex-1 min-w-0`}>
                           <option value="">— STAFF —</option>
                           {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
-                        <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={inputClass}>
-                          <option value="1">Priority 1</option>
-                          <option value="2">Priority 2</option>
-                          <option value="3">Priority 3</option>
-                          <option value="4">Priority 4</option>
-                          <option value="STANDBY">StandBy</option>
+                        <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${inputClass} shrink-0`}>
+                          <option value="1">Block Priority 1</option>
+                          <option value="2">Block Priority 2</option>
+                          <option value="3">Block Priority 3</option>
+                          <option value="4">Block Priority 4</option>
+                          <option value="STANDBY">Block StandBy</option>
                         </select>
                       </div>
                       <div className="flex gap-3">
