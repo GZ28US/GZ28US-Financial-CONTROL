@@ -34,6 +34,9 @@ function monthlyOf(r: FixedCostSupplier): number {
   // Old rows carry lowercase periodicity ("monthly") — normalize before matching.
   switch ((r.periodicity || '').toUpperCase()) {
     case 'MONTHLY': return perPeriod
+    // SEMIANNUAL (01/ago/2026, apólice Progressive Commercial): prêmio do
+    // semestre inteiro em amount_1 — a média mensal é /6.
+    case 'SEMIANNUAL': return perPeriod / 6
     case 'ANNUAL': return perPeriod / 12
     case 'WEEKLY': return (perPeriod * 52) / 12
     case 'DAILY': return (perPeriod * 365) / 12
