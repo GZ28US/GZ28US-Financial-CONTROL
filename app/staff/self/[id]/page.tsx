@@ -29,11 +29,19 @@ const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram', 'Facebook']
 const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 const labelClass = 'block mb-2 text-sm font-bold text-gray-400'
 
+// 'yyyy-mm-dd' -> 'MMM d, yyyy' without new Date() (avoids the UTC day-shift).
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+function formatBirthDateUS(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return iso
+  return `${MONTHS_SHORT[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}, ${m[1]}`
+}
+
 const L = {
   en: {
     intro: 'Fill in your details and tap', save: 'SAVE', saving: 'SAVING…', requiredNote: 'are required.',
     name: 'FULL NAME', email: 'E-MAIL', instagram: 'INSTAGRAM', phone: 'PHONE / WHATSAPP',
-    doc: 'CPF / SSN / ITIN', zip: 'ZIP CODE', address: 'ADDRESS', city: 'CITY', state: 'STATE',
+    doc: 'CPF / SSN / ITIN', birth: 'BIRTH DATE', zip: 'ZIP CODE', address: 'ADDRESS', city: 'CITY', state: 'STATE',
     pref: 'PREFERRED WAY TO RECEIVE MESSAGES',
     missing: 'Please fill in the required fields: ', badCpf: 'Invalid CPF. Please correct it.',
     notFoundT: 'Record not found', notFoundP: `Check the link you received or contact ${BRAND}.`,
@@ -44,7 +52,7 @@ const L = {
   pt: {
     intro: 'Preencha seus dados e toque em', save: 'SALVAR', saving: 'SALVANDO…', requiredNote: 'são obrigatórios.',
     name: 'NOME COMPLETO', email: 'E-MAIL', instagram: 'INSTAGRAM', phone: 'TELEFONE / WHATSAPP',
-    doc: 'CPF / SSN / ITIN', zip: 'ZIP CODE (CEP americano)', address: 'ENDEREÇO', city: 'CIDADE', state: 'ESTADO',
+    doc: 'CPF / SSN / ITIN', birth: 'DATA DE NASCIMENTO', zip: 'ZIP CODE (CEP americano)', address: 'ENDEREÇO', city: 'CIDADE', state: 'ESTADO',
     pref: 'COMO PREFERE RECEBER MENSAGENS',
     missing: 'Preencha os campos obrigatórios: ', badCpf: 'CPF inválido. Corrija o CPF.',
     notFoundT: 'Cadastro não encontrado', notFoundP: `Confira o link recebido ou fale com a ${BRAND}.`,
@@ -73,6 +81,7 @@ export default function StaffSelfFormPage() {
     instagram: '',
     phone: '+1 ',
     cpf: '',
+    birth_date: '',
     zip: '',
     address: '',
     city: '',
@@ -95,6 +104,7 @@ export default function StaffSelfFormPage() {
       instagram: data.instagram || '',
       phone: data.phone || '+1 ',
       cpf: data.cpf || '',
+      birth_date: data.birth_date || '',
       zip: data.zip || '',
       address: data.address || '',
       city: data.city || '',
@@ -110,6 +120,7 @@ export default function StaffSelfFormPage() {
     if (!form.email.trim()) missing.push(t.email)
     if (form.phone.replace(/\D/g, '').length < 10) missing.push(t.phone)
     if (!form.cpf.trim()) missing.push(t.doc)
+    if (!form.birth_date) missing.push(t.birth)
     if (!form.zip.trim()) missing.push(t.zip)
     if (!form.address.trim()) missing.push(t.address)
     if (!form.city.trim()) missing.push(t.city)
@@ -130,6 +141,7 @@ export default function StaffSelfFormPage() {
         p_instagram: form.instagram,
         p_phone: form.phone,
         p_cpf: form.cpf.trim(),
+        p_birth_date: form.birth_date || null,
         p_zip: form.zip,
         p_address: form.address,
         p_city: form.city,
@@ -151,6 +163,7 @@ export default function StaffSelfFormPage() {
     if (form.instagram.trim()) rows.push(`Instagram: ${form.instagram.trim()}`)
     if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
     if (form.cpf.trim()) rows.push(`Document: ${form.cpf.trim()}`)
+    if (form.birth_date) rows.push(`Birth date: ${formatBirthDateUS(form.birth_date)}`)
     if (form.zip.trim()) rows.push(`ZIP: ${form.zip.trim()}`)
     if (form.address.trim()) rows.push(`Address: ${form.address.trim()}`)
     if (form.city.trim()) rows.push(`City: ${form.city.trim()}`)
@@ -253,6 +266,11 @@ export default function StaffSelfFormPage() {
               className={inputClass}
               placeholder="000.000.000-00 / 000-00-0000"
             />
+          </div>
+
+          <div>
+            <label className={labelClass}>{t.birth} {req}</label>
+            <input type="date" value={form.birth_date} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} className={inputClass} max={new Date().toISOString().slice(0, 10)} />
           </div>
 
           <div>

@@ -35,6 +35,7 @@ export default function EditStaffPage() {
   const [email, setEmail] = useState('')
   const [instagram, setInstagram] = useState('')
   const [cpf, setCpf] = useState('')
+  const [birthDate, setBirthDate] = useState('')
   const [zip, setZip] = useState('')
   const [address, setAddress] = useState('')
   const [city, setCity] = useState('')
@@ -65,6 +66,7 @@ export default function EditStaffPage() {
     setEmail(data.email || '')
     setInstagram(data.instagram || '')
     setCpf(data.cpf || '')
+    setBirthDate(data.birth_date || '')
     setZip(data.zip || '')
     setAddress(data.address || '')
     setCity(data.city || '')
@@ -89,6 +91,7 @@ export default function EditStaffPage() {
         email: email.trim() || null,
         instagram: instagram.trim() || null,
         cpf: cpf.trim() || null,
+        birth_date: birthDate || null,
         zip: zip.trim() || null,
         address: address.trim() || null,
         city: city.trim() || null,
@@ -175,6 +178,11 @@ export default function EditStaffPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">CPF / SSN / ITIN</label>
           <input value={cpf} onChange={(e) => setCpf(e.target.value)} className={inputClass} placeholder="000.000.000-00 / 000-00-0000" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">BIRTH DATE</label>
+          <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className={inputClass} />
         </div>
 
         <div>
