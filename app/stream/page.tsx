@@ -89,7 +89,7 @@ export default function StreamPage() {
     // REFUNDED (fully closed); newest first inside each.
     const rank = (r: StreamRow) => {
       if ((r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today) return 0
-      return { BOUGHT: 1, SHIPPED: 2, CANCELLED: 3, DELIVERED: 4, REPORTED_PT: 5, DELIVERED_BR: 6, REFUNDED: 7 }[r.status]
+      return { BOUGHT: 1, SHIPPED: 2, CANCELLED: 3, DELIVERED: 4, REPORTED_PT: 5, DELIVERED_BR: 6, REFUNDED: 7 }[r.status] ?? 8
     }
     return rows.filter(r => {
       if (chip !== 'ALL' && r.status !== chip) return false
@@ -306,7 +306,9 @@ export default function StreamPage() {
       ) : (
         <div className="space-y-4">
           {visible.map(r => {
-            const meta = STREAM_STATUS_META[r.status]
+            // Unknown status (bad manual insert) must degrade to a visible chip,
+            // never white-screen the whole board.
+            const meta = STREAM_STATUS_META[r.status] ?? { label: String(r.status), icon: '❓', cls: 'bg-gray-800 text-gray-300' }
             const w = r.invoice_id ? where[r.invoice_id] : undefined
             const late = (r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today
             const editing = editTracking?.id === r.id
