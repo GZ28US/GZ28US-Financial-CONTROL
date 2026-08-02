@@ -54,11 +54,13 @@ export default function EditSeasonPage() {
   async function renumberSeasons() {
     const { data } = await supabase
       .from('seasons')
-      .select('id, date_entry')
+      .select('id, date_entry, date_conclusion')
       .eq('staff_id', staffId)
-      .order('date_entry', { ascending: true })
 
     if (!data) return
+
+    // Unknown-entry seasons number by their conclusion date (chronological slot).
+    data.sort((a, b) => ((a.date_entry || a.date_conclusion || '9999') as string).localeCompare(b.date_entry || b.date_conclusion || '9999'))
 
     for (let i = 0; i < data.length; i++) {
       const code = `US.${String(i + 1).padStart(3, '0')}`

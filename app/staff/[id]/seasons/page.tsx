@@ -72,11 +72,13 @@ export default function SeasonsPage() {
   async function renumberSeasons() {
     const { data } = await supabase
       .from('seasons')
-      .select('id, date_entry')
+      .select('id, date_entry, date_conclusion')
       .eq('staff_id', staffId)
-      .order('date_entry', { ascending: true })
 
     if (!data) return
+
+    // Unknown-entry seasons number by their conclusion date (chronological slot).
+    data.sort((a, b) => ((a.date_entry || a.date_conclusion || '9999') as string).localeCompare(b.date_entry || b.date_conclusion || '9999'))
 
     for (let i = 0; i < data.length; i++) {
       const code = `US.${String(i + 1).padStart(3, '0')}`
@@ -92,9 +94,14 @@ export default function SeasonsPage() {
       .from('seasons')
       .select('*')
       .eq('staff_id', staffId)
-      .order('date_entry', { ascending: false })
 
-    setSeasons(seasonData || [])
+    // Most recent first. A season with unknown date_entry (historical gap) sorts
+    // by its conclusion date, so it lands in its true chronological slot instead
+    // of floating to the top (Postgres puts NULLs first on DESC).
+    const sorted = [...(seasonData || [])].sort((a, b) =>
+      ((b.date_entry || b.date_conclusion || '') as string).localeCompare(a.date_entry || a.date_conclusion || '')
+    )
+    setSeasons(sorted)
 
     if (seasonData && seasonData.length > 0) {
       const seasonIds = seasonData.map(s => s.id)
