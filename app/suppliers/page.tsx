@@ -128,6 +128,7 @@ export default function SuppliersPage() {
                 )}
               </div>
               <div className="flex gap-3 flex-wrap shrink-0">
+                <Link href={`/suppliers/orders/${supplier.id}`} className="bg-purple-700 hover:bg-purple-600 px-5 py-3 rounded-2xl font-bold">ORDERS</Link>
                 <Link href={editHref} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                 <button onClick={() => setConfirmId(supplier.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                 <Link href={`/parts?supplierId=${supplier.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">PARTS</Link>
