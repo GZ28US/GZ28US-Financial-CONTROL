@@ -11,6 +11,16 @@ import { BASE_PATH } from '@/lib/utils'
 
 const STAFF_GROUP_NAME = 'GZ28US - STAFF'
 
+// ── MANOBRAS — the permanent yard duty (Márcio, 02/ago/2026) ────────────────
+// Cars go OUT every morning and back IN every evening, done by WHOEVER is
+// available. The card is PINNED on top of EVERY member's page and never goes
+// away: each run is banked in duty_events under the member who pressed the
+// buttons (duty_id null — there is no invoice_duties row behind it). DONE
+// resets the timer and the card stays for the next round. The running timer
+// lives in localStorage on the member's own phone.
+const MANOBRAS_DESC = 'MANOBRAS — cars OUT (morning) / cars IN (end of day)'
+type ManobrasState = { seconds: number; startedAt: string | null; workStartedAt: string | null }
+
 type Duty = {
   id: string
   description: string
@@ -70,6 +80,22 @@ export default function StaffDutySelfPage() {
   const busyRef = useRef(false)
   const [, setTick] = useState(0)
   useEffect(() => { const t = setInterval(() => setTick(v => v + 1), 1000); return () => clearInterval(t) }, [])
+
+  const [manobras, setManobras] = useState<ManobrasState>({ seconds: 0, startedAt: null, workStartedAt: null })
+  const manobrasKey = `gz28-manobras-${staffId}`
+  useEffect(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(manobrasKey) || 'null')
+      if (s && typeof s === 'object') setManobras({ seconds: Number(s.seconds) || 0, startedAt: s.startedAt || null, workStartedAt: s.workStartedAt || null })
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  function saveManobras(next: ManobrasState) {
+    setManobras(next)
+    try { localStorage.setItem(manobrasKey, JSON.stringify(next)) } catch {}
+  }
+  // The synthetic Duty shape lets MANOBRAS ride the same report/log pipeline.
+  const manobrasDuty = (s: ManobrasState): Duty => ({ id: 'MANOBRAS', description: MANOBRAS_DESC, done: false, priority: '1', invoiceCode: '—', carLabel: '', time_seconds: s.seconds, time_started_at: s.startedAt, work_started_at: s.workStartedAt, work_ended_at: null, promised: null })
 
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get('max')
@@ -148,7 +174,7 @@ export default function StaffDutySelfPage() {
   function logDutyEvent(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'DONE', d: Duty, secs: number | null) {
     void fetch(`${BASE_PATH}/api/duty-events`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ duty_id: d.id, staff_id: staffId, staff_name: staff?.name || '', action, seconds_banked: secs, description: d.description, car_label: d.carLabel, invoice_code: d.invoiceCode }),
+      body: JSON.stringify({ duty_id: d.id === 'MANOBRAS' ? null : d.id, staff_id: staffId, staff_name: staff?.name || '', action, seconds_banked: secs, description: d.description, car_label: d.carLabel, invoice_code: d.invoiceCode }),
     }).catch(() => {})
   }
 
@@ -173,11 +199,63 @@ export default function StaffDutySelfPage() {
         if (othersRunning.some(r => r.id === x.id) && x.time_started_at) return { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null }
         return x
       }))
-      const extra = othersRunning.length ? `⏸ auto-paused: ${othersRunning.map(r => r.description).join(', ')}` : undefined
+      // A running MANOBRAS timer also auto-pauses — one thing at a time.
+      let manobrasPaused = false
+      if (manobras.startedAt) {
+        const msecs = manobras.seconds + segSeconds(manobras.startedAt)
+        const paused = { ...manobras, seconds: msecs, startedAt: null }
+        saveManobras(paused)
+        logDutyEvent('PAUSED', manobrasDuty(paused), msecs)
+        manobrasPaused = true
+      }
+      const autoPaused = [...othersRunning.map(r => r.description), ...(manobrasPaused ? ['MANOBRAS'] : [])]
+      const extra = autoPaused.length ? `⏸ auto-paused: ${autoPaused.join(', ')}` : undefined
       void report(eventBody(resumed ? 'RESUMED' : 'STARTED', d, 0, extra))
       for (const r of othersRunning) logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string))
       logDutyEvent(resumed ? 'RESUMED' : 'STARTED', d, null)
     } finally { busyRef.current = false }
+  }
+
+  // ── MANOBRAS actions — same reporting/logging pipeline, timer on the phone ──
+  async function startManobras() {
+    if (busyRef.current) return; busyRef.current = true
+    try {
+      const nowIso = new Date().toISOString()
+      const resumed = !!manobras.workStartedAt
+      const othersRunning = duties.filter(x => x.time_started_at)
+      for (const r of othersRunning) {
+        const secs = (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string)
+        const { error } = await supabase.rpc('duty_self_update', { p_id: r.id, p_time_seconds: secs, p_time_started_at: null, p_work_started_at: r.work_started_at, p_work_ended_at: r.work_ended_at, p_done: r.done })
+        if (error) { alert(error.message); return }
+      }
+      setDuties(duties.map(x => x.time_started_at ? { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null } : x))
+      const next = { seconds: manobras.seconds, startedAt: nowIso, workStartedAt: manobras.workStartedAt || nowIso }
+      saveManobras(next)
+      const extra = othersRunning.length ? `⏸ auto-paused: ${othersRunning.map(r => r.description).join(', ')}` : undefined
+      void report(eventBody(resumed ? 'RESUMED' : 'STARTED', manobrasDuty(next), 0, extra))
+      for (const r of othersRunning) logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string))
+      logDutyEvent(resumed ? 'RESUMED' : 'STARTED', manobrasDuty(next), null)
+    } finally { busyRef.current = false }
+  }
+
+  function pauseManobras() {
+    if (!manobras.startedAt || busyRef.current) return
+    const secs = manobras.seconds + segSeconds(manobras.startedAt)
+    const next = { ...manobras, seconds: secs, startedAt: null }
+    saveManobras(next)
+    void report(eventBody('PAUSED', manobrasDuty(next), secs))
+    logDutyEvent('PAUSED', manobrasDuty(next), secs)
+  }
+
+  function finishManobras() {
+    if (busyRef.current) return
+    if (!manobras.workStartedAt && !manobras.startedAt) return // never started this round
+    const secs = manobras.seconds + (manobras.startedAt ? segSeconds(manobras.startedAt) : 0)
+    const finished = manobrasDuty({ seconds: secs, startedAt: null, workStartedAt: manobras.workStartedAt })
+    void report(eventBody('FINISHED', finished, secs))
+    logDutyEvent('DONE', finished, secs)
+    // Reset for the next round — the card NEVER goes away.
+    saveManobras({ seconds: 0, startedAt: null, workStartedAt: null })
   }
 
   async function pauseDuty(d: Duty) {
@@ -222,6 +300,33 @@ export default function StaffDutySelfPage() {
         <p className="text-purple-300 font-bold text-lg">👤 {staff?.name}</p>
         <p className="text-gray-500 text-sm">Press START when you begin, PAUSE when you stop, DONE when you finish. Every press reports to GZ28 automatically.</p>
       </div>
+
+      {/* 📌 MANOBRAS — permanent duty, pinned on top of EVERY member's page */}
+      {(() => {
+        const running = !!manobras.startedAt
+        const secsNow = manobras.seconds + (manobras.startedAt ? (Date.now() - new Date(manobras.startedAt).getTime()) / 1000 : 0)
+        return (
+          <div className={`bg-gray-900 border-2 rounded-2xl p-4 mb-3 ${running ? 'border-amber-500' : 'border-purple-600'}`}>
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-full text-xs font-bold shrink-0 bg-purple-900 text-purple-300">📌 PERMANENT</span>
+              <p className="font-bold text-base leading-tight">{MANOBRAS_DESC}</p>
+            </div>
+            <p className="text-sm text-gray-400 mt-1">Any member, any time — whoever does it gets the credit.</p>
+            {(running || manobras.seconds > 0) && (
+              <p className={`text-sm mt-1 font-bold ${running ? 'text-amber-400' : 'text-gray-400'}`}>⏱ {fmtDur(secsNow)}{running ? ' · running' : ' · paused'}</p>
+            )}
+            <div className="flex gap-2 mt-3">
+              {!running && (
+                <button onClick={() => startManobras()} className="flex-1 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-500 px-4 py-3 rounded-xl font-black text-base">▶ {manobras.workStartedAt ? 'RESUME' : 'START'}</button>
+              )}
+              {running && (
+                <button onClick={() => pauseManobras()} className="flex-1 bg-amber-600 hover:bg-amber-500 active:bg-amber-400 text-black px-4 py-3 rounded-xl font-black text-base">⏸ PAUSE</button>
+              )}
+              <button onClick={() => finishManobras()} className="flex-1 bg-green-700 hover:bg-green-600 active:bg-green-500 px-4 py-3 rounded-xl font-black text-base">✅ DONE</button>
+            </div>
+          </div>
+        )
+      })()}
 
       {open.length === 0 ? (
         <p className="text-xl text-gray-400 bg-gray-900 border border-gray-700 rounded-2xl p-5">🎉 No open duties — all done!</p>
