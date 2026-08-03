@@ -64,11 +64,6 @@ export default function SupplierOrdersPage() {
     })()
   }, [supplierId])
 
-  const q = search.trim().toLowerCase()
-  const visible = orders.filter(o =>
-    (region === 'ALL' || o.region === region) &&
-    (!q || [o.order_number, o.description, o.car_label, o.notes, o.ship_to].some(v => String(v || '').toLowerCase().includes(q))))
-
   // Store-credit account: payment entries with method CREDIT+ add to the credit
   // balance, CREDIT- consume it. Running balance accumulates chronologically over
   // ALL orders — region/search filters never change the account.
@@ -80,8 +75,8 @@ export default function SupplierOrdersPage() {
     }
     return { gen, used }
   }
-  // Accumulation follows the CREDIT event's own date (a credit can be applied
-  // long after the order was placed), falling back to the order date.
+  // Effective date: the CREDIT event's own date (a credit can be applied long
+  // after the order was placed), falling back to the order date.
   const creditDate = (o: Order) => {
     let d: string | null = null
     for (const p of o.payments || []) {
@@ -89,6 +84,13 @@ export default function SupplierOrdersPage() {
     }
     return d || o.order_date || ''
   }
+
+  const q = search.trim().toLowerCase()
+  // Listing runs newest → oldest by effective date; dateless rows sink to the end.
+  const visible = orders.filter(o =>
+    (region === 'ALL' || o.region === region) &&
+    (!q || [o.order_number, o.description, o.car_label, o.notes, o.ship_to].some(v => String(v || '').toLowerCase().includes(q))))
+    .sort((a, b) => creditDate(b).localeCompare(creditDate(a)))
   const creditBal: Record<string, number> = {}
   let creditNow = 0
   for (const o of [...orders].sort((a, b) =>
