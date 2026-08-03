@@ -83,13 +83,13 @@ function Hours7Chart({ days, secs }: { days: string[]; secs?: number[] }) {
   const fmtDay = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
   return (
     <div className="border-b border-gray-700 pb-3 mb-2">
-      <p className="text-xs font-bold text-gray-400 mb-2">⏱ WORKED HOURS — LAST 7 DAYS · total {full(total)}</p>
+      <p className="text-xs font-bold text-gray-400 mb-2">⏱ WORKED HOURS — LAST {days.length} DAYS · total {full(total)}</p>
       <div className="flex items-end gap-2 h-20">
         {days.map((d, i) => {
           const v = vals[i] || 0
           const hpx = v ? Math.max(5, Math.round((v / max) * 56)) : 2
           return (
-            <div key={d} className="flex flex-col items-center justify-end gap-0.5 flex-1 max-w-[3.5rem]" title={`${fmtDay(d)} — ${full(v)}`}>
+            <div key={d} className="flex flex-col items-center justify-end gap-0.5 flex-1" title={`${fmtDay(d)} — ${full(v)}`}>
               <span className="text-[10px] text-gray-300 font-bold leading-none">{compact(v)}</span>
               <div className={`w-full rounded-t ${v ? 'bg-emerald-600' : 'bg-gray-800'}`} style={{ height: `${hpx}px` }} />
               <span className="text-[10px] text-gray-500 font-bold leading-none">{DOW[new Date(d + 'T12:00:00Z').getUTCDay()]}</span>

@@ -20,11 +20,13 @@ export async function GET() {
   if (!url || !key) return NextResponse.json({ error: 'no service key' }, { status: 500 })
   const db = createClient(url, key, { auth: { persistSession: false } })
 
-  // The 7 local days, today included, oldest first.
+  // The last N local days, today included, oldest first. 14 fills the board
+  // card edge to edge (Márcio, 02/ago/2026 — "até completar a tela").
+  const N = 14
   const todayLocal = localDay(new Date().toISOString())
   const base = new Date(todayLocal + 'T00:00:00Z').getTime()
   const days: string[] = []
-  for (let i = 6; i >= 0; i--) days.push(new Date(base - i * 86400000).toISOString().slice(0, 10))
+  for (let i = N - 1; i >= 0; i--) days.push(new Date(base - i * 86400000).toISOString().slice(0, 10))
 
   // Deltas need the WHOLE history: seconds_banked is cumulative per
   // staff|duty, so an event before the window still sets the baseline.
