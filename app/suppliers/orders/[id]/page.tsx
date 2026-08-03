@@ -80,10 +80,19 @@ export default function SupplierOrdersPage() {
     }
     return { gen, used }
   }
+  // Accumulation follows the CREDIT event's own date (a credit can be applied
+  // long after the order was placed), falling back to the order date.
+  const creditDate = (o: Order) => {
+    let d: string | null = null
+    for (const p of o.payments || []) {
+      if ((p.method === 'CREDIT+' || p.method === 'CREDIT-') && p.date && (!d || p.date < d)) d = p.date
+    }
+    return d || o.order_date || ''
+  }
   const creditBal: Record<string, number> = {}
   let creditNow = 0
   for (const o of [...orders].sort((a, b) =>
-      String(a.order_date || '').localeCompare(String(b.order_date || '')) ||
+      creditDate(a).localeCompare(creditDate(b)) ||
       (creditOf(b).gen - creditOf(a).gen))) {
     const c = creditOf(o)
     creditNow += c.gen - c.used
