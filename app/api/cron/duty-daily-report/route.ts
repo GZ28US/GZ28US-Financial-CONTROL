@@ -31,8 +31,11 @@ export function computeDeltas(events: Ev[]) {
   for (const e of events) {
     const k = `${e.staff_name || ''}|${e.description || ''}`
     if ((e.action === 'PAUSED' || e.action === 'DONE') && e.seconds_banked != null) {
-      e._delta = Math.max(0, e.seconds_banked - (lastBank[k] || 0))
-      lastBank[k] = Math.max(lastBank[k] || 0, e.seconds_banked)
+      // Bank menor que o anterior = RODADA NOVA (a MANOBRAS zera a cada DONE) —
+      // o banco inteiro é tempo novo, não regressão.
+      const prev = lastBank[k] || 0
+      e._delta = e.seconds_banked >= prev ? e.seconds_banked - prev : e.seconds_banked
+      lastBank[k] = e.seconds_banked
     }
   }
 }

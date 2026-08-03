@@ -68,6 +68,39 @@ const dutyTextColor = (p: string) => (
   : p === '2' ? 'text-orange-300'
   : 'text-red-300')
 
+// ── LAST 7 DAYS chart (Márcio, 02/ago/2026) — shown only while the member's
+// board is expanded, right above the name line. Data comes aggregated from
+// /api/duty-hours (duty_events is service-role-only under RLS).
+type Hours7 = { days: string[]; byStaff: Record<string, number[]> }
+function Hours7Chart({ days, secs }: { days: string[]; secs?: number[] }) {
+  if (!days.length) return null
+  const vals = secs || days.map(() => 0)
+  const max = Math.max(...vals, 1)
+  const compact = (s: number) => (s >= 3600 ? `${(s / 3600).toFixed(1).replace(/\.0$/, '')}h` : s > 0 ? `${Math.round(s / 60)}m` : '')
+  const full = (s: number) => { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h}h ${m}m` : m ? `${m}m` : '0m' }
+  const total = vals.reduce((a, b) => a + b, 0)
+  const DOW = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+  const fmtDay = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  return (
+    <div className="border-b border-gray-700 pb-3 mb-2">
+      <p className="text-xs font-bold text-gray-400 mb-2">⏱ WORKED HOURS — LAST 7 DAYS · total {full(total)}</p>
+      <div className="flex items-end gap-2 h-20">
+        {days.map((d, i) => {
+          const v = vals[i] || 0
+          const hpx = v ? Math.max(5, Math.round((v / max) * 56)) : 2
+          return (
+            <div key={d} className="flex flex-col items-center justify-end gap-0.5 flex-1 max-w-[3.5rem]" title={`${fmtDay(d)} — ${full(v)}`}>
+              <span className="text-[10px] text-gray-300 font-bold leading-none">{compact(v)}</span>
+              <div className={`w-full rounded-t ${v ? 'bg-emerald-600' : 'bg-gray-800'}`} style={{ height: `${hpx}px` }} />
+              <span className="text-[10px] text-gray-500 font-bold leading-none">{DOW[new Date(d + 'T12:00:00Z').getUTCDay()]}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function StaffDutiesPage() {
   const [staffList, setStaffList] = useState<{ id: string; name: string; phone: string | null }[]>([])
   const [duties, setDuties] = useState<Duty[]>([])
@@ -92,6 +125,12 @@ export default function StaffDutiesPage() {
   // 1s ticker so running timers count live on screen.
   const [, setTick] = useState(0)
   useEffect(() => { const t = setInterval(() => setTick(v => v + 1), 1000); return () => clearInterval(t) }, [])
+
+  // Last-7-days worked hours per member, for the chart on the expanded board.
+  const [hours7, setHours7] = useState<Hours7 | null>(null)
+  useEffect(() => {
+    void fetch(`${BASE_PATH}/api/duty-hours`).then(r => r.json()).then(j => { if (j?.days) setHours7(j) }).catch(() => {})
+  }, [])
 
   useEffect(() => { void load() }, [])
 
@@ -383,6 +422,10 @@ export default function StaffDutiesPage() {
         <div className="space-y-6 max-w-4xl">
           {groups.map(g => (
             <div key={g.key} className="bg-gray-900 border border-gray-700 rounded-3xl p-5">
+              {/* Chart sits right above the member's name line, ONLY while open */}
+              {openGroups.has(g.key) && g.key !== 'none' && (
+                <Hours7Chart days={hours7?.days || []} secs={hours7?.byStaff?.[g.key]} />
+              )}
               <div className={`flex justify-between items-center gap-3 flex-wrap ${openGroups.has(g.key) ? 'border-b border-gray-700 pb-2 mb-2' : ''}`}>
                 <button onClick={() => toggleGroup(g.key)} className="flex items-center gap-2 text-left">
                   <span className="text-gray-400 text-lg">{openGroups.has(g.key) ? '▾' : '▸'}</span>
