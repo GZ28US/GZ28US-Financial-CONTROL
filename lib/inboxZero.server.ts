@@ -49,9 +49,13 @@ const ESIGN_SUBJ = /signature requested|review and sign|aguarda(ndo)? sua assina
 // Despachante (Auto Tags / Jordan, caso 30/jul: quote do RAMbo achado nos Itens
 // Excluídos): o thread da frota fica na caixa de entrada, intocado, sempre.
 const DESPACHANTE_FROM = /autotagsandtitle/i
+// K&G / O-1A (caso 03/ago: pacote ASSINATURA FORMULÁRIOS varrido da caixa): tudo
+// dos advogados de imigração fica na caixa de entrada até o Márcio dar destino.
+const KG_FROM = /guerra\.law|kravitz/i
 function ruleSlot1(subj: string, from: string): string | null {
   if (ESIGN_FROM.test(from) || ESIGN_SUBJ.test(subj)) return 'KEEP'
   if (DESPACHANTE_FROM.test(from)) return 'KEEP'
+  if (KG_FROM.test(from)) return 'KEEP'
   if (/verification code|c[óo]digo de verifica/i.test(subj)) return 'DELETE'
   if (/united\.com|latam|delta\.com|aa\.com|copaair|voegol|azul/i.test(from)) return 'Businesses/Trips'
   if (/delivery attempted|out for delivery|delivered/i.test(subj)) return 'Shopping'
@@ -149,6 +153,8 @@ async function zeroGmail(db: SupabaseClient, out: string[]): Promise<void> {
     const hdr = (n: string) => String(full.payload?.headers?.find((h: any) => h.name === n)?.value || '')
     // Mesma lei do 30/jul: pedido de assinatura eletrônica fica na caixa.
     if (ESIGN_FROM.test(hdr('From')) || ESIGN_SUBJ.test(hdr('Subject'))) continue
+    // K&G / O-1A (03/ago): advogados de imigração ficam na caixa.
+    if (KG_FROM.test(hdr('From'))) continue
     ids.push(m.id)
   }
   if (ids.length) {
