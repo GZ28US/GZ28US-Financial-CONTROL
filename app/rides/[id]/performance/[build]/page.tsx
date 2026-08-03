@@ -836,7 +836,8 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
                   <td className="py-3 text-right">
                     <div className="flex gap-2 justify-end">
                       {!p.foreign && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
-                      {!p.foreign && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
+                      {/* BoneStock is removable even when foreign (shared table) — Márcio 03/ago. */}
+                      {(!p.foreign || isBoneStock(p)) && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
                       <button onClick={() => { setReportToClient(false); setReportPull(p) }} disabled={sendingId === p.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-1 rounded-xl font-bold text-sm">{sendingId === p.id ? 'SENDING…' : 'SEND'}</button>
                     </div>
                   </td>
