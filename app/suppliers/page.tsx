@@ -30,6 +30,7 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
   // Per-supplier REAL average discount % — computed from the Parts DB across every
   // validated part (scans + hunts): OUR PRICE vs open-market MAP. No typed supplier
   // discount exists anymore; this is the only discount figure shown.
@@ -72,6 +73,10 @@ export default function SuppliersPage() {
     loadSuppliers()
   }
 
+  const q = search.trim().toLowerCase()
+  const visibleSuppliers = suppliers.filter(s =>
+    !q || [s.name, s.seller, s.email, s.phone, s.website].some(v => String(v || '').toLowerCase().includes(q)))
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
@@ -90,8 +95,9 @@ export default function SuppliersPage() {
       )}
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">SUPPLIERS ({suppliers.length})</h1>
-        <div className="flex gap-3 flex-wrap">
+        <h1 className="text-4xl font-bold">SUPPLIERS ({visibleSuppliers.length})</h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search suppliers…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
           <Link href="/suppliers/dealership/new" className="bg-yellow-600 hover:bg-yellow-500 text-black px-6 py-4 rounded-2xl text-xl font-bold">+ ADD A NEW DEALERSHIP SUPPLIER</Link>
           <Link href="/suppliers/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW SUPPLIER</Link>
         </div>
@@ -99,11 +105,11 @@ export default function SuppliersPage() {
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : suppliers.length === 0 ? (
-        <p className="text-2xl text-gray-400">No suppliers yet.</p>
+      ) : visibleSuppliers.length === 0 ? (
+        <p className="text-2xl text-gray-400">{q ? 'No suppliers match your search.' : 'No suppliers yet.'}</p>
       ) : (
         <div className="space-y-5">
-          {suppliers.map((supplier) => {
+          {visibleSuppliers.map((supplier) => {
             const isDealer = !!supplier.is_dealership
             const editHref = isDealer ? `/suppliers/dealership/edit/${supplier.id}` : `/suppliers/edit/${supplier.id}`
             return (
