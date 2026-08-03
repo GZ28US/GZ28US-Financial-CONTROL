@@ -69,6 +69,27 @@ export default function SupplierOrdersPage() {
     (region === 'ALL' || o.region === region) &&
     (!q || [o.order_number, o.description, o.car_label, o.notes, o.ship_to].some(v => String(v || '').toLowerCase().includes(q))))
 
+  // Store-credit account: payment entries with method CREDIT+ add to the credit
+  // balance, CREDIT- consume it. Running balance accumulates chronologically over
+  // ALL orders — region/search filters never change the account.
+  const creditOf = (o: Order) => {
+    let gen = 0, used = 0
+    for (const p of o.payments || []) {
+      if (p.method === 'CREDIT+') gen += Number(p.amount) || 0
+      else if (p.method === 'CREDIT-') used += Number(p.amount) || 0
+    }
+    return { gen, used }
+  }
+  const creditBal: Record<string, number> = {}
+  let creditNow = 0
+  for (const o of [...orders].sort((a, b) =>
+      String(a.order_date || '').localeCompare(String(b.order_date || '')) ||
+      (creditOf(b).gen - creditOf(a).gen))) {
+    const c = creditOf(o)
+    creditNow += c.gen - c.used
+    creditBal[o.id] = Math.round(creditNow * 100) / 100
+  }
+
   const sum = (rows: Order[], f: (o: Order) => number) => rows.reduce((s, o) => s + f(o), 0)
   const active = visible.filter(o => o.payment_status !== 'CANCELLED' && o.payment_status !== 'REFUNDED')
   const totalOrdered = sum(active, o => Number(o.total) || 0)
@@ -96,6 +117,7 @@ export default function SupplierOrdersPage() {
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-6 py-3"><p className="text-xs font-bold text-gray-400">TOTAL ORDERED</p><p className="text-2xl font-bold">{usd(totalOrdered)}</p></div>
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-6 py-3"><p className="text-xs font-bold text-gray-400">TOTAL PAID</p><p className="text-2xl font-bold text-green-400">{usd(totalPaid)}</p></div>
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-6 py-3"><p className="text-xs font-bold text-gray-400">OPEN BALANCE</p><p className={`text-2xl font-bold ${totalOrdered - totalPaid > 0.005 ? 'text-red-400' : 'text-green-400'}`}>{usd(totalOrdered - totalPaid)}</p></div>
+        <div className="bg-gray-900 border border-cyan-800 rounded-2xl px-6 py-3"><p className="text-xs font-bold text-cyan-400">CREDIT BALANCE</p><p className="text-2xl font-bold text-cyan-300">{usd(creditNow)}</p></div>
       </div>
 
       {loading ? (
@@ -115,8 +137,15 @@ export default function SupplierOrdersPage() {
                 <span className="ml-auto text-xl font-bold">{usd(o.total)}</span>
               </div>
               {o.description && <p className="text-gray-300 mt-1">{o.description}</p>}
+              {(() => { const c = creditOf(o); return (
+                <div className="flex gap-5 flex-wrap mt-1 text-sm text-gray-400">
+                  <span>Ordered: <b className="text-white">{usd(o.total)}</b></span>
+                  <span>Paid: <b className="text-green-400">{usd(o.paid_total ?? 0)}</b></span>
+                  <span>Credit: {c.gen > 0 ? <b className="text-cyan-300">+{usd(c.gen)}</b> : c.used > 0 ? <b className="text-orange-400">−{usd(c.used)}</b> : <b className="text-gray-600">—</b>}</span>
+                  <span>Credit balance: <b className="text-cyan-300">{usd(creditBal[o.id] ?? 0)}</b></span>
+                </div>
+              )})()}
               <div className="text-sm text-gray-500 mt-1 flex gap-4 flex-wrap">
-                {o.paid_total != null && <span>Paid: <b className="text-gray-300">{usd(o.paid_total)}</b></span>}
                 {(o.payments || []).map((p, i) => <span key={i}>• {p.date || ''} {usd(p.amount)} {p.method || ''}{p.ref ? ` (${p.ref})` : ''}</span>)}
                 {o.ship_to && <span>Ship-to: {o.ship_to}</span>}
                 {o.source && <span>Source: {o.source}</span>}
