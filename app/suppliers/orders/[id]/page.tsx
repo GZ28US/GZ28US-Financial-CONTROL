@@ -85,12 +85,22 @@ export default function SupplierOrdersPage() {
     return d || o.order_date || ''
   }
 
+  // Listing date rule (Márcio): an order enters the list on its order date;
+  // once paid (money or credit), its date becomes the payment date.
+  const effectiveDate = (o: Order) => {
+    let d: string | null = null
+    for (const p of o.payments || []) {
+      if (p.date && (!d || p.date > d)) d = p.date
+    }
+    return d || o.order_date || ''
+  }
+
   const q = search.trim().toLowerCase()
-  // Listing runs newest → oldest by effective date; dateless rows sink to the end.
+  // Newest → oldest by effective date; dateless rows sink to the end.
   const visible = orders.filter(o =>
     (region === 'ALL' || o.region === region) &&
     (!q || [o.order_number, o.description, o.car_label, o.notes, o.ship_to].some(v => String(v || '').toLowerCase().includes(q))))
-    .sort((a, b) => creditDate(b).localeCompare(creditDate(a)))
+    .sort((a, b) => effectiveDate(b).localeCompare(effectiveDate(a)))
   const creditBal: Record<string, number> = {}
   let creditNow = 0
   for (const o of [...orders].sort((a, b) =>
@@ -142,6 +152,7 @@ export default function SupplierOrdersPage() {
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="font-mono font-bold text-lg">{o.order_number || '—'}</span>
                 <span className="text-gray-400">{o.order_date || 'no date'}</span>
+                {(() => { const ed = effectiveDate(o); return ed && ed !== o.order_date ? <span className="text-green-500 text-sm">→ paid {ed}</span> : null })()}
                 {o.region && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${o.region === 'BR' ? 'bg-emerald-900 text-emerald-200' : 'bg-blue-900 text-blue-200'}`}>{o.region === 'BR' ? '🇧🇷 BR · PowerTrade' : '🇺🇸 US'}</span>}
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${statusBadge(o.payment_status)}`}>{o.payment_status || 'OPEN'}</span>
                 {o.car_label && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-900 text-purple-200">🚗 {o.car_label}</span>}
