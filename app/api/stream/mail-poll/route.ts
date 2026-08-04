@@ -5,7 +5,7 @@ import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
-import { runInboxZero } from '@/lib/inboxZero.server'
+import { runInboxZero, alertVipMail } from '@/lib/inboxZero.server'
 import { runStreamAnswers } from '@/lib/streamAnswers.server'
 import { runStaffPayroll } from '@/lib/staffPayroll.server'
 import type { StreamRow } from '@/lib/stream'
@@ -169,6 +169,10 @@ async function run(force: boolean): Promise<NextResponse> {
   // destino por regra; sem regra → TRIAGEM (Claudinha) + pergunta no grupo.
   let inboxZero: { actions: string[] } = { actions: [] }
   try { inboxZero = await runInboxZero(db) } catch (e) { console.error('[inbox-zero]', e) }
+  // ── VIP mail alert — contraparte ativa escreveu ⇒ WhatsApp do Márcio na hora
+  // (LEI 04/ago, caso Celina: news de negociação não pode dormir na TRIAGEM).
+  let vipMail: { alerted: string[] } = { alerted: [] }
+  try { vipMail = await alertVipMail(db) } catch (e) { console.error('[vip-mail]', e) }
   // A resposta do grupo à pergunta "a que carro/invoice pertence?" vira destino
   // no STREAM automaticamente (ordem 27/jul) — inclui acertar app US/BR.
   let streamAnswers: { applied: string[] } = { applied: [] }
@@ -190,7 +194,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }

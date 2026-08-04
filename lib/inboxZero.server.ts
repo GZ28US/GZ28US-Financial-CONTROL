@@ -39,6 +39,48 @@ async function msToken(db: SupabaseClient, account: string): Promise<string | nu
   return tk.access_token
 }
 
+// ── VIP MAIL ALERT (LEI do Márcio, 04/ago/2026 — caso Celina: resposta da
+// negociação SEMA ficou 8h na TRIAGEM sem ninguém avisar). E-mail de contraparte
+// ATIVA dispara aviso IMEDIATO no WhatsApp pessoal do Márcio, a cada poll de
+// 5 min, com o PC desligado. Cursor em whatsapp_polling_state ('vip-mail-alert')
+// garante que cada mensagem alerta uma única vez.
+const VIP_FROM = /celinak|@sema\.org|performanceracing\.com|kooksheaders|guerra\.law|kravitz|montway\.com|autotagsandtitle|venterraliving|esusu\.org|treperformance|titanmotorsports|stripe\.com|refunds@united/i
+const MARCIO_US = '13213150973@c.us'
+
+async function alertOne(from: string, subject: string, account: string): Promise<void> {
+  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
+  if (!instance || !token) return
+  const body = `📨 *VIP MAIL*\nDe: ${from}\nAssunto: ${subject}\nCaixa: ${account}\n\n${SIGNATURE}`
+  try {
+    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token, to: MARCIO_US, body }),
+    })
+  } catch { /* best-effort */ }
+}
+
+export async function alertVipMail(db: SupabaseClient): Promise<{ alerted: string[] }> {
+  const runStart = new Date().toISOString()
+  const { data } = await db.from('whatsapp_polling_state').select('*').eq('id', 'vip-mail-alert').limit(1)
+  // Cursor = ISO do último run; primeira execução olha só os últimos 15 min.
+  const cursor = data?.[0]?.last_message_id || new Date(Date.now() - 15 * 60_000).toISOString()
+  const alerted: string[] = []
+  for (const account of ['gz28us@hotmail.com', 'galpaoz28@hotmail.com']) {
+    const token = await msToken(db, account)
+    if (!token) continue
+    const url = `${G}/me/messages?$filter=receivedDateTime gt ${cursor}&$top=25&$select=subject,from,receivedDateTime`
+    const res = await fetch(url, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    for (const m of res?.value || []) {
+      const from = m.from?.emailAddress?.address || ''
+      if (!VIP_FROM.test(from)) continue
+      await alertOne(from, String(m.subject || '(sem assunto)').slice(0, 120), account)
+      alerted.push(`${account}: ${from}`)
+    }
+  }
+  await db.from('whatsapp_polling_state').upsert({ id: 'vip-mail-alert', last_message_id: runStart, updated_at: runStart })
+  return { alerted }
+}
+
 // Regras por conta: retorno = nome de pasta ('Pai/Filha' aponta subpasta), 'DELETE',
 // 'KEEP' (fica na caixa de entrada, intocado), ou null (→ TRIAGEM).
 // Mantidas alinhadas às decisões do Márcio de 26/jul.
