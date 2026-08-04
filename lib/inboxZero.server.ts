@@ -44,7 +44,7 @@ async function msToken(db: SupabaseClient, account: string): Promise<string | nu
 // ATIVA dispara aviso IMEDIATO no WhatsApp pessoal do Márcio, a cada poll de
 // 5 min, com o PC desligado. Cursor em whatsapp_polling_state ('vip-mail-alert')
 // garante que cada mensagem alerta uma única vez.
-const VIP_FROM = /celinak|@sema\.org|performanceracing\.com|kooksheaders|guerra\.law|kravitz|montway\.com|autotagsandtitle|venterraliving|esusu\.org|treperformance|titanmotorsports|stripe\.com|refunds@united/i
+const VIP_FROM = /celinak|@sema\.org|performanceracing\.com|kooksheaders|guerra\.law|kravitz|montway\.com|autotagsandtitle|venterraliving|esusu\.org|treperformance|titanmotorsports|stripe\.com|refunds@united|highhorseperformance\.com|kramerautoplex\.com|joesal67@gmail\.com/i
 const MARCIO_US = '13213150973@c.us'
 
 async function alertOne(from: string, subject: string, account: string): Promise<void> {
