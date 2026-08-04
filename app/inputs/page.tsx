@@ -141,7 +141,7 @@ export default function InputsPage() {
       })
     }
     return list
-  }, [rows])
+  }, [catRows])
 
   // ── Money summary (independent of search/period so the numbers are stable) ──
   const td = todayYmd()
