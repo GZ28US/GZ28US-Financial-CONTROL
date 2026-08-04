@@ -536,7 +536,8 @@ export default function EditInvoicePage() {
 
   async function openDbModal() {
     const { data } = await supabase.from('parts_database').select('*').order('created_at', { ascending: false, nullsFirst: false })
-    setDbItems(data || [])
+    // kit_items must be an array of members — anything else (bad enrollment) would crash every .map/.reduce below
+    setDbItems((data || []).map((d: any) => ({ ...d, kit_items: Array.isArray(d.kit_items) ? d.kit_items : [] })))
     setDbSearch('')
     setShowDbModal(true)
   }
