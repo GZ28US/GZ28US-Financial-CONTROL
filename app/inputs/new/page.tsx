@@ -30,7 +30,7 @@ function formatDate(d: string) {
 }
 
 const NEW_SUPPLIER = '+ NEW SUPPLIER'
-const categories = ['CONSUMPTION', 'STOCK']
+const categories = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS']
 
 function SupplierField({ suppliers, value, onChange }: { suppliers: string[], value: string, onChange: (v: string) => void }) {
   const [showNew, setShowNew] = useState(suppliers.length === 0)
@@ -93,7 +93,7 @@ export default function NewInputPage() {
     // vs INVENTORY list pages) so each "ADD NEW" lands in the right place.
     const sp = new URLSearchParams(window.location.search)
     const c = sp.get('category')
-    if (c === 'STOCK' || c === 'CONSUMPTION') setCategory(c)
+    if (c && categories.includes(c)) setCategory(c)
     if (sp.get('src') === 'inventory') setTable('inventory')
   }, [])
 

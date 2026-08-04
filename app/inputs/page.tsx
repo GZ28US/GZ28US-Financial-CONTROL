@@ -80,6 +80,7 @@ export default function InputsPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState<Period>('ALL')
+  const [category, setCategory] = useState('ALL')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const [confirmItemId, setConfirmItemId] = useState<string | null>(null)
@@ -108,7 +109,6 @@ export default function InputsPage() {
     const { data, error } = await supabase
       .from('inputs')
       .select('*')
-      .eq('category', 'CONSUMPTION')
       .order('purchase_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     if (error) { console.error(error); setLoading(false); return }
@@ -117,15 +117,19 @@ export default function InputsPage() {
     setExpanded(new Set())
   }
 
+  // Category chips are data-driven: whatever categories exist in the bank.
+  const categories = useMemo(() => ['ALL', ...Array.from(new Set(rows.map(r => r.category || 'CONSUMPTION'))).sort()], [rows])
+  const catRows = useMemo(() => category === 'ALL' ? rows : rows.filter(r => (r.category || 'CONSUMPTION') === category), [rows, category])
+
   // ── Purchases: one card per receipt (group), singles become 1-item purchases ──
   const purchases = useMemo<Purchase[]>(() => {
     const list: Purchase[] = []
     const seen = new Set<string>()
-    for (const r of rows) {
+    for (const r of catRows) {
       const key = r.purchase_group || r.id
       if (seen.has(key)) continue
       seen.add(key)
-      const items = r.purchase_group ? rows.filter(x => x.purchase_group === r.purchase_group) : [r]
+      const items = r.purchase_group ? catRows.filter(x => x.purchase_group === r.purchase_group) : [r]
       list.push({
         key,
         groupId: r.purchase_group,
@@ -502,11 +506,22 @@ export default function InputsPage() {
             🧾 SCAN PURCHASE
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScan(e.target.files[0]) }} />
           </label>
-          <Link href="/inputs/new?category=CONSUMPTION" className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD MANUALLY</Link>
+          <Link href={`/inputs/new?category=${category === 'ALL' ? 'CONSUMPTION' : category}`} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD MANUALLY</Link>
         </div>
       </div>
 
-      {/* CHIPS LINE: period filters + money summary */}
+      {/* CHIPS LINE: category filters + period filters + money summary */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        {categories.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCategory(c)}
+            className={`px-4 py-2 rounded-full font-bold ${category === c ? 'bg-purple-700' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+          >
+            {c === 'ALL' ? 'ALL CATEGORIES' : c}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-2 mb-8 flex-wrap">
         {PERIODS.map((p) => (
           <button

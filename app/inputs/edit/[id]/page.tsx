@@ -19,7 +19,7 @@ function parseReceiptUrls(raw: string | null): string[] {
 }
 
 const NEW_SUPPLIER = '+ NEW SUPPLIER'
-const categories = ['CONSUMPTION', 'STOCK']
+const categories = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS']
 
 function SupplierField({ suppliers, value, onChange }: { suppliers: string[], value: string, onChange: (v: string) => void }) {
   const [showNew, setShowNew] = useState(false)
