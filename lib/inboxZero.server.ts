@@ -147,11 +147,13 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
     for (const m of r?.value || []) msgs.push(m)
   }
   const cutoff = Date.now() - GRACE_MIN * 60_000
-  const triaged: string[] = []
   for (const m of msgs) {
     if (new Date(m.receivedDateTime).getTime() > cutoff) continue // recente demais — outros sweeps ainda vão agir
-    const dest = rule(String(m.subject || ''), String(m.from?.emailAddress?.address || '')) || 'TRIAGEM (Claudinha)'
-    if (dest === 'KEEP') continue // ação do Márcio pendente — fica na caixa, intocado
+    // LEI (Márcio, 04/ago/2026): e-mail SEM regra = NÃO PROCESSADO ⇒ FICA NA
+    // INBOX à vista, como pendência. Nada de TRIAGEM escondendo trabalho —
+    // foi assim que a resposta da Celina dormiu 8h sem ninguém ver.
+    const dest = rule(String(m.subject || ''), String(m.from?.emailAddress?.address || ''))
+    if (dest === null || dest === 'KEEP') continue // fica na caixa, intocado, até ser processado
     if (dest === 'DELETE') {
       await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}`, { method: 'DELETE', headers: gh(token) })
       out.push(`${account}: DELETE ${String(m.subject).slice(0, 40)}`)
@@ -163,52 +165,17 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
       method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: folderId }),
     })
     out.push(`${account}: ${dest} ← ${String(m.subject).slice(0, 40)}`)
-    if (dest === 'TRIAGEM (Claudinha)') triaged.push(String(m.subject || '(sem assunto)').slice(0, 60))
   }
-  // Sem report no grupo (ordem do Márcio, 27/jul): o que cair na TRIAGEM é
-  // levantado pela Claudinha diretamente com ele no chat, não pelo WhatsApp.
-  void triaged
 }
 
-async function zeroGmail(db: SupabaseClient, out: string[]): Promise<void> {
-  const { data } = await db.from('stream_mail_auth').select('*').eq('account', 'gz28us@gmail.com').limit(1)
-  const auth = data?.[0]
-  if (!auth?.refresh_token || !process.env.GOOGLE_CLIENT_ID) return
-  const tk = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, refresh_token: auth.refresh_token, grant_type: 'refresh_token' }),
-  }).then(r => r.json()).catch(() => null)
-  if (!tk?.access_token) return
-  const ghg = { Authorization: `Bearer ${tk.access_token}`, 'Content-Type': 'application/json' }
-  // No Gmail a mesma lei vale pro SPAM (28/jul): o que o filtro do Google jogou
-  // no lixo eletrônico é lido e processado igual ao que chega na caixa.
-  const list = { messages: [] as any[] }
-  for (const lbl of ['INBOX', 'SPAM']) {
-    const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=${lbl}&maxResults=25`, { headers: ghg }).then(r => r.json()).catch(() => null)
-    for (const m of r?.messages || []) list.messages.push(m)
-  }
-  const ids: string[] = []
-  const cutoff = Date.now() - GRACE_MIN * 60_000
-  for (const m of list?.messages || []) {
-    const full = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`, { headers: ghg }).then(r => r.json()).catch(() => null)
-    if (!full || Number(full.internalDate) >= cutoff) continue
-    const hdr = (n: string) => String(full.payload?.headers?.find((h: any) => h.name === n)?.value || '')
-    // Mesma lei do 30/jul: pedido de assinatura eletrônica fica na caixa.
-    if (ESIGN_FROM.test(hdr('From')) || ESIGN_SUBJ.test(hdr('Subject'))) continue
-    // K&G / O-1A (03/ago): advogados de imigração ficam na caixa.
-    if (KG_FROM.test(hdr('From'))) continue
-    ids.push(m.id)
-  }
-  if (ids.length) {
-    await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify', { method: 'POST', headers: ghg, body: JSON.stringify({ ids, removeLabelIds: ['INBOX'] }) })
-    out.push(`gmail: arquivados ${ids.length}`)
-  }
-}
+// Gmail (slot 4) — LEI (Márcio, 04/ago/2026): e-mail NÃO PROCESSADO fica na
+// inbox, à vista. O arquivamento em massa de "sobras" que existia aqui foi
+// DESLIGADO — quem tira e-mail da caixa do Gmail é o sweep que o processa de
+// verdade (purchase-capture, APPS, spam), nunca uma limpeza cega.
 
 export async function runInboxZero(db: SupabaseClient): Promise<{ actions: string[] }> {
   const out: string[] = []
   try { await zeroGraph(db, 'gz28us@hotmail.com', ruleSlot1, out) } catch (e) { console.error('[inbox-zero s1]', e) }
   try { await zeroGraph(db, 'galpaoz28@hotmail.com', ruleSlot2, out) } catch (e) { console.error('[inbox-zero s2]', e) }
-  try { await zeroGmail(db, out) } catch (e) { console.error('[inbox-zero s4]', e) }
   return { actions: out }
 }
