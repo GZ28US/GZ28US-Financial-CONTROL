@@ -293,6 +293,8 @@ export function matchRows(open: StreamRow[], msg: MailMsg): StreamRow[] {
 // para os Itens Excluídos (soft delete — recuperável). A lista é curada: só
 // remetentes puramente promocionais/golpe; transacionais nunca entram aqui.
 const SPAM_SENDERS: RegExp[] = [
+  // Phoenyx Design — ordem do Márcio 04/ago/2026: "delete this and any other email from them, forever"
+  /phoenyxdesign\.com/i,
   /zanvis\.com/i, /quickreliablecoverage/i, /insideapple\.apple\.com/i,
   /alstspecials\.com/i, /newvisionbooking\.com/i, /searshomeservices\.com/i,
   /acordocerto\.com\.br/i, /acerto\.com\.br/i, /ephysioassociates\.com/i,
