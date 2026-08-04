@@ -173,9 +173,53 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
 // DESLIGADO — quem tira e-mail da caixa do Gmail é o sweep que o processa de
 // verdade (purchase-capture, APPS, spam), nunca uma limpeza cega.
 
+// ── COLAPSO DE THREADS (LEI SACRED, Márcio 04/ago/2026, caso LUMA): thread
+// aberto mantém SÓ O ÚLTIMO e-mail na inbox; os anteriores vão pra pasta onde a
+// conversa já mora (outros e-mails do mesmo conversationId fora de inbox/sent/
+// lixo). Thread sem lar conhecido não é tocado — a sessão dá o destino primeiro.
+async function collapseThreads(db: SupabaseClient, account: string, out: string[]): Promise<void> {
+  const token = await msToken(db, account)
+  if (!token) return
+  // ids das pastas "não-lar" (well-known) — e-mail que mora nelas não define destino
+  const nonHome = new Set<string>()
+  for (const wk of ['inbox', 'sentitems', 'deleteditems', 'junkemail', 'drafts']) {
+    const f = await fetch(`${G}/me/mailFolders/${wk}`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    if (f?.id) nonHome.add(f.id)
+  }
+  const r = await fetch(`${G}/me/mailFolders/inbox/messages?$top=100&$select=id,subject,conversationId,receivedDateTime`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+  const byConv = new Map<string, any[]>()
+  for (const m of r?.value || []) {
+    if (!m.conversationId) continue
+    const arr = byConv.get(m.conversationId) || []
+    arr.push(m); byConv.set(m.conversationId, arr)
+  }
+  for (const [convId, msgs] of byConv) {
+    if (msgs.length < 2) continue
+    msgs.sort((a, b) => String(b.receivedDateTime).localeCompare(String(a.receivedDateTime)))
+    const older = msgs.slice(1) // o mais novo NUNCA sai daqui
+    // lar da conversa = pasta (fora das well-known) onde já há e-mails deste thread
+    const conv = await fetch(`${G}/me/messages?$filter=conversationId eq '${convId.replace(/'/g, "''")}'&$select=id,parentFolderId&$top=50`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    const homes: Record<string, number> = {}
+    for (const m of conv?.value || []) {
+      if (!m.parentFolderId || nonHome.has(m.parentFolderId)) continue
+      homes[m.parentFolderId] = (homes[m.parentFolderId] || 0) + 1
+    }
+    const home = Object.entries(homes).sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (!home) continue // sem lar conhecido — sessão decide primeiro
+    for (const m of older) {
+      const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, {
+        method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: home }),
+      })
+      if (mv.ok) out.push(`${account}: THREAD↓ ${String(m.subject).slice(0, 40)}`)
+    }
+  }
+}
+
 export async function runInboxZero(db: SupabaseClient): Promise<{ actions: string[] }> {
   const out: string[] = []
   try { await zeroGraph(db, 'gz28us@hotmail.com', ruleSlot1, out) } catch (e) { console.error('[inbox-zero s1]', e) }
   try { await zeroGraph(db, 'galpaoz28@hotmail.com', ruleSlot2, out) } catch (e) { console.error('[inbox-zero s2]', e) }
+  try { await collapseThreads(db, 'gz28us@hotmail.com', out) } catch (e) { console.error('[thread-collapse s1]', e) }
+  try { await collapseThreads(db, 'galpaoz28@hotmail.com', out) } catch (e) { console.error('[thread-collapse s2]', e) }
   return { actions: out }
 }
