@@ -81,6 +81,10 @@ type DuplicateInfo = { title: string; details: string; proceed: () => void }
 const paymentSources: string[] = ['', ...PAYMENT_METHODS]
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
+// A row is a pure COST line (skip on import, sink to bottom) only when it's SHORT —
+// a long part description that merely MENTIONS "shipping"/"tax" is still a part
+// (bug 04/aug: "MOPAR ... + shipping $98.53" never imported to ITEMS).
+const isCostLine = (item: string) => SKIP_WORDS.test(item || '') && String(item || '').trim().length <= 40
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 // Like isNumeric but allows a leading minus, for expense amounts (credits/refunds).
@@ -1090,7 +1094,7 @@ export default function EditInvoicePage() {
     const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string; payment_date: string | null }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
-      if (SKIP_WORDS.test(e.item)) return
+      if (isCostLine(e.item)) return
       if ((e.export_status || 'FRESH') !== 'FRESH') return
       const desc = (e.item || '').trim()
       if (!desc) return
@@ -2987,7 +2991,7 @@ export default function EditInvoicePage() {
                     // AFTER all parts, regardless of stored order. Stable sort keeps
                     // parts in their existing order and pushes extras to the bottom.
                     const orderedItems = [...groupItems].sort((a, b) =>
-                      (SKIP_WORDS.test(a.expense.item) ? 1 : 0) - (SKIP_WORDS.test(b.expense.item) ? 1 : 0)
+                      (isCostLine(a.expense.item) ? 1 : 0) - (isCostLine(b.expense.item) ? 1 : 0)
                     )
                     const firstItem = groupItems[0].expense
                     const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
