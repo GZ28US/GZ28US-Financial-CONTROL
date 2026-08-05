@@ -38,8 +38,9 @@ type Part = {
   dealer_supplier: string | null
   is_kit?: boolean
   kit_items?: { part_number?: string | null; item?: string; quantity: number }[]
-  // GZ28 SHOP catalog rows: locked — not editable/removable in the app, and
-  // enrollOne never overrides them (no scan, no gap-fill, no alias change).
+  // LOCKED rows (purchase-validated catalog): frozen — not editable/removable in
+  // the app, and enrollOne NEVER touches them (no scan, no kit, no gap-fill, no
+  // alias change — user law 05/aug/2026: locked overrides everything).
   locked?: boolean
 }
 
@@ -148,7 +149,9 @@ export default function PartsPage() {
 
   // Provenance badge — how the part got into the database. Legacy rows (null)
   // predate source tagging and were all built by scanning, so they read SCANNED.
+  // LOCKED is a status like the others and OVERRIDES them all (user law 05/aug/2026).
   function sourceBadge(p: Part): { label: string; cls: string } {
+    if (p.locked) return { label: '🔒 LOCKED', cls: 'bg-purple-800 text-purple-100' }
     if (p.source_type === 'HUNT') return { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
     if (p.source_type === 'MANUAL') return { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
     return { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
@@ -576,18 +579,18 @@ export default function PartsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <button onClick={() => toggleKit(p.id)} className="text-lg text-gray-300">{expandedKits.has(p.id) ? '▾' : '▸'}</button>
-                    <h2 className="text-xl font-bold">{p.item}</h2>
+                    <h2 className="text-xl font-bold">{p.alias || p.item}</h2>
                     <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-700 text-white">📦 KIT</span>
+                    {p.locked && <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 LOCKED</span>}
                     <span className="text-sm text-gray-400">{(p.kit_items || []).length} parts</span>
                   </div>
+                  {p.alias && <p className="text-sm text-gray-400 mb-1 pl-7">{p.item}</p>}
                   {(() => { const t = kitTotals(p); const pct = t.retail > 0 ? Math.round((1 - t.cost / t.retail) * 1000) / 10 : 0; return (
                     <p className="text-sm text-gray-400">RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(t.retail)}</span> · OUR del: <span className="text-green-400 font-bold">{formatUSD(t.cost)}</span>{t.retail > 0 ? ` (${pct}% off)` : ''}</p>
                   ) })()}
                 </div>
                 <div className="flex items-end gap-3 shrink-0">
-                  {p.locked ? (
-                    <span className="px-3 py-2 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 GZ28 SHOP — LOCKED</span>
-                  ) : (
+                  {p.locked ? null : (
                     <>
                       <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
                       <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
@@ -607,13 +610,14 @@ export default function PartsPage() {
             <div key={p.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 flex items-center justify-between gap-6 flex-wrap">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
-                  <h2 className="text-xl font-bold">{p.item}</h2>
+                  {/* The BIG TITLE is the ALIAS; the full description goes smaller below it. */}
+                  <h2 className="text-xl font-bold">{p.alias || p.item}</h2>
                   {(() => { const b = sourceBadge(p); return <span className={`px-3 py-1 rounded-full text-xs font-bold ${b.cls}`}>{b.label}</span> })()}
-                  {p.locked && <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 GZ28 SHOP</span>}
                   {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
                 </div>
+                {p.alias && <p className="text-sm text-gray-400 mb-1">{p.item}</p>}
                 {isHunt(p) ? (
                   <p className="text-sm text-gray-400">
                     RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
@@ -645,11 +649,7 @@ export default function PartsPage() {
                   </>
                 )}
               </div>
-              {p.locked ? (
-                <div className="flex items-end shrink-0">
-                  <span className="px-3 py-2 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 GZ28 SHOP — LOCKED</span>
-                </div>
-              ) : (
+              {p.locked ? null : (
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
                 <div>
                   <label className="block mb-1 text-xs text-gray-400 font-bold">ALIAS</label>

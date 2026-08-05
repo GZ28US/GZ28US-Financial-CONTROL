@@ -124,11 +124,11 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     return { status: 'inserted', error }
   }
 
-  // LOCKED rows are the validated catalog (GZ28 SHOP items + every part already
-  // confirmed by an official-supplier purchase). They ignore HUNT/manual edits —
-  // but an official-supplier SCAN always re-validates, lock or no lock
-  // (user rule 2026-07-23: "Compra escaneada é a VIDA REAL").
-  if (existing.locked && !officialScan) return { status: 'kept', error: null }
+  // LOCKED is ABSOLUTE (user law 2026-08-05: "when locked, nothing with the same
+  // part-number gets enrolled in the system, no matter what, not even in a kit").
+  // A locked row is frozen: no scan, hunt, manual entry or kit member ever touches
+  // it — everything that matches its PN resolves TO the locked row instead.
+  if (existing.locked) return { status: 'kept', error: null }
 
   // Who wins the row?
   const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
@@ -170,9 +170,9 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       alias: row.alias ?? existing.alias ?? null,
       // Weight only when the incoming scan carries one — never erase a known weight.
       ...(row.weight_lbs != null && Number(row.weight_lbs) > 0 ? { weight_lbs: row.weight_lbs } : {}),
-      // An official-supplier purchase VALIDATES the row: it locks (and a locked
-      // row stays locked). From here on only real invoices can change it —
-      // the bank compiles itself into a purchase-proven catalog.
+      // An official-supplier purchase VALIDATES the row: it locks. Once locked
+      // the row is frozen forever (the guard above) — the bank compiles itself
+      // into a purchase-proven catalog.
       locked: officialScan ? true : (existing.locked ?? false),
       updated_at: new Date().toISOString(),
     }
