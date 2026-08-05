@@ -636,7 +636,8 @@ export default function EditInvoicePage() {
       // purchase_group is a uuid column — the group id must be a real UUID, not a
       // "kit-…" string (that's what triggered "invalid input syntax for type uuid").
       const group = crypto.randomUUID()
-      const name = it.item || 'Kit'
+      // The kit's display name everywhere (expenses + items) is the ALIAS.
+      const name = it.alias || it.item || 'Kit'
       const rows = (it.kit_items || []).map((m: any) => {
         const mr = kitMemberRow(m)
         const row = expenseFromDbRow(mr, Number(m.quantity) || 1)

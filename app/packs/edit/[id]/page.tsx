@@ -245,7 +245,8 @@ export default function EditPackPage() {
       // so it survives applyPack/duplicate into invoice_parts/expenses without the
       // "invalid input syntax for type uuid" error.
       const group = crypto.randomUUID()
-      const name = it.item || 'Kit'
+      // The kit's display name everywhere (expenses + items) is the ALIAS.
+      const name = it.alias || it.item || 'Kit'
       const rows = (it.kit_items || []).map((m: any) => {
         const mr = kitMemberRow(m)
         const row = expenseFromDbRow(mr, (Number(m.quantity) || 1) * factor, group, name)
