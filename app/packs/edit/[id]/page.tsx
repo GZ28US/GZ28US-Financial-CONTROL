@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches } from '@/lib/utils'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { normPN } from '@/lib/partsDb'
 
@@ -555,8 +555,10 @@ export default function EditPackPage() {
             </div>
             <input value={dbSearch} onChange={(e) => setDbSearch(e.target.value)} placeholder="Search item, alias or part number..." className={inputClass} />
             {(() => {
-              const t = dbSearch.trim().toLowerCase()
-              const list = t ? dbItems.filter((d: any) => (d.item || '').toLowerCase().includes(t) || (d.alias || '').toLowerCase().includes(t) || (d.part_number || '').toLowerCase().includes(t)) : dbItems
+              const t = dbSearch.trim()
+              // Word-order-tolerant: every typed word must appear somewhere across
+              // item + alias + PN — "belt gates" finds "Gates ... Serpentine Belt".
+              const list = t ? dbItems.filter((d: any) => partMatches(t, d.item, d.alias, d.part_number)) : dbItems
               if (list.length === 0) return <p className="text-gray-400">No items in the parts database.</p>
               return list.map((d: any) => {
                 const isKit = !!d.is_kit
