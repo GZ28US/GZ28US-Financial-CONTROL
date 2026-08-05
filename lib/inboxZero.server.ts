@@ -215,11 +215,44 @@ async function collapseThreads(db: SupabaseClient, account: string, out: string[
   }
 }
 
+// ── ENVIADOS TAMBÉM SE PROCESSAM (LEI, Márcio 04/ago/2026): "PROCESS means all
+// emails, not only the incoming ones!" — todo e-mail ENVIADO vai pra pasta do
+// caso do seu thread (o lar do conversationId), igual fizemos à mão na sessão.
+// Enviado cujo thread ainda não tem lar fica no Sent até a sessão dar o destino.
+async function collapseSent(db: SupabaseClient, account: string, out: string[]): Promise<void> {
+  const token = await msToken(db, account)
+  if (!token) return
+  const nonHome = new Set<string>()
+  for (const wk of ['inbox', 'sentitems', 'deleteditems', 'junkemail', 'drafts']) {
+    const f = await fetch(`${G}/me/mailFolders/${wk}`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    if (f?.id) nonHome.add(f.id)
+  }
+  const cutoff = new Date(Date.now() - GRACE_MIN * 60_000).toISOString()
+  const r = await fetch(`${G}/me/mailFolders/sentitems/messages?$top=100&$select=id,subject,conversationId,sentDateTime`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+  for (const m of r?.value || []) {
+    if (!m.conversationId || String(m.sentDateTime) > cutoff) continue // 15 min de respiro
+    const conv = await fetch(`${G}/me/messages?$filter=conversationId eq '${m.conversationId.replace(/'/g, "''")}'&$select=id,parentFolderId&$top=50`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    const homes: Record<string, number> = {}
+    for (const c of conv?.value || []) {
+      if (!c.parentFolderId || nonHome.has(c.parentFolderId)) continue
+      homes[c.parentFolderId] = (homes[c.parentFolderId] || 0) + 1
+    }
+    const home = Object.entries(homes).sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (!home) continue
+    const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, {
+      method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: home }),
+    })
+    if (mv.ok) out.push(`${account}: SENT↓ ${String(m.subject).slice(0, 40)}`)
+  }
+}
+
 export async function runInboxZero(db: SupabaseClient): Promise<{ actions: string[] }> {
   const out: string[] = []
   try { await zeroGraph(db, 'gz28us@hotmail.com', ruleSlot1, out) } catch (e) { console.error('[inbox-zero s1]', e) }
   try { await zeroGraph(db, 'galpaoz28@hotmail.com', ruleSlot2, out) } catch (e) { console.error('[inbox-zero s2]', e) }
   try { await collapseThreads(db, 'gz28us@hotmail.com', out) } catch (e) { console.error('[thread-collapse s1]', e) }
   try { await collapseThreads(db, 'galpaoz28@hotmail.com', out) } catch (e) { console.error('[thread-collapse s2]', e) }
+  try { await collapseSent(db, 'gz28us@hotmail.com', out) } catch (e) { console.error('[sent-collapse s1]', e) }
+  try { await collapseSent(db, 'galpaoz28@hotmail.com', out) } catch (e) { console.error('[sent-collapse s2]', e) }
   return { actions: out }
 }
