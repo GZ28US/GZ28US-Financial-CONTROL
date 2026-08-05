@@ -5,7 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber } from '@/lib/utils'
+import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
@@ -2853,10 +2853,7 @@ export default function EditInvoicePage() {
                 const isKit = !!d.is_kit
                 const isHunt = d.source_type === 'HUNT'
                 const cost = isKit ? kitOurTotal(d) : (isHunt ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0))
-                const badge = isKit ? { label: '📦 KIT', cls: 'bg-teal-600 text-white' }
-                  : d.source_type === 'HUNT' ? { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
-                  : d.source_type === 'MANUAL' ? { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
-                  : { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
+                const badge = partStatusBadge(d)
                 return (
                 <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">
                   <div className="min-w-0">

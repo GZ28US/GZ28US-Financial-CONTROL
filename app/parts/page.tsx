@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, partMatches } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
@@ -38,10 +38,9 @@ type Part = {
   dealer_supplier: string | null
   is_kit?: boolean
   kit_items?: { part_number?: string | null; item?: string; quantity: number }[]
-  // LOCKED rows (purchase-validated catalog): frozen — not editable/removable in
-  // the app, and enrollOne NEVER touches them (no scan, no kit, no gap-fill, no
-  // alias change — user law 05/aug/2026: locked overrides everything).
-  locked?: boolean
+  // The part STATUS is source_type — SCAN / HUNT / MANUAL / LOCKED, exactly one.
+  // LOCKED = purchase-validated catalog: frozen, not editable/removable in the
+  // app, and enrollOne NEVER touches it (user law 05/aug/2026).
 }
 
 const numOf = (s: string) => { const n = parseFloat(String(s).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
@@ -149,13 +148,8 @@ export default function PartsPage() {
 
   // Provenance badge — how the part got into the database. Legacy rows (null)
   // predate source tagging and were all built by scanning, so they read SCANNED.
-  // LOCKED is a status like the others and OVERRIDES them all (user law 05/aug/2026).
-  function sourceBadge(p: Part): { label: string; cls: string } {
-    if (p.locked) return { label: '🔒 LOCKED', cls: 'bg-purple-800 text-purple-100' }
-    if (p.source_type === 'HUNT') return { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
-    if (p.source_type === 'MANUAL') return { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
-    return { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
-  }
+  // The part's ONE status — shared definition in lib/utils (LOCKED/HUNT/MANUAL/SCAN).
+  const sourceBadge = (p: Part) => partStatusBadge(p)
 
   function openCostEditor(p: Part) {
     setEditPart(p)
@@ -581,7 +575,7 @@ export default function PartsPage() {
                     <button onClick={() => toggleKit(p.id)} className="text-lg text-gray-300">{expandedKits.has(p.id) ? '▾' : '▸'}</button>
                     <h2 className="text-xl font-bold">{p.alias || p.item}</h2>
                     <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-700 text-white">📦 KIT</span>
-                    {p.locked && <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 LOCKED</span>}
+                    {isLockedPart(p) && <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-800 text-purple-100">🔒 LOCKED</span>}
                     <span className="text-sm text-gray-400">{(p.kit_items || []).length} parts</span>
                   </div>
                   {p.alias && <p className="text-sm text-gray-400 mb-1 pl-7">{p.item}</p>}
@@ -590,7 +584,7 @@ export default function PartsPage() {
                   ) })()}
                 </div>
                 <div className="flex items-end gap-3 shrink-0">
-                  {p.locked ? null : (
+                  {isLockedPart(p) ? null : (
                     <>
                       <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
                       <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
@@ -649,7 +643,7 @@ export default function PartsPage() {
                   </>
                 )}
               </div>
-              {p.locked ? null : (
+              {isLockedPart(p) ? null : (
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
                 <div>
                   <label className="block mb-1 text-xs text-gray-400 font-bold">ALIAS</label>

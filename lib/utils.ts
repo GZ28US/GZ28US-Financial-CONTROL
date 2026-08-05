@@ -110,6 +110,19 @@ export function partMatches(query: string, ...fields: (string | null | undefined
   return q.split(' ').filter(Boolean).every((tok) => hay.includes(tok))
 }
 
+// Part STATUS — exactly ONE per part (user law 05/aug/2026: "it can't be both").
+// LOCKED lives in source_type at the same level as SCAN / HUNT / MANUAL: locking a
+// part SETS its status to LOCKED, replacing the provenance status. Null/legacy
+// source_type reads as SCANNED (rows that predate source tagging).
+export const isLockedPart = (p: { source_type?: string | null } | null | undefined) => p?.source_type === 'LOCKED'
+export function partStatusBadge(p: { source_type?: string | null; is_kit?: boolean | null }): { label: string; cls: string } {
+  if (p?.source_type === 'LOCKED') return { label: '🔒 LOCKED', cls: 'bg-purple-800 text-purple-100' }
+  if (p?.is_kit) return { label: '📦 KIT', cls: 'bg-teal-600 text-white' }
+  if (p?.source_type === 'HUNT') return { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
+  if (p?.source_type === 'MANUAL') return { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
+  return { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
+}
+
 // Validate a Brazilian CPF (the two check digits). Accepts any punctuation; only
 // the 11 digits matter. Rejects all-equal sequences (000.../111... are invalid).
 export function isValidCPF(raw: string): boolean {

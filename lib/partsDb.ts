@@ -75,7 +75,7 @@ function withDerived(row: any, map: number | null, cost: number): any {
 //   the lowest cost. The kept alias is preserved; a known weight is never erased.
 export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
   const { data } = await supabase.from('parts_database')
-    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, locked')
+    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   // Two part numbers are the SAME part when the normalized forms match exactly OR
@@ -116,7 +116,8 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
 
   if (!existing) {
     // A scanned MAP gets the derived delivered/discount fields computed on insert.
-    const base = officialScan ? { ...row, locked: true } : row
+    // An official-supplier purchase enters already validated: status LOCKED.
+    const base = officialScan ? { ...row, source_type: 'LOCKED' } : row
     const toInsert = base.map_price != null && Number(base.map_price) > 0
       ? withDerived(base, Number(base.map_price), ourCostOf(base))
       : base
@@ -126,9 +127,10 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
 
   // LOCKED is ABSOLUTE (user law 2026-08-05: "when locked, nothing with the same
   // part-number gets enrolled in the system, no matter what, not even in a kit").
-  // A locked row is frozen: no scan, hunt, manual entry or kit member ever touches
-  // it — everything that matches its PN resolves TO the locked row instead.
-  if (existing.locked) return { status: 'kept', error: null }
+  // LOCKED is the part's STATUS (source_type), same level as SCAN/HUNT/MANUAL —
+  // a LOCKED row is frozen: no scan, hunt, manual entry or kit member ever touches
+  // it; everything that matches its PN resolves TO the locked row instead.
+  if (existing.source_type === 'LOCKED') return { status: 'kept', error: null }
 
   // Who wins the row?
   const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
@@ -165,15 +167,14 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       our_cost: row.our_cost ?? null,
       shipping: row.shipping ?? null,
       handling: row.handling ?? null,
-      source_type: row.source_type ?? existing.source_type ?? null,
+      // An official-supplier purchase VALIDATES the row: its status becomes
+      // LOCKED and the guard above freezes it forever — the bank compiles
+      // itself into a purchase-proven catalog.
+      source_type: officialScan ? 'LOCKED' : (row.source_type ?? existing.source_type ?? null),
       // A typed alias wins; otherwise the known alias is preserved.
       alias: row.alias ?? existing.alias ?? null,
       // Weight only when the incoming scan carries one — never erase a known weight.
       ...(row.weight_lbs != null && Number(row.weight_lbs) > 0 ? { weight_lbs: row.weight_lbs } : {}),
-      // An official-supplier purchase VALIDATES the row: it locks. Once locked
-      // the row is frozen forever (the guard above) — the bank compiles itself
-      // into a purchase-proven catalog.
-      locked: officialScan ? true : (existing.locked ?? false),
       updated_at: new Date().toISOString(),
     }
     const merged = withDerived(full, map, ourCostOf(row))
