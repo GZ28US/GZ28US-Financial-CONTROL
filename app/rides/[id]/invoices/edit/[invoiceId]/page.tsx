@@ -245,7 +245,7 @@ export default function EditInvoicePage() {
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null)
   const [editingNote, setEditingNote] = useState('')
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string }[]>([])
+  const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string; email: string; seller: string; ordering_method: string }[]>([])
   // Parts-DB reference (MAP / OUR COST / % / WEIGHT) shown under every expense row.
   const [dbRef, setDbRef] = useState<any[]>([])
   useEffect(() => {
@@ -305,7 +305,7 @@ export default function EditInvoicePage() {
   const [reportsExitAfter, setReportsExitAfter] = useState(true)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
-  const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string }>({ manufacturer: '', model: '', year: '' })
+  const [rideMatch, setRideMatch] = useState<{ manufacturer: string; model: string; year: string; brand?: string; version?: string }>({ manufacturer: '', model: '', year: '' })
   // Parts data bank: alias map (item -> alias) for IMPORT INTUITIVE PARTS, and
   // the IMPORT FROM DATABASE picker modal.
   const [aliasMap, setAliasMap] = useState<Map<string, string>>(new Map())
@@ -342,12 +342,12 @@ export default function EditInvoicePage() {
       setClientNumber(clientData?.client_number ?? null)
       applyClientContact(clientData)
     } else {
-      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, model, year, client_id').eq('id', ownerId).single()
+      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, client_id').eq('id', ownerId).single()
       const pCode = rideData?.project_code || ''
       const pName = rideData?.project_name || ''
       setProjectCode(pCode)
       setProjectName(pName)
-      setRideMatch({ manufacturer: rideData?.manufacturer || '', model: rideData?.model || '', year: rideData?.year != null ? String(rideData.year) : '' })
+      setRideMatch({ manufacturer: rideData?.manufacturer || '', model: rideData?.model || '', year: rideData?.year != null ? String(rideData.year) : '', brand: rideData?.brand || '', version: rideData?.version || '' })
       rideNameRef.current = pCode + (pName ? ` — ${pName}` : '')
       // Resolve THIS invoice's client (its stamp wins — ownership transfers
       // keep old invoices with the previous owner; the ride's current owner is
@@ -457,8 +457,8 @@ export default function EditInvoicePage() {
       setExpandedGroups(new Set())
     }
 
-    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
-    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
+    const { data: suppliersData } = await supabase.from('suppliers').select('name, discount, discount_type, aliases, email, seller, ordering_method')
+    if (suppliersData) setSuppliers(suppliersData.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '', email: s.email || '', seller: s.seller || '', ordering_method: s.ordering_method || '' })))
 
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
@@ -524,10 +524,11 @@ export default function EditInvoicePage() {
     setMapByName(mn)
     setPnByItem(pm)
 
-    // HUNT store links — separate query so a missing product_url column (pre-migration)
-    // can't break the load above. Keyed by normalized PN, then item name.
+    // Store links for ORDER NOW — every bank part with a product_url (not only HUNT),
+    // keyed by normalized PN, then item name. Separate query so a missing
+    // product_url column (pre-migration) can't break the load above.
     const hu = new Map<string, string>()
-    const { data: huParts } = await supabase.from('parts_database').select('item, part_number, product_url').eq('source_type', 'HUNT')
+    const { data: huParts } = await supabase.from('parts_database').select('item, part_number, product_url')
     for (const d of huParts || []) {
       if (!d.product_url) continue
       if (d.part_number) hu.set('PN:' + normPN(d.part_number), String(d.product_url))
@@ -557,6 +558,59 @@ export default function EditInvoicePage() {
   function huntUrlFor(exp: Expense): string | null {
     if (exp.part_number) { const u = huntUrlMap.get('PN:' + normPN(exp.part_number)); if (u) return u }
     return huntUrlMap.get('NM:' + (exp.item || '').trim().toLowerCase()) || null
+  }
+  // Supplier record for an expense (name or alias match) — powers ORDER NOW's email path.
+  function supplierRecFor(name: string | undefined | null) {
+    const n = (name || '').trim().toLowerCase()
+    if (!n) return null
+    return suppliers.find(s =>
+      s.name.trim().toLowerCase() === n ||
+      (s.aliases || '').split(/[,;]/).map(a => a.trim().toLowerCase()).filter(Boolean).some(a => a === n || n.includes(a) || a.includes(n))
+    ) || null
+  }
+  // ORDER NOW (Márcio's law, 05/aug/2026): every UNPAID expense row gets a one-click
+  // buy action. ONLINE part -> the exact store page; EMAIL supplier -> a compose
+  // window pre-written in his locked format (car code+name first, brand/model/version
+  // below, ground shipping, Dema signature). The button VANISHES once the row is PAID.
+  function orderNowFor(exp: Expense): { kind: 'ONLINE'; url: string } | { kind: 'EMAIL'; url: string } | null {
+    if (isValidDate(exp.payment_date || '')) return null // paid -> nothing to order
+    if (isCostLine(exp.item || '')) return null          // freight/tax lines don't get ordered
+    const online = huntUrlFor(exp)
+    if (online) return { kind: 'ONLINE', url: online }
+    const rec = supplierRecFor(exp.supplier)
+    if (!rec || !rec.email) return null
+    const carLine = `${projectCode}${projectName ? ` - ${projectName}` : ''}`
+    const specParts = [rideMatch.brand, rideMatch.model, rideMatch.version].filter(Boolean).join(' ')
+    const spec = specParts ? `(${specParts}${rideMatch.year ? ` — ${rideMatch.year}` : ''})` : ''
+    const qty = exp.quantity || '1'
+    const pn = (exp.part_number || '').trim()
+    const itemLine = `- ${qty} × ${exp.item}${pn ? ` — PN ${pn}` : ''} — with our dealer pricing.`
+    const subject = `${carLine} — Order: ${exp.item}${pn ? ` (${pn})` : ''}`
+    const body = [
+      carLine,
+      spec,
+      '',
+      `Hi ${rec.seller || 'there'},`,
+      '',
+      'Dema here, from GZ28 V8 SpeedShop. We need this part for this build:',
+      '',
+      itemLine,
+      '',
+      'Ship to:',
+      'GZ28 V8 SpeedShop USA LLC',
+      '11320 Space Blvd',
+      'Orlando, FL 32837',
+      '',
+      'Regular ground shipping is fine — no need for expedited freight.',
+      "Send over the invoice with the payment link and we'll settle it same day.",
+      '',
+      'Thank you!',
+      '',
+      'Dema',
+      'GZ28 V8 SpeedShop USA LLC',
+      '(321) 315-0973',
+    ].filter(l => l !== null).join('\n')
+    return { kind: 'EMAIL', url: `mailto:${rec.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` }
   }
   function kitOurTotal(kit: any) { return (kit.kit_items || []).reduce((s: number, m: any) => s + dbOurCost(kitMemberRow(m)) * (Number(m.quantity) || 1), 0) }
   // Build a fresh expense from a parts_database row. HUNT parts carry dealer pricing
@@ -1837,7 +1891,7 @@ export default function EditInvoicePage() {
     if (!n || supplierKnown(n)) return
     await supabase.from('suppliers').upsert([{ name: n }], { onConflict: 'name' })
     void mirrorEnsureSupplier(n)
-    setSuppliers(prev => [...prev, { name: n, discount: 0, discount_type: 'FIXED', aliases: '' }])
+    setSuppliers(prev => [...prev, { name: n, discount: 0, discount_type: 'FIXED', aliases: '', email: '', seller: '', ordering_method: '' }])
   }
   async function addExpense() {
     if (!newExpense.item || !newExpense.amount) { alert('Please enter at least item and amount'); return }
@@ -3063,7 +3117,7 @@ export default function EditInvoicePage() {
                                       {exp.supplier && <p className="text-sm font-bold truncate text-amber-300" title={exp.supplier}>{exp.supplier}: {(supplierIsVariable(exp.supplier) ? (parseFloat(exp.item_discount || '0') || 0) : (supplierDiscount(exp.supplier) || 0))}%</p>}
                                       <p className="text-sm font-bold truncate text-blue-300" title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
                                       {dbRefLine(exp.part_number, exp.item)}
-                                      {huntUrlFor(exp) && <a href={huntUrlFor(exp)!} target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 Open store page ↗</a>}
+                                      {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                       <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && <p className="text-xs text-gray-500">{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                       {exportStatusLine(exp, index)}
@@ -3195,7 +3249,7 @@ export default function EditInvoicePage() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                                {huntUrlFor(exp) && <a href={huntUrlFor(exp)!} target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 Open store page ↗</a>}
+                                {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className="text-sm text-gray-500">{isValidDate(exp.expense_date) ? formatDate(exp.expense_date) : 'No date'}{isPaid ? ` · Paid: ${formatDate(exp.payment_date)}` : ' · Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
