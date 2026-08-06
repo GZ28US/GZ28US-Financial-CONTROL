@@ -529,10 +529,19 @@ export default function EditInvoicePage() {
     // product_url column (pre-migration) can't break the load above.
     const hu = new Map<string, string>()
     const { data: huParts } = await supabase.from('parts_database').select('item, part_number, product_url')
+    // AutoZone compra é SEMPRE pelo portal Pro (conta dealer) — links do site varejo
+    // viram busca no AutoZonePro pelo PN, senão o ORDER NOW abre preço/estoque errados.
+    const toAzPro = (u: string, pn?: string | null) => {
+      if (!/\/\/(www\.)?autozone\.com/i.test(u)) return u
+      const m = u.match(/[?&]searchText=([^&]+)/i)
+      const q = m ? decodeURIComponent(m[1]) : (pn || '').trim()
+      return q ? `https://www.autozonepro.com/ui/product-results?searchText=${encodeURIComponent(q)}&exactMatch=true` : u
+    }
     for (const d of huParts || []) {
       if (!d.product_url) continue
-      if (d.part_number) hu.set('PN:' + normPN(d.part_number), String(d.product_url))
-      hu.set('NM:' + (d.item || '').trim().toLowerCase(), String(d.product_url))
+      const url = toAzPro(String(d.product_url), d.part_number)
+      if (d.part_number) hu.set('PN:' + normPN(d.part_number), url)
+      hu.set('NM:' + (d.item || '').trim().toLowerCase(), url)
     }
     setHuntUrlMap(hu)
 
