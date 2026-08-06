@@ -123,12 +123,47 @@ const TRACKING_RES: RegExp[] = [
   /\b\d{12}\b/g,                     // FedEx 12
   /\b[A-Z]{2}\d{9}US\b/g,            // USPS intl
 ]
+// eBay listing Item IDs are 12-digit numbers — the exact shape of a FedEx
+// tracking. They show up as "Item ID: 236502286470" / "ebay.com/itm/2365…"
+// in BOTH the order-confirmation and the shipping-confirmation emails, so an
+// all-digit candidate sitting in item context is never a tracking number.
+const ITEM_ID_CONTEXT = /(?:\/itm[/:]?|\bitem\s*(?:id|number|no\.?|#)?\s*[:#]?)\s*$/i
+// Tracking language that must sit NEAR an ambiguous all-digit candidate.
+// "deliver" stays out on purpose — "Estimated delivery" lines sit right next
+// to item listings in marketplace emails.
+const NEAR_TRACK = /track|fedex|usps|ups\b|carrier|shipment|shipped/i
 export function extractTrackings(s: string): string[] {
   const out = new Set<string>()
-  for (const re of TRACKING_RES) for (const m of s.match(re) || []) out.add(m)
-  // A FedEx-12 match that is really a phone number etc. is filtered by context:
-  // only keep 12-digit hits when a shippy word is nearby in the same text.
-  return [...out].filter(t => !/^\d{12}$/.test(t) || /track|ship|carrier|fedex|deliver/i.test(s))
+  for (const re of TRACKING_RES) {
+    for (const m of s.matchAll(re)) {
+      const t = m[0]
+      const at = m.index ?? 0
+      const before = s.slice(Math.max(0, at - 90), at)
+      const after = s.slice(at + t.length, at + t.length + 90)
+      if (ITEM_ID_CONTEXT.test(before)) continue
+      // An all-digit shape (FedEx 12/15) is ambiguous — eBay Item IDs, phone
+      // numbers, invoice ids all collide. Only trust it when tracking language
+      // sits within ~90 chars of the number itself, not just anywhere in the
+      // email (the eBay Item ID 236502286470 passed the old anywhere-check and
+      // shipped a BOUGHT row at purchase time, 06/ago/2026).
+      if (/^\d{12}$|^\d{15}$/.test(t) && !NEAR_TRACK.test(before) && !NEAR_TRACK.test(after)) continue
+      out.add(t)
+    }
+  }
+  return [...out]
+}
+
+// Purchase-confirmation emails NEVER carry a trustable tracking number — an
+// "Order confirmed" mail means BOUGHT, nothing more. Tracking only enters via
+// the shipping-confirmation email (caso eBay 25-14968-48374, 06/ago/2026:
+// the Item ID was captured as FedEx tracking and the row flipped SHIPPED at
+// purchase time). An email whose subject reads like a purchase confirmation
+// is skipped by the tracking capture unless its text explicitly announces the
+// shipment happened.
+const CONFIRM_SUBJECT = /order (confirm|receiv|placed|acknowledg)|confirmed:|thanks? for (your|shopping)|thank you for your (order|purchase)|purchase (is )?confirmed|receipt for your payment|your receipt|payment receipt|pedido (confirmado|recebido|realizado)|recibo d[eo] pagamento/i
+const SHIPPING_CONFIRM = /(has|have|was|were|just) (been )?(shipped|dispatched)|shipping confirmation|is on its way|on the way to you|out for delivery|tracking (number|no\.?|#)|foi (enviado|despachado|postado)|pedido enviado/i
+export function isPurchaseConfirmation(msg: MailMsg): boolean {
+  return CONFIRM_SUBJECT.test(msg.subject) && !SHIPPING_CONFIRM.test(`${msg.subject} ${msg.text}`)
 }
 
 const normTok = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length >= 4)

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel, refreshAllTracking } from '@/lib/stream.server'
-import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, matchRows, guessCarrier, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
+import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
@@ -54,6 +54,9 @@ async function run(force: boolean): Promise<NextResponse> {
     const { data: assigned } = await db.from('part_streams').select('tracking_number').not('tracking_number', 'is', null)
     const taken = new Set((assigned || []).map(r => String(r.tracking_number)))
     for (const msg of msgs) {
+      // "Order confirmed" = BOUGHT, never SHIPPED — tracking only comes from
+      // the shipping-confirmation email (caso eBay 25-14968-48374, 06/ago).
+      if (isPurchaseConfirmation(msg)) continue
       const trackings = extractTrackings(`${msg.subject} ${msg.text}`).filter(t => !taken.has(t))
       if (!trackings.length) continue
       const rows = matchRows(open.filter(r => !r.tracking_number), msg)
