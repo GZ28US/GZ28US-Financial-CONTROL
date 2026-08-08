@@ -84,7 +84,11 @@ type Kind =
 
 // Lojas/marketplaces NÃO são apps — confirmação de compra deles é peça/ingresso,
 // nunca assinatura (o backfill 2026-07-25 pescou eBay e Tixr por engano).
-const NOT_AN_APP = /ebay|tixr|amazon|mercado\s?livre|aliexpress|rockauto|summit\s?racing|jegs|paypal|walmart|bestbuy/i
+// Processadores de pagamento/faturamento também não: recibo do QuickBooks/Intuit
+// é fatura de FORNECEDOR paga por link (a T1 cobra assim) — em 2026-08-06 os
+// $1.908,61 dos bicos ID1750 do MudMonster viraram "app intuit.com" duplicando
+// a expense da invoice US.040. Fatura de vendor pertence à invoice do carro.
+const NOT_AN_APP = /ebay|tixr|amazon|mercado\s?livre|aliexpress|rockauto|summit\s?racing|jegs|paypal|walmart|bestbuy|intuit|quickbooks|bill\.com|melio|freshbooks|waveapps|square(up)?\.com|authorize\.net/i
 
 function classify(subject: string, from: string): Kind {
   if (NOT_AN_APP.test(from)) return { kind: 'vendor-mail' }
