@@ -1788,19 +1788,21 @@ export default function EditInvoicePage() {
 
   // DUTIES — persisted immediately (independent from SAVE CHANGES).
   const staffName = (id: string | null) => staffList.find(s => s.id === id)?.name || '—'
-  // Priority: 1 (highest) → 4, then StandBy. Drives the row color and sort order.
-  const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
+  // Priority: 0 (highest, above P1) → 4, then StandBy. Drives the row color and sort order.
+  const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, 'STANDBY': 5 }
   const dutyPriorityBadge = (p: string) => (
     p === 'STANDBY' ? { label: 'STANDBY', cls: 'bg-gray-700 text-gray-300' }
     : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
     : p === '3' ? { label: 'P3', cls: 'bg-yellow-900 text-yellow-300' }
     : p === '2' ? { label: 'P2', cls: 'bg-orange-900 text-orange-300' }
+    : p === '0' ? { label: 'P0', cls: 'bg-red-600 text-white' }
     : { label: 'P1', cls: 'bg-red-900 text-red-300' })
   const dutyTextColor = (p: string) => (
     p === 'STANDBY' ? 'text-gray-400'
     : p === '4' ? 'text-blue-300'
     : p === '3' ? 'text-yellow-200'
     : p === '2' ? 'text-orange-300'
+    : p === '0' ? 'text-red-200'
     : 'text-red-300')
   // Keep each member's duties together (rows from different members are never
   // mixed); within the member: TO DO first, DONE after, each block in
@@ -3815,6 +3817,7 @@ export default function EditInvoicePage() {
                 {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <select value={newDuty.priority} onChange={(e) => setNewDuty({ ...newDuty, priority: e.target.value })} className={selectClass} title="Priority">
+                <option value="0">Block Priority 0</option>
                 <option value="1">Block Priority 1</option>
                 <option value="2">Block Priority 2</option>
                 <option value="3">Block Priority 3</option>
@@ -3842,6 +3845,7 @@ export default function EditInvoicePage() {
                             {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                           </select>
                           <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${selectClass} shrink-0`}>
+                            <option value="0">Block Priority 0</option>
                             <option value="1">Block Priority 1</option>
                             <option value="2">Block Priority 2</option>
                             <option value="3">Block Priority 3</option>

@@ -40,7 +40,7 @@ function fmtPromised(d: string): string {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
+const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, 'STANDBY': 5 }
 
 // Same rule as the DUTIES list: priority first, then keep the SAME CAR's duties together
 // within a priority band, then by description.
@@ -56,6 +56,7 @@ const dutyPriorityBadge = (p: string) => (
   : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
   : p === '3' ? { label: 'P3', cls: 'bg-yellow-900 text-yellow-300' }
   : p === '2' ? { label: 'P2', cls: 'bg-orange-900 text-orange-300' }
+  : p === '0' ? { label: 'P0', cls: 'bg-red-600 text-white' }
   : { label: 'P1', cls: 'bg-red-900 text-red-300' })
 
 function fmtDur(totalSec: number): string {
@@ -283,9 +284,9 @@ export default function StaffDutySelfPage() {
     } finally { busyRef.current = false }
   }
 
-  // P1 THROUGH P3 always reach the member (Márcio, 02/ago/2026) — the ?max= filter
+  // P0 THROUGH P3 always reach the member (Márcio, 02/ago/2026) — the ?max= filter
   // from old links can narrow P4/StandBy, but never below Priority 3.
-  const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? 4, DUTY_PRIORITY_RANK['3'])
+  const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? DUTY_PRIORITY_RANK['STANDBY'], DUTY_PRIORITY_RANK['3'])
   const byPriority = (a: Duty, b: Duty) => dutyOrder(a, b)
   const open = duties.filter(d => !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank).sort(byPriority)
   const finished = duties.filter(d => d.done).sort(byPriority)

@@ -42,8 +42,8 @@ function fmtDT(iso: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-// Priority: 1 (highest) → 4, then StandBy. Drives the row color and sort order.
-const DUTY_PRIORITY_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, 'STANDBY': 4 }
+// Priority: 0 (highest, above P1) → 4, then StandBy. Drives the row color and sort order.
+const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, 'STANDBY': 5 }
 
 // Ordering rule: PRIORITY first (P1 → StandBy); WITHIN the same priority, every duty of
 // the SAME CAR stays together (grouped by carLabel), then by description for a stable
@@ -60,12 +60,14 @@ const dutyPriorityBadge = (p: string) => (
   : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
   : p === '3' ? { label: 'P3', cls: 'bg-yellow-900 text-yellow-300' }
   : p === '2' ? { label: 'P2', cls: 'bg-orange-900 text-orange-300' }
+  : p === '0' ? { label: 'P0', cls: 'bg-red-600 text-white' }
   : { label: 'P1', cls: 'bg-red-900 text-red-300' })
 const dutyTextColor = (p: string) => (
   p === 'STANDBY' ? 'text-gray-400'
   : p === '4' ? 'text-blue-300'
   : p === '3' ? 'text-yellow-200'
   : p === '2' ? 'text-orange-300'
+  : p === '0' ? 'text-red-200'
   : 'text-red-300')
 
 // ── LAST 7 DAYS chart (Márcio, 02/ago/2026) — shown only while the member's
@@ -241,9 +243,9 @@ export default function StaffDutiesPage() {
   // The member's open duties list, ordered by priority, cut at the chosen
   // priority (StandBy = include everything).
   function buildListBody(staffId: string, name: string, maxPriority: string): string | null {
-    // P1 THROUGH P3 always go to the member (Márcio, 02/ago/2026) — the cut can
+    // P0 THROUGH P3 always go to the member (Márcio, 02/ago/2026) — the cut can
     // narrow P4/StandBy, never below Priority 3.
-    const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? 3, DUTY_PRIORITY_RANK['3'])
+    const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? DUTY_PRIORITY_RANK['4'], DUTY_PRIORITY_RANK['3'])
     const rows = duties
       .filter(d => d.staff_id === staffId && !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank)
       .sort(dutyOrder)
@@ -455,6 +457,7 @@ export default function StaffDutiesPage() {
                           {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
                         <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${inputClass} shrink-0`}>
+                          <option value="0">Block Priority 0</option>
                           <option value="1">Block Priority 1</option>
                           <option value="2">Block Priority 2</option>
                           <option value="3">Block Priority 3</option>
@@ -523,7 +526,7 @@ export default function StaffDutiesPage() {
             <div>
               <label className="block mb-1 text-xs font-bold text-gray-400">UP TO WHICH PRIORITY?</label>
               <select value={listPopup.maxPriority} onChange={(e) => setListPopup({ ...listPopup, maxPriority: e.target.value })} className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-sm w-full">
-                <option value="3">Up to Priority 3 (minimum — P1–P3 always go)</option>
+                <option value="3">Up to Priority 3 (minimum — P0–P3 always go)</option>
                 <option value="4">Up to Priority 4</option>
                 <option value="STANDBY">Everything (incl. StandBy)</option>
               </select>
