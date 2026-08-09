@@ -2056,13 +2056,19 @@ export default function EditInvoicePage() {
         ? 'There is a PENDING BALANCE, so this invoice cannot stay CLOSED.\nStatus set to ONLINE — settle the balance to close it.'
         : 'Every income must have a date to stay CLOSED.\nStatus set to ONLINE — date the incomes to close it.')
     }
-    const effectiveFeedOnline = !isQuote && (effectiveLive === 'REALTIME' || effectiveLive === 'CLOSED')
     // Quote -> invoice transition: a quote with a valid HIRING DATE becomes an
     // invoice (one-way; an invoice never reverts to a quote). For a ride the
     // HIRING DATE is hiringDate; for a client shopping quote it's clientHiringDate
     // (its REQUEST DATE never converts it).
     const conversionDate = isClient ? clientHiringDate : hiringDate
     const nextIsQuote = isQuote && !isValidDate(conversionDate)
+    // A quote may carry CLOSED in quote-land ("quote done"); the newborn INVOICE must
+    // come up ONLINE — it can never be born CLOSED (CLOSED requires zero balance).
+    if (isQuote && !nextIsQuote && effectiveLive === 'CLOSED') {
+      effectiveLive = 'REALTIME'
+      setLiveStatus('REALTIME')
+    }
+    const effectiveFeedOnline = !nextIsQuote && (effectiveLive === 'REALTIME' || effectiveLive === 'CLOSED')
     // On that transition, archive the quote, then migrate its quote ride/client to project.
     if (isQuote && !nextIsQuote) { await backupQuoteBeforeConversion(); await migrateQuoteToProject() }
     const { error } = await supabase.from('invoices').update({
