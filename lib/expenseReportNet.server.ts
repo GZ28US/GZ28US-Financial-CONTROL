@@ -111,35 +111,55 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // Filtro por updated_at, não created_at (buraco achado 01/ago): linha ANTIGA
   // que vira paga hoje é dinheiro saindo hoje — "TODO E QUALQUER DINHEIRO QUE
   // DE FATO ENTRA OU SAI TEM QUE TER REPORT NO GRUPO."
+  // LEI SAGRADA (Márcio, 10/ago, após a enchente de balões dos pedidos HHP):
+  // "é SAGRADO reportar a que invoice e carro a expense/income se refere, e é
+  // UM balão por COMPRA, mesmo que tenha vários itens. Compra com itens de
+  // mais de um carro = um balão por compra POR CARRO." Agrupamento por
+  // invoice + (order_number || supplier+data), com o carro/cliente no título.
   const { data: ie } = await db.from('invoice_expenses')
-    .select('id, item, price, payment_date, created_at, invoices(invoice_code, is_quote)')
+    .select('id, invoice_id, item, price, quantity, tax, extra, supplier, order_number, payment_date, created_at, invoices(invoice_code, is_quote, rides(project_name, project_code), clients(name))')
     .gte('updated_at', EPOCH).not('payment_date', 'is', null).order('created_at')
+  const groups = new Map<string, any[]>()
   for (const e of (ie || []) as any[]) {
-    const key = `ern:ie:${e.id}`
-    if (seenSet.has(key)) continue
+    if (seenSet.has(`ern:ie:${e.id}`)) continue
     if (e.invoices?.is_quote) continue
-    const label = `EXPENSE ${e.invoices?.invoice_code || '—'} ${usd(e.price)}`
-    if (!alreadySent(Number(e.price)) && isRecentMoney(e.payment_date)) {
-      await sendReport([`*EXPENSE PAID* ${e.invoices?.invoice_code || '—'}`, `${e.payment_date || ''} — *${usd(e.price)}*`, String(e.item || '').slice(0, 160)].join('\n'))
+    const gk = `${e.invoice_id}|${e.order_number || `${e.supplier || ''}~${e.payment_date || ''}`}`
+    const arr = groups.get(gk) || []; arr.push(e); groups.set(gk, arr)
+  }
+  const lineTotal = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+  const ownerOf = (inv: any) => inv?.rides?.project_name || inv?.rides?.project_code || inv?.clients?.name || ''
+  for (const rows of groups.values()) {
+    const e0 = rows[0]
+    const total = rows.reduce((s, e) => s + lineTotal(e), 0)
+    const owner = ownerOf(e0.invoices)
+    const head = `*EXPENSE PAID* ${e0.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`
+    const label = `EXPENSE ${e0.invoices?.invoice_code || '—'} ${usd(total)} (${rows.length} itens)`
+    if (!alreadySent(total) && rows.some((e) => isRecentMoney(e.payment_date))) {
+      const names = rows.map((e) => String(e.item || '').slice(0, 60))
+      const itemsLine = rows.length === 1 ? names[0]
+        : `${rows.length} itens: ${names.slice(0, 3).join(' · ')}${rows.length > 3 ? ` +${rows.length - 3}` : ''}`
+      const srcLine = [e0.supplier, e0.order_number ? `pedido ${e0.order_number}` : ''].filter(Boolean).join(' — ')
+      await sendReport([head, `${e0.payment_date || ''} — *${usd(total)}*`, srcLine, itemsLine].filter(Boolean).join('\n'))
       out.push(label)
     }
-    await mark(key, label)
+    for (const e of rows) await mark(`ern:ie:${e.id}`, label)
   }
 
   // 2) invoice_payments (incomes) — mesma regra: só quando o dinheiro ENTROU.
   // ATENÇÃO ao modelo (incidente QuickSilver 31/jul): em incomes, payment_date é
   // a data PREVISTA — quem marca "recebido" é paid_at. Previsões nunca reportam.
   const { data: ip } = await db.from('invoice_payments')
-    .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote)')
+    .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote, rides(project_name, project_code), clients(name))')
     .gte('updated_at', EPOCH).not('paid_at', 'is', null).order('created_at')
   for (const p of (ip || []) as any[]) {
     const key = `ern:ip:${p.id}`
     if (seenSet.has(key)) continue
     if (p.invoices?.is_quote) continue
+    const owner = ownerOf(p.invoices)
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
     const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
     if (!alreadySent(Number(p.amount)) && isRecentMoney(paidOn)) {
-      await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}`, `${paidOn} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
+      await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
       out.push(label)
     }
     await mark(key, label)
