@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
     const info = await t17GetInfo(stream.tracking_number, stream.carrier)
     if (!info) return NextResponse.json({ ok: false, reason: 'no tracking info', t17: t17Last, row: stream })
     const updated = await applyTrackInfo(db, stream, info)
-    return NextResponse.json({ ok: true, row: updated })
+    // misc_info rides along so callers can read carrier extras 17TRACK exposes
+    // (package weight, pieces, dimensions) that applyTrackInfo doesn't persist.
+    return NextResponse.json({ ok: true, row: updated, misc: info?.misc_info ?? null, shipping: info?.shipping_info ?? null })
   }
 
   return NextResponse.json({ error: `unknown action ${action}` }, { status: 400 })
