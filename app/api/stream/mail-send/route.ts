@@ -11,12 +11,69 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 // o rascunho de resposta, a gente troca o corpo, pendura os anexos e envia.
 // Sem ele, é uma mensagem nova.
 //
+// Slot 4 = Gmail: refresh próprio do Google (mesmo fluxo do mail-query) e envio
+// via users.messages.send com MIME cru em base64url; replyTo vira threadId +
+// In-Reply-To/References pra resposta cair na mesma thread.
+//
 // REGRA DE OURO: esta rota só é chamada com o "manda" explícito do Márcio.
 
 export const dynamic = 'force-dynamic'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
+
+async function gmailSend(auth: any, b: any, to: string[], cc: string[]): Promise<NextResponse> {
+  const clientId = process.env.GOOGLE_CLIENT_ID, clientSecret = process.env.GOOGLE_CLIENT_SECRET
+  if (!clientId || !clientSecret) return NextResponse.json({ error: 'GOOGLE_CLIENT_ID/SECRET not configured' }, { status: 503 })
+  if (!auth.refresh_token) return NextResponse.json({ error: 'gmail not connected (run /api/stream/gmail-auth)' }, { status: 404 })
+  const tk = await (await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: auth.refresh_token, grant_type: 'refresh_token' }),
+  })).json()
+  if (!tk?.access_token) return NextResponse.json({ error: 'gmail token refresh failed: ' + (tk?.error || '?') }, { status: 502 })
+  const GH = { Authorization: `Bearer ${tk.access_token}` }
+  const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
+
+  // Resposta na thread: puxa Message-ID/References/Subject do original
+  let threadId: string | undefined, replyHeaders: string[] = [], subject: string = b.subject
+  if (b.replyTo) {
+    const m = await (await fetch(`${API}/messages/${encodeURIComponent(b.replyTo)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`, { headers: GH })).json()
+    if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'replyTo não encontrado' }, { status: 502 })
+    const hdr = (name: string) => (m.payload?.headers || []).find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || ''
+    threadId = m.threadId
+    const mid = hdr('Message-ID')
+    if (mid) replyHeaders = [`In-Reply-To: ${mid}`, `References: ${[hdr('References'), mid].filter(Boolean).join(' ')}`]
+    const orig = hdr('Subject')
+    if (orig) subject = /^re:/i.test(orig) ? orig : `Re: ${orig}`
+  }
+
+  const encSubject = /[^\x20-\x7e]/.test(subject) ? `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=` : subject
+  const headers = [
+    `From: ${auth.account}`,
+    `To: ${to.join(', ')}`,
+    ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
+    `Subject: ${encSubject}`,
+    ...replyHeaders,
+    'MIME-Version: 1.0',
+  ]
+  const htmlPart = ['Content-Type: text/html; charset="UTF-8"', 'Content-Transfer-Encoding: base64', '', Buffer.from(b.body, 'utf8').toString('base64')].join('\r\n')
+  const atts = b.attachments || []
+  const boundary = 'gz28-' + Math.random().toString(36).slice(2)
+  const mime = atts.length
+    ? [...headers, `Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, htmlPart,
+       ...atts.flatMap((a: any) => [`--${boundary}`, `Content-Type: ${a.contentType || 'application/octet-stream'}; name="${a.name}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${a.name}"`, '', a.base64]),
+       `--${boundary}--`].join('\r\n')
+    : [...headers, htmlPart].join('\r\n')
+  const raw = Buffer.from(mime, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+  const r = await fetch(`${API}/messages/send`, {
+    method: 'POST', headers: { ...GH, 'Content-Type': 'application/json' },
+    body: JSON.stringify(threadId ? { raw, threadId } : { raw }),
+  })
+  const sent = await r.json().catch(() => null)
+  if (!r.ok || !sent?.id) return NextResponse.json({ error: sent?.error?.message || 'gmail send falhou' }, { status: 502 })
+  return NextResponse.json({ ok: true, account: auth.account, provider: 'gmail', threaded: !!threadId, attachments: atts.length, id: sent.id, threadId: sent.threadId })
+}
 
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => null)
@@ -29,8 +86,13 @@ export async function POST(req: NextRequest) {
   }
 
   const db = streamDb()
-  const auth = await getMailAuth(db, Number(b.slot) || 1)
+  const slot = Number(b.slot) || 1
+  const auth = await getMailAuth(db, slot)
   if (!auth) return NextResponse.json({ error: 'slot sem autenticação' }, { status: 404 })
+
+  // ── Slot 4 = Gmail (Google API em vez do Graph) ───────────────────────────
+  if (slot === 4) return gmailSend(auth, b, to, Array.isArray(b.cc) ? b.cc : b.cc ? [b.cc] : [])
+
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ error: 'token expirado' }, { status: 502 })
 
