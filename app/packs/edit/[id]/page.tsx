@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches, partStatusBadge } from '@/lib/utils'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { normPN } from '@/lib/partsDb'
+import { usdBrlRate, toUsd } from '@/lib/fx'
 
 // FULL pack editor — a standalone page that mirrors the invoice editor's item
 // machinery (EXPENSES + PARTS + SERVICES + GRAND TOTAL + NOTES, auto-CALCULATE,
@@ -82,8 +83,12 @@ export default function EditPackPage() {
 
   // Parts-DB reference (MAP / OUR COST / % / WEIGHT) shown under every expense row.
   const [dbRef, setDbRef] = useState<any[]>([])
+  // Live USD/BRL rate — bank rows recorded off a Brazilian receipt hold reais, and a pack
+  // prices in dollars, so their cost is projected whenever it crosses into this screen.
+  const [fxRate, setFxRate] = useState<number | null>(null)
   useEffect(() => {
-    supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs').limit(3000).then(({ data }) => setDbRef(data || []))
+    supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs, currency').limit(3000).then(({ data }) => setDbRef(data || []))
+    usdBrlRate().then(setFxRate)
   }, [])
   // The Parts-DB record for an expense (normalized PN match, suffix-tolerant; item-name fallback).
   function dbRefFor(pn?: string | null, item?: string | null) {
@@ -95,14 +100,18 @@ export default function EditPackPage() {
     const nm = String(item || '').trim().toLowerCase()
     return nm ? (dbRef.find((p: any) => String(p.item || '').trim().toLowerCase() === nm) || null) : null
   }
-  // One-line DB reference: MAP · OUR COST · % · WEIGHT (USD — the bank's native currency).
+  // One-line DB reference: MAP · OUR COST · % · WEIGHT, shown in DOLLARS. A row recorded
+  // in reais is projected at today's rate and flagged, so the number is never mistaken
+  // for the figure printed on the Brazilian receipt.
   function dbRefLine(pn?: string | null, item?: string | null) {
     const di = dbRefFor(pn, item)
     if (!di) return null
+    const show = (v: any) => { const u = toUsd(Number(v) || 0, di.currency, fxRate); return u == null ? '—' : `US$ ${u.toFixed(2)}` }
     return (
       <p className="text-xs text-teal-300">
-        DB: MAP {Number(di.map_price) > 0 ? `US$ ${Number(di.map_price).toFixed(2)}` : '—'}
-        {' · '}OUR COST {Number(di.unit_price) > 0 ? `US$ ${Number(di.unit_price).toFixed(2)}` : '—'}
+        {String(di.currency || 'USD').toUpperCase() === 'BRL' ? '🇧🇷 ' : ''}
+        DB: MAP {Number(di.map_price) > 0 ? show(di.map_price) : '—'}
+        {' · '}OUR COST {Number(di.unit_price) > 0 ? show(di.unit_price) : '—'}
         {di.part_discount != null && Number(di.part_discount) !== 0 ? ` · ${Number(di.part_discount)}%` : ''}
         {Number(di.weight_lbs) > 0 ? ` · ${Number(di.weight_lbs)} lbs` : ''}
       </p>
@@ -155,7 +164,11 @@ export default function EditPackPage() {
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
     if (sup) setSuppliers(sup.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
 
-    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling')
+    // Bank rows can be recorded in reais; a pack prices in dollars, so the rate is
+    // resolved BEFORE the MAP tables are built and every reais MAP is projected into USD.
+    const rate = await usdBrlRate()
+    setFxRate(rate)
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling, currency')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
     const mn = new Map<string, number>()
@@ -168,7 +181,9 @@ export default function EditPackPage() {
       // (reseller), so they enter the parts table WITHOUT tax: MAP + freight only.
       // The pack's FL TAXES line then adds the CUSTOMER's tax. (A future "bought
       // with tax" flag from hunt/scan will switch this to a tax-inclusive base.)
-      const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
+      // Projected into USD for a reais row — a BRL MAP taken raw would price the pack
+      // ~5x high. No rate for a reais row => no MAP, rather than a wrong one.
+      const mapFinal = toUsd((Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0), d.currency, rate) ?? 0
       if (pn && mapFinal > 0) mp.set(pn, mapFinal)
       const nm = (d.item || '').trim().toLowerCase()
       if (nm && mapFinal > 0 && !mn.has(nm)) mn.set(nm, mapFinal)
@@ -216,8 +231,13 @@ export default function EditPackPage() {
     const nm = (m.item || '').trim().toLowerCase()
     return dbItems.find((d: any) => !d.is_kit && !d.part_number && (d.item || '').trim().toLowerCase() === nm)
   }
-  // A parts_database row's OUR cost (dealer net for hunt, unit price otherwise).
-  function dbOurCost(d: any) { return d ? (Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0) : 0 }
+  // A parts_database row's OUR cost (dealer net for hunt, unit price otherwise), IN
+  // DOLLARS — a row recorded in reais is projected, never read as if it were dollars.
+  function dbOurCost(d: any) {
+    if (!d) return 0
+    const raw = Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0
+    return toUsd(raw, d.currency, fxRate) ?? 0
+  }
   // A kit's summed OUR cost (members × their qty), for the picker display.
   function kitOurTotal(kit: any) { return (kit.kit_items || []).reduce((s: number, m: any) => s + dbOurCost(kitMemberRow(m)) * (Number(m.quantity) || 1), 0) }
   // Build an expense row from a parts_database item (shared by single + kit import).
@@ -227,9 +247,13 @@ export default function EditPackPage() {
   function expenseFromDbRow(it: any, quantity: number, kitGroup?: string, kitName?: string): Expense {
     const isHunt = it?.source_type === 'HUNT'
     const supplier = it ? ((isHunt ? it.dealer_supplier : it.supplier) || it.supplier || '') : ''
-    const amount = it ? (isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
-    const extra = it ? (isHunt ? ((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : (Number(it.extra) || 0)) : 0
-    const tax = it ? (isHunt ? 0 : (Number(it.tax) || 0)) : 0
+    // A pack expense is always in DOLLARS. A bank row recorded off a Brazilian receipt
+    // holds reais, so every figure crossing into the pack is projected at today's rate —
+    // the reais stay fixed in the bank, the dollars are derived here.
+    const usd = (v: any) => toUsd(Number(v) || 0, it?.currency, fxRate) ?? 0
+    const amount = it ? usd(isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
+    const extra = it ? (isHunt ? usd((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : usd(it.extra)) : 0
+    const tax = it ? (isHunt ? 0 : usd(it.tax)) : 0
     return {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),

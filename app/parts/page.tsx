@@ -4,9 +4,10 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
+import { formatUSD, formatBRL, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
-import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
+import { fileForScan } from '@/lib/scanFile'
+import { usdBrlRate, toUsd, isSupportedCurrency } from '@/lib/fx'
 
 type Part = {
   id: string
@@ -14,6 +15,10 @@ type Part = {
   part_number: string | null
   alias: string | null
   supplier: string | null
+  // Currency every money field on this row is recorded in. 'USD' for legacy rows and
+  // for anything scanned off a dollar document; 'BRL' keeps a Brazilian receipt's reais
+  // exactly as printed, with the dollar value projected live (lib/fx.ts).
+  currency: string | null
   unit_price: number | null
   base_cost: number | null
   tax: number | null
@@ -54,8 +59,12 @@ export default function PartsPage() {
   const [scannedItems, setScannedItems] = useState<{
     supplier: string
     date: string
+    // Currency read off the document — every amount below is in it, unconverted.
+    currency: string
     items: { item: string; part_number: string; alias: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
   } | null>(null)
+  // Live USD/BRL rate for projecting reais-recorded costs into dollars on screen.
+  const [fxRate, setFxRate] = useState<number | null>(null)
   const [enrolling, setEnrolling] = useState(false)
   const [search, setSearch] = useState('')
   const [costFilter, setCostFilter] = useState(false)
@@ -95,6 +104,7 @@ export default function PartsPage() {
       if (sid) loadSupplierFilter(sid)
     }
     load()
+    usdBrlRate().then(setFxRate)
   }, [])
 
   async function loadSupplierFilter(id: string) {
@@ -141,6 +151,21 @@ export default function PartsPage() {
     if (error) { alert(error.message); return }
     setParts(prev => prev.filter(x => x.id !== p.id))
   }
+
+  // ---- CURRENCY DISPLAY ----------------------------------------------------------
+  // A row prints in the currency it was RECORDED in. A reais row also shows today's
+  // dollar projection in parentheses — that number is computed live, never stored, so
+  // it moves with the rate exactly as the user specified.
+  const isBRL = (p: { currency?: string | null }) => String(p?.currency || 'USD').toUpperCase() === 'BRL'
+  function money(p: { currency?: string | null }, v: any): string {
+    const n = Number(v) || 0
+    if (!isBRL(p)) return formatUSD(n)
+    const usd = toUsd(n, 'BRL', fxRate)
+    return usd == null ? formatBRL(n) : `${formatBRL(n)} ≈ ${formatUSD(usd)}`
+  }
+  // The dollar value of a row's amount, for anything that sums across rows (kit totals) —
+  // mixing reais and dollars in one total is only meaningful in a single currency.
+  const usdOf = (p: { currency?: string | null }, v: any) => toUsd(Number(v) || 0, p?.currency, fxRate) ?? 0
 
   // HUNT parts carry MAP/cost pricing; "pending" = hunted but OUR cost not yet filled.
   const isHunt = (p: Part) => p.source_type === 'HUNT'
@@ -231,12 +256,14 @@ export default function PartsPage() {
     const nm = (m.item || '').trim().toLowerCase()
     return parts.find(p => !p.is_kit && !p.part_number && (p.item || '').trim().toLowerCase() === nm)
   }
-  // A member's per-unit RETAIL + OUR cost (delivered for hunt parts, unit price else).
+  // A member's per-unit RETAIL + OUR cost (delivered for hunt parts, unit price else),
+  // always projected into DOLLARS: a kit can mix a reais-recorded member with dollar
+  // ones, and only a single-currency total means anything.
   function memberPrices(p?: Part): { retail: number; cost: number } {
     if (!p) return { retail: 0, cost: 0 }
-    if (p.source_type === 'HUNT') return { retail: Number(p.map_delivered) || 0, cost: Number(p.cost_delivered ?? p.map_delivered) || 0 }
-    const u = Number(p.unit_price) || 0
-    return { retail: u, cost: Number(p.base_cost) || u }
+    if (p.source_type === 'HUNT') return { retail: usdOf(p, p.map_delivered), cost: usdOf(p, p.cost_delivered ?? p.map_delivered) }
+    const u = usdOf(p, p.unit_price)
+    return { retail: u, cost: usdOf(p, p.base_cost) || u }
   }
   function kitTotals(kit: Part): { retail: number; cost: number } {
     return (kit.kit_items || []).reduce((a, m) => {
@@ -297,12 +324,17 @@ export default function PartsPage() {
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
-      // BRL-as-USD guard: the bank is USD — a foreign-currency document must never
-      // enroll its raw numbers as dollars. BRL converts at today's rate (confirmed
-      // by the user); any other currency aborts.
-      const fx = await scanCurrencyFx(parsed.currency)
-      if (fx == null) { setScanning(false); return }
-      const money = (v: any) => (((parseFloat(v) || 0) * fx)).toFixed(2)
+      // CURRENCY — the document's own. A real-life receipt is enrolled in the currency it
+      // was printed in and NOTHING is converted here (user law 13/aug/2026): a Brazilian
+      // invoice keeps its reais fixed, and the dollar figure is projected from the live
+      // rate wherever it's needed. Anything that isn't USD or BRL is refused outright
+      // rather than guessed at.
+      const cur = String(parsed.currency || 'USD').toUpperCase().trim() || 'USD'
+      if (!isSupportedCurrency(cur)) {
+        alert(`⚠ This document is in ${cur}. The parts database only records USD and BRL.\nNOTHING was imported.`)
+        setScanning(false); return
+      }
+      const money = (v: any) => (parseFloat(v) || 0).toFixed(2)
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => ({
@@ -319,7 +351,7 @@ export default function PartsPage() {
       }))
       if (items.length === 0) { alert('No items found on that document.'); setScanning(false); return }
       // Open the review popup — nothing is enrolled until CONFIRM.
-      setScannedItems({ supplier, date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '', items })
+      setScannedItems({ supplier, date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '', currency: cur, items })
     } catch (err) {
       console.error(err)
       alert('Failed to scan. Please try again.')
@@ -337,6 +369,8 @@ export default function PartsPage() {
       ...i,
       supplier: scannedItems.supplier,
       purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedItems.date) ? scannedItems.date : null,
+      // The document's currency travels with its amounts, unconverted.
+      currency: scannedItems.currency,
     })))
     setEnrolling(false)
     setScannedItems(null)
@@ -363,6 +397,9 @@ export default function PartsPage() {
   const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg'
   // Compact style for the REVIEW SCANNED ITEMS rows so a full line of fields fits the screen.
   const scanInput = 'bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs'
+  // The review box labels its amounts with the DOCUMENT's currency — you are editing
+  // reais on a Brazilian receipt, not dollars.
+  const scanSym = scannedItems?.currency === 'BRL' ? 'R$' : '$'
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   return (
@@ -396,6 +433,14 @@ export default function PartsPage() {
               <h2 className="text-lg font-bold">REVIEW SCANNED ITEMS ({scannedItems.items.length})</h2>
               <button onClick={() => setScannedItems(null)} className="text-gray-400 hover:text-white text-xl font-bold">✕</button>
             </div>
+            {/* The currency was read off the document. Nothing is converted before
+                enrolling — reais go in as reais. */}
+            {scannedItems.currency === 'BRL' && (
+              <div className="bg-emerald-900/50 border border-emerald-700 rounded-xl px-3 py-2 text-xs text-emerald-100">
+                🇧🇷 <span className="font-bold">Brazilian document (R$).</span> The amounts below are enrolled in <span className="font-bold">reais, exactly as printed</span> — no conversion.
+                {fxRate ? <> The dollar value is projected live at today’s rate (US$ 1 = R$ {fxRate.toFixed(4)}).</> : <> Today’s rate isn’t available, so no dollar projection is shown until it is.</>}
+              </div>
+            )}
             <div className="overflow-y-auto flex-1 space-y-2">
               <div className="flex gap-3 flex-wrap">
                 <div className="flex-1 min-w-[12rem]">
@@ -425,19 +470,19 @@ export default function PartsPage() {
                   <input type="text" title="Alias (optional nickname for this part)" value={it.alias} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], alias: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-24`} placeholder="Alias" />
                   <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-10`} placeholder="1" />
                   <div className="relative w-20">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
                     <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0.00" />
                   </div>
                   <div className="relative w-16">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
                     <input type="text" inputMode="decimal" value={it.tax} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0" />
                   </div>
                   <div className="relative w-16">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
                     <input type="text" inputMode="decimal" value={it.extra} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0" />
                   </div>
                   <div className="relative w-20" title="MAP / List price from the document">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
                     <input type="text" inputMode="decimal" value={it.list_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], list_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="MAP" />
                   </div>
                   <input type="text" inputMode="decimal" title="Weight (lbs) from the document" value={it.weight_lbs} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], weight_lbs: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-12`} placeholder="lbs" />
@@ -448,7 +493,10 @@ export default function PartsPage() {
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700 items-center">
               <div className="flex-1 text-right text-gray-400 font-bold text-sm">
-                TOTAL: {formatUSD(scannedItems.items.reduce((s, i) => s + (parseFloat(i.unit_price) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0))}
+                {(() => {
+                  const total = scannedItems.items.reduce((s, i) => s + (parseFloat(i.unit_price) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0)
+                  return <>TOTAL: {money({ currency: scannedItems.currency }, total)}</>
+                })()}
               </div>
               <button onClick={confirmScannedItems} disabled={enrolling} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-4 py-2 rounded-xl font-bold text-sm">{enrolling ? 'ENROLLING…' : 'CONFIRM'}</button>
             </div>
@@ -608,15 +656,18 @@ export default function PartsPage() {
                   <h2 className="text-xl font-bold">{p.alias || p.item}</h2>
                   {(() => { const b = sourceBadge(p); return <span className={`px-3 py-1 rounded-full text-xs font-bold ${b.cls}`}>{b.label}</span> })()}
                   {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
+                  {/* Recorded off a Brazilian receipt: the reais below are the real,
+                      fixed figures — the dollars beside them are today's projection. */}
+                  {isBRL(p) && <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-800 text-emerald-100" title="Recorded in Brazilian reais — the US$ figure is projected at today's rate">🇧🇷 BRL</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
                 </div>
                 {p.alias && <p className="text-sm text-gray-400 mb-1">{p.item}</p>}
                 {isHunt(p) ? (
                   <p className="text-sm text-gray-400">
-                    RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
+                    RETAIL del: <span className="text-gray-200 font-bold">{money(p, p.map_delivered)}</span>
                     {p.our_cost != null
-                      ? <> · OUR del: <span className="text-green-400 font-bold">{formatUSD(Number(p.cost_delivered) || 0)}</span> ({Number(p.delivered_discount) || 0}% off)</>
+                      ? <> · OUR del: <span className="text-green-400 font-bold">{money(p, p.cost_delivered)}</span> ({Number(p.delivered_discount) || 0}% off)</>
                       : <span className="text-amber-400 font-bold"> · OUR COST PENDING</span>}
                     {p.dealer_supplier ? ` · ${p.dealer_supplier}` : ''}
                   </p>
@@ -626,13 +677,13 @@ export default function PartsPage() {
                         the extras that add information — tax, shipping/handling, the LANDED cost
                         when it differs from the unit price, and the purchase date. */}
                     <p className="text-sm text-gray-400">
-                      MAP: <span className="text-gray-200 font-bold">{Number(p.map_price) > 0 ? formatUSD(Number(p.map_price)) : '—'}</span>
-                      {' · '}OUR COST: <span className="text-green-400 font-bold">{formatUSD(Number(p.unit_price) || 0)}</span>
+                      MAP: <span className="text-gray-200 font-bold">{Number(p.map_price) > 0 ? money(p, p.map_price) : '—'}</span>
+                      {' · '}OUR COST: <span className="text-green-400 font-bold">{money(p, p.unit_price)}</span>
                       {' · '}DISCOUNT: <span className="text-yellow-300 font-bold">{Number(p.part_discount) > 0 ? `${Number(p.part_discount)}%` : '—'}</span>
                       {Number(p.weight_lbs) > 0 ? <> · {Number(p.weight_lbs)} lbs</> : null}
-                      {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax))}` : ''}
-                      {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra))}` : ''}
-                      {Math.abs((Number(p.base_cost) || 0) - (Number(p.unit_price) || 0)) >= 0.01 && (Number(p.base_cost) || 0) > 0 ? ` · Landed ${formatUSD(Number(p.base_cost))}` : ''}
+                      {(Number(p.tax) || 0) > 0 ? ` · Tax ${money(p, p.tax)}` : ''}
+                      {(Number(p.extra) || 0) > 0 ? ` · Extra ${money(p, p.extra)}` : ''}
+                      {Math.abs((Number(p.base_cost) || 0) - (Number(p.unit_price) || 0)) >= 0.01 && (Number(p.base_cost) || 0) > 0 ? ` · Landed ${money(p, p.base_cost)}` : ''}
                       {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
                     </p>
                     {(p.category || p.donor || p.notes) && (
