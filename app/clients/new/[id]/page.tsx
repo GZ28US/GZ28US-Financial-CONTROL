@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, CLIENT_COUNTRIES, ENGLAND_REGIONS, countryDefaults, formatUKPostcode } from '@/lib/utils'
 
 const usaStates = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -67,8 +67,7 @@ export default function EditClientPage({
     setForm({
       ...form,
       country,
-      phone: country === 'USA' ? '+1 ' : '+55 ',
-      state: country === 'USA' ? 'FL' : 'SP',
+      ...countryDefaults(country),
     })
   }
 
@@ -96,9 +95,13 @@ export default function EditClientPage({
   }
 
   const stateOptions =
-    form.country === 'USA'
-      ? usaStates
-      : brazilStates
+    form.country === 'USA' ? usaStates
+    : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : brazilStates
+  const phonePlaceholder =
+    form.country === 'USA' ? '+1 (407) 123-4567'
+    : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : '+55 (62) 99999-9999'
 
   if (loading) {
     return (
@@ -144,16 +147,13 @@ export default function EditClientPage({
           onChange={(e) => changeCountry(e.target.value)}
           className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"
         >
-          <option value="USA">USA</option>
-          <option value="BRAZIL">BRAZIL</option>
+          {CLIENT_COUNTRIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
         </select>
 
         <input
-          placeholder={
-            form.country === 'USA'
-              ? '+1 (407) 123-4567'
-              : '+55 (62) 99999-9999'
-          }
+          placeholder={phonePlaceholder}
           value={form.phone}
           onChange={(e) =>
             setForm({
@@ -206,12 +206,12 @@ export default function EditClientPage({
         </select>
 
         <input
-          placeholder="ZIP"
+          placeholder={form.country === 'ENGLAND' ? 'POSTCODE (SW1A 1AA)' : form.country === 'USA' ? 'ZIP' : 'CEP'}
           value={form.zip}
           onChange={(e) =>
             setForm({
               ...form,
-              zip: e.target.value,
+              zip: form.country === 'ENGLAND' ? formatUKPostcode(e.target.value) : e.target.value,
             })
           }
           className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl"

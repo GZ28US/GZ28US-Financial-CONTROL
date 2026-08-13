@@ -50,10 +50,42 @@ export function clientCode(c: { is_quote?: boolean | null; client_number: number
   return `${CODE_PREFIX}.${c.is_quote ? 'QT.' : ''}${num}`
 }
 
+// Countries a client address can use, in dropdown order. ENGLAND uses UK postcodes
+// (letters + digits, "SW1A 1AA") and the 9 English REGIONS in the state field.
+export const CLIENT_COUNTRIES = ['USA', 'BRAZIL', 'ENGLAND']
+
+// The 9 regions of England — exactly the strings postcodes.io returns as `region`,
+// so a postcode lookup always lands on one of these.
+export const ENGLAND_REGIONS = [
+  'East Midlands', 'East of England', 'London', 'North East', 'North West',
+  'South East', 'South West', 'West Midlands', 'Yorkshire and The Humber',
+]
+
+// What an empty PHONE and the STATE field start as when the COUNTRY select changes.
+export function countryDefaults(country: string): { phone: string; state: string } {
+  if (country === 'BRAZIL') return { phone: '+55 ', state: 'SP' }
+  if (country === 'ENGLAND') return { phone: '+44 ', state: 'London' }
+  return { phone: '+1 ', state: 'FL' }
+}
+
+// Mask a UK postcode as the user types: OUTWARD + space + INWARD (the inward half is
+// always the last 3 chars) — "sw1a1aa" -> "SW1A 1AA". Letters/digits only, max 7.
+export function formatUKPostcode(raw: string): string {
+  const s = (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7)
+  return s.length > 3 ? `${s.slice(0, -3)} ${s.slice(-3)}` : s
+}
+
+// True once a UK postcode is complete (outward + inward) — the point where the
+// postcodes.io lookup is worth firing.
+export function isUKPostcode(raw: string): boolean {
+  return /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/.test((raw || '').toUpperCase().trim())
+}
+
 // Normalize a stored phone into the digits-only form UltraMsg expects as `to` for
 // an individual WhatsApp chat, BY the client's country (both apps have clients from
-// both countries). Brazil -> +55 (DDD + number; a 10/11-digit "55…" is a DDD, not
-// the country code, so it still gets +55). USA (default) -> +1.
+// several countries). Brazil -> +55 (DDD + number; a 10/11-digit "55…" is a DDD, not
+// the country code, so it still gets +55). England -> +44 (the national trunk "0" is
+// dropped: 07911 123456 -> 447911123456). USA (default) -> +1.
 export function toWaNumber(phone: string | null | undefined, country?: string | null): string {
   const digits = (phone || '').replace(/\D/g, '')
   if (!digits) return ''
@@ -61,6 +93,11 @@ export function toWaNumber(phone: string | null | undefined, country?: string | 
     if (digits.startsWith('55') && digits.length >= 12) return digits
     if (digits.length === 10 || digits.length === 11) return '55' + digits
     return digits
+  }
+  if (country === 'ENGLAND') {
+    const rest = digits.startsWith('44') && digits.length >= 12 ? digits.slice(2) : digits
+    const local = rest.replace(/^0/, '')
+    return local.length === 9 || local.length === 10 ? '44' + local : digits
   }
   if (digits.startsWith('1') && digits.length === 11) return digits
   if (digits.length === 10) return '1' + digits
@@ -78,14 +115,30 @@ export function formatCPF(raw: string): string {
 
 // Display a phone number in its country's format:
 //   BR  +55 (11) 98121.5678  (mobile)  /  +55 (11) 3121.5678  (landline)
+//   UK  +44 7911 123456      (mobile)  /  +44 20 7946 0958    (London/2-digit area)
 //   US  +1 (321) 315.0973
-// `country` ('BRAZIL' | 'USA') forces the format; otherwise it's inferred from the
-// digits (leading 55 with 12-13 digits => Brazil, else US). Unknown shapes return
-// the original string untouched.
+// `country` ('BRAZIL' | 'ENGLAND' | 'USA') forces the format; otherwise it's inferred
+// from the digits (leading 55/44 with 12-13 digits => Brazil/England, else US).
+// Unknown shapes return the original string untouched.
 export function formatPhone(phone: string | null | undefined, country?: string | null): string {
   if (!phone) return ''
   const digits = String(phone).replace(/\D/g, '')
   if (!digits) return String(phone)
+  const isUK = country === 'ENGLAND' || (!country && digits.startsWith('44') && digits.length > 11)
+  if (isUK) {
+    // After +44 the national trunk "0" is dropped: 020 7946 0958 -> +44 20 7946 0958.
+    const rest = digits.startsWith('44') && digits.length > 11 ? digits.slice(2) : digits
+    const local = rest.replace(/^0/, '')
+    if (local.length === 10) {
+      // The area code is 2 digits for 02x (London 20, Coventry 24, Cardiff 29…) and 3 for
+      // the big-city "11x"/"1x1" codes (Manchester 161, Birmingham 121…). Everything else
+      // — including 07### mobiles — reads as 4 + 6.
+      if (local.startsWith('2')) return `+44 ${local.slice(0, 2)} ${local.slice(2, 6)} ${local.slice(6)}`
+      if (/^(11\d|1[1-9]1)/.test(local)) return `+44 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`
+    }
+    if (local.length === 10 || local.length === 9) return `+44 ${local.slice(0, 4)} ${local.slice(4)}`
+    return String(phone)
+  }
   const isBR = country === 'BRAZIL' || (!country && digits.startsWith('55') && digits.length > 11)
   if (isBR) {
     const local = digits.startsWith('55') ? digits.slice(2) : digits

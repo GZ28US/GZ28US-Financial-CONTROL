@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, clientCode } from '@/lib/utils'
+import {
+  BASE_PATH, clientCode, CLIENT_COUNTRIES, ENGLAND_REGIONS,
+  countryDefaults, formatUKPostcode, isUKPostcode,
+} from '@/lib/utils'
 import Header from '@/components/Header'
 
 const usaStates = [
@@ -53,8 +56,7 @@ export default function NewClientPage() {
     setForm({
       ...form,
       country,
-      phone: country === 'USA' ? '+1 ' : '+55 ',
-      state: country === 'USA' ? 'FL' : 'SP',
+      ...countryDefaults(country),
       zip: '',
       address: '',
       city: '',
@@ -62,12 +64,14 @@ export default function NewClientPage() {
   }
 
   // ZIP -> address autofill. USA uses zippopotam.us (city + state). Brazil uses
-  // viacep.com.br (street + city + state). All fields stay editable; failures
-  // are silently ignored so the user can just type manually.
+  // viacep.com.br (street + city + state). England uses postcodes.io (city + region;
+  // it has no street-level data, so ADDRESS stays manual). All fields stay editable;
+  // failures are silently ignored so the user can just type manually.
   useEffect(() => {
     const digits = form.zip.replace(/\D/g, '')
     if (form.country === 'USA' && digits.length === 5) lookupUSA(digits)
     else if (form.country === 'BRAZIL' && digits.length === 8) lookupBrazil(digits)
+    else if (form.country === 'ENGLAND' && isUKPostcode(form.zip)) lookupEngland(form.zip)
   }, [form.zip, form.country])
 
   async function lookupUSA(zip: string) {
@@ -104,6 +108,26 @@ export default function NewClientPage() {
         address: prev.address || street,
         city: prev.city || city,
         state: brazilStates.includes(uf) ? uf : prev.state,
+      }))
+    } catch {}
+    setZipLookup(false)
+  }
+
+  async function lookupEngland(postcode: string) {
+    setZipLookup(true)
+    try {
+      const res = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode.replace(/\s+/g, ''))}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const r = data?.result
+      if (!r) return
+      setForm(prev => ({
+        ...prev,
+        zip: r.postcode || prev.zip,
+        city: prev.city || r.admin_district || '',
+        // `region` is England-only (null for Scotland/Wales/NI postcodes) — keep the
+        // current pick rather than blanking the field on a non-English postcode.
+        state: ENGLAND_REGIONS.includes(r.region) ? r.region : prev.state,
       }))
     } catch {}
     setZipLookup(false)
@@ -151,7 +175,21 @@ export default function NewClientPage() {
     window.location.href = `${BASE_PATH}/clients?mode=${m || 'project'}`
   }
 
-  const stateOptions = form.country === 'USA' ? usaStates : brazilStates
+  const stateOptions =
+    form.country === 'USA' ? usaStates
+    : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : brazilStates
+  // Each country names its own postal code / subdivision, and shows its own samples.
+  const zipLabel = form.country === 'USA' ? 'ZIP' : form.country === 'ENGLAND' ? 'POSTCODE' : 'CEP'
+  const stateLabel = form.country === 'ENGLAND' ? 'REGION' : 'STATE'
+  const phonePlaceholder =
+    form.country === 'USA' ? '+1 (407) 123-4567'
+    : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : '+55 (62) 99999-9999'
+  const zipPlaceholder =
+    form.country === 'USA' ? '32837'
+    : form.country === 'ENGLAND' ? 'SW1A 1AA'
+    : '74000-000'
   const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 
   return (
@@ -214,8 +252,9 @@ export default function NewClientPage() {
             onChange={(e) => changeCountry(e.target.value)}
             className={`${inputClass} w-full`}
           >
-            <option value="USA">USA</option>
-            <option value="BRAZIL">BRAZIL</option>
+            {CLIENT_COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
           </select>
         </div>
 
@@ -225,19 +264,19 @@ export default function NewClientPage() {
             value={form.phone}
             onChange={(e) => setForm({ ...form, phone: e.target.value })}
             className={`${inputClass} w-full`}
-            placeholder={form.country === 'USA' ? '+1 (407) 123-4567' : '+55 (62) 99999-9999'}
+            placeholder={phonePlaceholder}
           />
         </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">
-            ZIP {zipLookup && <span className="text-sm text-gray-400 font-normal">— looking up...</span>}
+            {zipLabel} {zipLookup && <span className="text-sm text-gray-400 font-normal">— looking up...</span>}
           </label>
           <input
             value={form.zip}
-            onChange={(e) => setForm({ ...form, zip: e.target.value })}
+            onChange={(e) => setForm({ ...form, zip: form.country === 'ENGLAND' ? formatUKPostcode(e.target.value) : e.target.value })}
             className={`${inputClass} w-full`}
-            placeholder={form.country === 'USA' ? '32837' : '74000-000'}
+            placeholder={zipPlaceholder}
           />
         </div>
 
@@ -262,7 +301,7 @@ export default function NewClientPage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">STATE</label>
+          <label className="block mb-2 text-lg font-bold">{stateLabel}</label>
           <select
             value={form.state}
             onChange={(e) => setForm({ ...form, state: e.target.value })}

@@ -3,7 +3,10 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatCPF, isValidCPF } from '@/lib/utils'
+import {
+  BASE_PATH, formatCPF, isValidCPF, ENGLAND_REGIONS,
+  countryDefaults, formatUKPostcode, isUKPostcode,
+} from '@/lib/utils'
 
 // PUBLIC client self-service form. The shop sends a client this link (SEND CLIENT
 // on the client page) so the client fills in their own details and saves. It is
@@ -42,7 +45,7 @@ const STRINGS = {
     email: 'E-MAIL', emailPh: 'voce@exemplo.com',
     instagram: 'INSTAGRAM', instagramPh: '@seuusuario',
     facebook: 'FACEBOOK', facebookPh: 'facebook.com/usuario ou @usuario',
-    country: 'PAÍS', countryOptions: [['BRAZIL', 'BRASIL'], ['USA', 'EUA']] as [string, string][],
+    country: 'PAÍS', countryOptions: [['BRAZIL', 'BRASIL'], ['USA', 'EUA'], ['ENGLAND', 'INGLATERRA']] as [string, string][],
     phone: 'TELEFONE / WHATSAPP',
     cpfOptional: '(opcional)', cpfInvalid: 'CPF inválido. Corrija o CPF ou deixe o campo em branco.',
     looking: '— buscando endereço…',
@@ -61,7 +64,7 @@ const STRINGS = {
     email: 'EMAIL', emailPh: 'you@example.com',
     instagram: 'INSTAGRAM', instagramPh: '@username',
     facebook: 'FACEBOOK', facebookPh: 'facebook.com/user or @user',
-    country: 'COUNTRY', countryOptions: [['USA', 'USA'], ['BRAZIL', 'BRAZIL']] as [string, string][],
+    country: 'COUNTRY', countryOptions: [['USA', 'USA'], ['BRAZIL', 'BRAZIL'], ['ENGLAND', 'ENGLAND']] as [string, string][],
     phone: 'PHONE / WHATSAPP',
     cpfOptional: '(optional)', cpfInvalid: 'Invalid CPF. Fix the CPF or leave the field blank.',
     looking: '— looking up…',
@@ -105,6 +108,18 @@ export default function ClientSelfFormPage() {
   // Language follows the client's country: BRAZIL -> Portuguese, otherwise English.
   const L = form.country === 'BRAZIL' ? STRINGS.pt : STRINGS.en
 
+  // Each country names its own postal code / subdivision, and shows its own samples.
+  const zipLabel = form.country === 'USA' ? 'ZIP' : form.country === 'ENGLAND' ? 'POSTCODE' : 'CEP'
+  const stateLabel = form.country === 'ENGLAND' ? 'REGION' : L.state
+  const phonePlaceholder =
+    form.country === 'USA' ? '+1 (407) 123-4567'
+    : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : '+55 (11) 99999-9999'
+  const zipPlaceholder =
+    form.country === 'USA' ? '32801'
+    : form.country === 'ENGLAND' ? 'SW1A 1AA'
+    : '00000-000'
+
   useEffect(() => { if (id) load(id) }, [id])
 
   async function load(clientId: string) {
@@ -137,17 +152,36 @@ export default function ClientSelfFormPage() {
     setForm({
       ...form,
       country,
-      phone: country === 'USA' ? '+1 ' : '+55 ',
-      state: country === 'USA' ? 'FL' : 'SP',
+      ...countryDefaults(country),
     })
   }
 
-  // ZIP/CEP -> address autofill. USA uses zippopotam.us (city + state); Brazil uses
-  // viacep.com.br (street + city + state). Called from the field's onChange (only on
-  // the client's own typing — never on load, so a saved address is never clobbered).
+  // ZIP/CEP/POSTCODE -> address autofill. USA uses zippopotam.us (city + state); Brazil
+  // uses viacep.com.br (street + city + state); England uses postcodes.io (city + region
+  // — it has no street-level data, so ADDRESS stays manual). Called from the field's
+  // onChange (only on the client's own typing — never on load, so a saved address is
+  // never clobbered).
   async function lookupZip(country: string, rawZip: string) {
     const digits = rawZip.replace(/\D/g, '')
-    if (country === 'BRAZIL' && digits.length === 8) {
+    if (country === 'ENGLAND' && isUKPostcode(rawZip)) {
+      setZipLookup(true)
+      try {
+        const res = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(rawZip.replace(/\s+/g, ''))}`)
+        if (res.ok) {
+          const r = (await res.json())?.result
+          if (r) {
+            setForm(prev => ({
+              ...prev,
+              zip: r.postcode || prev.zip,
+              city: r.admin_district || prev.city,
+              // `region` is England-only (null for Scotland/Wales/NI postcodes).
+              state: ENGLAND_REGIONS.includes(r.region) ? r.region : prev.state,
+            }))
+          }
+        }
+      } catch {}
+      setZipLookup(false)
+    } else if (country === 'BRAZIL' && digits.length === 8) {
       setZipLookup(true)
       try {
         const res = await fetch(`https://viacep.com.br/ws/${digits}/json/`)
@@ -226,13 +260,13 @@ export default function ClientSelfFormPage() {
     if (form.email.trim()) rows.push(`Email: ${form.email.trim()}`)
     if (form.instagram.trim()) rows.push(`Instagram: ${form.instagram.trim()}`)
     if (form.facebook.trim()) rows.push(`Facebook: ${form.facebook.trim()}`)
-    if (form.country.trim()) rows.push(`Country: ${form.country === 'USA' ? 'USA' : 'BRAZIL'}`)
+    if (form.country.trim()) rows.push(`Country: ${form.country.trim()}`)
     if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
     if (form.country === 'BRAZIL' && form.cpf.trim()) rows.push(`CPF: ${form.cpf.trim()}`)
     if (form.address.trim()) rows.push(`Address: ${form.address.trim()}`)
     if (form.city.trim()) rows.push(`City: ${form.city.trim()}`)
     if (form.state.trim()) rows.push(`State: ${form.state.trim()}`)
-    if (form.zip.trim()) rows.push(`${form.country === 'USA' ? 'ZIP' : 'CEP'}: ${form.zip.trim()}`)
+    if (form.zip.trim()) rows.push(`${zipLabel}: ${form.zip.trim()}`)
     if (form.preferred_message_method.trim()) rows.push(`Messages: ${form.preferred_message_method.trim()}`)
     const body = `✅ *FORM FILLED BY THE CLIENT*\n${form.name || '—'}\nThe client filled in and saved their own details:${rows.length ? '\n\n' + rows.join('\n') : ''}`
     fetch(`${BASE_PATH}/api/whatsapp`, {
@@ -242,7 +276,10 @@ export default function ClientSelfFormPage() {
     }).catch(() => {})
   }
 
-  const stateOptions = form.country === 'USA' ? usaStates : brazilStates
+  const stateOptions =
+    form.country === 'USA' ? usaStates
+    : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : brazilStates
 
   if (loading) {
     return (
@@ -316,7 +353,7 @@ export default function ClientSelfFormPage() {
 
           <div>
             <label className={labelClass}>{L.phone}</label>
-            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={inputClass} placeholder={form.country === 'USA' ? '+1 (407) 123-4567' : '+55 (11) 99999-9999'} />
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={inputClass} placeholder={phonePlaceholder} />
           </div>
 
           {form.country === 'BRAZIL' && (
@@ -328,15 +365,19 @@ export default function ClientSelfFormPage() {
 
           <div>
             <label className={labelClass}>
-              {form.country === 'USA' ? 'ZIP' : 'CEP'}
+              {zipLabel}
               {zipLookup && <span className="ml-2 font-normal text-gray-400">{L.looking}</span>}
             </label>
             <input
               value={form.zip}
-              onChange={(e) => { const v = e.target.value; setForm({ ...form, zip: v }); lookupZip(form.country, v) }}
+              onChange={(e) => {
+                const v = form.country === 'ENGLAND' ? formatUKPostcode(e.target.value) : e.target.value
+                setForm({ ...form, zip: v })
+                lookupZip(form.country, v)
+              }}
               className={inputClass}
-              inputMode="numeric"
-              placeholder={form.country === 'USA' ? '32801' : '00000-000'}
+              inputMode={form.country === 'ENGLAND' ? 'text' : 'numeric'}
+              placeholder={zipPlaceholder}
             />
           </div>
 
@@ -351,7 +392,7 @@ export default function ClientSelfFormPage() {
           </div>
 
           <div>
-            <label className={labelClass}>{L.state}</label>
+            <label className={labelClass}>{stateLabel}</label>
             <select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} className={inputClass}>
               {stateOptions.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>

@@ -5,23 +5,8 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatPhone } from '@/lib/utils'
+import { BASE_PATH, formatPhone, toWaNumber } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
-
-// Normalize a phone to the digits-only `to` UltraMsg expects, by the client's country.
-// USA -> +1 (this app's default); BRAZIL -> +55.
-function toWaNumber(phone: string | null | undefined, country?: string | null): string {
-  const digits = (phone || '').replace(/\D/g, '')
-  if (!digits) return ''
-  if (country === 'BRAZIL') {
-    if (digits.startsWith('55') && digits.length >= 12) return digits
-    if (digits.length === 10 || digits.length === 11) return '55' + digits
-    return digits
-  }
-  if (digits.startsWith('1') && digits.length === 11) return digits
-  if (digits.length === 10) return '1' + digits
-  return digits
-}
 
 type Ride = {
   id: string

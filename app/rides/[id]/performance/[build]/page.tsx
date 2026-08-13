@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, toWaNumber } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
 
 const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
@@ -21,15 +21,6 @@ const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0')
 const YEARS = Array.from({ length: new Date().getFullYear() - 2025 + 1 }, (_, i) => String(new Date().getFullYear() - i))
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
-// Normalize a stored phone string into the digits-only form UltraMsg expects.
-// US default: a bare 10-digit number gets a leading 1. Numbers that already
-// include a country code are passed through.
-function toWaNumber(phone: string | null | undefined): string {
-  const digits = (phone || '').replace(/\D/g, '')
-  if (!digits) return ''
-  if (digits.length === 10) return '1' + digits
-  return digits
-}
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader()
@@ -391,7 +382,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
     const plain = report.replace(/\*/g, '') + (p.document_url ? `\n\nChart: ${p.document_url}` : '')
 
     if (method === 'WhatsApp') {
-      const to = toWaNumber(client.phone)
+      const to = toWaNumber(client.phone, client.country)
       if (!to) { alert('This client has no phone number for WhatsApp.\nAdd a phone on the client page, or change their preferred method to SMS / E-Mail.'); return }
       setSendingId(p.id)
       try {
@@ -613,7 +604,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
         const method = client.preferred_message_method || 'WhatsApp'
         const plain = caption.replace(/\*/g, '') + `\n\nReceipt: ${url}`
         if (method === 'WhatsApp') {
-          const to = toWaNumber(client.phone)
+          const to = toWaNumber(client.phone, client.country)
           if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the receipt was not sent to them.') }
           else {
             const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: caption, documentUrl: url, filename }) })
@@ -926,7 +917,7 @@ async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | n
   } catch { return null }
 }
 
-function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; preferred_message_method: string | null } | null }) {
+function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   const [bsLoading, setBsLoading] = useState(true)
@@ -1139,7 +1130,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       if (!data.ok) { alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return }
       // Optionally send the client their own copy of the DataSheet.
       if (alsoClient) {
-        const to = client && (client.preferred_message_method || 'WhatsApp') === 'WhatsApp' ? toWaNumber(client.phone) : null
+        const to = client && (client.preferred_message_method || 'WhatsApp') === 'WhatsApp' ? toWaNumber(client.phone, client.country) : null
         if (!to) alert('Sent to the group. The client has no WhatsApp number on file, so the DataSheet was not sent to them.')
         else {
           const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: `🔧 *Your GZ28 Build Sheet*${rideTitle ? `\n${rideTitle}` : ''}`, documentUrl: urlData.publicUrl, filename }) })
@@ -1245,7 +1236,7 @@ export default function RidePerformancePage() {
   const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
   const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null; transmission: string | null } | null>(null)
   const [buildName, setBuildName] = useState('')
-  const [client, setClient] = useState<{ name: string | null; phone: string | null; preferred_message_method: string | null } | null>(null)
+  const [client, setClient] = useState<{ name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
   const [tab, setTab] = useState<Tab>('BUILD SHEET')
 
   useEffect(() => {
@@ -1255,7 +1246,7 @@ export default function RidePerformancePage() {
         supabase.from('ride_builds').select('name').eq('ride_code', data.project_code).eq('build_no', buildNo).maybeSingle().then(({ data: b }) => setBuildName(b?.name || ''))
       }
       if (data?.client_id) {
-        supabase.from('clients').select('name, phone, preferred_message_method').eq('id', data.client_id).single().then(({ data: c }) => setClient(c))
+        supabase.from('clients').select('name, phone, country, preferred_message_method').eq('id', data.client_id).single().then(({ data: c }) => setClient(c))
       }
     })
   }, [])

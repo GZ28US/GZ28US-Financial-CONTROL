@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, orderIncomes, formatPhone } from '@/lib/utils'
+import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
 
 type Invoice = {
   id: string
@@ -84,16 +84,6 @@ function getLiveBadge(liveStatus: string | null) {
   if (liveStatus === 'CLOSED') return { label: 'CLOSED', cls: 'bg-green-700 text-white' }
   if (liveStatus === 'REALTIME') return { label: 'ONLINE', cls: 'bg-blue-800 text-blue-200' }
   return { label: 'INCOMPLETE', cls: 'bg-gray-700 text-gray-300' }
-}
-
-// Normalize a stored phone string into the digits-only form UltraMsg expects as
-// `to` for an individual WhatsApp chat. US default: a bare 10-digit number gets
-// a leading 1. Numbers that already include a country code are passed through.
-function toWaNumber(phone: string | null | undefined): string {
-  const digits = (phone || '').replace(/\D/g, '')
-  if (!digits) return ''
-  if (digits.length === 10) return '1' + digits
-  return digits
 }
 
 function pad3(n: number) { return String(n).padStart(3, '0') }
@@ -390,7 +380,7 @@ export default function ViewInvoicePage() {
       }
 
       // WhatsApp (default) — automatic via UltraMsg through the existing route.
-      const to = toWaNumber(client?.phone)
+      const to = toWaNumber(client?.phone, client?.country)
       if (!to) {
         alert('This client has no phone number for WhatsApp.\nAdd a phone on the client page, or change their preferred method to SMS / E-Mail.')
         setSending(false)
@@ -575,7 +565,7 @@ export default function ViewInvoicePage() {
                   <div className="pi-info-row"><span className="pi-info-label">{T.name}:</span><span className="pi-info-value">{client.name}</span></div>
                   {client.address && <div className="pi-info-row"><span className="pi-info-label">{T.address}:</span><span className="pi-info-value">{client.address}</span></div>}
                   {(client.city || client.state) && <div className="pi-info-row"><span className="pi-info-label">{T.cityst}:</span><span className="pi-info-value">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}
-                  {client.phone && <div className="pi-info-row"><span className="pi-info-label">{T.phone}:</span><span className="pi-info-value">{formatPhone(client.phone)}</span></div>}
+                  {client.phone && <div className="pi-info-row"><span className="pi-info-label">{T.phone}:</span><span className="pi-info-value">{formatPhone(client.phone, client.country)}</span></div>}
                   {client.email && <div className="pi-info-row"><span className="pi-info-label">{T.email}:</span><span className="pi-info-value">{client.email}</span></div>}
                 </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>{T.noClient}</div>}
               </div>
@@ -876,7 +866,7 @@ export default function ViewInvoicePage() {
               <label className="block mb-3 text-lg font-bold">CLIENT</label>
               <div className={sectionClass}>
                 <div className={rowClass}><span className={labelClass}>NAME</span><span className="font-bold">{client.name}</span></div>
-                {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone)}</span></div>}
+                {client.phone && <div className={rowClass}><span className={labelClass}>PHONE</span><span className="font-bold">{formatPhone(client.phone, client.country)}</span></div>}
                 {client.email && <div className={rowClass}><span className={labelClass}>EMAIL</span><span className="font-bold">{client.email}</span></div>}
                 {client.address && <div className={rowClass}><span className={labelClass}>ADDRESS</span><span className="font-bold">{client.address}</span></div>}
                 {(client.city || client.state) && <div className={rowClass}><span className={labelClass}>CITY/ST</span><span className="font-bold">{[client.city, client.state].filter(Boolean).join(' / ')}{client.zip ? ` ${client.zip}` : ''}</span></div>}
