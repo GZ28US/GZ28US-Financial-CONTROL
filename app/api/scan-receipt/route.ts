@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
     const purchasePrompt = `You are scanning a purchase receipt for an auto shop. Extract the following information and return ONLY valid JSON, no other text:
 {
-  "supplier": "store/supplier name. If the header is only a generic greeting like 'WELCOME TO OUR STORE' with no business name, use the street address or city printed at the top instead (e.g. '9999 S Hwy 441, Orlando FL'). For a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
+  "supplier": "the SELLER — the business we BOUGHT FROM — see rule 0. If the header is only a generic greeting like 'WELCOME TO OUR STORE' with no business name, use the street address or city printed at the top instead (e.g. '9999 S Hwy 441, Orlando FL'). For a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
   "currency": "ISO code of the currency the returned amounts are in (USD, BRL, ...) — see rule 15",
   "order_number": "the store's order / confirmation / sales-order number printed on the document (e.g. 'Order #123456', 'SO-98765', 'Confirmation 2AB4C'), else empty string",
   "date": "YYYY-MM-DD format, or empty string if not found",
@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
   ]
 }
 Rules:
+0. WHO IS THE SUPPLIER — a purchase document names TWO parties, and "supplier" is ALWAYS the one that SOLD the goods, never the one that bought them. WE are the buyer: GZ28, GZ28US, GZ28BR, "GZ28 V8 SpeedShop", "GZ28 V8 SpeedShop USA LLC", "GZ28 V8 SpeedShop BR Ltda", or any address in Orlando FL belonging to them. NEVER return our own name as the supplier.
+   - The SELLER is the letterhead/logo at the top, the party the invoice is FROM, labelled "From", "Sold By", "Vendedor", "Remetente", or on a Brazilian nota fiscal the "EMITENTE" block (the one whose CNPJ heads the document).
+   - The BUYER (us — never the supplier) is labelled "Bill To", "Sold To", "Ship To", "Customer", "Cliente", "Comprador", "Destinatário", or on a nota fiscal the "DESTINATÁRIO / REMETENTE" recipient block.
+   - If BOTH parties are printed and one of them is a GZ28 entity, the supplier is the OTHER one, always.
+   - Only when the document names no seller at all should supplier be an empty string — never fall back to the buyer.
 1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons. A standalone "Dsc"/"Discount"/"Coupon" line (often printed right below the item it applies to) is NOT its own item — fold that amount into the line_total of the item directly above it and never emit it as a separate item. NEVER merge or deduplicate printed lines: two lines with similar or even identical descriptions are SEPARATE items — output one entry per printed product line, each with ITS OWN part number exactly as printed (e.g. two injector sets that differ only in part number are two items, never one).
 2. quantity: read exactly from the Qty column. If there is no Qty column, look for a quantity multiplier printed for the item — usually on the line DIRECTLY BELOW the description, in the form "N x" / "N @" / "N X" (e.g. ALDI and other grocery receipts print "20 x" with the unit price beneath the item). That N is the quantity. Default to 1 only when no such multiplier is shown for that item.
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92. When the receipt has separate "List" and "Cost" (or "Price"/"Your Price") columns, use the COST/actual-paid column for line_total — never the List/retail column. On receipts that STACK the quantity (a "N x  unit_price" line below the item), the line_total is the EXTENDED amount printed on the item's OWN line (= N times unit_price — e.g. "Dog Entree ... 13.20" with "20 x 0.66" beneath it has line_total 13.20), NOT the small per-unit price on the sub-line. Never report the per-unit price as the line_total when a quantity multiplier is present.
@@ -277,7 +282,7 @@ Rules:
       content: [{
         type: 'text',
         text: JSON.stringify({
-          supplier: parsed.supplier || '',
+          supplier: sellerOnly(parsed.supplier),
           date: parsed.date || '',
           paid: parsed.paid !== false,
           source: parsed.source || '',
@@ -296,6 +301,29 @@ Rules:
     console.error('scan-receipt error:', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
+}
+
+/**
+ * The SUPPLIER is whoever SOLD to us — never ourselves. A purchase document prints both
+ * parties (a Brazilian nota fiscal has EMITENTE and DESTINATÁRIO; a US invoice has a
+ * letterhead and a "Bill To"), and the reader sometimes picks the buyer block, which put
+ * GZ28 in the supplier field. Rule 0 of the prompt tells it which party to take; this is
+ * the deterministic backstop for when it gets it wrong anyway.
+ *
+ * Only OUR OWN entity is stripped. GZ28BR is left alone on purpose — this app is GZ28US,
+ * so a purchase from the Brazilian company is a real supplier, not a self-reference.
+ * A blanked supplier is better than a wrong one: the field is editable on the review
+ * screen, so an empty box asks to be filled while "GZ28US" looks already answered.
+ */
+function sellerOnly(name: unknown): string {
+  const s = String(name ?? '').trim()
+  if (!s) return ''
+  const flat = s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const isGz28 = flat.includes('gz28') || /gz\s*28/i.test(s)
+  if (!isGz28) return s
+  // Our sibling company is a legitimate seller to us; anything else GZ28 is us.
+  const isBrSibling = /\bbr\b|brasil|brazil|ltda/i.test(s) || flat.includes('gz28br')
+  return isBrSibling ? s : ''
 }
 
 /**
