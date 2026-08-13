@@ -6,8 +6,8 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, formatBRL, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
-import { fileForScan } from '@/lib/scanFile'
-import { usdBrlRate, toUsd, isSupportedCurrency } from '@/lib/fx'
+import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
+import { usdBrlRate, toUsd } from '@/lib/fx'
 
 type Part = {
   id: string
@@ -59,8 +59,6 @@ export default function PartsPage() {
   const [scannedItems, setScannedItems] = useState<{
     supplier: string
     date: string
-    // Currency read off the document — every amount below is in it, unconverted.
-    currency: string
     items: { item: string; part_number: string; alias: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
   } | null>(null)
   // Live USD/BRL rate for projecting reais-recorded costs into dollars on screen.
@@ -324,17 +322,16 @@ export default function PartsPage() {
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
-      // CURRENCY — the document's own. A real-life receipt is enrolled in the currency it
-      // was printed in and NOTHING is converted here (user law 13/aug/2026): a Brazilian
-      // invoice keeps its reais fixed, and the dollar figure is projected from the live
-      // rate wherever it's needed. Anything that isn't USD or BRL is refused outright
-      // rather than guessed at.
-      const cur = String(parsed.currency || 'USD').toUpperCase().trim() || 'USD'
-      if (!isSupportedCurrency(cur)) {
-        alert(`⚠ This document is in ${cur}. The parts database only records USD and BRL.\nNOTHING was imported.`)
-        setScanning(false); return
-      }
-      const money = (v: any) => (parseFloat(v) || 0).toFixed(2)
+      // This is the US app: it scans DOLLAR documents and enrols in dollars. Recording a
+      // receipt in its own currency is a BR-app feature (user, 13/aug/2026: "BRL features
+      // only BR app"), so a foreign document here is still converted at scan time — BRL
+      // at today's rate after the user confirms, anything else refused.
+      // NOTE: this only governs what THIS app WRITES. Reading is a different matter — the
+      // parts bank is shared with GZ28BR, which now enrols Brazilian receipts in reais,
+      // and every screen below projects those rows into USD instead of reading R$ as $.
+      const fx = await scanCurrencyFx(parsed.currency)
+      if (fx == null) { setScanning(false); return }
+      const money = (v: any) => (((parseFloat(v) || 0) * fx)).toFixed(2)
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => ({
@@ -351,7 +348,7 @@ export default function PartsPage() {
       }))
       if (items.length === 0) { alert('No items found on that document.'); setScanning(false); return }
       // Open the review popup — nothing is enrolled until CONFIRM.
-      setScannedItems({ supplier, date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '', currency: cur, items })
+      setScannedItems({ supplier, date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '', items })
     } catch (err) {
       console.error(err)
       alert('Failed to scan. Please try again.')
@@ -369,8 +366,10 @@ export default function PartsPage() {
       ...i,
       supplier: scannedItems.supplier,
       purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedItems.date) ? scannedItems.date : null,
-      // The document's currency travels with its amounts, unconverted.
-      currency: scannedItems.currency,
+      // This app enrols in dollars only — a foreign document was already converted at
+      // scan time (scanCurrencyFx). Recording a receipt in its own currency is the BR
+      // app's job; here the column stays 'USD'.
+      currency: 'USD',
     })))
     setEnrolling(false)
     setScannedItems(null)
@@ -397,9 +396,6 @@ export default function PartsPage() {
   const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg'
   // Compact style for the REVIEW SCANNED ITEMS rows so a full line of fields fits the screen.
   const scanInput = 'bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs'
-  // The review box labels its amounts with the DOCUMENT's currency — you are editing
-  // reais on a Brazilian receipt, not dollars.
-  const scanSym = scannedItems?.currency === 'BRL' ? 'R$' : '$'
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   return (
@@ -433,14 +429,6 @@ export default function PartsPage() {
               <h2 className="text-lg font-bold">REVIEW SCANNED ITEMS ({scannedItems.items.length})</h2>
               <button onClick={() => setScannedItems(null)} className="text-gray-400 hover:text-white text-xl font-bold">✕</button>
             </div>
-            {/* The currency was read off the document. Nothing is converted before
-                enrolling — reais go in as reais. */}
-            {scannedItems.currency === 'BRL' && (
-              <div className="bg-emerald-900/50 border border-emerald-700 rounded-xl px-3 py-2 text-xs text-emerald-100">
-                🇧🇷 <span className="font-bold">Brazilian document (R$).</span> The amounts below are enrolled in <span className="font-bold">reais, exactly as printed</span> — no conversion.
-                {fxRate ? <> The dollar value is projected live at today’s rate (US$ 1 = R$ {fxRate.toFixed(4)}).</> : <> Today’s rate isn’t available, so no dollar projection is shown until it is.</>}
-              </div>
-            )}
             <div className="overflow-y-auto flex-1 space-y-2">
               <div className="flex gap-3 flex-wrap">
                 <div className="flex-1 min-w-[12rem]">
@@ -470,19 +458,19 @@ export default function PartsPage() {
                   <input type="text" title="Alias (optional nickname for this part)" value={it.alias} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], alias: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-24`} placeholder="Alias" />
                   <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-10`} placeholder="1" />
                   <div className="relative w-20">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
                     <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0.00" />
                   </div>
                   <div className="relative w-16">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
                     <input type="text" inputMode="decimal" value={it.tax} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], tax: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0" />
                   </div>
                   <div className="relative w-16">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
                     <input type="text" inputMode="decimal" value={it.extra} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0" />
                   </div>
                   <div className="relative w-20" title="MAP / List price from the document">
-                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">{scanSym}</span>
+                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
                     <input type="text" inputMode="decimal" value={it.list_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], list_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="MAP" />
                   </div>
                   <input type="text" inputMode="decimal" title="Weight (lbs) from the document" value={it.weight_lbs} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], weight_lbs: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-12`} placeholder="lbs" />
@@ -493,10 +481,7 @@ export default function PartsPage() {
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700 items-center">
               <div className="flex-1 text-right text-gray-400 font-bold text-sm">
-                {(() => {
-                  const total = scannedItems.items.reduce((s, i) => s + (parseFloat(i.unit_price) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0)
-                  return <>TOTAL: {money({ currency: scannedItems.currency }, total)}</>
-                })()}
+                TOTAL: {formatUSD(scannedItems.items.reduce((s, i) => s + (parseFloat(i.unit_price) || 0) * (parseFloat(i.quantity) || 1) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0), 0))}
               </div>
               <button onClick={confirmScannedItems} disabled={enrolling} className="bg-green-700 hover:bg-green-600 disabled:opacity-60 px-4 py-2 rounded-xl font-bold text-sm">{enrolling ? 'ENROLLING…' : 'CONFIRM'}</button>
             </div>

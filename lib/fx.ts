@@ -10,8 +10,16 @@
 // today's rate. A USD row (every legacy row — the column defaults to 'USD') is untouched
 // by all of this.
 
+// SACRED conversion rule (packs 2026-07-23, carried by the BR invoices): money is NEVER
+// converted at the bare commercial quote. The house rate is the awesomeapi commercial
+// dollar PLUS R$0,20. A "dry" division would disagree with every pack and invoice figure
+// already on file, so every BRL⇄USD projection in the app goes through this spread.
+export const FX_SPREAD_BRL = 0.20
+
 const TTL_MS = 6 * 60 * 60 * 1000
-const LS_KEY = 'gz28_usdbrl'
+// v2: the cache holds the RAW commercial quote; the spread is applied on read, so a
+// change to the rule can never be poisoned by a stale cached number.
+const LS_KEY = 'gz28_usdbrl_v2'
 
 let memo: { rate: number; at: number } | null = null
 let inFlight: Promise<number | null> | null = null
@@ -32,11 +40,18 @@ function writeCache(rate: number) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(memo)) } catch {}
 }
 
-// Today's commercial USD→BRL rate (how many reais one dollar buys), cached for 6h.
-// If the quote can't be fetched, the last known rate is reused rather than blocking —
-// a slightly stale projection beats a blank screen. Returns null only when no rate has
-// ever been fetched on this device, and callers must then show the BRL figure alone.
+// The rate the house CONVERTS AT: today's commercial quote + the SACRED R$0,20 spread,
+// cached for 6h. If the quote can't be fetched, the last known one is reused rather than
+// blocking — a slightly stale projection beats a blank screen. Returns null only when no
+// quote has ever been fetched on this device, and callers must then show the BRL alone.
 export async function usdBrlRate(): Promise<number | null> {
+  const spot = await usdBrlSpot()
+  return spot == null ? null : spot + FX_SPREAD_BRL
+}
+
+// The raw commercial quote, with no spread — for showing "the dollar closed at X", never
+// for converting money. Use usdBrlRate() for anything that turns reais into dollars.
+export async function usdBrlSpot(): Promise<number | null> {
   const cached = readCache()
   if (cached && Date.now() - cached.at < TTL_MS) return cached.rate
   if (inFlight) return inFlight
