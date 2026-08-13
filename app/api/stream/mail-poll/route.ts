@@ -6,6 +6,7 @@ import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import { runInboxZero, alertVipMail } from '@/lib/inboxZero.server'
+import { runZelleWatch } from '@/lib/zelleWatch.server'
 import { runStreamAnswers } from '@/lib/streamAnswers.server'
 import { runStaffPayroll } from '@/lib/staffPayroll.server'
 import type { StreamRow } from '@/lib/stream'
@@ -172,6 +173,11 @@ async function run(force: boolean): Promise<NextResponse> {
   // destino por regra; sem regra → TRIAGEM (Claudinha) + pergunta no grupo.
   let inboxZero: { actions: string[] } = { actions: [] }
   try { inboxZero = await runInboxZero(db) } catch (e) { console.error('[inbox-zero]', e) }
+  // ── ZELLE WATCH (LEI 13/ago) — dinheiro que entra/sai por Zelle não pode
+  // depender de e-mail parado na inbox: varre a caixa INTEIRA, lança a entrada
+  // com histórico e alerta o resto. Roda ANTES do inbox-zero, que arquiva.
+  let zelle: { booked: string[]; pending: string[] } = { booked: [], pending: [] }
+  try { zelle = await runZelleWatch(db) } catch (e) { console.error('[zelle-watch]', e) }
   // ── VIP mail alert — contraparte ativa escreveu ⇒ WhatsApp do Márcio na hora
   // (LEI 04/ago, caso Celina: news de negociação não pode dormir na TRIAGEM).
   let vipMail: { alerted: string[] } = { alerted: [] }
@@ -197,7 +203,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }
