@@ -325,9 +325,20 @@ export default function EditInvoicePage() {
   const [dbSearch, setDbSearch] = useState('')
   const rideNameRef = useRef('')
 
+  // Which button started the save. SAVE & EXIT returns to the invoice list; SAVE stays
+  // in the editor and reloads from the DB — mandatory, because rows inserted by the save
+  // (parts, services, notes) only get their ids there, and saving twice without them
+  // would insert duplicates. A ref, not state: the post-save report dialogs read it many
+  // awaits later, and a stale closure would send the user to the wrong place.
+  const exitAfterSaveRef = useRef(true)
+  const [savingInvoice, setSavingInvoice] = useState(false)
+  const [savedFlash, setSavedFlash] = useState(false)
+
   useEffect(() => { loadData() }, [])
 
-  async function loadData() {
+  // `keepUi` is set by the stay-on-page SAVE: the data is refreshed from the DB but the
+  // expense groups the user had open stay open (purchase_group ids survive a save).
+  async function loadData(keepUi = false) {
     const applyClientContact = (c: any) => {
       setClientPhone(c?.phone || '')
       setClientCountry(c?.country || '')
@@ -454,7 +465,7 @@ export default function EditInvoicePage() {
         paid_from: e.paid_from || e.source || DEFAULT_SOURCE,
         paid_to: e.paid_to || 'GZ28US',
       })))
-      setExpandedGroups(new Set())
+      if (!keepUi) setExpandedGroups(new Set())
     }
 
     const { data: suppliersData } = await supabase.from('suppliers').select('name, discount, discount_type, aliases, email, seller, ordering_method')
@@ -2044,6 +2055,24 @@ export default function EditInvoicePage() {
     }
   }
 
+  // The two SAVE buttons. `exit` decides where the save flow ends; the guard stops a
+  // second click from re-running an in-flight save (easy to do now that SAVE keeps the
+  // page open) and re-inserting every unsaved row.
+  async function handleSave(exit: boolean) {
+    if (savingInvoice) return
+    exitAfterSaveRef.current = exit
+    setSavingInvoice(true)
+    try { await saveInvoice() } finally { setSavingInvoice(false) }
+  }
+
+  // End of the save flow: leave the editor, or stay and refresh state from the DB.
+  async function leaveOrStay() {
+    if (exitAfterSaveRef.current) { router.push(basePath); return }
+    await loadData(true)
+    setSavedFlash(true)
+    setTimeout(() => setSavedFlash(false), 2500)
+  }
+
   async function saveInvoice() {
     // A CLOSED invoice can NEVER carry a pending balance. If one appeared after it was
     // closed (e.g. an income was removed), it can't stay CLOSED — drop it to ONLINE on
@@ -2246,9 +2275,9 @@ export default function EditInvoicePage() {
     await finishSave(newPayments, newExpenses, nextIsQuote)
   }
 
-  function finishSave(newPayments: Payment[], newExpenses: Expense[], stillQuote: boolean) {
+  async function finishSave(newPayments: Payment[], newExpenses: Expense[], stillQuote: boolean) {
     // Quotes don't generate WhatsApp income/expense reports — just save & return.
-    if (stillQuote) { router.push(basePath); return }
+    if (stillQuote) { await leaveOrStay(); return }
     const pendingIncomes: IncomeReport[] = newPayments
       .filter(p => !!p.paid_at)
       .map(p => ({
@@ -2306,7 +2335,7 @@ export default function EditInvoicePage() {
       return
     }
 
-    router.push(basePath)
+    await leaveOrStay()
   }
 
   // DELIVERY DATE without CONCLUSION DATE = the PROMISED TO date — carried on
@@ -2402,7 +2431,7 @@ export default function EditInvoicePage() {
     // Leave the editor only on the post-save flow; a PAID-toggle report keeps
     // the user editing (mirrors sendExpenseReports).
     if (!expenseReports) {
-      if (reportsExitAfter) router.push(basePath)
+      if (reportsExitAfter) void leaveOrStay()
       else setReportsExitAfter(true)
     }
   }
@@ -2439,7 +2468,7 @@ export default function EditInvoicePage() {
     setExpenseReports(null)
     // Leave the editor only on the post-save flow; a PAID-toggle report keeps
     // the user editing.
-    if (reportsExitAfter) router.push(basePath)
+    if (reportsExitAfter) void leaveOrStay()
     else setReportsExitAfter(true)
   }
 
@@ -3889,7 +3918,7 @@ export default function EditInvoicePage() {
 
       </div>
 
-      {/* Fixed action bar — keeps SAVE CHANGES reachable without scrolling the
+      {/* Fixed action bar — keeps both SAVE buttons reachable without scrolling the
           whole invoice. z-40 is below the modal layer (z-50) so dialogs cover
           it when open. The page itself uses pb-32 so the last visible section
           doesn't slip under this bar. */}
@@ -3901,7 +3930,22 @@ export default function EditInvoicePage() {
             <div className="flex justify-between items-baseline gap-3"><span className="text-sm text-gray-400 font-bold">FINAL MARKUP</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
           </div>
           <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
-          <button onClick={saveInvoice} className="flex-1 bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
+          {/* SAVE keeps you in the editor (the row above confirms it landed);
+              SAVE & EXIT is the old SAVE CHANGES — it writes and goes back. */}
+          <button
+            onClick={() => handleSave(false)}
+            disabled={savingInvoice}
+            className={`flex-1 px-6 py-4 rounded-2xl text-xl font-bold disabled:opacity-50 ${savedFlash ? 'bg-green-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+          >
+            {savingInvoice ? 'SAVING…' : savedFlash ? '✓ SAVED' : 'SAVE'}
+          </button>
+          <button
+            onClick={() => handleSave(true)}
+            disabled={savingInvoice}
+            className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold"
+          >
+            SAVE &amp; EXIT
+          </button>
         </div>
       </div>
     </main>
