@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   ]
 }
 Rules:
-0. WHO IS THE SUPPLIER — a purchase document names TWO parties, and "supplier" is ALWAYS the one that SOLD the goods, never the one that bought them. WE are the buyer: GZ28, GZ28US, GZ28BR, "GZ28 V8 SpeedShop", "GZ28 V8 SpeedShop USA LLC", "GZ28 V8 SpeedShop BR Ltda", or any address in Orlando FL belonging to them. NEVER return our own name as the supplier.
+0. WHO IS THE SUPPLIER — a purchase document names TWO parties, and "supplier" is ALWAYS the one that SOLD the goods, never the one that bought them. WE are the buyer, and we appear under ANY of these names — "GZ28" is short for "GALPÃO Z28", so the spelled-out Brazilian legal name is equally us: GZ28, GZ28US, GZ28BR, "GZ28 V8 SpeedShop", "GZ28 V8 SpeedShop USA LLC", "GZ28 V8 SpeedShop BR Ltda", "GALPÃO Z28" / "GALPAO Z28", "GALPÃO Z28 SERVIÇOS AUTOMOTIVOS EIRELI", or an address in Orlando FL belonging to them. NEVER return any of these as the supplier.
    - The SELLER is the letterhead/logo at the top, the party the invoice is FROM, labelled "From", "Sold By", "Vendedor", "Remetente", or on a Brazilian nota fiscal the "EMITENTE" block (the one whose CNPJ heads the document).
    - The BUYER (us — never the supplier) is labelled "Bill To", "Sold To", "Ship To", "Customer", "Cliente", "Comprador", "Destinatário", or on a nota fiscal the "DESTINATÁRIO / REMETENTE" recipient block.
    - If BOTH parties are printed and one of them is a GZ28 entity, the supplier is the OTHER one, always.
@@ -64,6 +64,7 @@ Rules:
 13. PAYMENT / TRANSFER / PIX receipts (e.g. a "Comprovante do Pix", a bank transfer / TED / DOC / Zelle / wire confirmation) have NO itemized products. For these, IGNORE rule 1: set "supplier" to the RECIPIENT/payee (the "recebedor" / "Para" / "Dados do recebedor" — the party RECEIVING the money, never the bank, never the payer), set "paid" to true, set "grand_total" to the amount paid ("Valor pago" / "Valor"), set "tax" to 0 and "extras" to [], and return a SINGLE item whose description is a short label (the payee name, or "Pagamento") and whose line_total is that same amount. Never return an empty items array for a payment receipt.
 14. source: the PAYER — who SENT the money (the "pagador" / "De" / "Dados do pagador" / "from"). This is the person/company that paid, NOT the supplier/payee. Empty string if not shown.
 15. CURRENCY — this system registers expenses in USD. Read carefully which currency each printed amount is in ("R$" / "BRL" = Brazilian real; "$" / "US$" / "USD" = US dollar; airline documents label amounts like "USD 350.00" or "BRL 1.839,48"). If the document shows amounts in USD anywhere, return ALL monetary fields (grand_total, tax, extras, line_total, list_price) in USD and set "currency" to "USD". When only some components are printed in USD, convert the rest using the exchange rate implied by any amount printed in BOTH currencies. ONLY if the document contains no USD amount at all: return the amounts exactly as printed in the document's own currency and set "currency" to its ISO code (e.g. "BRL") — never guess an exchange rate, and NEVER report a BRL/foreign amount as if it were USD.
+15a. A BRAZILIAN document is BRL even when no "R$" symbol is printed next to the numbers — Brazilian invoices routinely print bare figures in their VL UNIT / VALOR columns. Treat the document as BRL whenever it carries Brazilian markers and shows no USD amount anywhere: a CNPJ or CPF number, "DANFE", "Nota Fiscal", "NF-e", "ICMS", "EMITENTE"/"DESTINATÁRIO", a Brazilian address or CEP, or amounts written in Brazilian format (1.234,56). Do NOT default to USD just because the currency symbol is missing — decide from the document's origin.
 15b. AIRLINE TICKETS / TRAVEL ITINERARIES (Copa, LATAM, GOL, American, ...): these typically print the base FARE as a matching two-currency pair (e.g. "USD 300.00" alongside its local equivalent like "BRL 1,635.00") and then EXTRA charges — airport/boarding taxes, fees, surcharges, fuel, IOF — printed ONLY in the local currency, with the grand total also in local currency. NEVER return just the USD base fare as the total. Instead: (a) derive the exchange rate from the matching fare pair (local fare ÷ USD fare); (b) convert EVERY local-only charge to USD by dividing by that rate; (c) return ONE item per passenger ticket whose line_total is the ENTIRE amount paid in USD = USD base fare + ALL converted charges, rounded to 2 decimals; (d) grand_total = the sum of those USD ticket totals — cross-check: it must equal the printed local-currency grand total divided by the derived rate (within a few cents); (e) set tax to 0 and extras to [] — airline taxes/fees are part of the ticket price, not US sales tax; (f) do NOT create separate items for individual flight segments — put the route/segments in the ticket item's description instead.
 16. Brazilian number format: "1.839,48" means 1839.48 (dot = thousands separator, comma = decimals). Always output plain numbers with a dot as the decimal separator and no thousands separators.`
 
@@ -318,11 +319,20 @@ Rules:
 function sellerOnly(name: unknown): string {
   const s = String(name ?? '').trim()
   if (!s) return ''
-  const flat = s.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const isGz28 = flat.includes('gz28') || /gz\s*28/i.test(s)
-  if (!isGz28) return s
-  // Our sibling company is a legitimate seller to us; anything else GZ28 is us.
-  const isBrSibling = /\bbr\b|brasil|brazil|ltda/i.test(s) || flat.includes('gz28br')
+  // Accent-folded, punctuation-stripped, so "GALPÃO Z-28" and "GALPAO Z28" match alike.
+  const flat = s.toLowerCase()
+    .replace(/[áàâãä]/g, 'a').replace(/[éèêë]/g, 'e').replace(/[íìîï]/g, 'i')
+    .replace(/[óòôõö]/g, 'o').replace(/[úùûü]/g, 'u').replace(/ç/g, 'c')
+    .replace(/[^a-z0-9]/g, '')
+  // Every way the house writes itself. "GZ28" IS "Galpão Z28", so the spelled-out legal
+  // name (GALPAO Z28 SERVIÇOS AUTOMOTIVOS EIRELI) is us just as much as the short form —
+  // that spelling is what slipped through on a real nota fiscal (13/aug/2026).
+  const isOurs = flat.includes('gz28') || flat.includes('galpaoz28') || flat.includes('galpaozeta28')
+  if (!isOurs) return s
+  // The Brazilian SISTER COMPANY can genuinely sell to this (US) app, so it is kept —
+  // but only when it identifies itself as the Ltda, not as the Galpão EIRELI that shows
+  // up in the buyer block of Brazilian purchase notes.
+  const isBrSibling = flat.includes('gz28br') || (/\bbr\b|brasil|brazil/i.test(s) && /ltda/i.test(s))
   return isBrSibling ? s : ''
 }
 
