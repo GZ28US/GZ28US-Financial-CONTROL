@@ -90,12 +90,28 @@ async function alreadyBooked(db: SupabaseClient, hit: Hit): Promise<boolean> {
   return !!data?.length
 }
 
-// Destino de uma ENTRADA: a invoice onde o MESMO remetente já pagou antes.
-// Sem histórico o robô não adivinha — vira PENDING com alerta.
-async function lastInvoiceOf(db: SupabaseClient, party: string): Promise<{ invoice_id: string; code: string } | null> {
-  const key = party.split(/\s+/)[0]
-  if (!key || key.length < 3) return null
-  const { data } = await db.from('invoice_payments').select('invoice_id, payment_date').ilike('description', `%${key}%`).not('invoice_id', 'is', null).order('payment_date', { ascending: false }).limit(1)
+// Destino de uma ENTRADA (LEI 13/ago, caso Martez): o dinheiro novo entra na
+// invoice ABERTA MAIS NOVA do cliente — foi exatamente o erro corrigido à mão
+// (4 Zelles de agosto caíram na US.035.1 de junho enquanto a US.035.3, aberta no
+// mesmo dia do 1º Zelle, ficava com "down payment" de mentira). Só se o cliente
+// não for reconhecido é que cai no histórico (última invoice em que ele pagou).
+async function targetInvoice(db: SupabaseClient, party: string): Promise<{ invoice_id: string; code: string } | null> {
+  const words = party.trim().split(/\s+/).filter(w => w.length > 2)
+  if (!words.length) return null
+
+  const { data: clients } = await db.from('clients').select('id, name')
+  const norm = (s: string) => String(s || '').toUpperCase()
+  const client = (clients || []).find(c => words.every(w => norm(c.name).includes(norm(w))))
+    || (clients || []).find(c => norm(c.name).includes(norm(words[0])) && words.length === 1)
+  if (client) {
+    // Invoice viva mais recente do cliente (nunca uma quote, nunca concluída).
+    const { data: invs } = await db.from('invoices').select('id, invoice_code, conclusion_date, created_at')
+      .eq('client_id', client.id).eq('is_quote', false).is('conclusion_date', null)
+      .order('created_at', { ascending: false }).limit(1)
+    if (invs?.[0]) return { invoice_id: invs[0].id, code: invs[0].invoice_code || '?' }
+  }
+
+  const { data } = await db.from('invoice_payments').select('invoice_id, payment_date').ilike('description', `%${words[0]}%`).not('invoice_id', 'is', null).order('payment_date', { ascending: false }).limit(1)
   const invoice_id = data?.[0]?.invoice_id
   if (!invoice_id) return null
   const { data: inv } = await db.from('invoices').select('invoice_code').eq('id', invoice_id).limit(1)
@@ -124,7 +140,7 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
     if (await alreadyBooked(db, hit)) continue
 
     if (hit.direction === 'IN') {
-      const target = await lastInvoiceOf(db, hit.party)
+      const target = await targetInvoice(db, hit.party)
       if (target) {
         await db.from('invoice_payments').insert({
           invoice_id: target.invoice_id, amount: hit.amount, payment_date: hit.when, source: 'ZELLE', paid_to: 'GZ28US',
