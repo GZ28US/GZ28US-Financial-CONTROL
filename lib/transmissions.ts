@@ -88,6 +88,9 @@ export function transmissionOptionsFor(
   if (b === 'CADILLAC' && m.includes('CTS-V')) return y >= 2009 && y <= 2015 ? ['GM6L90 (Auto6)', 'TR6060 (Manual6)'] : []
 
   // ---- FORD ----
+  // Bronco Raptor: 10R60 — a caixa do Bronco, NÃO a 10R80 da F150 (mesma família de
+  // 10 marchas, torque e relações diferentes).
+  if (b === 'FORD' && m === 'BRONCO') return ['10R60 (Auto10)']
   if (b === 'FORD' && m === 'F150') {
     if (has('LIGHTNING') && y <= 2004) return ['4R100 (Auto4)']
     if (y >= 2017) return ['10R80 (Auto10)']

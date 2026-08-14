@@ -93,8 +93,10 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
   FORD: {
     2015: ['MUSTANG'], 2016: ['MUSTANG'],
     2017: ['F150', 'MUSTANG'], 2018: ['F150', 'MUSTANG'], 2019: ['F150', 'MUSTANG'], 2020: ['F150', 'MUSTANG'],
-    2021: ['F150', 'MUSTANG'], 2022: ['F150', 'MUSTANG'], 2023: ['F150', 'MUSTANG'], 2024: ['F150', 'MUSTANG'],
-    2025: ['F150', 'MUSTANG'], 2026: ['F150', 'MUSTANG'],
+    2021: ['F150', 'MUSTANG'],
+    // BRONCO entra em 2022, o ano de estreia do Raptor (só o Raptor está no sistema).
+    2022: ['BRONCO', 'F150', 'MUSTANG'], 2023: ['BRONCO', 'F150', 'MUSTANG'], 2024: ['BRONCO', 'F150', 'MUSTANG'],
+    2025: ['BRONCO', 'F150', 'MUSTANG'], 2026: ['BRONCO', 'F150', 'MUSTANG'],
   },
 }
 
@@ -206,6 +208,15 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     2017: ['1500 5.7', '1500 Rebel 5.7'], 2018: ['1500 5.7', '1500 Rebel 5.7'],
     // TRX: 6.2L supercharged Hellcat V8, 702 hp (2021-2024; 2024 = last year).
     2021: ['TRX 6.2 SC'], 2022: ['TRX 6.2 SC'], 2023: ['TRX 6.2 SC'], 2024: ['TRX 6.2 SC'],
+  },
+  // Bronco Raptor ("Braptor"): 3.0L EcoBoost V6 biturbo, 418 hp, do lançamento (2022)
+  // até hoje. Só o Raptor foi pedido — as versões de rua do Bronco não entram.
+  BRONCO: {
+    2022: ['3.0L TT V6 Raptor'],
+    2023: ['3.0L TT V6 Raptor'],
+    2024: ['3.0L TT V6 Raptor'],
+    2025: ['3.0L TT V6 Raptor'],
+    2026: ['3.0L TT V6 Raptor'],
   },
   F150: {
     2017: ['SuperSnake 5.0L SC'],
@@ -1438,6 +1449,7 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
   },
   FORD: {
     FORD: {
+      BRONCO: ['3.0L TT V6 Raptor'],
       F150: ['SVT Lightning 5.4 V8 SC', 'SuperSnake 5.0L SC', '5.0L V8', '5.2L SC V8 Raptor R'],
       MUSTANG: ['GT 4.6', 'GT 5.0', 'Shelby GT 4.6', 'Boss 302 5.0', 'Shelby GT350 5.2', 'Shelby GT350R 5.2', 'Bullitt 5.0', 'Shelby GT500 5.4 SC', 'Shelby GT500 5.8 SC', 'Shelby GT500 5.2 SC', 'Mach 1 5.0', 'Dark Horse 5.0', 'GTD 5.2 SC', 'Dark Horse SC 5.2 SC'],
     },
