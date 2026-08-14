@@ -4,10 +4,9 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, formatBRL, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import { usdBrlRate, toUsd } from '@/lib/fx'
 
 type Part = {
   id: string
@@ -15,9 +14,8 @@ type Part = {
   part_number: string | null
   alias: string | null
   supplier: string | null
-  // Currency every money field on this row is recorded in. 'USD' for legacy rows and
-  // for anything scanned off a dollar document; 'BRL' keeps a Brazilian receipt's reais
-  // exactly as printed, with the dollar value projected live (lib/fx.ts).
+  // MARKET this row belongs to. This app is the DOLLAR market and filters BRL rows out
+  // at the query — reais rows are GZ28BR's (BRL features live only in the BR app).
   currency: string | null
   unit_price: number | null
   base_cost: number | null
@@ -61,8 +59,6 @@ export default function PartsPage() {
     date: string
     items: { item: string; part_number: string; alias: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
   } | null>(null)
-  // Live USD/BRL rate for projecting reais-recorded costs into dollars on screen.
-  const [fxRate, setFxRate] = useState<number | null>(null)
   const [enrolling, setEnrolling] = useState(false)
   const [search, setSearch] = useState('')
   const [costFilter, setCostFilter] = useState(false)
@@ -102,7 +98,6 @@ export default function PartsPage() {
       if (sid) loadSupplierFilter(sid)
     }
     load()
-    usdBrlRate().then(setFxRate)
   }, [])
 
   async function loadSupplierFilter(id: string) {
@@ -116,7 +111,7 @@ export default function PartsPage() {
   }
 
   async function load() {
-    const { data } = await supabase.from('parts_database').select('*').order('created_at', { ascending: false, nullsFirst: false })
+    const { data } = await supabase.from('parts_database').select('*').neq('currency', 'BRL').order('created_at', { ascending: false, nullsFirst: false })
     setParts((data || []) as Part[])
     const { data: sup } = await supabase.from('suppliers').select('name, aliases')
     setNaSuppliers((sup || []).map((s: any) => ({ name: s.name || '', aliases: s.aliases || '' })))
@@ -149,21 +144,6 @@ export default function PartsPage() {
     if (error) { alert(error.message); return }
     setParts(prev => prev.filter(x => x.id !== p.id))
   }
-
-  // ---- CURRENCY DISPLAY ----------------------------------------------------------
-  // A row prints in the currency it was RECORDED in. A reais row also shows today's
-  // dollar projection in parentheses — that number is computed live, never stored, so
-  // it moves with the rate exactly as the user specified.
-  const isBRL = (p: { currency?: string | null }) => String(p?.currency || 'USD').toUpperCase() === 'BRL'
-  function money(p: { currency?: string | null }, v: any): string {
-    const n = Number(v) || 0
-    if (!isBRL(p)) return formatUSD(n)
-    const usd = toUsd(n, 'BRL', fxRate)
-    return usd == null ? formatBRL(n) : `${formatBRL(n)} ≈ ${formatUSD(usd)}`
-  }
-  // The dollar value of a row's amount, for anything that sums across rows (kit totals) —
-  // mixing reais and dollars in one total is only meaningful in a single currency.
-  const usdOf = (p: { currency?: string | null }, v: any) => toUsd(Number(v) || 0, p?.currency, fxRate) ?? 0
 
   // HUNT parts carry MAP/cost pricing; "pending" = hunted but OUR cost not yet filled.
   const isHunt = (p: Part) => p.source_type === 'HUNT'
@@ -259,9 +239,9 @@ export default function PartsPage() {
   // ones, and only a single-currency total means anything.
   function memberPrices(p?: Part): { retail: number; cost: number } {
     if (!p) return { retail: 0, cost: 0 }
-    if (p.source_type === 'HUNT') return { retail: usdOf(p, p.map_delivered), cost: usdOf(p, p.cost_delivered ?? p.map_delivered) }
-    const u = usdOf(p, p.unit_price)
-    return { retail: u, cost: usdOf(p, p.base_cost) || u }
+    if (p.source_type === 'HUNT') return { retail: Number(p.map_delivered) || 0, cost: Number(p.cost_delivered ?? p.map_delivered) || 0 }
+    const u = Number(p.unit_price) || 0
+    return { retail: u, cost: Number(p.base_cost) || 0 || u }
   }
   function kitTotals(kit: Part): { retail: number; cost: number } {
     return (kit.kit_items || []).reduce((a, m) => {
@@ -641,18 +621,15 @@ export default function PartsPage() {
                   <h2 className="text-xl font-bold">{p.alias || p.item}</h2>
                   {(() => { const b = sourceBadge(p); return <span className={`px-3 py-1 rounded-full text-xs font-bold ${b.cls}`}>{b.label}</span> })()}
                   {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
-                  {/* Recorded off a Brazilian receipt: the reais below are the real,
-                      fixed figures — the dollars beside them are today's projection. */}
-                  {isBRL(p) && <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-800 text-emerald-100" title="Recorded in Brazilian reais — the US$ figure is projected at today's rate">🇧🇷 BRL</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
                   {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
                 </div>
                 {p.alias && <p className="text-sm text-gray-400 mb-1">{p.item}</p>}
                 {isHunt(p) ? (
                   <p className="text-sm text-gray-400">
-                    RETAIL del: <span className="text-gray-200 font-bold">{money(p, p.map_delivered)}</span>
+                    RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
                     {p.our_cost != null
-                      ? <> · OUR del: <span className="text-green-400 font-bold">{money(p, p.cost_delivered)}</span> ({Number(p.delivered_discount) || 0}% off)</>
+                      ? <> · OUR del: <span className="text-green-400 font-bold">{formatUSD(Number(p.cost_delivered) || 0)}</span> ({Number(p.delivered_discount) || 0}% off)</>
                       : <span className="text-amber-400 font-bold"> · OUR COST PENDING</span>}
                     {p.dealer_supplier ? ` · ${p.dealer_supplier}` : ''}
                   </p>
@@ -662,13 +639,13 @@ export default function PartsPage() {
                         the extras that add information — tax, shipping/handling, the LANDED cost
                         when it differs from the unit price, and the purchase date. */}
                     <p className="text-sm text-gray-400">
-                      MAP: <span className="text-gray-200 font-bold">{Number(p.map_price) > 0 ? money(p, p.map_price) : '—'}</span>
-                      {' · '}OUR COST: <span className="text-green-400 font-bold">{money(p, p.unit_price)}</span>
+                      MAP: <span className="text-gray-200 font-bold">{Number(p.map_price) > 0 ? formatUSD(Number(p.map_price) || 0) : '—'}</span>
+                      {' · '}OUR COST: <span className="text-green-400 font-bold">{formatUSD(Number(p.unit_price) || 0)}</span>
                       {' · '}DISCOUNT: <span className="text-yellow-300 font-bold">{Number(p.part_discount) > 0 ? `${Number(p.part_discount)}%` : '—'}</span>
                       {Number(p.weight_lbs) > 0 ? <> · {Number(p.weight_lbs)} lbs</> : null}
-                      {(Number(p.tax) || 0) > 0 ? ` · Tax ${money(p, p.tax)}` : ''}
-                      {(Number(p.extra) || 0) > 0 ? ` · Extra ${money(p, p.extra)}` : ''}
-                      {Math.abs((Number(p.base_cost) || 0) - (Number(p.unit_price) || 0)) >= 0.01 && (Number(p.base_cost) || 0) > 0 ? ` · Landed ${money(p, p.base_cost)}` : ''}
+                      {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax) || 0)}` : ''}
+                      {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra) || 0)}` : ''}
+                      {Math.abs((Number(p.base_cost) || 0) - (Number(p.unit_price) || 0)) >= 0.01 && (Number(p.base_cost) || 0) > 0 ? ` · Landed ${formatUSD(Number(p.base_cost) || 0)}` : ''}
                       {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
                     </p>
                     {(p.category || p.donor || p.notes) && (

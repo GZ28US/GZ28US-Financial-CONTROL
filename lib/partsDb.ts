@@ -27,8 +27,7 @@ export type EnrollItem = {
   weight_lbs?: number | string
   // Optional nickname typed on the review screen — a typed alias always wins.
   alias?: string | null
-  // Currency the amounts above are PRINTED in ('USD' | 'BRL'). A Brazilian receipt
-  // enrolls its reais untouched; the dollar figure is projected on read (lib/fx.ts).
+  // MARKET the amounts above are printed in ('USD' | 'BRL'). One row per PN per market.
   currency?: string | null
 }
 

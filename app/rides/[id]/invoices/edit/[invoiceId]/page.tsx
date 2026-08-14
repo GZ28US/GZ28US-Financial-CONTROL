@@ -7,7 +7,6 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
-import { usdBrlRate, toUsd } from '@/lib/fx'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
@@ -249,11 +248,8 @@ export default function EditInvoicePage() {
   const [suppliers, setSuppliers] = useState<{ name: string; discount: number; discount_type: string; aliases: string; email: string; seller: string; ordering_method: string }[]>([])
   // Parts-DB reference (MAP / OUR COST / % / WEIGHT) shown under every expense row.
   const [dbRef, setDbRef] = useState<any[]>([])
-  // Live USD/BRL rate. Parts-bank rows recorded off a Brazilian receipt hold reais; this
-  // invoice is in dollars, so every price pulled from the bank is projected at import.
-  const [fxRate, setFxRate] = useState<number | null>(null)
   useEffect(() => {
-    supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs, currency').limit(3000).then(({ data }) => setDbRef(data || []))
+    supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs, currency').neq('currency', 'BRL').limit(3000).then(({ data }) => setDbRef(data || []))
   }, [])
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
@@ -515,11 +511,7 @@ export default function EditInvoicePage() {
 
     // Aliases from the parts data bank, applied as part descriptions when
     // IMPORT INTUITIVE PARTS runs.
-    // Bank rows can be recorded in reais; this invoice prices in dollars, so the rate is
-    // resolved BEFORE the MAP tables are built and every reais MAP is projected into USD.
-    const rate = await usdBrlRate()
-    setFxRate(rate)
-    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling, currency')
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling, currency').neq('currency', 'BRL')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
     const mn = new Map<string, number>()
@@ -533,7 +525,7 @@ export default function EditInvoicePage() {
       // RETAIL = map_price + freight (no tax), as enrolled at hunt/scan/manual, projected
       // into USD when the row is a reais one (a BRL MAP imported raw would price the part
       // ~5x high). No rate for a reais row => no MAP, rather than a wrong one.
-      const mapFinal = toUsd((Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0), d.currency, rate) ?? 0
+      const mapFinal = (Number(d.map_price) || 0) + (Number(d.shipping) || 0) + (Number(d.handling) || 0)
       if (pn && mapFinal > 0) mp.set(pn, mapFinal)
       // MAP by item NAME — fallback for bank rows without a part number, so
       // no-PN parts never import at OUR COST (zero margin) silently.
@@ -549,7 +541,7 @@ export default function EditInvoicePage() {
     // keyed by normalized PN, then item name. Separate query so a missing
     // product_url column (pre-migration) can't break the load above.
     const hu = new Map<string, string>()
-    const { data: huParts } = await supabase.from('parts_database').select('item, part_number, product_url')
+    const { data: huParts } = await supabase.from('parts_database').select('item, part_number, product_url').neq('currency', 'BRL')
     // AutoZone compra é SEMPRE pelo portal Pro (conta dealer) — links do site varejo
     // viram busca no AutoZonePro pelo PN, senão o ORDER NOW abre preço/estoque errados.
     const toAzPro = (u: string, pn?: string | null) => {
@@ -570,7 +562,7 @@ export default function EditInvoicePage() {
   }
 
   async function openDbModal() {
-    const { data } = await supabase.from('parts_database').select('*').order('created_at', { ascending: false, nullsFirst: false })
+    const { data } = await supabase.from('parts_database').select('*').neq('currency', 'BRL').order('created_at', { ascending: false, nullsFirst: false })
     // kit_items must be an array of members — anything else (bad enrollment) would crash every .map/.reduce below
     setDbItems((data || []).map((d: any) => ({ ...d, kit_items: Array.isArray(d.kit_items) ? d.kit_items : [] })))
     setDbSearch('')
@@ -583,13 +575,7 @@ export default function EditInvoicePage() {
     const nm = (m.item || '').trim().toLowerCase()
     return dbItems.find((d: any) => !d.is_kit && !d.part_number && (d.item || '').trim().toLowerCase() === nm)
   }
-  // A bank row's OUR cost IN DOLLARS — a row recorded in reais is projected at today's
-  // rate, never read as if its number were dollars.
-  function dbOurCost(d: any) {
-    if (!d) return 0
-    const raw = Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0
-    return toUsd(raw, d.currency, fxRate) ?? 0
-  }
+  function dbOurCost(d: any) { return d ? (Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0) : 0 }
   // Store URL for a HUNTED expense (matched by part number, then item name); null otherwise.
   function huntUrlFor(exp: Expense): string | null {
     if (exp.part_number) { const u = huntUrlMap.get('PN:' + normPN(exp.part_number)); if (u) return u }
@@ -655,13 +641,9 @@ export default function EditInvoicePage() {
   function expenseFromDbRow(it: any, quantity: number): Expense {
     const isHunt = it?.source_type === 'HUNT'
     const supplier = it ? ((isHunt ? it.dealer_supplier : it.supplier) || it.supplier || '') : ''
-    // An invoice expense is always in DOLLARS. A bank row recorded off a Brazilian
-    // receipt holds reais, so every figure crossing into the invoice is projected at
-    // today's rate — the reais stay fixed in the bank, the dollars are derived here.
-    const usd = (v: any) => toUsd(Number(v) || 0, it?.currency, fxRate) ?? 0
-    const amount = it ? usd(isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
-    const extra = it ? (isHunt ? usd((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : usd(it.extra)) : 0
-    const tax = it ? (isHunt ? 0 : usd(it.tax)) : 0
+    const amount = it ? (isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
+    const extra = it ? (isHunt ? ((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : (Number(it.extra) || 0)) : 0
+    const tax = it ? (isHunt ? 0 : (Number(it.tax) || 0)) : 0
     return {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
@@ -1290,13 +1272,11 @@ export default function EditInvoicePage() {
   function dbRefLine(pn?: string | null, item?: string | null) {
     const di = dbRefFor(pn, item)
     if (!di) return null
-    const usd = (v: any) => toUsd(Number(v) || 0, di.currency, fxRate)
-    const show = (v: any) => { const u = usd(v); return u == null ? '—' : `US$ ${u.toFixed(2)}` }
+
     return (
       <p className="text-xs text-teal-300">
-        {String(di.currency || 'USD').toUpperCase() === 'BRL' ? '🇧🇷 ' : ''}
-        DB: MAP {Number(di.map_price) > 0 ? show(di.map_price) : '—'}
-        {' · '}OUR COST {Number(di.unit_price) > 0 ? show(di.unit_price) : '—'}
+        DB: MAP {Number(di.map_price) > 0 ? `US$ ${Number(di.map_price).toFixed(2)}` : '—'}
+        {' · '}OUR COST {Number(di.unit_price) > 0 ? `US$ ${Number(di.unit_price).toFixed(2)}` : '—'}
         {di.part_discount != null && Number(di.part_discount) !== 0 ? ` · ${Number(di.part_discount)}%` : ''}
         {Number(di.weight_lbs) > 0 ? ` · ${Number(di.weight_lbs)} lbs` : ''}
       </p>

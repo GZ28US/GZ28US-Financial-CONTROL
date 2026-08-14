@@ -16,13 +16,6 @@ export function formatUSD(amount: number): string {
   }).format(v)
 }
 
-// Brazilian reais, for money that is RECORDED in BRL (a scanned Brazilian receipt in
-// the parts bank). Its dollar figure is never stored — see lib/fx.ts.
-export function formatBRL(amount: number): string {
-  const v = Math.abs(amount) < 0.005 ? 0 : amount
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
-}
-
 // Universal short date format. US is month-first: MM/DD/YY. Input is an ISO
 // 'YYYY-MM-DD' (extra time part tolerated); anything else returns ''.
 export function formatShortDate(d: string | null | undefined): string {
