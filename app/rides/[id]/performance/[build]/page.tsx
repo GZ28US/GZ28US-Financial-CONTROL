@@ -71,11 +71,20 @@ function toLocalDialect(p: DynoPull): DynoPull {
 // The auto-created baseline row is identified by its PACK label.
 function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
+// The BUILD's pack name states the goal in CRANK bhp: "Z1250sc Alpha170 Pack" = 1250 bhp.
+// (Z = the house prefix, then the number, then the aspiration: sc / na / tt.)
+// Returns null for a build named anything else — no invented target.
+function packTargetBhp(packName: string | null | undefined): number | null {
+  const m = String(packName || '').trim().match(/^Z\s*(\d{3,4})\s*(sc|na|tt)?\b/i)
+  const n = m ? parseInt(m[1], 10) : NaN
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 // Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
 // this WhatsApp group ONLY — never the default group.
 const REPORTS_GROUP = 'GZ28US - Tcal'
 
-function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number; defaultLoss: string }) {
+function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packName }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number; defaultLoss: string; packName: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: defaultLoss, dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
@@ -83,6 +92,29 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
   const [editForm, setEditForm] = useState({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const editBhp = applyLoss(editForm.whp, editForm.loss)
   const editBnm = applyLoss(editForm.wnm, editForm.loss)
+
+  // ---- META DO PACK -----------------------------------------------------------------
+  // O nome do build (camada anterior) é o pacote contratado e diz a meta em bhp de virabrequim:
+  // "Z1250sc Alpha170 Pack" = 1250 bhp. O dinamômetro mede RODA, então a meta é convertida
+  // pela MESMA perda que o carro já usa nas puxadas — não uma perda inventada.
+  const targetBhp = packTargetBhp(packName)
+  // Perda em uso: a da puxada mais recente do carro (as linhas vêm em created_at DESC, com
+  // a BoneStock fixada no topo — por isso ela é pulada primeiro). Sem puxada nenhuma, vale a
+  // que estiver no formulário (ou o padrão do carro), para a meta já aparecer no carro novo.
+  const lossInUse = (() => {
+    const real = pulls.filter(p => !isBoneStock(p) && p.loss_pct != null)
+    if (real.length) return Number(real[0].loss_pct)
+    const anyPull = pulls.find(p => p.loss_pct != null)
+    if (anyPull) return Number(anyPull.loss_pct)
+    const typed = parseFloat(form.loss)
+    return Number.isFinite(typed) ? typed : NaN
+  })()
+  const targetWhp = targetBhp != null && Number.isFinite(lossInUse) && lossInUse > 0 && lossInUse < 100
+    ? targetBhp * (1 - lossInUse / 100)
+    : null
+  // "Quanto falta" é medido contra o MELHOR whp já feito pelo carro (recorde da máquina).
+  const bestWhp = pulls.reduce((max, p) => Math.max(max, Number(p.whp) || 0), 0)
+  const gapWhp = targetWhp != null ? targetWhp - bestWhp : null
   const [scanning, setScanning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [scannedFile, setScannedFile] = useState<File | null>(null)
@@ -158,6 +190,13 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
   }
 
   useEffect(() => { load() }, [])
+
+  // O PACK da puxada já nasce preenchido com o nome do pack do build (camada anterior) —
+  // é sempre ele que se está puxando. Chega assíncrono do pai, e só preenche enquanto o
+  // campo estiver vazio: o que ele digitar nunca é sobrescrito.
+  useEffect(() => {
+    if (packName) setForm(f => (f.pack.trim() ? f : { ...f, pack: packName }))
+  }, [packName])
 
   async function load() {
     const { data } = await supabase
@@ -283,7 +322,8 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
       // Every ride's table leads with a BoneStock baseline row — create it once, on the first pull.
       if (!pulls.some(isBoneStock)) { await createBoneStock(effLoss) }
 
-      setForm({ pack: '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
+      // Volta com o PACK do build já preenchido: a próxima puxada é do mesmo pacote.
+      setForm({ pack: packName || '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
       setScannedFile(null)
       load()
       // Ask whether to report it (instead of auto-sending).
@@ -673,6 +713,42 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss }: { ri
             <div className="flex gap-3 pt-1">
               <button onClick={() => setReportPull(null)} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
               <button onClick={confirmReport} disabled={reporting} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PACK TARGET — the build's pack name states the goal in crank bhp; the dyno reads
+          wheel, so the goal is converted at the loss this car is actually running. */}
+      {targetBhp != null && (
+        <div className={`rounded-3xl border p-5 mb-6 ${gapWhp != null && gapWhp <= 0 ? 'bg-green-950/40 border-green-700' : 'bg-fuchsia-950/30 border-fuchsia-800'}`}>
+          <div className="flex items-baseline justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-xs font-bold text-fuchsia-300 tracking-wide">🎯 PACK TARGET · {packName}</p>
+              <p className="text-3xl font-bold mt-1">
+                {targetWhp != null ? `${targetWhp.toFixed(1)} WHP` : '—'}
+                <span className="text-base font-normal text-gray-400 ml-3">
+                  = {targetBhp} BHP{Number.isFinite(lossInUse) ? ` @ ${lossInUse}% loss` : ''}
+                </span>
+              </p>
+            </div>
+            <div className="text-right">
+              {targetWhp == null ? (
+                <p className="text-amber-300 font-bold">Enter a LOSS % to see the WHP target</p>
+              ) : gapWhp != null && gapWhp > 0 ? (
+                <>
+                  <p className="text-2xl font-bold text-amber-300">+{gapWhp.toFixed(1)} WHP to go</p>
+                  <p className="text-sm text-gray-400">
+                    best so far {bestWhp > 0 ? `${bestWhp.toFixed(1)} WHP` : '— no pulls yet'}
+                    {bestWhp > 0 ? ` · ${((gapWhp / bestWhp) * 100).toFixed(1)}% more` : ''}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-green-400">✅ TARGET MET</p>
+                  <p className="text-sm text-gray-400">best {bestWhp.toFixed(1)} WHP · {Math.abs(gapWhp || 0).toFixed(1)} WHP over</p>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1296,7 +1372,7 @@ export default function RidePerformancePage() {
       {!ride ? (
         <p className='text-xl text-gray-400'>Loading…</p>
       ) : tab === 'DYNO' ? (
-        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} />
+        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} packName={buildName} />
       ) : tab === 'BUILD SHEET' ? (
         <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} />
       ) : (
