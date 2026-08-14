@@ -179,6 +179,9 @@ export default function ViewInvoicePage() {
     return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
   }
   function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
+  // The day this document is being generated — a quote is stamped with it (it has
+  // no hiring/entry date yet). 'en-CA' gives the local date already as YYYY-MM-DD.
+  const todayISO = new Date().toLocaleDateString('en-CA')
 
   function handlePrint() {
     if (!invoice) return
@@ -458,7 +461,7 @@ export default function ViewInvoicePage() {
   // client.country; a tela do app segue em inglês.
   const ptPrint = client?.country === 'BRAZIL'
   const T = ptPrint ? {
-    quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
+    quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega', quoteDate: 'Data',
     clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
     vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Pack / Serviço',
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Impostos Flórida', itemsTotal: 'Total dos Itens',
@@ -466,13 +469,22 @@ export default function ViewInvoicePage() {
     payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
     notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA',
   } : {
-    quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery',
+    quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery', quoteDate: 'Date',
     clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail', noClient: 'No client linked',
     vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Pack / Service',
     items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Taxes', itemsTotal: 'Items Total',
     services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
     payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
     notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY',
+  }
+
+  // Display-only: a shopping (client) invoice sells parts, not shop hours — the labor
+  // line reads as handling of the operation. The stored description never changes, so
+  // the CALCULATE/labor-index logic on the edit page keeps matching on the real key.
+  function serviceDisplayName(desc: string) {
+    if (!isClient) return desc
+    if (desc === 'Full Project Labor') return ptPrint ? 'Manuseio da Operação' : 'HANDLING'
+    return desc.replace(/m[ãa]o[\s-]*de[\s-]*obra/gi, ptPrint ? 'Manuseio da Operação' : 'Handling')
   }
 
   return (
@@ -552,8 +564,14 @@ export default function ViewInvoicePage() {
               <div className="pi-inv-box">
                 <div className="pi-inv-label">{invoice.is_quote ? T.quoteNo : T.invoiceNo}</div>
                 <div className="pi-inv-num">{invoice.invoice_code}</div>
-                <div className="pi-inv-date">{T.hiring}: {formatDate(invoice.hiring_date)}</div>
-                <div className="pi-inv-date">{T.entry}: {formatDate(invoice.entry_date)}</div>
+                {/* A quote isn't hired yet and the car hasn't come in: in place of those two
+                    dates it carries the date this PDF is generated. */}
+                {invoice.is_quote
+                  ? <div className="pi-inv-date">{T.quoteDate}: {formatDate(todayISO)}</div>
+                  : <>
+                      <div className="pi-inv-date">{T.hiring}: {formatDate(invoice.hiring_date)}</div>
+                      <div className="pi-inv-date">{T.entry}: {formatDate(invoice.entry_date)}</div>
+                    </>}
                 {invoice.delivery_date && <div className="pi-inv-date">{T.deliveryHdr}: {formatDate(invoice.delivery_date)}</div>}
               </div>
             </div>
@@ -634,7 +652,7 @@ export default function ViewInvoicePage() {
                 <tbody>
                   {services.map(sv => (
                     <tr key={sv.id}>
-                      <td>{sv.description}</td>
+                      <td>{serviceDisplayName(sv.description)}</td>
                       <td className="r">{sv.price === 0 ? T.courtesy : formatUSD(sv.price)}</td>
                     </tr>
                   ))}
