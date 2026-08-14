@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { usdBrlRate, toUsd } from '@/lib/fx'
+
 
 // Items whose name matches these are "extras" (shipping/handling/etc). For the
 // parts data bank we keep the CHEAPEST extra ever seen; regular parts keep the
@@ -44,35 +44,12 @@ export function normPN(pn?: string | null): string {
 }
 
 // Unified per-unit OUR COST that decides which duplicate wins: hunt parts use the
-// dealer net (our_cost), scanned/manual parts use the unit price. In the ROW'S OWN
-// currency — use ourCostUsd whenever two rows are compared.
+// dealer net (our_cost), scanned/manual parts use the unit price. Always compared
+// against a row of the SAME market, so it never mixes reais with dollars.
 function ourCostOf(r: any): number {
   const v = r?.source_type === 'HUNT' ? (r.our_cost ?? r.map_price) : (r.unit_price ?? r.base_cost)
   const n = Number(v)
   return Number.isFinite(n) ? n : Infinity
-}
-
-// Move an amount between the two currencies the bank uses. Returns null when the move
-// needs a rate and none is available — the caller then DROPS the value rather than store
-// a number under the wrong currency (a stored MAP in the wrong unit poisons every
-// discount the bank computes from it).
-function convertMoney(v: any, from: string, to: string, rate: number | null): number | null {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return null
-  const f = String(from || 'USD').toUpperCase(), t = String(to || 'USD').toUpperCase()
-  if (f === t) return n
-  if (!rate || rate <= 0) return null
-  return f === 'BRL' ? n / rate : n * rate
-}
-
-// The same cost projected into dollars, so "which one is cheaper" is never decided by
-// comparing R$ against US$ — a BRL row would otherwise look ~5x more expensive and a
-// real Brazilian invoice would lose to a stale dollar one (or vice versa).
-function ourCostUsd(r: any, rate: number | null): number {
-  const usd = toUsd(ourCostOf(r), r?.currency, rate)
-  // No rate for a BRL row: treat it as incomparable rather than guess. Infinity means
-  // "never cheaper", so the existing row stands and nothing is overwritten on a guess.
-  return usd == null ? Infinity : usd
 }
 
 // Recompute the delivered/discount fields against a (constant) MAP + a cost.
@@ -93,7 +70,7 @@ function withDerived(row: any, map: number | null, cost: number): any {
 }
 
 // THE dedupe rule (hunt / scan / manual all funnel through here): a part number
-// lives in the DB only ONCE. Match on the normalized part number (or item name
+// lives in the DB only ONCE PER MARKET (currency). Match on the normalized part number (or item name
 // when there's no PN). Insert when new. When it already exists:
 //   REAL LIFE PREVAILS — a SCANNED invoice is the ground truth. The flow is
 //   hunt → quote → deal → purchase → real invoice, so a scan ALWAYS replaces
@@ -116,8 +93,16 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
     const min = Math.min(a.length, b.length)
     return min >= 6 && (a.endsWith(b) || b.endsWith(a))
   }
+  // ONE ROW PER PART NUMBER **PER MARKET** (user law 14/aug/2026). The same part is
+  // genuinely a different purchase in each country — a Mopar oil filter is US$ 8.66 at
+  // Titan and R$ 147 in Brazil — so the rows coexist and never overwrite each other:
+  // the dollar row is the American reality, the reais row the Brazilian one. Every other
+  // law (real life prevails, LOCKED, cheapest extra) then applies WITHIN the market.
+  const market = (r: any) => String(r?.currency || 'USD').toUpperCase()
+  const myMarket = market(row)
+  const sameMarket = rows.filter((r: any) => market(r) === myMarket)
   const key = keyOf(row)
-  let existing = key ? rows.find((r: any) => samePN(keyOf(r), key)) : null
+  let existing = key ? sameMarket.find((r: any) => samePN(keyOf(r), key)) : null
 
   // Fallback: listing titles (eBay etc.) often carry the real part number only in
   // the item TEXT, while the PN field holds a marketplace item number (or nothing).
@@ -128,7 +113,7 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       .map(t => normPN(t)).filter(t => t.length >= 6 && /\d/.test(t))
     const mine = new Set([...tokensOf(row.item), ...tokensOf(row.part_number)])
     if (mine.size) {
-      existing = rows.find((r: any) => {
+      existing = sameMarket.find((r: any) => {
         const rpn = r.part_number ? normPN(r.part_number) : ''
         if (rpn && rpn.length >= 6 && [...mine].some(t => samePN(t, rpn))) return true
         // Mirror case: our PN appears inside the existing row's item text.
@@ -160,20 +145,16 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   // it; everything that matches its PN resolves TO the locked row instead.
   if (existing.source_type === 'LOCKED') return { status: 'kept', error: null }
 
-  // Who wins the row? The cheapest-wins branches compare in DOLLARS, so a row recorded
-  // in reais is measured against a dollar one at today's rate instead of by raw number.
-  // The rate is only fetched when the two rows actually differ in currency (it's cached
-  // anyway), so an all-USD bank never touches the network.
-  const cur = (r: any) => String(r?.currency || 'USD').toUpperCase()
-  const rate = cur(row) !== cur(existing) ? await usdBrlRate() : null
-  const cheaper = (a: any, b: any) => cur(a) === cur(b) ? ourCostOf(a) < ourCostOf(b) : ourCostUsd(a, rate) < ourCostUsd(b, rate)
+  // Who wins the row? Both sides are in the SAME currency by construction (the match
+  // above never crosses markets), so these are plain number comparisons again — no rate,
+  // no conversion, nothing to get wrong.
   const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
   const isExtra = !!(row.is_extra || existing.is_extra)
   let replace: boolean
-  if (isExtra) replace = cheaper(row, existing)                               // extras: cheapest ever
+  if (isExtra) replace = ourCostOf(row) < ourCostOf(existing)                 // extras: cheapest ever
   else if (row.source_type === 'SCAN') replace = existing.source_type !== 'SCAN' || dateOf(row) >= dateOf(existing) // real life prevails; newest scan wins
   else if (existing.source_type === 'SCAN') replace = false                   // hunt/manual never beats a real invoice
-  else replace = cheaper(row, existing)                                       // hunt vs hunt: lowest cost
+  else replace = ourCostOf(row) < ourCostOf(existing)                         // hunt vs hunt: lowest cost
 
   // MAP: a winning SCAN that carries a retail (printed List or supplier-discount
   // derived) overrides the stored MAP — real life re-validates it. Otherwise the
@@ -181,7 +162,7 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   // from a dollar row onto a reais row has to become reais, or the discount is nonsense).
   const map = replace && row.source_type === 'SCAN' && Number(row.map_price) > 0
     ? Number(row.map_price)
-    : (existing.map_price != null ? convertMoney(existing.map_price, cur(existing), cur(row), rate) : (row.map_price ?? null))
+    : (existing.map_price != null ? existing.map_price : (row.map_price ?? null))
   if (replace) {
     // Write a COMPLETE, consistent payload so no stale fields linger when the
     // winning source differs from the one on file (e.g. scan beats a prior hunt).
@@ -206,9 +187,9 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       // LOCKED and the guard above freezes it forever — the bank compiles
       // itself into a purchase-proven catalog.
       source_type: officialScan ? 'LOCKED' : (row.source_type ?? existing.source_type ?? null),
-      // The winning row's own currency ALWAYS travels with its numbers — a reais scan
-      // that beats a dollar row must not inherit 'USD' and read as dollars forever.
-      currency: cur(row),
+      // The market this row belongs to. Same as the existing row by construction (a
+      // match never crosses markets), written explicitly so the pair can never drift.
+      currency: myMarket,
       // A typed alias wins; otherwise the known alias is preserved.
       alias: row.alias ?? existing.alias ?? null,
       // Weight only when the incoming scan carries one — never erase a known weight.
@@ -223,12 +204,7 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   // MAP and weight it lacks — an official-supplier scan is authoritative for both.
   const patch: any = {}
   if ((existing.map_price == null || Number(existing.map_price) <= 0) && row.map_price != null && Number(row.map_price) > 0) {
-    // The incoming MAP has to be expressed in the KEPT row's currency before it lands
-    // on it; with no rate to do that, the MAP is simply not filled in.
-    const mapInExisting = convertMoney(row.map_price, cur(row), cur(existing), rate)
-    if (mapInExisting != null && mapInExisting > 0) {
-      Object.assign(patch, withDerived({ shipping: existing.shipping, handling: existing.handling }, mapInExisting, ourCostOf(existing)))
-    }
+    Object.assign(patch, withDerived({ shipping: existing.shipping, handling: existing.handling }, Number(row.map_price), ourCostOf(existing)))
   }
   if ((existing.weight_lbs == null || Number(existing.weight_lbs) <= 0) && row.weight_lbs != null && Number(row.weight_lbs) > 0) {
     patch.weight_lbs = row.weight_lbs
