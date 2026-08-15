@@ -64,6 +64,12 @@ export default function RidesPage() {
   const [clientParam, setClientParam] = useState('')
   // Rides this client SOLD (ownership transfer): ride id → sale date, for the badge.
   const [soldByRide, setSoldByRide] = useState<Record<string, string>>({})
+  // MESMO CARRO EM DUAS ÁREAS: ride id → códigos dos OUTROS rides com o mesmo VIN.
+  // As listas são separadas por área (PROJECT / QUOTE / SHOP), então um carro que existe
+  // nas duas nunca aparece lado a lado e é fácil contar duas vezes — o caso do Devil170
+  // (US.170 = conta do carro da empresa, SHP.001 = quotes de vitrine, mesmo VIN). O selo
+  // deixa isso explícito onde quer que a linha apareça.
+  const [vinTwins, setVinTwins] = useState<Record<string, string[]>>({})
 
   // Read mode/client from the URL AFTER mount (reliable across soft navigation), then load.
   useEffect(() => {
@@ -87,6 +93,22 @@ export default function RidesPage() {
       const { data: periods } = await supabase.from('ride_owners').select('ride_id, to_date').eq('client_id', c).not('to_date', 'is', null)
       for (const p of periods || []) soldDates[p.ride_id] = p.to_date
     }
+    // Gêmeos por VIN — calculado sobre TODOS os rides, antes de filtrar por área, que é
+    // justamente onde a duplicata se esconde. VIN normalizado (sem espaço, maiúsculo);
+    // rides sem VIN nunca são pareados.
+    const byVin: Record<string, { id: string; code: string }[]> = {}
+    for (const r of (data || []) as any[]) {
+      const vin = String(r.vin || '').toUpperCase().replace(/\s/g, '')
+      if (vin.length < 11) continue
+      ;(byVin[vin] ||= []).push({ id: r.id, code: r.project_code || '' })
+    }
+    const twins: Record<string, string[]> = {}
+    for (const list of Object.values(byVin)) {
+      if (list.length < 2) continue
+      for (const r of list) twins[r.id] = list.filter(x => x.id !== r.id).map(x => x.code).filter(Boolean)
+    }
+    setVinTwins(twins)
+
     const ridesData = (data || []).filter((r: any) => {
       const modeOk = m === 'shop' ? r.origin === 'SHOP' : r.origin !== 'SHOP' && (!!r.is_quote === (m === 'quote'))
       return modeOk && (!c || r.client_id === c || (soldDates[r.id] && r.client_id !== c))
@@ -361,6 +383,16 @@ export default function RidesPage() {
                     {/* SOLD — this client's era ended (ownership transfer); shows only on a client-filtered list */}
                     {clientParam && soldByRide[ride.id] && (ride as any).client_id !== clientParam && (
                       <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">SOLD {new Date(soldByRide[ride.id] + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    )}
+                    {/* MESMO CARRO — outro ride com o VIN idêntico, em outra área. Sem
+                        isso o mesmo carro conta duas vezes sem ninguém perceber. */}
+                    {(vinTwins[ride.id] || []).length > 0 && (
+                      <span
+                        className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-200"
+                        title={`Mesmo VIN de ${vinTwins[ride.id].join(', ')} — é o MESMO carro, registrado em outra área. Conte uma vez só.`}
+                      >
+                        🔗 SAME CAR AS {vinTwins[ride.id].join(', ')}
+                      </span>
                     )}
                     {mode !== 'quote' && <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
