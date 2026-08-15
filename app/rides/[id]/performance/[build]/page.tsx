@@ -173,7 +173,10 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       const m = String(data.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
       setForm((f) => ({
         ...f,
-        pack: data.pack || f.pack,
+        // O PACK é NOSSO: vem do nome do pack do build (ou do que ele digitou) e o scan
+        // NUNCA sobrescreve. A folha do dinamômetro traz o rótulo que o operador digitou
+        // lá na máquina — não é o nome do pacote contratado. Só preenche se estiver vazio.
+        pack: f.pack.trim() || data.pack || '',
         whp: data.whp || f.whp,
         wnm: data.wnm || f.wnm,
         dmonth: m ? m[2] : f.dmonth,
