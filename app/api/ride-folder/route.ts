@@ -248,6 +248,31 @@ export async function POST(req: NextRequest) {
     // upload: drop a file into the ride folder's subfolder (default HB Tuning),
     // overwriting any previous version. No self-heal folder creation — the file
     // only lands where the car's folder actually exists (common cars: both zones).
+    // Renomeia UM arquivo dentro da subpasta do ride (ex.: o BuildSheet PDF quando o nome
+    // do pack muda). `from` pode não existir (arquivo nunca gerado) — isso NÃO é erro:
+    // devolve 'no-file' e o chamador decide se tenta um nome alternativo (Build.NN legado).
+    if (action === 'rename-file') {
+      const from = sanitize(String(body.from || ''))
+      const to = sanitize(String(body.to || ''))
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
+      if (!from || !to) return NextResponse.json({ error: 'Bad request: rename-file needs from + to.' }, { status: 400 })
+      if (from === to) return NextResponse.json({ ok: true, result: 'same-name' })
+      const folder = await findFolderByCode(token, root, code)
+      if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
+      const mv = await dbx(token, 'files/move_v2', {
+        from_path: `${root}/${folder}/${sub}/${from}`,
+        to_path: `${root}/${folder}/${sub}/${to}`,
+        autorename: false,
+      })
+      if (!mv.ok) {
+        const tag = JSON.stringify(mv.data?.error || {})
+        if (tag.includes('not_found')) return NextResponse.json({ ok: true, result: 'no-file' })
+        if (tag.includes('conflict')) return NextResponse.json({ ok: true, result: 'conflict' })
+        return NextResponse.json({ error: 'move failed: ' + mv.text.slice(0, 200) }, { status: 502 })
+      }
+      return NextResponse.json({ ok: true, result: 'renamed', path: `${folder}/${sub}/${to}` })
+    }
+
     if (action === 'upload') {
       const filename = sanitize(String(body.filename || ''))
       const sub = sanitize(String(body.subfolder || 'HB Tuning'))

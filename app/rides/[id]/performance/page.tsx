@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { packTargetBhp, isBaselineName } from '@/lib/utils'
+import { packTargetBhp, isBaselineName, BASE_PATH } from '@/lib/utils'
 
 // BUILDS — every ride's performance data is grouped into builds (Build.01, Build.02…),
 // and a build IS a pack: it carries the pack name ("Z1250sc Alpha170 Pack"), which states
@@ -109,6 +109,32 @@ export default function RideBuildsPage() {
   function startEdit(b: Build) { setEditingId(b.id); setEditName(b.name || '') }
   function cancelEdit() { setEditingId(null); setEditName('') }
 
+  // O BuildSheet PDF no Dropbox carrega o NOME DO PACK — então renomear o pack renomeia o
+  // arquivo junto. Tenta primeiro o arquivo com o nome antigo do pack; se não existir,
+  // tenta o formato legado Build.NN (arquivos de antes da mudança de nomenclatura).
+  // Não-fatal: sem arquivo (sheet nunca gerada) não é erro.
+  async function renameSheetFile(b: Build, oldName: string, newName: string) {
+    if (!ride?.project_code) return
+    const fileTag = (s: string) => s.replace(/[\\/:*?"<>|]/g, '')
+    const base = `${ride.project_code}${ride.project_name ? ' - ' + ride.project_name : ''}`
+    const to = `${base} ${fileTag(newName.trim() || buildLabel(b.build_no))} BuildSheet.pdf`
+    const candidates = [
+      ...(oldName.trim() ? [`${base} ${fileTag(oldName.trim())} BuildSheet.pdf`] : []),
+      `${base} ${buildLabel(b.build_no)} BuildSheet.pdf`,
+    ]
+    for (const from of candidates) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'rename-file', zone: 'US', code: ride.project_code, name: ride.project_name, from, to }),
+        })
+        const d = await res.json().catch(() => ({}))
+        if (d.ok && (d.result === 'renamed' || d.result === 'same-name')) return
+        if (d.result === 'conflict') { alert(`The Dropbox file "${to}" already exists — the old sheet was left as "${from}".`); return }
+      } catch { /* não-fatal: o PDF re-sincroniza com o nome novo no próximo save da sheet */ }
+    }
+  }
+
   async function saveEdit(b: Build) {
     const newName = editName.trim()
     // Renomear PARA baseline: só uma por carro, e ela vira Build.01 — este build vai pra
@@ -121,6 +147,8 @@ export default function RideBuildsPage() {
     try {
       const { error } = await supabase.from('ride_builds').update({ name: newName || null }).eq('id', b.id)
       if (error) { alert(error.message); return }
+      // O arquivo no Dropbox acompanha o nome do pack — renomeou aqui, renomeia lá.
+      if (newName !== (b.name || '').trim()) await renameSheetFile(b, b.name || '', newName)
       if (isBaselineName(newName) && b.build_no !== 1 && ride?.project_code) {
         const code = ride.project_code
         try {
