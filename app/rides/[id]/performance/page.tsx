@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { packTargetBhp } from '@/lib/utils'
+import { packTargetBhp, isBaselineName } from '@/lib/utils'
 
 // BUILDS — every ride's performance data is grouped into builds (Build.01, Build.02…),
 // and a build IS a pack: it carries the pack name ("Z1250sc Alpha170 Pack"), which states
@@ -13,10 +13,11 @@ import { packTargetBhp } from '@/lib/utils'
 // (BUILD SHEET / DYNO) scoped to that build in the shared bank, keyed by ride_code + build_no.
 type Build = { id: string; build_no: number; created_at: string; name?: string | null }
 const buildLabel = (n: number) => `Build.${String(n).padStart(2, '0')}`
-// "BoneStock" NÃO é um pack — é o carro de fábrica, a linha de base de tudo. A linha dele
-// é roxa (mesmo padrão dos duties permanentes do staff), fixada SEMPRE no topo, e sem o
-// selo Build.0X: não é um build, é o BoneStock.
-const isBoneStockBuild = (b: { name?: string | null }) => (b.name || '').trim().toLowerCase() === 'bonestock'
+// "BoneStock" e "Stock" NÃO são packs — são a linha de base do carro (Stock = a base
+// DESTE carro; nunca é oferecida aos outros). Linha roxa (padrão dos duties permanentes),
+// fixada SEMPRE no topo, sem o selo Build.0X — e SEMPRE Build.01 (o addBuild/saveEdit
+// renumeram o resto quando preciso).
+const isBoneStockBuild = (b: { name?: string | null }) => isBaselineName(b.name)
 
 export default function RideBuildsPage() {
   const params = useParams()
@@ -67,13 +68,37 @@ export default function RideBuildsPage() {
     setLoading(false)
   }
 
+  // Muda o build_no de UM build nas três tabelas que o usam como chave — a ordem de quem
+  // chama garante que nunca há colisão no meio do caminho.
+  async function shiftBuildNo(code: string, from: number, to: number) {
+    for (const t of ['ride_builds', 'dyno_pulls', 'ride_build_sheets'] as const) {
+      const { error } = await supabase.from(t).update({ build_no: to }).eq('ride_code', code).eq('build_no', from)
+      if (error) throw new Error(`${t}: ${error.message}`)
+    }
+  }
+
+  // BASELINE É SEMPRE Build.01 (ordem do usuário, 17/ago/2026): abre espaço empurrando os
+  // builds existentes uma casa pra cima, do maior pro menor (sem colisão), até `upTo`.
+  async function makeRoomForBuild1(code: string, upTo: number) {
+    const nums = builds.map((b) => b.build_no).filter((n) => n < upTo).sort((a, b) => b - a)
+    for (const n of nums) await shiftBuildNo(code, n, n + 1)
+  }
+
   async function addBuild() {
     if (!ride?.project_code) return
     setAdding(true)
     try {
       const next = builds.length ? Math.max(...builds.map((b) => b.build_no)) + 1 : 1
       const buildName = (prompt(`Pack name for ${buildLabel(next)} (e.g. Z1250sc Alpha170 Pack):`) || '').trim()
-      const { error } = await supabase.from('ride_builds').insert([{ ride_code: ride.project_code, build_no: next, name: buildName || null }])
+      // Baseline (BoneStock/Stock): só UMA por carro, e nasce como Build.01 — os outros
+      // builds sobem uma casa (junto com as puxadas e build sheets deles).
+      let insertNo = next
+      if (isBaselineName(buildName)) {
+        if (builds.some((b) => isBaselineName(b.name))) { alert('This car already has a baseline build (BoneStock/Stock). There can be only one.'); return }
+        try { await makeRoomForBuild1(ride.project_code, next) } catch (e) { alert('Renumbering failed: ' + String(e)); await load(); return }
+        insertNo = 1
+      }
+      const { error } = await supabase.from('ride_builds').insert([{ ride_code: ride.project_code, build_no: insertNo, name: buildName || null }])
       if (error) { alert(error.message); return }
       await load()
     } finally {
@@ -85,12 +110,31 @@ export default function RideBuildsPage() {
   function cancelEdit() { setEditingId(null); setEditName('') }
 
   async function saveEdit(b: Build) {
+    const newName = editName.trim()
+    // Renomear PARA baseline: só uma por carro, e ela vira Build.01 — este build vai pra
+    // primeira posição e os que estavam abaixo dele sobem uma casa (dados juntos).
+    if (isBaselineName(newName) && builds.some((x) => x.id !== b.id && isBaselineName(x.name))) {
+      alert('This car already has a baseline build (BoneStock/Stock). There can be only one.')
+      return
+    }
     setSavingEdit(true)
-    const { error } = await supabase.from('ride_builds').update({ name: editName.trim() || null }).eq('id', b.id)
-    setSavingEdit(false)
-    if (error) { alert(error.message); return }
-    cancelEdit()
-    await load()
+    try {
+      const { error } = await supabase.from('ride_builds').update({ name: newName || null }).eq('id', b.id)
+      if (error) { alert(error.message); return }
+      if (isBaselineName(newName) && b.build_no !== 1 && ride?.project_code) {
+        const code = ride.project_code
+        try {
+          const TEMP = 9001 // fora do alcance de qualquer build real — evita colisão
+          await shiftBuildNo(code, b.build_no, TEMP)
+          await makeRoomForBuild1(code, b.build_no)
+          await shiftBuildNo(code, TEMP, 1)
+        } catch (e) { alert('Renumbering failed: ' + String(e)) }
+      }
+      cancelEdit()
+      await load()
+    } finally {
+      setSavingEdit(false)
+    }
   }
 
   // APAGAR O PACK APAGA TUDO DELE (ordem do usuário, 17/ago/2026): as puxadas de dinamômetro
@@ -178,7 +222,7 @@ export default function RideBuildsPage() {
                         {/* BoneStock não é build nem pack: sem selo Build.0X, com o selo
                             roxo de fixado (mesmo padrão do duty permanente do staff). */}
                         {bone
-                          ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-900 text-purple-300">📌 FACTORY BASELINE</span>
+                          ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-900 text-purple-300">{(b.name || '').trim().toLowerCase() === 'stock' ? '📌 THIS CAR’S BASELINE' : '📌 FACTORY BASELINE'}</span>
                           : <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">🏁 {buildLabel(b.build_no)}</span>}
                         {/* A meta sai do próprio nome do pack (Z1250sc = 1250 bhp). */}
                         {target != null && <span className="px-3 py-1 rounded-full text-xs font-bold bg-fuchsia-900 text-fuchsia-200">🎯 {target} BHP</span>}

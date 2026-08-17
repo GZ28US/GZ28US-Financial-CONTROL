@@ -152,6 +152,15 @@ export function formatPhone(phone: string | null | undefined, country?: string |
   return String(phone)
 }
 
+// BASELINE packs (user law 17/aug/2026): "BoneStock" is the factory baseline; "Stock" is
+// the same thing FOR THAT CAR ONLY — identical behavior everywhere (scan-only, loss deduced
+// from the factory rating, purple pinned row, Build.01 always), with ONE difference:
+// a Stock pull is never offered to other cars as an importable reference; BoneStock is.
+export const isBaselineName = (name: string | null | undefined) => {
+  const n = String(name || '').trim().toLowerCase()
+  return n === 'bonestock' || n === 'stock'
+}
+
 // A BUILD's pack name states the goal in CRANK bhp: "Z1250sc Alpha170 Pack" = 1250 bhp.
 // (Z = the house prefix, the number, then the aspiration: sc / na / tt.) Returns null for
 // a name outside that pattern — no invented target. Shared by the builds list and the

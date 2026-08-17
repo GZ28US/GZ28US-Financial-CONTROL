@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber, packTargetBhp } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
 
 const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
@@ -70,8 +70,11 @@ function toLocalDialect(p: DynoPull): DynoPull {
   }
 }
 
-// The auto-created baseline row is identified by its PACK label.
-function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
+// A linha de BASE é identificada pelo PACK: "BoneStock" (fábrica) ou "Stock" (a base
+// DESTE carro — mesmo comportamento, só não é oferecida aos outros; ver isBaselineName).
+function isBoneStock(p: { pack: string | null }) { return isBaselineName(p.pack) }
+// Estrito: só a BoneStock de verdade pode ser emprestada a OUTROS carros.
+function isTrueBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
 
 // Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
@@ -326,7 +329,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         .not('whp', 'is', null)
         .order('pull_date', { ascending: false, nullsFirst: false })
       const byCode = new Map((twins || []).map((t: any) => [t.project_code, t]))
-      setImportables(((bones || []) as DynoPull[]).filter(isBoneStock).map((row) => {
+      setImportables(((bones || []) as DynoPull[]).filter(isTrueBoneStock).map((row) => {
         const t: any = byCode.get(row.ride_code || '')
         return {
           row, // linha CRUA — a importação copia como está (dialeto BR incluso)
@@ -1044,7 +1047,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       {/* Diz POR QUE não há botão de inserir — senão parece bug. */}
       {bonestockPack && (
         <p className="text-sm text-amber-300 font-bold -mt-3 mb-6">
-          🔒 BoneStock is SCAN ONLY — the dyno sheet is the proof of veracity. SCAN PULL reads
+          🔒 The baseline (BoneStock/Stock) is SCAN ONLY — the dyno sheet is the proof of veracity. SCAN PULL reads
           the sheet, deduces the loss from the factory rating and saves the pull by itself.
         </p>
       )}
@@ -1224,6 +1227,8 @@ const BS_FIELDS: BSField[] = [
   { key: 'flex_sensor', label: 'FlexSensor', kind: 'enum', options: ['Stock', 'ECU Wired', 'Gauge Wired', 'NO'] },
   { key: 'fuel', label: 'Fuel', kind: 'enum', options: BS_FUEL_OPTIONS },
   { key: 'transmission', label: 'Transmission', kind: 'so' },
+  // Último campo (pedido 17/ago/2026): Stock/Other + texto livre quando Other.
+  { key: 'traction_tires', label: 'Traction Tires Size', kind: 'so' },
 ]
 
 // GZ28 logo as a JPEG data-URI for the PDF header (canvas round-trip keeps jsPDF happy).
@@ -1386,7 +1391,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         r.onerror = reject
         r.readAsDataURL(blob)
       })
-      const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} Build.${String(buildNo).padStart(2, '0')} BuildSheet.pdf`
+      const packTag = ((buildName || '').trim() || `Build.${String(buildNo).padStart(2, '0')}`).replace(/[\/:*?"<>|]/g, '')
+      const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
       const results = await Promise.all(['US'].map(async (zone) => {
         try {
           const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
@@ -1415,7 +1421,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         r.readAsDataURL(blob)
       })
       const buildTag = `Build.${String(buildNo).padStart(2, '0')}`
-      const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${buildTag} BuildSheet.pdf`
+      // O arquivo carrega o NOME DO PACK, não Build.XX (ordem do usuário, 17/ago/2026).
+      const packTag = ((buildName || '').trim() || buildTag).replace(/[\\/:*?"<>|]/g, '')
+      const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
       // Re-sync to the Dropbox HB Tuning folder first — the caption reports where it landed.
       const ROOT_LABEL = 'Dropbox\\001 - GZ28US\\GZ28US Rides'
       const savedIn: string[] = []
