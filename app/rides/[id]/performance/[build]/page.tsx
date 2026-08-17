@@ -46,7 +46,7 @@ function applyLoss(wheel: string, loss: string): number | null {
 
 // `borrowed` = a BoneStock do carro EMPRESTADA de outro build: aparece na tabela como a
 // linha de base, mas não é editável nem removível daqui — a dona é o build de origem.
-type DynoPull = { id: string; ride_code?: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean; borrowed?: boolean }
+type DynoPull = { id: string; ride_code?: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; imported_from?: string | null; foreign?: boolean; borrowed?: boolean }
 
 // BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
 // factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
@@ -88,6 +88,8 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   // de fábrica). Os outros packs não pedem perda nenhuma e ela não é editável: BoneStock
   // define, o resto consome.
   const [carLoss, setCarLoss] = useState<number | null>(null)
+  // De qual baseline a perda veio ("BoneStock" ou "Stock") — só pro rótulo na tela.
+  const [carLossFrom, setCarLossFrom] = useState('BoneStock')
   // IMPORT BoneStock (ordem do usuário, 17/ago/2026): carro SEM baseline própria, mas com
   // CARROS IDÊNTICOS no sistema que têm BoneStock — oferece importar a de um deles como
   // referência. `carHasBone` começa true (pessimista) pra o botão nunca piscar antes do load.
@@ -299,6 +301,8 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     const bsAll = ((rideWide || []) as DynoPull[]).filter(isBoneStock)
     const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
     setCarLoss(bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null)
+    // O rótulo diz de QUAL baseline a perda veio — "from Stock" quando a base é a Stock.
+    setCarLossFrom(bsCar?.pack || 'BoneStock')
     setCarHasBone(bsAll.length > 0)
     // Build sem BoneStock própria mostra a do carro EMPRESTADA, fixada no topo —
     // read-only (sem EDIT/REMOVE): a dona é o build de origem.
@@ -327,6 +331,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         .select('*')
         .in('ride_code', codes)
         .not('whp', 'is', null)
+        .is('imported_from', null) // cópia importada NÃO se propaga — só ORIGINAIS
         .order('pull_date', { ascending: false, nullsFirst: false })
       const byCode = new Map((twins || []).map((t: any) => [t.project_code, t]))
       setImportables(((bones || []) as DynoPull[]).filter(isTrueBoneStock).map((row) => {
@@ -360,6 +365,9 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         pull_date: s.pull_date,
         dyno: s.dyno,
         document_url: s.document_url,
+        // PROVENIÊNCIA (lei 17/ago/2026): cópia importada carrega de quem veio — e cópia
+        // NUNCA é oferecida a outros carros; só ORIGINAIS são compartilháveis.
+        imported_from: s.ride_code || null,
       }])
       if (error) { alert(error.message); return }
       setShowImport(false)
@@ -1064,7 +1072,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       <div className="flex items-center gap-3 mb-4 text-lg">
         <span className="text-gray-400 font-bold">Crank → wheel loss:</span>
         {carLoss != null ? (
-          <span className="font-bold text-purple-300">{carLoss}% <span className="font-normal text-sm text-purple-400">🔒 from BoneStock</span></span>
+          <span className="font-bold text-purple-300">{carLoss}% <span className="font-normal text-sm text-purple-400">🔒 from {carLossFrom}</span></span>
         ) : editingLoss ? (
           <>
             <input value={lossDraft} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setLossDraft(e.target.value) }} className="w-20 bg-gray-800 border border-gray-700 rounded-xl px-3 py-1" placeholder="%" />
