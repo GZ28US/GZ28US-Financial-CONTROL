@@ -182,8 +182,8 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!code || !['create', 'rename', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
-      return NextResponse.json({ error: 'Bad request: need action create|rename|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
+    if (!code || !['create', 'rename', 'rename-file', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
+      return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
     }
     const root = zone ? ROOTS[zone] : ''
     const target = `${code}${name ? ' - ' + name : ''}`
