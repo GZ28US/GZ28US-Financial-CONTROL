@@ -13,6 +13,10 @@ import { packTargetBhp } from '@/lib/utils'
 // (BUILD SHEET / DYNO) scoped to that build in the shared bank, keyed by ride_code + build_no.
 type Build = { id: string; build_no: number; created_at: string; name?: string | null }
 const buildLabel = (n: number) => `Build.${String(n).padStart(2, '0')}`
+// "BoneStock" NÃO é um pack — é o carro de fábrica, a linha de base de tudo. A linha dele
+// é roxa (mesmo padrão dos duties permanentes do staff), fixada SEMPRE no topo, e sem o
+// selo Build.0X: não é um build, é o BoneStock.
+const isBoneStockBuild = (b: { name?: string | null }) => (b.name || '').trim().toLowerCase() === 'bonestock'
 
 export default function RideBuildsPage() {
   const params = useParams()
@@ -44,7 +48,10 @@ export default function RideBuildsPage() {
       supabase.from('dyno_pulls').select('build_no').eq('ride_code', code),
       supabase.from('ride_build_sheets').select('build_no').eq('ride_code', code),
     ])
-    setBuilds((data || []) as Build[])
+    // BoneStock fixado no topo, sempre; o resto segue por build_no (a query já ordena).
+    const rows = (data || []) as Build[]
+    rows.sort((a, b) => (isBoneStockBuild(b) ? 1 : 0) - (isBoneStockBuild(a) ? 1 : 0))
+    setBuilds(rows)
     // Conta pelo build_no EXATO — a mesma chave que o delete usa. Linha sem build_no não
     // é contada em build nenhum: seria contada aqui e NÃO apagada lá, virando órfã calada.
     // (Hoje não existe nenhuma assim; a regra é pra continuar assim.)
@@ -142,8 +149,9 @@ export default function RideBuildsPage() {
             const target = packTargetBhp(b.name)
             const pulls = pullsByBuild[b.build_no] || 0
             const sheet = !!sheetByBuild[b.build_no]
+            const bone = isBoneStockBuild(b)
             return (
-              <div key={b.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 flex items-center justify-between gap-6 flex-wrap">
+              <div key={b.id} className={`rounded-3xl p-5 flex items-center justify-between gap-6 flex-wrap ${bone ? 'bg-purple-950/40 border-2 border-purple-600' : 'bg-gray-900 border border-gray-800'}`}>
                 {editingId === b.id ? (
                   <>
                     <div className="flex-1 min-w-[16rem]">
@@ -166,8 +174,12 @@ export default function RideBuildsPage() {
                   <>
                     <Link href={`/rides/${rideId}/performance/${b.build_no}`} className="flex-1 min-w-0 group">
                       <div className="flex items-center gap-3 mb-1 flex-wrap">
-                        <h2 className={`text-2xl font-bold group-hover:underline ${b.name ? '' : 'text-gray-600 italic'}`}>{b.name || 'Unnamed'}</h2>
-                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">🏁 {buildLabel(b.build_no)}</span>
+                        <h2 className={`text-2xl font-bold group-hover:underline ${bone ? 'text-purple-300' : b.name ? '' : 'text-gray-600 italic'}`}>{b.name || 'Unnamed'}</h2>
+                        {/* BoneStock não é build nem pack: sem selo Build.0X, com o selo
+                            roxo de fixado (mesmo padrão do duty permanente do staff). */}
+                        {bone
+                          ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-900 text-purple-300">📌 FACTORY BASELINE</span>
+                          : <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">🏁 {buildLabel(b.build_no)}</span>}
                         {/* A meta sai do próprio nome do pack (Z1250sc = 1250 bhp). */}
                         {target != null && <span className="px-3 py-1 rounded-full text-xs font-bold bg-fuchsia-900 text-fuchsia-200">🎯 {target} BHP</span>}
                       </div>
