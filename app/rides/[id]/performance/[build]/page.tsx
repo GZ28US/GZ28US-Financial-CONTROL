@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, packTargetBhp } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
 
 const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
@@ -71,14 +71,6 @@ function toLocalDialect(p: DynoPull): DynoPull {
 // The auto-created baseline row is identified by its PACK label.
 function isBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
-// The BUILD's pack name states the goal in CRANK bhp: "Z1250sc Alpha170 Pack" = 1250 bhp.
-// (Z = the house prefix, then the number, then the aspiration: sc / na / tt.)
-// Returns null for a build named anything else — no invented target.
-function packTargetBhp(packName: string | null | undefined): number | null {
-  const m = String(packName || '').trim().match(/^Z\s*(\d{3,4})\s*(sc|na|tt)?\b/i)
-  const n = m ? parseInt(m[1], 10) : NaN
-  return Number.isFinite(n) && n > 0 ? n : null
-}
 
 // Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
 // this WhatsApp group ONLY — never the default group.

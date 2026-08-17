@@ -152,6 +152,16 @@ export function formatPhone(phone: string | null | undefined, country?: string |
   return String(phone)
 }
 
+// A BUILD's pack name states the goal in CRANK bhp: "Z1250sc Alpha170 Pack" = 1250 bhp.
+// (Z = the house prefix, the number, then the aspiration: sc / na / tt.) Returns null for
+// a name outside that pattern — no invented target. Shared by the builds list and the
+// dyno tab so both read the same goal from the same string.
+export function packTargetBhp(packName: string | null | undefined): number | null {
+  const m = String(packName || '').trim().match(/^Z\s*(\d{3,4})\s*(sc|na|tt)?\b/i)
+  const n = m ? parseInt(m[1], 10) : NaN
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 // Punctuation-insensitive, word-order-tolerant search match. Splits the query into
 // tokens (letters/digits only) and matches only when EVERY token appears across the
 // given fields — so "DragPack Setup Welds" finds "…DragPack Setup - Welds…".
