@@ -177,6 +177,36 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         dyno: data.dyno || f.dyno,
       }))
       setScannedFile(file)
+
+      // BONESTOCK: a perda não se chuta, se DEDUZ. O BoneStock É o carro de fábrica, então
+      // o bhp que sair da conta TEM que bater com a potência declarada pelo fabricante —
+      // a única incógnita é a perda da transmissão:  loss = (1 − whp / hp_fábrica) × 100.
+      // (Num pack qualquer isso não vale: ali a potência é justamente o que se quer medir.)
+      const effPack = (form.pack.trim() || data.pack || packName || '').trim()
+      const scannedWhp = parseFloat(String(data.whp ?? '')) || 0
+      if (isBoneStock({ pack: effPack }) && scannedWhp > 0 && car) {
+        try {
+          const fr = await fetch(`${BASE_PATH}/api/factory-specs`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car),
+          })
+          const fs = await fr.json().catch(() => ({}))
+          const hp = Number(fs?.hp)
+          if (Number.isFinite(hp) && hp > 0) {
+            if (scannedWhp >= hp) {
+              // Roda medindo mais que o virabrequim de fábrica: ou o carro não está stock,
+              // ou a folha não é deste carro. Não inventa perda negativa — avisa e deixa com ele.
+              alert(`Essa puxada deu ${scannedWhp} whp, mas a fábrica declara ${hp} hp no virabrequim.\n\nNo BoneStock a roda tem que dar MENOS que a fábrica — confira a folha (ou o carro não está de fábrica). A perda ficou em branco.`)
+            } else {
+              // Arredonda de 0,5 em 0,5 (ordem do usuário): 12,97% vira 13%, 17,66% vira
+              // 17,5%. Perda de transmissão é estimativa — número redondo é mais honesto
+              // que duas casas decimais fingindo precisão, e é como as puxadas antigas já
+              // estão gravadas (15, 17, 18.5, 24).
+              const loss = Math.round((1 - scannedWhp / hp) * 100 * 2) / 2
+              setForm((f) => ({ ...f, loss: String(loss) }))
+            }
+          }
+        } catch { /* sem specs de fábrica: segue com a perda em branco, como antes */ }
+      }
     } catch (err) {
       alert('Scan failed: ' + String(err))
     } finally {
