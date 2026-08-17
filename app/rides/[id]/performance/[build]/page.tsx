@@ -46,7 +46,7 @@ function applyLoss(wheel: string, loss: string): number | null {
 
 // `borrowed` = a BoneStock do carro EMPRESTADA de outro build: aparece na tabela como a
 // linha de base, mas não é editável nem removível daqui — a dona é o build de origem.
-type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean; borrowed?: boolean }
+type DynoPull = { id: string; ride_code?: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean; borrowed?: boolean }
 
 // BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
 // factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
@@ -85,6 +85,13 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   // de fábrica). Os outros packs não pedem perda nenhuma e ela não é editável: BoneStock
   // define, o resto consome.
   const [carLoss, setCarLoss] = useState<number | null>(null)
+  // IMPORT BoneStock (ordem do usuário, 17/ago/2026): carro SEM baseline própria, mas com
+  // CARROS IDÊNTICOS no sistema que têm BoneStock — oferece importar a de um deles como
+  // referência. `carHasBone` começa true (pessimista) pra o botão nunca piscar antes do load.
+  const [carHasBone, setCarHasBone] = useState(true)
+  const [importables, setImportables] = useState<{ row: DynoPull; label: string; whp: number | null }[]>([])
+  const [showImport, setShowImport] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: defaultLoss, dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -271,11 +278,74 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     const bsAll = ((rideWide || []) as DynoPull[]).filter(isBoneStock)
     const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
     setCarLoss(bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null)
+    setCarHasBone(bsAll.length > 0)
     // Build sem BoneStock própria mostra a do carro EMPRESTADA, fixada no topo —
     // read-only (sem EDIT/REMOVE): a dona é o build de origem.
     if (bsCar && !rows.some(isBoneStock)) rows.unshift({ ...toLocalDialect(bsCar), borrowed: true })
     setPulls(rows)
     setLoading(false)
+  }
+
+  // CARROS IDÊNTICOS com BoneStock: mesmo brand/model/version (o version nomeia o motor —
+  // "SRT Demon 170 6.2"), qualquer ano — o ano aparece na lista e quem escolhe é o usuário.
+  // Só roda quando ESTE carro não tem baseline nenhuma; o resultado decide se o botão existe.
+  useEffect(() => {
+    if (!car || carHasBone) { setImportables([]); return }
+    ;(async () => {
+      const { data: twins } = await supabase
+        .from('rides')
+        .select('project_code, project_name, year')
+        .eq('brand', car.brand || '')
+        .eq('model', car.model || '')
+        .eq('version', car.version || '')
+        .neq('project_code', rideCode)
+      const codes = (twins || []).map((t: any) => t.project_code).filter(Boolean)
+      if (codes.length === 0) { setImportables([]); return }
+      const { data: bones } = await supabase
+        .from('dyno_pulls')
+        .select('*')
+        .in('ride_code', codes)
+        .not('whp', 'is', null)
+        .order('pull_date', { ascending: false, nullsFirst: false })
+      const byCode = new Map((twins || []).map((t: any) => [t.project_code, t]))
+      setImportables(((bones || []) as DynoPull[]).filter(isBoneStock).map((row) => {
+        const t: any = byCode.get(row.ride_code || '')
+        return {
+          row, // linha CRUA — a importação copia como está (dialeto BR incluso)
+          label: `${row.ride_code || '—'}${t?.project_name ? ` — ${t.project_name}` : ''}${t?.year ? ` (${t.year})` : ''}`,
+          whp: toLocalDialect(row).whp, // só pra EXIBIR comparável
+        }
+      }))
+    })()
+  }, [car, carHasBone]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Copia a BoneStock escolhida para ESTE carro (ride_code/build atuais), campos como
+  // estão — perda, torque, fator de correção, dialeto e a folha (document_url) juntos.
+  // Daí em diante a máquina toda já existente assume: perda do carro, linha emprestada
+  // nos outros builds, meta do pack em WHP.
+  async function importBoneStock(c: { row: DynoPull; label: string }) {
+    setImporting(true)
+    try {
+      const s = c.row
+      const { error } = await supabase.from('dyno_pulls').insert([{
+        ride_code: rideCode,
+        build_no: buildNo,
+        origin: s.origin || 'US',
+        pack: 'BoneStock',
+        whp: s.whp, wnm: s.wnm,
+        loss_pct: s.loss_pct,
+        bhp: s.bhp, bnm: s.bnm,
+        correction_factor: s.correction_factor ?? null,
+        pull_date: s.pull_date,
+        dyno: s.dyno,
+        document_url: s.document_url,
+      }])
+      if (error) { alert(error.message); return }
+      setShowImport(false)
+      await load()
+    } finally {
+      setImporting(false)
+    }
   }
 
   // Auto-create the BoneStock baseline (factory crank specs → wheel via the entered loss).
@@ -791,6 +861,46 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
       {/* REPORT THIS PULL TO WHATSAPP? */}
+      {/* IMPORT BoneStock — as BoneStock dos carros idênticos; o usuário escolhe qual
+          vira a referência DESTE carro. Colunas pedidas: Car, WHP, Dyno, Date. */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-amber-400">IMPORT BoneStock</h2>
+              <button onClick={() => setShowImport(false)} className="text-gray-400 hover:text-white text-xl font-bold">✕</button>
+            </div>
+            <p className="text-gray-400 text-base">Identical cars in the system with a BoneStock pull — pick the one to use as THIS car&apos;s factory baseline.</p>
+            <div className="overflow-y-auto flex-1">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-gray-400 text-sm border-b border-gray-700">
+                    <th className="py-2 pr-4 font-bold">CAR</th>
+                    <th className="py-2 pr-4 font-bold">WHP</th>
+                    <th className="py-2 pr-4 font-bold">DYNO</th>
+                    <th className="py-2 pr-4 font-bold">DATE</th>
+                    <th className="py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importables.map((c) => (
+                    <tr key={c.row.id} className="border-b border-gray-800">
+                      <td className="py-3 pr-4 font-bold">{c.label}</td>
+                      <td className="py-3 pr-4">{c.whp != null ? c.whp.toFixed(2) : '—'}</td>
+                      <td className="py-3 pr-4">{c.row.dyno || '—'}</td>
+                      <td className="py-3 pr-4 text-gray-400">{fmtDate(c.row.pull_date)}</td>
+                      <td className="py-3 text-right">
+                        <button onClick={() => importBoneStock(c)} disabled={importing} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-2xl font-bold text-sm">{importing ? 'IMPORTING…' : 'USE'}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {reportPull && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
@@ -901,6 +1011,14 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
           <button onClick={() => scanInputRef.current?.click()} disabled={scanning} className="bg-purple-700 hover:bg-purple-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{scanning ? 'SCANNING…' : 'SCAN PULL'}</button>
           <input ref={scanInputRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleScanFile} />
         </div>
+        {/* Carro sem baseline, mas com CARRO IDÊNTICO já medido no sistema: dá pra importar
+            a BoneStock dele como referência em vez de rodar o dinamômetro de novo. */}
+        {!carHasBone && importables.length > 0 && (
+          <div>
+            <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">IMPORT</label>
+            <button onClick={() => setShowImport(true)} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold text-lg">IMPORT BoneStock</button>
+          </div>
+        )}
       </div>
 
       {/* Diz POR QUE não há botão de inserir — senão parece bug. */}
