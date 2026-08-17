@@ -78,6 +78,11 @@ const REPORTS_GROUP = 'GZ28US - Tcal'
 
 function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packName }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number; defaultLoss: string; packName: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
+  // A PERDA DO CARRO (ordem do usuário, 17/ago/2026): quando o carro tem uma puxada
+  // BoneStock — em QUALQUER build — a perda dela é A perda do carro (deduzida da potência
+  // de fábrica). Os outros packs não pedem perda nenhuma e ela não é editável: BoneStock
+  // define, o resto consome.
+  const [carLoss, setCarLoss] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: defaultLoss, dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -98,6 +103,8 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   // a BoneStock fixada no topo — por isso ela é pulada primeiro). Sem puxada nenhuma, vale a
   // que estiver no formulário (ou o padrão do carro), para a meta já aparecer no carro novo.
   const lossInUse = (() => {
+    // A perda da BoneStock do carro manda em tudo, quando existe.
+    if (carLoss != null) return carLoss
     const real = pulls.filter(p => !isBoneStock(p) && p.loss_pct != null)
     if (real.length) return Number(real[0].loss_pct)
     const anyPull = pulls.find(p => p.loss_pct != null)
@@ -250,6 +257,15 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     // BoneStock baseline is always pinned as the first row.
     rows.sort((a, b) => (isBoneStock(b) ? 1 : 0) - (isBoneStock(a) ? 1 : 0))
     setPulls(rows)
+    // A perda do CARRO vem da BoneStock de QUALQUER build (a query acima é só deste build).
+    const { data: bsRows } = await supabase
+      .from('dyno_pulls')
+      .select('pack, loss_pct, created_at')
+      .eq('ride_code', rideCode)
+      .not('loss_pct', 'is', null)
+      .order('created_at', { ascending: false })
+    const bs = ((bsRows || []) as { pack: string | null; loss_pct: number | null }[]).find(isBoneStock)
+    setCarLoss(bs?.loss_pct != null ? Number(bs.loss_pct) : null)
     setLoading(false)
   }
 
@@ -341,8 +357,14 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         documentUrl = urlData.publicUrl
       }
       const pullDate = vals.dyear && vals.dmonth && vals.dday ? `${vals.dyear}-${vals.dmonth}-${vals.dday}` : null
-      // Loss is constant per ride: use what the user typed on the first pull, reuse it after.
-      const effLoss = pulls.length === 0 ? vals.loss : (rideLoss != null ? String(rideLoss) : vals.loss)
+      // A perda é do CARRO: a BoneStock define (a dela é a deduzida da fábrica, sempre a
+      // própria), todo outro pack CONSOME a perda da BoneStock quando ela existe. Sem
+      // BoneStock ainda, vale o comportamento antigo: digitada no primeiro pull, reusada.
+      const effLoss = isBoneStock({ pack: vals.pack.trim() })
+        ? vals.loss
+        : carLoss != null ? String(carLoss)
+        : pulls.length === 0 ? vals.loss
+        : (rideLoss != null ? String(rideLoss) : vals.loss)
       const { data: inserted, error } = await supabase.from('dyno_pulls').insert([{
         ride_code: rideCode,
         build_no: buildNo,
@@ -387,8 +409,9 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       return
     }
     // Loss is set ONCE for the whole ride (on the first pull) — required so the pull and the
-    // auto BoneStock share the exact same crank→wheel conversion.
-    if (pulls.length === 0 && !form.loss.trim()) { alert('Enter the crank→wheel LOSS % — it is set once for the whole ride.'); return }
+    // auto BoneStock share the exact same crank→wheel conversion. Com a perda da BoneStock
+    // do carro já conhecida, não se pede nada: ela é usada direto.
+    if (carLoss == null && pulls.length === 0 && !form.loss.trim()) { alert('Enter the crank→wheel LOSS % — it is set once for the whole ride.'); return }
     await savePull(form, scannedFile)
   }
 
@@ -826,7 +849,8 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
           <label className="block mb-1 text-sm text-gray-400 font-bold">WTQ (lb·ft)</label>
           <input value={form.wnm} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, wnm: e.target.value }) }} className={inputClass} placeholder="0" />
         </div>
-        {pulls.length === 0 && (
+        {/* Com a BoneStock do carro no banco, a perda já é conhecida — o campo some. */}
+        {pulls.length === 0 && carLoss == null && (
           <div className="w-28">
             <label className="block mb-1 text-sm text-gray-400 font-bold">LOSS (%)</label>
             <input value={form.loss} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setForm({ ...form, loss: e.target.value }) }} className={inputClass} placeholder="0" />
@@ -884,10 +908,14 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         </p>
       )}
 
-      {/* Loss is a per-ride constant — shown here once, never as a per-pull column. */}
+      {/* Loss is a per-ride constant — shown here once, never as a per-pull column.
+          Vinda da BoneStock do carro, ela é FATO deduzido da potência de fábrica, não
+          escolha: mostra em roxo, travada, sem botão de editar. */}
       <div className="flex items-center gap-3 mb-4 text-lg">
         <span className="text-gray-400 font-bold">Crank → wheel loss:</span>
-        {editingLoss ? (
+        {carLoss != null ? (
+          <span className="font-bold text-purple-300">{carLoss}% <span className="font-normal text-sm text-purple-400">🔒 from BoneStock</span></span>
+        ) : editingLoss ? (
           <>
             <input value={lossDraft} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setLossDraft(e.target.value) }} className="w-20 bg-gray-800 border border-gray-700 rounded-xl px-3 py-1" placeholder="%" />
             <button onClick={saveLoss} className="bg-green-700 hover:bg-green-600 px-4 py-1 rounded-xl font-bold text-sm">SAVE</button>
