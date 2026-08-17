@@ -89,6 +89,10 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   // O nome do build (camada anterior) é o pacote contratado e diz a meta em bhp de virabrequim:
   // "Z1250sc Alpha170 Pack" = 1250 bhp. O dinamômetro mede RODA, então a meta é convertida
   // pela MESMA perda que o carro já usa nas puxadas — não uma perda inventada.
+  // Pack EFETIVO do formulário (o do build, ou o que ele digitou) — é ele que decide se
+  // esta puxada é a linha de fábrica.
+  const bonestockPack = isBoneStock({ pack: (form.pack.trim() || packName || '') })
+
   const targetBhp = packTargetBhp(packName)
   // Perda em uso: a da puxada mais recente do carro (as linhas vêm em created_at DESC, com
   // a BoneStock fixada no topo — por isso ela é pulada primeiro). Sem puxada nenhuma, vale a
@@ -163,6 +167,47 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       const data = await res.json()
       if (!res.ok || data.error) { alert(data.error || 'Scan failed.'); return }
       const m = String(data.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+
+      // BONESTOCK É 100% PELO SCAN (só neste caso; packs normais seguem o fluxo manual).
+      // A perda não se chuta, se DEDUZ: o BoneStock É o carro de fábrica, então o bhp da
+      // conta TEM que bater com a potência declarada — a única incógnita é a perda:
+      //   loss = (1 − whp / hp_fábrica) × 100, arredondada de 0,5 em 0,5 (12,97% -> 13%).
+      // Deduziu, GRAVA sozinho — não existe botão de inserir neste caminho.
+      const effPack = (form.pack.trim() || data.pack || packName || '').trim()
+      const scannedWhp = parseFloat(String(data.whp ?? '')) || 0
+      if (isBoneStock({ pack: effPack })) {
+        if (!(scannedWhp > 0)) { alert('The scan found no WHP figure on this sheet — BoneStock cannot be saved without it. Scan a clearer sheet.'); return }
+        if (!car) { alert('Car identity not loaded yet — try again in a second.'); return }
+        let hp = 0
+        try {
+          const fr = await fetch(`${BASE_PATH}/api/factory-specs`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car),
+          })
+          const fs = await fr.json().catch(() => ({}))
+          hp = Number(fs?.hp) || 0
+        } catch { /* tratado abaixo */ }
+        if (!(hp > 0)) { alert('Could not fetch the factory power rating for this car — BoneStock needs it to deduce the loss. Try again.'); return }
+        if (scannedWhp >= hp) {
+          // Roda medindo mais que o virabrequim de fábrica: ou o carro não está stock,
+          // ou a folha não é deste carro. Não inventa perda negativa — não grava nada.
+          alert(`This pull reads ${scannedWhp} whp, but the factory rates ${hp} hp at the crank.\n\nOn BoneStock the wheels must read LESS than the factory figure — check the sheet (or the car isn't stock). Nothing was saved.`)
+          return
+        }
+        const loss = Math.round((1 - scannedWhp / hp) * 100 * 2) / 2
+        await savePull({
+          pack: effPack,
+          whp: String(scannedWhp),
+          wnm: String(data.wnm ?? ''),
+          loss: String(loss),
+          dmonth: m ? m[2] : '',
+          dday: m ? m[3] : '',
+          dyear: m ? m[1] : '',
+          dyno: data.dyno || 'GZ28US DynoJet',
+        }, file)
+        return
+      }
+
+      // Pack normal: o scan pré-preenche e o usuário confere e clica ADD, como sempre.
       setForm((f) => ({
         ...f,
         // O PACK é NOSSO: vem do nome do pack do build (ou do que ele digitou) e o scan
@@ -177,36 +222,6 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         dyno: data.dyno || f.dyno,
       }))
       setScannedFile(file)
-
-      // BONESTOCK: a perda não se chuta, se DEDUZ. O BoneStock É o carro de fábrica, então
-      // o bhp que sair da conta TEM que bater com a potência declarada pelo fabricante —
-      // a única incógnita é a perda da transmissão:  loss = (1 − whp / hp_fábrica) × 100.
-      // (Num pack qualquer isso não vale: ali a potência é justamente o que se quer medir.)
-      const effPack = (form.pack.trim() || data.pack || packName || '').trim()
-      const scannedWhp = parseFloat(String(data.whp ?? '')) || 0
-      if (isBoneStock({ pack: effPack }) && scannedWhp > 0 && car) {
-        try {
-          const fr = await fetch(`${BASE_PATH}/api/factory-specs`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car),
-          })
-          const fs = await fr.json().catch(() => ({}))
-          const hp = Number(fs?.hp)
-          if (Number.isFinite(hp) && hp > 0) {
-            if (scannedWhp >= hp) {
-              // Roda medindo mais que o virabrequim de fábrica: ou o carro não está stock,
-              // ou a folha não é deste carro. Não inventa perda negativa — avisa e deixa com ele.
-              alert(`Essa puxada deu ${scannedWhp} whp, mas a fábrica declara ${hp} hp no virabrequim.\n\nNo BoneStock a roda tem que dar MENOS que a fábrica — confira a folha (ou o carro não está de fábrica). A perda ficou em branco.`)
-            } else {
-              // Arredonda de 0,5 em 0,5 (ordem do usuário): 12,97% vira 13%, 17,66% vira
-              // 17,5%. Perda de transmissão é estimativa — número redondo é mais honesto
-              // que duas casas decimais fingindo precisão, e é como as puxadas antigas já
-              // estão gravadas (15, 17, 18.5, 24).
-              const loss = Math.round((1 - scannedWhp / hp) * 100 * 2) / 2
-              setForm((f) => ({ ...f, loss: String(loss) }))
-            }
-          }
-        } catch { /* sem specs de fábrica: segue com a perda em branco, como antes */ }
-      }
     } catch (err) {
       alert('Scan failed: ' + String(err))
     } finally {
@@ -309,43 +324,45 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     load()
   }
 
-  async function addPull() {
-    if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
-    // Loss is set ONCE for the whole ride (on the first pull) — required so the pull and the
-    // auto BoneStock share the exact same crank→wheel conversion.
-    if (pulls.length === 0 && !form.loss.trim()) { alert('Enter the crank→wheel LOSS % — it is set once for the whole ride.'); return }
+  // Grava a puxada a partir de valores EXPLÍCITOS — não do estado do formulário. É o que
+  // permite o SCAN do BoneStock gravar sozinho: logo depois de um setState os valores novos
+  // ainda não estão em `form`, então quem escaneou passa o que leu direto para cá.
+  type PullVals = { pack: string; whp: string; wnm: string; loss: string; dmonth: string; dday: string; dyear: string; dyno: string }
+  async function savePull(vals: PullVals, file: File | null) {
     setSaving(true)
     try {
       let documentUrl: string | null = null
-      if (scannedFile) {
-        const ext = scannedFile.name.split('.').pop() || 'pdf'
+      if (file) {
+        const ext = file.name.split('.').pop() || 'pdf'
         const path = `dyno/${rideId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-        const { error: upErr } = await supabase.storage.from('dyno-charts').upload(path, scannedFile, { upsert: true })
+        const { error: upErr } = await supabase.storage.from('dyno-charts').upload(path, file, { upsert: true })
         if (upErr) { alert('Document upload failed: ' + upErr.message); return }
         const { data: urlData } = supabase.storage.from('dyno-charts').getPublicUrl(path)
         documentUrl = urlData.publicUrl
       }
-      const pullDate = form.dyear && form.dmonth && form.dday ? `${form.dyear}-${form.dmonth}-${form.dday}` : null
+      const pullDate = vals.dyear && vals.dmonth && vals.dday ? `${vals.dyear}-${vals.dmonth}-${vals.dday}` : null
       // Loss is constant per ride: use what the user typed on the first pull, reuse it after.
-      const effLoss = pulls.length === 0 ? form.loss : (rideLoss != null ? String(rideLoss) : form.loss)
+      const effLoss = pulls.length === 0 ? vals.loss : (rideLoss != null ? String(rideLoss) : vals.loss)
       const { data: inserted, error } = await supabase.from('dyno_pulls').insert([{
         ride_code: rideCode,
         build_no: buildNo,
         origin: 'US',
-        pack: form.pack.trim() || null,
-        whp: form.whp ? parseFloat(form.whp) : null,
-        wnm: form.wnm ? parseFloat(form.wnm) : null,
+        pack: vals.pack.trim() || null,
+        whp: vals.whp ? parseFloat(vals.whp) : null,
+        wnm: vals.wnm ? parseFloat(vals.wnm) : null,
         loss_pct: effLoss ? parseFloat(effLoss) : null,
-        bhp: applyLoss(form.whp, effLoss),
-        bnm: applyLoss(form.wnm, effLoss),
+        bhp: applyLoss(vals.whp, effLoss),
+        bnm: applyLoss(vals.wnm, effLoss),
         pull_date: pullDate,
-        dyno: form.dyno || null,
+        dyno: vals.dyno || null,
         document_url: documentUrl,
       }]).select().single()
       if (error) { alert(error.message); return }
 
-      // Every ride's table leads with a BoneStock baseline row — create it once, on the first pull.
-      if (!pulls.some(isBoneStock)) { await createBoneStock(effLoss) }
+      // Every ride's table leads with a BoneStock baseline row — create it once, on the first
+      // pull. Mas se a puxada que acabou de entrar JÁ É a BoneStock (escaneada), não se cria
+      // outra por cima: seriam duas linhas de fábrica no mesmo build.
+      if (!isBoneStock({ pack: vals.pack.trim() }) && !pulls.some(isBoneStock)) { await createBoneStock(effLoss) }
 
       // Volta com o PACK do build já preenchido: a próxima puxada é do mesmo pacote.
       setForm({ pack: packName || '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
@@ -357,6 +374,22 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     } finally {
       setSaving(false)
     }
+  }
+
+  async function addPull() {
+    if (!form.pack.trim() && !form.whp) { alert('Enter at least a PACK or a WHP figure.'); return }
+    // BONESTOCK É SÓ POR SCAN (ordem do usuário, 17/ago/2026): "that's how it's a real proof
+    // of veracity". A linha de fábrica é a base de TODOS os ganhos do carro — ela não pode
+    // nascer de número digitado à mão, tem que vir da folha do dinamômetro. Esta trava é a
+    // segunda barreira, para o caso de o pack virar BoneStock com o formulário já preenchido.
+    if (bonestockPack && !scannedFile) {
+      alert('BoneStock only goes in by SCAN — the dyno sheet is the proof.\n\nPress SCAN PULL and pick the sheet.')
+      return
+    }
+    // Loss is set ONCE for the whole ride (on the first pull) — required so the pull and the
+    // auto BoneStock share the exact same crank→wheel conversion.
+    if (pulls.length === 0 && !form.loss.trim()) { alert('Enter the crank→wheel LOSS % — it is set once for the whole ride.'); return }
+    await savePull(form, scannedFile)
   }
 
   async function removePull(id: string) {
@@ -822,16 +855,28 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
             {DYNO_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         </div>
-        <div>
-          <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">ADD</label>
-          <button onClick={addPull} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{saving ? 'SAVING…' : '+ ADD PULL'}</button>
-        </div>
+        {/* BoneStock é 100% pelo SCAN (lê a folha, deduz a perda e grava sozinho) — o botão
+            de inserir à mão não existe nesse caso. Packs normais seguem com o ADD normal. */}
+        {!bonestockPack && (
+          <div>
+            <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">ADD</label>
+            <button onClick={addPull} disabled={saving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{saving ? 'SAVING…' : '+ ADD PULL'}</button>
+          </div>
+        )}
         <div>
           <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">SCAN</label>
           <button onClick={() => scanInputRef.current?.click()} disabled={scanning} className="bg-purple-700 hover:bg-purple-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{scanning ? 'SCANNING…' : 'SCAN PULL'}</button>
           <input ref={scanInputRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleScanFile} />
         </div>
       </div>
+
+      {/* Diz POR QUE não há botão de inserir — senão parece bug. */}
+      {bonestockPack && (
+        <p className="text-sm text-amber-300 font-bold -mt-3 mb-6">
+          🔒 BoneStock is SCAN ONLY — the dyno sheet is the proof of veracity. SCAN PULL reads
+          the sheet, deduces the loss from the factory rating and saves the pull by itself.
+        </p>
+      )}
 
       {scannedFile && (
         <p className="text-sm text-purple-300 mb-4">📎 Chart attached: <span className="font-bold">{scannedFile.name}</span> — saved with this pull on ADD.
