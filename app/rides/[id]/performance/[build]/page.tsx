@@ -223,7 +223,25 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         return
       }
 
-      // Pack normal: o scan pré-preenche e o usuário confere e clica ADD, como sempre.
+      // Pack normal em carro COM BoneStock: a perda já é conhecida e travada, então não
+      // sobra nada a conferir — o scan GRAVA direto, sem ADD PULL (ordem do usuário,
+      // 17/ago/2026). O report continua sendo oferecido depois, como em toda puxada.
+      if (carLoss != null && scannedWhp > 0) {
+        await savePull({
+          pack: effPack,
+          whp: String(scannedWhp),
+          wnm: String(data.wnm ?? ''),
+          loss: String(carLoss),
+          dmonth: m ? m[2] : '',
+          dday: m ? m[3] : '',
+          dyear: m ? m[1] : '',
+          dyno: data.dyno || 'GZ28US DynoJet',
+        }, file)
+        return
+      }
+
+      // Carro ainda sem BoneStock (ou folha sem WHP legível): o scan pré-preenche e o
+      // usuário confere, entra a perda se for o primeiro pull, e clica ADD — como sempre.
       setForm((f) => ({
         ...f,
         // O PACK é NOSSO: vem do nome do pack do build (ou do que ele digitou) e o scan
@@ -877,6 +895,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                   <tr className="text-gray-400 text-sm border-b border-gray-700">
                     <th className="py-2 pr-4 font-bold">CAR</th>
                     <th className="py-2 pr-4 font-bold">WHP</th>
+                    <th className="py-2 pr-4 font-bold">LOSS</th>
                     <th className="py-2 pr-4 font-bold">DYNO</th>
                     <th className="py-2 pr-4 font-bold">DATE</th>
                     <th className="py-2"></th>
@@ -887,6 +906,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                     <tr key={c.row.id} className="border-b border-gray-800">
                       <td className="py-3 pr-4 font-bold">{c.label}</td>
                       <td className="py-3 pr-4">{c.whp != null ? c.whp.toFixed(2) : '—'}</td>
+                      <td className="py-3 pr-4">{c.row.loss_pct != null ? `${c.row.loss_pct}%` : '—'}</td>
                       <td className="py-3 pr-4">{c.row.dyno || '—'}</td>
                       <td className="py-3 pr-4 text-gray-400">{fmtDate(c.row.pull_date)}</td>
                       <td className="py-3 text-right">
