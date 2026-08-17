@@ -44,7 +44,9 @@ function applyLoss(wheel: string, loss: string): number | null {
   return Math.round((w / denom) * 100) / 100
 }
 
-type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean }
+// `borrowed` = a BoneStock do carro EMPRESTADA de outro build: aparece na tabela como a
+// linha de base, mas não é editável nem removível daqui — a dona é o build de origem.
+type DynoPull = { id: string; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; foreign?: boolean; borrowed?: boolean }
 
 // BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
 // factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
@@ -246,26 +248,33 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   }, [packName])
 
   async function load() {
-    const { data } = await supabase
-      .from('dyno_pulls')
-      .select('*')
-      .eq('ride_code', rideCode)
-      .eq('build_no', buildNo)
-      .order('pull_date', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
+    const [{ data }, { data: rideWide }] = await Promise.all([
+      supabase
+        .from('dyno_pulls')
+        .select('*')
+        .eq('ride_code', rideCode)
+        .eq('build_no', buildNo)
+        .order('pull_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }),
+      // A BoneStock do CARRO mora em qualquer build — a query acima é só deste.
+      supabase
+        .from('dyno_pulls')
+        .select('*')
+        .eq('ride_code', rideCode)
+        .order('created_at', { ascending: false }),
+    ])
     const rows = ((data || []) as DynoPull[]).map(toLocalDialect)
     // BoneStock baseline is always pinned as the first row.
     rows.sort((a, b) => (isBoneStock(b) ? 1 : 0) - (isBoneStock(a) ? 1 : 0))
+    // A BoneStock do carro: define a perda E aparece em TODO pack (ordem do usuário,
+    // 17/ago/2026). Preferindo a que tem perda gravada, se houver mais de uma.
+    const bsAll = ((rideWide || []) as DynoPull[]).filter(isBoneStock)
+    const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
+    setCarLoss(bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null)
+    // Build sem BoneStock própria mostra a do carro EMPRESTADA, fixada no topo —
+    // read-only (sem EDIT/REMOVE): a dona é o build de origem.
+    if (bsCar && !rows.some(isBoneStock)) rows.unshift({ ...toLocalDialect(bsCar), borrowed: true })
     setPulls(rows)
-    // A perda do CARRO vem da BoneStock de QUALQUER build (a query acima é só deste build).
-    const { data: bsRows } = await supabase
-      .from('dyno_pulls')
-      .select('pack, loss_pct, created_at')
-      .eq('ride_code', rideCode)
-      .not('loss_pct', 'is', null)
-      .order('created_at', { ascending: false })
-    const bs = ((bsRows || []) as { pack: string | null; loss_pct: number | null }[]).find(isBoneStock)
-    setCarLoss(bs?.loss_pct != null ? Number(bs.loss_pct) : null)
     setLoading(false)
   }
 
@@ -990,7 +999,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                 </tr>
               ) : (
                 <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
-                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? 'text-amber-300' : ''}`}>{p.pack || '—'}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? (p.borrowed ? 'text-purple-300' : 'text-amber-300') : ''}`}>{p.pack || '—'}{p.borrowed ? <span className="ml-2 text-xs font-normal text-purple-400" title="A BoneStock do carro, gravada em outro build — só leitura aqui">🔒</span> : null}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
                   <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} lb·ft` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
@@ -1000,9 +1009,11 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                   <td className="py-3 pr-4">{p.document_url ? <a href={p.document_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a> : '—'}</td>
                   <td className="py-3 text-right">
                     <div className="flex gap-2 justify-end">
-                      {!p.foreign && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
+                      {/* Linha EMPRESTADA (a BoneStock do carro, de outro build): só leitura
+                          aqui — edição/remoção acontecem no build de origem. */}
+                      {!p.foreign && !p.borrowed && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
                       {/* BoneStock is removable even when foreign (shared table) — Márcio 03/ago. */}
-                      {(!p.foreign || isBoneStock(p)) && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
+                      {(!p.foreign || isBoneStock(p)) && !p.borrowed && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
                       <button onClick={() => { setReportToClient(false); setReportPull(p) }} disabled={sendingId === p.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-1 rounded-xl font-bold text-sm">{sendingId === p.id ? 'SENDING…' : 'SEND'}</button>
                     </div>
                   </td>
