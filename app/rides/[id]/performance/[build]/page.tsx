@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
 
 const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
@@ -97,6 +97,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   const [importables, setImportables] = useState<{ row: DynoPull; label: string; whp: number | null }[]>([])
   const [showImport, setShowImport] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [predicting, setPredicting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ pack: '', whp: '', wnm: '', loss: defaultLoss, dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -377,8 +378,30 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     }
   }
 
+
+  // BONESTOCK PREDICTION (ordem do usuário, 17/ago/2026): carro que ainda não passou no
+  // dinamômetro não tem linha de base — e sem base não há perda, nem meta em roda, nem ganho.
+  // Aqui o usuário informa a perda PREVISTA e o app deriva a baseline da potência de fábrica
+  // (a mesma conta da createBoneStock). Fica marcada como PREVISÃO: vale como base DESTE carro,
+  // mas nunca é oferecida a outro — previsão não é prova, só a folha escaneada é.
+  async function addBoneStockPrediction() {
+    if (!car) { alert('Car identity not loaded yet — try again in a second.'); return }
+    const msg = 'LOSS PREDICTION (%) — the crank\u2192wheel loss you expect for this car.\n\nThe baseline is derived from the factory power rating at this loss and marked as a PREDICTION until a real dyno sheet is scanned.'
+    const raw = prompt(msg, defaultLoss || '15')
+    if (raw === null) return
+    const loss = parseFloat(String(raw).replace(',', '.'))
+    if (!Number.isFinite(loss) || loss <= 0 || loss >= 100) { alert('Enter a loss between 0 and 100 (e.g. 15).'); return }
+    setPredicting(true)
+    try {
+      await createBoneStock(String(loss), BASELINE_PREDICTION)
+      await load()
+    } finally {
+      setPredicting(false)
+    }
+  }
+
   // Auto-create the BoneStock baseline (factory crank specs → wheel via the entered loss).
-  async function createBoneStock(lossStr: string) {
+  async function createBoneStock(lossStr: string, packLabel: string = 'BoneStock') {
     let hp: number | null = null, nm: number | null = null
     if (car) {
       try {
@@ -399,7 +422,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         ride_code: rideCode,
         build_no: buildNo,
         origin: 'BR',
-        pack: 'BoneStock',
+        pack: packLabel,
         whp: hp != null ? Math.round((hp * lf / CORR) * 100) / 100 : null,
         wnm: kgfm != null ? Math.round((kgfm * lf / CORR) * 100) / 100 : null,
         loss_pct: loss,
@@ -417,7 +440,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       ride_code: rideCode,
       build_no: buildNo,
       origin: 'US',
-      pack: 'BoneStock',
+      pack: packLabel,
       whp, wnm,
       loss_pct: loss,
       bhp: hp, // factory crank hp
@@ -1050,6 +1073,14 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
             <button onClick={() => setShowImport(true)} className="bg-amber-600 hover:bg-amber-500 text-black px-5 py-3 rounded-2xl font-bold text-lg">IMPORT BoneStock</button>
           </div>
         )}
+        {/* Carro que nunca passou no dinamômetro: sem baseline não há perda, nem meta em
+            roda, nem ganho. A PREVISÃO destrava tudo isso a partir da potência de fábrica. */}
+        {!carHasBone && (
+          <div>
+            <label className="block mb-1 text-sm font-bold invisible" aria-hidden="true">PREDICT</label>
+            <button onClick={addBoneStockPrediction} disabled={predicting} className="bg-fuchsia-700 hover:bg-fuchsia-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{predicting ? 'PREDICTING…' : 'BoneStock Prediction'}</button>
+          </div>
+        )}
       </div>
 
       {/* Diz POR QUE não há botão de inserir — senão parece bug. */}
@@ -1072,7 +1103,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       <div className="flex items-center gap-3 mb-4 text-lg">
         <span className="text-gray-400 font-bold">Crank → wheel loss:</span>
         {carLoss != null ? (
-          <span className="font-bold text-purple-300">{carLoss}% <span className="font-normal text-sm text-purple-400">🔒 from {carLossFrom}</span></span>
+          <span className={`font-bold ${isPredictedBaseline(carLossFrom) ? 'text-fuchsia-300' : 'text-purple-300'}`}>{carLoss}% <span className={`font-normal text-sm ${isPredictedBaseline(carLossFrom) ? 'text-fuchsia-400' : 'text-purple-400'}`}>{isPredictedBaseline(carLossFrom) ? '📐 predicted — scan a sheet to make it real' : `🔒 from ${carLossFrom}`}</span></span>
         ) : editingLoss ? (
           <>
             <input value={lossDraft} inputMode="decimal" onChange={(e) => { if (isNumeric(e.target.value)) setLossDraft(e.target.value) }} className="w-20 bg-gray-800 border border-gray-700 rounded-xl px-3 py-1" placeholder="%" />
@@ -1148,7 +1179,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                 </tr>
               ) : (
                 <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
-                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? (p.borrowed ? 'text-purple-300' : 'text-amber-300') : ''}`}>{p.pack || '—'}{p.borrowed ? <span className="ml-2 text-xs font-normal text-purple-400" title="A BoneStock do carro, gravada em outro build — só leitura aqui">🔒</span> : null}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? (p.borrowed ? 'text-purple-300' : 'text-amber-300') : ''}`}>{p.pack || '—'}{p.borrowed ? <span className="ml-2 text-xs font-normal text-purple-400" title="A BoneStock do carro, gravada em outro build — só leitura aqui">🔒</span> : null}{isPredictedBaseline(p.pack) ? <span className="ml-2 text-xs font-normal text-fuchsia-300" title="PREVISÃO: derivada da potência de fábrica com a perda estimada — não é folha medida">📐 predicted</span> : null}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
                   <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} lb·ft` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>

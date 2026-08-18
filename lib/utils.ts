@@ -158,8 +158,18 @@ export function formatPhone(phone: string | null | undefined, country?: string |
 // a Stock pull is never offered to other cars as an importable reference; BoneStock is.
 export const isBaselineName = (name: string | null | undefined) => {
   const n = String(name || '').trim().toLowerCase()
-  return n === 'bonestock' || n === 'stock'
+  return n === 'bonestock' || n === 'stock' || n === BASELINE_PREDICTION.toLowerCase()
 }
+
+// A BASELINE PREVISTA (ordem do usuário, 17/ago/2026): carro que nunca passou no dinamômetro
+// não tem linha de base — e sem ela não há meta, nem ganho, nem perda calculada. Então o
+// usuário CHUTA a perda e o app deriva a baseline da potência de fábrica. Ela se comporta
+// como baseline em tudo (define a perda, fixa no topo, aparece emprestada nos outros packs),
+// menos numa coisa: NUNCA é oferecida a outro carro. Previsão não é prova — só a BoneStock
+// escaneada (isTrueBoneStock) atravessa de um carro pro outro.
+export const BASELINE_PREDICTION = 'BoneStock Prediction'
+export const isPredictedBaseline = (name: string | null | undefined) =>
+  String(name || '').trim().toLowerCase() === BASELINE_PREDICTION.toLowerCase()
 
 // A BUILD's pack name states the goal in CRANK bhp: "Z1250sc Alpha170 Pack" = 1250 bhp.
 // (Z = the house prefix, the number, then the aspiration: sc / na / tt.) Returns null for
