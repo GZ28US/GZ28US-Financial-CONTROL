@@ -597,6 +597,96 @@ for (let y = 1993; y <= 2002; y++) {
   specialEditions[`${y}-FIREBIRD-Formula 5.7 V8`] = ['None', 'Firehawk (SLP)']
 }
 
+// ── Firebird Trans Am Gens 1–3 (1969–1992) — every Trans Am ever made ───────────
+// Versions = the real engines (Ram Air III/IV, 455 HO, SD-455, W72 "T/A 6.6",
+// Olds 403, 301/Turbo 4.9, Cross-Fire, L69 H.O., TPI, GTA 5.7, the '89 Turbo 3.8).
+// Bandit black-golds, anniversaries and pace cars live in specialEditions (per the
+// special-editions rule). Per-year factory palettes — best-effort from paint charts.
+const firebirdGen12ColorsByYear: Record<number, string[]> = {
+  1969: ['Cameo White', 'Starlight Black', 'Carousel Red', 'Matador Red', 'Liberty Blue', 'Warwick Blue', 'Crystal Turquoise', 'Limelight Green', 'Midnight Green', 'Palladium Silver'],
+  1970: ['Polar White', 'Palladium Silver', 'Lucerne Blue', 'Bermuda Blue', 'Atoll Blue', 'Verdoro Green', 'Goldenrod Yellow', 'Granada Gold', 'Castilian Bronze', 'Cardinal Red'],
+  1971: ['Cameo White', 'Nordic Silver', 'Starlight Black', 'Adriatic Blue', 'Lucerne Blue', 'Limekist Green', 'Quezal Gold', 'Sandalwood', 'Castilian Bronze', 'Cardinal Red'],
+  1972: ['Cameo White', 'Revere Silver', 'Adriatic Blue', 'Lucerne Blue', 'Julep Green', 'Wilderness Green', 'Brittany Beige', 'Monarch Yellow', 'Sundance Orange', 'Cardinal Red'],
+  1973: ['Cameo White', 'Ascot Silver', 'Regatta Blue', 'Admiralty Blue', 'Brewster Green', 'Golden Olive', 'Sunlight Yellow', 'Valencia Gold', 'Navajo Orange', 'Buccaneer Red'],
+  1974: ['Cameo White', 'Ascot Silver', 'Regatta Blue', 'Admiralty Blue', 'Pinehurst Green', 'Sunstorm Yellow', 'Denver Gold', 'Fire Coral Bronze', 'Honduras Maroon', 'Buccaneer Red'],
+  1975: ['Cameo White', 'Sterling Silver', 'Stellar Blue', 'Arctic Blue', 'Bimini Blue', 'Alpine Green', 'Sunstorm Yellow', 'Sandstone', 'Honduras Maroon', 'Buccaneer Red'],
+  1976: ['Cameo White', 'Sterling Silver', 'Starlight Black', 'Athena Blue', 'Polaris Blue', 'Metalime Green', 'Goldenrod Yellow', 'Buckskin', 'Firethorn Red', 'Carousel Red'],
+  1977: ['Cameo White', 'Sterling Silver', 'Starlight Black', 'Glacier Blue', 'Nautilus Blue', 'Bahia Green', 'Goldenrod Yellow', 'Mojave Tan', 'Mandarin Orange', 'Buccaneer Red'],
+  1978: ['Cameo White', 'Platinum', 'Starlight Black', 'Glacier Blue', 'Martinique Blue', 'Berkshire Green', 'Solar Gold', 'Sundance Yellow', 'Redbird Red', 'Mayan Red'],
+  1979: ['Cameo White', 'Platinum', 'Starlight Black', 'Atlantis Blue', 'Nocturne Blue', 'Solar Gold', 'Sundance Yellow', 'Sierra Copper', 'Heritage Brown', 'Mayan Red'],
+  1980: ['Cameo White', 'Platinum', 'Starlight Black', 'Tahoe Blue', 'Nightwatch Blue', 'Tahitian Yellow', 'Solar Gold', 'Francisco Red', 'Fiero Bronze', 'Ontario Gray'],
+  1981: ['Cameo White', 'Stardust Silver', 'Starlight Black', 'Nightwatch Blue', 'Tahitian Yellow', 'Dorado Gold', 'Navajo Orange', 'Spectra Red', 'Autumn Maroon', 'Ontario Gray'],
+}
+const firebirdGen3ColorsByYear: Record<number, string[]> = {
+  1982: ['White', 'Silver Metallic', 'Black', 'Light Blue Metallic', 'Dark Blue Metallic', 'Light Jadestone Metallic', 'Dark Jadestone Metallic', 'Gold Wing Metallic', 'Dark Gold Metallic', 'Spectra Red', 'Dark Claret Metallic', 'Dark Charcoal Metallic'],
+  1983: ['White', 'Silver Sand Metallic', 'Black', 'Light Royal Blue Metallic', 'Medium Dark Royal Blue Metallic', 'Gold Wing Metallic', 'Light Briar Brown Metallic', 'Dark Briar Brown Metallic', 'Spectra Red', 'Midnight Sand Gray Metallic'],
+  1984: ['White', 'Silver Sand Metallic', 'Black', 'Light Royal Blue Metallic', 'Medium Dark Royal Blue Metallic', 'Frost Beige', 'Light Briar Brown Metallic', 'Dark Gold Wing Metallic', 'Dark Briar Brown Metallic', 'Spectra Red', 'Midnight Sand Gray Metallic'],
+  1985: ['White', 'Silver Metallic', 'Medium Gray Metallic', 'Black', 'Dark Blue Metallic', 'Bright Blue Metallic', 'Yellow Gold', 'Yellow Beige', 'Light Chestnut Metallic', 'Russet Metallic', 'Blaze Red', 'Dark Red Metallic'],
+  1986: ['White', 'Black', 'Silver Metallic', 'Bright Blue Metallic', 'Black Sapphire Metallic', 'Yellow Gold', 'Champagne Gold Metallic', 'Russet Metallic', 'Midnight Russet Metallic', 'Flame Red Metallic', 'Bright Red', 'Gunmetal Metallic'],
+  1987: ['White', 'Black', 'Silver Metallic', 'Bright Blue Metallic', 'Black Sapphire Metallic', 'Yellow Gold', 'Champagne Gold Metallic', 'Midnight Russet Metallic', 'Flame Red Metallic', 'Bright Red', 'Gunmetal Metallic'],
+  1988: ['White', 'Black', 'Silver Metallic', 'Medium Maui Blue Metallic', 'Yellow Gold', 'Medium Orange Metallic', 'Flame Red Metallic', 'Bright Red', 'Gunmetal Metallic'],
+  1989: ['White', 'Black', 'Medium Maui Blue Metallic', 'Flame Red Metallic', 'Bright Red', 'Medium Rosewood Metallic', 'Gunmetal Metallic', 'Bright Blue Metallic'],
+  1990: ['White', 'Black', 'Medium Maui Blue Metallic', 'Brilliant Red Metallic', 'Bright Red', 'Gunmetal Metallic', 'Bright Blue Metallic'],
+  1991: ['Arctic White', 'Black', 'Medium Maui Blue Metallic', 'Dark Teal Metallic', 'Medium Green Metallic', 'Brilliant Red Metallic', 'Bright Red', 'Gunmetal Metallic', 'Ultra Blue Metallic'],
+  1992: ['Arctic White', 'Black', 'Dark Jade Gray Metallic', 'Dark Aqua Metallic', 'Medium Green Metallic', 'Jamaica Yellow', 'Brilliant Red Metallic', 'Medium Quasar Blue Metallic', 'Bright Red'],
+}
+const transAmVersionsByYear = (y: number): string[] => {
+  if (y <= 1970) return ['Trans Am Ram Air III 6.6 V8', 'Trans Am Ram Air IV 6.6 V8']
+  if (y <= 1972) return ['Trans Am 455 HO 7.5 V8']
+  if (y === 1973) return ['Trans Am 7.5 V8', 'Trans Am SD-455 7.5 V8']
+  if (y === 1974) return ['Trans Am 6.6 V8', 'Trans Am 7.5 V8', 'Trans Am SD-455 7.5 V8']
+  if (y <= 1976) return ['Trans Am 6.6 V8', 'Trans Am 7.5 V8']                  // 455 dies after '76
+  if (y <= 1978) return ['Trans Am 6.6 V8', 'Trans Am T/A 6.6 V8 (W72)', 'Trans Am 6.6 V8 (Olds 403)']
+  if (y === 1979) return ['Trans Am 6.6 V8 (Olds 403)', 'Trans Am T/A 6.6 V8 (W72)', 'Trans Am 4.9 V8'] // leftover W72s, 4-speed only
+  if (y === 1980) return ['Trans Am T/A 4.9 V8', 'Trans Am Turbo 4.9 V8', 'Trans Am 4.9 V8', 'Trans Am 5.0 V8'] // 5.0 = Chevy LG4, CA-only
+  if (y === 1981) return ['Trans Am 4.9 V8', 'Trans Am Turbo 4.9 V8', 'Trans Am 5.0 V8'] // LG4 = the only 4-speed
+  if (y === 1982) return ['Trans Am 5.0 V8', 'Trans Am Cross-Fire 5.0 V8']
+  if (y === 1983) return ['Trans Am 5.0 V8', 'Trans Am Cross-Fire 5.0 V8', 'Trans Am H.O. 5.0 V8'] // L69 mid-year; Cross-Fire dies early '83
+  if (y === 1984) return ['Trans Am 5.0 V8', 'Trans Am H.O. 5.0 V8']
+  if (y <= 1986) return ['Trans Am 5.0 V8', 'Trans Am H.O. 5.0 V8', 'Trans Am TPI 5.0 V8'] // TPI arrives '85
+  if (y === 1987) return ['Trans Am 5.0 V8', 'Trans Am TPI 5.0 V8', 'Trans Am GTA 5.7 V8'] // GTA launch
+  if (y === 1988) return ['Trans Am 5.0 V8', 'Trans Am TPI 5.0 V8', 'Trans Am GTA 5.7 V8']
+  if (y === 1989) return ['Trans Am 5.0 V8', 'Trans Am TPI 5.0 V8', 'Trans Am GTA 5.7 V8', 'Trans Am Turbo 3.8 V6'] // 20th Anniversary TTA
+  return ['Trans Am TPI 5.0 V8', 'Trans Am GTA 5.7 V8'] // 1990-92
+}
+for (let y = 1969; y <= 1992; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('PONTIAC')) brandsByManufacturerAndYear['GM'][y].push('PONTIAC')
+  modelsByBrandAndYear['PONTIAC'][y] = modelsByBrandAndYear['PONTIAC'][y] || []
+  if (!modelsByBrandAndYear['PONTIAC'][y].includes('FIREBIRD')) modelsByBrandAndYear['PONTIAC'][y].push('FIREBIRD')
+  versionsByModelAndYear['FIREBIRD'][y] = [...(versionsByModelAndYear['FIREBIRD'][y] || []), ...transAmVersionsByYear(y)]
+  for (const v of transAmVersionsByYear(y)) specialEditions[`${y}-FIREBIRD-${v}`] = ['None']
+}
+// Black-gold Bandits, anniversaries and pace cars — per year and per engine, as the
+// registries document their availability.
+specialEditions['1976-FIREBIRD-Trans Am 6.6 V8'] = ['None', '50th Anniversary LE (Y82)']
+specialEditions['1976-FIREBIRD-Trans Am 7.5 V8'] = ['None', '50th Anniversary LE (Y82)']
+for (const v of ['Trans Am 6.6 V8', 'Trans Am T/A 6.6 V8 (W72)', 'Trans Am 6.6 V8 (Olds 403)']) {
+  specialEditions[`1977-FIREBIRD-${v}`] = ['None', 'Special Edition Bandit (Y81/Y82)']
+  specialEditions[`1978-FIREBIRD-${v}`] = ['None', 'Special Edition Bandit (Y82/Y84)', 'Gold Special Edition (Y88)']
+}
+specialEditions['1979-FIREBIRD-Trans Am 6.6 V8 (Olds 403)'] = ['None', 'Special Edition Bandit (Y84)', '10th Anniversary (Y89)']
+specialEditions['1979-FIREBIRD-Trans Am T/A 6.6 V8 (W72)'] = ['None', 'Special Edition Bandit (Y84)', '10th Anniversary (Y89)']
+specialEditions['1979-FIREBIRD-Trans Am 4.9 V8'] = ['None', 'Special Edition Bandit (Y84)']
+specialEditions['1980-FIREBIRD-Trans Am T/A 4.9 V8'] = ['None', 'Special Edition Bandit (Y84)']
+specialEditions['1980-FIREBIRD-Trans Am Turbo 4.9 V8'] = ['None', 'Special Edition Bandit (Y84)', 'Indy 500 Pace Car']
+specialEditions['1981-FIREBIRD-Trans Am 4.9 V8'] = ['None', 'Special Edition Bandit (Y84)']
+specialEditions['1981-FIREBIRD-Trans Am Turbo 4.9 V8'] = ['None', 'Special Edition Bandit (Y84)', 'Daytona 500 Pace Car (Y85)']
+specialEditions['1982-FIREBIRD-Trans Am 5.0 V8'] = ['None', 'Recaro Edition']
+specialEditions['1982-FIREBIRD-Trans Am Cross-Fire 5.0 V8'] = ['None', 'Recaro Edition']
+specialEditions['1983-FIREBIRD-Trans Am 5.0 V8'] = ['None', 'Recaro Edition', 'Daytona 500 25th Anniversary Pace Car']
+specialEditions['1983-FIREBIRD-Trans Am Cross-Fire 5.0 V8'] = ['None', 'Recaro Edition', 'Daytona 500 25th Anniversary Pace Car']
+specialEditions['1983-FIREBIRD-Trans Am H.O. 5.0 V8'] = ['None', 'Recaro Edition']
+specialEditions['1984-FIREBIRD-Trans Am 5.0 V8'] = ['None', 'Recaro Edition']
+specialEditions['1984-FIREBIRD-Trans Am H.O. 5.0 V8'] = ['None', 'Recaro Edition', '15th Anniversary']
+specialEditions['1988-FIREBIRD-Trans Am GTA 5.7 V8'] = ['None', 'GTA Notchback']
+// Every one of the 1,555 Turbo Trans Ams WAS the 20th Anniversary Indy Pace Car.
+specialEditions['1989-FIREBIRD-Trans Am Turbo 3.8 V6'] = ['20th Anniversary Pace Car']
+years.sort((a, b) => a - b)
+
 // ── Chrysler 300C — V8 only, LX (2005–2010) & LD (2011–2023) ────────────────────
 // LX: 300C 5.7 HEMI todos os anos + SRT8 6.1 (2005–2010). LD: 5.7 até 2023,
 // SRT8 6.4 (2012–2014) e o 392 Final Edition fechando a linha em 2023. Paletas
@@ -1391,6 +1481,8 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
   if (model === 'CAMARO' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
+  if (model === 'FIREBIRD' && firebirdGen12ColorsByYear[year]) return firebirdGen12ColorsByYear[year]
+  if (model === 'FIREBIRD' && firebirdGen3ColorsByYear[year]) return firebirdGen3ColorsByYear[year]
   if (model === 'FIREBIRD' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
   if (model === '300C') return c300ColorsByYear(year)
   if (model === 'CAMARO' && gen5CamaroColorsByYear[year]) return gen5CamaroColorsByYear[year]

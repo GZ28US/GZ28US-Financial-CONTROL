@@ -58,6 +58,25 @@ export function transmissionOptionsFor(
   if (b === 'PONTIAC' && m === 'FIREBIRD') {
     // 4th-gen F-body V8: 4L60 in '93, 4L60E from '94; T56 manual across the run.
     if (y >= 1993 && y <= 2002) return [y >= 1994 ? 'GM4L60E (Auto4)' : 'GM4L60 (Auto4)', 'T56 (Manual6)']
+    // 3rd gen: 700R4 + T5 (as the Camaro); GTA auto-only; the '89 Turbo 3.8 used
+    // the Grand National's TH200-4R, auto only.
+    if (y >= 1982 && y <= 1992) {
+      if (has('Turbo 3.8')) return ['TH200-4R (Auto4)']
+      if (has('GTA')) return ['700R4 (Auto4)']
+      return ['700R4 (Auto4)', 'T5 (Manual5)']
+    }
+    // 301 era (1980-81): Turbo 4.9 auto-only; in '81 the Chevy 305 was the only 4-speed.
+    if (y >= 1980 && y <= 1981) {
+      if (y === 1981 && has('5.0')) return ['Super T-10 (Manual4)', 'TH350 (Auto3)']
+      return ['TH350 (Auto3)']
+    }
+    // 1975-79: Super T-10 4-speed + TH350/TH400; the leftover '79 W72s were 4-speed only.
+    if (y >= 1975 && y <= 1979) {
+      if (y === 1979 && has('W72')) return ['Super T-10 (Manual4)']
+      return ['Super T-10 (Manual4)', 'TH350 (Auto3)', 'TH400 (Auto3)']
+    }
+    // 1969-74: Muncie 4-speed + TH400.
+    if (y >= 1969 && y <= 1974) return ['Muncie M20 (Manual4)', 'TH400 (Auto3)']
     return []
   }
   if (b === 'CHEVROLET' && m === 'CAMARO') {
