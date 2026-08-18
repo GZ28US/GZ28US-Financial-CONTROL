@@ -9,6 +9,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/ca/api/cron/bank-sync",
+      "schedule": "0 */6 * * *"
+    },
+    {
       "path": "/ca/api/cron/daily-report",
       "schedule": "0 8 * * *"
     },

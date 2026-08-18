@@ -79,6 +79,7 @@ const MENU: MenuItem[] = [
     label: 'ADM',
     items: [
       ['/adm/reports', 'REPORTS'],
+      ['/adm/bank', 'BANK'],
     ],
   },
 ]
