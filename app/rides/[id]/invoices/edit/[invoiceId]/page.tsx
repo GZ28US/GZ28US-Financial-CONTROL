@@ -578,7 +578,8 @@ export default function EditInvoicePage() {
     const nm = (m.item || '').trim().toLowerCase()
     return dbItems.find((d: any) => !d.is_kit && !d.part_number && (d.item || '').trim().toLowerCase() === nm)
   }
-  function dbOurCost(d: any) { return d ? (Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0) : 0 }
+  // A bank row's OUR COST — ONE field (unit_price); a still-pending HUNT shows its MAP.
+  function dbOurCost(d: any) { return d ? (Number(d.unit_price ?? d.map_price ?? 0) || 0) : 0 }
   // Store URL for a HUNTED expense (matched by part number, then item name); null otherwise.
   function huntUrlFor(exp: Expense): string | null {
     if (exp.part_number) { const u = huntUrlMap.get('PN:' + normPN(exp.part_number)); if (u) return u }
@@ -638,19 +639,19 @@ export default function EditInvoicePage() {
     return { kind: 'EMAIL', url: `mailto:${rec.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` }
   }
   function kitOurTotal(kit: any) { return (kit.kit_items || []).reduce((s: number, m: any) => s + dbOurCost(kitMemberRow(m)) * (Number(m.quantity) || 1), 0) }
-  // Build a fresh expense from a parts_database row. HUNT parts carry dealer pricing
-  // (our_cost/dealer_supplier/freight, tax-exempt, with the MAP→net discount % so the
-  // PARTS gross-up recovers the RETAIL); scanned parts carry unit_price/tax/extra.
+  // Build a fresh expense from a parts_database row. ONE cost field (unit_price) for
+  // every source; HUNTs keep dealer_supplier/freight, tax-exempt. The stamped % is
+  // part_discount (MAP→OUR COST), filtered by the supplier's wholesale caste.
   function expenseFromDbRow(it: any, quantity: number): Expense {
     const isHunt = it?.source_type === 'HUNT'
     const supplier = it ? ((isHunt ? it.dealer_supplier : it.supplier) || it.supplier || '') : ''
-    const amount = it ? (isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
+    const amount = it ? (it.unit_price ?? 0) : 0
     const extra = it ? (isHunt ? ((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : (Number(it.extra) || 0)) : 0
     const tax = it ? (isHunt ? 0 : (Number(it.tax) || 0)) : 0
     return {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
-      expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
+      expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: normalizeItemDiscount(String(supplier || ''), String(it?.part_discount ?? 0)),
       source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US',
     }
   }
@@ -2943,8 +2944,7 @@ export default function EditInvoicePage() {
               if (list.length === 0) return <p className="text-gray-400">No items in the database.</p>
               return list.map((d: any) => {
                 const isKit = !!d.is_kit
-                const isHunt = d.source_type === 'HUNT'
-                const cost = isKit ? kitOurTotal(d) : (isHunt ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0))
+                const cost = isKit ? kitOurTotal(d) : dbOurCost(d)
                 const badge = partStatusBadge(d)
                 return (
                 <div key={d.id} className="flex items-center justify-between gap-4 border-b border-gray-800 py-2">

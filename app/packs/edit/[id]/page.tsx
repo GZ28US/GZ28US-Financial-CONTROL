@@ -218,24 +218,24 @@ export default function EditPackPage() {
     const nm = (m.item || '').trim().toLowerCase()
     return dbItems.find((d: any) => !d.is_kit && !d.part_number && (d.item || '').trim().toLowerCase() === nm)
   }
-  // A parts_database row's OUR cost (dealer net for hunt, unit price otherwise), IN
-  function dbOurCost(d: any) { return d ? (Number(d.source_type === 'HUNT' ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0)) || 0) : 0 }
+  // A parts_database row's OUR cost — ONE field (unit_price; a pending HUNT shows MAP).
+  function dbOurCost(d: any) { return d ? (Number(d.unit_price ?? d.map_price ?? 0) || 0) : 0 }
   // A kit's summed OUR cost (members × their qty), for the picker display.
   function kitOurTotal(kit: any) { return (kit.kit_items || []).reduce((s: number, m: any) => s + dbOurCost(kitMemberRow(m)) * (Number(m.quantity) || 1), 0) }
   // Build an expense row from a parts_database item (shared by single + kit import).
-  // HUNT parts carry dealer pricing (our_cost/dealer_supplier/freight, tax-exempt;
-  // the MAP→net discount % rides along so the PARTS gross-up recovers the RETAIL);
-  // scanned parts carry unit_price/supplier/tax/extra/own discount.
+  // ONE cost field (unit_price) for every source; HUNTs keep dealer_supplier/freight,
+  // tax-exempt, and the MAP→net part_discount rides along so the PARTS gross-up
+  // recovers the RETAIL.
   function expenseFromDbRow(it: any, quantity: number, kitGroup?: string, kitName?: string): Expense {
     const isHunt = it?.source_type === 'HUNT'
     const supplier = it ? ((isHunt ? it.dealer_supplier : it.supplier) || it.supplier || '') : ''
-    const amount = it ? (isHunt ? (it.our_cost ?? it.unit_price ?? 0) : (it.unit_price ?? 0)) : 0
+    const amount = it ? (it.unit_price ?? 0) : 0
     const extra = it ? (isHunt ? ((Number(it.shipping) || 0) + (Number(it.handling) || 0)) : (Number(it.extra) || 0)) : 0
     const tax = it ? (isHunt ? 0 : (Number(it.tax) || 0)) : 0
     return {
       supplier: String(supplier || ''), item: it?.item || '', part_number: it?.part_number || '',
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
-      item_discount: String(isHunt ? (it?.part_discount ?? 0) : (it?.item_discount ?? 0)),
+      item_discount: String(it?.part_discount ?? 0),
       export_status: 'FRESH', kit_group: kitGroup, kit_name: kitName,
     }
   }
@@ -566,7 +566,7 @@ export default function EditPackPage() {
               return list.map((d: any) => {
                 const isKit = !!d.is_kit
                 const isHunt = d.source_type === 'HUNT'
-                const cost = isKit ? kitOurTotal(d) : (isHunt ? (d.our_cost ?? d.map_price ?? 0) : (d.unit_price ?? 0))
+                const cost = isKit ? kitOurTotal(d) : dbOurCost(d)
                 const sup = isKit ? '' : (isHunt ? (d.dealer_supplier || d.supplier) : d.supplier)
                 const badge = partStatusBadge(d)
                 return (

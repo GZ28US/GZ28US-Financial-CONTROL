@@ -18,11 +18,9 @@ type Part = {
   // at the query — reais rows are GZ28BR's (BRL features live only in the BR app).
   currency: string | null
   unit_price: number | null
-  base_cost: number | null
   tax: number | null
   extra: number | null
   quantity: number | null
-  item_discount: number | null
   purchase_date: string | null
   is_extra: boolean
   category: string | null
@@ -30,14 +28,10 @@ type Part = {
   donor: string | null
   notes: string | null
   map_price: number | null
-  our_cost: number | null
   shipping: number | null
   handling: number | null
-  map_delivered: number | null
-  cost_delivered: number | null
   part_discount: number | null
   weight_lbs: number | null
-  delivered_discount: number | null
   dealer_supplier: string | null
   is_kit?: boolean
   kit_items?: { part_number?: string | null; item?: string; quantity: number }[]
@@ -147,7 +141,22 @@ export default function PartsPage() {
 
   // HUNT parts carry MAP/cost pricing; "pending" = hunted but OUR cost not yet filled.
   const isHunt = (p: Part) => p.source_type === 'HUNT'
-  const isPending = (p: Part) => isHunt(p) && p.our_cost == null
+  const isPending = (p: Part) => isHunt(p) && p.unit_price == null
+
+  // DERIVED projections, never stored (one field per info, user law 18/aug/2026):
+  // an ordinary buyer pays MAP + the same freight + 6.5% FL tax; we pay cost + freight.
+  const huntDelivered = (p: Part) => {
+    const sh = (Number(p.shipping) || 0) + (Number(p.handling) || 0)
+    const mapDel = Math.round(((Number(p.map_price) || 0) + sh) * 1.065 * 100) / 100
+    const costDel = p.unit_price != null ? Math.round((Number(p.unit_price) + sh) * 100) / 100 : null
+    const off = mapDel > 0 && costDel != null && costDel > 0 ? Math.round((1 - costDel / mapDel) * 1000) / 10 : 0
+    return { mapDel, costDel, off }
+  }
+  // DERIVED landed unit cost: unit price + this unit's share of tax + extras.
+  const landedOf = (p: Part) => {
+    const u = Number(p.unit_price) || 0, q = Number(p.quantity) || 1
+    return Math.round((u + (q > 0 ? ((Number(p.tax) || 0) + (Number(p.extra) || 0)) / q : 0)) * 100) / 100
+  }
 
   // Provenance badge — how the part got into the database. Legacy rows (null)
   // predate source tagging and were all built by scanning, so they read SCANNED.
@@ -156,32 +165,23 @@ export default function PartsPage() {
 
   function openCostEditor(p: Part) {
     setEditPart(p)
-    setEcOur(p.our_cost != null ? String(p.our_cost) : '')
+    setEcOur(p.unit_price != null ? String(p.unit_price) : '')
     setEcShip(p.shipping != null ? String(p.shipping) : '')
     setEcHand(p.handling != null ? String(p.handling) : '')
   }
 
-  // Write OUR cost back to a hunted part and recompute delivered + discounts
-  // against the stored MAP. This is the surface the assistant drives to clear
-  // the PENDING COST queue from the logged-in dealer carts.
+  // Write OUR cost back to a hunted part — ONE field, unit_price — and recompute THE
+  // discount against the stored MAP. Delivered projections derive on screen now.
+  // This is the surface the assistant drives to clear the PENDING COST queue.
   async function saveCost() {
     if (!editPart) return
     const map = Number(editPart.map_price) || 0
     const our = numOf(ecOur), ship = numOf(ecShip), hand = numOf(ecHand)
-    // Ordinary buyer pays the SAME freight as us, plus 6.5% FL tax — recompute
-    // MAP delivered with the freight so the comparison stays apples-to-apples.
-    const mapDel = (map + ship + hand) * 1.065
-    const costDel = our + ship + hand
-    const partDisc = (map > 0 && our > 0) ? (1 - our / map) * 100 : 0
-    const delDisc = (mapDel > 0 && costDel > 0) ? (1 - costDel / mapDel) * 100 : 0
     const { error } = await supabase.from('parts_database').update({
-      our_cost: our || null,
+      unit_price: our || null,
       shipping: ship || null,
       handling: hand || null,
-      map_delivered: Math.round(mapDel * 100) / 100 || null,
-      cost_delivered: Math.round(costDel * 100) / 100 || null,
-      part_discount: Math.round(partDisc * 10) / 10,
-      delivered_discount: Math.round(delDisc * 10) / 10,
+      part_discount: (map > 0 && our > 0) ? Math.round((1 - our / map) * 1000) / 10 : null,
       updated_at: new Date().toISOString(),
     }).eq('id', editPart.id)
     if (error) { alert(error.message); return }
@@ -195,7 +195,7 @@ export default function PartsPage() {
   }
 
   // Hand-enter a part. Tagged MANUALLY ENTERED so its provenance is clear, and it
-  // sorts to the top (created_at default). Landed base cost = the price typed.
+  // sorts to the top (created_at default).
   async function saveNewPart() {
     const item = naItem.trim()
     if (!item) { alert('Please enter the part name.'); return }
@@ -209,7 +209,6 @@ export default function PartsPage() {
       alias: naAlias.trim() || null,
       supplier: naSupplier.trim() || null,
       unit_price: price,
-      base_cost: price,
       quantity: Number(naQty) || 1,
       purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(naDate) ? naDate : null,
       is_extra: false,
@@ -239,9 +238,9 @@ export default function PartsPage() {
   // ones, and only a single-currency total means anything.
   function memberPrices(p?: Part): { retail: number; cost: number } {
     if (!p) return { retail: 0, cost: 0 }
-    if (p.source_type === 'HUNT') return { retail: Number(p.map_delivered) || 0, cost: Number(p.cost_delivered ?? p.map_delivered) || 0 }
+    if (p.source_type === 'HUNT') { const d = huntDelivered(p); return { retail: d.mapDel, cost: d.costDel ?? d.mapDel } }
     const u = Number(p.unit_price) || 0
-    return { retail: u, cost: Number(p.base_cost) || 0 || u }
+    return { retail: u, cost: landedOf(p) || u }
   }
   function kitTotals(kit: Part): { retail: number; cost: number } {
     return (kit.kit_items || []).reduce((a, m) => {
@@ -627,9 +626,9 @@ export default function PartsPage() {
                 {p.alias && <p className="text-sm text-gray-400 mb-1">{p.item}</p>}
                 {isHunt(p) ? (
                   <p className="text-sm text-gray-400">
-                    RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(Number(p.map_delivered) || 0)}</span>
-                    {p.our_cost != null
-                      ? <> · OUR del: <span className="text-green-400 font-bold">{formatUSD(Number(p.cost_delivered) || 0)}</span> ({Number(p.delivered_discount) || 0}% off)</>
+                    RETAIL del: <span className="text-gray-200 font-bold">{formatUSD(huntDelivered(p).mapDel)}</span>
+                    {p.unit_price != null
+                      ? <> · OUR del: <span className="text-green-400 font-bold">{formatUSD(huntDelivered(p).costDel || 0)}</span> ({huntDelivered(p).off}% off)</>
                       : <span className="text-amber-400 font-bold"> · OUR COST PENDING</span>}
                     {p.dealer_supplier ? ` · ${p.dealer_supplier}` : ''}
                   </p>
@@ -645,7 +644,7 @@ export default function PartsPage() {
                       {Number(p.weight_lbs) > 0 ? <> · {Number(p.weight_lbs)} lbs</> : null}
                       {(Number(p.tax) || 0) > 0 ? ` · Tax ${formatUSD(Number(p.tax) || 0)}` : ''}
                       {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra) || 0)}` : ''}
-                      {Math.abs((Number(p.base_cost) || 0) - (Number(p.unit_price) || 0)) >= 0.01 && (Number(p.base_cost) || 0) > 0 ? ` · Landed ${formatUSD(Number(p.base_cost) || 0)}` : ''}
+                      {Math.abs(landedOf(p) - (Number(p.unit_price) || 0)) >= 0.01 && landedOf(p) > 0 ? ` · Landed ${formatUSD(landedOf(p))}` : ''}
                       {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
                     </p>
                     {(p.category || p.donor || p.notes) && (

@@ -42,30 +42,25 @@ export function normPN(pn?: string | null): string {
   return x
 }
 
-// Unified per-unit OUR COST that decides which duplicate wins: hunt parts use the
-// dealer net (our_cost), scanned/manual parts use the unit price. Always compared
-// against a row of the SAME market, so it never mixes reais with dollars.
+// Per-unit OUR COST — ONE FIELD (user law 18/aug/2026): unit_price, whatever the
+// source. A hunted part still waiting for its dealer cost falls back to MAP so
+// dedupe comparisons stay meaningful. Same-market rows only, so no currency mix.
 function ourCostOf(r: any): number {
-  const v = r?.source_type === 'HUNT' ? (r.our_cost ?? r.map_price) : (r.unit_price ?? r.base_cost)
+  const v = r?.unit_price ?? r?.map_price
   const n = Number(v)
   return Number.isFinite(n) ? n : Infinity
 }
 
-// Recompute the delivered/discount fields against a (constant) MAP + a cost.
+// THE discount — ONE FIELD (user law 18/aug/2026): part_discount = MAP→OUR COST,
+// recomputed against a (constant) MAP + a cost. Delivered projections derive on
+// screen now, never stored.
 function withDerived(row: any, map: number | null, cost: number): any {
-  const ship = Number(row.shipping) || 0, hand = Number(row.handling) || 0
-  const r2 = (n: number) => Math.round(n * 100) / 100
   const r1 = (n: number) => Math.round(n * 10) / 10
-  if (map != null && Number(map) > 0 && Number.isFinite(cost)) {
+  if (map != null && Number(map) > 0 && Number.isFinite(cost) && cost > 0) {
     const m = Number(map)
-    const mapDel = r2((m + ship + hand) * 1.065)
-    const costDel = r2(cost + ship + hand)
-    return {
-      ...row, map_price: m, map_delivered: mapDel, cost_delivered: costDel,
-      part_discount: r1((1 - cost / m) * 100), delivered_discount: r1((1 - costDel / mapDel) * 100),
-    }
+    return { ...row, map_price: m, part_discount: r1((1 - cost / m) * 100) }
   }
-  return { ...row, map_price: map != null ? Number(map) : null, map_delivered: null, cost_delivered: null, part_discount: null, delivered_discount: null }
+  return { ...row, map_price: map != null ? Number(map) : null, part_discount: null }
 }
 
 // THE dedupe rule (hunt / scan / manual all funnel through here): a part number
@@ -79,7 +74,7 @@ function withDerived(row: any, map: number | null, cost: number): any {
 //   the lowest cost. The kept alias is preserved; a known weight is never erased.
 export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
   const { data } = await supabase.from('parts_database')
-    .select('id, item, alias, part_number, source_type, unit_price, base_cost, our_cost, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, currency')
+    .select('id, item, alias, part_number, source_type, unit_price, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, currency')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   // Two part numbers are the SAME part when the normalized forms match exactly OR
@@ -127,7 +122,7 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   const officialScan = row.source_type === 'SCAN' && !!row.dealer_supplier
 
   if (!existing) {
-    // A scanned MAP gets the derived delivered/discount fields computed on insert.
+    // A scanned MAP gets THE discount (MAP→OUR COST) computed on insert.
     // An official-supplier purchase enters already validated: status LOCKED.
     const base = officialScan ? { ...row, source_type: 'LOCKED' } : row
     const toInsert = base.map_price != null && Number(base.map_price) > 0
@@ -171,15 +166,12 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
       supplier: row.supplier ?? null,
       dealer_supplier: row.dealer_supplier ?? null,
       unit_price: row.unit_price ?? null,
-      base_cost: row.base_cost ?? null,
       tax: row.tax ?? null,
       extra: row.extra ?? null,
       quantity: row.quantity ?? null,
-      item_discount: row.item_discount ?? null,
       purchase_date: row.purchase_date ?? null,
       is_extra: row.is_extra ?? false,
       receipt_url: row.receipt_url ?? null,
-      our_cost: row.our_cost ?? null,
       shipping: row.shipping ?? null,
       handling: row.handling ?? null,
       // An official-supplier purchase VALIDATES the row: its status becomes
@@ -203,7 +195,7 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   // MAP and weight it lacks — an official-supplier scan is authoritative for both.
   const patch: any = {}
   if ((existing.map_price == null || Number(existing.map_price) <= 0) && row.map_price != null && Number(row.map_price) > 0) {
-    Object.assign(patch, withDerived({ shipping: existing.shipping, handling: existing.handling }, Number(row.map_price), ourCostOf(existing)))
+    Object.assign(patch, withDerived({}, Number(row.map_price), ourCostOf(existing)))
   }
   if ((existing.weight_lbs == null || Number(existing.weight_lbs) <= 0) && row.weight_lbs != null && Number(row.weight_lbs) > 0) {
     patch.weight_lbs = row.weight_lbs
@@ -247,19 +239,14 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
     if (!name && !pn) continue
     if (PAYMENT_WORDS.test(name)) continue
     const price = Number(raw.unit_price) || 0
-    const qtyN = Number(raw.quantity) || 1
-    // Landed unit cost = unit price + per-unit share of tax + extras.
-    const baseCost = price + (qtyN > 0 ? ((Number(raw.tax) || 0) + (Number(raw.extra) || 0)) / qtyN : 0)
     const row: any = {
       item: name || pn,
       part_number: pn || null,
       supplier: raw.supplier || null,
       unit_price: price,
-      base_cost: baseCost,
       tax: Number(raw.tax) || 0,
       extra: Number(raw.extra) || 0,
       quantity: Number(raw.quantity) || 1,
-      item_discount: Number(raw.item_discount) || 0,
       purchase_date: raw.purchase_date || null,
       is_extra: EXTRA_WORDS.test(name),
       receipt_url: raw.receipt_url || null,
