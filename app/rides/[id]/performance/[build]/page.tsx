@@ -133,8 +133,14 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     ? targetBhp * (1 - lossInUse / 100)
     : null
   // "Quanto falta" é medido contra o MELHOR whp já feito pelo carro (recorde da máquina).
-  const bestWhp = pulls.reduce((max, p) => Math.max(max, Number(p.whp) || 0), 0)
-  const gapWhp = targetWhp != null ? targetWhp - bestWhp : null
+  // "MELHOR" É PUXADA DE VERDADE: a linha de base não é puxada do pacote, é o ponto de
+  // partida — contá-la como "best pull" faz um carro sem puxada nenhuma parecer que já
+  // rodou (era o que o PDF do GoldenEye mostrava: baseline e best iguais).
+  const bestWhp = pulls.reduce((max, p) => (isBoneStock(p) ? max : Math.max(max, Number(p.whp) || 0)), 0)
+  const baseWhp = pulls.reduce((max, p) => (isBoneStock(p) ? Math.max(max, Number(p.whp) || 0) : max), 0)
+  // Mas o QUE FALTA se mede de onde o carro ESTÁ: sem puxada, ele está na linha de base.
+  const fromWhp = Math.max(bestWhp, baseWhp)
+  const gapWhp = targetWhp != null ? targetWhp - fromWhp : null
   const [scanning, setScanning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [scannedFile, setScannedFile] = useState<File | null>(null)
@@ -995,8 +1001,11 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                 <>
                   <p className="text-2xl font-bold text-amber-300">+{gapWhp.toFixed(1)} WHP to go</p>
                   <p className="text-sm text-gray-400">
-                    best so far {bestWhp > 0 ? `${bestWhp.toFixed(1)} WHP` : '— no pulls yet'}
-                    {bestWhp > 0 ? ` · ${((gapWhp / bestWhp) * 100).toFixed(1)}% more` : ''}
+                    {bestWhp > 0
+                      ? `best so far ${bestWhp.toFixed(1)} WHP · ${((gapWhp / bestWhp) * 100).toFixed(1)}% more`
+                      : baseWhp > 0
+                        ? `no pulls yet — measured from the baseline, ${baseWhp.toFixed(1)} WHP`
+                        : '— no pulls yet'}
                   </p>
                 </>
               ) : (
@@ -1322,7 +1331,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const shown = mine.some(isBoneStock) || !bsCar ? mine : [bsCar, ...mine]
     setDyno({
       loss: bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : (rows.find((p) => p.loss_pct != null)?.loss_pct ?? null),
-      best: shown.reduce((m, p) => Math.max(m, Number(p.whp) || 0), 0),
+      // Só puxada DE VERDADE conta como "best pull" — a linha de base é o ponto de partida,
+      // não uma puxada do pacote (senão FROM e NOW saem iguais num carro que nunca rodou).
+      best: shown.reduce((m, p) => (isBoneStock(p) ? m : Math.max(m, Number(p.whp) || 0)), 0),
       // DE ONDE O CARRO SAIU: a linha de fábrica (BoneStock, Stock ou a prevista). Sem ela o
       // tuner não sabe quanto já ganhou — só quanto falta, que é meia história.
       baseWhp: bsCar?.whp != null ? Number(bsCar.whp) : null,
@@ -1334,7 +1345,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   const tgtBhp = packTargetBhp(buildName)
   const tgtLoss = dyno.loss
   const tgtWhp = tgtBhp != null && tgtLoss != null && tgtLoss > 0 && tgtLoss < 100 ? tgtBhp * (1 - tgtLoss / 100) : null
-  const tgtGap = tgtWhp != null ? tgtWhp - dyno.best : null
+  // O que falta se mede de onde o carro ESTÁ: sem puxada nenhuma, ele está na linha de base.
+  const tgtGap = tgtWhp != null ? tgtWhp - Math.max(dyno.best, dyno.baseWhp || 0) : null
   // O que o carro JÁ ganhou sobre a linha de fábrica (só quando há puxada real acima dela).
   const gainWhp = dyno.baseWhp != null && dyno.best > dyno.baseWhp ? dyno.best - dyno.baseWhp : null
 
@@ -1457,12 +1469,14 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // texto crescer, pra nunca invadir o título à esquerda.
       const headline = tgtGap == null ? '' : tgtGap > 0 ? `+${tgtGap.toFixed(1)} WHP TO GO` : 'TARGET MET'
       if (headline) {
+        // Grande, mas com FOLGA: a 13pt a linha ocupa ~4,6mm e termina em y+7,5, enquanto o
+        // rótulo da 3ª coluna só começa em y+11 — não se tocam mais (era 17pt em y+9,5).
         doc.setFont('helvetica', 'bold')
-        let hsz = 17
+        let hsz = 13
         doc.setFontSize(hsz)
-        while (doc.getTextWidth(headline) > w * 0.46 && hsz > 9) { hsz -= 1; doc.setFontSize(hsz) }
+        while (doc.getTextWidth(headline) > w * 0.42 && hsz > 8) { hsz -= 1; doc.setFontSize(hsz) }
         if (met) doc.setTextColor(22, 140, 60); else doc.setTextColor(196, 110, 0)
-        doc.text(headline, x + w - 5, y + 9.5, { align: 'right' })
+        doc.text(headline, x + w - 5, y + 7.5, { align: 'right' })
       }
       // três estágios
       const colW = (w - 10) / 3
