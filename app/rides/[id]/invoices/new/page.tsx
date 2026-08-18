@@ -124,7 +124,7 @@ export default function NewInvoicePage() {
 
       const { data: exps } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
       const expRows = (exps || []).map((e: any) => ({
-        invoice_id: inv.id, expense_date: null, supplier: e.supplier, item: e.item, price: e.price,
+        invoice_id: inv.id, expense_date: e.payment_date ?? null, supplier: e.supplier, item: e.item, price: e.price,
         tax: e.tax, extra: e.extra, quantity: e.quantity, item_discount: e.item_discount, part_number: e.part_number,
         export_status: e.export_status || 'FRESH', purchase_group: e.purchase_group, kit_group: e.kit_group,
         kit_name: e.kit_name, stock_source_type: e.stock_source_type, stock_donor: e.stock_donor,
