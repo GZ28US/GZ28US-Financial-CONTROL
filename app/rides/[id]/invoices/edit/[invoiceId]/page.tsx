@@ -934,7 +934,7 @@ export default function EditInvoicePage() {
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
       export_status: 'FRESH',
-      item_discount: item.item_discount || '0',
+      item_discount: normalizeItemDiscount(scannedPurchase.supplier, item.item_discount),
       source: scannedPurchase.source || DEFAULT_SOURCE,
       payment_method: 'CASH',
       // The scanned payer (matched to GZ28US/GZ28BR) is who PAID the invoice.
@@ -1291,15 +1291,32 @@ export default function EditInvoicePage() {
     )
   }
 
-  // DISCOUNT MODEL (2026-07-08): the typed supplier % is GONE. Every discount is
-  // per ITEM — printed on the real invoice or typed on the line — and the true
-  // discount lives in the Parts DB as OUR PRICE vs open-market MAP. These helpers
-  // stay for the UI wiring: no fixed % exists, and every item shows a Disc field.
-  function supplierDiscount(_name: string | undefined | null): number | null {
-    return null
+  // MODELO DE DESCONTO (lei do usuário, 18/ago/2026): desconto é SEMPRE do ITEM, e só
+  // existe pra fornecedor WHOLESALE. Três castas, lidas do banco de suppliers:
+  //   FIXED com % > 0 (T1 Race 30, HallTech 20…)  -> todo item nasce CARIMBADO com o %;
+  //   VARIABLE (High Horse, Titan…)               -> cada item marca o seu (da invoice);
+  //   FIXED com 0 (varejo comum)                  -> desconto NÃO EXISTE, nunca, pra nada.
+  function supplierRec(name: string | undefined | null) {
+    const n = (name || '').trim().toLowerCase()
+    if (!n) return null
+    return suppliers.find(su => su.name.toLowerCase() === n || (su.aliases || '').toLowerCase().split(',').map(a => a.trim()).filter(Boolean).includes(n)) || null
   }
-  function supplierIsVariable(_name: string | undefined | null): boolean {
-    return true
+  function supplierIsVariable(name: string | undefined | null): boolean {
+    return supplierRec(name)?.discount_type === 'VARIABLE'
+  }
+  function supplierDiscount(name: string | undefined | null): number | null {
+    const r = supplierRec(name)
+    return r && r.discount_type === 'FIXED' && r.discount > 0 ? r.discount : null
+  }
+  function supplierHasWholesale(name: string | undefined | null): boolean {
+    return supplierIsVariable(name) || supplierDiscount(name) != null
+  }
+  // Normaliza o % de um item pela casta do fornecedor: carimbo fixo vence tudo,
+  // variável mantém o que veio (invoice/mão), o resto é 0 — sem exceção.
+  function normalizeItemDiscount(supplier: string | undefined | null, current: string | undefined | null): string {
+    const fx = supplierDiscount(supplier)
+    if (fx != null) return String(fx)
+    return supplierIsVariable(supplier) ? String(parseFloat(current || '0') || 0) : '0'
   }
   function formatMileage(value: string) {
     const clean = value.replace(/[^0-9.]/g, '')
@@ -1939,6 +1956,7 @@ export default function EditInvoicePage() {
     if (!isQuote) {
       if (!isValidDate(row.payment_date)) row.payment_date = todayStr()
       row.expense_date = row.payment_date // espelho: a única data é a do pagamento
+      row.item_discount = normalizeItemDiscount(row.supplier, row.item_discount)
     }
     setExpenses([...expenses, row]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   }
@@ -1964,7 +1982,7 @@ export default function EditInvoicePage() {
         tax: parseFloat(editingExpense.tax) || 0,
         extra: parseFloat(editingExpense.extra) || 0,
         quantity: parseFloat(editingExpense.quantity) || 1,
-        item_discount: parseFloat(editingExpense.item_discount || '0') || 0,
+        item_discount: parseFloat(normalizeItemDiscount(editingExpense.supplier, editingExpense.item_discount)) || 0,
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
         payment_method: editingExpense.payment_method || 'CASH',
@@ -2738,8 +2756,8 @@ export default function EditInvoicePage() {
                 <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                 <input type="text" value={scannedPurchase.supplier} onChange={(e) => setScannedPurchase({ ...scannedPurchase, supplier: e.target.value })} className={inputClass} />
                 {supplierIsVariable(scannedPurchase.supplier)
-                  ? <p className="text-sm font-bold text-yellow-300 mt-1">★ Item discount: enter the % printed on the invoice</p>
-                  : supplierDiscount(scannedPurchase.supplier) != null && <p className="text-sm font-bold text-yellow-300 mt-1">★ Supplier discount: {supplierDiscount(scannedPurchase.supplier)}%</p>}
+                  ? <p className="text-sm font-bold text-yellow-300 mt-1">★ Wholesale account — item discounts come from the invoice, per item</p>
+                  : supplierDiscount(scannedPurchase.supplier) != null && <p className="text-sm font-bold text-yellow-300 mt-1">★ Wholesale account — every item stamped {supplierDiscount(scannedPurchase.supplier)}%</p>}
               </div>
               <div className="flex-1">
                 <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
@@ -2772,7 +2790,7 @@ export default function EditInvoicePage() {
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Extra $</span>
                       <input type="text" inputMode="decimal" value={item.extra} onChange={(e) => { if (isNumeric(e.target.value)) { const items = [...scannedPurchase.items]; items[i] = { ...items[i], extra: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) } }} className={`${smallInputClass} w-full pl-14`} placeholder="0.00" />
                     </div>
-                    {supplierIsVariable(scannedPurchase.supplier) && (
+                    {supplierHasWholesale(scannedPurchase.supplier) && (
                       <div className="relative w-24">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-300 text-sm">Disc</span>
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
@@ -3083,7 +3101,7 @@ export default function EditInvoicePage() {
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} />
                 </div>
               </div>
-              {supplierIsVariable(newExpense.supplier) && (
+              {supplierHasWholesale(newExpense.supplier) && (
                 <div className="w-16"><label className="block mb-1 text-xs text-yellow-300">DISC</label>
                   <div className="relative">
                     <input type="text" inputMode="decimal" placeholder="0" value={newExpense.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setNewExpense({ ...newExpense, item_discount: e.target.value }) }} className={`${smallInputClass} w-full pr-6`} />
@@ -3145,11 +3163,7 @@ export default function EditInvoicePage() {
                               <p className={`text-base font-bold ${groupColor}`}>{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatUSD(groupTotal)}{!isQuote && <span className={`font-bold ${groupColor}`}>{groupPaid ? ` — Paid: ${formatDate(groupPaidDate)}` : ' — Not paid yet'}</span>}</p>
-                            {supplierIsVariable(firstItem.supplier) ? (
-                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Item discounts: per item (from the invoice)</p>
-                            ) : supplierDiscount(firstItem.supplier) != null && (
-                              <p className="text-sm font-bold text-yellow-300 ml-6">★ Supplier discount: {supplierDiscount(firstItem.supplier)}%</p>
-                            )}
+
                           </div>
                           <div className="flex gap-2 shrink-0 items-start" onClick={e => e.stopPropagation()}>
                             <div className="flex flex-col gap-1">
@@ -3185,7 +3199,7 @@ export default function EditInvoicePage() {
                                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">Extra$</span>
                                         <input type="text" inputMode="decimal" value={editingGroupItem.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingGroupItem({ ...editingGroupItem, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-11`} placeholder="0.00" />
                                       </div>
-                                      {supplierIsVariable(exp.supplier) && (
+                                      {supplierHasWholesale(exp.supplier) && (
                                         <div className="relative w-20">
                                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-yellow-300 text-xs">Disc</span>
                                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">%</span>
@@ -3199,7 +3213,9 @@ export default function EditInvoicePage() {
                                 ) : (
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
-                                      {exp.supplier && <p className="text-sm font-bold truncate text-amber-300" title={exp.supplier}>{exp.supplier}: {(supplierIsVariable(exp.supplier) ? (parseFloat(exp.item_discount || '0') || 0) : (supplierDiscount(exp.supplier) || 0))}%</p>}
+                                      {/* Fornecedor é do TÍTULO da compra; na linha só quando DIVERGE (kit misto). */}
+                                      {exp.supplier && exp.supplier !== firstItem.supplier && <p className="text-sm font-bold truncate text-amber-300" title={exp.supplier}>{exp.supplier}</p>}
+                                      {(parseFloat(exp.item_discount || '0') || 0) > 0 && <p className="text-xs font-bold text-yellow-300">★ {parseFloat(exp.item_discount || '0')}%</p>}
                                       {/* A cor conta o status (azul pago / vermelho devendo); o TEXTO de status só
                                           aparece no item que DIVERGE do grupo — estorno/devolução, a exceção. */}
                                       <p className={`text-sm font-bold truncate ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
@@ -3266,7 +3282,7 @@ export default function EditInvoicePage() {
                                   <input type="text" inputMode="decimal" value={editingExpense.extra} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, extra: e.target.value }) }} className={`${smallInputClass} w-full pl-9`} />
                                 </div>
                               </div>
-                              {supplierIsVariable(editingExpense.supplier) && (
+                              {supplierHasWholesale(editingExpense.supplier) && (
                                 <div className="w-16"><label className="block mb-1 text-xs text-yellow-300">DISC</label>
                                   <div className="relative">
                                     <input type="text" inputMode="decimal" value={editingExpense.item_discount} onChange={(e) => { if (isNumeric(e.target.value)) setEditingExpense({ ...editingExpense, item_discount: e.target.value }) }} className={`${smallInputClass} w-full pr-6`} placeholder="0" />
@@ -3341,9 +3357,7 @@ export default function EditInvoicePage() {
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                 {exportStatusLine(exp, index)}
-                                {supplierIsVariable(exp.supplier)
-                                  ? <p className="text-sm font-bold text-yellow-300">★ Item discount: {parseFloat(exp.item_discount || '0') || 0}%</p>
-                                  : supplierDiscount(exp.supplier) != null && <p className="text-sm font-bold text-yellow-300">★ Supplier discount: {supplierDiscount(exp.supplier)}%</p>}
+                                {(parseFloat(exp.item_discount || '0') || 0) > 0 && <p className="text-sm font-bold text-yellow-300">★ Item discount: {parseFloat(exp.item_discount || '0')}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}
                               </div>
                               <div className="flex gap-2 shrink-0 items-start">
