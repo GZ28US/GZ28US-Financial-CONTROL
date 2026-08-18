@@ -1440,7 +1440,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     // desenhado e a tabela sobe pro lugar de sempre.
     let tableY = carLine ? 33 : 28
     if (tgtBhp != null) {
-      const x = 8, w = pageW - 16, y = tableY, h = 26
+      const x = 8, w = pageW - 16, y = tableY, h = 30
       const met = tgtGap != null && tgtGap <= 0
       doc.setFillColor(248, 248, 250); doc.setDrawColor(215, 215, 222); doc.setLineWidth(0.3)
       doc.roundedRect(x, y, w, h, 2, 2, 'FD')
@@ -1463,7 +1463,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         doc.text(unit, cx + bw + 1.5, y + 18)
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(70, 70, 78)
         doc.text(sub, cx, y + 22.5)
-        if (note) { doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(rgb[0], rgb[1], rgb[2]); doc.text(note, cx, y + 25.5) }
+        if (note) { doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(rgb[0], rgb[1], rgb[2]); doc.text(note, cx, y + 26.5) }
       }
       stage(0, 'FROM  ·  BASELINE', dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—', 'WHP',
         dyno.baseBhp != null ? `${Number(dyno.baseBhp).toFixed(0)} BHP` : 'no baseline yet',
