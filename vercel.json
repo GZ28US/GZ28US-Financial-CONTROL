@@ -19,9 +19,16 @@
     {
       "path": "/ca/api/cron/duty-daily-report",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/ca/api/cron/marketing-kill",
+      "schedule": "*/5 * * * *"
     }
   ],
   "rewrites": [
-    { "source": "/", "destination": "/ca/landing.html" }
+    {
+      "source": "/",
+      "destination": "/ca/landing.html"
+    }
   ]
 }
