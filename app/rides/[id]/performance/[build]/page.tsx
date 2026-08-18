@@ -8,7 +8,9 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
 
-const TABS = ['BUILD SHEET', 'DYNO', '1/4 MILE', '1/8 MILE', '100-200'] as const
+// DYNO primeiro e por padrão (ordem do usuário, 17/ago/2026): dentro de um pack é a
+// página principal — é ela que diz onde o carro está e quanto falta pra meta.
+const TABS = ['DYNO', 'BUILD SHEET', '1/4 MILE', '1/8 MILE', '100-200'] as const
 type Tab = typeof TABS[number]
 
 const DYNO_OPTIONS = ['DynoSolutions DynoJet', 'GZ28US DynoJet', 'GZ28BR ServiTec', 'ArteCarros ServiTec', 'Absoluto']
@@ -1450,6 +1452,18 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // título
       doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(150, 60, 150)
       doc.text('PACK TARGET' + (buildName ? '  ·  ' + buildName.toUpperCase() : ''), x + 5, y + 5)
+      // O QUE FALTA, GRANDE, no canto superior direito da moldura — mesmo lugar e mesmo
+      // peso que na tela: é o número que o tuner procura primeiro. Encolhe sozinho se o
+      // texto crescer, pra nunca invadir o título à esquerda.
+      const headline = tgtGap == null ? '' : tgtGap > 0 ? `+${tgtGap.toFixed(1)} WHP TO GO` : 'TARGET MET'
+      if (headline) {
+        doc.setFont('helvetica', 'bold')
+        let hsz = 17
+        doc.setFontSize(hsz)
+        while (doc.getTextWidth(headline) > w * 0.46 && hsz > 9) { hsz -= 1; doc.setFontSize(hsz) }
+        if (met) doc.setTextColor(22, 140, 60); else doc.setTextColor(196, 110, 0)
+        doc.text(headline, x + w - 5, y + 9.5, { align: 'right' })
+      }
       // três estágios
       const colW = (w - 10) / 3
       const stage = (i: number, label: string, big: string, unit: string, sub: string, note: string, rgb: [number, number, number]) => {
@@ -1473,7 +1487,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         gainWhp != null ? `+${gainWhp.toFixed(1)} WHP gained` : '', [25, 25, 30])
       stage(2, 'TARGET  ·  PACK', tgtWhp != null ? tgtWhp.toFixed(1) : '—', 'WHP',
         `= ${tgtBhp} BHP${tgtLoss != null ? ` @ ${tgtLoss}% loss` : ''}`,
-        tgtGap == null ? '' : tgtGap > 0 ? `+${tgtGap.toFixed(1)} WHP to go` : 'TARGET MET',
+        '', // o que falta agora é a manchete no topo da moldura
         met ? [22, 140, 60] : [160, 32, 160])
       // barra de progresso rente ao rodapé da caixa
       if (tgtWhp != null && tgtWhp > 0) {
@@ -1750,7 +1764,7 @@ export default function RidePerformancePage() {
   const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null; transmission: string | null } | null>(null)
   const [buildName, setBuildName] = useState('')
   const [client, setClient] = useState<{ name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
-  const [tab, setTab] = useState<Tab>('BUILD SHEET')
+  const [tab, setTab] = useState<Tab>('DYNO')
 
   useEffect(() => {
     supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, special_edition, year, transmission, client_id').eq('id', rideId).single().then(({ data }) => {
