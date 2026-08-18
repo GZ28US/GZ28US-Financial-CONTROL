@@ -2490,6 +2490,18 @@ export default function EditInvoicePage() {
       expenseRows.push({ type: 'single', index, expense: exp })
     }
   })
+  // PAGOS PRIMEIRO (ordem do usuário, 18/ago/2026): o que já saiu do caixa abre a lista;
+  // o que ainda deve, fecha. Grupo segue a MAIORIA dos itens (compra é um pagamento só —
+  // um item divergente é exceção de estorno, não muda a classe do grupo). O sort é estável:
+  // a ordem manual (▲▼) continua valendo dentro de cada classe.
+  const rowIsPaid = (row: (typeof expenseRows)[number]): boolean => {
+    if (row.type === 'single') return isValidDate(row.expense?.payment_date || '')
+    const items = row.groupExpenses || []
+    if (items.length === 0) return false
+    const paid = items.filter(({ expense: e }) => isValidDate(e.payment_date)).length
+    return paid * 2 >= items.length
+  }
+  expenseRows.sort((a, b) => (rowIsPaid(a) ? 0 : 1) - (rowIsPaid(b) ? 0 : 1))
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
@@ -3101,15 +3113,22 @@ export default function EditInvoicePage() {
                     const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
                     const isExpanded = expandedGroups.has(groupId)
                     const receiptUrl = firstItem.receipt_urls[0]
+                    // O status de pagamento é DA COMPRA (ordem do usuário, 18/ago/2026): um
+                    // grupo = um pagamento, então ele vive no título. A maioria define o
+                    // grupo; item divergente (estorno/devolução) mostra o próprio status.
+                    const paidGroupItems = groupItems.filter(({ expense: e }) => isValidDate(e.payment_date))
+                    const groupPaid = groupItems.length > 0 && paidGroupItems.length * 2 >= groupItems.length
+                    const groupPaidDate = paidGroupItems.map(({ expense: e }) => e.payment_date).sort().slice(-1)[0] || ''
+                    const groupColor = groupPaid ? 'text-blue-400' : 'text-red-400'
                     return (
                       <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
                         <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
-                              <p className="text-base font-bold text-blue-400">{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
+                              <p className={`text-base font-bold ${groupColor}`}>{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
                             </div>
-                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.expense_date || firstItem.payment_date)} — {formatUSD(groupTotal)}</p>
+                            <p className="text-sm text-gray-400 ml-6">{formatDate(firstItem.expense_date || firstItem.payment_date)} — {formatUSD(groupTotal)}{!isQuote && <span className={`font-bold ${groupColor}`}>{groupPaid ? ` — Paid: ${formatDate(groupPaidDate)}` : ' — Not paid yet'}</span>}</p>
                             {supplierIsVariable(firstItem.supplier) ? (
                               <p className="text-sm font-bold text-yellow-300 ml-6">★ Item discounts: per item (from the invoice)</p>
                             ) : supplierDiscount(firstItem.supplier) != null && (
@@ -3165,11 +3184,13 @@ export default function EditInvoicePage() {
                                   <div className="flex items-center justify-between gap-4">
                                     <div className="flex-1 min-w-0">
                                       {exp.supplier && <p className="text-sm font-bold truncate text-amber-300" title={exp.supplier}>{exp.supplier}: {(supplierIsVariable(exp.supplier) ? (parseFloat(exp.item_discount || '0') || 0) : (supplierDiscount(exp.supplier) || 0))}%</p>}
-                                      <p className="text-sm font-bold truncate text-blue-300" title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
+                                      {/* A cor conta o status (azul pago / vermelho devendo); o TEXTO de status só
+                                          aparece no item que DIVERGE do grupo — estorno/devolução, a exceção. */}
+                                      <p className={`text-sm font-bold truncate ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
                                       {dbRefLine(exp.part_number, exp.item)}
                                       {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
-                                      <p className="text-sm text-blue-300">Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
-                                      {!isQuote && <p className="text-xs text-gray-500">{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
+                                      <p className={`text-sm ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                      {!isQuote && isValidDate(exp.payment_date) !== groupPaid && <p className={`text-xs font-bold ${isValidDate(exp.payment_date) ? 'text-blue-400' : 'text-red-400'}`}>{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                       {exportStatusLine(exp, index)}
                                     </div>
                                     <div className="flex gap-2 shrink-0 items-start">
