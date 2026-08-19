@@ -11,6 +11,7 @@
 // nosso, mesmo titulado no nome da LLC.
 import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
+import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, rideScope, qtyLine, expLine, unpaidTotals, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
@@ -163,7 +164,7 @@ export default function BalancePage() {
       <Header />
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">BALANÇO PATRIMONIAL</h1>
-        <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-950 text-amber-300">EM DESENVOLVIMENTO</span>
+        <FinBadge />
         <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL</a>
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Posição de hoje, derivada ao vivo. CAR DESTINY separa o que é nosso do que só está no nosso nome.</p>

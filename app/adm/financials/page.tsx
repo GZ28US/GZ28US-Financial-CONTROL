@@ -5,6 +5,8 @@
 // DRE e Balanço mostram o que já dá para derivar e dizem na cara o que
 // ainda falta (decisões D1–D11 e gaps G1–G8 do blueprint).
 import Header from '@/components/Header'
+import FinBadge from '@/components/FinBadge'
+import { FIN_CHANGELOG } from '@/lib/finVersion'
 import { BASE_PATH } from '@/lib/utils'
 
 const CARDS = [
@@ -29,8 +31,8 @@ export default function FinancialsHub() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <div className="flex items-baseline gap-4 flex-wrap mb-1"><h1 className="text-4xl font-bold">FINANCIAL</h1><span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-950 text-amber-300">EM DESENVOLVIMENTO</span></div>
-      <p className="text-gray-400 mb-8 max-w-3xl">As demonstrações da GZ28 V8 SpeedShop USA LLC, direto do banco de dados — as três telas leem o mesmo dataset para os números baterem entre si.</p>
+      <div className="flex items-baseline gap-4 flex-wrap mb-1"><h1 className="text-4xl font-bold">FINANCIAL</h1><FinBadge /></div>
+      <p className="text-gray-400 mb-8 max-w-3xl">As demonstrações da GZ28 V8 SpeedShop USA LLC, direto do banco de dados — as três telas leem o mesmo dataset para os números baterem entre si. Os números melhoram na medida em que os dados entram — datas de conclusão, destino dos carros, contas a pagar de verdade — e a integração bancária (Plaid, já esboçada em ADM → BANK) fecha o ciclo na Fase 2.</p>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl">
         {CARDS.map(c => (
@@ -44,6 +46,20 @@ export default function FinancialsHub() {
             <p className="text-sm text-gray-400">{c.desc}</p>
           </a>
         ))}
+      </div>
+
+      {/* Changelog — cada patch bumpa lib/finVersion e ganha uma linha aqui. */}
+      <div className="mt-10 max-w-3xl">
+        <h2 className="text-xl font-bold mb-3 text-gray-300">CHANGELOG</h2>
+        <div className="border border-gray-800 rounded-2xl divide-y divide-gray-800">
+          {FIN_CHANGELOG.map(c => (
+            <div key={c.version} className="px-4 py-3 flex gap-4 items-baseline">
+              <span className="font-bold tabular-nums text-purple-300 w-16 shrink-0">v{c.version}</span>
+              <span className="text-gray-500 text-xs w-20 shrink-0">{c.date}</span>
+              <span className="text-sm text-gray-400">{c.notes}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </main>
   )

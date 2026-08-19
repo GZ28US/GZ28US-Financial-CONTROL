@@ -7,6 +7,7 @@
 // pendente, sem migração — só leitura do que já existe.
 import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
+import FinBadge from '@/components/FinBadge'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import { loadFinancials, buildCashEvents, CashEvent } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
@@ -170,7 +171,7 @@ export default function DfcPage() {
       <Header />
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">DFC — FLUXO DE CAIXA</h1>
-        <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-950 text-amber-300">EM DESENVOLVIMENTO</span>
+        <FinBadge />
         <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL</a>
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Método direto, regime de caixa (payment_date / paid_at). Clique numa célula para ver as linhas de origem. O que ainda não foi pago não aparece aqui — está no Balanço como contas a pagar.</p>
