@@ -30,6 +30,21 @@ type InputRow = {
   purchase_group: string | null
   receipt_url: string | null
   created_at: string
+  order_number: string | null
+  payment_method: string | null
+  paid_from: string | null
+  payment_date: string | null
+}
+
+// Logistics live in the STREAM, joined by order_number (one field per info:
+// tracking/carrier/ETA are part_streams columns, NEVER text inside notes).
+type StreamInfo = {
+  order_number: string
+  status: string | null
+  carrier: string | null
+  tracking_number: string | null
+  eta: string | null
+  delivered_at: string | null
 }
 
 type Purchase = {
@@ -77,6 +92,7 @@ function firstReceipt(raw: string | null): string | null {
 
 export default function InputsPage() {
   const [rows, setRows] = useState<InputRow[]>([])
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState<Period>('ALL')
@@ -112,9 +128,26 @@ export default function InputsPage() {
       .order('purchase_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     if (error) { console.error(error); setLoading(false); return }
-    setRows((data || []) as InputRow[])
+    const loaded = (data || []) as InputRow[]
+    setRows(loaded)
     setLoading(false)
     setExpanded(new Set())
+
+    // STREAM join: shipping status for every order number on the page.
+    // A single order can have several stream rows (split shipments) — the one
+    // with a tracking number wins the display slot.
+    const orderNos = Array.from(new Set(loaded.map(r => r.order_number).filter(Boolean))) as string[]
+    if (!orderNos.length) { setStreams({}); return }
+    const { data: st } = await supabase
+      .from('part_streams')
+      .select('order_number, status, carrier, tracking_number, eta, delivered_at')
+      .in('order_number', orderNos)
+    const map: Record<string, StreamInfo> = {}
+    for (const s of (st || []) as StreamInfo[]) {
+      if (!s.order_number) continue
+      if (!map[s.order_number] || (s.tracking_number && !map[s.order_number].tracking_number)) map[s.order_number] = s
+    }
+    setStreams(map)
   }
 
   // Category chips are data-driven: whatever categories exist in the bank.
@@ -165,7 +198,7 @@ export default function InputsPage() {
   const visible = purchases.filter(p => {
     const periodOk = !periodStart || ((p.date || '') >= periodStart)
     const searchOk = !term || p.items.some(i =>
-      [i.description, i.supplier, i.notes].some(f => (f || '').toLowerCase().includes(term)))
+      [i.description, i.supplier, i.notes, i.order_number].some(f => (f || '').toLowerCase().includes(term)))
     return periodOk && searchOk
   })
   const visibleTotal = visible.reduce((s, p) => s + p.total, 0)
@@ -566,6 +599,10 @@ export default function InputsPage() {
                       </div>
                       <p className="text-lg text-gray-400 ml-7">
                         {fmtDate(p.date)} — <span className="font-bold text-gray-300">{formatUSD(p.total)}</span>
+                        {/* THE order number — the most important field of a purchase — always visible, even collapsed. */}
+                        {Array.from(new Set(p.items.map(i => i.order_number).filter(Boolean))).map(o => (
+                          <span key={o as string} className="ml-3 px-2.5 py-0.5 rounded-lg text-base font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 whitespace-nowrap">#{o}</span>
+                        ))}
                         {p.receipt && (
                           <>
                             {' · '}
@@ -582,13 +619,34 @@ export default function InputsPage() {
                   </div>
                   {isExpanded && (
                     <div className="border-t border-gray-800">
-                      {p.items.map((item, gi) => (
+                      {p.items.map((item, gi) => {
+                        const st = item.order_number ? streams[item.order_number] : undefined
+                        const delivered = st?.status === 'DELIVERED'
+                        return (
                         <div key={item.id} className={`flex items-center justify-between gap-6 px-6 py-4 ${gi < p.items.length - 1 ? 'border-b border-gray-800' : ''}`}>
                           <div className="flex-1 min-w-0 pl-5">
                             <h3 className="text-xl font-bold">{item.description}</h3>
                             <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
+                            {/* Structured facts — each one a real DB column, never prose in notes. */}
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              {item.order_number && (
+                                <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">#{item.order_number}</span>
+                              )}
+                              {item.payment_method && (
+                                <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-gray-300 border border-gray-700">
+                                  💳 {item.payment_method}{item.paid_from && item.paid_from !== 'GZ28US' ? ` · by ${item.paid_from}` : ''}{item.payment_date ? ` · paid ${fmtDate(item.payment_date)}` : ''}
+                                </span>
+                              )}
+                              {st && (
+                                <span className={`px-2.5 py-0.5 rounded-lg text-sm font-bold border ${delivered ? 'bg-green-950 text-green-300 border-green-800' : st.status === 'SHIPPED' ? 'bg-blue-950 text-blue-300 border-blue-800' : 'bg-gray-800 text-gray-300 border-gray-700'}`}>
+                                  {delivered ? `✓ DELIVERED${st.delivered_at ? ' ' + fmtDate(st.delivered_at.slice(0, 10)) : ''}`
+                                    : `${st.status || 'BOUGHT'}${st.eta ? ` · ETA ${fmtDate(st.eta)}` : ''}`}
+                                  {st.carrier ? ` · ${st.carrier}` : ''}{st.tracking_number ? ` ${st.tracking_number}` : ''}
+                                </span>
+                              )}
+                            </div>
                             {item.notes && item.notes.split('\n').map((note, i) => (
-                              <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
+                              <p key={i} className="text-sm text-yellow-400 mt-1">📝 {note}</p>
                             ))}
                           </div>
                           <div className="flex gap-3 shrink-0">
@@ -597,7 +655,8 @@ export default function InputsPage() {
                             <button onClick={() => setConfirmItemId(item.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
                           </div>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </div>

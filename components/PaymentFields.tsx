@@ -13,7 +13,10 @@ import DatePicker from '@/components/DatePicker'
 // no GZ28US vs GZ28BR FLOW (abate/gera dívida entre as oficinas).
 // Default: PAID ON — "when I add an expense, it means it's paid".
 
-export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL'] as const
+// 'GZ28US Regions DebitCard' (Márcio, 19/ago/2026): o cartão de débito da LLC é
+// forma de pagamento própria, SEM número — o final do cartão muda quando o banco
+// reemite; o nome não. 'CARD' fica para cartões que não são o débito da Regions.
+export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'GZ28US Regions DebitCard', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL'] as const
 export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
