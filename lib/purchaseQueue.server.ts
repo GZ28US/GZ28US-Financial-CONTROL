@@ -1,0 +1,303 @@
+// SERVER-ONLY — FILA DE DESTINO DAS COMPRAS (ordem do Márcio, 19/ago/2026:
+// "quero que o APP faça tudo isso, não você"). Fecha o ciclo que faltava:
+// pescar → (PESCA TEMU quando cego) → perguntar no grupo UMA POR EXPENSE →
+// LER a resposta → registrar no lugar certo → insistir de hora em hora até
+// zerar. Nada pode ficar no limbo: enquanto houver linha aberta, a fila cobra.
+//
+// Estado DE VERDADE em part_streams.placement_status (nunca emoji em texto):
+//   NEEDS_ITEMS      compra cega (Temu): sem item/valor — cobra PESCA TEMU no PVT
+//   NEEDS_PLACEMENT  itens conhecidos, destino não — pergunta no grupo REPORTS
+//   PLACED           registrada (placed_ref diz onde)   IGNORED  descartada
+//
+// placed_ref carrega "DESTINO#id-da-linha-criada" quando a FILA inseriu o
+// dinheiro — o ERRADO só pode desfazer o que tem esse id; lançamento manual
+// com o mesmo order_number é intocável (achado F2 da revisão de 19/ago).
+//
+// Regras (placement_rules) decidem sozinhas quando podem — resposta com
+// "SEMPRE" vira regra nova (lei do auto-pelo-app). Perguntas de destino só
+// DEPOIS de saber o que é cada item (ordem dele, 19/ago).
+
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+const SIGNATURE = 'Sent by GZ28US Control App®'
+const PVT = '13213150973@c.us' // cel US do Márcio (canal dos PDFs / PESCA TEMU)
+const usd = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+type StreamRow = {
+  id: string; supplier: string | null; item: string; order_number: string | null
+  ship_to: string | null; placement_status: string | null; asked_count: number
+  last_asked_at: string | null; invoice_id: string | null; placed_ref: string | null
+}
+type Rule = { id: number; store: string | null; keyword: string | null; ship_to_match: string | null; destination: string; hits: number }
+
+const amountOf = (item: string): number | null => {
+  const m = String(item || '').match(/\$\s?([\d,]+\.\d{2})/)
+  return m ? Number(m[1].replace(/,/g, '')) : null
+}
+// Título limpo pro lançamento ("Loja PEDIDO — $X — ❓ destino a definir" → só o que descreve).
+// Strip do order number SÓ quando ele existe (achado F9: fallback 'x' comia letras do título).
+function titleOf(r: StreamRow): string {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let t = String(r.item || '').replace(/\s*—\s*❓[^—]*$/g, '').replace(/\s*—\s*\$[\d,.]+/g, '')
+  if (r.supplier) t = t.replace(new RegExp(`^${esc(r.supplier)}\\s*`, 'i'), '')
+  if (r.order_number) t = t.replace(new RegExp(`\\s*#?${esc(r.order_number)}\\s*`), ' ')
+  t = t.replace(/\s+/g, ' ').trim()
+  return t || `${r.supplier || 'Compra'} ${r.order_number || ''}`.trim()
+}
+const keyOf = (r: StreamRow): string => String(r.order_number || r.id).slice(-6)
+// Temu cobra via PayPal (aprendizado da PESCA TEMU 19/ago); resto = débito Regions.
+const methodOf = (r: StreamRow): string => /temu/i.test(r.supplier || '') ? 'PAYPAL' : 'GZ28US Regions DebitCard'
+
+async function wa(to: string, body: string): Promise<boolean> {
+  const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
+  if (!instance || !tk || !to) return false
+  const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token: tk, to, body: `${body}\n\n${SIGNATURE}` }),
+  }).catch(() => null)
+  return !!r?.ok
+}
+
+// 23h–07h de Orlando o app dorme (perguntar às 3h só ensina a ignorar o grupo).
+// Via Intl pra sobreviver ao horário de verão (achado F8: UTC-4 fixo erraria no inverno).
+const quietNow = (): boolean => {
+  const h = Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }).format(new Date()))
+  return h >= 23 || h < 7
+}
+const hourSince = (iso: string | null) => !iso || (Date.now() - new Date(iso).getTime()) > 3600_000
+
+// ── Destinos ────────────────────────────────────────────────────────────────
+// Vocabulário EXATO (achado F3: "\bCAT\b" pegava "cat-back"; palavra solta em
+// conversa virava lançamento). Carro (RIDE:) só com a chave da compra junto.
+function parseDestination(raw: string, allowRide: boolean): string | null {
+  const clean = raw.trim().replace(/\s*SEMPRE\s*$/i, '')
+  const t = clean.toUpperCase()
+  if (/^(IGNORA|IGNORE|LIXO)$/.test(t)) return 'IGNORE'
+  if (/^(APARTMENT|APARTAMENTO|APTO?)$/.test(t)) return 'INPUTS/APARTMENT'
+  if (/^(CATS?|GATOS?)$/.test(t)) return 'INPUTS/CATS'
+  if (/^(CONSUMPTION|OFICINA|SHOP|CONSUMO|INPUTS?)$/.test(t)) return 'INPUTS/CONSUMPTION'
+  if (allowRide && clean.length >= 2 && clean.length <= 60) return `RIDE:${clean}`
+  return null
+}
+
+async function resolveInvoice(db: SupabaseClient, term: string): Promise<{ id: string; code: string } | null> {
+  const t = term.trim()
+  const m = t.match(/^(US\.\d+)(\.\d+)?$/i)
+  if (m?.[2]) { // código de invoice exato (US.019.2)
+    const { data } = await db.from('invoices').select('id, invoice_code').ilike('invoice_code', t).limit(1)
+    if (data?.[0]) return { id: data[0].id, code: data[0].invoice_code }
+  }
+  // ride por código (US.019) ou nome (Tornado) → invoice viva mais nova
+  const rideQ = m ? db.from('rides').select('id, project_name').ilike('project_code', m[1]) : db.from('rides').select('id, project_name').ilike('project_name', `%${t}%`)
+  const { data: rides } = await rideQ.limit(2)
+  if (rides?.length !== 1) return null // 0 ou ambíguo: não chutar carro em dado financeiro
+  const { data: invs } = await db.from('invoices').select('id, invoice_code').eq('ride_id', rides[0].id)
+    .eq('is_quote', false).is('conclusion_date', null).order('created_at', { ascending: false }).limit(1)
+  return invs?.[0] ? { id: invs[0].id, code: invs[0].invoice_code } : null
+}
+
+// Registra a compra no destino. Devolve o placed_ref (com #id quando a fila
+// inseriu dinheiro), 'NEEDS_VALUE' quando falta valor, ou null quando o
+// destino não resolve (ex.: carro não encontrado).
+async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string[]): Promise<string | null> {
+  const amt = amountOf(r.item)
+  const today = new Date().toISOString().slice(0, 10)
+  if (dest === 'IGNORE') {
+    await db.from('part_streams').update({ placement_status: 'IGNORED', placed_ref: 'IGNORED' }).eq('id', r.id)
+    return 'IGNORED'
+  }
+  if (dest.startsWith('INPUTS/')) {
+    const category = dest.split('/')[1]
+    if (amt == null) return 'NEEDS_VALUE' // sem valor não vira dinheiro — segue na fila
+    let ref = dest
+    const { data: dup } = r.order_number ? await db.from('inputs').select('id').eq('order_number', r.order_number).limit(1) : { data: null }
+    if (!dup?.length) {
+      // UMA data só (lei 18/ago): payment_date espelha purchase_date.
+      const { data: ins } = await db.from('inputs').insert({
+        description: titleOf(r), category, quantity: 1, unit_price: amt,
+        purchase_date: today, payment_date: today, supplier: r.supplier,
+        order_number: r.order_number, payment_method: methodOf(r), paid_from: 'GZ28US',
+      }).select('id').single()
+      if (ins?.id) ref = `${dest}#${ins.id}`
+    }
+    await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, where_label: category }).eq('id', r.id)
+    out.push(`${keyOf(r)} → ${dest}`)
+    return ref
+  }
+  if (dest.startsWith('RIDE:')) {
+    const inv = await resolveInvoice(db, dest.slice(5))
+    if (!inv) return null
+    if (amt == null) return 'NEEDS_VALUE'
+    let ref = inv.code
+    // dedup pelo order_number quando houver; sem order_number insere direto
+    // (achado F6: exigir order_number sumia com o dinheiro em silêncio)
+    const { data: dup } = r.order_number ? await db.from('invoice_expenses').select('id').eq('order_number', r.order_number).limit(1) : { data: null }
+    if (!dup?.length) {
+      const { data: ins } = await db.from('invoice_expenses').insert({
+        invoice_id: inv.id, supplier: r.supplier, item: titleOf(r), price: amt, quantity: 1,
+        source: 'GZ28US', payment_method: methodOf(r), paid_from: 'GZ28US', paid_to: 'GZ28US',
+        payment_date: today, expense_date: today, order_number: r.order_number,
+      }).select('id').single()
+      if (ins?.id) ref = `${inv.code}#${ins.id}`
+    }
+    await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, invoice_id: inv.id, where_label: inv.code }).eq('id', r.id)
+    out.push(`${keyOf(r)} → ${inv.code}`)
+    return ref
+  }
+  return null
+}
+
+const refLabel = (ref: string) => ref.split('#')[0]
+
+export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: string[]; asked: number; answered: number }> {
+  const placed: string[] = []
+  let asked = 0, answered = 0
+  const quiet = quietNow()
+
+  // ── 0. Classificar/promover ───────────────────────────────────────────────
+  // Limbo herdado ("❓ destino a definir" no texto) entra na fila; linha cuja
+  // pesca já trouxe valor sobe de NEEDS_ITEMS para NEEDS_PLACEMENT sozinha.
+  const { data: legacy } = await db.from('part_streams').select('id, item').ilike('item', '%destino a definir%').is('placement_status', null)
+  for (const l of legacy || []) {
+    await db.from('part_streams').update({ placement_status: amountOf(l.item) == null ? 'NEEDS_ITEMS' : 'NEEDS_PLACEMENT' }).eq('id', l.id)
+  }
+  const { data: blind } = await db.from('part_streams').select('id, item').eq('placement_status', 'NEEDS_ITEMS')
+  for (const b of blind || []) {
+    if (amountOf(b.item) != null && !/destino a definir/i.test(b.item)) {
+      await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT' }).eq('id', b.id)
+    }
+  }
+
+  const pending = async (st: string): Promise<StreamRow[]> => {
+    const { data } = await db.from('part_streams')
+      .select('id, supplier, item, order_number, ship_to, placement_status, asked_count, last_asked_at, invoice_id, placed_ref')
+      .eq('placement_status', st).order('created_at', { ascending: true })
+    return (data || []) as StreamRow[]
+  }
+
+  // ── 1. Regras decidem sem perguntar ───────────────────────────────────────
+  // Fora do horário quieto (o report da regra faz parte do registro — de
+  // madrugada a linha espera a manhã em vez de registrar mudo, achado F7).
+  if (!quiet) {
+    const { data: rulesData } = await db.from('placement_rules').select('*')
+    const rules = (rulesData || []) as Rule[]
+    for (const r of await pending('NEEDS_PLACEMENT')) {
+      const rule = rules.find(x =>
+        (!x.store || (r.supplier || '').toLowerCase().includes(x.store.toLowerCase())) &&
+        (!x.keyword || r.item.toLowerCase().includes(x.keyword.toLowerCase())) &&
+        (!x.ship_to_match || (r.ship_to || '').toLowerCase().includes(x.ship_to_match.toLowerCase())) &&
+        (x.store || x.keyword || x.ship_to_match))
+      if (!rule) continue
+      const ref = await place(db, r, rule.destination, placed)
+      if (ref && ref !== 'NEEDS_VALUE') {
+        await db.from('placement_rules').update({ hits: (rule.hits || 0) + 1 }).eq('id', rule.id)
+        const amt = amountOf(r.item)
+        await wa(process.env.ULTRAMSG_GROUP_ID || '', `🛒 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
+      }
+    }
+  }
+
+  // ── 2. Ler respostas do grupo (sempre — resposta dele merece ação na hora) ─
+  const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN, group = process.env.ULTRAMSG_GROUP_ID
+  if (instance && tk && group) {
+    const msgs: { id?: string; body?: string; fromMe?: boolean }[] = await fetch(`https://api.ultramsg.com/${instance}/chats/messages?token=${encodeURIComponent(tk)}&chatId=${encodeURIComponent(group)}&limit=40`).then(r => r.json()).catch(() => [])
+    const { data: seenRows } = await db.from('stream_mail_moves').select('message_id').eq('from_addr', 'queue-answer')
+    const seen = new Set((seenRows || []).map((x: any) => x.message_id))
+    const open = [...await pending('NEEDS_PLACEMENT')]
+    const done = await pending('PLACED')
+    const markSeen = (mid: string, body: string, state: string) =>
+      db.from('stream_mail_moves').insert({ message_id: mid, subject: body.slice(0, 120), from_addr: 'queue-answer', folder_name: 'REPORTS', state })
+    for (const m of Array.isArray(msgs) ? msgs : []) {
+      const mid = 'qa:' + String(m.id || '')
+      if (!m.id || m.fromMe || seen.has(mid)) continue
+      const body = String(m.body || '').trim()
+      if (!body || body.length > 200 || body.includes(SIGNATURE)) continue
+
+      // "ERRADO <chave>: <destino>" — desfaz e realoca. Resolve o destino ANTES
+      // de apagar qualquer coisa, e só apaga linha criada pela própria fila
+      // (placed_ref com #id) — achados F1/F2.
+      const err = body.match(/^ERRADO\s+([\w.-]{4,30})\s*[:\-]?\s*(.*)$/i)
+      if (err) {
+        const matches = done.filter(x => (x.order_number || x.id).endsWith(err[1]) || keyOf(x) === err[1])
+        if (matches.length !== 1) { await wa(group, matches.length ? `⚠️ Chave *${err[1]}* ambígua — usa o número do pedido completo.` : `⚠️ Não achei compra registrada com a chave *${err[1]}*.`); await markSeen(mid, body, 'ERRADO-NOT-FOUND'); answered++; continue }
+        const row = matches[0]
+        const dest = parseDestination(err[2] || '', true)
+        if (!dest) { await wa(group, `⚠️ ERRADO ${err[1]}: me diz o destino certo — *ERRADO ${err[1]}: <APARTMENT | CATS | OFICINA | carro | IGNORA>*`); await markSeen(mid, body, 'ERRADO-NO-DEST'); answered++; continue }
+        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(group, `⚠️ Não achei carro/invoice viva pra "*${dest.slice(5)}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
+        const [refDest, refId] = String(row.placed_ref || '').split('#')
+        if (!refId) { await wa(group, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
+        if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
+        else await db.from('invoice_expenses').delete().eq('id', refId)
+        const ref = await place(db, row, dest, placed)
+        await wa(group, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} realocada: *${refLabel(ref)}*` : `⚠️ ${keyOf(row)}: desfeita, mas o novo destino falhou — segue na fila.`)
+        if (!ref || ref === 'NEEDS_VALUE') await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT', placed_ref: null }).eq('id', row.id)
+        await markSeen(mid, body, 'ERRADO-APPLIED'); answered++; continue
+      }
+
+      // "<chave>: <destino>" — ou destino EXATO puro quando só há UMA pendente
+      const kv = body.match(/^([\w.-]{4,30})\s*[:\-]\s*(.+)$/)
+      if (kv) {
+        const matches = open.filter(x => (x.order_number || x.id).endsWith(kv[1]) || keyOf(x) === kv[1])
+        if (!matches.length) continue // chave não é nossa — pode ser conversa; não marca
+        if (matches.length > 1) { await wa(group, `⚠️ Chave *${kv[1]}* bate em ${matches.length} compras — usa o número do pedido completo.`); await markSeen(mid, body, 'AMBIGUOUS'); answered++; continue }
+        const row = matches[0]
+        const dest = parseDestination(kv[2], true)
+        if (!dest) continue
+        const ref = await place(db, row, dest, placed)
+        if (ref === 'NEEDS_VALUE') { await wa(group, `⚠️ ${keyOf(row)} ainda não tem valor (PESCA TEMU pendente) — repete a resposta depois da pesca.`); await markSeen(mid, body, 'NEEDS-VALUE'); answered++; continue }
+        if (!ref) { await wa(group, `⚠️ Não achei carro/invoice viva pra "*${kv[2].trim()}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
+        open.splice(open.indexOf(row), 1)
+        answered++
+        if (/\bSEMPRE\b/i.test(body) && r_supplier(row)) {
+          await db.from('placement_rules').insert({ store: r_supplier(row), destination: dest, note: `aprendida da resposta: "${body.slice(0, 60)}"` })
+          await wa(group, `🧠 Regra aprendida: *${r_supplier(row)} → ${refLabel(dest)}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
+        } else {
+          await wa(group, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
+        }
+        await markSeen(mid, body, 'APPLIED'); continue
+      }
+      if (open.length === 1) {
+        const dest = parseDestination(body, false) // sem chave: só vocabulário exato — conversa não vira lançamento
+        if (!dest) continue
+        const row = open[0]
+        const ref = await place(db, row, dest, placed)
+        if (ref && ref !== 'NEEDS_VALUE') { open.pop(); answered++; await wa(group, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`); await markSeen(mid, body, 'APPLIED') }
+      }
+    }
+  }
+
+  // ── 3. Perguntar — UMA POR EXPENSE nas novas; lembrete em relógio ÚNICO ────
+  if (!quiet && group) {
+    for (const r of await pending('NEEDS_PLACEMENT')) {
+      if (r.asked_count === 0) {
+        const amt = amountOf(r.item)
+        await wa(group, `🛒 *ONDE REGISTRO? — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\nResponda: *${keyOf(r)}: <destino>*\n(APARTMENT, CATS, OFICINA, nome do carro ou IGNORA — "SEMPRE" no fim vira regra)`)
+        await db.from('part_streams').update({ asked_count: 1, last_asked_at: new Date().toISOString() }).eq('id', r.id)
+        asked++
+      }
+    }
+    // Relógio único da cobrança (achado F4: relógio por linha virava spam a
+    // cada 5 min): só cobra quando a cobrança MAIS RECENTE já tem 1h.
+    const openAsked = (await pending('NEEDS_PLACEMENT')).filter(r => r.asked_count > 0)
+    const newestAsk = openAsked.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
+    if (openAsked.length && hourSince(newestAsk)) {
+      const lines = openAsked.map(r => `• *${keyOf(r)}* — ${r.supplier || '?'} ${titleOf(r).slice(0, 40)}${amountOf(r.item) != null ? ' — ' + usd(amountOf(r.item)!) : ''}`)
+      await wa(group, `⏳ *COMPRAS SEM DESTINO (${openAsked.length})* — sigo cobrando até zerar:\n\n${lines.join('\n')}\n\nResponda: *<chave>: <destino>*`)
+      const now = new Date().toISOString()
+      for (const r of openAsked) await db.from('part_streams').update({ asked_count: r.asked_count + 1, last_asked_at: now }).eq('id', r.id)
+      asked += openAsked.length
+    }
+    // Compras cegas: cobrar a PESCA TEMU no PVT, relógio único também
+    const needItems = await pending('NEEDS_ITEMS')
+    const newestPvt = needItems.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
+    if (needItems.length && hourSince(newestPvt)) {
+      await wa(PVT, `🎣 *PESCA TEMU pendente* — ${needItems.length} pedido(s) sem itens/valores:\n${needItems.map(r => '• ' + (r.order_number || r.id)).join('\n')}\n\nAbre a thread *PESCA TEMU* no Claude e roda o comando.`)
+      const now = new Date().toISOString()
+      for (const r of needItems) await db.from('part_streams').update({ asked_count: r.asked_count + 1, last_asked_at: now }).eq('id', r.id)
+    }
+  }
+
+  return { placed, asked, answered }
+}
+
+const r_supplier = (r: StreamRow) => (r.supplier || '').trim() || null

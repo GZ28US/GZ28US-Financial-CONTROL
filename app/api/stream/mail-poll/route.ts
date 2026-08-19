@@ -7,7 +7,8 @@ import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import { runInboxZero, alertVipMail } from '@/lib/inboxZero.server'
 import { runZelleWatch } from '@/lib/zelleWatch.server'
-import { runStreamAnswers } from '@/lib/streamAnswers.server'
+// runStreamAnswers foi SUBSTITUÍDO pela fila de destino (cron purchase-queue,
+// 19/ago) — dois leitores no mesmo grupo aplicariam a mesma resposta duas vezes.
 import { runStaffPayroll } from '@/lib/staffPayroll.server'
 import type { StreamRow } from '@/lib/stream'
 
@@ -184,8 +185,7 @@ async function run(force: boolean): Promise<NextResponse> {
   try { vipMail = await alertVipMail(db) } catch (e) { console.error('[vip-mail]', e) }
   // A resposta do grupo à pergunta "a que carro/invoice pertence?" vira destino
   // no STREAM automaticamente (ordem 27/jul) — inclui acertar app US/BR.
-  let streamAnswers: { applied: string[] } = { applied: [] }
-  try { streamAnswers = await runStreamAnswers(db) } catch (e) { console.error('[stream-answers]', e) }
+  const streamAnswers: { applied: string[] } = { applied: [] } // legado — ver cron purchase-queue
 
   // ── Folha recorrente de staff: no dia do pagamento, a linha da semana nasce
   // EM ABERTO e fica visível como pendente até alguém dar baixa.
