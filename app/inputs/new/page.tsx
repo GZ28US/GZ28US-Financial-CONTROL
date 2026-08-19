@@ -76,6 +76,8 @@ export default function NewInputPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
+  const [notes, setNotes] = useState('')
   const [source, setSource] = useState(DEFAULT_SOURCE)
   // Universal payment block (inputs keep their own `source` field — no write-through).
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
@@ -143,6 +145,8 @@ export default function NewInputPage() {
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
+      order_number: orderNumber.trim() || null,
+      notes: notes.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       ...paymentToRow(payment, purchaseDate),
@@ -288,6 +292,11 @@ export default function NewInputPage() {
         </div>
 
         <div>
+          <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
+          <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
+        </div>
+
+        <div>
           <label className="block mb-2 text-lg font-bold">PAID FROM</label>
           <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
@@ -348,6 +357,11 @@ export default function NewInputPage() {
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
         <PaymentFields value={payment} onChange={setPayment} />
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">NOTES</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Human notes only — tracking, payment and order data have their own fields." className={`${inputClass} resize-y`} />
+        </div>
 
         <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE INPUT</button>
         <a href={`${BASE_PATH}${listHref()}`} className="text-gray-400 text-xl">Cancel</a>

@@ -69,6 +69,8 @@ export default function EditInputPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
+  const [notes, setNotes] = useState('')
   const [source, setSource] = useState('')
   // Universal payment block (inputs keep their own `source` field — no write-through).
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
@@ -100,6 +102,8 @@ export default function EditInputPage() {
     setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
+    setOrderNumber(data.order_number || '')
+    setNotes(data.notes || '')
     setSource(data.source || DEFAULT_SOURCE)
     // Initialize the payment block from the row so an untouched save round-trips.
     setPayment(paymentFromRow(data))
@@ -150,6 +154,8 @@ export default function EditInputPage() {
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
+      order_number: orderNumber.trim() || null,
+      notes: notes.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       ...paymentToRow(payment, purchaseDate),
@@ -188,6 +194,11 @@ export default function EditInputPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
+          <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
         </div>
 
         <div>
@@ -251,6 +262,11 @@ export default function EditInputPage() {
 
         {/* UNIVERSAL PAYMENT BLOCK — payment date = purchase date when PAID */}
         <PaymentFields value={payment} onChange={setPayment} />
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">NOTES</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Human notes only — tracking, payment and order data have their own fields." className={`${inputClass} resize-y`} />
+        </div>
 
         <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         <a href={`${BASE_PATH}${category === 'STOCK' ? '/inventory' : '/inputs'}`} className="text-gray-400 text-xl">Cancel</a>

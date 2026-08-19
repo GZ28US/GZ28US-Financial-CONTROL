@@ -627,11 +627,9 @@ export default function InputsPage() {
                           <div className="flex-1 min-w-0 pl-5">
                             <h3 className="text-xl font-bold">{item.description}</h3>
                             <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                            {/* Structured facts — each one a real DB column, never prose in notes. */}
+                            {/* Structured facts — each one a real DB column, never prose in notes.
+                                Order number lives on the purchase header only (no double chip). */}
                             <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              {item.order_number && (
-                                <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">#{item.order_number}</span>
-                              )}
                               {item.payment_method && (
                                 <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-gray-300 border border-gray-700">
                                   💳 {item.payment_method}{item.paid_from && item.paid_from !== 'GZ28US' ? ` · by ${item.paid_from}` : ''}{item.payment_date ? ` · paid ${fmtDate(item.payment_date)}` : ''}
@@ -644,6 +642,14 @@ export default function InputsPage() {
                                   {st.carrier ? ` · ${st.carrier}` : ''}{st.tracking_number ? ` ${st.tracking_number}` : ''}
                                 </span>
                               )}
+                              {/* Item's own receipt, viewable right here (the header chip covers the
+                                  single-receipt purchase — repeat only when this item adds one). */}
+                              {(() => {
+                                const rcpt = firstReceipt(item.receipt_url)
+                                return rcpt && (p.items.length > 1 || rcpt !== p.receipt) ? (
+                                  <a href={rcpt} target="_blank" rel="noopener noreferrer" className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-blue-400 border border-gray-700 hover:text-blue-300">📎 receipt</a>
+                                ) : null
+                              })()}
                             </div>
                             {item.notes && item.notes.split('\n').map((note, i) => (
                               <p key={i} className="text-sm text-yellow-400 mt-1">📝 {note}</p>
