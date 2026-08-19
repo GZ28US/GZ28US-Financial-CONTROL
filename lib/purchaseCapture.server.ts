@@ -112,6 +112,12 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
     return inserted
   }
 
+  // Os ITENS entram na LINHA (não só na mensagem): é a fila de destino quem
+  // pergunta no grupo, e a pergunta precisa dizer O QUE foi comprado (19/ago).
+  const isTemu = /temu\.com$/i.test(msg.fromAddr.split('@')[1] || '')
+  const read = isTemu ? { items: [] as string[], guess: '' } : await readItems(text)
+  const itemsBrief = read.items.slice(0, 3).map(s => s.replace(/\s*\([^)]*\)\s*—.*$/, '').trim()).join('; ').slice(0, 140)
+
   for (let i = 0; i < orders.length; i++) {
     const orderNo = orders[i]
     const amt = totals[i] ?? (orders.length === 1 ? totals[0] : undefined)
@@ -119,11 +125,13 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
     if (dup?.length) continue
     const { data: row } = await db.from('part_streams').insert({
       supplier: store,
-      item: `${store} ${orderNo}${amt ? ' — ' + usd(amt) : ''} — ❓ destino a definir`,
+      item: `${store} ${orderNo}${amt ? ' — ' + usd(amt) : ''}${itemsBrief ? ' — ' + itemsBrief : ''} — ❓ destino a definir`,
       order_number: orderNo,
       status: 'BOUGHT',
       app: 'US',
       ship_to: shipTo,
+      // Estado real da fila desde o nascimento (cron purchase-queue assume daqui)
+      placement_status: amt != null ? 'NEEDS_PLACEMENT' : 'NEEDS_ITEMS',
     }).select().single()
     if (row) inserted.push(`${store} ${orderNo}`)
   }
@@ -134,7 +142,7 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
   // avisa o Márcio no PVT pra ele logar na Temu e chamar o Claude com
   // "PESCA TEMU"; o Claude lê os pedidos no Chrome logado, registra tudo e SÓ
   // ENTÃO as perguntas de destino (uma por expense) saem no grupo de report.
-  if (inserted.length && /temu\.com$/i.test(msg.fromAddr.split('@')[1] || '')) {
+  if (inserted.length && isTemu) {
     const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
     if (instance && tk) {
       const pvt = '13213150973@c.us' // cel US do Márcio (mesmo canal dos PDFs)
@@ -154,31 +162,9 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
     return inserted
   }
 
-  // Report pedindo o destino — só quando esta mensagem realmente inseriu algo.
-  // Bronca do Márcio (27/jul): a mensagem tem que LISTAR OS ITENS e dizer a que
-  // eles PODEM se referir — nunca afirmar que a compra é de um carro.
-  if (inserted.length) {
-    const read = await readItems(text)
-    const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN, groupId = process.env.ULTRAMSG_GROUP_ID
-    if (instance && tk && groupId) {
-      const addrAlarm = shipTo && !SHOP_ADDR.test(shipTo)
-        ? `\n🚨 *ENDEREÇO DE ENTREGA NÃO É O GALPÃO:*\n${shipTo}`
-        : (shipTo ? `\n📍 Entrega: galpão (11320 Space Blvd) ✓` : '')
-      const body = [
-        `🛒 *COMPRA CAPTURADA — ${store}*`, '',
-        `Pedido(s): ${orders.join(', ')}`,
-        totals.length ? `Total: ${totals.map(usd).join(' + ')}` : '',
-        read.items.length ? `\n*Itens:*\n${read.items.map(i => `• ${i}`).join('\n')}` : '',
-        addrAlarm,
-        read.guess ? `\n🤔 Pelo que são, parece ${read.guess} — mas é só leitura minha.` : '',
-        '', 'Está no STREAM como BOUGHT. *A que se refere?* (carro, insumo da oficina, ferramenta, estoque, pessoal…)',
-      ].filter(Boolean).join('\n')
-      await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: tk, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-      }).catch(() => {})
-    }
-  }
+  // Quem fala com o grupo é a FILA DE DESTINO (cron purchase-queue), um lugar
+  // só (19/ago): regras registram e reportam; sem regra, ELA pergunta — com os
+  // itens, que agora viajam dentro da própria linha. Aqui só se captura.
   await db.from('stream_mail_moves').insert({ message_id: msg.key, subject: msg.subject.slice(0, 120), from_addr: 'purchase-capture', folder_name: store.slice(0, 60), state: inserted.length ? 'CAPTURED' : 'DUP' })
   seenSet.add(msg.key)
   return inserted

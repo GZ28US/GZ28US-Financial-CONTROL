@@ -275,7 +275,9 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
     for (const r of await pending('NEEDS_PLACEMENT')) {
       if (r.asked_count === 0) {
         const amt = amountOf(r.item)
-        await wa(group, `🛒 *ONDE REGISTRO? — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\nResponda: *${keyOf(r)}: <destino>*\n(APARTMENT, CATS, OFICINA, nome do carro ou IGNORA — "SEMPRE" no fim vira regra)`)
+        // Alarme herdado da captura: entrega fora do galpão merece destaque.
+        const addr = r.ship_to ? (/11320|space\s*blvd/i.test(r.ship_to) ? '\n📍 Entrega: galpão ✓' : `\n🚨 *Entrega fora do galpão:* ${r.ship_to}`) : ''
+        await wa(group, `🛒 *ONDE REGISTRO? — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}${addr}\n\nResponda: *${keyOf(r)}: <destino>*\n(APARTMENT, CATS, OFICINA, nome do carro ou IGNORA — "SEMPRE" no fim vira regra)`)
         await db.from('part_streams').update({ asked_count: 1, last_asked_at: new Date().toISOString() }).eq('id', r.id)
         asked++
       }
