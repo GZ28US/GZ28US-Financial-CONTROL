@@ -62,10 +62,14 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
   }
 
   const { data: ie } = await db.from('invoice_expenses')
-    .select('id, expense_date, created_at, receipt_url, invoices!inner(is_quote)')
+    .select('id, item, expense_date, created_at, receipt_url, invoices!inner(is_quote)')
     .not('receipt_url', 'is', null).is('payment_date', null).eq('invoices.is_quote', false)
   for (const e of (ie || []) as any[]) {
     if (!e.receipt_url || e.receipt_url === '[]') continue
+    // EXCEÇÃO (19/ago, caso HHP #382526): compra CANCELADA/ESTORNADA fica
+    // não-paga MESMO com recibo anexado — o recibo é de um pagamento que
+    // voltou. O marcador [ESTORNADO]/[CANCELADO] no item blinda a linha.
+    if (/^\[(ESTORNAD|CANCELAD)/i.test(String(e.item || ''))) continue
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('invoice_expenses').update(patch(e, d)).eq('id', e.id)
     if (!error) fixed++
