@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatPhone, toWaNumber } from '@/lib/utils'
+import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 
 type Ride = {
@@ -370,19 +370,20 @@ export default function ViewRidePage() {
           </div>
         </div>
 
-        {/* TITLE & DOCS — who handles this car's paperwork (US-only feature).
-            USA = GZ28US fleet car (title/plates/insurance tracked); EXPORT = bought
-            by GZ28US, endorsed title goes straight to the exporter (unless it did
-            get transferred with taxes paid — the Alcatraz case); CLIENT = the
-            American client's own car, owner handles everything. */}
+        {/* TITLE & DOCS — who OWNS this car and who handles its paperwork (US-only).
+            The five destinies live in lib/utils CAR_DESTINY: USA / EXPORT / CLIENT
+            are the client's car (never our asset, whatever the title says), OWN and
+            TOOL are ours and carry onto the balance sheet. EXPORT keeps the Alcatraz
+            exception — normally no FL title, but a dealership may have charged the
+            taxes in the sale and transferred it anyway. */}
         {ride.title_scope && (
           <div>
             <label className="block mb-3 text-lg font-bold">TITLE &amp; DOCS</label>
             <div className={sectionClass}>
               <div className={rowClass}>
                 <span className={labelClass}>CAR DESTINY</span>
-                <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride.title_scope === 'USA' ? 'bg-blue-900 text-blue-300' : ride.title_scope === 'EXPORT' ? 'bg-purple-900 text-purple-300' : 'bg-gray-700 text-gray-300'}`}>
-                  {ride.title_scope === 'USA' ? 'USA — GZ28US FLEET' : ride.title_scope === 'EXPORT' ? 'EXPORT' : 'OWNER HANDLES'}
+                <span className={`px-3 py-1 rounded-full text-sm font-bold ${carDestiny(ride.title_scope)?.cls || 'bg-gray-700 text-gray-300'}`}>
+                  {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
                 </span>
               </div>
               {ride.title_scope !== 'CLIENT' && (
@@ -395,13 +396,13 @@ export default function ViewRidePage() {
                   </span>
                 </div>
               )}
-              {ride.title_scope === 'USA' && (ride.insurance_company || ride.insurance_policy) && (
+              {insuresCar(ride.title_scope) && (ride.insurance_company || ride.insurance_policy) && (
                 <div className={rowClass}>
                   <span className={labelClass}>INSURANCE</span>
                   <span className="font-bold">{[ride.insurance_company, ride.insurance_policy ? `#${ride.insurance_policy}` : null].filter(Boolean).join(' ')}</span>
                 </div>
               )}
-              {ride.title_scope === 'USA' && ride.insurance_expiry && (() => { const st = plateStatus(ride.insurance_expiry); return (
+              {insuresCar(ride.title_scope) && ride.insurance_expiry && (() => { const st = plateStatus(ride.insurance_expiry); return (
                 <div className={rowClass}>
                   <span className={labelClass}>INSURANCE EXPIRY</span>
                   <span className="font-bold flex items-center gap-2 flex-wrap justify-end">

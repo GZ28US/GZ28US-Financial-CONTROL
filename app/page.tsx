@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
+import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL, PLATE_RENEWAL_COUNTY_URL, type PlateStatus } from '@/lib/plateExpiry'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 
@@ -166,10 +166,11 @@ export default function HomePage() {
       }))
       .filter(r => r.st.state === 'due' || r.st.state === 'expired')
       .sort((a, b) => a.st.days - b.st.days))
-    // Insurance watch — USA-fleet cars only (title_scope 'USA'); same window logic
-    // as the plates, driven by rides.insurance_expiry.
+    // Insurance watch — every car we actually insure (USA client cars plus our
+    // own OWN/TOOL fleet); same window logic as the plates, driven by
+    // rides.insurance_expiry. EXPORT cars are never on our policy.
     setInsuranceAlerts((ridesD || [])
-      .filter((r: any) => r.title_scope === 'USA' && r.insurance_expiry)
+      .filter((r: any) => insuresCar(r.title_scope) && r.insurance_expiry)
       .map((r: any) => ({
         id: r.id,
         code: r.project_code || '—',

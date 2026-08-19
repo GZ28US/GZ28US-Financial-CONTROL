@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { supabaseBR } from '@/lib/supabaseBR'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, CAR_DESTINY, insuresCar } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
 import { plateStatus } from '@/lib/plateExpiry'
 import {
@@ -264,9 +264,9 @@ export default function EditRidePage() {
       photo_url: photoUrl || null,
       title_scope: titleScope || null,
       title_transferred: titleScope ? titleTransferred : null,
-      insurance_company: titleScope === 'USA' ? (insCompany || null) : null,
-      insurance_policy: titleScope === 'USA' ? (insPolicy || null) : null,
-      insurance_expiry: titleScope === 'USA' ? (insExpiry || null) : null,
+      insurance_company: insuresCar(titleScope) ? (insCompany || null) : null,
+      insurance_policy: insuresCar(titleScope) ? (insPolicy || null) : null,
+      insurance_expiry: insuresCar(titleScope) ? (insExpiry || null) : null,
       title_notes: titleNotes || null,
     }).eq('id', rideId)
 
@@ -469,12 +469,10 @@ export default function EditRidePage() {
           <label className="block mb-2 text-lg font-bold">CAR DESTINY</label>
           <select value={titleScope} onChange={(e) => setTitleScope(e.target.value)} className={selectClass}>
             <option value="">— Not set —</option>
-            <option value="USA">USA — GZ28US fleet (title, plates &amp; insurance here)</option>
-            <option value="EXPORT">EXPORT — bought by GZ28US, goes straight to the exporter</option>
-            <option value="CLIENT">OWNER HANDLES — the client takes care of their own docs</option>
+            {CAR_DESTINY.map(d => <option key={d.value} value={d.value}>{d.option}</option>)}
           </select>
 
-          {titleScope === 'USA' && (
+          {insuresCar(titleScope) && (
             <div className="mt-4 space-y-4">
               <label className="flex items-center gap-3 text-lg font-bold cursor-pointer">
                 <input type="checkbox" checked={titleTransferred} onChange={(e) => setTitleTransferred(e.target.checked)} className="w-6 h-6" />

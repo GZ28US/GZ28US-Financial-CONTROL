@@ -233,3 +233,44 @@ export function flowClientLabel(name: string | null | undefined): string {
   if (/gz28.*speed\s*shop.*\bus\b/i.test(n)) return "GZ28US"
   return n
 }
+
+// ── CAR DESTINY (rides.title_scope) ─────────────────────────────────────────
+// One field answers two questions at once: WHO OWNS the car, and WHO HANDLES
+// its paperwork. Ownership is what the financial statements run on — a client's
+// car parked in our name is never our asset, no matter whose name is on the
+// title — while the docs flag is what drives the plate and insurance watches.
+//
+//   USA     client's car that stays in the US; we hold title, plates, insurance
+//   EXPORT  client's car, in our name only until it ships to Brazil
+//   CLIENT  American client's car, owner handles their own docs
+//   OWN     ours — the showcase & marketing fleet (Devil170, GENEZIZ, HellBull)
+//   TOOL    ours — a vehicle or rig that works for the shop (RAMbo, the trailer)
+//
+// USA used to mean "GZ28US fleet" and was carrying our own cars; OWN and TOOL
+// took that job on 19/aug/2026 so the balance sheet can tell the two apart.
+// A legacy 'DEALER' value still exists on one ride and renders as OWNER HANDLES.
+export const CAR_DESTINY = [
+  { value: 'USA',    badge: 'USA CLIENT',   cls: 'bg-blue-900 text-blue-300',
+    option: "USA CLIENT — American client's car, GZ28US holds title, plates & insurance" },
+  { value: 'EXPORT', badge: 'EXPORT',       cls: 'bg-purple-900 text-purple-300',
+    option: "EXPORT — client's car, in GZ28US' name until it ships to Brazil" },
+  { value: 'CLIENT', badge: 'OWNER HANDLES', cls: 'bg-gray-700 text-gray-300',
+    option: 'OWNER HANDLES — the client takes care of their own docs' },
+  { value: 'OWN',    badge: 'GZ28US OWN',   cls: 'bg-amber-900 text-amber-300',
+    option: 'GZ28US OWN — our showcase & marketing fleet (an asset, not a job)' },
+  { value: 'TOOL',   badge: 'GZ28US TOOL',  cls: 'bg-emerald-900 text-emerald-300',
+    option: 'GZ28US TOOL — our service vehicle or rig (depreciates like equipment)' },
+] as const
+
+export function carDestiny(scope: string | null | undefined) {
+  return CAR_DESTINY.find(d => d.value === scope) || null
+}
+
+// Ours, therefore on our balance sheet: OWN as a marketing-fleet asset, TOOL as
+// depreciable equipment. Everything else belongs to a client and stays off it.
+export const isOurCar = (scope: string | null | undefined) => scope === 'OWN' || scope === 'TOOL'
+
+// Cars physically here on our plates — we buy the policy, so we watch it expire.
+// EXPORT is excluded: no FL title, no registration, the endorsed title just ships.
+export const insuresCar = (scope: string | null | undefined) =>
+  scope === 'USA' || scope === 'OWN' || scope === 'TOOL'
