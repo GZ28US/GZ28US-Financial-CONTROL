@@ -187,10 +187,11 @@ export default function NewGoodPage() {
       quantity: qty || 1,
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
+      // Registered = paid; payment_date espelha a data única (vazia → vazia).
       supplier: supplier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
-      ...paymentToRow(payment, purchaseDate),
+      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
     }]).select().single()
     if (error || !good) { alert(error?.message || 'Error saving good'); return }
 
@@ -200,6 +201,7 @@ export default function NewGoodPage() {
         description: ex.description,
         amount: parseFloat(ex.amount) || 0,
         expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
+        payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
@@ -375,7 +377,9 @@ export default function NewGoodPage() {
           </div>
         </div>
 
-        <DatePicker label="DATE OF PURCHASE" value={purchaseDate} onChange={setPurchaseDate} />
+        {/* ONE date only (lei 18/ago, estendida aos GOODS 19/ago): comprada = paga;
+            payment_date espelha este campo. */}
+        <DatePicker label="DATE" value={purchaseDate} onChange={setPurchaseDate} />
 
         {/* GOOD RECEIPT */}
         <div>
@@ -534,7 +538,7 @@ export default function NewGoodPage() {
         </div>
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
-        <PaymentFields value={payment} onChange={setPayment} />
+        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
 
         <button onClick={saveGood} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE GOOD</button>
         <a href={`${BASE_PATH}/goods`} className="text-gray-400 text-xl">Cancel</a>

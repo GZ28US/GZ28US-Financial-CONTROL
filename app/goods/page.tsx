@@ -139,6 +139,8 @@ export default function GoodsPage() {
     const { error } = await supabase.from('goods').update({
       supplier: editingPurchaseSupplier || null,
       purchase_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
+      // UMA data só (lei 18/ago, goods 19/ago): payment_date espelha sempre.
+      payment_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
     }).eq('purchase_group', editingPurchaseGroupId)
     if (error) { alert(error.message); return }
     setEditingPurchaseGroupId(null)
@@ -255,6 +257,7 @@ export default function GoodsPage() {
         quantity: parseFloat(item.quantity) || 1,
         unit_price: parseFloat(item.amount) || 0,
         purchase_date: purchaseDate,
+        payment_date: purchaseDate, // espelho — comprada = paga
         supplier: scannedPurchase.supplier || null,
         source,
         receipt_url: JSON.stringify([scannedPurchase.receiptUrl]),

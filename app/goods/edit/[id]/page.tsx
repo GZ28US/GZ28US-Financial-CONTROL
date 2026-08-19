@@ -213,6 +213,7 @@ export default function EditGoodPage() {
       const { error } = await supabase.from('good_expenses').update({
         description: editingExpense.description, amount: parseFloat(editingExpense.amount),
         expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
+        payment_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null, // espelho
         supplier: editingExpense.supplier.trim() || null,
         source: editingExpense.source || DEFAULT_SOURCE,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
@@ -236,7 +237,7 @@ export default function EditGoodPage() {
       supplier: supplier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
-      ...paymentToRow(payment, purchaseDate),
+      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
       updated_at: new Date().toISOString(),
     }).eq('id', goodId)
     if (error) { alert(error.message); return }
@@ -246,6 +247,7 @@ export default function EditGoodPage() {
       const { error: e } = await supabase.from('good_expenses').insert(newExpenses.map(ex => ({
         good_id: goodId, description: ex.description, amount: parseFloat(ex.amount) || 0,
         expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
+        payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
@@ -304,7 +306,9 @@ export default function EditGoodPage() {
           </div>
         </div>
 
-        <DatePicker label="DATE OF PURCHASE" value={purchaseDate} onChange={setPurchaseDate} />
+        {/* ONE date only (lei 18/ago, estendida aos GOODS 19/ago): comprada = paga;
+            payment_date espelha este campo. */}
+        <DatePicker label="DATE" value={purchaseDate} onChange={setPurchaseDate} />
 
         {/* GOOD RECEIPT */}
         <div>
@@ -463,7 +467,7 @@ export default function EditGoodPage() {
         </div>
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
-        <PaymentFields value={payment} onChange={setPayment} />
+        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
 
         <button onClick={saveGood} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         <a href={`${BASE_PATH}/goods`} className="text-gray-400 text-xl">Cancel</a>
