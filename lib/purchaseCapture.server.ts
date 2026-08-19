@@ -142,7 +142,7 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
         '🛒 *COMPRA TEMU DETECTADA*', '',
         `Pedido(s): ${orders.join(', ')}`,
         'STREAM já registrado. A Temu não manda itens nem valores por e-mail.', '',
-        '👉 Loga na Temu no seu PC e me chama na thread com: *PESCA TEMU*',
+        '👉 Abre a thread *PESCA TEMU* no Claude e roda o comando — o login da Temu é lá dentro, no Claude Browser.',
       ].join('\n')
       await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
