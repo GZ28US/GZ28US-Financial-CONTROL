@@ -103,9 +103,11 @@ function commonOf(p: Purchase, streams: Record<string, StreamInfo>) {
 }
 
 function PayChip({ i }: { i: InputRow }) {
+  // No date here: purchase date and payment date are ONE (lei 18/ago) and the
+  // single date already shows on the purchase header.
   return (
     <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-gray-300 border border-gray-700">
-      💳 {i.payment_method}{i.paid_from && i.paid_from !== 'GZ28US' ? ` · by ${i.paid_from}` : ''}{i.payment_date ? ` · paid ${fmtDate(i.payment_date)}` : ''}
+      💳 {i.payment_method}{i.paid_from && i.paid_from !== 'GZ28US' ? ` · by ${i.paid_from}` : ''}
     </span>
   )
 }

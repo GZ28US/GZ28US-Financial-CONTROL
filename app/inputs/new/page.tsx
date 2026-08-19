@@ -149,7 +149,9 @@ export default function NewInputPage() {
       notes: notes.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
-      ...paymentToRow(payment, purchaseDate),
+      // Registered = paid (Comprovante = PAGA); payment_date is a mirror of the
+      // single DATE — never a second date. No date yet → both stay empty.
+      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
     }])
     if (error) { alert(error.message); return }
 
@@ -326,7 +328,9 @@ export default function NewInputPage() {
           </div>
         </div>
 
-        <DatePicker label="DATE OF PURCHASE" value={purchaseDate} onChange={setPurchaseDate} />
+        {/* ONE date only (lei 18/ago, estendida aos INPUTS 19/ago): the day it was
+            bought IS the day it was paid — payment_date mirrors this field. */}
+        <DatePicker label="DATE" value={purchaseDate} onChange={setPurchaseDate} />
 
         <div>
           <label className="block mb-2 text-lg font-bold">RECEIPT</label>
@@ -356,7 +360,7 @@ export default function NewInputPage() {
         </div>
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
-        <PaymentFields value={payment} onChange={setPayment} />
+        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
 
         <div>
           <label className="block mb-2 text-lg font-bold">NOTES</label>
