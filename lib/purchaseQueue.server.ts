@@ -157,9 +157,13 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
   // ── 0. Classificar/promover ───────────────────────────────────────────────
   // Limbo herdado ("❓ destino a definir" no texto) entra na fila; linha cuja
   // pesca já trouxe valor sobe de NEEDS_ITEMS para NEEDS_PLACEMENT sozinha.
-  const { data: legacy } = await db.from('part_streams').select('id, item').ilike('item', '%destino a definir%').is('placement_status', null)
-  for (const l of legacy || []) {
-    await db.from('part_streams').update({ placement_status: amountOf(l.item) == null ? 'NEEDS_ITEMS' : 'NEEDS_PLACEMENT' }).eq('id', l.id)
+  // Dois marcadores de limbo herdados: "❓ destino a definir" (captura) e
+  // "(itens a detalhar)" (rounds manuais de Temu) — os dois entram na fila.
+  for (const marker of ['%destino a definir%', '%a detalhar%']) {
+    const { data: legacy } = await db.from('part_streams').select('id, item').ilike('item', marker).is('placement_status', null)
+    for (const l of legacy || []) {
+      await db.from('part_streams').update({ placement_status: amountOf(l.item) == null ? 'NEEDS_ITEMS' : 'NEEDS_PLACEMENT' }).eq('id', l.id)
+    }
   }
   const { data: blind } = await db.from('part_streams').select('id, item').eq('placement_status', 'NEEDS_ITEMS')
   for (const b of blind || []) {
