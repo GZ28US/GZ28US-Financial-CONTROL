@@ -47,9 +47,13 @@ export default function DrePage() {
     let missingConclusion = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
-      parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount; cost += t.cost
+      const ours = isOurRide(d, inv)
+      // Carro nosso (OWN/TOOL) não fatura pra ninguém — linha de preço em
+      // invoice nossa é display, não receita. Só o custo entra (as-booked).
+      if (!ours) { parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount }
+      cost += t.cost
       if (!inv.conclusion_date) missingConclusion++
-      if (isOurRide(d, inv)) fleetCost += t.cost                       // frota OWN/TOOL dentro do CPV as-booked
+      if (ours) fleetCost += t.cost                                    // frota OWN/TOOL dentro do CPV as-booked
       else if (inv.live_status !== 'CLOSED') wipOpen += t.cost         // custo de job aberto (vira WIP sob D2)
     }
     const brutaTotal = parts + flTax + services
@@ -61,15 +65,17 @@ export default function DrePage() {
       const ct = d.fixedSuppliers.get(f.supplier_id)?.cost_type || 'UNCLASSIFIED'
       fixedBy[ct] = (fixedBy[ct] || 0) + (parseFloat(f.amount) || 0)
     }
-    const consum = d.inputs.filter(x => x.category === 'CONSUMPTION').reduce((s, x) => s + qtyLine(x), 0)
+    // Complemento de APARTMENT/CATS: categoria nova ou nula cai aqui, nunca some.
+    const consum = d.inputs.filter(x => x.category !== 'APARTMENT' && x.category !== 'CATS').reduce((s, x) => s + qtyLine(x), 0)
     const aptCats = d.inputs.filter(x => x.category === 'APARTMENT' || x.category === 'CATS').reduce((s, x) => s + qtyLine(x), 0)
     const smallTools = d.goods.filter(g => qtyLine(g) < CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) < CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const opex = payroll + (fixedBy.FIXED || 0) + (fixedBy.MARKETING || 0) + (fixedBy.APP || 0)
-      + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
+      + (fixedBy.ASSET || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
     return {
       parts, services, flTax, discount, brutaTotal, liquida, cost, lucroBruto,
       payroll, fixedBy, consum, aptCats, smallTools, opex, ebitda: lucroBruto - opex,
+      margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—',
       wipOpen, fleetCost, missingConclusion, nInvoices: d.invoices.length,
     }
   }, [d])
@@ -90,6 +96,7 @@ export default function DrePage() {
       { cells: ['(−) Ocupação, seguros & profissionais', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
+      { cells: ['(−) Ativos & instalações (as-booked)', usd(-(m.fixedBy.ASSET || 0))] },
       { cells: ['(−) Consumíveis de oficina', usd(-m.consum)] },
       { cells: ['(−) Ferramental de baixo valor', usd(-m.smallTools)] },
       { cells: ['(−) Apartamento & mascotes', usd(-m.aptCats)] },
@@ -105,7 +112,7 @@ export default function DrePage() {
       subtitle: 'Acumulado desde o início · regime de competência, as-booked',
       kpis: [
         ['Receita líquida', usd(m.liquida)],
-        ['Lucro bruto', `${usd(m.lucroBruto)} (${(m.lucroBruto / m.liquida * 100).toFixed(1)}%)`],
+        ['Lucro bruto', `${usd(m.lucroBruto)} (${m.margemPct})`],
         ['Despesas operacionais', usd(-m.opex)],
         ['EBITDA', usd(m.ebitda)],
       ],
@@ -152,7 +159,7 @@ export default function DrePage() {
           <div key={label as string} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
             <p className="text-xs font-bold text-gray-500 mb-1">{label}</p>
             <p className={`text-2xl font-bold tabular-nums ${cls}`}>{usd(v as number)}</p>
-            {label === 'LUCRO BRUTO' && <p className="text-xs text-gray-500 mt-1">{(m.lucroBruto / m.liquida * 100).toFixed(1)}% da receita líquida</p>}
+            {label === 'LUCRO BRUTO' && <p className="text-xs text-gray-500 mt-1">{m.margemPct} da receita líquida</p>}
           </div>
         ))}
       </div>
@@ -177,6 +184,7 @@ export default function DrePage() {
             { label: 'Pessoal', value: m.payroll, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
+            { label: 'Ativos & instalações', value: m.fixedBy.ASSET || 0, kind: 'out' },
             { label: 'Ferramental de baixo valor', value: m.smallTools, kind: 'out' },
             { label: 'Consumíveis de oficina', value: m.consum, kind: 'out' },
             { label: 'Apartamento & mascotes', value: m.aptCats, kind: 'out' },
@@ -207,6 +215,7 @@ export default function DrePage() {
           <Row label="(−) Ocupação, seguros & profissionais" value={-(m.fixedBy.FIXED || 0)} sub />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub />
+          <Row label="(−) Ativos & instalações (as-booked)" value={-(m.fixedBy.ASSET || 0)} sub note="capitaliza quando D8/G4 fecharem" />
           <Row label="(−) Consumíveis de oficina" value={-m.consum} sub />
           <Row label="(−) Ferramental de baixo valor" value={-m.smallTools} sub note={`GOODS abaixo do piso de $${CAP_FLOOR.toLocaleString()} (D8)`} />
           <Row label="(−) Apartamento & mascotes" value={-m.aptCats} sub note="D10 decide se é benefício ou retirada" />
@@ -217,7 +226,7 @@ export default function DrePage() {
           <Row label="RESULTADO ACUMULADO" value={m.ebitda} />
         </div>
 
-        <p className="mt-4 text-sm text-gray-500">Margem bruta as-booked: {(m.lucroBruto / m.liquida * 100).toFixed(1)}% — deprimida porque o valor bruto dos carros de clientes passa pela receita e pelo custo (tratamento agência é a decisão D2/D3 do blueprint).</p>
+        <p className="mt-4 text-sm text-gray-500">Margem bruta as-booked: {m.margemPct} — deprimida porque o valor bruto dos carros de clientes passa pela receita e pelo custo (tratamento agência é a decisão D2/D3 do blueprint).</p>
       </div>
     </main>
   )

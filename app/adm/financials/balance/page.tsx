@@ -55,13 +55,18 @@ export default function BalancePage() {
     let ar = 0, advances = 0, wip = 0, fleetOwn = 0, fleetTool = 0, flPayable = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
-      const bal = t.grand - t.received
-      if (bal > 0) ar += bal; else advances += -bal
       const scope = rideScope(d, inv)
+      const ours = scope === 'OWN' || scope === 'TOOL'
+      // Carro nosso não gera A/R, adiantamento nem FL tax — ninguém nos deve
+      // pelo nosso próprio carro; linha de preço em invoice nossa é display.
+      if (!ours) {
+        const bal = t.grand - t.received
+        if (bal > 0) ar += bal; else advances += -bal
+        if (t.flTax > 0 && !inv.fl_tax_expense_date) flPayable += t.flTax
+      }
       if (scope === 'OWN') fleetOwn += t.cost
       else if (scope === 'TOOL') fleetTool += t.cost
       else if (inv.live_status !== 'CLOSED') wip += t.cost
-      if (t.flTax > 0 && !inv.fl_tax_expense_date) flPayable += t.flTax
     }
     // Conta corrente GZ28BR — mesmo algoritmo do GZ-FLOW, condensado:
     // GOT = receita nossa que entrou na conta deles; PAID = conta nossa que eles pagaram.
@@ -74,7 +79,9 @@ export default function BalancePage() {
     let got = d.payments.filter(p => p.paid_to === GZ && p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
     let paid = 0
     const scan = (rows: any[], amt: (r: any) => number) => {          // eslint-disable-line @typescript-eslint/no-explicit-any
-      for (const r of rows) { const sd = side(r); if (sd === 'PAID') paid += amt(r); else if (sd === 'GOT') got += amt(r) }
+      // Sem payment_date ainda não foi pago — está em Fornecedores a Pagar;
+      // contar aqui também seria o mesmo passivo duas vezes.
+      for (const r of rows) { if (!r.payment_date) continue; const sd = side(r); if (sd === 'PAID') paid += amt(r); else if (sd === 'GOT') got += amt(r) }
     }
     scan(d.invExpenses, expLine); scan(d.goods, qtyLine); scan(d.goodExpenses, r => parseFloat(r.amount) || 0)
     scan(d.inputs, qtyLine); scan(d.inventory, qtyLine)
@@ -83,6 +90,7 @@ export default function BalancePage() {
     const stockPurch = d.inventory.filter(s => s.source_type === 'PURCHASED').reduce((s, r) => s + qtyLine(r), 0)
     const stockDon = d.inventory.filter(s => s.source_type === 'DONATED').reduce((s, r) => s + qtyLine(r), 0)
     const equip = d.goods.filter(g => qtyLine(g) >= CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
+      + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) >= CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const unpaid = unpaidTotals(d)
     const draws = d.expenses.filter(e => e.origin === 'PERSONAL').reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
     const brNet = got - paid
@@ -233,7 +241,7 @@ export default function BalancePage() {
           <div className="border border-gray-800 rounded-2xl overflow-hidden">
             <div className="px-4 py-3 bg-gray-900 font-bold text-lg">PASSIVO</div>
             <Row label="Fornecedores a pagar" value={m.unpaid.total} chip={<Chip kind="dec" label="G6" />}
-              note={`projetos ${usd(m.unpaid.inv)} · fixos ${usd(m.unpaid.fixed)} · folha ${usd(m.unpaid.staff)} — sem payment_date pode ser devido OU só sem preencher`} />
+              note={`projetos ${usd(m.unpaid.inv)} · fixos ${usd(m.unpaid.fixed)} · folha ${usd(m.unpaid.staff)} · compras ${usd(m.unpaid.purchases)} — sem payment_date pode ser devido OU só sem preencher`} />
             <Row label="Adiantamentos de clientes" value={m.advances} chip={<Chip kind="dec" label="D9" />} note="recebido > faturado — inclui os jobs legados sem linhas" />
             <Row label="FL sales tax a recolher" value={m.flPayable} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado com fl_tax_expense_date vazio" />
             {m.brNet < 0 && <Row label="Devido à GZ28BR" value={-m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} />}

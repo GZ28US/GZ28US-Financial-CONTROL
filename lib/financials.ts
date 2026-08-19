@@ -43,7 +43,9 @@ export type FinData = {
 async function fetchAll(table: string, select: string): Promise<any[]> {
   const out: any[] = []
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from(table).select(select).range(from, from + 999)
+    // ORDER BY estável é obrigatório: sem ele o Postgres pode reordenar entre
+    // as duas requests e uma linha na fronteira dos 1.000 some ou duplica.
+    const { data, error } = await supabase.from(table).select(select).order('id').range(from, from + 999)
     if (error) throw new Error(table + ': ' + error.message)
     out.push(...(data || []))
     if (!data || data.length < 1000) break
@@ -69,9 +71,16 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin'),
   ])
   const real = invoices.filter((i: any) => !i.is_quote)
+  // Filhas de QUOTE ficam fora de TUDO: linha de despesa de orçamento (herdada
+  // dos packs) não é caixa, não é contas a pagar, não é custo — era $206k de
+  // fornecedores-fantasma no Balanço antes deste filtro.
+  const realIds = new Set(real.map((i: any) => i.id))
+  const byReal = (r: any) => realIds.has(r.invoice_id)
   return {
     invoices: real,
-    payments, invExpenses, invParts, invServices, expenses, fixedExpenses,
+    payments: payments.filter(byReal), invExpenses: invExpenses.filter(byReal),
+    invParts: invParts.filter(byReal), invServices: invServices.filter(byReal),
+    expenses, fixedExpenses,
     fixedSuppliers: new Map(fixedSuppliers.map((s: any) => [s.id, s])),
     goods, goodExpenses, inputs, inventory,
     rides: new Map(rides.map((r: any) => [r.id, r])),
@@ -131,7 +140,9 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   for (const p of d.payments) {
     if (!p.paid_at) continue
     const m = invoiceMeta(d, p.invoice_id)
-    push(p.payment_date || String(p.paid_at).slice(0, 10), 'OPER',
+    // Data do caixa é o RECEBIMENTO (paid_at); payment_date é só o agendado.
+    const cashDate = String(p.paid_at).slice(0, 10)
+    push(okDate(cashDate) ? cashDate : p.payment_date, 'OPER',
       p.paid_to === 'GZ28BR' ? 'RECEIPTS_BR' : 'RECEIPTS',
       num(p.amount), m.code, m.car || p.description || p.source || '', m.href)
   }
@@ -176,5 +187,9 @@ export function unpaidTotals(d: FinData) {
   const inv = d.invExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + expLine(e), 0)
   const fixed = d.fixedExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)
   const staff = d.expenses.filter(e => !okDate(e.payment_date) && e.origin !== 'PERSONAL').reduce((s, e) => s + num(e.amount), 0)
-  return { inv, fixed, staff, total: inv + fixed + staff }
+  const purchases = d.goods.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + qtyLine(g), 0)
+    + d.goodExpenses.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + num(g.amount), 0)
+    + d.inputs.filter(x => !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)
+    + d.inventory.filter(x => x.source_type === 'PURCHASED' && !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)
+  return { inv, fixed, staff, purchases, total: inv + fixed + staff + purchases }
 }
