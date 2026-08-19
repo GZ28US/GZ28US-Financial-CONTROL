@@ -90,6 +90,37 @@ function firstReceipt(raw: string | null): string | null {
   try { const a = JSON.parse(raw); return Array.isArray(a) && a[0] ? String(a[0]) : null } catch { return null }
 }
 
+// ── Smart info placement (Márcio, 19/ago) ────────────────────────────────────
+// Info shared by the WHOLE purchase renders on the header; info that varies
+// between items renders on the item row. This is DISPLAY logic only — the bank
+// keeps one field per info, nothing is ever stored twice.
+function commonOf(p: Purchase, streams: Record<string, StreamInfo>) {
+  const payKeys = new Set(p.items.filter(i => i.payment_method).map(i => `${i.payment_method}|${i.paid_from || ''}|${i.payment_date || ''}`))
+  const pay = payKeys.size === 1 ? (p.items.find(i => i.payment_method) || null) : null
+  const stKeys = Array.from(new Set(p.items.map(i => (i.order_number && streams[i.order_number]) ? i.order_number : null).filter(Boolean))) as string[]
+  const stream = stKeys.length === 1 ? streams[stKeys[0]] : null
+  return { pay, stream }
+}
+
+function PayChip({ i }: { i: InputRow }) {
+  return (
+    <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-gray-300 border border-gray-700">
+      💳 {i.payment_method}{i.paid_from && i.paid_from !== 'GZ28US' ? ` · by ${i.paid_from}` : ''}{i.payment_date ? ` · paid ${fmtDate(i.payment_date)}` : ''}
+    </span>
+  )
+}
+
+function StreamChip({ st }: { st: StreamInfo }) {
+  const delivered = st.status === 'DELIVERED'
+  return (
+    <span className={`px-2.5 py-0.5 rounded-lg text-sm font-bold border ${delivered ? 'bg-green-950 text-green-300 border-green-800' : st.status === 'SHIPPED' ? 'bg-blue-950 text-blue-300 border-blue-800' : 'bg-gray-800 text-gray-300 border-gray-700'}`}>
+      {delivered ? `✓ DELIVERED${st.delivered_at ? ' ' + fmtDate(st.delivered_at.slice(0, 10)) : ''}`
+        : `${st.status || 'BOUGHT'}${st.eta ? ` · ETA ${fmtDate(st.eta)}` : ''}`}
+      {st.carrier ? ` · ${st.carrier}` : ''}{st.tracking_number ? ` ${st.tracking_number}` : ''}
+    </span>
+  )
+}
+
 export default function InputsPage() {
   const [rows, setRows] = useState<InputRow[]>([])
   const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
@@ -586,6 +617,8 @@ export default function InputsPage() {
           <div className="space-y-5">
             {visible.map((p) => {
               const isExpanded = expanded.has(p.key)
+              const common = commonOf(p, streams)
+              const single = p.items.length === 1
               return (
                 <div key={p.key} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
                   <div className="p-6 flex items-center justify-between gap-4">
@@ -610,47 +643,48 @@ export default function InputsPage() {
                           </>
                         )}
                       </p>
+                      {/* Purchase-wide facts (same value across every item) live HERE, not on rows. */}
+                      {(common.pay || common.stream) && (
+                        <div className="flex items-center gap-2 mt-2 ml-7 flex-wrap">
+                          {common.pay && <PayChip i={common.pay} />}
+                          {common.stream && <StreamChip st={common.stream} />}
+                        </div>
+                      )}
                     </div>
                     <div className="flex gap-3 flex-wrap shrink-0">
-                      {p.groupId && <Link href={`/inputs/group/${p.groupId}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
-                      <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>
-                      <button onClick={() => setConfirmPurchase(p)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                      {single
+                        ? <Link href={`/inputs/${p.items[0].id}`} title="View purchase" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                        : p.groupId && <Link href={`/inputs/group/${p.groupId}`} title="View purchase" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
+                      {single
+                        ? <Link href={`/inputs/edit/${p.items[0].id}`} title="Edit purchase" className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                        : <button onClick={() => startEdit(p)} title="Edit purchase" className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>}
+                      <button onClick={() => setConfirmPurchase(p)} title="Remove purchase" className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                     </div>
                   </div>
                   {isExpanded && (
                     <div className="border-t border-gray-800">
                       {p.items.map((item, gi) => {
                         const st = item.order_number ? streams[item.order_number] : undefined
-                        const delivered = st?.status === 'DELIVERED'
+                        // Smart placement: a chip renders here ONLY when its info is NOT
+                        // purchase-wide (otherwise it already lives on the header).
+                        const ownPay = item.payment_method && !common.pay
+                        const ownStream = st && !common.stream
+                        const rcpt = firstReceipt(item.receipt_url)
+                        const ownRcpt = rcpt && (p.items.length > 1 || rcpt !== p.receipt)
                         return (
                         <div key={item.id} className={`flex items-center justify-between gap-6 px-6 py-4 ${gi < p.items.length - 1 ? 'border-b border-gray-800' : ''}`}>
                           <div className="flex-1 min-w-0 pl-5">
                             <h3 className="text-xl font-bold">{item.description}</h3>
                             <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                            {/* Structured facts — each one a real DB column, never prose in notes.
-                                Order number lives on the purchase header only (no double chip). */}
-                            <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              {item.payment_method && (
-                                <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-gray-300 border border-gray-700">
-                                  💳 {item.payment_method}{item.paid_from && item.paid_from !== 'GZ28US' ? ` · by ${item.paid_from}` : ''}{item.payment_date ? ` · paid ${fmtDate(item.payment_date)}` : ''}
-                                </span>
-                              )}
-                              {st && (
-                                <span className={`px-2.5 py-0.5 rounded-lg text-sm font-bold border ${delivered ? 'bg-green-950 text-green-300 border-green-800' : st.status === 'SHIPPED' ? 'bg-blue-950 text-blue-300 border-blue-800' : 'bg-gray-800 text-gray-300 border-gray-700'}`}>
-                                  {delivered ? `✓ DELIVERED${st.delivered_at ? ' ' + fmtDate(st.delivered_at.slice(0, 10)) : ''}`
-                                    : `${st.status || 'BOUGHT'}${st.eta ? ` · ETA ${fmtDate(st.eta)}` : ''}`}
-                                  {st.carrier ? ` · ${st.carrier}` : ''}{st.tracking_number ? ` ${st.tracking_number}` : ''}
-                                </span>
-                              )}
-                              {/* Item's own receipt, viewable right here (the header chip covers the
-                                  single-receipt purchase — repeat only when this item adds one). */}
-                              {(() => {
-                                const rcpt = firstReceipt(item.receipt_url)
-                                return rcpt && (p.items.length > 1 || rcpt !== p.receipt) ? (
-                                  <a href={rcpt} target="_blank" rel="noopener noreferrer" className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-blue-400 border border-gray-700 hover:text-blue-300">📎 receipt</a>
-                                ) : null
-                              })()}
-                            </div>
+                            {(ownPay || ownStream || ownRcpt) && (
+                              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                {ownPay && <PayChip i={item} />}
+                                {ownStream && st && <StreamChip st={st} />}
+                                {ownRcpt && (
+                                  <a href={rcpt!} target="_blank" rel="noopener noreferrer" className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-blue-400 border border-gray-700 hover:text-blue-300">📎 receipt</a>
+                                )}
+                              </div>
+                            )}
                             {item.notes && item.notes.split('\n').map((note, i) => (
                               <p key={i} className="text-sm text-yellow-400 mt-1">📝 {note}</p>
                             ))}
