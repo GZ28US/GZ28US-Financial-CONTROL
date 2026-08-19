@@ -371,11 +371,11 @@ export default function ViewRidePage() {
         </div>
 
         {/* TITLE & DOCS — who OWNS this car and who handles its paperwork (US-only).
-            The five destinies live in lib/utils CAR_DESTINY: USA / EXPORT / CLIENT
-            are the client's car (never our asset, whatever the title says), OWN and
-            TOOL are ours and carry onto the balance sheet. EXPORT keeps the Alcatraz
-            exception — normally no FL title, but a dealership may have charged the
-            taxes in the sale and transferred it anyway. */}
+            The five destinies live in lib/utils CAR_DESTINY. USA / CLIENT are an
+            American client's own car — never in our name, nothing tracked. EXPORT is
+            the ONLY in-our-name-but-not-ours case (until it ships; Alcatraz exception:
+            a dealership may have charged the taxes and transferred anyway). OWN and
+            TOOL are ours and carry onto the balance sheet. */}
         {ride.title_scope && (
           <div>
             <label className="block mb-3 text-lg font-bold">TITLE &amp; DOCS</label>
@@ -386,7 +386,7 @@ export default function ViewRidePage() {
                   {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
                 </span>
               </div>
-              {ride.title_scope !== 'CLIENT' && (
+              {ride.title_scope !== 'CLIENT' && ride.title_scope !== 'USA' && (
                 <div className={rowClass}>
                   <span className={labelClass}>TITLE</span>
                   <span className="font-bold">

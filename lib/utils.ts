@@ -240,9 +240,10 @@ export function flowClientLabel(name: string | null | undefined): string {
 // car parked in our name is never our asset, no matter whose name is on the
 // title — while the docs flag is what drives the plate and insurance watches.
 //
-//   USA     client's car that stays in the US; we hold title, plates, insurance
-//   EXPORT  client's car, in our name only until it ships to Brazil
-//   CLIENT  American client's car, owner handles their own docs
+//   USA     American client's own car — never in our name, we only work on it
+//   EXPORT  client's car, in OUR name until it ships to Brazil. The ONLY case
+//           where the LLC holds title to a car that isn't ours.
+//   CLIENT  legacy twin of USA (owner handles docs) — same treatment
 //   OWN     ours — the showcase & marketing fleet (Devil170, GENEZIZ, HellBull)
 //   TOOL    ours — a vehicle or rig that works for the shop (RAMbo, the trailer)
 //
@@ -251,7 +252,7 @@ export function flowClientLabel(name: string | null | undefined): string {
 // A legacy 'DEALER' value still exists on one ride and renders as OWNER HANDLES.
 export const CAR_DESTINY = [
   { value: 'USA',    badge: 'USA CLIENT',   cls: 'bg-blue-900 text-blue-300',
-    option: "USA CLIENT — American client's car, GZ28US holds title, plates & insurance" },
+    option: "USA CLIENT — American client's own car; never in our name, we only work on it" },
   { value: 'EXPORT', badge: 'EXPORT',       cls: 'bg-purple-900 text-purple-300',
     option: "EXPORT — client's car, in GZ28US' name until it ships to Brazil" },
   { value: 'CLIENT', badge: 'OWNER HANDLES', cls: 'bg-gray-700 text-gray-300',
@@ -270,7 +271,7 @@ export function carDestiny(scope: string | null | undefined) {
 // depreciable equipment. Everything else belongs to a client and stays off it.
 export const isOurCar = (scope: string | null | undefined) => scope === 'OWN' || scope === 'TOOL'
 
-// Cars physically here on our plates — we buy the policy, so we watch it expire.
-// EXPORT is excluded: no FL title, no registration, the endorsed title just ships.
-export const insuresCar = (scope: string | null | undefined) =>
-  scope === 'USA' || scope === 'OWN' || scope === 'TOOL'
+// Cars on OUR policy — only the ones we actually own. Client cars carry the
+// client's insurance (USA/CLIENT are never even in our name), and EXPORT has no
+// FL title or registration: the endorsed title just ships to the exporter.
+export const insuresCar = isOurCar

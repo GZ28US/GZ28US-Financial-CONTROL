@@ -507,8 +507,8 @@ export default function EditRidePage() {
             </div>
           )}
 
-          {titleScope === 'CLIENT' && (
-            <p className="mt-3 text-gray-400">The owner handles title, registration and insurance — nothing tracked here.</p>
+          {(titleScope === 'CLIENT' || titleScope === 'USA') && (
+            <p className="mt-3 text-gray-400">The client's own car — title, registration and insurance are theirs, nothing tracked here.</p>
           )}
 
           <div className="mt-4">
