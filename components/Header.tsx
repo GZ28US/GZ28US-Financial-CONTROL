@@ -78,6 +78,7 @@ const MENU: MenuItem[] = [
     type: 'dropdown',
     label: 'ADM',
     items: [
+      ['/adm/financials', 'FINANCIAL'],
       ['/adm/reports', 'REPORTS'],
       ['/adm/bank', 'BANK'],
     ],
