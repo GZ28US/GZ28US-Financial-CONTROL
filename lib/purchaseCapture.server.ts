@@ -128,6 +128,32 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
     if (row) inserted.push(`${store} ${orderNo}`)
   }
 
+  // ── TEMU (protocolo PESCA TEMU, Márcio 19/ago) ─────────────────────────────
+  // E-mail da Temu é CEGO: não traz item nem valor (verificado no HTML cru de
+  // todos os tipos). Então compra Temu NÃO pergunta destino no grupo — o app
+  // avisa o Márcio no PVT pra ele logar na Temu e chamar o Claude com
+  // "PESCA TEMU"; o Claude lê os pedidos no Chrome logado, registra tudo e SÓ
+  // ENTÃO as perguntas de destino (uma por expense) saem no grupo de report.
+  if (inserted.length && /temu\.com$/i.test(msg.fromAddr.split('@')[1] || '')) {
+    const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
+    if (instance && tk) {
+      const pvt = '13213150973@c.us' // cel US do Márcio (mesmo canal dos PDFs)
+      const body = [
+        '🛒 *COMPRA TEMU DETECTADA*', '',
+        `Pedido(s): ${orders.join(', ')}`,
+        'STREAM já registrado. A Temu não manda itens nem valores por e-mail.', '',
+        '👉 Loga na Temu no seu PC e me chama na thread com: *PESCA TEMU*',
+      ].join('\n')
+      await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: tk, to: pvt, body: `${body}\n\n${SIGNATURE}` }),
+      }).catch(() => {})
+    }
+    await db.from('stream_mail_moves').insert({ message_id: msg.key, subject: msg.subject.slice(0, 120), from_addr: 'purchase-capture', folder_name: store.slice(0, 60), state: 'CAPTURED — PESCA TEMU pedido no PVT' })
+    seenSet.add(msg.key)
+    return inserted
+  }
+
   // Report pedindo o destino — só quando esta mensagem realmente inseriu algo.
   // Bronca do Márcio (27/jul): a mensagem tem que LISTAR OS ITENS e dizer a que
   // eles PODEM se referir — nunca afirmar que a compra é de um carro.
