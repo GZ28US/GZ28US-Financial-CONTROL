@@ -246,6 +246,9 @@ export function flowClientLabel(name: string | null | undefined): string {
 //   CLIENT  legacy twin of USA (owner handles docs) — same treatment
 //   OWN     ours — the showcase & marketing fleet (Devil170, GENEZIZ, HellBull)
 //   TOOL    ours — a vehicle or rig that works for the shop (RAMbo, the trailer)
+//   DONOR   bought to PART-OUT (C7 Burnt, ScatPrisionPack) — a carcass that
+//           becomes parts inventory, never a job, never fleet. May belong to
+//           GZ28BR; who paid shows up in the GZ-FLOW as usual.
 //
 // USA used to mean "GZ28US fleet" and was carrying our own cars; OWN and TOOL
 // took that job on 19/aug/2026 so the balance sheet can tell the two apart.
@@ -261,6 +264,8 @@ export const CAR_DESTINY = [
     option: 'GZ28US OWN — our showcase & marketing fleet (an asset, not a job)' },
   { value: 'TOOL',   badge: 'GZ28US TOOL',  cls: 'bg-emerald-900 text-emerald-300',
     option: 'GZ28US TOOL — our service vehicle or rig (depreciates like equipment)' },
+  { value: 'DONOR',  badge: 'DONOR — PART-OUT', cls: 'bg-rose-900 text-rose-300',
+    option: 'DONOR — bought to part-out; the carcass becomes parts inventory' },
 ] as const
 
 export function carDestiny(scope: string | null | undefined) {

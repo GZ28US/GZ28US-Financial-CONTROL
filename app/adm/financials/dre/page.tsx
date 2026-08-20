@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, isOurRide, ledgerTotals, qtyLine, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -47,7 +47,8 @@ export default function DrePage() {
     let missingConclusion = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
-      const ours = isOurRide(d, inv)
+      const scope = rideScope(d, inv)
+      const ours = scope === 'OWN' || scope === 'TOOL' || scope === 'DONOR'
       // Carro nosso (OWN/TOOL) não fatura pra ninguém — linha de preço em
       // invoice nossa é display, não receita. Só o custo entra (as-booked).
       if (!ours) { parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount }

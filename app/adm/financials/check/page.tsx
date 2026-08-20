@@ -60,10 +60,11 @@ function buildChecks(d: FinData): Check[] {
 
   // 2 · Rides sem CAR DESTINY. Quotes e vitrine SHOP ficam fora de propósito.
   {
-    const withInvoice = new Set(d.invoices.map((i: any) => i.ride_id).filter(Boolean))
     const items: Item[] = []
     d.rides.forEach((r: any) => {
-      if (r.is_quote || r.origin === 'SHOP' || !withInvoice.has(r.id)) return
+      // TODA ride real precisa de destino — mesmo sem invoice ainda (pedido
+      // do Márcio, 20/ago). Só quote e vitrine SHOP ficam de fora.
+      if (r.is_quote || r.origin === 'SHOP') return
       if (r.title_scope && r.title_scope !== 'DEALER') return
       items.push({
         href: '/rides/edit/' + r.id, code: r.project_code || '—',
@@ -128,7 +129,7 @@ function buildChecks(d: FinData): Check[] {
     })
     checks.push({
       key: 'destiny-review', title: 'DESTINY REVIEW — destinos contraditórios', blocks: 'Balanço · DRE (a classificação inteira)',
-      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA/CLIENT a LLC nunca comprou; EXPORT só existe em carro 0km (usado não entra no Brasil). Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
+      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA/CLIENT a LLC nunca comprou; EXPORT só existe em carro 0km (usado não entra no Brasil); DONOR pode ter crédito de peça puxada, isso é normal. Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
       items,
     })
   }

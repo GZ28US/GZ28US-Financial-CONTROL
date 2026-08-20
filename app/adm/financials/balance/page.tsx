@@ -52,11 +52,13 @@ export default function BalancePage() {
 
   const m = useMemo(() => {
     if (!d) return null
-    let ar = 0, advances = 0, wip = 0, fleetOwn = 0, fleetTool = 0, flPayable = 0
+    let ar = 0, advances = 0, wip = 0, fleetOwn = 0, fleetTool = 0, donorCost = 0, flPayable = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
       const scope = rideScope(d, inv)
-      const ours = scope === 'OWN' || scope === 'TOOL'
+      // DONOR entra no guard: crédito de peça puxada do doador não é
+      // adiantamento de cliente, e doador não gera A/R.
+      const ours = scope === 'OWN' || scope === 'TOOL' || scope === 'DONOR'
       // Carro nosso não gera A/R, adiantamento nem FL tax — ninguém nos deve
       // pelo nosso próprio carro; linha de preço em invoice nossa é display.
       if (!ours) {
@@ -66,6 +68,7 @@ export default function BalancePage() {
       }
       if (scope === 'OWN') fleetOwn += t.cost
       else if (scope === 'TOOL') fleetTool += t.cost
+      else if (scope === 'DONOR') donorCost += t.cost
       else if (inv.live_status !== 'CLOSED') wip += t.cost
     }
     // Conta corrente GZ28BR — mesmo algoritmo do GZ-FLOW, condensado:
@@ -97,13 +100,13 @@ export default function BalancePage() {
     const lt = ledgerTotals(d)
     const cash = lt ? lt.cashTotal : 0
     const loans = lt ? lt.loanBalance : 0
-    const totalAtivo = cash + ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn
+    const totalAtivo = cash + ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn + donorCost
     const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0)
     // Residual = ativo − passivo − capital líquido. É o resultado acumulado
     // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
     // livros e o DATA CHECK zeram. Só existe com os livros vivos.
     const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
-    return { ar, advances, wip, fleetOwn, fleetTool, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
+    return { ar, advances, wip, fleetOwn, fleetTool, donorCost, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
   }, [d])
 
   async function downloadPdf() {
@@ -131,6 +134,7 @@ export default function BalancePage() {
             { cells: ['Imobilizado — equipamento', usd(m.equip)] },
             { cells: ['Imobilizado — veículos de serviço (TOOL)', usd(m.fleetTool)] },
             { cells: ['Frota de marketing (OWN)', usd(m.fleetOwn)] },
+            { cells: ['Carros doadores — part-out (DONOR)', usd(m.donorCost)] },
             { cells: [m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)', usd(m.totalAtivo)], bold: true },
           ],
         },
@@ -224,6 +228,7 @@ export default function BalancePage() {
             ['Estoque (comprado + doado)', m.stockPurch + m.stockDon],
             ['Equipamento', m.equip],
             ['Veículos de serviço (TOOL)', m.fleetTool],
+            ['Doadores (part-out)', m.donorCost],
           ]} />
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
@@ -252,6 +257,7 @@ export default function BalancePage() {
           <Row label="Imobilizado — equipamento" value={m.equip} chip={<Chip kind="dec" label="D8" />} note={`GOODS ≥ $${CAP_FLOOR.toLocaleString()} · sem depreciação ainda (G4)`} />
           <Row label="Imobilizado — veículos de serviço" value={m.fleetTool} chip={<Chip kind="ok" label="TOOL" />} note="todo o investido nas rides TOOL" />
           <Row label="Frota de marketing" value={m.fleetOwn} chip={<Chip kind="ok" label="OWN" />} note="todo o investido nas rides OWN — GENEZIZ não deprecia, nunca será vendido" />
+          <Row label="Carros doadores (part-out)" value={m.donorCost} chip={<Chip kind="ok" label="DONOR" />} note="carcaça comprada pra virar estoque de peças; crédito de peça puxada abate via fluxo de doador" />
           <Row label={m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)'} value={m.totalAtivo} total />
         </div>
 
