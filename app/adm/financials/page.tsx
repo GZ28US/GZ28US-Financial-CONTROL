@@ -31,6 +31,11 @@ const CARDS = [
     desc: 'Os três livros que fecham o Balanço: aportes e retiradas de sócio, contratos de financiamento com juros, e o saldo de fim de mês de cada conta.',
   },
   {
+    href: '/adm/financials/ledgers', title: 'LEDGERS', sub: 'Capital · Empréstimos · Caixa',
+    status: 'FERRAMENTA', statusCls: 'bg-sky-950 text-sky-300',
+    desc: 'Os três livros que fecham o Balanço: aportes e retiradas de sócio, contratos de financiamento com juros, e o saldo de fim de mês de cada conta.',
+  },
+  {
     href: '/adm/financials/check', title: 'DATA CHECK', sub: 'Checklist de dados',
     status: 'FERRAMENTA', statusCls: 'bg-sky-950 text-sky-300',
     desc: 'Tudo que está travando as demonstrações, linha por linha, com link direto pro conserto: datas de conclusão, destinos de carro, pagamentos sem data, jobs legados.',
@@ -44,7 +49,7 @@ export default function FinancialsHub() {
       <div className="flex items-baseline gap-4 flex-wrap mb-1"><h1 className="text-4xl font-bold">FINANCIAL</h1><FinBadge /></div>
       <p className="text-gray-400 mb-8 max-w-3xl">As demonstrações da GZ28 V8 SpeedShop USA LLC, direto do banco de dados — as três telas leem o mesmo dataset para os números baterem entre si. Os números melhoram na medida em que os dados entram — datas de conclusão, destino dos carros, contas a pagar de verdade — e a integração bancária (Plaid, já esboçada em ADM → BANK) fecha o ciclo na Fase 2.</p>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 max-w-7xl">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 max-w-6xl">
         {CARDS.map(c => (
           <a key={c.href} href={`${BASE_PATH}${c.href}`}
             className="bg-gray-900 border border-gray-700 rounded-3xl p-6 hover:bg-gray-800 hover:border-gray-500 transition-colors flex flex-col gap-3">
