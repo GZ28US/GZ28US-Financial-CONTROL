@@ -82,7 +82,10 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin, client_id, admission_mileage, exported'),
+    // rides via '*': tabela pequena e é a que mais ganha coluna nova — select
+    // explícito derrubava o dataset inteiro quando o deploy chegava antes da
+    // migration (caso rides.exported). Com '*', coluna ausente vira undefined.
+    fetchAll('rides', '*'),
     fetchAll('clients', 'id, name, country'),
   ])
   const [capitalEvents, financingRows, financingEvents, cashBalances, dataFixes] = await Promise.all([

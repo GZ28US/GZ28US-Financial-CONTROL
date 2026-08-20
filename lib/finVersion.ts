@@ -3,9 +3,10 @@
 // Quando as demonstrações merecerem, troca FIN_STAGE para 'BETA' aqui e o
 // selo muda em todas as telas e relatórios de uma vez.
 export const FIN_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const FIN_VERSION = '0.9.1'
+export const FIN_VERSION = '0.9.2'
 
 export const FIN_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.9.2', date: '2026-08-20', notes: 'Conserto do hub FINANCIAL (a remoção do card DATA CHECK tinha duplicado o LEDGERS e mantido o CHECK) e DATA CHECK à prova de migration: rides agora via select(*) — coluna ainda não migrada (caso exported) vira undefined em vez de derrubar a tela.' },
   { version: '0.9.1', date: '2026-08-20', notes: 'DATA CHECK promovido a ferramenta de organização do app inteiro: sai do hub FINANCIAL e vira item próprio do ADM (/adm/check, com redirect do caminho antigo).' },
   { version: '0.9.0', date: '2026-08-20', notes: 'Status EXPORTED (MIGRATION_ride_exported.sql): checkbox nos dois tipos de export marcando o embarque — fim do ciclo na GZ28US. Num GZ28 EXPORT o carro sai do nome da LLC (vira ride da GZ28BR). Badge EXPORTED no ride, custo do job sai do WIP do Balanço e da nota da DRE; DESTINY REVIEW acusa EXPORTED em destino que não é de exportação.' },
   { version: '0.8.0', date: '2026-08-20', notes: 'Destinos renomeados: EXPORT vira GZ28 EXPORT e OWNER HANDLES vira 3RD PARTY EXPORT — a frota legada sempre foi exportação por terceiro. DELIVERY MILES vira fato medido: campo ADMISSION MILEAGE no ride (MIGRATION_ride_admission_mileage.sql) substitui o checkbox; entrada < 100 mi pode exportar, >= 100 não pode — regra vale pros DOIS tipos de export no DESTINY REVIEW.' },
