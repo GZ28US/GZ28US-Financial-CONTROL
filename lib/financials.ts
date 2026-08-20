@@ -249,6 +249,23 @@ export function ledgerTotals(d: FinData) {
   return { contributions, capDraws, loanBalance, interestPaid, cashAccounts, cashTotal }
 }
 
+// Data de reconhecimento de um invoice FECHADO (insight do Márcio, 20/ago):
+// CLOSED já exige todo income datado E recebido — então o último recebimento
+// é uma data de conclusão DERIVÁVEL. Hierarquia: conclusion_date explícita
+// (verdade do trabalho, capturada pela trava do fechamento) > delivery_date >
+// último income. Invoice aberto não tem data mesmo: é WIP sob D2.
+export function recognitionDate(d: FinData, inv: any): string | null {
+  if (inv.conclusion_date) return inv.conclusion_date
+  if (inv.delivery_date) return inv.delivery_date
+  if (inv.live_status !== 'CLOSED') return null
+  let last = ''
+  for (const p of d.payments) if (p.invoice_id === inv.id) {
+    const dt = p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || '')
+    if (dt && dt > last) last = dt
+  }
+  return last || null
+}
+
 // Sem data de pagamento = ainda devido (vira Fornecedores a Pagar no Balanço).
 export function unpaidTotals(d: FinData) {
   const inv = d.invExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + expLine(e), 0)

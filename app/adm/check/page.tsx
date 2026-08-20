@@ -44,10 +44,16 @@ function buildChecks(d: FinData): Check[] {
 
   // 1 · Invoices sem data de conclusão (G1) — CLOSED primeiro, que é o pior caso.
   {
-    // Só FECHADA sem data é problema: job em andamento não tem conclusion
-    // date MESMO — a data nasce no fechamento (e o fechamento agora exige ela).
+    // Insight do Márcio (20/ago): CLOSED exige incomes datados e recebidos —
+    // o último recebimento JÁ é data derivável de conclusão. Pendência de
+    // verdade é só a raridade fechada SEM NENHUMA data (nem conclusão, nem
+    // entrega, nem income datado). O resto o DRE deriva sozinho.
+    const derivable = (i: any) => {
+      if (i.conclusion_date || i.delivery_date) return true
+      return d.payments.some((p: any) => p.invoice_id === i.id && (p.paid_at || p.payment_date))
+    }
     const items = d.invoices
-      .filter((i: any) => i.live_status === 'CLOSED' && !i.conclusion_date)
+      .filter((i: any) => i.live_status === 'CLOSED' && !derivable(i))
       .map((i: any) => {
         const m = invoiceMeta(d, i.id)
         // Sugestão: última atividade do invoice (pagamento recebido ou despesa
@@ -69,8 +75,8 @@ function buildChecks(d: FinData): Check[] {
         }
       })
     checks.push({
-      key: 'conclusion', title: 'Invoices FECHADAS sem CONCLUSION DATE', blocks: 'DRE por período (G1)',
-      why: 'CLOSED = nunca mais muda — então a data em que o trabalho terminou tem que existir (é ela que diz o mês do resultado). Job em andamento não aparece aqui: a data dele nasce no fechamento, que agora exige ela.',
+      key: 'conclusion', title: 'Invoices FECHADAS sem NENHUMA data derivável', blocks: 'DRE por período (G1)',
+      why: 'Fechada com incomes datados já tem mês de resultado (deriva do último recebimento). Só aparece aqui a raridade sem conclusão, sem entrega E sem income datado — aí não tem de onde derivar.',
       items,
     })
   }
