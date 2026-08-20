@@ -115,9 +115,9 @@ function buildChecks(d: FinData): Check[] {
         if (r.is_brand_new === false)
           flags.push('declarado USADO e marcado EXPORT — usado não entra no Brasil')
         else if (r.is_brand_new == null)
-          flags.push('EXPORT sem o selo 0 KM — marque BRAND NEW no ride pra confirmar')
+          flags.push('EXPORT sem o selo DELIVERY MILES — marque no ride pra confirmar')
         if (minMiles !== Infinity && minMiles > 100)
-          flags.push(`milhagem de entrada ${Math.round(minMiles).toLocaleString('en-US')} mi acima do teto de exportação (100 mi)${r.is_brand_new ? ' — apesar do selo 0 KM, confira' : ''}`)
+          flags.push(`milhagem de entrada ${Math.round(minMiles).toLocaleString('en-US')} mi acima do teto de exportação (100 mi)${r.is_brand_new ? ' — apesar do selo DELIVERY MILES, confira' : ''}`)
       }
       if (!flags.length) return
       items.push({

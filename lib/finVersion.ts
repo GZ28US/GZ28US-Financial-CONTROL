@@ -3,9 +3,10 @@
 // Quando as demonstrações merecerem, troca FIN_STAGE para 'BETA' aqui e o
 // selo muda em todas as telas e relatórios de uma vez.
 export const FIN_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const FIN_VERSION = '0.6.2'
+export const FIN_VERSION = '0.6.3'
 
 export const FIN_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.6.3', date: '2026-08-20', notes: 'Selo renomeado: BRAND NEW (0 KM) vira DELIVERY MILES — mesmo campo (rides.is_brand_new), só o nome de cara em edit, detalhe e DESTINY REVIEW.' },
   { version: '0.6.2', date: '2026-08-20', notes: 'Selo BRAND NEW (0 KM) declarado no ride (checkbox no edit, badge no detalhe — MIGRATION_ride_brand_new.sql): milhagem sozinha não prova carro novo (0km chega com 9 ou 46 mi). DESTINY REVIEW passa a exigir o selo em EXPORT e usa teto de 100 mi como conferência.' },
   { version: '0.6.1', date: '2026-08-20', notes: 'DESTINY REVIEW aprende a lei: só carro 0km exporta pro Brasil. Cliente brasileiro com carro usado nos EUA é normal (residência) — flag removida; a contradição real é EXPORT em carro com milhagem de usado, que agora é acusada.' },
   { version: '0.6.0', date: '2026-08-20', notes: 'DATA CHECK vira bancada: conserto de um campo acontece na própria linha (FIX — data, destino, tipo de fornecedor, baixa de recebimento), links de contexto abrem em aba nova, REFRESH re-audita sem perder o lugar. HISTÓRICO agrupa os consertos por sessão (tabela data_fixes — MIGRATION_data_fixes.sql). DESTINY REVIEW cruza cada destino com o dinheiro do carro e acusa contradições, inclusive de mudanças feitas fora da tela.' },

@@ -479,7 +479,7 @@ export default function EditRidePage() {
 
           <label className="flex items-center gap-3 text-lg font-bold cursor-pointer mt-4">
             <input type="checkbox" checked={isBrandNew} onChange={(e) => setIsBrandNew(e.target.checked)} className="w-6 h-6" />
-            BRAND NEW — 0 KM {titleScope === 'EXPORT' && <span className="text-sm text-amber-300 font-normal">(obrigatório pra EXPORT — usado não entra no Brasil)</span>}
+            DELIVERY MILES — carro 0 km {titleScope === 'EXPORT' && <span className="text-sm text-amber-300 font-normal">(obrigatório pra EXPORT — usado não entra no Brasil)</span>}
           </label>
 
           {insuresCar(titleScope) && (
