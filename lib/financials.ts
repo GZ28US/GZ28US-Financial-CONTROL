@@ -38,6 +38,18 @@ export type FinData = {
   inventory: any[]
   rides: Map<string, any>
   invoiceById: Map<string, any>
+  // Fase 2 — os três livros (null até MIGRATION_financial_ledgers.sql rodar)
+  capitalEvents: any[] | null
+  financing: any[] | null
+  financingEvents: any[] | null
+  cashBalances: any[] | null
+  ledgersReady: boolean
+}
+
+// Igual ao fetchAll, mas devolve null se a tabela ainda não existe (os livros
+// da Fase 2 só nascem quando o Márcio rodar MIGRATION_financial_ledgers.sql).
+async function fetchOpt(table: string, select: string): Promise<any[] | null> {
+  try { return await fetchAll(table, select) } catch { return null }
 }
 
 async function fetchAll(table: string, select: string): Promise<any[]> {
@@ -70,6 +82,10 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
     fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin'),
   ])
+  const [capitalEvents, financingRows, financingEvents, cashBalances] = await Promise.all([
+    fetchOpt('capital_events', '*'), fetchOpt('financing', '*'),
+    fetchOpt('financing_events', '*'), fetchOpt('cash_balances', '*'),
+  ])
   const real = invoices.filter((i: any) => !i.is_quote)
   // Filhas de QUOTE ficam fora de TUDO: linha de despesa de orçamento (herdada
   // dos packs) não é caixa, não é contas a pagar, não é custo — era $206k de
@@ -85,6 +101,8 @@ export async function loadFinancials(): Promise<FinData> {
     goods, goodExpenses, inputs, inventory,
     rides: new Map(rides.map((r: any) => [r.id, r])),
     invoiceById: new Map(real.map((i: any) => [i.id, i])),
+    capitalEvents, financing: financingRows, financingEvents, cashBalances,
+    ledgersReady: !!(capitalEvents && financingRows && financingEvents && cashBalances),
   }
 }
 
@@ -179,7 +197,47 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     if (s.source_type === 'PURCHASED')
       push(s.payment_date, 'INVEST', 'STOCK', -qtyLine(s), 'STOCK', s.description || '', '/inventory')
 
+  // Fase 2 — livros: aporte/retirada de sócio e eventos de empréstimo.
+  if (d.ledgersReady) {
+    for (const c of d.capitalEvents!) {
+      push(c.event_date, 'FIN', c.kind === 'CONTRIBUTION' ? 'CAPITAL' : 'DRAW',
+        (c.kind === 'CONTRIBUTION' ? 1 : -1) * num(c.amount), 'CAPITAL',
+        [c.member, c.description].filter(Boolean).join(' · '), '/adm/financials/ledgers')
+    }
+    const finById = new Map(d.financing!.map((f: any) => [f.id, f]))
+    for (const e of d.financingEvents!) {
+      const lender = finById.get(e.financing_id)?.lender || ''
+      const line = e.kind === 'DISBURSEMENT' ? 'LOAN_IN' : e.kind === 'PAYMENT' ? 'LOAN_PAY' : 'INTEREST'
+      push(e.event_date, 'FIN', line, (e.kind === 'DISBURSEMENT' ? 1 : -1) * num(e.amount),
+        'LOAN', [lender, e.description].filter(Boolean).join(' · '), '/adm/financials/ledgers')
+    }
+  }
+
   return ev.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+// Totais dos livros da Fase 2 (null enquanto a migration não rodou):
+// capital, retiradas formais, saldo devedor de empréstimos, juros pagos e o
+// último saldo de caixa POR CONTA (o Balanço soma; a conciliação compara).
+export function ledgerTotals(d: FinData) {
+  if (!d.ledgersReady) return null
+  const contributions = d.capitalEvents!.filter((c: any) => c.kind === 'CONTRIBUTION').reduce((s: number, c: any) => s + num(c.amount), 0)
+  const capDraws = d.capitalEvents!.filter((c: any) => c.kind === 'DRAW').reduce((s: number, c: any) => s + num(c.amount), 0)
+  let loanBalance = 0, interestPaid = 0
+  for (const e of d.financingEvents!) {
+    if (e.kind === 'DISBURSEMENT') loanBalance += num(e.amount)
+    else if (e.kind === 'PAYMENT') loanBalance -= num(e.amount)
+    else interestPaid += num(e.amount)
+  }
+  const latest = new Map<string, { date: string; balance: number }>()
+  for (const b of d.cashBalances!) {
+    const cur = latest.get(b.account)
+    if (!cur || String(b.balance_date) > cur.date) latest.set(b.account, { date: String(b.balance_date), balance: num(b.balance) })
+  }
+  const cashAccounts = [...latest.entries()].map(([account, v]) => ({ account, date: v.date, balance: v.balance }))
+    .sort((a, b) => b.balance - a.balance)
+  const cashTotal = cashAccounts.reduce((s, a) => s + a.balance, 0)
+  return { contributions, capDraws, loanBalance, interestPaid, cashAccounts, cashTotal }
 }
 
 // Sem data de pagamento = ainda devido (vira Fornecedores a Pagar no Balanço).

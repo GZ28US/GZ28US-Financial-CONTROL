@@ -30,6 +30,11 @@ const CARDS = [
     status: 'FERRAMENTA', statusCls: 'bg-sky-950 text-sky-300',
     desc: 'Tudo que está travando as demonstrações, linha por linha, com link direto pro conserto: datas de conclusão, destinos de carro, pagamentos sem data, jobs legados.',
   },
+  {
+    href: '/adm/financials/ledgers', title: 'LEDGERS', sub: 'Capital · Empréstimos · Caixa',
+    status: 'FERRAMENTA', statusCls: 'bg-sky-950 text-sky-300',
+    desc: 'Os três livros que fecham o Balanço: aportes e retiradas de sócio, contratos de financiamento com juros, e o saldo de fim de mês de cada conta.',
+  },
 ]
 
 export default function FinancialsHub() {

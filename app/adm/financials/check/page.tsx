@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, invoiceMeta, expLine, qtyLine, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -150,6 +150,24 @@ function buildChecks(d: FinData): Check[] {
       why: 'Compra de estoque sem data de pagamento não entra no caixa de investimentos.',
       items: rows.map((r: any) => ({ href: '/inventory', code: 'STOCK', label: r.description || '', amount: qtyLine(r) })),
       impact: rows.reduce((s: number, r: any) => s + qtyLine(r), 0),
+    })
+  }
+
+  // 9 · Caixa: migration pendente, nenhum saldo, ou saldo com mais de 35 dias.
+  {
+    const lt = ledgerTotals(d)
+    const items: Item[] = []
+    if (!lt) items.push({ href: '/adm/financials/ledgers', code: 'LIVROS', label: 'Rodar MIGRATION_financial_ledgers.sql no Supabase e lançar os primeiros saldos', extra: 'migration pendente' })
+    else if (lt.cashAccounts.length === 0) items.push({ href: '/adm/financials/ledgers', code: 'CAIXA', label: 'Nenhum saldo de caixa lançado ainda', extra: 'Balanço sem linha de caixa' })
+    else {
+      const cutoff = new Date(Date.now() - 35 * 864e5).toISOString().slice(0, 10)
+      for (const a of lt.cashAccounts) if (a.date < cutoff)
+        items.push({ href: '/adm/financials/ledgers', code: 'CAIXA', label: a.account, extra: 'último saldo ' + a.date, amount: a.balance })
+    }
+    checks.push({
+      key: 'cash-stale', title: 'Saldo de caixa ausente ou envelhecido', blocks: 'Balanço (caixa) · conciliação com o banco',
+      why: 'O Balanço usa o último saldo por conta. Saldo velho é caixa mentindo — lance o fechamento de cada mês em LEDGERS até o Plaid assumir.',
+      items,
     })
   }
 

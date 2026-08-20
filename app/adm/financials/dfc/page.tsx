@@ -37,10 +37,14 @@ const ROWS: RowDef[] = [
   { kind: 'line', key: 'STOCK', label: 'Estoque de peças comprado' },
   { kind: 'sub', keys: ['EQUIP', 'STOCK'], label: 'Caixa de investimentos' },
   { kind: 'head', label: 'FINANCIAMENTO' },
-  { kind: 'line', key: 'DRAW', label: 'Retiradas (pessoal)' },
-  { kind: 'sub', keys: ['DRAW'], label: 'Caixa de financiamento' },
+  { kind: 'line', key: 'CAPITAL', label: 'Aportes de capital' },
+  { kind: 'line', key: 'DRAW', label: 'Retiradas (sócios & pessoal)' },
+  { kind: 'line', key: 'LOAN_IN', label: 'Empréstimos recebidos' },
+  { kind: 'line', key: 'LOAN_PAY', label: 'Empréstimos amortizados' },
+  { kind: 'line', key: 'INTEREST', label: 'Juros pagos' },
+  { kind: 'sub', keys: ['CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST'], label: 'Caixa de financiamento' },
 ]
-const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'EQUIP', 'STOCK', 'DRAW']
+const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'EQUIP', 'STOCK', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST']
 
 // Gráfico: barras de entrada (verde) e saída (vermelho) por coluna + linha do
 // caixa acumulado desde o início. SVG puro, mesmo espírito do GZ-FLOW.
@@ -153,7 +157,7 @@ export default function DfcPage() {
       tables: [{ head: ['', ...colLabels, 'TOTAL'], rows }],
       notes: [
         'Recebimentos de 2025 entraram na conta da GZ28BR — receita da GZ28US que virou saldo intercompany (GZ-FLOW).',
-        'Aportes de capital e empréstimos ainda não são registrados no app; até lá a variação líquida não bate com o extrato bancário.',
+        'Aportes de capital e empréstimos entram pelo livro LEDGERS; sem eles lançados a variação líquida não bate com o extrato bancário.',
         'Linhas sem data de pagamento não são caixa e constam no Balanço como contas a pagar.',
       ],
     })
@@ -281,7 +285,7 @@ export default function DfcPage() {
       <div className="mt-8 max-w-3xl text-sm text-gray-500 space-y-2">
         <p>· Recebimentos de 2025 entraram na conta da GZ28BR (linha própria) — são receita nossa que virou saldo intercompany, acompanhado no GZ-FLOW.</p>
         <p>· Contas nossas pagas pela GZ28BR contam como saída aqui e viram dívida deles no GZ-FLOW.</p>
-        <p>· Aportes de capital e empréstimos ainda não são registrados (Fase 2 do blueprint) — até lá a variação líquida não bate com o extrato do banco.</p>
+        <p>· Aportes de capital e empréstimos entram pelo livro LEDGERS (ADM → FINANCIAL) — enquanto não estiverem lançados, a variação líquida não bate com o extrato do banco.</p>
       </div>
     </main>
   )

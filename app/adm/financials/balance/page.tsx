@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, qtyLine, expLine, unpaidTotals, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -94,9 +94,16 @@ export default function BalancePage() {
     const unpaid = unpaidTotals(d)
     const draws = d.expenses.filter(e => e.origin === 'PERSONAL').reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
     const brNet = got - paid
-    const totalAtivo = ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn
-    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0)
-    return { ar, advances, wip, fleetOwn, fleetTool, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo }
+    const lt = ledgerTotals(d)
+    const cash = lt ? lt.cashTotal : 0
+    const loans = lt ? lt.loanBalance : 0
+    const totalAtivo = cash + ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn
+    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0)
+    // Residual = ativo − passivo − capital líquido. É o resultado acumulado
+    // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
+    // livros e o DATA CHECK zeram. Só existe com os livros vivos.
+    const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
+    return { ar, advances, wip, fleetOwn, fleetTool, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
   }, [d])
 
   async function downloadPdf() {
@@ -107,7 +114,7 @@ export default function BalancePage() {
       title: 'Balanço Patrimonial',
       subtitle: 'Posição de hoje · derivada ao vivo do Control App (não fecha até existirem caixa, capital e empréstimos — Fase 2)',
       kpis: [
-        ['Total do ativo (ex-caixa)', usd(m.totalAtivo)],
+        [m.lt ? 'Total do ativo' : 'Total do ativo (ex-caixa)', usd(m.totalAtivo)],
         ['Passivo conhecido', usd(m.totalPassivo)],
         ['Conta corrente GZ28BR', usd(m.brNet)],
         ['Frota própria', usd(m.fleetOwn + m.fleetTool)],
@@ -115,7 +122,7 @@ export default function BalancePage() {
       tables: [
         {
           title: 'ATIVO', head: ['', 'HOJE'], rows: [
-            { cells: ['Caixa e equivalentes', `? (${na} — G5)`] },
+            { cells: ['Caixa e equivalentes', m.lt ? usd(m.lt.cashTotal) : `? (${na} — G5)`] },
             { cells: ['Contas a receber', usd(m.ar)] },
             ...(m.brNet > 0 ? [{ cells: ['Conta corrente GZ28BR', usd(m.brNet)] }] : []),
             { cells: ['Obras em andamento (WIP)', usd(m.wip)] },
@@ -124,7 +131,7 @@ export default function BalancePage() {
             { cells: ['Imobilizado — equipamento', usd(m.equip)] },
             { cells: ['Imobilizado — veículos de serviço (TOOL)', usd(m.fleetTool)] },
             { cells: ['Frota de marketing (OWN)', usd(m.fleetOwn)] },
-            { cells: ['TOTAL DO ATIVO (ex-caixa)', usd(m.totalAtivo)], bold: true },
+            { cells: [m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)', usd(m.totalAtivo)], bold: true },
           ],
         },
         {
@@ -133,15 +140,15 @@ export default function BalancePage() {
             { cells: ['Adiantamentos de clientes', usd(m.advances)] },
             { cells: ['FL sales tax a recolher', usd(m.flPayable)] },
             ...(m.brNet < 0 ? [{ cells: ['Devido à GZ28BR', usd(-m.brNet)] }] : []),
-            { cells: ['Empréstimos e financiamentos', `? (${na} — G3)`] },
+            { cells: ['Empréstimos e financiamentos', m.lt ? usd(m.lt.loanBalance) : `? (${na} — G3)`] },
             { cells: ['TOTAL DO PASSIVO (conhecido)', usd(m.totalPassivo)], bold: true },
           ],
         },
         {
           title: 'PATRIMÔNIO LÍQUIDO', head: ['', 'HOJE'], rows: [
-            { cells: ['Capital integralizado', `? (${na} — G2)`] },
-            { cells: ['Retiradas dos sócios', usd(-m.draws)] },
-            { cells: ['Resultado acumulado', 'deriva da DRE (D1–D3 pendentes)'] },
+            { cells: ['Capital integralizado', m.lt ? usd(m.lt.contributions) : `? (${na} — G2)`] },
+            { cells: ['Retiradas dos sócios', usd(-(m.draws + (m.lt ? m.lt.capDraws : 0)))] },
+            { cells: ['Resultado acumulado + não lançado (residual)', m.residual === null ? 'aguarda os livros' : usd(m.residual)] },
           ],
         },
       ],
@@ -181,7 +188,7 @@ export default function BalancePage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">
-        {[['TOTAL DO ATIVO (EX-CAIXA)', m.totalAtivo, 'text-gray-200'],
+        {[[m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (EX-CAIXA)', m.totalAtivo, 'text-gray-200'],
           ['PASSIVO CONHECIDO', m.totalPassivo, 'text-red-400'],
           ['CONTA CORRENTE GZ28BR', m.brNet, m.brNet < 0 ? 'text-red-400' : 'text-emerald-400'],
           ['FROTA PRÓPRIA (OWN+TOOL)', m.fleetOwn + m.fleetTool, 'text-amber-300']].map(([label, v, cls]) => (
@@ -192,16 +199,24 @@ export default function BalancePage() {
         ))}
       </div>
 
-      <div className="bg-red-950/50 border border-red-900 rounded-2xl p-4 mb-6 text-sm text-red-200 max-w-2xl">
-        <p className="font-bold">ESTE BALANÇO AINDA NÃO FECHA — de propósito.</p>
-        <p>Caixa (G5), capital integralizado (G2) e empréstimos (G3) não têm registro no app. Sem eles não existe o outro lado da equação. Fase 2 do blueprint cria os três livros.</p>
-      </div>
+      {!m.lt ? (
+        <div className="bg-red-950/50 border border-red-900 rounded-2xl p-4 mb-6 text-sm text-red-200 max-w-2xl">
+          <p className="font-bold">ESTE BALANÇO AINDA NÃO FECHA — de propósito.</p>
+          <p>Caixa (G5), capital (G2) e empréstimos (G3) não têm registro. Rode MIGRATION_financial_ledgers.sql e lance os livros em LEDGERS — aí a equação ganha o outro lado.</p>
+        </div>
+      ) : (
+        <div className="bg-sky-950/40 border border-sky-900 rounded-2xl p-4 mb-6 text-sm text-sky-200 max-w-2xl">
+          <p className="font-bold">LIVROS ATIVOS.</p>
+          <p>Caixa, capital e empréstimos vêm de LEDGERS. O residual do patrimônio é o resultado acumulado MAIS o que ainda não foi lançado — ele converge pro resultado real conforme os livros e o DATA CHECK zeram.</p>
+        </div>
+      )}
 
       {/* Composição do ativo e do passivo */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 max-w-6xl mb-8 items-start">
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
           <p className="text-sm font-bold text-gray-400 mb-4">DE QUE É FEITO O ATIVO</p>
           <Composition items={[
+            ['Caixa', m.lt ? m.lt.cashTotal : 0],
             ['Contas a receber', m.ar],
             ['WIP (jobs abertos)', m.wip],
             ['Conta corrente GZ28BR', Math.max(m.brNet, 0)],
@@ -225,7 +240,10 @@ export default function BalancePage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 max-w-6xl items-start">
         <div className="border border-gray-800 rounded-2xl overflow-hidden">
           <div className="px-4 py-3 bg-gray-900 font-bold text-lg">ATIVO</div>
-          <Row label="Caixa e equivalentes" value={null} chip={<Chip kind="gap" label="G5" />} note="bank_transactions vazio — sync Plaid ou saldo mensal manual" />
+          {m.lt
+            ? <Row label="Caixa e equivalentes" value={m.lt.cashTotal} chip={<Chip kind="ok" label="LEDGERS" />}
+                note={m.lt.cashAccounts.length ? m.lt.cashAccounts.map(a => `${a.account}: ${usd(a.balance)} em ${a.date}`).join(' · ') : 'nenhum saldo lançado ainda — LEDGERS → SALDOS DE CAIXA'} />
+            : <Row label="Caixa e equivalentes" value={null} chip={<Chip kind="gap" label="G5" />} note="rode MIGRATION_financial_ledgers.sql e lance os saldos em LEDGERS" />}
           <Row label="Contas a receber" value={m.ar} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado − recebido, por invoice" />
           {m.brNet > 0 && <Row label="Conta corrente GZ28BR" value={m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} note="receita nossa na conta deles − contas nossas que eles pagaram" />}
           <Row label="Obras em andamento (WIP)" value={m.wip} chip={<Chip kind="dec" label="D2/D3" />} note="custo de jobs abertos de clientes — inclui carros EXPORT ainda não separados" />
@@ -234,7 +252,7 @@ export default function BalancePage() {
           <Row label="Imobilizado — equipamento" value={m.equip} chip={<Chip kind="dec" label="D8" />} note={`GOODS ≥ $${CAP_FLOOR.toLocaleString()} · sem depreciação ainda (G4)`} />
           <Row label="Imobilizado — veículos de serviço" value={m.fleetTool} chip={<Chip kind="ok" label="TOOL" />} note="todo o investido nas rides TOOL" />
           <Row label="Frota de marketing" value={m.fleetOwn} chip={<Chip kind="ok" label="OWN" />} note="todo o investido nas rides OWN — GENEZIZ não deprecia, nunca será vendido" />
-          <Row label="TOTAL DO ATIVO (ex-caixa)" value={m.totalAtivo} total />
+          <Row label={m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)'} value={m.totalAtivo} total />
         </div>
 
         <div className="space-y-8">
@@ -245,15 +263,19 @@ export default function BalancePage() {
             <Row label="Adiantamentos de clientes" value={m.advances} chip={<Chip kind="dec" label="D9" />} note="recebido > faturado — inclui os jobs legados sem linhas" />
             <Row label="FL sales tax a recolher" value={m.flPayable} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado com fl_tax_expense_date vazio" />
             {m.brNet < 0 && <Row label="Devido à GZ28BR" value={-m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} />}
-            <Row label="Empréstimos e financiamentos" value={null} chip={<Chip kind="gap" label="G3" />} note="K&G Financing só existe como string de despesa" />
+            {m.lt
+              ? <Row label="Empréstimos e financiamentos" value={m.lt.loanBalance} chip={<Chip kind="ok" label="LEDGERS" />} note="saldo devedor: recebido − amortizado, por contrato" />
+              : <Row label="Empréstimos e financiamentos" value={null} chip={<Chip kind="gap" label="G3" />} note="rode a migration e lance os contratos em LEDGERS" />}
             <Row label="TOTAL DO PASSIVO (conhecido)" value={m.totalPassivo} total />
           </div>
 
           <div className="border border-gray-800 rounded-2xl overflow-hidden">
             <div className="px-4 py-3 bg-gray-900 font-bold text-lg">PATRIMÔNIO LÍQUIDO</div>
-            <Row label="Capital integralizado" value={null} chip={<Chip kind="gap" label="G2" />} note="nenhuma tabela registra aporte dos sócios" />
-            <Row label="Retiradas dos sócios" value={-m.draws} chip={<Chip kind="ok" label="AO VIVO" />} note="expenses origin PERSONAL — só o que foi capturado" />
-            <Row label="Resultado acumulado" value={null} chip={<Chip kind="dec" label="DRE" />} note="deriva da DRE quando D1–D3 fecharem" />
+            {m.lt
+              ? <Row label="Capital integralizado" value={m.lt.contributions} chip={<Chip kind="ok" label="LEDGERS" />} note="aportes lançados no livro de capital" />
+              : <Row label="Capital integralizado" value={null} chip={<Chip kind="gap" label="G2" />} note="rode a migration e lance os aportes em LEDGERS" />}
+            <Row label="Retiradas dos sócios" value={-(m.draws + (m.lt ? m.lt.capDraws : 0))} chip={<Chip kind="ok" label="AO VIVO" />} note="retiradas formais (LEDGERS) + expenses origin PERSONAL" />
+            <Row label="Resultado acumulado + não lançado" value={m.residual} chip={<Chip kind="dec" label="RESIDUAL" />} note="ativo − passivo − capital líquido; converge pro resultado real conforme os livros enchem" />
           </div>
         </div>
       </div>

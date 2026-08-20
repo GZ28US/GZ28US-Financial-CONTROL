@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, isOurRide, qtyLine, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, isOurRide, ledgerTotals, qtyLine, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -72,7 +72,11 @@ export default function DrePage() {
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) < CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const opex = payroll + (fixedBy.FIXED || 0) + (fixedBy.MARKETING || 0) + (fixedBy.APP || 0)
       + (fixedBy.ASSET || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
+    // Juros pagos vêm do livro de empréstimos (null até a migration rodar).
+    const lt = ledgerTotals(d)
+    const juros = lt ? lt.interestPaid : null
     return {
+      juros, resultado: (lucroBruto - opex) - (juros || 0),
       parts, services, flTax, discount, brutaTotal, liquida, cost, lucroBruto,
       payroll, fixedBy, consum, aptCats, smallTools, opex, ebitda: lucroBruto - opex,
       margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—',
@@ -103,8 +107,8 @@ export default function DrePage() {
       { cells: ['(−) Não classificado', usd(-(m.fixedBy.UNCLASSIFIED || 0))] },
       { cells: ['EBITDA', usd(m.ebitda)], bold: true },
       { cells: ['(−) Depreciação', 'sem registro (G4)'] },
-      { cells: ['(−) Resultado financeiro', 'sem registro (G3)'] },
-      { cells: ['RESULTADO ACUMULADO', usd(m.ebitda)], bold: true },
+      { cells: ['(−) Resultado financeiro (juros)', m.juros === null ? 'sem lançamento (LEDGERS)' : usd(-m.juros)] },
+      { cells: ['RESULTADO ACUMULADO', usd(m.resultado)], bold: true },
     ]
     await downloadStatementPdf({
       filename: 'GZ28US_DRE_acumulada.pdf',
@@ -222,8 +226,8 @@ export default function DrePage() {
           <Row label="(−) Não classificado" value={-(m.fixedBy.UNCLASSIFIED || 0)} sub />
           <Row label="EBITDA" value={m.ebitda} />
           <Row label="(−) Depreciação" value={null} sub note="sem registro de ativos ainda (G4)" />
-          <Row label="(−) Resultado financeiro" value={null} sub note="sem registro de empréstimos ainda (G3)" />
-          <Row label="RESULTADO ACUMULADO" value={m.ebitda} />
+          <Row label="(−) Resultado financeiro (juros)" value={m.juros === null ? null : -m.juros} sub note={m.juros === null ? 'lance os empréstimos no livro LEDGERS' : 'juros pagos, do livro de empréstimos'} />
+          <Row label="RESULTADO ACUMULADO" value={m.resultado} />
         </div>
 
         <p className="mt-4 text-sm text-gray-500">Margem bruta as-booked: {m.margemPct} — deprimida porque o valor bruto dos carros de clientes passa pela receita e pelo custo (tratamento agência é a decisão D2/D3 do blueprint).</p>
