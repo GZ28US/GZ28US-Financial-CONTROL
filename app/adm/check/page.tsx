@@ -31,7 +31,7 @@ type Fix =
   | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null }
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'received'; table: string; rowId: string }
-type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix }
+type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 type Check = { key: string; title: string; why: string; blocks: string; items: Item[]; impact?: number }
 
@@ -50,9 +50,21 @@ function buildChecks(d: FinData): Check[] {
       .filter((i: any) => i.live_status === 'CLOSED' && !i.conclusion_date)
       .map((i: any) => {
         const m = invoiceMeta(d, i.id)
+        // Sugestão: última atividade do invoice (pagamento recebido ou despesa
+        // paga/lançada) — num invoice fechado, isso costuma cravar a conclusão.
+        let last = ''
+        for (const p of d.payments) if (p.invoice_id === i.id) {
+          const dt = p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || '')
+          if (dt && dt > last) last = dt
+        }
+        for (const e of d.invExpenses) if (e.invoice_id === i.id) {
+          const dt = e.payment_date || e.expense_date || ''
+          if (dt && dt > last) last = dt
+        }
         return {
           href: m.href, code: m.code, label: m.car || '—',
-          extra: 'fechada sem data de conclusão',
+          extra: last ? 'última atividade: ' + formatShortDate(last) : 'fechada sem data de conclusão',
+          suggest: last || undefined,
           fix: { kind: 'date' as const, table: 'invoices', rowId: i.id, field: 'conclusion_date' },
         }
       })
@@ -419,7 +431,7 @@ export default function DataCheckPage() {
                             {it.extra && <span className="text-xs text-gray-500 shrink-0">{it.extra}</span>}
                             {it.amount !== undefined && <span className="tabular-nums font-bold text-sm shrink-0">{usd(it.amount)}</span>}
                             {it.fix && (
-                              <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue('') }}
+                              <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
                                 {it.fix.kind === 'received' ? 'BAIXA' : 'FIX'}
                               </button>
@@ -427,7 +439,12 @@ export default function DataCheckPage() {
                           </div>
                           {it.fix && fixing === fixKey && (
                             <div className="bg-black/40 border border-gray-800 rounded-2xl p-4 mb-3 mx-2 grid grid-cols-1 gap-4">
-                              {it.fix.kind === 'date' && <DatePicker compact label={it.fix.field.toUpperCase()} value={fixValue} onChange={setFixValue} />}
+                              {it.fix.kind === 'date' && (
+                                <div>
+                                  <DatePicker compact label={it.fix.field.toUpperCase()} value={fixValue} onChange={setFixValue} />
+                                  {it.suggest && <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: última atividade do invoice ({formatShortDate(it.suggest)}) — ajuste se precisar.</p>}
+                                </div>
+                              )}
                               {it.fix.kind === 'select' && (
                                 <div>
                                   <label className="block mb-1 text-xs font-bold">{it.fix.field.toUpperCase()}</label>
