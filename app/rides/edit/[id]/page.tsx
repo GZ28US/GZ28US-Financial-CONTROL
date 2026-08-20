@@ -67,6 +67,9 @@ export default function EditRidePage() {
   // Milhagem de ENTRADA na GZ28. DELIVERY MILES = < 100 mi = pode exportar
   // (GZ28 EXPORT ou 3RD PARTY EXPORT); >= 100 = usado = não exporta. Lei do 0km.
   const [admissionMileage, setAdmissionMileage] = useState('')
+  // EXPORTED = embarcou, fim do ciclo. Num GZ28 EXPORT o carro sai do nome
+  // da GZ28US e vira ride da GZ28BR; o custo do job sai do WIP do Balanço.
+  const [exported, setExported] = useState(false)
   const [insCompany, setInsCompany] = useState('')
   const [insPolicy, setInsPolicy] = useState('')
   const [insExpiry, setInsExpiry] = useState('')
@@ -115,6 +118,7 @@ export default function EditRidePage() {
     setPhotoUrl(r.photo_url || '')
     setTitleScope(r.title_scope || '')
     setAdmissionMileage(r.admission_mileage != null ? String(r.admission_mileage) : '')
+    setExported(!!r.exported)
     setTitleTransferred(!!r.title_transferred)
     setInsCompany(r.insurance_company || '')
     setInsPolicy(r.insurance_policy || '')
@@ -273,6 +277,7 @@ export default function EditRidePage() {
       insurance_expiry: insuresCar(titleScope) ? (insExpiry || null) : null,
       title_notes: titleNotes || null,
       admission_mileage: admissionMileage !== '' ? (parseFloat(admissionMileage) || 0) : null,
+      exported,
     }).eq('id', rideId)
 
     if (error) { setSaving(false); alert(error.message); return }
@@ -490,6 +495,21 @@ export default function EditRidePage() {
                   : <p className="mt-2 text-emerald-400 font-bold">DELIVERY MILES ✓ — abaixo do teto de 100 mi, pode exportar.</p>
             )}
           </div>
+
+          {(titleScope === 'EXPORT' || titleScope === 'CLIENT') && (
+            <div className="mt-4">
+              <label className="flex items-center gap-3 text-lg font-bold cursor-pointer">
+                <input type="checkbox" checked={exported} onChange={(e) => setExported(e.target.checked)} className="w-6 h-6" />
+                EXPORTED — embarcou, ciclo finalizado
+              </label>
+              {exported && titleScope === 'EXPORT' && (
+                <p className="mt-2 text-sky-300">O carro não está mais no nome da GZ28US — daqui pra frente é ride da GZ28BR. O custo do job sai do WIP do Balanço.</p>
+              )}
+              {exported && titleScope === 'CLIENT' && (
+                <p className="mt-2 text-sky-300">Embarcado pela exportadora terceira — ciclo na GZ28US encerrado.</p>
+              )}
+            </div>
+          )}
 
           {insuresCar(titleScope) && (
             <div className="mt-4 space-y-4">

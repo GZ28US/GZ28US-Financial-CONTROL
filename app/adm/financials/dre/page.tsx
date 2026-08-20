@@ -55,7 +55,7 @@ export default function DrePage() {
       cost += t.cost
       if (!inv.conclusion_date) missingConclusion++
       if (ours) fleetCost += t.cost                                    // frota OWN/TOOL dentro do CPV as-booked
-      else if (inv.live_status !== 'CLOSED') wipOpen += t.cost         // custo de job aberto (vira WIP sob D2)
+      else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) wipOpen += t.cost   // job aberto e carro ainda aqui (EXPORTED = entregue)
     }
     const brutaTotal = parts + flTax + services
     const liquida = brutaTotal - discount - flTax

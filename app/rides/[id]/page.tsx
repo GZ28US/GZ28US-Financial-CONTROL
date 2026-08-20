@@ -27,6 +27,7 @@ type Ride = {
   client_id: string | null
   title_scope: string | null
   admission_mileage: number | null
+  exported: boolean | null
   title_transferred: boolean | null
   insurance_company: string | null
   insurance_policy: string | null
@@ -383,8 +384,11 @@ export default function ViewRidePage() {
             <div className={sectionClass}>
               <div className={rowClass}>
                 <span className={labelClass}>CAR DESTINY</span>
-                <span className={`px-3 py-1 rounded-full text-sm font-bold ${carDestiny(ride.title_scope)?.cls || 'bg-gray-700 text-gray-300'}`}>
-                  {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
+                <span className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${carDestiny(ride.title_scope)?.cls || 'bg-gray-700 text-gray-300'}`}>
+                    {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
+                  </span>
+                  {ride.exported && <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">EXPORTED</span>}
                 </span>
               </div>
               {ride.admission_mileage != null && (

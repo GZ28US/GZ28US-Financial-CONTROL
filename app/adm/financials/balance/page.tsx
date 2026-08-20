@@ -69,7 +69,9 @@ export default function BalancePage() {
       if (scope === 'OWN') fleetOwn += t.cost
       else if (scope === 'TOOL') fleetTool += t.cost
       else if (scope === 'DONOR') donorCost += t.cost
-      else if (inv.live_status !== 'CLOSED') wip += t.cost
+      // Carro EXPORTED embarcou: trabalho entregue, custo não é mais obra
+      // em andamento — fica no CPV as-booked, fora do WIP.
+      else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) wip += t.cost
     }
     // Conta corrente GZ28BR — mesmo algoritmo do GZ-FLOW, condensado:
     // GOT = receita nossa que entrou na conta deles; PAID = conta nossa que eles pagaram.
@@ -251,7 +253,7 @@ export default function BalancePage() {
             : <Row label="Caixa e equivalentes" value={null} chip={<Chip kind="gap" label="G5" />} note="rode MIGRATION_financial_ledgers.sql e lance os saldos em LEDGERS" />}
           <Row label="Contas a receber" value={m.ar} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado − recebido, por invoice" />
           {m.brNet > 0 && <Row label="Conta corrente GZ28BR" value={m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} note="receita nossa na conta deles − contas nossas que eles pagaram" />}
-          <Row label="Obras em andamento (WIP)" value={m.wip} chip={<Chip kind="dec" label="D2/D3" />} note="custo de jobs abertos de clientes — inclui carros EXPORT ainda não separados" />
+          <Row label="Obras em andamento (WIP)" value={m.wip} chip={<Chip kind="dec" label="D2/D3" />} note="custo de jobs abertos de clientes — carro EXPORTED já saiu daqui" />
           <Row label="Estoque de peças" value={m.stockPurch} chip={<Chip kind="ok" label="AO VIVO" />} />
           <Row label="Estoque doado" value={m.stockDon} chip={<Chip kind="dec" label="D6" />} note="valor creditado ao job doador" />
           <Row label="Imobilizado — equipamento" value={m.equip} chip={<Chip kind="dec" label="D8" />} note={`GOODS ≥ $${CAP_FLOOR.toLocaleString()} · sem depreciação ainda (G4)`} />

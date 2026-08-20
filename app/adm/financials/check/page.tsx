@@ -117,6 +117,8 @@ function buildChecks(d: FinData): Check[] {
         else if (mi >= 100)
           flags.push(`${Math.round(mi).toLocaleString('en-US')} mi na entrada — acima do teto de DELIVERY MILES (100 mi), não pode ser ${kindLabel}`)
       }
+      if (r.exported && scope !== 'EXPORT' && scope !== 'CLIENT')
+        flags.push('marcado EXPORTED mas o destino não é de exportação — conferir')
       if (!flags.length) return
       items.push({
         href: '/rides/edit/' + r.id, code: r.project_code || '—',

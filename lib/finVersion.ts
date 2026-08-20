@@ -3,9 +3,10 @@
 // Quando as demonstrações merecerem, troca FIN_STAGE para 'BETA' aqui e o
 // selo muda em todas as telas e relatórios de uma vez.
 export const FIN_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const FIN_VERSION = '0.8.0'
+export const FIN_VERSION = '0.9.0'
 
 export const FIN_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.9.0', date: '2026-08-20', notes: 'Status EXPORTED (MIGRATION_ride_exported.sql): checkbox nos dois tipos de export marcando o embarque — fim do ciclo na GZ28US. Num GZ28 EXPORT o carro sai do nome da LLC (vira ride da GZ28BR). Badge EXPORTED no ride, custo do job sai do WIP do Balanço e da nota da DRE; DESTINY REVIEW acusa EXPORTED em destino que não é de exportação.' },
   { version: '0.8.0', date: '2026-08-20', notes: 'Destinos renomeados: EXPORT vira GZ28 EXPORT e OWNER HANDLES vira 3RD PARTY EXPORT — a frota legada sempre foi exportação por terceiro. DELIVERY MILES vira fato medido: campo ADMISSION MILEAGE no ride (MIGRATION_ride_admission_mileage.sql) substitui o checkbox; entrada < 100 mi pode exportar, >= 100 não pode — regra vale pros DOIS tipos de export no DESTINY REVIEW.' },
   { version: '0.7.0', date: '2026-08-20', notes: 'Nova categoria de destino: DONOR — PART-OUT (carcaça comprada pra virar estoque de peças, casos C7 Burnt e ScatPrisionPack). Balanço ganha a linha Carros doadores; doador não gera A/R nem adiantamento (crédito de peça puxada é normal). DATA CHECK passa a listar TODA ride real sem destino, mesmo sem invoice.' },
   { version: '0.6.3', date: '2026-08-20', notes: 'Selo renomeado: BRAND NEW (0 KM) vira DELIVERY MILES — mesmo campo (rides.is_brand_new), só o nome de cara em edit, detalhe e DESTINY REVIEW.' },
