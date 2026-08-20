@@ -15,6 +15,7 @@ type Invoice = {
   entry_date: string | null
   conclusion_date: string | null
   delivery_date: string | null
+  expected_conclusion_date: string | null
   mileage: number | null
   service: string | null
   florida_taxes: number | null
@@ -984,8 +985,33 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {(isValidDate(invoice.conclusion_date) || isValidDate(invoice.delivery_date)) && (
+          {(isValidDate(invoice.conclusion_date) || isValidDate(invoice.delivery_date) || isValidDate(invoice.expected_conclusion_date)) && (
             <div className={sectionClass}>
+              {isValidDate(invoice.expected_conclusion_date) && (() => {
+                // Régua do prazo: FATO (conclusão, senão entrega) × PREVISÃO.
+                // Sem fato e previsão vencida = EM ATRASO correndo até hoje.
+                const expected = invoice.expected_conclusion_date as string
+                const actual = isValidDate(invoice.conclusion_date) ? invoice.conclusion_date : (isValidDate(invoice.delivery_date) ? invoice.delivery_date : null)
+                const today = new Date().toLocaleDateString('en-CA')
+                const days = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5)
+                let badge = null as { txt: string; cls: string } | null
+                if (actual) {
+                  const dd = days(actual, expected)
+                  badge = dd > 0 ? { txt: `ATRASADA ${dd}d`, cls: 'bg-red-950 text-red-400' }
+                    : dd < 0 ? { txt: `ADIANTADA ${-dd}d`, cls: 'bg-emerald-950 text-emerald-400' }
+                    : { txt: 'NO PRAZO', cls: 'bg-sky-950 text-sky-300' }
+                } else if (today > expected) {
+                  badge = { txt: `EM ATRASO ${days(today, expected)}d`, cls: 'bg-amber-950 text-amber-300' }
+                }
+                return (
+                  <div className={rowClass}>
+                    <span className={labelClass}>EXPECTED CONCLUSION</span>
+                    <span className="font-bold flex items-center gap-2">{formatDate(expected)}
+                      {badge && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${badge.cls}`}>{badge.txt}</span>}
+                    </span>
+                  </div>
+                )
+              })()}
               {isValidDate(invoice.conclusion_date) && <div className={rowClass}><span className={labelClass}>CONCLUSION DATE</span><span className="font-bold">{formatDate(invoice.conclusion_date)}</span></div>}
               {isValidDate(invoice.delivery_date) && <div className={rowClass}><span className={labelClass}>DELIVERY DATE</span><span className="font-bold">{formatDate(invoice.delivery_date)}</span></div>}
             </div>
