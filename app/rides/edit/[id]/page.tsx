@@ -64,6 +64,9 @@ export default function EditRidePage() {
   // CLIENT = an American client's own car, the owner handles the paperwork.
   const [titleScope, setTitleScope] = useState('')
   const [titleTransferred, setTitleTransferred] = useState(false)
+  // Selo 0 KM — declarado, não inferido: 0km chega com 9 mi ou 46 mi, então
+  // milhagem sozinha não decide. EXPORT exige este selo (lei do usado).
+  const [isBrandNew, setIsBrandNew] = useState(false)
   const [insCompany, setInsCompany] = useState('')
   const [insPolicy, setInsPolicy] = useState('')
   const [insExpiry, setInsExpiry] = useState('')
@@ -111,6 +114,7 @@ export default function EditRidePage() {
     setPlateExpiry(r.plate_expiry || '')
     setPhotoUrl(r.photo_url || '')
     setTitleScope(r.title_scope || '')
+    setIsBrandNew(!!r.is_brand_new)
     setTitleTransferred(!!r.title_transferred)
     setInsCompany(r.insurance_company || '')
     setInsPolicy(r.insurance_policy || '')
@@ -268,6 +272,7 @@ export default function EditRidePage() {
       insurance_policy: insuresCar(titleScope) ? (insPolicy || null) : null,
       insurance_expiry: insuresCar(titleScope) ? (insExpiry || null) : null,
       title_notes: titleNotes || null,
+      is_brand_new: isBrandNew,
     }).eq('id', rideId)
 
     if (error) { setSaving(false); alert(error.message); return }
@@ -471,6 +476,11 @@ export default function EditRidePage() {
             <option value="">— Not set —</option>
             {CAR_DESTINY.map(d => <option key={d.value} value={d.value}>{d.option}</option>)}
           </select>
+
+          <label className="flex items-center gap-3 text-lg font-bold cursor-pointer mt-4">
+            <input type="checkbox" checked={isBrandNew} onChange={(e) => setIsBrandNew(e.target.checked)} className="w-6 h-6" />
+            BRAND NEW — 0 KM {titleScope === 'EXPORT' && <span className="text-sm text-amber-300 font-normal">(obrigatório pra EXPORT — usado não entra no Brasil)</span>}
+          </label>
 
           {insuresCar(titleScope) && (
             <div className="mt-4 space-y-4">

@@ -109,9 +109,16 @@ function buildChecks(d: FinData): Check[] {
       // Lei brasileira (Márcio, 20/ago): SÓ CARRO 0KM pode ser exportado ao
       // Brasil. Cliente brasileiro com residência nos EUA mantendo carro usado
       // aqui é NORMAL (caso Badillac/Nivaldo) — por isso BR+USA/CLIENT não é
-      // flag. A contradição real é a inversa: EXPORT num carro USADO.
-      if (scope === 'EXPORT' && minMiles !== Infinity && minMiles > 1000)
-        flags.push(`carro USADO (${Math.round(minMiles).toLocaleString('en-US')} mi na entrada) marcado EXPORT — só 0km exporta pro Brasil`)
+      // flag. A prova de 0km é o selo DECLARADO no ride (milhagem sozinha não
+      // decide: 0km chega com 9 ou 46 mi); o teto de 100 mi confere o selo.
+      if (scope === 'EXPORT') {
+        if (r.is_brand_new === false)
+          flags.push('declarado USADO e marcado EXPORT — usado não entra no Brasil')
+        else if (r.is_brand_new == null)
+          flags.push('EXPORT sem o selo 0 KM — marque BRAND NEW no ride pra confirmar')
+        if (minMiles !== Infinity && minMiles > 100)
+          flags.push(`milhagem de entrada ${Math.round(minMiles).toLocaleString('en-US')} mi acima do teto de exportação (100 mi)${r.is_brand_new ? ' — apesar do selo 0 KM, confira' : ''}`)
+      }
       if (!flags.length) return
       items.push({
         href: '/rides/edit/' + r.id, code: r.project_code || '—',

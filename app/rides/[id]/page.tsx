@@ -26,6 +26,7 @@ type Ride = {
   photo_url: string | null
   client_id: string | null
   title_scope: string | null
+  is_brand_new: boolean | null
   title_transferred: boolean | null
   insurance_company: string | null
   insurance_policy: string | null
