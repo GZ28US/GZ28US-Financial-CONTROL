@@ -37,15 +37,15 @@ export default function FinancialsHub() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <div className="flex items-baseline gap-4 flex-wrap mb-1"><h1 className="text-4xl font-bold">FINANCIAL</h1><FinBadge /></div>
-      <p className="text-gray-400 mb-8 max-w-3xl">As demonstrações da GZ28 V8 SpeedShop USA LLC, direto do banco de dados — as três telas leem o mesmo dataset para os números baterem entre si. Os números melhoram na medida em que os dados entram — datas de conclusão, destino dos carros, contas a pagar de verdade — e a integração bancária (Plaid, já esboçada em ADM → BANK) fecha o ciclo na Fase 2.</p>
+      <p className="text-gray-400 mb-8 max-w-3xl">As demonstrações da GZ28 V8 SpeedShop USA LLC, direto do banco de dados — todas as telas leem o mesmo dataset para os números baterem entre si. Os números melhoram na medida em que os dados entram — datas de conclusão, destino dos carros, contas a pagar de verdade — e a integração bancária (Plaid, já esboçada em ADM → BANK) fecha o ciclo na Fase 2.</p>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 max-w-6xl">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl">
         {CARDS.map(c => (
           <a key={c.href} href={`${BASE_PATH}${c.href}`}
             className="bg-gray-900 border border-gray-700 rounded-3xl p-6 hover:bg-gray-800 hover:border-gray-500 transition-colors flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-3xl font-bold">{c.title}</span>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${c.statusCls}`}>{c.status}</span>
+              <span className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap shrink-0 ${c.statusCls}`}>{c.status}</span>
             </div>
             <p className="text-lg font-bold text-gray-300">{c.sub}</p>
             <p className="text-sm text-gray-400">{c.desc}</p>
@@ -54,7 +54,7 @@ export default function FinancialsHub() {
       </div>
 
       {/* Changelog — cada patch bumpa lib/finVersion e ganha uma linha aqui. */}
-      <div className="mt-10 max-w-3xl">
+      <div className="mt-10 max-w-5xl">
         <h2 className="text-xl font-bold mb-3 text-gray-300">CHANGELOG</h2>
         <div className="border border-gray-800 rounded-2xl divide-y divide-gray-800">
           {FIN_CHANGELOG.map(c => (
