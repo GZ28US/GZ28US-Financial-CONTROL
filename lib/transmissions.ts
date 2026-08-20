@@ -31,7 +31,12 @@ export function transmissionOptionsFor(
   }
   if (b === 'DODGE' && m === 'DURANGO' && has('HELLCAT')) return ['ZF8HP95 (Auto8)']
   if (b === 'DODGE' && m === 'MAGNUM') return ['NAG1 W5A580 (Auto5)']
-  if (b === 'DODGE' && m === 'VIPER' && y <= 2002) return ['T56 (Manual6)']
+  if (b === 'DODGE' && m === 'VIPER') {
+    // Gen 5 (2013-17): TR6060 6-speed manual, the only transmission ever offered.
+    if (y >= 2013 && y <= 2017) return ['TR6060 (Manual6)']
+    if (y <= 2002) return ['T56 (Manual6)']
+    return []
+  }
   if (b === 'RAM' || (b === 'DODGE' && m === 'RAM')) {
     // TRX (2021-2024 e o TRX SRT 2027, 6.2 SC) runs the heavy-duty ZF 8HP95 — auto only.
     if (has('TRX')) return ['ZF8HP95 (Auto8)']

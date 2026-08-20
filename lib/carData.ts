@@ -65,9 +65,9 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
     1992: ['VIPER'], 1993: ['VIPER'], 1994: ['VIPER'], 1995: ['VIPER'],
     2006: ['CHARGER'], 2007: ['CHARGER'],
     2008: ['CHALLENGER', 'CHARGER'], 2009: ['CHALLENGER', 'CHARGER'], 2010: ['CHALLENGER', 'CHARGER'],
-    2011: ['CHALLENGER', 'CHARGER'], 2012: ['CHALLENGER', 'CHARGER'], 2013: ['CHALLENGER', 'CHARGER'],
-    2014: ['CHALLENGER', 'CHARGER'], 2015: ['CHALLENGER', 'CHARGER'], 2016: ['CHALLENGER', 'CHARGER'],
-    2017: ['CHALLENGER', 'CHARGER'],
+    2011: ['CHALLENGER', 'CHARGER'], 2012: ['CHALLENGER', 'CHARGER'], 2013: ['CHALLENGER', 'CHARGER', 'VIPER'],
+    2014: ['CHALLENGER', 'CHARGER', 'VIPER'], 2015: ['CHALLENGER', 'CHARGER', 'VIPER'], 2016: ['CHALLENGER', 'CHARGER', 'VIPER'],
+    2017: ['CHALLENGER', 'CHARGER', 'VIPER'],
     2018: ['CHALLENGER', 'CHARGER'],
     2019: ['CHALLENGER', 'CHARGER'],
     2020: ['CHALLENGER', 'CHARGER'],
@@ -136,6 +136,15 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
   },
   VIPER: {
     1992: ['RT/10 8.0 V10'], 1993: ['RT/10 8.0 V10'], 1994: ['RT/10 8.0 V10'], 1995: ['RT/10 8.0 V10'],
+    // Gen 5 (VX I): 640 hp in 2013-14 (sold as SRT Viper), 645 hp from 2015 (Dodge
+    // Viper). GT and the GTC 1-of-1 program arrive 2015; TA is a standalone limited
+    // model only in 2014 (1.0) and 2015 (2.0), then a GTC order package; ACR returns
+    // 2016 (Extreme Aero = equipment package, not an edition); 2017 drops the GT.
+    2013: ['SRT 8.4 V10', 'GTS 8.4 V10'],
+    2014: ['SRT 8.4 V10', 'TA 8.4 V10', 'GTS 8.4 V10'],
+    2015: ['SRT 8.4 V10', 'GT 8.4 V10', 'GTC 8.4 V10', 'GTS 8.4 V10', 'TA 8.4 V10'],
+    2016: ['SRT 8.4 V10', 'GT 8.4 V10', 'GTC 8.4 V10', 'GTS 8.4 V10', 'ACR 8.4 V10'],
+    2017: ['SRT 8.4 V10', 'GTC 8.4 V10', 'GTS 8.4 V10', 'ACR 8.4 V10'],
   },
   CHALLENGER: {
     // LC generation (2008-2014): 6.1 HEMI SRT8 (2008-2010), 6.4 HEMI SRT8/392 (2011-2014).
@@ -275,6 +284,29 @@ export const specialEditions: Record<string, string[]> = {
   '2024-CAMARO-SS 6.2': ['None', 'Panther Collector Edition'],
   '2024-CAMARO-ZL1 6.2': ['None', 'Panther Collector Edition'],
   // Ram 1500 TRX special editions (Level 1/Level 2 are equipment groups, NOT editions).
+  // Viper Gen 5 — factory serialized editions (verified 20/aug/2026): Launch Edition
+  // 150 ('13), Anodized Carbon 50 ('14), Ceramic Blue 40 ('15), and the 2017
+  // farewells: 1:28 (28), VoooDoo II (31), GTS-R Commemorative (100), Snakeskin
+  // (25 GTC + ACR batch), Dealer Edition (Tomball/Roanoke, 22 sold).
+  '2013-VIPER-SRT 8.4 V10': ['None'],
+  '2013-VIPER-GTS 8.4 V10': ['None', 'Launch Edition'],
+  '2014-VIPER-SRT 8.4 V10': ['None'],
+  '2014-VIPER-TA 8.4 V10': ['None'],
+  '2014-VIPER-GTS 8.4 V10': ['None', 'Anodized Carbon'],
+  '2015-VIPER-SRT 8.4 V10': ['None'],
+  '2015-VIPER-GT 8.4 V10': ['None'],
+  '2015-VIPER-GTC 8.4 V10': ['None'],
+  '2015-VIPER-GTS 8.4 V10': ['None', 'Ceramic Blue Edition'],
+  '2015-VIPER-TA 8.4 V10': ['None'],
+  '2016-VIPER-SRT 8.4 V10': ['None'],
+  '2016-VIPER-GT 8.4 V10': ['None'],
+  '2016-VIPER-GTC 8.4 V10': ['None'],
+  '2016-VIPER-GTS 8.4 V10': ['None'],
+  '2016-VIPER-ACR 8.4 V10': ['None'],
+  '2017-VIPER-SRT 8.4 V10': ['None'],
+  '2017-VIPER-GTC 8.4 V10': ['None', 'Snakeskin Edition'],
+  '2017-VIPER-GTS 8.4 V10': ['None'],
+  '2017-VIPER-ACR 8.4 V10': ['None', '1:28 Edition', 'VoooDoo II Edition', 'GTS-R Commemorative Edition', 'Snakeskin Edition', 'Dodge Dealer Edition'],
   '2021-1500-TRX 6.2 SC': ['None', 'Launch Edition'],
   '2022-1500-TRX 6.2 SC': ['None', 'Ignition Edition', 'Sandblast Edition'],
   '2023-1500-TRX 6.2 SC': ['None', 'Havoc Edition', 'Lunar Edition'],
@@ -1247,6 +1279,12 @@ const viperColorsByYear: Record<number, string[]> = {
   1993: ['Red', 'Black', 'White'],
   1994: ['Red', 'Black', 'White', 'Emerald Green', 'Dandelion Yellow'],
   1995: ['Red', 'Black', 'White', 'Emerald Green', 'Dandelion Yellow'],
+  // Gen 5 catalog palettes (GTC's 1-of-1 bespoke program colors are NOT catalog).
+  2013: ['Adrenaline Red', 'Venom Black', 'Bright White', 'Race Yellow', 'Gunmetal Pearl', 'Shadow Blue Pearl', 'GTS Blue Pearl', 'Stryker Red Tri-Coat Pearl'],
+  2014: ['Adrenaline Red', 'Venom Black', 'Bright White', 'Race Yellow', 'Gunmetal Pearl', 'Billet Silver Metallic', 'GTS-R Blue Pearl', 'Competition Blue Pearl', 'Stryker Green Tri-Coat Pearl', 'Stryker Red Tri-Coat Pearl', 'TA Orange'],
+  2015: ['Adrenaline Red', 'Venom Black', 'Bright White', 'Billet Silver Metallic', 'Gunmetal Pearl', 'GTS-R Blue Pearl', 'Competition Blue Pearl', "Y'Orange", 'Stryker Orange', 'Stryker Purple', 'Stryker Green', 'Ceramic Blue', 'Anodized Carbon Matte'],
+  2016: ['Adrenaline Red', 'Billet Silver Metallic', 'Venom Black', 'Bright White', 'Ceramic Blue', 'Competition Blue', 'GTS-R Blue', 'Gunmetal Pearl', 'Stryker Orange', 'Stryker Purple', "Y'Orange"],
+  2017: ['Adrenaline Red', 'Venom Black', 'Viper White', 'Billet Silver Metallic', 'Gunmetal Pearl', 'GTS-R Blue Pearl', 'Competition Blue', "Y'Orange", 'Stryker Orange Tri-Coat Pearl', 'Stryker Purple Tri-Coat Pearl', 'Stryker Green Tri-Coat Pearl', 'Ceramic Blue', 'Anodized Carbon Matte'],
 }
 
 const classicChargerColorsByYear: Record<number, string[]> = {
@@ -1415,6 +1453,18 @@ const trxColorsByYear: Record<number, string[]> = {
 
 const colorsByConfiguration: Record<string, string[]> = {
   // Ram 1500 TRX edition-exclusive (forced) colors.
+  // Viper Gen 5 — edition-forced colors + the TA limited palettes.
+  '2013-VIPER-GTS 8.4 V10-Launch Edition': ['GTS Blue Pearl'],
+  '2014-VIPER-GTS 8.4 V10-Anodized Carbon': ['Anodized Carbon Matte'],
+  '2014-VIPER-TA 8.4 V10-None': ['TA Orange', 'Venom Black', 'Bright White'],
+  '2015-VIPER-GTS 8.4 V10-Ceramic Blue Edition': ['Ceramic Blue'],
+  '2015-VIPER-TA 8.4 V10-None': ['Competition Blue Pearl', "Y'Orange", 'Venom Black'],
+  '2017-VIPER-ACR 8.4 V10-1:28 Edition': ['Venom Black'],
+  '2017-VIPER-ACR 8.4 V10-VoooDoo II Edition': ['Venom Black'],
+  '2017-VIPER-ACR 8.4 V10-GTS-R Commemorative Edition': ['Pearl White'],
+  '2017-VIPER-ACR 8.4 V10-Snakeskin Edition': ['Snakeskin Green'],
+  '2017-VIPER-GTC 8.4 V10-Snakeskin Edition': ['Snakeskin Green'],
+  '2017-VIPER-ACR 8.4 V10-Dodge Dealer Edition': ['Viper White'],
   '2021-1500-TRX 6.2 SC-Launch Edition': ['Anvil'],
   '2022-1500-TRX 6.2 SC-Ignition Edition': ['Ignition Orange'],
   '2022-1500-TRX 6.2 SC-Sandblast Edition': ['Mojave Sand'],
