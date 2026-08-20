@@ -26,7 +26,7 @@ type Ride = {
   photo_url: string | null
   client_id: string | null
   title_scope: string | null
-  is_brand_new: boolean | null
+  admission_mileage: number | null
   title_transferred: boolean | null
   insurance_company: string | null
   insurance_policy: string | null
@@ -387,10 +387,13 @@ export default function ViewRidePage() {
                   {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
                 </span>
               </div>
-              {ride.is_brand_new != null && (
+              {ride.admission_mileage != null && (
                 <div className={rowClass}>
-                  <span className={labelClass}>CONDITION</span>
-                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride.is_brand_new ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-700 text-gray-300'}`}>{ride.is_brand_new ? 'DELIVERY MILES' : 'USED'}</span>
+                  <span className={labelClass}>ADMISSION MILEAGE</span>
+                  <span className="font-bold flex items-center gap-2">
+                    {Number(ride.admission_mileage).toLocaleString('en-US')} mi
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${Number(ride.admission_mileage) < 100 ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-700 text-gray-300'}`}>{Number(ride.admission_mileage) < 100 ? 'DELIVERY MILES' : 'USED'}</span>
+                  </span>
                 </div>
               )}
               {ride.title_scope !== 'CLIENT' && ride.title_scope !== 'USA' && (

@@ -82,7 +82,7 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin, client_id, is_brand_new'),
+    fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin, client_id, admission_mileage'),
     fetchAll('clients', 'id, name, country'),
   ])
   const [capitalEvents, financingRows, financingEvents, cashBalances, dataFixes] = await Promise.all([

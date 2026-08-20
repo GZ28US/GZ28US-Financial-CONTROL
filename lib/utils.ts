@@ -241,9 +241,13 @@ export function flowClientLabel(name: string | null | undefined): string {
 // title — while the docs flag is what drives the plate and insurance watches.
 //
 //   USA     American client's own car — never in our name, we only work on it
-//   EXPORT  client's car, in OUR name until it ships to Brazil. The ONLY case
-//           where the LLC holds title to a car that isn't ours.
-//   CLIENT  legacy twin of USA (owner handles docs) — same treatment
+//   EXPORT  GZ28 EXPORT — client's car, in OUR name until WE ship it to
+//           Brazil. The ONLY case where the LLC holds title to a car that
+//           isn't ours.
+//   CLIENT  3RD PARTY EXPORT — an outside exporter ships the car; title and
+//           docs are theirs. (Legacy fleet: Sidney Penna era.)
+//   Export law: BOTH export kinds require DELIVERY MILES — admission_mileage
+//   under 100 mi. A used car cannot legally enter Brazil.
 //   OWN     ours — the showcase & marketing fleet (Devil170, GENEZIZ, HellBull)
 //   TOOL    ours — a vehicle or rig that works for the shop (RAMbo, the trailer)
 //   DONOR   bought to PART-OUT (C7 Burnt, ScatPrisionPack) — a carcass that
@@ -256,10 +260,10 @@ export function flowClientLabel(name: string | null | undefined): string {
 export const CAR_DESTINY = [
   { value: 'USA',    badge: 'USA CLIENT',   cls: 'bg-blue-900 text-blue-300',
     option: "USA CLIENT — American client's own car; never in our name, we only work on it" },
-  { value: 'EXPORT', badge: 'EXPORT',       cls: 'bg-purple-900 text-purple-300',
-    option: "EXPORT — client's car, in GZ28US' name until it ships to Brazil" },
-  { value: 'CLIENT', badge: 'OWNER HANDLES', cls: 'bg-gray-700 text-gray-300',
-    option: 'OWNER HANDLES — the client takes care of their own docs' },
+  { value: 'EXPORT', badge: 'GZ28 EXPORT',  cls: 'bg-purple-900 text-purple-300',
+    option: "GZ28 EXPORT — client's car, in GZ28US' name until WE ship it to Brazil" },
+  { value: 'CLIENT', badge: '3RD PARTY EXPORT', cls: 'bg-fuchsia-900 text-fuchsia-300',
+    option: '3RD PARTY EXPORT — an outside exporter ships the car; their docs, their freight' },
   { value: 'OWN',    badge: 'GZ28US OWN',   cls: 'bg-amber-900 text-amber-300',
     option: 'GZ28US OWN — our showcase & marketing fleet (an asset, not a job)' },
   { value: 'TOOL',   badge: 'GZ28US TOOL',  cls: 'bg-emerald-900 text-emerald-300',

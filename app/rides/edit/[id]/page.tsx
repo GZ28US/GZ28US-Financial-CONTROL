@@ -64,9 +64,9 @@ export default function EditRidePage() {
   // CLIENT = an American client's own car, the owner handles the paperwork.
   const [titleScope, setTitleScope] = useState('')
   const [titleTransferred, setTitleTransferred] = useState(false)
-  // Selo 0 KM — declarado, não inferido: 0km chega com 9 mi ou 46 mi, então
-  // milhagem sozinha não decide. EXPORT exige este selo (lei do usado).
-  const [isBrandNew, setIsBrandNew] = useState(false)
+  // Milhagem de ENTRADA na GZ28. DELIVERY MILES = < 100 mi = pode exportar
+  // (GZ28 EXPORT ou 3RD PARTY EXPORT); >= 100 = usado = não exporta. Lei do 0km.
+  const [admissionMileage, setAdmissionMileage] = useState('')
   const [insCompany, setInsCompany] = useState('')
   const [insPolicy, setInsPolicy] = useState('')
   const [insExpiry, setInsExpiry] = useState('')
@@ -114,7 +114,7 @@ export default function EditRidePage() {
     setPlateExpiry(r.plate_expiry || '')
     setPhotoUrl(r.photo_url || '')
     setTitleScope(r.title_scope || '')
-    setIsBrandNew(!!r.is_brand_new)
+    setAdmissionMileage(r.admission_mileage != null ? String(r.admission_mileage) : '')
     setTitleTransferred(!!r.title_transferred)
     setInsCompany(r.insurance_company || '')
     setInsPolicy(r.insurance_policy || '')
@@ -272,7 +272,7 @@ export default function EditRidePage() {
       insurance_policy: insuresCar(titleScope) ? (insPolicy || null) : null,
       insurance_expiry: insuresCar(titleScope) ? (insExpiry || null) : null,
       title_notes: titleNotes || null,
-      is_brand_new: isBrandNew,
+      admission_mileage: admissionMileage !== '' ? (parseFloat(admissionMileage) || 0) : null,
     }).eq('id', rideId)
 
     if (error) { setSaving(false); alert(error.message); return }
@@ -477,10 +477,19 @@ export default function EditRidePage() {
             {CAR_DESTINY.map(d => <option key={d.value} value={d.value}>{d.option}</option>)}
           </select>
 
-          <label className="flex items-center gap-3 text-lg font-bold cursor-pointer mt-4">
-            <input type="checkbox" checked={isBrandNew} onChange={(e) => setIsBrandNew(e.target.checked)} className="w-6 h-6" />
-            DELIVERY MILES — carro 0 km {titleScope === 'EXPORT' && <span className="text-sm text-amber-300 font-normal">(obrigatório pra EXPORT — usado não entra no Brasil)</span>}
-          </label>
+          <div className="mt-4">
+            <label className="block mb-2 text-lg font-bold">ADMISSION MILEAGE (mi)</label>
+            <input type="text" inputMode="decimal" value={admissionMileage}
+              onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setAdmissionMileage(e.target.value) }}
+              className={inputClass} placeholder="Milhagem na entrada da GZ28" />
+            {(titleScope === 'EXPORT' || titleScope === 'CLIENT') && (
+              parseFloat(admissionMileage) >= 100
+                ? <p className="mt-2 text-red-400 font-bold">≥ 100 mi — carro usado NÃO pode ser exportado (nem por nós, nem por terceiro).</p>
+                : admissionMileage === ''
+                  ? <p className="mt-2 text-amber-300">Exportação exige DELIVERY MILES: entrada com menos de 100 mi.</p>
+                  : <p className="mt-2 text-emerald-400 font-bold">DELIVERY MILES ✓ — abaixo do teto de 100 mi, pode exportar.</p>
+            )}
+          </div>
 
           {insuresCar(titleScope) && (
             <div className="mt-4 space-y-4">
@@ -517,8 +526,11 @@ export default function EditRidePage() {
             </div>
           )}
 
-          {(titleScope === 'CLIENT' || titleScope === 'USA') && (
+          {titleScope === 'USA' && (
             <p className="mt-3 text-gray-400">The client's own car — title, registration and insurance are theirs, nothing tracked here.</p>
+          )}
+          {titleScope === 'CLIENT' && (
+            <p className="mt-3 text-gray-400">3rd party export — an outside exporter ships the car; title, docs and freight are theirs. Nothing tracked here besides the admission mileage.</p>
           )}
 
           <div className="mt-4">

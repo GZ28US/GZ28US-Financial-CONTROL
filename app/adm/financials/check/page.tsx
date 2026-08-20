@@ -90,35 +90,32 @@ function buildChecks(d: FinData): Check[] {
       const scope = r.title_scope
       if (!scope || scope === 'DEALER' || r.is_quote || r.origin === 'SHOP') return
       const invs = byRide.get(r.id) || []
-      let billed = 0, received = 0, carBuy = 0, minMiles = Infinity
+      let billed = 0, received = 0, carBuy = 0
       for (const inv of invs) {
         const t = invoiceTotals(d, inv)
         billed += t.grand; received += t.received
         carBuy += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && expLine(e) >= 15000 && CAR_RX.test(e.item || ''))
           .reduce((s: number, e: any) => s + expLine(e), 0)
-        const mi = parseFloat(inv.mileage)
-        if (mi > 0 && mi < minMiles) minMiles = mi
       }
       const client = r.client_id ? d.clients.get(r.client_id) : null
       const flags: string[] = []
       if ((scope === 'OWN' || scope === 'TOOL') && (billed > 0.005 || received > 0.005))
         flags.push(`carro NOSSO com faturamento de cliente (${usd(billed)} faturado, ${usd(received)} recebido)`)
-      if ((scope === 'USA' || scope === 'CLIENT') && carBuy > 0)
-        flags.push(`a LLC comprou o carro (${usd(carBuy)}) num carro marcado como "do cliente" — devia ser EXPORT ou OWN?`)
+      if (scope === 'USA' && carBuy > 0)
+        flags.push(`a LLC comprou o carro (${usd(carBuy)}) num carro de cliente americano — devia ser GZ28 EXPORT ou OWN?`)
       if (scope === 'EXPORT' && client?.country === 'USA')
-        flags.push('EXPORT com cliente dos EUA — vai exportar mesmo?')
-      // Lei brasileira (Márcio, 20/ago): SÓ CARRO 0KM pode ser exportado ao
-      // Brasil. Cliente brasileiro com residência nos EUA mantendo carro usado
-      // aqui é NORMAL (caso Badillac/Nivaldo) — por isso BR+USA/CLIENT não é
-      // flag. A prova de 0km é o selo DECLARADO no ride (milhagem sozinha não
-      // decide: 0km chega com 9 ou 46 mi); o teto de 100 mi confere o selo.
-      if (scope === 'EXPORT') {
-        if (r.is_brand_new === false)
-          flags.push('declarado USADO e marcado EXPORT — usado não entra no Brasil')
-        else if (r.is_brand_new == null)
-          flags.push('EXPORT sem o selo DELIVERY MILES — marque no ride pra confirmar')
-        if (minMiles !== Infinity && minMiles > 100)
-          flags.push(`milhagem de entrada ${Math.round(minMiles).toLocaleString('en-US')} mi acima do teto de exportação (100 mi)${r.is_brand_new ? ' — apesar do selo DELIVERY MILES, confira' : ''}`)
+        flags.push('GZ28 EXPORT com cliente dos EUA — vai exportar mesmo?')
+      // Lei do 0km (Márcio, 20/ago): SÓ carro com DELIVERY MILES — entrada
+      // abaixo de 100 mi (admission_mileage) — pode ser exportado ao Brasil,
+      // por nós (GZ28 EXPORT) ou por terceiro (3RD PARTY EXPORT). Cliente
+      // brasileiro com carro usado nos EUA é normal (residência).
+      if (scope === 'EXPORT' || scope === 'CLIENT') {
+        const kindLabel = scope === 'EXPORT' ? 'GZ28 EXPORT' : '3RD PARTY EXPORT'
+        const mi = r.admission_mileage == null ? null : parseFloat(r.admission_mileage)
+        if (mi == null || isNaN(mi))
+          flags.push(kindLabel + ' sem ADMISSION MILEAGE — lance a milhagem de entrada no ride pra validar a exportação')
+        else if (mi >= 100)
+          flags.push(`${Math.round(mi).toLocaleString('en-US')} mi na entrada — acima do teto de DELIVERY MILES (100 mi), não pode ser ${kindLabel}`)
       }
       if (!flags.length) return
       items.push({
@@ -129,7 +126,7 @@ function buildChecks(d: FinData): Check[] {
     })
     checks.push({
       key: 'destiny-review', title: 'DESTINY REVIEW — destinos contraditórios', blocks: 'Balanço · DRE (a classificação inteira)',
-      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA/CLIENT a LLC nunca comprou; EXPORT só existe em carro 0km (usado não entra no Brasil); DONOR pode ter crédito de peça puxada, isso é normal. Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
+      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA a LLC nunca comprou; exportação (GZ28 ou 3RD PARTY) exige ADMISSION MILEAGE abaixo de 100 mi — DELIVERY MILES; DONOR pode ter crédito de peça puxada, isso é normal. Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
       items,
     })
   }
