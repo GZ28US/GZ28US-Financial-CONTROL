@@ -3007,6 +3007,18 @@ export default function EditInvoicePage() {
                 // so the button can never dead-end at ONLINE.
                 if (!noPendingBalance) { alert('CLOSED requires no PENDING BALANCE owed — skipped to INCOMPLETE.'); setLiveStatus('INCOMPLETE'); return }
                 if (!allIncomesDated) { alert('CLOSED requires every income to have a date — skipped to INCOMPLETE.'); setLiveStatus('INCOMPLETE'); return }
+                // CLOSED = nunca mais muda — então a data de conclusão TEM que
+                // existir (é ela que diz o mês do resultado na DRE). Job em
+                // andamento não tem data mesmo; ela nasce aqui, no fechamento.
+                if (!isValidDate(conclusionDate)) {
+                  const today = new Date().toLocaleDateString('en-CA')
+                  if (confirm('CLOSED requires a CONCLUSION DATE (the day work finished). Use TODAY (' + today + ')? Cancel to set the real date first.')) {
+                    setConclusionDate(today); setLiveStatus('CLOSED')
+                  } else {
+                    alert('Set the CONCLUSION DATE, then close — skipped to INCOMPLETE.'); setLiveStatus('INCOMPLETE')
+                  }
+                  return
+                }
                 setLiveStatus('CLOSED'); return
               }
               setLiveStatus('INCOMPLETE')

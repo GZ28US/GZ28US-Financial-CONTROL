@@ -44,20 +44,21 @@ function buildChecks(d: FinData): Check[] {
 
   // 1 · Invoices sem data de conclusão (G1) — CLOSED primeiro, que é o pior caso.
   {
+    // Só FECHADA sem data é problema: job em andamento não tem conclusion
+    // date MESMO — a data nasce no fechamento (e o fechamento agora exige ela).
     const items = d.invoices
-      .filter((i: any) => !i.conclusion_date)
-      .sort((a: any, b: any) => (a.live_status === 'CLOSED' ? -1 : 1) - (b.live_status === 'CLOSED' ? -1 : 1))
+      .filter((i: any) => i.live_status === 'CLOSED' && !i.conclusion_date)
       .map((i: any) => {
         const m = invoiceMeta(d, i.id)
         return {
           href: m.href, code: m.code, label: m.car || '—',
-          extra: i.live_status + (i.live_status === 'CLOSED' ? ' — fechada sem data!' : ''),
+          extra: 'fechada sem data de conclusão',
           fix: { kind: 'date' as const, table: 'invoices', rowId: i.id, field: 'conclusion_date' },
         }
       })
     checks.push({
-      key: 'conclusion', title: 'Invoices sem CONCLUSION DATE', blocks: 'DRE por período (G1)',
-      why: 'Sem data de conclusão não existe o mês do resultado — a DRE fica presa no acumulado. As CLOSED são as urgentes: já acabaram e não dizem quando.',
+      key: 'conclusion', title: 'Invoices FECHADAS sem CONCLUSION DATE', blocks: 'DRE por período (G1)',
+      why: 'CLOSED = nunca mais muda — então a data em que o trabalho terminou tem que existir (é ela que diz o mês do resultado). Job em andamento não aparece aqui: a data dele nasce no fechamento, que agora exige ela.',
       items,
     })
   }

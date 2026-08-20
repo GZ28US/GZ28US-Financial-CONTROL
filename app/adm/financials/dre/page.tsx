@@ -53,7 +53,7 @@ export default function DrePage() {
       // invoice nossa é display, não receita. Só o custo entra (as-booked).
       if (!ours) { parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount }
       cost += t.cost
-      if (!inv.conclusion_date) missingConclusion++
+      if (inv.live_status === 'CLOSED' && !inv.conclusion_date) missingConclusion++
       if (ours) fleetCost += t.cost                                    // frota OWN/TOOL dentro do CPV as-booked
       else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) wipOpen += t.cost   // job aberto e carro ainda aqui (EXPORTED = entregue)
     }
@@ -125,7 +125,7 @@ export default function DrePage() {
       notes: [
         `As-booked: ${usd(m.wipOpen)} de custo de jobs ABERTOS pesa no resultado — sob a decisão D2 (reconhecimento na entrega) migra para o Balanço como WIP.`,
         `O CPV inclui ${usd(m.fleetCost)} da frota própria (rides OWN/TOOL) — sai do custo quando D2/D3 fecharem.`,
-        `${m.missingConclusion} de ${m.nInvoices} invoices sem conclusion_date (G1) — por isso o relatório é acumulado, sem colunas por período.`,
+        `${m.missingConclusion} invoices FECHADAS sem conclusion_date (G1) — por isso o relatório é acumulado, sem colunas por período. Job em andamento não precisa de data (WIP sob D2).`,
         'Margem deprimida porque o valor bruto dos carros de clientes passa pela receita e pelo custo (tratamento agência pendente — D2/D3).',
       ],
     })
@@ -201,7 +201,7 @@ export default function DrePage() {
       <div className="max-w-2xl">
         <div className="bg-amber-950/60 border border-amber-800 rounded-2xl p-4 mb-6 text-sm text-amber-200 space-y-1">
           <p className="font-bold">POR QUE AINDA NÃO TEM COLUNA POR MÊS (G1)</p>
-          <p>{m.missingConclusion} de {m.nInvoices} invoices sem conclusion_date — sem a data de conclusão não existe o mês do resultado. Preenchendo as datas, esta tela ganha colunas por período.</p>
+          <p>{m.missingConclusion} invoices FECHADAS sem conclusion_date — sem a data não existe o mês do resultado delas. Job em andamento não precisa de data (é WIP sob D2); o fechamento agora exige a data, então esse número só desce. Zerando, esta tela ganha colunas por período.</p>
           <p className="pt-1">E o custo de jobs ABERTOS ({usd(m.wipOpen)}) ainda pesa aqui como despesa — sob a decisão D2 (reconhecer na entrega) ele migra pro Balanço como WIP e este resultado sobe.</p>
         </div>
 
