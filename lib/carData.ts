@@ -1400,9 +1400,9 @@ const trxColorsByYear: Record<number, string[]> = {
   2022: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
   2023: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
   2024: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic', 'Delmonico Red Pearl', 'Night Edge Blue', 'Harvest Sunrise'],
-  // 2027 TRX SRT (launch palette; Hydro Blue, Flame Red and Goldilocks land later
-  // in the model year) — best-effort from the order-bank announcement.
-  2027: ['Bright White', 'Diamond Black Crystal Pearl', 'Granite Crystal Metallic', 'Silver Zynith', 'Ceramic Grey', 'Spitfire Orange', 'Hydro Blue Pearl', 'Flame Red', 'Goldilocks'],
+  // 2027 TRX SRT — the 8 announced colors (order-bank article + owner-forum paint
+  // codes: PW7/PXJ/PSE/PCG/PR6/PG9/PF2); Goldilocks is late availability.
+  2027: ['Bright White', 'Diamond Black', 'Silver Zynith', 'Forged Blue', 'Molten Red', 'Serrano Green', 'Spitfire Orange', 'Goldilocks'],
 }
 
 const colorsByConfiguration: Record<string, string[]> = {
