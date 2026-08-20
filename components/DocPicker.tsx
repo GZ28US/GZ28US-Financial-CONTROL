@@ -9,11 +9,12 @@ import { clientCode } from '@/lib/utils'
 // client's RIDES, then jump to that ride's invoice/quote creation page.
 //   type='invoice' -> project clients & project rides, creates an invoice
 //   type='quote'   -> any client & any of their rides, creates a quote (?mode=quote)
-export default function DocPicker({ type, onClose, duplicateFrom, origin }: { type: 'invoice' | 'quote'; onClose: () => void; duplicateFrom?: string; origin?: 'SHOP' }) {
+// initialClientId pre-selects the client (the rides list arrives filtered by ?client=).
+export default function DocPicker({ type, onClose, duplicateFrom, origin, initialClientId }: { type: 'invoice' | 'quote'; onClose: () => void; duplicateFrom?: string; origin?: 'SHOP'; initialClientId?: string }) {
   const router = useRouter()
   const [clients, setClients] = useState<any[]>([])
   const [rides, setRides] = useState<any[]>([])
-  const [clientId, setClientId] = useState('')
+  const [clientId, setClientId] = useState(initialClientId || '')
   const [rideId, setRideId] = useState('')
 
   useEffect(() => {

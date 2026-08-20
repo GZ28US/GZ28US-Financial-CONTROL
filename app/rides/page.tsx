@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 
 type Ride = {
@@ -57,6 +58,7 @@ export default function RidesPage() {
   const [liveFilter, setLiveFilter] = useState<'ALL' | 'INCOMPLETE' | 'REALTIME' | 'CLOSED'>('ALL')
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
   const [search, setSearch] = useState('')
+  const [quotePicker, setQuotePicker] = useState(false)
   // PROJECTS = origin PROJECT + is_quote false; QUOTES = origin PROJECT +
   // is_quote true; SHOP = origin SHOP (shop rides, kept fully separate).
   const [mode, setMode] = useState<'project' | 'quote' | 'shop'>('project')
@@ -319,6 +321,9 @@ export default function RidesPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search rides…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
           <Link href={`/rides/new?mode=${mode}${clientParam ? `&client=${clientParam}` : ''}`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW RIDE</Link>
+          {/* Quote flow = the QUOTES-list pattern (DocPicker), with the page's client preset. */}
+          <button onClick={() => setQuotePicker(true)} className="bg-amber-600 hover:bg-amber-500 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW QUOTE</button>
+          {quotePicker && <DocPicker type="quote" initialClientId={clientParam || undefined} onClose={() => setQuotePicker(false)} />}
         </div>
       </div>
       <div className="flex items-center gap-4 flex-wrap mb-8">
