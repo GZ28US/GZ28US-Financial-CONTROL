@@ -29,6 +29,7 @@ const CAR_RX = /car purchase|compra |challenger|charger|demon|hellcat|redeye|wid
 type Fix =
   | { kind: 'date'; table: string; rowId: string; field: string }
   | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null }
+  | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'received'; table: string; rowId: string }
 type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
@@ -115,9 +116,8 @@ function buildChecks(d: FinData): Check[] {
       if (scope === 'EXPORT' || scope === 'CLIENT') {
         const kindLabel = scope === 'EXPORT' ? 'GZ28 EXPORT' : '3RD PARTY EXPORT'
         const mi = r.admission_mileage == null ? null : parseFloat(r.admission_mileage)
-        if (mi == null || isNaN(mi))
-          flags.push(kindLabel + ' sem ADMISSION MILEAGE — lance a milhagem de entrada no ride pra validar a exportação')
-        else if (mi >= 100)
+        // milhagem AUSENTE tem card próprio com fix inline; aqui só a contradição
+        if (mi != null && !isNaN(mi) && mi >= 100)
           flags.push(`${Math.round(mi).toLocaleString('en-US')} mi na entrada — acima do teto de DELIVERY MILES (100 mi), não pode ser ${kindLabel}`)
       }
       if (r.exported && scope !== 'EXPORT' && scope !== 'CLIENT')
@@ -136,7 +136,28 @@ function buildChecks(d: FinData): Check[] {
     })
   }
 
-  // 4 · Despesas de projeto sem payment_date (G6).
+  // 4 · Export sem ADMISSION MILEAGE — a milhagem lança AQUI, inline.
+  {
+    const items: Item[] = []
+    d.rides.forEach((r: any) => {
+      if (r.is_quote || r.origin === 'SHOP') return
+      if (r.title_scope !== 'EXPORT' && r.title_scope !== 'CLIENT') return
+      if (r.admission_mileage != null) return
+      items.push({
+        href: '/rides/edit/' + r.id, code: r.project_code || '—',
+        label: r.project_name || [r.model, r.version].filter(Boolean).join(' '),
+        extra: r.title_scope === 'EXPORT' ? 'GZ28 EXPORT' : '3RD PARTY EXPORT',
+        fix: { kind: 'number', table: 'rides', rowId: r.id, field: 'admission_mileage', suffix: 'mi' },
+      })
+    })
+    checks.push({
+      key: 'admission-mileage', title: 'Export sem ADMISSION MILEAGE', blocks: 'validação de exportação (lei do 0km)',
+      why: 'Todo carro de exportação — GZ28 ou por terceiro — precisa da milhagem de entrada: abaixo de 100 mi é DELIVERY MILES e pode embarcar. Lance o número aqui mesmo.',
+      items,
+    })
+  }
+
+  // 5 · Despesas de projeto sem payment_date (G6).
   {
     const rows = d.invExpenses.filter((e: any) => !e.payment_date)
     const items = rows.map((e: any) => {
@@ -303,7 +324,7 @@ export default function DataCheckPage() {
   async function applyFix(check: Check, item: Item, value: string) {
     const fix = item.fix!
     setSaving(true)
-    const newValue = fix.kind === 'received' ? new Date().toISOString() : value
+    const newValue = fix.kind === 'received' ? new Date().toISOString() : fix.kind === 'number' ? (parseFloat(value) || 0) : value
     const field = fixField(fix)
     const { error: err } = await supabase.from(fix.table).update({ [field]: newValue }).eq('id', fix.rowId)
     if (err) { setSaving(false); alert(err.message); return }
@@ -413,6 +434,14 @@ export default function DataCheckPage() {
                                     <option value="">— escolher —</option>
                                     {it.fix.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                   </select>
+                                </div>
+                              )}
+                              {it.fix.kind === 'number' && (
+                                <div>
+                                  <label className="block mb-1 text-xs font-bold">{it.fix.field.toUpperCase()}{it.fix.suffix ? ` (${it.fix.suffix})` : ''}</label>
+                                  <input type="text" inputMode="decimal" value={fixValue}
+                                    onChange={e => { if (/^d*.?d*$/.test(e.target.value)) setFixValue(e.target.value) }}
+                                    className="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm" placeholder="0" autoFocus />
                                 </div>
                               )}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
