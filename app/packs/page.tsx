@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { formatUSD, partMatches } from '@/lib/utils'
 import { carLabel } from '@/lib/carData'
 
 // A pack's GRAND TOTAL = the QUOTE price: parts + services, less the global
@@ -34,6 +34,7 @@ export default function PacksPage() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'ALL' | 'DRAFT' | 'CLOSED'>('ALL')
+  const [search, setSearch] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
 
@@ -69,7 +70,9 @@ export default function PacksPage() {
     load()
   }
 
-  const filtered = rows.filter((p) => filter === 'ALL' || (p.status || 'DRAFT') === filter)
+  // Search matches the pack NAME and any of its CARS (same token engine as the Parts DB).
+  const filtered = rows.filter((p) => (filter === 'ALL' || (p.status || 'DRAFT') === filter)
+    && partMatches(search, p.name, ...(Array.isArray(p.cars) ? p.cars.map(carLabel) : [])))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   return (
@@ -88,22 +91,29 @@ export default function PacksPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
-        <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-4xl font-bold">PERFORMANCE PACKAGES ({filtered.length})</h1>
-          <div className="flex gap-2 flex-wrap">
-            {(['ALL', 'DRAFT', 'CLOSED'] as const).map((f) => (
-              <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
-            ))}
-          </div>
-        </div>
+      {/* List-page layout law: title + ADD on top, SEARCH under it, chips below. */}
+      <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+        <h1 className="text-4xl font-bold">PERFORMANCE PACKAGES ({filtered.length})</h1>
         <Link href="/packs/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW PACK</Link>
+      </div>
+
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search pack or car..."
+        className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg w-full max-w-2xl mb-4"
+      />
+
+      <div className="flex gap-3 mb-6 flex-wrap">
+        {(['ALL', 'DRAFT', 'CLOSED'] as const).map((f) => (
+          <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
+        ))}
       </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
       ) : filtered.length === 0 ? (
-        <p className="text-2xl text-gray-400">No packages yet.</p>
+        <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No packages yet.' : 'No matches.'}</p>
       ) : (
         <div className="space-y-4">
           {filtered.map((p) => {
