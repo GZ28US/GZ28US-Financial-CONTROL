@@ -43,6 +43,18 @@ function buildChecks(d: FinData): Check[] {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
 
+  // Quem é o dono da pendência: carro (project name) · cliente. Invoice de
+  // shop sem project name cai no nome do cliente — "006.8 Pending balance"
+  // sem contexto nenhum foi o exemplo do Márcio (20/ago).
+  const whoFor = (invoiceId: string) => {
+    const inv = d.invoiceById.get(invoiceId)
+    const ride = inv?.ride_id ? d.rides.get(inv.ride_id) : null
+    const car = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
+    const cid = inv?.client_id || ride?.client_id
+    const client = cid ? (d.clients.get(cid)?.name || '') : ''
+    return [car, client].filter(Boolean).join(' · ') || '(sem carro/cliente)'
+  }
+
   // 1 · Invoices sem data de conclusão (G1) — CLOSED primeiro, que é o pior caso.
   {
     // Insight do Márcio (20/ago): CLOSED exige incomes datados e recebidos —
@@ -69,7 +81,7 @@ function buildChecks(d: FinData): Check[] {
           if (dt && dt > last) last = dt
         }
         return {
-          href: m.href, code: m.code, label: m.car || '—',
+          href: m.href, code: m.code, label: whoFor(i.id),
           extra: last ? 'última atividade: ' + formatShortDate(last) : 'fechada sem data de conclusão',
           suggest: last || undefined,
           fix: { kind: 'date' as const, table: 'invoices', rowId: i.id, field: 'conclusion_date' },
@@ -219,7 +231,8 @@ function buildChecks(d: FinData): Check[] {
     const items = rows.map((e: any) => {
       const m = invoiceMeta(d, e.invoice_id)
       return {
-        href: m.href, code: m.code, label: e.item || '', extra: e.supplier || '', amount: expLine(e),
+        href: m.href, code: m.code, label: e.item || '(despesa sem descrição)',
+        extra: [whoFor(e.invoice_id), e.supplier].filter(Boolean).join(' · '), amount: expLine(e),
         fix: { kind: 'date' as const, table: 'invoice_expenses', rowId: e.id, field: 'payment_date' },
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
@@ -264,7 +277,7 @@ function buildChecks(d: FinData): Check[] {
       const sched = d.payments.filter((p: any) => p.invoice_id === inv.id).reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0)
       if (t.grand < 0.005 && sched > 0) {
         const m = invoiceMeta(d, inv.id)
-        items.push({ href: m.href, code: m.code, label: m.car || '—', extra: inv.live_status + ' — precisa de linhas, abre em aba nova', amount: sched })
+        items.push({ href: m.href, code: m.code, label: whoFor(inv.id), extra: inv.live_status + ' — precisa de linhas, abre em aba nova', amount: sched })
         impact += sched
       }
     }
@@ -301,7 +314,9 @@ function buildChecks(d: FinData): Check[] {
     const items = rows.map((p: any) => {
       const m = invoiceMeta(d, p.invoice_id)
       return {
-        href: m.href, code: m.code, label: m.car || p.description || '', extra: 'vencido ' + formatShortDate(p.payment_date), amount: parseFloat(p.amount) || 0,
+        href: m.href, code: m.code,
+        label: whoFor(p.invoice_id) + ' — income «' + (p.description || p.source || 'agendado') + '»',
+        extra: 'vencido ' + formatShortDate(p.payment_date), amount: parseFloat(p.amount) || 0,
         fix: { kind: 'received' as const, table: 'invoice_payments', rowId: p.id },
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
@@ -470,7 +485,7 @@ export default function DataCheckPage() {
                         <div key={i}>
                           <div className="flex items-baseline gap-3 py-2 px-2">
                             <span className="text-gray-400 text-xs w-20 shrink-0 font-bold">{it.code}</span>
-                            <a href={`${BASE_PATH}${it.href}`} target="_blank" rel="noreferrer" className="flex-1 truncate text-sm hover:text-white hover:underline" title="Abre em aba nova">{it.label}</a>
+                            <a href={`${BASE_PATH}${it.href}`} target="_blank" rel="noreferrer" className="flex-1 truncate text-sm hover:text-white hover:underline" title={`${it.code} · ${it.label}${it.extra ? ' — ' + it.extra : ''} (abre em aba nova)`}>{it.label}</a>
                             {it.extra && <span className="text-xs text-gray-500 shrink-0">{it.extra}</span>}
                             {it.amount !== undefined && <span className="tabular-nums font-bold text-sm shrink-0">{usd(it.amount)}</span>}
                             {it.fix && (
