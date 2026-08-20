@@ -80,6 +80,7 @@ const MENU: MenuItem[] = [
     items: [
       ['/adm/financials', 'FINANCIAL'],
       ['/adm/check', 'DATA CHECK'],
+      ['/adm/changelog', 'CHANGELOG'],
       ['/adm/reports', 'REPORTS'],
       ['/adm/bank', 'BANK'],
     ],
