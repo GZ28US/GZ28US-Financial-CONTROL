@@ -91,8 +91,8 @@ export default function LedgersPage() {
           <div className={secCls}>
             <h2 className="text-2xl font-bold mb-1">CAPITAL DOS SÓCIOS</h2>
             <p className="text-sm text-gray-500 mb-4">Aporte entra no caixa e no patrimônio; retirada formal sai dos dois. (Gasto pessoal miúdo continua em STAFF → PERSONAL.)</p>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
-              <DatePicker label="DATA" value={cap.event_date} onChange={v => setCap({ ...cap, event_date: v })} />
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-3 mb-4">
+              <div className="col-span-2"><DatePicker compact label="DATA" value={cap.event_date} onChange={v => setCap({ ...cap, event_date: v })} /></div>
               <div><label className="block mb-2 font-bold text-sm">TIPO</label>
                 <select value={cap.kind} onChange={e => setCap({ ...cap, kind: e.target.value })} className={inputCls}>
                   <option value="CONTRIBUTION">APORTE</option><option value="DRAW">RETIRADA</option>
@@ -122,9 +122,9 @@ export default function LedgersPage() {
           <div className={secCls}>
             <h2 className="text-2xl font-bold mb-1">EMPRÉSTIMOS & FINANCIAMENTOS</h2>
             <p className="text-sm text-gray-500 mb-4">RECEBEU sobe caixa e dívida · AMORTIZOU desce os dois · JUROS sai do caixa e vira despesa na DRE.</p>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
               <div className="md:col-span-2"><label className="block mb-2 font-bold text-sm">CREDOR (novo contrato)</label><input value={loan.lender} onChange={e => setLoan({ ...loan, lender: e.target.value })} className={inputCls} placeholder="K&G FINANCING, INC." /></div>
-              <DatePicker label="INÍCIO" value={loan.start_date} onChange={v => setLoan({ ...loan, start_date: v })} />
+              <div className="col-span-2"><DatePicker compact label="INÍCIO" value={loan.start_date} onChange={v => setLoan({ ...loan, start_date: v })} /></div>
               <div><label className="block mb-2 font-bold text-sm">TAXA % a.a.</label><input type="number" value={loan.rate_apr} onChange={e => setLoan({ ...loan, rate_apr: e.target.value })} className={inputCls} /></div>
               <div className="flex items-end"><button disabled={saving || !loan.lender} className={btnCls}
                 onClick={() => save('financing', { lender: loan.lender, start_date: loan.start_date || null, rate_apr: loan.rate_apr ? n(loan.rate_apr) : null, description: loan.description || null }, () => setLoan({ lender: '', start_date: '', rate_apr: '', description: '' }))}>CRIAR</button></div>
@@ -138,8 +138,8 @@ export default function LedgersPage() {
                   <span className="ml-auto tabular-nums font-bold text-amber-300">saldo devedor {usd(loanBalance(f.id))}</span>
                   <button onClick={() => del('financing', f.id)} className="text-gray-600 hover:text-red-400 font-bold px-2" title="Apaga o contrato e os eventos">✕</button>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
-                  <DatePicker label="DATA" value={evt.financing_id === f.id ? evt.event_date : ''} onChange={v => setEvt({ ...evt, financing_id: f.id, event_date: v })} />
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-3">
+                  <div className="col-span-2"><DatePicker compact label="DATA" value={evt.financing_id === f.id ? evt.event_date : ''} onChange={v => setEvt({ ...evt, financing_id: f.id, event_date: v })} /></div>
                   <div><label className="block mb-2 font-bold text-sm">EVENTO</label>
                     <select value={evt.financing_id === f.id ? evt.kind : 'DISBURSEMENT'} onChange={e => setEvt({ ...evt, financing_id: f.id, kind: e.target.value })} className={inputCls}>
                       <option value="DISBURSEMENT">RECEBEU</option><option value="PAYMENT">AMORTIZOU</option><option value="INTEREST">JUROS</option>
@@ -168,8 +168,8 @@ export default function LedgersPage() {
           <div className={secCls}>
             <h2 className="text-2xl font-bold mb-1">SALDOS DE CAIXA</h2>
             <p className="text-sm text-gray-500 mb-4">Fim de mês, por conta, direto do extrato. O Balanço usa o último saldo de cada conta; a conciliação compara a variação real com a calculada pelo DFC.</p>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-              <DatePicker label="DATA DO SALDO" value={bal.balance_date} onChange={v => setBal({ ...bal, balance_date: v })} />
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+              <div className="col-span-2"><DatePicker compact label="DATA DO SALDO" value={bal.balance_date} onChange={v => setBal({ ...bal, balance_date: v })} /></div>
               <div><label className="block mb-2 font-bold text-sm">CONTA</label><input value={bal.account} onChange={e => setBal({ ...bal, account: e.target.value })} className={inputCls} placeholder="Regions •9336" /></div>
               <div><label className="block mb-2 font-bold text-sm">SALDO $</label><input type="number" value={bal.balance} onChange={e => setBal({ ...bal, balance: e.target.value })} className={inputCls} /></div>
               <div><label className="block mb-2 font-bold text-sm">NOTAS</label><input value={bal.notes} onChange={e => setBal({ ...bal, notes: e.target.value })} className={inputCls} /></div>
