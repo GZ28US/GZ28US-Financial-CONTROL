@@ -3,10 +3,9 @@
 // Quando as demonstrações merecerem, troca FIN_STAGE para 'BETA' aqui e o
 // selo muda em todas as telas e relatórios de uma vez.
 export const FIN_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const FIN_VERSION = '0.9.6'
+export const FIN_VERSION = '0.9.5'
 
 export const FIN_CHANGELOG: { version: string; date: string; notes: string }[] = [
-  { version: '0.9.6', date: '2026-08-20', notes: 'Batismo: a seção vira FINANCIAL HUB — menu, título, links das telas e carimbo dos PDFs.' },
   { version: '0.9.5', date: '2026-08-20', notes: 'G1 destravado (insight do Márcio): recognitionDate() deriva o mês do resultado de invoice fechado — conclusion_date explícita > delivery_date > último recebimento. DRE por período fica pronta pra nascer junto com D1/D2.' },
   { version: '0.9.4', date: '2026-08-20', notes: 'Fechar invoice exige CONCLUSION DATE (a trava oferece hoje com um clique); aviso G1 da DRE conta só as fechadas sem data — job em andamento é WIP sob D2, não pendência.' },
   { version: '0.9.3', date: '2026-08-20', notes: 'Hub: os 4 cards em 2×2 folgado (4 numa linha espremia título, selo e descrição), selo de status sem quebra de linha, texto de intro atualizado e changelog alinhado à grade.' },
