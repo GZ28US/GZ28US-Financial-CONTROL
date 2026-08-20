@@ -387,6 +387,12 @@ export default function ViewRidePage() {
                   {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
                 </span>
               </div>
+              {ride.is_brand_new != null && (
+                <div className={rowClass}>
+                  <span className={labelClass}>CONDITION</span>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride.is_brand_new ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-700 text-gray-300'}`}>{ride.is_brand_new ? '0 KM — BRAND NEW' : 'USED'}</span>
+                </div>
+              )}
               {ride.title_scope !== 'CLIENT' && ride.title_scope !== 'USA' && (
                 <div className={rowClass}>
                   <span className={labelClass}>TITLE</span>
