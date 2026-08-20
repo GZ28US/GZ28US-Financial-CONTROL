@@ -3,7 +3,7 @@ export const years = [
   1992, 1993, 1994, 1995, 1996,
   2005, 2006, 2007, 2008,
   2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017,
-  2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
+  2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027,
 ]
 
 export const manufacturersByYear: Record<number, string[]> = {
@@ -25,6 +25,7 @@ export const manufacturersByYear: Record<number, string[]> = {
   2024: ['MOPAR', 'GM', 'FORD'],
   2025: ['MOPAR', 'GM', 'FORD'],
   2026: ['MOPAR', 'GM', 'FORD'],
+  2027: ['MOPAR'],
 }
 
 export const brandsByManufacturerAndYear: Record<string, Record<number, string[]>> = {
@@ -39,6 +40,8 @@ export const brandsByManufacturerAndYear: Record<string, Record<number, string[]
     // RAM back 2021-2024: the 1500 TRX years.
     2021: ['DODGE', 'RAM'], 2022: ['DODGE', 'RAM'], 2023: ['DODGE', 'RAM'],
     2024: ['DODGE', 'RAM'], 2025: ['DODGE'], 2026: ['DODGE'],
+    // 2027: a volta do TRX — RAM de novo na lista.
+    2027: ['RAM'],
   },
   GM: {
     1992: ['CHEVROLET'], 1993: ['CHEVROLET'], 1994: ['CHEVROLET'], 1995: ['CHEVROLET'], 1996: ['CHEVROLET'],
@@ -78,6 +81,7 @@ export const modelsByBrandAndYear: Record<string, Record<number, string[]>> = {
   RAM: {
     2009: ['1500'], 2015: ['1500'], 2016: ['1500'], 2017: ['1500'], 2018: ['1500'],
     2021: ['1500'], 2022: ['1500'], 2023: ['1500'], 2024: ['1500'],
+    2027: ['1500'],
   },
   CHEVROLET: {
     // C4 Corvette (1992-on: LT1 era; ZR-1 through 1995).
@@ -206,8 +210,11 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
   '1500': {
     2009: ['1500 5.7'], 2015: ['1500 5.7', '1500 Rebel 5.7'], 2016: ['1500 5.7', '1500 Rebel 5.7'],
     2017: ['1500 5.7', '1500 Rebel 5.7'], 2018: ['1500 5.7', '1500 Rebel 5.7'],
-    // TRX: 6.2L supercharged Hellcat V8, 702 hp (2021-2024; 2024 = last year).
+    // TRX: 6.2L supercharged Hellcat V8, 702 hp (2021-2024). The truck returns for
+    // 2027 as the TRX SRT — same 6.2 SC HEMI pushed to 777 hp (smaller pulley,
+    // revised valvetrain), first SRT-badged Ram since the '06 SRT-10.
     2021: ['TRX 6.2 SC'], 2022: ['TRX 6.2 SC'], 2023: ['TRX 6.2 SC'], 2024: ['TRX 6.2 SC'],
+    2027: ['TRX SRT 6.2 SC'],
   },
   // Bronco Raptor ("Braptor"): 3.0L EcoBoost V6 biturbo, 418 hp, do lançamento (2022)
   // até hoje. Só o Raptor foi pedido — as versões de rua do Bronco não entram.
@@ -270,6 +277,7 @@ export const specialEditions: Record<string, string[]> = {
   '2022-1500-TRX 6.2 SC': ['None', 'Ignition Edition', 'Sandblast Edition'],
   '2023-1500-TRX 6.2 SC': ['None', 'Havoc Edition', 'Lunar Edition'],
   '2024-1500-TRX 6.2 SC': ['None', 'Final Edition'],
+  '2027-1500-TRX SRT 6.2 SC': ['None'],
   // C4 Corvette special editions.
   '1993-CORVETTE-Base 5.7': ['None', '40th Anniversary'],
   '1993-CORVETTE-ZR-1 5.7': ['None', '40th Anniversary'],
@@ -1392,6 +1400,9 @@ const trxColorsByYear: Record<number, string[]> = {
   2022: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
   2023: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Hydro Blue Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic'],
   2024: ['Bright White', 'Flame Red', 'Diamond Black Crystal Pearl', 'Granite Crystal Metallic', 'Billet Silver Metallic', 'Delmonico Red Pearl', 'Night Edge Blue', 'Harvest Sunrise'],
+  // 2027 TRX SRT (launch palette; Hydro Blue, Flame Red and Goldilocks land later
+  // in the model year) — best-effort from the order-bank announcement.
+  2027: ['Bright White', 'Diamond Black Crystal Pearl', 'Granite Crystal Metallic', 'Silver Zynith', 'Ceramic Grey', 'Spitfire Orange', 'Hydro Blue Pearl', 'Flame Red', 'Goldilocks'],
 }
 
 const colorsByConfiguration: Record<string, string[]> = {
