@@ -37,7 +37,9 @@ export type FinData = {
   inputs: any[]
   inventory: any[]
   rides: Map<string, any>
+  clients: Map<string, any>
   invoiceById: Map<string, any>
+  dataFixes: any[] | null       // trilha do DATA CHECK (null até MIGRATION_data_fixes.sql)
   // Fase 2 — os três livros (null até MIGRATION_financial_ledgers.sql rodar)
   capitalEvents: any[] | null
   financing: any[] | null
@@ -67,7 +69,7 @@ async function fetchAll(table: string, select: string): Promise<any[]> {
 
 export async function loadFinancials(): Promise<FinData> {
   const [invoices, payments, invExpenses, invParts, invServices, expenses,
-    fixedExpenses, fixedSuppliers, goods, goodExpenses, inputs, inventory, rides] = await Promise.all([
+    fixedExpenses, fixedSuppliers, goods, goodExpenses, inputs, inventory, rides, clients] = await Promise.all([
     fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date'),
     fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description'),
     fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source'),
@@ -80,11 +82,13 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin'),
+    fetchAll('rides', 'id, project_code, project_name, model, version, title_scope, is_quote, origin, client_id'),
+    fetchAll('clients', 'id, name, country'),
   ])
-  const [capitalEvents, financingRows, financingEvents, cashBalances] = await Promise.all([
+  const [capitalEvents, financingRows, financingEvents, cashBalances, dataFixes] = await Promise.all([
     fetchOpt('capital_events', '*'), fetchOpt('financing', '*'),
     fetchOpt('financing_events', '*'), fetchOpt('cash_balances', '*'),
+    fetchOpt('data_fixes', '*'),
   ])
   const real = invoices.filter((i: any) => !i.is_quote)
   // Filhas de QUOTE ficam fora de TUDO: linha de despesa de orçamento (herdada
@@ -100,7 +104,9 @@ export async function loadFinancials(): Promise<FinData> {
     fixedSuppliers: new Map(fixedSuppliers.map((s: any) => [s.id, s])),
     goods, goodExpenses, inputs, inventory,
     rides: new Map(rides.map((r: any) => [r.id, r])),
+    clients: new Map(clients.map((c: any) => [c.id, c])),
     invoiceById: new Map(real.map((i: any) => [i.id, i])),
+    dataFixes,
     capitalEvents, financing: financingRows, financingEvents, cashBalances,
     ledgersReady: !!(capitalEvents && financingRows && financingEvents && cashBalances),
   }
