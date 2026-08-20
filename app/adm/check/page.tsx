@@ -30,6 +30,7 @@ type Fix =
   | { kind: 'date'; table: string; rowId: string; field: string }
   | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null }
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
+  | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
 type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
@@ -176,7 +177,43 @@ function buildChecks(d: FinData): Check[] {
     })
   }
 
-  // 5 · Despesas de projeto sem payment_date (G6).
+  // 5 · Ciclo de entrega: delivery_date (fato: no passado + invoice FECHADA)
+  //     e o selo EXPORTED validam um ao outro. delivery_date em invoice
+  //     ABERTA é PROMESSA (banner PROMISED TO) — não conta como saída.
+  {
+    const items: Item[] = []
+    const byRide = new Map<string, any[]>()
+    for (const i of d.invoices) { if (!i.ride_id) continue; const a = byRide.get(i.ride_id) || []; a.push(i); byRide.set(i.ride_id, a) }
+    d.rides.forEach((r: any) => {
+      if (r.is_quote || r.origin === 'SHOP') return
+      if (r.title_scope !== 'EXPORT' && r.title_scope !== 'CLIENT') return
+      const invs = byRide.get(r.id) || []
+      const deliveredFact = invs.filter((i: any) => i.delivery_date && i.delivery_date <= TODAY && i.live_status === 'CLOSED')
+      const anyDelivery = invs.some((i: any) => i.delivery_date)
+      if (!r.exported && deliveredFact.length > 0) {
+        const last = deliveredFact.map((i: any) => i.delivery_date).sort().pop()
+        items.push({
+          href: '/rides/edit/' + r.id, code: r.project_code || '—',
+          label: (r.project_name || '') + ' — entregue em ' + formatShortDate(last) + ' e sem selo EXPORTED',
+          fix: { kind: 'flag', table: 'rides', rowId: r.id, field: 'exported', value: true, confirmText: 'O carro embarcou de fato? Marca EXPORTED: fim do ciclo na GZ28US — num GZ28 EXPORT, sai do nome da LLC e o custo sai do WIP.' },
+        })
+      }
+      if (r.exported && !anyDelivery) {
+        items.push({
+          href: '/rides/' + r.id + '/invoices', code: r.project_code || '—',
+          label: (r.project_name || '') + ' — EXPORTED sem delivery date em nenhuma invoice: quando saiu?',
+          extra: 'lançar na invoice final',
+        })
+      }
+    })
+    checks.push({
+      key: 'delivery-cycle', title: 'Ciclo de entrega inconsistente (delivery × EXPORTED)', blocks: 'Balanço (WIP) · ciclo do carro',
+      why: 'Delivery date no passado em invoice FECHADA diz que o carro saiu — aí o selo EXPORTED tem que existir (um clique aqui confirma). E EXPORTED sem delivery date em invoice nenhuma não diz QUANDO saiu. Delivery em invoice aberta é promessa, não conta.',
+      items,
+    })
+  }
+
+  // 6 · Despesas de projeto sem payment_date (G6).
   {
     const rows = d.invExpenses.filter((e: any) => !e.payment_date)
     const items = rows.map((e: any) => {
@@ -343,7 +380,7 @@ export default function DataCheckPage() {
   async function applyFix(check: Check, item: Item, value: string) {
     const fix = item.fix!
     setSaving(true)
-    const newValue = fix.kind === 'received' ? new Date().toISOString() : fix.kind === 'number' ? (parseFloat(value) || 0) : value
+    const newValue = fix.kind === 'received' ? new Date().toISOString() : fix.kind === 'flag' ? fix.value : fix.kind === 'number' ? (parseFloat(value) || 0) : value
     const field = fixField(fix)
     const { error: err } = await supabase.from(fix.table).update({ [field]: newValue }).eq('id', fix.rowId)
     if (err) { setSaving(false); alert(err.message); return }
@@ -439,7 +476,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -468,13 +505,14 @@ export default function DataCheckPage() {
                                     className="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm" placeholder="0" autoFocus />
                                 </div>
                               )}
+                              {it.fix.kind === 'flag' && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
-                                <button disabled={saving || (it.fix.kind !== 'received' && !fixValue)}
+                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>
