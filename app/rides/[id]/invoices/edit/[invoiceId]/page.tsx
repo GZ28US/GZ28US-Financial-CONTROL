@@ -3696,7 +3696,15 @@ export default function EditInvoicePage() {
             </div>
             <div className="flex gap-2 flex-wrap">
               <button onClick={addPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD INCOME</button>
-              {pendingBalance < -0.005 && <button onClick={() => addPendingBalanceIncome(-pendingBalance)} className="bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold text-lg">ADD PENDING BALANCE ({formatUSD(-pendingBalance)})</button>}
+              {/* Sempre visível: cinza quando os incomes já cobrem o grand
+                  total — botão que some parece botão que sumiu (Márcio, 20/ago). */}
+              <button onClick={() => addPendingBalanceIncome(-pendingBalance)} disabled={pendingBalance >= -0.005}
+                title={pendingBalance >= -0.005 ? 'Incomes já cobrem o grand total — nada pendente a adicionar' : undefined}
+                className={pendingBalance < -0.005
+                  ? 'bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold text-lg'
+                  : 'bg-gray-800 text-gray-500 border border-gray-700 px-5 py-3 rounded-2xl font-bold text-lg cursor-not-allowed'}>
+                {pendingBalance < -0.005 ? `ADD PENDING BALANCE (${formatUSD(-pendingBalance)})` : 'ADD PENDING BALANCE — NADA PENDENTE'}
+              </button>
             </div>
             {payments.length > 0 && (
               <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
