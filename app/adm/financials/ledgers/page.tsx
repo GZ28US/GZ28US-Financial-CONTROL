@@ -158,12 +158,10 @@ export default function LedgersPage() {
               <p className="text-lg font-bold mb-4">NEW CONTRACT</p>
               <div className="grid grid-cols-1 gap-5">
                 <Field label="LENDER" value={loan.lender} onChange={v => setLoan({ ...loan, lender: v })} placeholder="K&G FINANCING, INC." />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 items-end">
-                  <DatePicker label="START DATE" value={loan.start_date} onChange={v => setLoan({ ...loan, start_date: v })} />
-                  <div>
-                    <label className="block mb-2 text-lg font-bold">RATE % / YEAR</label>
-                    <input type="text" inputMode="decimal" value={loan.rate_apr} onChange={e => { if (isNumeric(e.target.value)) setLoan({ ...loan, rate_apr: e.target.value }) }} className={inputClass} placeholder="Optional" />
-                  </div>
+                <DatePicker label="START DATE" value={loan.start_date} onChange={v => setLoan({ ...loan, start_date: v })} />
+                <div>
+                  <label className="block mb-2 text-lg font-bold">RATE % / YEAR</label>
+                  <input type="text" inputMode="decimal" value={loan.rate_apr} onChange={e => { if (isNumeric(e.target.value)) setLoan({ ...loan, rate_apr: e.target.value }) }} className={inputClass} placeholder="Optional" />
                 </div>
                 <button disabled={saving || !loan.lender.trim()} className="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold"
                   onClick={() => save('financing', { lender: loan.lender.trim(), start_date: loan.start_date || null, rate_apr: loan.rate_apr ? n(loan.rate_apr) : null, description: loan.description.trim() || null }, () => setLoan({ lender: '', start_date: '', rate_apr: '', description: '' }))}>
@@ -174,46 +172,15 @@ export default function LedgersPage() {
 
             {financing.map(f => (
               <div key={f.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 mb-5">
-                <div className="flex items-center gap-3 flex-wrap mb-4">
+                <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xl font-bold">{f.lender}</span>
                   {f.rate_apr != null && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-800 text-gray-300">{f.rate_apr}% a.a.</span>}
                   <span className="ml-auto px-3 py-1 rounded-full text-sm font-bold bg-amber-950 text-amber-300 tabular-nums">DEVEDOR {usd(loanBalance(f.id))}</span>
                   <button onClick={() => del('financing', f.id)} className="text-gray-600 hover:text-red-400 font-bold text-lg px-1" title="Apaga o contrato e os eventos">✕</button>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 mb-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
-                    <DatePicker label="DATE" value={evt.financing_id === f.id ? evt.event_date : ''} onChange={v => setEvt({ ...evt, financing_id: f.id, event_date: v })} />
-                    <div>
-                      <label className="block mb-2 text-sm text-gray-400 font-bold">EVENT</label>
-                      <select value={evt.financing_id === f.id ? evt.kind : 'DISBURSEMENT'} onChange={e => setEvt({ ...evt, financing_id: f.id, kind: e.target.value })} className={inputClass}>
-                        <option value="DISBURSEMENT">RECEBEU — dinheiro entrou</option>
-                        <option value="PAYMENT">AMORTIZOU — pagou principal</option>
-                        <option value="INTEREST">JUROS — pagou juros</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
-                    <div>
-                      <label className="block mb-2 text-sm text-gray-400 font-bold">AMOUNT</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">$</span>
-                        <input type="text" inputMode="decimal" value={evt.financing_id === f.id ? evt.amount : ''} onChange={e => { if (isNumeric(e.target.value)) setEvt({ ...evt, financing_id: f.id, amount: e.target.value }) }} className={`${inputClass} pl-12`} placeholder="0.00" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block mb-2 text-sm text-gray-400 font-bold">DESCRIPTION</label>
-                      <input type="text" value={evt.financing_id === f.id ? evt.description : ''} onChange={e => setEvt({ ...evt, financing_id: f.id, description: e.target.value })} className={inputClass} placeholder="Optional" />
-                    </div>
-                  </div>
-                  <button disabled={saving || evt.financing_id !== f.id || !evt.event_date || !n(evt.amount)} className={saveBtn}
-                    onClick={() => save('financing_events', { financing_id: f.id, event_date: evt.event_date, kind: evt.kind, amount: n(evt.amount), description: evt.description.trim() || null }, () => setEvt({ financing_id: '', event_date: '', kind: 'DISBURSEMENT', amount: '', description: '' }))}>
-                    {saving ? 'SAVING…' : 'ADD EVENT'}
-                  </button>
-                </div>
-
                 {finEvents.filter(e => e.financing_id === f.id).length > 0 && (
-                  <div className="border-t border-gray-800">
+                  <div className="mt-4 border-t border-gray-800">
                     {finEvents.filter(e => e.financing_id === f.id).map(e => (
                       <div key={e.id} className="py-3 flex items-center gap-4 border-b border-gray-800 last:border-b-0">
                         <span className="text-gray-400 text-sm w-24 shrink-0">{formatShortDate(e.event_date)}</span>
@@ -223,6 +190,32 @@ export default function LedgersPage() {
                         <button onClick={() => del('financing_events', e.id)} className="text-gray-600 hover:text-red-400 font-bold text-lg px-1">✕</button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {evt.financing_id !== f.id ? (
+                  <button onClick={() => setEvt({ financing_id: f.id, event_date: '', kind: 'DISBURSEMENT', amount: '', description: '' })}
+                    className="mt-4 w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 px-6 py-3 rounded-2xl text-lg font-bold">+ ADD EVENT</button>
+                ) : (
+                  <div className="mt-4 bg-black/40 border border-gray-800 rounded-2xl p-4 grid grid-cols-1 gap-5">
+                    <DatePicker label="DATE" value={evt.event_date} onChange={v => setEvt({ ...evt, event_date: v })} />
+                    <div>
+                      <label className="block mb-2 text-lg font-bold">EVENT</label>
+                      <select value={evt.kind} onChange={e => setEvt({ ...evt, kind: e.target.value })} className={inputClass}>
+                        <option value="DISBURSEMENT">RECEBEU — dinheiro entrou</option>
+                        <option value="PAYMENT">AMORTIZOU — pagou principal</option>
+                        <option value="INTEREST">JUROS — pagou juros</option>
+                      </select>
+                    </div>
+                    <MoneyField label="AMOUNT" value={evt.amount} onChange={v => setEvt({ ...evt, amount: v })} />
+                    <Field label="DESCRIPTION" value={evt.description} onChange={v => setEvt({ ...evt, description: v })} placeholder="Optional" />
+                    <div className="flex gap-4 items-center">
+                      <button onClick={() => setEvt({ financing_id: '', event_date: '', kind: 'DISBURSEMENT', amount: '', description: '' })} className="text-gray-400 text-lg font-bold px-2">Cancel</button>
+                      <button disabled={saving || !evt.event_date || !n(evt.amount)} className={`flex-1 ${saveBtn}`}
+                        onClick={() => save('financing_events', { financing_id: f.id, event_date: evt.event_date, kind: evt.kind, amount: n(evt.amount), description: evt.description.trim() || null }, () => setEvt({ financing_id: '', event_date: '', kind: 'DISBURSEMENT', amount: '', description: '' }))}>
+                        {saving ? 'SAVING…' : 'ADD EVENT'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
