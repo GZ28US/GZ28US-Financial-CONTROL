@@ -126,11 +126,13 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     2016: ['R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
     2017: ['R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
     2018: ['R/T 5.7', 'ScatPack 6.4', 'SRT 392 6.4', 'SRT HellCat 6.2'],
-    2019: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
-    2020: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
-    2021: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
-    2022: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
-    2023: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye 6.2', 'SRT HellCat RedEye WideBody 6.2'],
+    // Charger REDEYE only exists 2021-2023 and is ALWAYS Widebody (verified 20/aug/2026;
+    // the narrow Charger Hellcat itself ended after 2019). No 2019/2020 Charger Redeye.
+    2019: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2'],
+    2020: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2'],
+    2021: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye WideBody 6.2'],
+    2022: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye WideBody 6.2'],
+    2023: ['R/T 5.7', 'ScatPack 6.4', 'ScatPack WideBody 6.4', 'SRT HellCat 6.2', 'SRT HellCat WideBody 6.2', 'SRT HellCat RedEye WideBody 6.2'],
   },
   VIPER: {
     1992: ['RT/10 8.0 V10'], 1993: ['RT/10 8.0 V10'], 1994: ['RT/10 8.0 V10'], 1995: ['RT/10 8.0 V10'],
@@ -331,6 +333,12 @@ export const specialEditions: Record<string, string[]> = {
   '2021-CHALLENGER-R/T ScatPack 6.4': ['None', 'T/A 392', 'Shaker'],
   '2022-CHALLENGER-R/T 5.7': ['None', 'T/A'],
   '2022-CHALLENGER-R/T ScatPack 6.4': ['None', 'T/A 392', 'Shaker'],
+  // JailBreak (verified 20/aug/2026): born MY2022 as a $995 package on the Redeye
+  // WIDEBODY only (both cars); MY2023 expanded — the Challenger offered 4 configs
+  // (incl. narrow Hellcat/Redeye JailBreaks); every Charger JailBreak is Widebody.
+  // Redeye JailBreak = 807 hp; base-Hellcat JailBreak stays 717 (no bump).
+  '2022-CHALLENGER-SRT HellCat RedEye WideBody 6.2': ['None', 'JailBreak'],
+  '2022-CHARGER-SRT HellCat RedEye WideBody 6.2': ['None', 'JailBreak'],
   '2023-CHALLENGER-R/T ScatPack 6.4': ['None', 'Swinger', 'Shakedown', 'Mopar Edition', 'T/A', 'Shaker'],
   '2023-CHALLENGER-R/T ScatPack WideBody 6.4': ['None', 'Swinger', 'Shakedown', 'Mopar Edition', 'T/A', 'Shaker'],
   '2023-CHALLENGER-SRT HellCat 6.2': ['None', 'Black Ghost', 'JailBreak'],
@@ -339,7 +347,7 @@ export const specialEditions: Record<string, string[]> = {
   '2023-CHALLENGER-SRT HellCat RedEye WideBody 6.2': ['None', 'JailBreak'],
   '2023-CHARGER-ScatPack 6.4': ['None', 'Super Bee'],
   '2023-CHARGER-ScatPack WideBody 6.4': ['None', 'Super Bee'],
-  '2023-CHARGER-SRT HellCat RedEye 6.2': ['None', 'King Daytona', 'Daytona', 'JailBreak'],
+  '2023-CHARGER-SRT HellCat WideBody 6.2': ['None', 'JailBreak'],
   '2023-CHARGER-SRT HellCat RedEye WideBody 6.2': ['None', 'King Daytona', 'Daytona', 'JailBreak'],
   '2025-DURANGO-SRT HellCat 6.2': ['None', 'Silver Bullet', 'Hammerhead', 'Brass Monkey'],
   '2026-DURANGO-SRT HellCat 6.2': ['None', 'JailBreak'],
@@ -1459,7 +1467,6 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2013-CORVETTE-ZR1 6.2 SC-60th Anniversary': ['Arctic White'],
   '2023-CHALLENGER-R/T ScatPack 6.4-Swinger': ['Sublime', 'F8 Green', 'White Knuckle'],
   '2023-CHALLENGER-R/T ScatPack WideBody 6.4-Swinger': ['Sublime', 'F8 Green', 'White Knuckle'],
-  '2023-CHARGER-SRT HellCat RedEye 6.2-King Daytona': ['Go Mango'],
   '2023-CHARGER-SRT HellCat RedEye WideBody 6.2-King Daytona': ['Go Mango'],
   '2025-DURANGO-SRT HellCat 6.2-Silver Bullet': ['Triple Nickel'],
   '2025-DURANGO-SRT HellCat 6.2-Hammerhead': ['Hammerhead Gray'],

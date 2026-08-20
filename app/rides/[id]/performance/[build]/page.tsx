@@ -151,7 +151,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   const [reportPull, setReportPull] = useState<DynoPull | null>(null)
   const [reportToClient, setReportToClient] = useState(false)
   const [reporting, setReporting] = useState(false)
-  const [car, setCar] = useState<{ manufacturer: string | null; brand: string | null; model: string | null; version: string | null; year: number | null } | null>(null)
+  const [car, setCar] = useState<{ manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null } | null>(null)
   // "SEND DYNO DATA" — generate the full sheet PDF and WhatsApp it (group + optionally client).
   const [dynoSendOpen, setDynoSendOpen] = useState(false)
   const [dynoSendToClient, setDynoSendToClient] = useState(false)
@@ -171,9 +171,9 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
 
   useEffect(() => {
     (async () => {
-      const { data: rideRow } = await supabase.from('rides').select('client_id, manufacturer, brand, model, version, year').eq('id', rideId).single()
+      const { data: rideRow } = await supabase.from('rides').select('client_id, manufacturer, brand, model, version, special_edition, year').eq('id', rideId).single()
       if (rideRow) {
-        setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, year: rideRow.year })
+        setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, special_edition: (rideRow as any).special_edition ?? null, year: rideRow.year })
         if (rideRow.client_id) {
           const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method, instagram, facebook').eq('id', rideRow.client_id).single()
           if (c) setClient(c as typeof client)
