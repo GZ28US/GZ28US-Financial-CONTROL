@@ -124,9 +124,12 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
 
 // Every ride folder carries these standard subfolders — ensured (idempotent) on
 // every create/rename so old folders self-heal too.
-const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation', 'Screening']
+const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation']
+// A pasta de triagem tem nome POR ZONA — Screening nos rides US, Volante nos BR —
+// derivado do path, então qualquer um dos apps nomeia certo mexendo na outra zona.
 async function ensureSubfolders(token: string, folderPath: string) {
-  for (const sub of SUBFOLDERS) {
+  const subs = [...SUBFOLDERS, folderPath.startsWith(ROOTS.BR) ? 'Volante' : 'Screening']
+  for (const sub of subs) {
     const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
     if (!r.ok && !r.text.includes('conflict')) {
       console.error('[ride-folder] subfolder create failed', { path: `${folderPath}/${sub}`, err: r.text.slice(0, 200) })
