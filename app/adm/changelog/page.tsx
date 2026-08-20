@@ -6,13 +6,13 @@
 //   DATA CHECK   bancada de dados, produto próprio          lib/dcVersion
 // Cada track bumpa no seu arquivo; esta tela só lê e lista.
 import Header from '@/components/Header'
-import { APP_STAGE, APP_VERSION, APP_CHANGELOG } from '@/lib/appVersion'
+import { APP_CHANGELOG } from '@/lib/appVersion'
 import { FIN_STAGE, FIN_VERSION, FIN_CHANGELOG } from '@/lib/finVersion'
 import { DC_STAGE, DC_VERSION, DC_CHANGELOG } from '@/lib/dcVersion'
 
-type Entry = { version: string; date: string; notes: string }
-const TRACKS: { title: string; stage: string; version: string; cls: string; accent: string; entries: Entry[] }[] = [
-  { title: 'CONTROL APP', stage: APP_STAGE, version: APP_VERSION, cls: 'bg-emerald-950 text-emerald-400 border-emerald-700', accent: 'text-emerald-300', entries: APP_CHANGELOG },
+type Entry = { version?: string; date: string; notes: string }
+const TRACKS: { title: string; stage?: string; version?: string; cls?: string; accent: string; sub?: string; entries: Entry[] }[] = [
+  { title: 'CONTROL APP', accent: 'text-emerald-300', sub: 'núcleo em produção desde mai/2026 — sem selo; o git é a história (1.094+ commits)', entries: APP_CHANGELOG },
   { title: 'FINANCIAL', stage: FIN_STAGE, version: FIN_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: FIN_CHANGELOG },
   { title: 'DATA CHECK', stage: DC_STAGE, version: DC_VERSION, cls: 'bg-sky-950 text-sky-300 border-sky-700', accent: 'text-sky-300', entries: DC_CHANGELOG },
 ]
@@ -29,13 +29,14 @@ export default function ChangelogPage() {
           <div key={t.title}>
             <div className="flex items-baseline gap-3 flex-wrap mb-3">
               <h2 className="text-2xl font-bold">{t.title}</h2>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${t.cls}`}>{t.stage} · v{t.version}</span>
-              <span className="text-sm text-gray-500">{t.entries.length} versõe{t.entries.length > 1 ? 's' : ''}</span>
+              {t.stage && <span className={`px-3 py-1 rounded-full text-xs font-bold border ${t.cls}`}>{t.stage} · v{t.version}</span>}
+              {t.sub && <span className="text-sm text-gray-500">{t.sub}</span>}
+              {!t.sub && <span className="text-sm text-gray-500">{t.entries.length} versõe{t.entries.length > 1 ? 's' : ''}</span>}
             </div>
             <div className="border border-gray-800 rounded-2xl divide-y divide-gray-800">
               {t.entries.map(c => (
-                <div key={c.version} className="px-4 py-3 flex gap-4 items-baseline">
-                  <span className={`font-bold tabular-nums w-16 shrink-0 ${t.accent}`}>v{c.version}</span>
+                <div key={(c.version || '') + c.date + c.notes.slice(0, 20)} className="px-4 py-3 flex gap-4 items-baseline">
+                  {c.version && <span className={`font-bold tabular-nums w-16 shrink-0 ${t.accent}`}>v{c.version}</span>}
                   <span className="text-gray-500 text-xs w-20 shrink-0">{c.date}</span>
                   <span className="text-sm text-gray-400">{c.notes}</span>
                 </div>
