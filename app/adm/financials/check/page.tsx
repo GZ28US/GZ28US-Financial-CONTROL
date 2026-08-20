@@ -89,12 +89,14 @@ function buildChecks(d: FinData): Check[] {
       const scope = r.title_scope
       if (!scope || scope === 'DEALER' || r.is_quote || r.origin === 'SHOP') return
       const invs = byRide.get(r.id) || []
-      let billed = 0, received = 0, carBuy = 0
+      let billed = 0, received = 0, carBuy = 0, minMiles = Infinity
       for (const inv of invs) {
         const t = invoiceTotals(d, inv)
         billed += t.grand; received += t.received
         carBuy += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && expLine(e) >= 15000 && CAR_RX.test(e.item || ''))
           .reduce((s: number, e: any) => s + expLine(e), 0)
+        const mi = parseFloat(inv.mileage)
+        if (mi > 0 && mi < minMiles) minMiles = mi
       }
       const client = r.client_id ? d.clients.get(r.client_id) : null
       const flags: string[] = []
@@ -104,8 +106,12 @@ function buildChecks(d: FinData): Check[] {
         flags.push(`a LLC comprou o carro (${usd(carBuy)}) num carro marcado como "do cliente" — devia ser EXPORT ou OWN?`)
       if (scope === 'EXPORT' && client?.country === 'USA')
         flags.push('EXPORT com cliente dos EUA — vai exportar mesmo?')
-      if ((scope === 'USA' || scope === 'CLIENT') && client?.country === 'BRAZIL')
-        flags.push('cliente do BRASIL num carro marcado como americano — não seria EXPORT?')
+      // Lei brasileira (Márcio, 20/ago): SÓ CARRO 0KM pode ser exportado ao
+      // Brasil. Cliente brasileiro com residência nos EUA mantendo carro usado
+      // aqui é NORMAL (caso Badillac/Nivaldo) — por isso BR+USA/CLIENT não é
+      // flag. A contradição real é a inversa: EXPORT num carro USADO.
+      if (scope === 'EXPORT' && minMiles !== Infinity && minMiles > 1000)
+        flags.push(`carro USADO (${Math.round(minMiles).toLocaleString('en-US')} mi na entrada) marcado EXPORT — só 0km exporta pro Brasil`)
       if (!flags.length) return
       items.push({
         href: '/rides/edit/' + r.id, code: r.project_code || '—',
@@ -115,7 +121,7 @@ function buildChecks(d: FinData): Check[] {
     })
     checks.push({
       key: 'destiny-review', title: 'DESTINY REVIEW — destinos contraditórios', blocks: 'Balanço · DRE (a classificação inteira)',
-      why: 'Cruza cada destino com o dinheiro: carro OWN/TOOL não fatura cliente; carro USA/CLIENT a LLC nunca comprou; EXPORT tem dono brasileiro. Zero aqui = sua sessão de destinos passou no double-check.',
+      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA/CLIENT a LLC nunca comprou; EXPORT só existe em carro 0km (usado não entra no Brasil). Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
       items,
     })
   }
