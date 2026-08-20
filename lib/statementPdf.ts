@@ -119,7 +119,7 @@ export async function downloadStatementPdf(o: {
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i)
     doc.setFontSize(7); doc.setTextColor(...MUTED)
-    doc.text(`Emitido ${stamp} — GZ28US Control App · FINANCIAL ${FIN_STAGE} v${FIN_VERSION}`, M, doc.internal.pageSize.getHeight() - 20)
+    doc.text(`Emitido ${stamp} — GZ28US Control App · FINANCIAL HUB ${FIN_STAGE} v${FIN_VERSION}`, M, doc.internal.pageSize.getHeight() - 20)
     doc.text(`${i} / ${pages}`, pageW - M, doc.internal.pageSize.getHeight() - 20, { align: 'right' })
   }
   doc.save(o.filename)

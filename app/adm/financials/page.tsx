@@ -36,7 +36,7 @@ export default function FinancialsHub() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <div className="flex items-baseline gap-4 flex-wrap mb-1"><h1 className="text-4xl font-bold">FINANCIAL</h1><FinBadge /></div>
+      <div className="flex items-baseline gap-4 flex-wrap mb-1"><h1 className="text-4xl font-bold">FINANCIAL HUB</h1><FinBadge /></div>
       <p className="text-gray-400 mb-8 max-w-3xl">As demonstrações da GZ28 V8 SpeedShop USA LLC, direto do banco de dados — todas as telas leem o mesmo dataset para os números baterem entre si. Os números melhoram na medida em que os dados entram — datas de conclusão, destino dos carros, contas a pagar de verdade — e a integração bancária (Plaid, já esboçada em ADM → BANK) fecha o ciclo na Fase 2.</p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl">

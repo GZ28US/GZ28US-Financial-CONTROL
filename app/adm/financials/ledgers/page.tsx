@@ -97,7 +97,7 @@ export default function LedgersPage() {
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">LEDGERS</h1>
         <FinBadge />
-        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL</a>
+        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
       </div>
       <p className="text-gray-400 mb-8 max-w-3xl">Capital, empréstimos e saldos de caixa — o lado do funding que fecha o Balanço. Lançamento manual até a integração bancária assumir.</p>
 

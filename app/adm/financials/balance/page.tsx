@@ -186,7 +186,7 @@ export default function BalancePage() {
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">BALANÇO PATRIMONIAL</h1>
         <FinBadge />
-        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL</a>
+        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Posição de hoje, derivada ao vivo. CAR DESTINY separa o que é nosso do que só está no nosso nome.</p>
 

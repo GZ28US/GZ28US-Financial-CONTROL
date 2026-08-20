@@ -149,7 +149,7 @@ export default function DrePage() {
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">DRE — RESULTADO</h1>
         <FinBadge />
-        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL</a>
+        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Regime de competência, acumulado desde o início, as-booked. {m.nInvoices} invoices reais.</p>
 

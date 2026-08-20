@@ -176,7 +176,7 @@ export default function DfcPage() {
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">DFC — FLUXO DE CAIXA</h1>
         <FinBadge />
-        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL</a>
+        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Método direto, regime de caixa (payment_date / paid_at). Clique numa célula para ver as linhas de origem. O que ainda não foi pago não aparece aqui — está no Balanço como contas a pagar.</p>
 

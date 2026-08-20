@@ -402,9 +402,9 @@ export default function DataCheckPage() {
     <main className="min-h-screen bg-black text-white p-8 pb-24">
       <Header />
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
-        <h1 className="text-4xl font-bold">DATA CHECK</h1>
+        <h1 className="text-4xl font-bold">DATA CHECKER</h1>
         <DcBadge />
-        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">FINANCIAL →</a>
+        <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">FINANCIAL HUB →</a>
       </div>
       <p className="text-gray-400 mb-6 max-w-3xl">Conserto de um campo acontece aqui dentro (FIX na linha). O que precisa de contexto abre em aba nova — esta tela não sai do lugar. Tudo que você conserta aqui vira HISTÓRICO lá embaixo.</p>
 
