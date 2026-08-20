@@ -15,11 +15,12 @@
 //     feitas FORA desta tela, que histórico nenhum pegaria.
 import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
-import FinBadge from '@/components/FinBadge'
+import DcBadge from '@/components/DcBadge'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
+import { DC_CHANGELOG } from '@/lib/dcVersion'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -325,7 +326,7 @@ export default function DataCheckPage() {
       <Header />
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
         <h1 className="text-4xl font-bold">DATA CHECK</h1>
-        <FinBadge />
+        <DcBadge />
         <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">FINANCIAL →</a>
       </div>
       <p className="text-gray-400 mb-6 max-w-3xl">Conserto de um campo acontece aqui dentro (FIX na linha). O que precisa de contexto abre em aba nova — esta tela não sai do lugar. Tudo que você conserta aqui vira HISTÓRICO lá embaixo.</p>
@@ -437,6 +438,20 @@ export default function DataCheckPage() {
       </div>
 
       <p className="mt-8 text-sm text-gray-500 max-w-3xl">Fora do checklist (são obra, não conserto): capital e empréstimos (lançar em LEDGERS) e a integração bancária Plaid, que vai conferir tudo isso contra o extrato de verdade.</p>
+
+      {/* Changelog próprio — DATA CHECK versiona independente do FINANCIAL. */}
+      <div className="mt-10 max-w-4xl">
+        <h2 className="text-xl font-bold mb-3 text-gray-300">CHANGELOG</h2>
+        <div className="border border-gray-800 rounded-2xl divide-y divide-gray-800">
+          {DC_CHANGELOG.map(c => (
+            <div key={c.version} className="px-4 py-3 flex gap-4 items-baseline">
+              <span className="font-bold tabular-nums text-sky-300 w-16 shrink-0">v{c.version}</span>
+              <span className="text-gray-500 text-xs w-20 shrink-0">{c.date}</span>
+              <span className="text-sm text-gray-400">{c.notes}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </main>
   )
 }
