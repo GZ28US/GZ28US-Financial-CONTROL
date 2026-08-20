@@ -208,6 +208,9 @@ export default function EditInvoicePage() {
   const [entryDate, setEntryDate] = useState('')
   const [conclusionDate, setConclusionDate] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
+  // PREVISÃO de conclusão (ideia do Márcio, 20/ago): a promessa mora aqui;
+  // conclusion/delivery viram só FATO. É a régua do ATRASADA/ADIANTADA.
+  const [expectedConclusionDate, setExpectedConclusionDate] = useState('')
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
   const [liveStatus, setLiveStatus] = useState('INCOMPLETE')
@@ -384,6 +387,7 @@ export default function EditInvoicePage() {
     setEntryDate(data.entry_date || '')
     setConclusionDate(data.conclusion_date || '')
     setDeliveryDate(data.delivery_date || '')
+    setExpectedConclusionDate(data.expected_conclusion_date || '')
     setMileage(data.mileage ? Number(data.mileage).toLocaleString('en-US') : '')
     setService(data.service || '')
     setLiveStatus(data.live_status === 'CLOSED' ? 'CLOSED' : data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
@@ -2139,6 +2143,7 @@ export default function EditInvoicePage() {
       entry_date: isValidDate(entryDate) ? entryDate : null,
       conclusion_date: isValidDate(conclusionDate) ? conclusionDate : null,
       delivery_date: isValidDate(deliveryDate) ? deliveryDate : null,
+      expected_conclusion_date: isValidDate(expectedConclusionDate) ? expectedConclusionDate : null,
       mileage: mileage ? parseFloat(mileage.replace(/,/g, '')) : null,
       service: service || null,
       feed_status: effectiveFeedOnline ? 'REAL_TIME' : 'INCOMPLETE',
@@ -2372,10 +2377,10 @@ export default function EditInvoicePage() {
     await leaveOrStay()
   }
 
-  // DELIVERY DATE without CONCLUSION DATE = the PROMISED TO date — carried on
+  // EXPECTED CONCLUSION without CONCLUSION DATE = the PROMISED TO date — carried on
   // every report and update, always.
   function promisedLine(): string {
-    return isValidDate(deliveryDate) && !isValidDate(conclusionDate) ? `🗓 PROMISED TO: ${formatDate(deliveryDate)}` : ''
+    return isValidDate(expectedConclusionDate) && !isValidDate(conclusionDate) ? `🗓 PROMISED TO: ${formatDate(expectedConclusionDate)}` : ''
   }
   function buildIncomeCaption(inc: IncomeReport) {
     const dateStr = isValidDate(inc.date) ? formatDate(inc.date) : '—'
@@ -3843,6 +3848,7 @@ export default function EditInvoicePage() {
           </div>
         </div>
 
+        {!isClient && !isQuote && <DatePicker label="EXPECTED CONCLUSION (previsão)" value={expectedConclusionDate} onChange={setExpectedConclusionDate} />}
         {!isClient && isValidDate(entryDate) && <DatePicker label="CONCLUSION DATE" value={conclusionDate} onChange={setConclusionDate} />}
         {!isClient && !isQuote && <DatePicker label="DELIVERY DATE" value={deliveryDate} onChange={setDeliveryDate} />}
 
