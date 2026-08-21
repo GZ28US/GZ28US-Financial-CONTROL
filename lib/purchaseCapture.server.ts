@@ -29,7 +29,9 @@ const SIGNATURE = 'Sent by GZ28US Control App®'
 const CAPTURE_EPOCH = '2026-07-20T00:00:00Z'
 
 // Assuntos que caracterizam CONFIRMAÇÃO DE COMPRA (não shipping/marketing).
-const ORDER_SUBJECT = /order (confirmation|confirmed|acknowledg|received|placed|details)|orders? confirmation|your order (has been )?(received|placed|confirmed)|new order|thanks? for (your|shopping)|thank you for your (order|purchase)|purchase (is )?confirmed|receipt for your payment|your receipt|payment receipt|you('ve| have) made a payment|we('ve| have) received your order|invoice for (your )?order|pedido (confirmado|recebido|realizado)|recibo d[eo] pagamento/i
+// 21/ago: +"ordered:" (Amazon auto-confirm), +"order has been received"/"order is
+// now complete" (HP Tuners) — os dois passaram batidos no dia 20 por não casarem.
+const ORDER_SUBJECT = /order (confirmation|confirmed|acknowledg|received|placed|details)|orders? confirmation|your order (has been )?(received|placed|confirmed)|order (has been|is now) (received|complete)|^ordered:|new order|thanks? for (your|shopping)|thank you for your (order|purchase)|purchase (is )?confirmed|receipt for your payment|your receipt|payment receipt|you('ve| have) made a payment|we('ve| have) received your order|invoice for (your )?order|pedido (confirmado|recebido|realizado)|recibo d[eo] pagamento/i
 // Remetentes que têm fluxo próprio (APPS, staff travel) ou nunca são compra.
 // PayPal SAIU da lista (30/jul) — recibo PayPal é compra (caso TouchUpDirect).
 const EXCLUDE_FROM = /anthropic|apple|google|microsoft|united\.com|delta\.com|aa\.com|latam|copaair|voegol|azul|rockauto\.com|stripe\.com|vercel|supabase|ultramsg|godaddy|17track/i
