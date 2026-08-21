@@ -143,7 +143,7 @@ async function gmailMessages(db: SupabaseClient): Promise<MailMsg[]> {
       fromAddr: String(hdr('from')),
       subject: String(hdr('subject')),
       text: stripHtml(parts.join(' ')),
-      dateStr: new Date(Number(m.internalDate || Date.now())).toISOString().slice(0, 10),
+      dateStr: new Date(Number(m.internalDate || Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }),
       box: 'gmail',
     })
   }

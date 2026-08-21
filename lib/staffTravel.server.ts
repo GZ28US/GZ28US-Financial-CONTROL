@@ -123,7 +123,7 @@ export async function runStaffTravelSweep(db: SupabaseClient): Promise<{ opened:
     const closing = US_AIRPORTS.includes(origin) && BR_AIRPORTS.includes(dest)
     if (!opening && !closing) continue
 
-    const today = new Date().toISOString().slice(0, 10)
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
     const flightsLine = p.flights.length ? `✈️ Voos: ${p.flights.join(' + ')} (${origin} → ${dest})` : `✈️ ${origin} → ${dest}`
 
     if (opening) {

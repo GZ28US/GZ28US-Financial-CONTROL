@@ -194,7 +194,7 @@ async function scanHotmail(db: SupabaseClient, seenSet: Set<string>, out: string
     const text = stripHtml(String(full?.body?.content || ''))
     out.push(...await processPurchase(db, seenSet, {
       key, fromAddr, fromName: String(m.from?.emailAddress?.name || ''), subject: subj,
-      text, dateStr: received.slice(0, 10) || new Date().toISOString().slice(0, 10), box: 'hotmail',
+      text, dateStr: received.slice(0, 10) || new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }), box: 'hotmail',
     }))
   }
 }
@@ -229,7 +229,7 @@ async function scanGmail(db: SupabaseClient, seenSet: Set<string>, out: string[]
     const fromName = fromRaw.replace(/<[^>]+>/, '').replace(/"/g, '').trim()
     const subj = header('subject')
     if (!ORDER_SUBJECT.test(subj) || EXCLUDE_FROM.test(fromAddr)) continue
-    const dateStr = new Date(Number(m.internalDate || Date.now())).toISOString().slice(0, 10)
+    const dateStr = new Date(Number(m.internalDate || Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
     if (dateStr < CAPTURE_EPOCH.slice(0, 10)) continue
     out.push(...await processPurchase(db, seenSet, {
       key, fromAddr, fromName, subject: subj, text: gmailBodyText(m.payload), dateStr, box: 'gmail',

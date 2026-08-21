@@ -101,7 +101,7 @@ async function resolveInvoice(db: SupabaseClient, term: string): Promise<{ id: s
 // destino não resolve (ex.: carro não encontrado).
 async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string[]): Promise<string | null> {
   const amt = amountOf(r.item)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) // relogio do app = Orlando (ordem 20/08): UTC virava "amanha" depois das 20h
   if (dest === 'IGNORE') {
     await db.from('part_streams').update({ placement_status: 'IGNORED', placed_ref: 'IGNORED' }).eq('id', r.id)
     return 'IGNORED'
