@@ -23,7 +23,8 @@ import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyL
 import { DC_CHANGELOG } from '@/lib/dcVersion'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
-const TODAY = new Date().toISOString().slice(0, 10)
+// Relógio do app = Orlando (regra de 20/08): depois das 20h o UTC já é amanhã.
+const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 const CAR_RX = /car purchase|compra |challenger|charger|demon|hellcat|redeye|widebody|superstock|camaro|z\/28/i
 
 type Fix =
@@ -348,7 +349,7 @@ function buildChecks(d: FinData): Check[] {
     if (!lt) items.push({ href: '/adm/financials/ledgers', code: 'LIVROS', label: 'Rodar MIGRATION_financial_ledgers.sql no Supabase e lançar os primeiros saldos', extra: 'migration pendente' })
     else if (lt.cashAccounts.length === 0) items.push({ href: '/adm/financials/ledgers', code: 'CAIXA', label: 'Nenhum saldo de caixa lançado ainda', extra: 'Balanço sem linha de caixa' })
     else {
-      const cutoff = new Date(Date.now() - 35 * 864e5).toISOString().slice(0, 10)
+      const cutoff = new Date(Date.now() - 35 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
       for (const a of lt.cashAccounts) if (a.date < cutoff)
         items.push({ href: '/adm/financials/ledgers', code: 'CAIXA', label: a.account, extra: 'último saldo ' + a.date, amount: a.balance })
     }

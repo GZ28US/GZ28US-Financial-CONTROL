@@ -992,7 +992,7 @@ export default function ViewInvoicePage() {
                 // Sem fato e previsão vencida = EM ATRASO correndo até hoje.
                 const expected = invoice.expected_conclusion_date as string
                 const actual = isValidDate(invoice.conclusion_date) ? invoice.conclusion_date : (isValidDate(invoice.delivery_date) ? invoice.delivery_date : null)
-                const today = new Date().toLocaleDateString('en-CA')
+                const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
                 const days = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5)
                 let badge = null as { txt: string; cls: string } | null
                 if (actual) {

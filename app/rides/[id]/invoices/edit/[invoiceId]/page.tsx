@@ -3016,7 +3016,7 @@ export default function EditInvoicePage() {
                 // existir (é ela que diz o mês do resultado na DRE). Job em
                 // andamento não tem data mesmo; ela nasce aqui, no fechamento.
                 if (!isValidDate(conclusionDate)) {
-                  const today = new Date().toLocaleDateString('en-CA')
+                  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
                   if (confirm('CLOSED requires a CONCLUSION DATE (the day work finished). Use TODAY (' + today + ')? Cancel to set the real date first.')) {
                     setConclusionDate(today); setLiveStatus('CLOSED')
                   } else {
