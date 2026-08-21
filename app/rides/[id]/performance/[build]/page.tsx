@@ -48,7 +48,7 @@ function applyLoss(wheel: string, loss: string): number | null {
 
 // `borrowed` = a BoneStock do carro EMPRESTADA de outro build: aparece na tabela como a
 // linha de base, mas não é editável nem removível daqui — a dona é o build de origem.
-type DynoPull = { id: string; ride_code?: string; build_no?: number; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; imported_from?: string | null; foreign?: boolean; borrowed?: boolean }
+type DynoPull = { id: string; ride_code?: string; build_no?: number; pack: string | null; whp: number | null; wnm: number | null; loss_pct: number | null; bhp: number | null; bnm: number | null; pull_date: string | null; dyno: string | null; document_url: string | null; origin?: string | null; correction_factor?: number | null; imported_from?: string | null; foreign?: boolean; borrowed?: boolean; linked?: string; linkedName?: string }
 
 // BR-recorded pulls store UNCORRECTED wheel figures, torque in kgf·m and an SAE correction
 // factor; this app shows corrected STD figures with torque in lb·ft. Convert once at load —
@@ -77,6 +77,34 @@ function toLocalDialect(p: DynoPull): DynoPull {
 function isBoneStock(p: { pack: string | null }) { return isBaselineName(p.pack) }
 // Estrito: só a BoneStock de verdade pode ser emprestada a OUTROS carros.
 function isTrueBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
+
+// BONESTOCK VIVA (user law 21/aug/2026): an imported baseline is a POINTER to the origin
+// car — the figures are read THERE, now. Changed at the origin → changed everywhere
+// (dyno table, loss label, BuildSheet FROM/TARGET, PDF). Only ORIGINALS can be a
+// source; the origin's current baseline follows the origin page's own pin rule (newest,
+// preferring one with a loss on file); predictions never propagate.
+async function resolveLiveBaselines(list: DynoPull[]): Promise<DynoPull[]> {
+  const srcCodes = [...new Set(list.filter((p) => p.imported_from && isBoneStock(p)).map((p) => String(p.imported_from)))]
+  if (srcCodes.length === 0) return list
+  const [{ data: srcRows }, { data: srcRides }] = await Promise.all([
+    supabase.from('dyno_pulls').select('*').in('ride_code', srcCodes).is('imported_from', null).order('created_at', { ascending: false }),
+    supabase.from('rides').select('project_code, project_name').in('project_code', srcCodes),
+  ])
+  const names = new Map<string, string>(((srcRides || []) as any[]).map((r) => [String(r.project_code), String(r.project_name || '')]))
+  const current = new Map<string, DynoPull>()
+  for (const code of srcCodes) {
+    const own = ((srcRows || []) as DynoPull[]).filter((r) => r.ride_code === code && isTrueBoneStock(r))
+    const pick = own.find((r) => r.loss_pct != null) ?? own[0]
+    if (pick) current.set(code, pick)
+  }
+  return list.map((p) => {
+    const src = p.imported_from && isBoneStock(p) ? current.get(String(p.imported_from)) : undefined
+    if (!src) return p
+    // THIS row keeps its identity (id / ride_code / build_no / imported_from); every
+    // measured figure comes from the origin.
+    return { ...p, pack: src.pack, whp: src.whp, wnm: src.wnm, loss_pct: src.loss_pct, bhp: src.bhp, bnm: src.bnm, correction_factor: src.correction_factor ?? null, pull_date: src.pull_date, dyno: src.dyno, document_url: src.document_url, origin: src.origin, linked: String(p.imported_from), linkedName: names.get(String(p.imported_from)) || '' }
+  })
+}
 
 
 // Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
@@ -302,16 +330,18 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         .eq('ride_code', rideCode)
         .order('created_at', { ascending: false }),
     ])
-    const rows = ((data || []) as DynoPull[]).map(toLocalDialect)
+    const [liveData, liveWide] = await Promise.all([resolveLiveBaselines((data || []) as DynoPull[]), resolveLiveBaselines((rideWide || []) as DynoPull[])])
+    const rows = liveData.map(toLocalDialect)
     // BoneStock baseline is always pinned as the first row.
     rows.sort((a, b) => (isBoneStock(b) ? 1 : 0) - (isBoneStock(a) ? 1 : 0))
     // A BoneStock do carro: define a perda E aparece em TODO pack (ordem do usuário,
     // 17/ago/2026). Preferindo a que tem perda gravada, se houver mais de uma.
-    const bsAll = ((rideWide || []) as DynoPull[]).filter(isBoneStock)
+    const bsAll = liveWide.filter(isBoneStock)
     const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
     setCarLoss(bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null)
     // O rótulo diz de QUAL baseline a perda veio — "from Stock" quando a base é a Stock.
-    setCarLossFrom(bsCar?.pack || 'BoneStock')
+    // De outro carro? O rótulo diz de qual: "US.042 - SublimeHell BoneStock" (ordem 21/ago/2026).
+    setCarLossFrom(bsCar?.linked ? `${bsCar.linked}${bsCar.linkedName ? ` - ${bsCar.linkedName}` : ''} ${bsCar.pack || 'BoneStock'}` : (bsCar?.pack || 'BoneStock'))
     setCarHasBone(bsAll.length > 0)
     // Build sem BoneStock própria mostra a do carro EMPRESTADA, fixada no topo —
     // read-only (sem EDIT/REMOVE): a dona é o build de origem.
@@ -1190,7 +1220,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                 </tr>
               ) : (
                 <tr key={p.id} className={`border-b border-gray-800 ${isBoneStock(p) ? 'bg-gray-800/40' : ''}`}>
-                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? (p.borrowed ? 'text-purple-300' : 'text-amber-300') : ''}`}>{p.pack || '—'}{p.borrowed ? <span className="ml-2 text-xs font-normal text-purple-400" title="A BoneStock do carro, gravada em outro build — só leitura aqui">🔒</span> : null}{isPredictedBaseline(p.pack) ? <span className="ml-2 text-xs font-normal text-fuchsia-300" title="PREVISÃO: derivada da potência de fábrica com a perda estimada — não é folha medida">📐 predicted</span> : null}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
+                  <td className={`py-3 pr-4 font-bold ${isBoneStock(p) ? (p.borrowed ? 'text-purple-300' : 'text-amber-300') : ''}`}>{p.pack || '—'}{p.borrowed ? <span className="ml-2 text-xs font-normal text-purple-400" title="A BoneStock do carro, gravada em outro build — só leitura aqui">🔒</span> : null}{p.linked ? <span className="ml-2 text-xs font-normal text-cyan-300" title={`BoneStock LIVE from ${p.linked}${p.linkedName ? ` - ${p.linkedName}` : ''} — read at the origin car; change it there`}>🔗 {p.linked}{p.linkedName ? ` - ${p.linkedName}` : ''}</span> : null}{isPredictedBaseline(p.pack) ? <span className="ml-2 text-xs font-normal text-fuchsia-300" title="PREVISÃO: derivada da potência de fábrica com a perda estimada — não é folha medida">📐 predicted</span> : null}{p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}</td>
                   <td className="py-3 pr-4">{p.whp != null ? `${p.whp.toFixed(2)} whp` : '—'}</td>
                   <td className="py-3 pr-4">{p.wnm != null ? `${p.wnm.toFixed(2)} lb·ft` : '—'}</td>
                   <td className="py-3 pr-4">{p.bhp != null ? `${p.bhp.toFixed(2)} bhp` : '—'}</td>
@@ -1202,7 +1232,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
                     <div className="flex gap-2 justify-end">
                       {/* Linha EMPRESTADA (a BoneStock do carro, de outro build): só leitura
                           aqui — edição/remoção acontecem no build de origem. */}
-                      {!p.foreign && !p.borrowed && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
+                      {!p.foreign && !p.borrowed && !p.linked && <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>}
                       {/* BoneStock is removable even when foreign (shared table) — Márcio 03/ago. */}
                       {(!p.foreign || isBoneStock(p)) && !p.borrowed && <button onClick={() => removePull(p.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>}
                       <button onClick={() => { setReportToClient(false); setReportPull(p) }} disabled={sendingId === p.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-3 py-1 rounded-xl font-bold text-sm">{sendingId === p.id ? 'SENDING…' : 'SEND'}</button>
@@ -1324,7 +1354,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // aba DYNO mostra: as puxadas DESTE build mais a baseline emprestada quando ele não tem.
   async function loadDynoTarget() {
     const { data } = await supabase.from('dyno_pulls').select('*').eq('ride_code', rideCode)
-    const rows = ((data || []) as DynoPull[]).map(toLocalDialect)
+    const rows = (await resolveLiveBaselines((data || []) as DynoPull[])).map(toLocalDialect)
     const mine = rows.filter((p) => p.build_no === buildNo)
     const bsAll = rows.filter(isBoneStock)
     const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
