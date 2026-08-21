@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     }], { onConflict: 'plaid_item_id' }).select().single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // Primeira carga — o Link pede 90 dias; o cursor assume daqui em diante.
+    // Primeira carga — o Link pede 730 dias (máximo do Plaid); o cursor assume daqui em diante.
     const first = await syncBankItem(db, row).catch((e) => ({ error: String(e).slice(0, 200) }))
     return NextResponse.json({ ok: true, account: label, first })
   } catch (e) {

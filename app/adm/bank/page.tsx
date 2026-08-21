@@ -82,6 +82,31 @@ export default function BankPage() {
     }
   }
 
+  // HISTÓRICO COMPLETO (21/ago): reabre o Link em update mode pedindo 730 dias.
+  // Sem exchange — é a mesma conexão. O Plaid busca o passado em segundo plano e
+  // o webhook HISTORICAL_UPDATE sincroniza; o SYNC aqui pega o que já veio.
+  async function expandHistory(itemId: string) {
+    setBusy('history')
+    try {
+      const r = await fetch(`${BASE_PATH}/api/plaid/link-token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: itemId }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.error) { alert(d.error || 'Could not create the update link token.'); return }
+      withPlaidScript(() => {
+        window.Plaid!.create({
+          token: d.link_token,
+          onSuccess: async () => {
+            await fetch(`${BASE_PATH}/api/plaid/accounts`, { method: 'POST' }).catch(() => null)
+            await load()
+            alert('Histórico de 24 meses solicitado. O Plaid busca o passado em segundo plano — as transações antigas entram sozinhas nos próximos minutos (webhook) ou no SYNC NOW.')
+          },
+          onExit: () => setBusy(null),
+        }).open()
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function syncNow() {
     setBusy('sync')
     try {
@@ -152,6 +177,11 @@ export default function BankPage() {
             <p className="text-xs text-gray-500 mt-2">last sync {a.last_synced_at ? new Date(a.last_synced_at).toLocaleString('en-US') : 'never'}</p>
             {a.status === 'NEEDS_REAUTH' && (
               <button onClick={connectBank} className="mt-3 bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-2xl font-bold text-sm">RECONNECT</button>
+            )}
+            {a.status === 'ACTIVE' && (
+              <button onClick={() => expandHistory(a.id)} disabled={busy !== null} className="mt-3 bg-sky-800 hover:bg-sky-700 disabled:opacity-50 px-4 py-2 rounded-2xl font-bold text-sm" title="Reabre o consentimento pedindo 24 meses de histórico (o padrão da primeira conexão era 90 dias)">
+                {busy === 'history' ? 'OPENING…' : '⟲ FULL HISTORY — 24 MONTHS'}
+              </button>
             )}
           </div>
         ))}
