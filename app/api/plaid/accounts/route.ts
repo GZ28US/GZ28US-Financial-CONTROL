@@ -13,12 +13,19 @@ export async function GET(req: NextRequest) {
     .from('bank_accounts')
     .select('id, institution, display_name, accounts, status, last_synced_at, created_at')
     .order('created_at')
-  const { data: recent } = await db
-    .from('bank_transactions')
-    .select('id, plaid_account_id, item_id, date, amount, name, merchant, pending, check_number, match_status')
-    .order('date', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(limit)
+  // PostgREST devolve no máximo 1.000 por request — pagina até o limit pedido
+  // (SHOW ALL com 1.662 linhas parava em 1.000, susto do Márcio 21/ago).
+  const recent: any[] = []   // eslint-disable-line @typescript-eslint/no-explicit-any
+  for (let from = 0; from < limit; from += 1000) {
+    const { data } = await db
+      .from('bank_transactions')
+      .select('id, plaid_account_id, item_id, date, amount, name, merchant, pending, check_number, match_status')
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(from, Math.min(from + 999, limit - 1))
+    recent.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
   const counts: Record<string, number> = {}
   const { data: all } = await db.from('bank_transactions').select('match_status')
   for (const r of all || []) counts[r.match_status || 'NEW'] = (counts[r.match_status || 'NEW'] || 0) + 1

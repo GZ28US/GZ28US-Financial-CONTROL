@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import DcBadge from '@/components/DcBadge'
 import DatePicker from '@/components/DatePicker'
+import BankReconcileCard from '@/components/BankReconcileCard'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
@@ -373,6 +374,7 @@ export default function DataCheckPage() {
   const [done, setDone] = useState<Set<string>>(new Set())    // rowIds consertados nesta visita
   const [showHistory, setShowHistory] = useState(false)
   const [reloadN, setReloadN] = useState(0)
+  const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
 
   useEffect(() => {
     setD(null); setError('')
@@ -380,7 +382,7 @@ export default function DataCheckPage() {
   }, [reloadN])
 
   const checks = useMemo(() => (d ? buildChecks(d) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done])
-  const totalIssues = checks.reduce((s, c) => s + c.items.length, 0)
+  const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
 
   // Trilha agrupada por dia — a "sessão" do double-check.
   const history = useMemo(() => {
@@ -463,6 +465,8 @@ export default function DataCheckPage() {
       )}
 
       <div className="space-y-4 max-w-4xl">
+        {/* Conciliação bancária — lê/escreve por /api/bank/reconcile (tabelas só-service-key). */}
+        <BankReconcileCard onCount={setBankCount} />
         {checks.map(c => (
           <div key={c.key} className={`border rounded-2xl overflow-hidden ${c.items.length === 0 ? 'border-emerald-900/60' : 'border-gray-700'}`}>
             <button onClick={() => setOpen(open === c.key ? null : c.key)} className="w-full text-left px-5 py-4 bg-gray-900 hover:bg-gray-800 flex items-center gap-4">

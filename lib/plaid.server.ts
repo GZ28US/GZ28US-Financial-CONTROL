@@ -113,6 +113,27 @@ export async function syncBankItem(db: SupabaseClient, item: BankItem): Promise<
   return { added, modified, removed }
 }
 
+// SALDO DO DIA (BL v0.2.0): depois do sync, o saldo atual de cada sub-conta vai
+// pra cash_balances (source PLAID) — é o "caixa" do Balanço, sem lançamento
+// manual. Uma chamada por dia por conta (a /accounts/balance/get é cobrada):
+// se já existe linha PLAID de hoje, não chama. Chave da conta = display_name
+// da conexão, a mesma que os extratos importados usam.
+export async function syncBalances(db: SupabaseClient, item: { id: string; plaid_access_token: string; display_name: string | null; institution: string }): Promise<number> {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const account = item.display_name || item.institution
+  const { count } = await db.from('cash_balances').select('id', { count: 'exact', head: true })
+    .eq('account', account).eq('balance_date', today).eq('source', 'PLAID')
+  if ((count || 0) > 0) return 0
+  const r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token })
+  const total = (r.accounts || []).reduce((s: number, a: any) => s + (Number(a.balances?.current) || 0), 0)
+  const { error } = await db.from('cash_balances').upsert([{
+    balance_date: today, account, balance: total, source: 'PLAID',
+    notes: (r.accounts || []).map((a: any) => `${a.name || a.official_name || 'conta'}${a.mask ? ' •' + a.mask : ''}: ${Number(a.balances?.current) || 0}`).join(' · '),
+  }], { onConflict: 'balance_date,account' })
+  if (error) throw new Error('cash_balances: ' + error.message)
+  return 1
+}
+
 // Sincroniza TODAS as conexões ativas — usada pelo webhook e pelo cron (rede de segurança).
 export async function syncAllBankItems(): Promise<Array<Record<string, unknown>>> {
   const db = bankDb()
@@ -121,7 +142,9 @@ export async function syncAllBankItems(): Promise<Array<Record<string, unknown>>
   for (const it of items || []) {
     try {
       const r = await syncBankItem(db, it)
-      out.push({ account: it.display_name || it.institution, ...r })
+      // Saldo do dia é melhor esforço: falha aqui não derruba o sync das transações.
+      const balances = await syncBalances(db, it).catch(() => -1)
+      out.push({ account: it.display_name || it.institution, ...r, balances })
     } catch (e) {
       const msg = String(e).slice(0, 200)
       // Token vencido (banco força re-auth) não derruba as outras conexões — marca
