@@ -211,7 +211,7 @@ export default function BankPage() {
             <div>
               <h2 className="text-2xl font-bold">LATEST TRANSACTIONS</h2>
               <p className="text-xs text-gray-500 mt-1">
-                {(sources.STATEMENT + sources.PLAID).toLocaleString('en-US')} lines · <span className="text-gray-400 font-bold">{sources.STATEMENT.toLocaleString('en-US')}</span> from PDF statements (Nov/2025 → May/2026) · <span className="text-sky-300 font-bold">{sources.PLAID.toLocaleString('en-US')}</span> live from Plaid
+                {(sources.STATEMENT + sources.PLAID).toLocaleString('en-US')} lines · <span className="text-gray-400 font-bold">{sources.STATEMENT.toLocaleString('en-US')}</span> imported from PDF statements (Nov/2025 → May/2026, badged) · the rest live from Plaid
               </p>
             </div>
             {/* Conciliação: quantas linhas já têm par no app. O trabalho acontece no Data Checker. */}
@@ -232,7 +232,6 @@ export default function BankPage() {
               <tr className="text-gray-400 text-sm border-b border-gray-700">
                 <th className="py-2 pr-4 font-bold">DATE</th>
                 <th className="py-2 pr-4 font-bold">ACCOUNT</th>
-                <th className="py-2 pr-4 font-bold">SOURCE</th>
                 <th className="py-2 pr-4 font-bold">DESCRIPTION</th>
                 <th className="py-2 pr-4 font-bold text-right">AMOUNT</th>
                 <th className="py-2 pr-4 font-bold">STATUS</th>
@@ -243,11 +242,11 @@ export default function BankPage() {
                 <tr key={t.id} className="border-b border-gray-800">
                   <td className="py-2.5 pr-4 text-gray-400 whitespace-nowrap">{t.date}</td>
                   <td className="py-2.5 pr-4 text-gray-400 whitespace-nowrap">{accName(t)}</td>
-                  <td className="py-2.5 pr-4 whitespace-nowrap">{isStatement(t) ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700">STATEMENT</span> : <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-950 text-sky-300 border border-sky-900">PLAID</span>}</td>
                   <td className="py-2.5 pr-4">
                     {t.merchant || t.name || '—'}
                     {t.check_number ? <span className="ml-2 text-xs text-gray-500">check #{t.check_number}</span> : null}
                     {t.pending ? <span className="ml-2 text-xs text-amber-400">pending</span> : null}
+                    {isStatement(t) ? <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700 align-middle" title="Importada do extrato em PDF — antes do Plaid">STATEMENT</span> : null}
                   </td>
                   <td className={`py-2.5 pr-4 text-right font-bold ${t.amount > 0 ? 'text-red-300' : 'text-green-300'}`}>{t.amount > 0 ? '−' : '+'}{usd(t.amount)}</td>
                   <td className="py-2.5 pr-4"><span className={`px-3 py-1 rounded-full text-xs font-bold ${STATUS_BADGE[t.match_status] || 'bg-gray-800 text-gray-300'}`}>{STATUS_LABEL[t.match_status] || t.match_status}</span></td>
