@@ -36,8 +36,9 @@ export default function BankPage() {
 
   useEffect(() => { void load() }, [])
 
-  async function load() {
-    const r = await fetch(`${BASE_PATH}/api/plaid/accounts`)
+  const [showAll, setShowAll] = useState(false)
+  async function load(all = showAll) {
+    const r = await fetch(`${BASE_PATH}/api/plaid/accounts?limit=${all ? 5000 : 300}`)
     const d = await r.json().catch(() => ({}))
     setConfigured(Boolean(d.configured))
     setEnv(String(d.env || ''))
@@ -191,6 +192,13 @@ export default function BankPage() {
       </div>
 
       {/* Últimas transações */}
+      {recent.length > 0 && (() => { const total = Object.values(counts).reduce((s, n) => s + n, 0); return (
+        <div className="flex items-center gap-3 mb-2 text-sm text-gray-400">
+          <span>Mostrando {recent.length} de {total} transações{showAll ? '' : ' (as mais recentes)'}</span>
+          {total > recent.length && <button onClick={() => { setShowAll(true); load(true) }} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1 rounded-xl font-bold text-xs">SHOW ALL ({total})</button>}
+          {showAll && <button onClick={() => { setShowAll(false); load(false) }} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1 rounded-xl font-bold text-xs">SÓ RECENTES</button>}
+        </div>
+      ) })()}
       {recent.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 overflow-x-auto">
           <h2 className="text-2xl font-bold mb-4">LATEST TRANSACTIONS</h2>

@@ -4,7 +4,10 @@ import { bankDb, plaidConfigured, plaidEnv, syncAllBankItems } from '@/lib/plaid
 // Alimenta a tela ADM ▸ BANK: conexões, placar do universo e as últimas transações.
 // As tabelas têm RLS trancado (só service key), então a tela lê por aqui — o token
 // de acesso NUNCA sai deste servidor (o select da tela não o inclui).
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
+  // ?limit= — a tela pede 300 por padrão e 5000 no SHOW ALL. O teto antigo de 60
+  // parava em 17/ago com 277 transações só em agosto (susto do Márcio, 21/ago).
+  const limit = Math.min(5000, Math.max(1, parseInt(req.nextUrl.searchParams.get('limit') || '300', 10) || 300))
   const db = bankDb()
   const { data: accounts } = await db
     .from('bank_accounts')
@@ -15,7 +18,7 @@ export async function GET(_req: NextRequest) {
     .select('id, plaid_account_id, item_id, date, amount, name, merchant, pending, check_number, match_status')
     .order('date', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(60)
+    .limit(limit)
   const counts: Record<string, number> = {}
   const { data: all } = await db.from('bank_transactions').select('match_status')
   for (const r of all || []) counts[r.match_status || 'NEW'] = (counts[r.match_status || 'NEW'] || 0) + 1
