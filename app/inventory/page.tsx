@@ -563,7 +563,13 @@ export default function InventoryPage() {
                           <div key={item.id} className={`flex items-center justify-between gap-6 px-6 py-4 ${gi < p.items.length - 1 ? 'border-b border-gray-800' : ''}`}>
                             <div className={`flex-1 min-w-0 ${p.donated ? '' : 'pl-5'}`}>
                               <h3 className="text-xl font-bold">{item.description}</h3>
-                              <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
+                              {/* Doada não tem custo: o número é MSRP, e o custo se escreve por extenso.
+                                  Tudo sai dos campos que já existem — unit_price, quantity e source_type. */}
+                              {item.source_type === 'DONATED' ? (
+                                <p className="text-lg text-gray-400">OUR COST: <span className="font-bold text-orange-300">DONATED</span> — MSRP: <span className="font-bold text-gray-300">{formatUSD(item.unit_price)}</span>{item.quantity > 1 ? <> × {item.quantity} = <span className="font-bold text-gray-300">{formatUSD(item.quantity * item.unit_price)}</span></> : null}</p>
+                              ) : (
+                                <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
+                              )}
                               {/* Origem numa linha só: invoice (`notes`) + de onde veio (`supplier`). */}
                               {item.source_type === 'DONATED'
                                 ? (item.notes || item.supplier) && <p className="text-sm text-yellow-400 mt-1">📦 {[item.notes, item.supplier].filter(Boolean).join(' — ')}</p>
@@ -597,7 +603,7 @@ export default function InventoryPage() {
                         <h3 className="text-xl font-bold truncate">{item.description}</h3>
                         <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-700 text-black">SOLD</span>
                       </div>
-                      <p className="text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)}{item.supplier ? ` · ${item.supplier}` : ''}</p>
+                      <p className="text-gray-400">{item.source_type === 'DONATED' ? <>OUR COST: <span className="font-bold text-orange-300">DONATED</span> — MSRP: {formatUSD(item.unit_price)}{item.quantity > 1 ? ` × ${item.quantity}` : ''}</> : <>Qty: {item.quantity} × {formatUSD(item.unit_price)}</>}{item.supplier ? ` · ${item.supplier}` : ''}</p>
                     </div>
                     <Link href={`/inventory/sell/${item.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold shrink-0">VIEW SALE</Link>
                   </div>
