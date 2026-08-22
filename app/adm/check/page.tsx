@@ -17,7 +17,8 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import DcBadge from '@/components/DcBadge'
 import DatePicker from '@/components/DatePicker'
-import BankReconcileCard from '@/components/BankReconcileCard'
+import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCard'
+import { PAID_FROM_OPTIONS } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
@@ -34,14 +35,18 @@ type Fix =
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
-type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string }
+// certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
+type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 type Check = { key: string; title: string; why: string; blocks: string; items: Item[]; impact?: number }
 
 const DESTINY_OPTIONS = CAR_DESTINY.map(o => ({ value: o.value, label: o.option }))
 const TYPE_OPTIONS = ['FIXED', 'APP', 'MARKETING', 'ASSET'].map(v => ({ value: v, label: v }))
 
-function buildChecks(d: FinData): Check[] {
+const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
+
+// matched = pares "tabela:id" do app já casados com linha da Regions (/api/bank/reconcile?matched=1).
+function buildChecks(d: FinData, matched: Set<string>): Check[] {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
 
@@ -343,6 +348,36 @@ function buildChecks(d: FinData): Check[] {
     })
   }
 
+  // 9b · PAID FROM vazio — quem pagou? Sem isso o motor do Bank Link trata a
+  // linha como "talvez Regions" (ruído no pool) e o DFC não sabe de que caixa
+  // saiu. Linha já casada com a Regions = GZ28US com certeza (o banco provou):
+  // vai no bulk PREENCHER CERTOS. source GZ28BR/GZ28US vira sugestão pré-carregada.
+  {
+    const mk = (table: string, r: any, code: string, href: string, label: string, amount: number): Item => {
+      const certain = matched.has(table + ':' + r.id)
+      const suggest = certain ? 'GZ28US' : (r.source === 'GZ28BR' || r.source === 'GZ28US') ? r.source : undefined
+      return {
+        href, code, label, amount, certain, suggest,
+        extra: certain ? 'casada com a Regions' : suggest ? 'sugestão: ' + suggest : undefined,
+        fix: { kind: 'select' as const, table, rowId: r.id, field: 'paid_from', options: PAID_FROM_SELECT, current: null },
+      }
+    }
+    const items: Item[] = [
+      ...d.invExpenses.filter((e: any) => !e.paid_from).map((e: any) => { const m = invoiceMeta(d, e.invoice_id); return mk('invoice_expenses', e, 'PROJ', m.href, [m.code, m.car, e.item, e.supplier].filter(Boolean).join(' · '), expLine(e)) }),
+      ...d.fixedExpenses.filter((e: any) => !e.paid_from).map((e: any) => mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0)),
+      ...d.expenses.filter((e: any) => !e.paid_from).map((e: any) => mk('expenses', e, e.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', '/staff', e.description || e.type || '', parseFloat(e.amount) || 0)),
+      ...d.goods.filter((g: any) => !g.paid_from).map((g: any) => mk('goods', g, 'GOODS', '/goods', [g.description, g.supplier].filter(Boolean).join(' · '), qtyLine(g))),
+      ...d.goodExpenses.filter((g: any) => !g.paid_from).map((g: any) => mk('good_expenses', g, 'GOODS', '/goods', g.description || '', parseFloat(g.amount) || 0)),
+      ...d.inputs.filter((x: any) => !x.paid_from).map((x: any) => mk('inputs', x, 'INPUT', '/inputs', [x.description, x.category].filter(Boolean).join(' · '), qtyLine(x))),
+      ...d.inventory.filter((x: any) => x.source_type === 'PURCHASED' && !x.paid_from).map((x: any) => mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x))),
+    ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
+    checks.push({
+      key: 'paid-from', title: 'Lançamentos sem PAID FROM (quem pagou?)', blocks: 'Bank Link (pool) · DFC por caixa',
+      why: 'Sem "quem pagou" o motor do Bank Link trata a linha como possível Regions (ruído nos candidatos) e o DFC não separa o caixa dos EUA do Brasil. Linha já casada com a Regions é GZ28US na certa — o botão PREENCHER CERTOS resolve todas de uma vez; as outras têm a sugestão do campo SOURCE pré-carregada.',
+      items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+  }
+
   // 10 · Caixa: migration pendente, nenhum saldo, ou saldo com mais de 35 dias.
   {
     const lt = ledgerTotals(d)
@@ -375,13 +410,23 @@ export default function DataCheckPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
+  const [matched, setMatched] = useState<Set<string>>(new Set())   // "tabela:id" já casados com a Regions
+  const [bulk, setBulk] = useState<string>('')   // progresso do PREENCHER CERTOS
 
   useEffect(() => {
     setD(null); setError('')
     loadFinancials().then(setD).catch(e => setError(String(e?.message || e)))
+    // Pares casados com a Regions — melhor esforço (sem sessão/servidor o card só perde o "certo").
+    ;(async () => {
+      try {
+        const r = await fetch(`${BASE_PATH}/api/bank/reconcile?matched=1`, { headers: await sessionHeaders() })
+        const j = await r.json().catch(() => ({}))
+        if (r.ok && Array.isArray(j.matched)) setMatched(new Set(j.matched.map((m: { table: string; id: string }) => m.table + ':' + m.id)))
+      } catch { /* sem banco, sem certeza */ }
+    })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done])
+  const checks = useMemo(() => (d ? buildChecks(d, matched) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
 
   // Trilha agrupada por dia — a "sessão" do double-check.
@@ -411,6 +456,26 @@ export default function DataCheckPage() {
     setSaving(false)
     setDone(prev => new Set(prev).add(fix.rowId + '|' + field))
     setFixing(null); setFixValue('')
+  }
+
+  // PREENCHER CERTOS: só itens com certain (prova, não palpite). Uma escrita por
+  // linha + trilha; o que falhar fica na lista com o erro no alert.
+  async function applyCertain(check: Check) {
+    const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
+    if (!items.length || !confirm(`Preencher ${items.length} linhas com ${items[0].suggest}? Todas já casaram com uma linha da Regions — o banco provou quem pagou.`)) return
+    setSaving(true)
+    const errors: string[] = []
+    let n = 0
+    for (const it of items) {
+      const fix = it.fix!; const field = fixField(fix)
+      setBulk(`${n + 1}/${items.length}`)
+      const { error: err } = await supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId).is(field, null)
+      if (err) { errors.push(`${it.code} · ${it.label}: ${err.message}`); continue }
+      await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: it.suggest, label: `CERTO (Regions) · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+      setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
+    }
+    setBulk(''); setSaving(false)
+    if (errors.length) alert(`${n} preenchidas; ${errors.length} com erro:\n` + errors.slice(0, 8).join('\n'))
   }
 
   if (error) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-red-400">{error}</p></main>
@@ -482,6 +547,14 @@ export default function DataCheckPage() {
             {open === c.key && (
               <div className="px-5 py-4 border-t border-gray-800">
                 <p className="text-sm text-gray-400 mb-3 max-w-2xl">{c.why}</p>
+                {c.items.some(i => i.certain) && (
+                  <div className="flex items-center gap-3 mb-3">
+                    <button disabled={saving} onClick={() => applyCertain(c)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
+                      {bulk ? `PREENCHENDO ${bulk}…` : `PREENCHER CERTOS (${c.items.filter(i => i.certain).length})`}
+                    </button>
+                    <span className="text-xs text-gray-500">linhas já casadas com a Regions → GZ28US; as demais seguem uma a uma pelo FIX</span>
+                  </div>
+                )}
                 {c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
                   <div className="max-h-[32rem] overflow-y-auto divide-y divide-gray-800">
                     {c.items.map((it, i) => {
@@ -515,6 +588,7 @@ export default function DataCheckPage() {
                                     <option value="">— escolher —</option>
                                     {it.fix.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                   </select>
+                                  {it.suggest && <p className="mt-1 text-xs text-sky-300">{it.certain ? 'Certo: esta linha já casou com uma linha da Regions.' : `Sugestão pré-carregada (campo SOURCE = ${it.suggest}) — ajuste se precisar.`}</p>}
                                 </div>
                               )}
                               {it.fix.kind === 'number' && (
