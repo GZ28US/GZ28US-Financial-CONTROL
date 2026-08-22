@@ -84,7 +84,7 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<Status>('ALL')
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
 
   const [confirmItemId, setConfirmItemId] = useState<string | null>(null)
   const [confirmPurchase, setConfirmPurchase] = useState<Purchase | null>(null)
@@ -122,7 +122,6 @@ export default function InventoryPage() {
       setSoldIds(new Set((sales || []).map((x: any) => x.inventory_id)))
     } else setSoldIds(new Set())
     setLoading(false)
-    setExpanded(new Set())
   }
 
   // Sold-out rows (qty ≤ 0) never show; SOLD items render in their own view.
@@ -164,9 +163,6 @@ export default function InventoryPage() {
   })
   const visibleSold = status === 'ALL' || status === 'SOLD' ? soldRows.filter(matches) : []
 
-  function toggle(key: string) {
-    setExpanded(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n })
-  }
 
   async function removeItem(id: string) {
     const { error } = await supabase.from('inventory').delete().eq('id', id)
@@ -530,20 +526,21 @@ export default function InventoryPage() {
           {visible.length > 0 && (
             <div className="space-y-5">
               {visible.map((p) => {
-                const isExpanded = expanded.has(p.key)
                 return (
                   <div key={p.key} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
+                    {/* DOAÇÃO não tem cabeçalho de grupo (ordem 22/ago/2026): o carro e a
+                        invoice já estão na linha "From …" de cada item — repetir é ruído. */}
+                    {!p.donated && (
                     <div className="p-6 flex items-center justify-between gap-4">
-                      <div className="flex-1 min-w-0 cursor-pointer group" onClick={() => toggle(p.key)}>
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-1 flex-wrap">
-                          <span className="text-lg">{isExpanded ? '▾' : '▸'}</span>
-                          <h2 className="text-2xl font-bold group-hover:text-blue-400 transition">{p.supplier || (p.donated ? p.items[0].donor || 'Donation' : 'Unknown Supplier')}</h2>
+                          <h2 className="text-2xl font-bold">{p.supplier || 'Unknown Supplier'}</h2>
                           <span className="px-3 py-1 rounded-full text-sm font-bold bg-green-900 text-green-300">
                             {p.items.length} item{p.items.length === 1 ? '' : 's'}
                           </span>
                           {originBadge(p.items[0])}
                         </div>
-                        <p className="text-lg text-gray-400 ml-7">
+                        <p className="text-lg text-gray-400">
                           {fmtDate(p.date)} — <span className="font-bold text-gray-300">{formatUSD(p.total)}</span>
                           {p.receipt && (
                             <>
@@ -559,17 +556,19 @@ export default function InventoryPage() {
                         <button onClick={() => setConfirmPurchase(p)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                       </div>
                     </div>
-                    {isExpanded && (
-                      <div className="border-t border-gray-800">
+                    )}
+                    <div className={p.donated ? '' : 'border-t border-gray-800'}>
                         {p.items.map((item, gi) => (
                           <div key={item.id} className={`flex items-center justify-between gap-6 px-6 py-4 ${gi < p.items.length - 1 ? 'border-b border-gray-800' : ''}`}>
-                            <div className="flex-1 min-w-0 pl-5">
+                            <div className={`flex-1 min-w-0 ${p.donated ? '' : 'pl-5'}`}>
                               <h3 className="text-xl font-bold">{item.description}</h3>
-                              {item.source_type === 'DONATED' && item.donor && <p className="text-base text-orange-400">Donor: {item.donor}</p>}
                               <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                              {item.notes && item.notes.split('\n').map((note, i) => (
-                                <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
-                              ))}
+                              {/* Origem numa linha só: a invoice vem do `notes`, o doador do `donor`. */}
+                              {item.source_type === 'DONATED'
+                                ? (item.notes || item.donor) && <p className="text-sm text-yellow-400 mt-1">📦 {[item.notes, item.donor].filter(Boolean).join(' — ')}</p>
+                                : item.notes && item.notes.split('\n').map((note, i) => (
+                                    <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
+                                  ))}
                             </div>
                             <div className="flex gap-3 shrink-0">
                               <Link href={`/inventory/sell/${item.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-2xl font-bold text-sm">💲 SELL</Link>
@@ -579,8 +578,7 @@ export default function InventoryPage() {
                             </div>
                           </div>
                         ))}
-                      </div>
-                    )}
+                    </div>
                   </div>
                 )
               })}

@@ -68,22 +68,6 @@ export default function InvoicesPage() {
     const list = data || []
     setRows(list)
 
-    // Stock-sale income per donor invoice (a donated part another car pulled from stock).
-    const stockByCode = new Map<string, { all: number; paid: number }>()
-    const [{ data: donInv }, { data: pulls }] = await Promise.all([
-      supabase.from('inventory').select('description, donor, notes').eq('category', 'STOCK').eq('source_type', 'DONATED'),
-      supabase.from('invoice_expenses').select('item, stock_donor, payment_date, price, quantity').not('stock_donor', 'is', null),
-    ])
-    const donorCodeByKey = new Map<string, string>()
-    ;(donInv || []).forEach((r: any) => { const m = (r.notes || '').match(/^From\s+(\S+)\s+—/); if (m) donorCodeByKey.set(`${(r.donor || '').trim().toLowerCase()}|${(r.description || '').trim().toLowerCase()}`, m[1]) })
-    ;(pulls || []).forEach((e: any) => {
-      const code = donorCodeByKey.get(`${(e.stock_donor || '').trim().toLowerCase()}|${(e.item || '').trim().toLowerCase()}`)
-      if (!code) return
-      const amt = (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1)
-      const cur = stockByCode.get(code) || { all: 0, paid: 0 }
-      cur.all += amt; if (isValidDate(e.payment_date)) cur.paid += amt
-      stockByCode.set(code, cur)
-    })
 
     // Bulk-load the children for every listed invoice (one query each, grouped in memory).
     const ids = list.map((i: any) => i.id)
@@ -113,9 +97,8 @@ export default function InvoicesPage() {
       const partsSubTotal = ipa.reduce((s: number, p: any) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
       const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
-      const ss = stockByCode.get(inv.invoice_code) || { all: 0, paid: 0 }
-      const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0) + ss.paid
-      const totalIncomeAll = ip.reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0) + ss.all
+      const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0)
+      const totalIncomeAll = ip.reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0)
       const expensesTotalGlobal = flTaxAmount + ie.reduce((s: number, e: any) => s + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((s: number, e: any) => s + expenseLine(e), 0)
       const currentProfit = totalPaid - expensesTotalPaid

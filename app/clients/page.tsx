@@ -53,24 +53,6 @@ export default function ClientsPage() {
         ? c.origin === 'SHOP'
         : c.origin !== 'SHOP' && (!!c.is_quote === (mode === 'quote')))
 
-    // Stock-sale income per donor invoice (a donated part another car pulled from stock).
-    const stockByCode = new Map<string, { all: number; paid: number }>()
-    {
-      const [{ data: donInv }, { data: pulls }] = await Promise.all([
-        supabase.from('inventory').select('description, donor, notes').eq('category', 'STOCK').eq('source_type', 'DONATED'),
-        supabase.from('invoice_expenses').select('item, stock_donor, payment_date, price, quantity').not('stock_donor', 'is', null),
-      ])
-      const donorCodeByKey = new Map<string, string>()
-      ;(donInv || []).forEach((r: any) => { const mm = (r.notes || '').match(/^From\s+(\S+)\s+—/); if (mm) donorCodeByKey.set(`${(r.donor || '').trim().toLowerCase()}|${(r.description || '').trim().toLowerCase()}`, mm[1]) })
-      ;(pulls || []).forEach((e: any) => {
-        const code = donorCodeByKey.get(`${(e.stock_donor || '').trim().toLowerCase()}|${(e.item || '').trim().toLowerCase()}`)
-        if (!code) return
-        const amt = (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1)
-        const cur = stockByCode.get(code) || { all: 0, paid: 0 }
-        cur.all += amt; if (isValidDate(e.payment_date)) cur.paid += amt
-        stockByCode.set(code, cur)
-      })
-    }
 
     const withStats = await Promise.all(clientList.map(async (client) => {
       // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
@@ -136,9 +118,8 @@ export default function ClientsPage() {
           const grandTotal = partsAndServicesTotal - discountAmount
 
           // Income counts only payments explicitly marked PAID (paid_at), plus stock-sale income.
-          const ss = stockByCode.get((inv as any).invoice_code) || { all: 0, paid: 0 }
-          const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0) + ss.paid
-          const totalIncomeAll = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0) + ss.all
+          const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+          const totalIncomeAll = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
 
           const flTaxAmount = floridaTaxesAmount
           const flTaxPaid = isValidDate(inv.fl_tax_expense_date)

@@ -482,8 +482,10 @@ export default function EditInvoicePage() {
 
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
-    const prefix = `From ${iCode} — ${rName}`
-    const { data: stockHistory } = await supabase.from('inventory').select('*').eq('supplier', rName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
+    // O vínculo com a invoice é o notes ("From <código>") — um campo, e só ele.
+    // (`%` no ilike tolera as linhas legadas que ainda carregam " — <carro>" no fim.)
+    void rName
+    const { data: stockHistory } = await supabase.from('inventory').select('*').eq('category', 'STOCK').ilike('notes', `From ${iCode}%`)
     if (stockHistory) {
       // Newest first — both for the editable PARTS TO STOCK list and the
       // "already in stock from this invoice" recap below it.
@@ -1094,7 +1096,7 @@ export default function EditInvoicePage() {
       const camFromDonated = exp.stock_source_type === 'DONATED'
       const sourceType = camFromDonated ? 'DONATED' : 'PURCHASED'
       const donor = camFromDonated ? (exp.stock_donor || null) : null
-      const note = `From ${invoiceCode} — ${ownerLabel()}`
+      const note = `From ${invoiceCode}`
       const { error } = await supabase.from('inventory').insert([{
         description: exp.item,
         category: 'STOCK',
@@ -2282,8 +2284,8 @@ export default function EditInvoicePage() {
     // state of the "from this invoice" stock rows.
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const donorLabel = ownerLabel()
-    const prefix = `From ${invoiceCode} — ${rideName}`
-    await supabase.from('inventory').delete().eq('supplier', rideName).eq('category', 'STOCK').ilike('notes', `${prefix}%`)
+    void rideName
+    await supabase.from('inventory').delete().eq('category', 'STOCK').ilike('notes', `From ${invoiceCode}%`)
     if (partsToStock.length > 0) {
       const { error: e } = await supabase.from('inventory').insert(partsToStock.map(p => ({
         description: p.description,
@@ -2291,8 +2293,10 @@ export default function EditInvoicePage() {
         quantity: parseFloat(p.quantity) || 1,
         unit_price: parseFloat(p.unit_price) || 0,
         purchase_date: isValidDate(p.date) ? p.date : null,
-        supplier: rideName,
-        notes: `From ${invoiceCode} — ${rideName}`,
+        // UM CAMPO POR INFO (lei 22/ago/2026): quem doou mora em `donor`, a invoice de
+        // origem em `notes`. `supplier` (que repetia o carro) não é mais gravado aqui.
+        supplier: null,
+        notes: `From ${invoiceCode}`,
         source_type: 'DONATED',
         donor: donorLabel,
       })))
