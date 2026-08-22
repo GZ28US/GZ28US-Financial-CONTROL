@@ -200,7 +200,7 @@ export default function DrePage() {
 
       <div className="max-w-2xl">
         <div className="bg-amber-950/60 border border-amber-800 rounded-2xl p-4 mb-6 text-sm text-amber-200 space-y-1">
-          <p className="font-bold">G1 DESTRAVADO — datas deriváveis (insight do Márcio, 20/ago)</p>
+          <p className="font-bold">G1 DESTRAVADO — datas deriváveis (insight do João, 20/ago)</p>
           <p>CLOSED exige todo income datado e recebido — então o mês do resultado de invoice fechado DERIVA do último recebimento quando falta conclusion_date explícita (que continua valendo mais: é a verdade do trabalho, não do caixa). Fechadas sem data derivável: {m.missingConclusion}. Colunas por período entram junto com as decisões D1/D2.</p>
           <p className="pt-1">E o custo de jobs ABERTOS ({usd(m.wipOpen)}) ainda pesa aqui como despesa — sob a decisão D2 (reconhecer na entrega) ele migra pro Balanço como WIP e este resultado sobe.</p>
         </div>
