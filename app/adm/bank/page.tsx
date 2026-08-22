@@ -117,7 +117,7 @@ export default function BankPage() {
         <div className="flex items-baseline gap-4 flex-wrap">
           <h1 className="text-4xl font-bold">BANK LINK</h1>
           <BlBadge />
-          <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
+          <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">FINANCIAL HUB →</a>
         </div>
         <div className="flex gap-3">
           <Link href="/adm/reports" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
