@@ -426,7 +426,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, matched) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done])
+  const checks = useMemo(() => (d ? buildChecks(d, matched) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, matched])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
 
   // Trilha agrupada por dia — a "sessão" do double-check.
