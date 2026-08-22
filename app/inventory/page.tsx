@@ -35,6 +35,8 @@ type ItemRow = {
   // Either way the origin lives in ONE field — `supplier`: the vendor when bought, the
   // DONOR CAR when it came off a car's invoice (user law 22/aug/2026).
   source_type: string | null
+  // Documento que trouxe a peça: o pedido do fornecedor, ou a INVOICE do carro que doou.
+  order_number: string | null
 }
 
 type Purchase = {
@@ -157,7 +159,7 @@ export default function InventoryPage() {
   const donatedValue = stockRows.filter(i => i.source_type === 'DONATED').reduce((s, i) => s + i.quantity * i.unit_price, 0)
 
   const term = search.trim().toLowerCase()
-  const matches = (i: ItemRow) => !term || [i.description, i.supplier, i.notes].some(f => (f || '').toLowerCase().includes(term))
+  const matches = (i: ItemRow) => !term || [i.description, i.supplier, i.notes, i.order_number].some(f => (f || '').toLowerCase().includes(term))
   const visible = status === 'SOLD' ? [] : purchases.filter(p => {
     const statusOk = status === 'ALL' || (status === 'DONATED' ? p.donated : !p.donated)
     return statusOk && p.items.some(matches)
@@ -570,9 +572,9 @@ export default function InventoryPage() {
                               ) : (
                                 <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
                               )}
-                              {/* Origem numa linha só: invoice (`notes`) + de onde veio (`supplier`). */}
+                              {/* Origem numa linha só: invoice (`order_number`) + quem entregou (`supplier`). */}
                               {item.source_type === 'DONATED'
-                                ? (item.notes || item.supplier) && <p className="text-sm text-yellow-400 mt-1">📦 {[item.notes, item.supplier].filter(Boolean).join(' — ')}</p>
+                                ? (item.order_number || item.supplier) && <p className="text-sm text-yellow-400 mt-1">📦 {[item.order_number ? `From ${item.order_number}` : '', item.supplier].filter(Boolean).join(' — ')}</p>
                                 : item.notes && item.notes.split('\n').map((note, i) => (
                                     <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
                                   ))}

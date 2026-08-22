@@ -197,19 +197,28 @@ export default function EditInputPage() {
         </div>
 
         <div>
-          <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
-          <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
+          {/* Peça DOADA: quem entregou é o CARRO, não um fornecedor — e nada foi pago,
+              então ORDER NUMBER (que guarda a invoice de origem), PAID FROM, RECEIPT e o
+              bloco de pagamento não aparecem (lei 22/ago/2026). */}
+          <label className="block mb-2 text-lg font-bold">{donated ? 'DONOR' : 'SUPPLIER'}</label>
+          {donated
+            ? <div className={`${inputClass} text-gray-300`}>{supplier || '—'}</div>
+            : <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />}
         </div>
 
+        {!donated && (
         <div>
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
         </div>
+        )}
 
+        {!donated && (
         <div>
           <label className="block mb-2 text-lg font-bold">PAID FROM</label>
           <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
+        )}
 
         <div className="flex gap-4">
           <div className="flex-1">
@@ -246,6 +255,7 @@ export default function EditInputPage() {
             bought IS the day it was paid — payment_date mirrors this field. */}
         <DatePicker label="DATE" value={purchaseDate} onChange={setPurchaseDate} />
 
+        {!donated && (
         <div>
           <label className="block mb-2 text-lg font-bold">RECEIPT</label>
           <div className="flex items-center gap-3 flex-wrap">
@@ -272,9 +282,10 @@ export default function EditInputPage() {
             )}
           </div>
         </div>
+        )}
 
         {/* UNIVERSAL PAYMENT BLOCK — payment date = purchase date when PAID */}
-        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
+        {!donated && <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />}
 
         <div>
           <label className="block mb-2 text-lg font-bold">NOTES</label>

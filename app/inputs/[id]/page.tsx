@@ -90,7 +90,7 @@ export default function ViewInputPage() {
             <div className={rowClass}><span className={labelClass}>CATEGORY</span>
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${input.category === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`}>{input.category}</span>
             </div>
-            {input.supplier && <div className={rowClass}><span className={labelClass}>SUPPLIER</span><span className="font-bold">{input.supplier}</span></div>}
+            {input.supplier && <div className={rowClass}><span className={labelClass}>{donated ? 'DONOR' : 'SUPPLIER'}</span><span className="font-bold">{input.supplier}</span></div>}
             <div className={rowClass}><span className={labelClass}>QUANTITY</span><span className="font-bold">{input.quantity}</span></div>
             <div className={rowClass}><span className={labelClass}>{donated ? 'UNIT MSRP' : 'UNIT PRICE'}</span><span className="font-bold">{formatUSD(input.unit_price)}</span></div>
             <div className={rowClass}><span className={labelClass}>{donated ? 'TOTAL MSRP' : 'TOTAL COST'}</span><span className="font-bold text-xl">{formatUSD(totalCost)}</span></div>

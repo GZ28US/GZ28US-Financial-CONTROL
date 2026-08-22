@@ -483,10 +483,10 @@ export default function EditInvoicePage() {
 
     const iCode = data.invoice_code || ''
     const rName = isClient ? iCode : rideNameRef.current
-    // O vínculo com a invoice é o notes ("From <código>") — um campo, e só ele.
-    // (`%` no ilike tolera as linhas legadas que ainda carregam " — <carro>" no fim.)
+    // O vínculo com a invoice é o `order_number` — o DOCUMENTO que trouxe a peça.
+    // NOTES é do usuário, não do app (lei 22/ago/2026).
     void rName
-    const { data: stockHistory } = await supabase.from('inventory').select('*').eq('category', 'STOCK').ilike('notes', `From ${iCode}%`)
+    const { data: stockHistory } = await supabase.from('inventory').select('*').eq('category', 'STOCK').eq('source_type', 'DONATED').eq('order_number', iCode)
     if (stockHistory) {
       // Newest first — both for the editable PARTS TO STOCK list and the
       // "already in stock from this invoice" recap below it.
@@ -1096,7 +1096,8 @@ export default function EditInvoicePage() {
     if (target === 'STOCK') {
       const camFromDonated = exp.stock_source_type === 'DONATED'
       const sourceType = camFromDonated ? 'DONATED' : 'PURCHASED'
-      const note = `From ${invoiceCode}`
+      // Comprada guarda o rastro no notes; doada guarda a invoice no order_number.
+      const note = camFromDonated ? null : `From ${invoiceCode}`
       const { error } = await supabase.from('inventory').insert([{
         description: exp.item,
         category: 'STOCK',
@@ -1105,6 +1106,7 @@ export default function EditInvoicePage() {
         purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
         // A origem volta pro MESMO campo: carro doador quando doada, fornecedor quando comprada.
         supplier: camFromDonated ? (exp.stock_donor || null) : (exp.supplier || null),
+        order_number: camFromDonated ? invoiceCode : null,
         notes: note,
         receipt_url: receiptUrlsJson,
         source_type: sourceType,
@@ -2285,7 +2287,7 @@ export default function EditInvoicePage() {
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     const donorLabel = ownerLabel()
     void rideName
-    await supabase.from('inventory').delete().eq('category', 'STOCK').ilike('notes', `From ${invoiceCode}%`)
+    await supabase.from('inventory').delete().eq('category', 'STOCK').eq('source_type', 'DONATED').eq('order_number', invoiceCode)
     if (partsToStock.length > 0) {
       const { error: e } = await supabase.from('inventory').insert(partsToStock.map(p => ({
         description: p.description,
@@ -2293,10 +2295,11 @@ export default function EditInvoicePage() {
         quantity: parseFloat(p.quantity) || 1,
         unit_price: parseFloat(p.unit_price) || 0,
         purchase_date: isValidDate(p.date) ? p.date : null,
-        // UM CAMPO POR INFO (lei 22/ago/2026): a origem é SEMPRE `supplier` — aqui, o carro
-        // doador; a invoice de origem mora em `notes`. Não existe mais coluna `donor`.
+        // UM CAMPO POR INFO (lei 22/ago/2026): quem entregou a peça é o `supplier` (aqui, o
+        // carro doador) e o documento que a trouxe é o `order_number` (esta invoice).
+        // NOTES não leva info de app — fica livre pro usuário.
         supplier: donorLabel,
-        notes: `From ${invoiceCode}`,
+        order_number: invoiceCode,
         source_type: 'DONATED',
       })))
       if (e) { alert(e.message); return }
