@@ -78,17 +78,11 @@ const MENU: MenuItem[] = [
     type: 'dropdown',
     label: 'ADM',
     items: [
-      ['/adm/bank', 'BANK LINK'],
       ['/adm/financials', 'FINANCIAL HUB'],
       ['/adm/check', 'DATA CHECKER'],
-      ['/adm/reports', 'REPORTS'],
-    ],
-  },
-  {
-    type: 'dropdown',
-    label: 'DEV',
-    items: [
       ['/adm/changelog', 'CHANGELOG'],
+      ['/adm/reports', 'REPORTS'],
+      ['/adm/bank', 'BANK LINK'],
     ],
   },
 ]

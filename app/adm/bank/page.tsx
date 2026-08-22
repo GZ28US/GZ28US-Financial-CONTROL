@@ -128,6 +128,29 @@ export default function BankPage() {
       </div>
       <p className="text-xl text-gray-400 mb-6">The banking universe — every transaction the bank posts lands here by itself.</p>
 
+      {/* CAIXA CONSOLIDADO — manchete da página (Márcio, 22/ago): o que a empresa tem
+          agora somando todas as conexões. Não é card: os cards são só os bancos. */}
+      {accounts.length > 0 && (() => {
+        const list = accounts.map((a) => balances[a.id]).filter(Boolean)
+        const total = list.reduce((s, b) => s + b.balance, 0)
+        const oldest = list.map((b) => b.date).sort()[0]
+        const allPlaid = list.length > 0 && list.every((b) => b.source === 'PLAID')
+        return (
+          <div className="flex items-end justify-between gap-6 flex-wrap border-b border-gray-800 pb-6 mb-8">
+            <div>
+              <p className="text-sm font-bold tracking-widest text-gray-500">CAIXA CONSOLIDADO</p>
+              <p className={`text-6xl font-bold tabular-nums leading-none mt-2 ${total < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{total < 0 ? '−' : ''}{usd(total)}</p>
+            </div>
+            <p className="text-sm text-gray-500 text-right">
+              {list.length === 0 ? 'sem saldo ainda — SYNC NOW busca no banco' : (
+                <>{list.length} de {accounts.length} conex{accounts.length === 1 ? 'ão' : 'ões'} com saldo · posição de {oldest}{list.length > 1 ? ' (a mais antiga)' : ''}<br />
+                {allPlaid ? 'Plaid atualiza 1×/dia no sync' : 'inclui saldo de extrato — SYNC NOW traz o do Plaid'}</>
+              )}
+            </p>
+          </div>
+        )
+      })()}
+
       {configured === false && (
         <div className="bg-amber-950/40 border border-amber-700 rounded-3xl p-6 mb-6">
           <p className="text-lg font-bold text-amber-300">Plaid keys not set yet</p>
@@ -137,21 +160,6 @@ export default function BankPage() {
       {env === 'sandbox' && configured && (
         <p className="text-sm font-bold text-fuchsia-300 mb-4">⚠️ SANDBOX mode — test data only, no real bank.</p>
       )}
-
-      {/* CAIXA — o que a empresa tem agora: por conexão (nos cards) e o total de
-          todas as conexões ligadas. Fonte: último cash_balances por conta. */}
-      {accounts.length > 0 && (() => {
-        const list = accounts.map((a) => balances[a.id]).filter(Boolean)
-        const total = list.reduce((s, b) => s + b.balance, 0)
-        const oldest = list.map((b) => b.date).sort()[0]
-        return (
-          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 mb-6 max-w-md">
-            <p className="text-xs font-bold text-gray-500 mb-1">CAIXA TOTAL — {list.length} conex{list.length === 1 ? 'ão' : 'ões'}</p>
-            <p className={`text-4xl font-bold tabular-nums ${total < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{total < 0 ? '−' : ''}{usd(total)}</p>
-            <p className="text-xs text-gray-500 mt-1">{list.length ? `saldo mais antigo em ${oldest} · Plaid atualiza 1×/dia no sync` : 'sem saldo ainda — clique SYNC NOW'}</p>
-          </div>
-        )
-      })()}
 
       {/* Placar do universo */}
       {Object.keys(counts).length > 0 && (

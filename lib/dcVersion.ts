@@ -4,10 +4,9 @@
 // CHECK bumpa DC_VERSION e acrescenta uma linha no topo do changelog.
 // A era anterior (dentro do FINANCIAL v0.4.0–v0.9.x) está no changelog de lá.
 export const DC_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'BETA'
-export const DC_VERSION = '1.7.1'
+export const DC_VERSION = '1.7.0'
 
 export const DC_CHANGELOG: { version: string; date: string; notes: string }[] = [
-  { version: '1.7.1', date: '2026-08-21', notes: 'Card do banco: recarrega depois de cada MATCH (candidatos são do servidor), erro de rede/401 aparece no cabeçalho com "tentar de novo" em vez de "carregando" eterno, falha de resposta avisa antes de repetir.' },
   { version: '1.7.0', date: '2026-08-21', notes: 'Card "Banco sem casamento": cada linha da Regions sem par no app, com candidatos automáticos (mesmo valor, data próxima, pedido somado) e decisão na própria linha — MATCH preenche a data de pagamento do app que faltava, TRANSFER/IGNORE tiram da fila, EXPLAIN guarda o que foi. Filtro por nome/valor/data, tudo na trilha.' },
   { version: '1.6.1', date: '2026-08-21', notes: 'Relógio = Orlando: "hoje" dos recebimentos vencidos e do corte de saldo envelhecido deixa o UTC (que vira amanhã depois das 20h) e segue a regra do app.' },
   { version: '1.6.0', date: '2026-08-20', notes: 'Contexto nas linhas: toda pendência de invoice identifica carro · cliente e diz O QUE a linha é — «006.8 Pending balance» virou «006.8 · [cliente] — income Pending balance, vencido em X». Tooltip com o contexto completo.' },
