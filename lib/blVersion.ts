@@ -3,9 +3,10 @@
 // independente de FINANCIAL HUB (lib/finVersion) e DATA CHECKER (lib/dcVersion).
 // Todo patch do BANK LINK bumpa BL_VERSION e acrescenta uma linha no changelog.
 export const BL_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const BL_VERSION = '0.2.2'
+export const BL_VERSION = '0.2.3'
 
 export const BL_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.2.3', date: '2026-08-22', notes: 'Origem visível: cada linha ganha selo STATEMENT (908, do extrato em PDF Nov/2025 → mai/2026) ou PLAID (ao vivo), e o cabeçalho da tabela diz quantas de cada. O placar "NEW: 1662" sai de baixo do CAIXA CONSOLIDADO — não era "linhas novas", era conciliação: vira RECONCILIATION junto da tabela, NEW → UNMATCHED, QUEUED → TO BOOK, com atalho → DATA CHECKER.' },
   { version: '0.2.2', date: '2026-08-22', notes: 'CAIXA TOTAL vira CAIXA CONSOLIDADO e sai do formato de card: é a manchete da página, logo abaixo do título, com número grande e régua — só os bancos conectados são cards. Legenda diz quantas conexões têm saldo, a posição mais antiga e se algum saldo ainda é de extrato (não Plaid).' },
   { version: '0.2.1', date: '2026-08-21', notes: 'Tela no ecossistema: ← FINANCIAL HUB, selo junto do título, BALANCE por conexão e CAIXA TOTAL de todas as conexões (último saldo de cash_balances — Plaid ou extrato); BANK LINK no topo do ADM e CHANGELOG no dropdown DEV. Revisão adversarial (22 agentes): MATCH re-deriva o candidato no servidor (fecha o buraco de casar a mesma linha do app em duas do banco, grupo ⇄ item incluído); UNMATCH desfaz o backfill; estorno negativo vai pro pool oposto; leitura pagina além de 1.000; rota /api/plaid/accounts passa a exigir sessão (estava aberta — expunha o extrato e disparava sync cobrado); saldo do dia conta só depósito (cartão subtrai) e nunca sobrescreve lançamento manual.' },
   { version: '0.2.0', date: '2026-08-21', notes: 'Histórico completo: 908 linhas de Nov/2025 a 25/mai/2026 importadas dos extratos PDF da Regions (checksum por extrato + 220/220 conferidas contra o Plaid em junho), ids stmt:. Saldo do dia via Plaid → cash_balances (uma chamada/dia, source PLAID) — o Caixa do Balanço vive sozinho. API /api/bank/reconcile: candidatos no app por valor/data/grupo de compra e ações MATCH/TRANSFER/IGNORE/EXPLAIN com backfill de payment_date. SHOW ALL pagina além de 1.000.' },

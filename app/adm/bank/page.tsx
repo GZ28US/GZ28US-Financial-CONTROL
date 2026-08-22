@@ -12,12 +12,15 @@ import { sessionHeaders } from '@/components/BankReconcileCard'
 // a janela: conexões, placar do casamento e as últimas transações. O CONNECT BANK
 // abre o Plaid Link (o único momento humano — o consentimento OAuth no banco).
 type Account = { id: string; institution: string; display_name: string | null; accounts: Record<string, { name: string; mask: string | null; type: string }> | null; status: string; last_synced_at: string | null }
-type Tx = { id: string; plaid_account_id: string | null; item_id: string; date: string; amount: number; name: string | null; merchant: string | null; pending: boolean; check_number: string | null; match_status: string }
+type Tx = { id: string; plaid_account_id: string | null; item_id: string; date: string; amount: number; name: string | null; merchant: string | null; pending: boolean; check_number: string | null; match_status: string; plaid_id: string | null }
 
 declare global { interface Window { Plaid?: { create: (cfg: Record<string, unknown>) => { open: () => void } } } }
 
 const usd = (n: number) => '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+// Vocabulário de conciliação na tela (o banco guarda NEW/MATCHED/…; NEW = ainda sem par no app)
+const STATUS_LABEL: Record<string, string> = { NEW: 'UNMATCHED', MATCHED: 'MATCHED', POSTED: 'BOOKED', TRANSFER: 'TRANSFER', QUEUED: 'TO BOOK', IGNORED: 'IGNORED', REMOVED: 'REMOVED' }
+const isStatement = (t: { plaid_id: string | null }) => String(t.plaid_id || '').startsWith('stmt:')
 const STATUS_BADGE: Record<string, string> = {
   NEW: 'bg-amber-800 text-amber-200',
   MATCHED: 'bg-green-900 text-green-300',
@@ -34,6 +37,7 @@ export default function BankPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recent, setRecent] = useState<Tx[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [sources, setSources] = useState<{ STATEMENT: number; PLAID: number }>({ STATEMENT: 0, PLAID: 0 })
   const [balances, setBalances] = useState<Record<string, { balance: number; date: string; source: string; notes: string | null }>>({})
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -48,6 +52,7 @@ export default function BankPage() {
     setAccounts(d.accounts || [])
     setRecent(d.recent || [])
     setCounts(d.counts || {})
+    setSources(d.sources || { STATEMENT: 0, PLAID: 0 })
     setBalances(d.balances || {})
   }
 
@@ -161,14 +166,6 @@ export default function BankPage() {
         <p className="text-sm font-bold text-fuchsia-300 mb-4">⚠️ SANDBOX mode — test data only, no real bank.</p>
       )}
 
-      {/* Placar do universo */}
-      {Object.keys(counts).length > 0 && (
-        <div className="flex gap-3 mb-6 flex-wrap">
-          {Object.entries(counts).map(([k, v]) => (
-            <span key={k} className={`px-4 py-2 rounded-full text-sm font-bold ${STATUS_BADGE[k] || 'bg-gray-800 text-gray-300'}`}>{k}: {v}</span>
-          ))}
-        </div>
-      )}
 
       {/* Conexões */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
@@ -210,12 +207,32 @@ export default function BankPage() {
       ) })()}
       {recent.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 overflow-x-auto">
-          <h2 className="text-2xl font-bold mb-4">LATEST TRANSACTIONS</h2>
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+            <div>
+              <h2 className="text-2xl font-bold">LATEST TRANSACTIONS</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                {(sources.STATEMENT + sources.PLAID).toLocaleString('en-US')} lines · <span className="text-gray-400 font-bold">{sources.STATEMENT.toLocaleString('en-US')}</span> from PDF statements (Nov/2025 → May/2026) · <span className="text-sky-300 font-bold">{sources.PLAID.toLocaleString('en-US')}</span> live from Plaid
+              </p>
+            </div>
+            {/* Conciliação: quantas linhas já têm par no app. O trabalho acontece no Data Checker. */}
+            {Object.keys(counts).length > 0 && (
+              <div className="text-right">
+                <p className="text-xs font-bold text-gray-500 mb-1">RECONCILIATION</p>
+                <div className="flex gap-2 flex-wrap justify-end">
+                  {Object.entries(counts).map(([k, v]) => (
+                    <span key={k} className={`px-3 py-1 rounded-full text-xs font-bold ${STATUS_BADGE[k] || 'bg-gray-800 text-gray-300'}`}>{STATUS_LABEL[k] || k}: {v.toLocaleString('en-US')}</span>
+                  ))}
+                  <Link href="/adm/check" className="px-3 py-1 rounded-full text-xs font-bold bg-gray-800 hover:bg-gray-700 border border-gray-700">→ DATA CHECKER</Link>
+                </div>
+              </div>
+            )}
+          </div>
           <table className="w-full text-left">
             <thead>
               <tr className="text-gray-400 text-sm border-b border-gray-700">
                 <th className="py-2 pr-4 font-bold">DATE</th>
                 <th className="py-2 pr-4 font-bold">ACCOUNT</th>
+                <th className="py-2 pr-4 font-bold">SOURCE</th>
                 <th className="py-2 pr-4 font-bold">DESCRIPTION</th>
                 <th className="py-2 pr-4 font-bold text-right">AMOUNT</th>
                 <th className="py-2 pr-4 font-bold">STATUS</th>
@@ -226,13 +243,14 @@ export default function BankPage() {
                 <tr key={t.id} className="border-b border-gray-800">
                   <td className="py-2.5 pr-4 text-gray-400 whitespace-nowrap">{t.date}</td>
                   <td className="py-2.5 pr-4 text-gray-400 whitespace-nowrap">{accName(t)}</td>
+                  <td className="py-2.5 pr-4 whitespace-nowrap">{isStatement(t) ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700">STATEMENT</span> : <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-950 text-sky-300 border border-sky-900">PLAID</span>}</td>
                   <td className="py-2.5 pr-4">
                     {t.merchant || t.name || '—'}
                     {t.check_number ? <span className="ml-2 text-xs text-gray-500">check #{t.check_number}</span> : null}
                     {t.pending ? <span className="ml-2 text-xs text-amber-400">pending</span> : null}
                   </td>
                   <td className={`py-2.5 pr-4 text-right font-bold ${t.amount > 0 ? 'text-red-300' : 'text-green-300'}`}>{t.amount > 0 ? '−' : '+'}{usd(t.amount)}</td>
-                  <td className="py-2.5 pr-4"><span className={`px-3 py-1 rounded-full text-xs font-bold ${STATUS_BADGE[t.match_status] || 'bg-gray-800 text-gray-300'}`}>{t.match_status}</span></td>
+                  <td className="py-2.5 pr-4"><span className={`px-3 py-1 rounded-full text-xs font-bold ${STATUS_BADGE[t.match_status] || 'bg-gray-800 text-gray-300'}`}>{STATUS_LABEL[t.match_status] || t.match_status}</span></td>
                 </tr>
               ))}
             </tbody>

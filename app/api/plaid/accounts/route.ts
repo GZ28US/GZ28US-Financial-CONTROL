@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   for (let from = 0; from < limit; from += 1000) {
     const { data } = await db
       .from('bank_transactions')
-      .select('id, plaid_account_id, item_id, date, amount, name, merchant, pending, check_number, match_status')
+      .select('id, plaid_account_id, item_id, date, amount, name, merchant, pending, check_number, match_status, plaid_id')
       .order('date', { ascending: false })
       .order('created_at', { ascending: false })
       .range(from, Math.min(from + 999, limit - 1))
@@ -37,14 +37,17 @@ export async function GET(req: NextRequest) {
     if (b) balances[a.id] = { balance: Number(b.balance) || 0, date: b.balance_date, source: b.source, notes: b.notes }
   }
   const counts: Record<string, number> = {}
-  const { data: all } = await db.from('bank_transactions').select('match_status')
-  for (const r of all || []) counts[r.match_status || 'NEW'] = (counts[r.match_status || 'NEW'] || 0) + 1
+  // Origem de cada linha: stmt:… veio do extrato em PDF (Nov/2025 → 25/mai/2026), o resto é Plaid ao vivo.
+  const sources = { STATEMENT: 0, PLAID: 0 }
+  const { data: all } = await db.from('bank_transactions').select('match_status, plaid_id').range(0, 9999)
+  for (const r of all || []) { counts[r.match_status || 'NEW'] = (counts[r.match_status || 'NEW'] || 0) + 1; sources[String(r.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID']++ }
   return NextResponse.json({
     configured: plaidConfigured(),
     env: plaidEnv(),
     accounts: accounts || [],
     recent: recent || [],
     counts,
+    sources,
     balances,
   })
 }
