@@ -121,11 +121,18 @@ export async function syncBankItem(db: SupabaseClient, item: BankItem): Promise<
 export async function syncBalances(db: SupabaseClient, item: { id: string; plaid_access_token: string; display_name: string | null; institution: string }): Promise<number> {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const account = item.display_name || item.institution
+  // Linha de QUALQUER source hoje (manual inclusive) ⇒ não chama nem sobrescreve.
   const { count } = await db.from('cash_balances').select('id', { count: 'exact', head: true })
-    .eq('account', account).eq('balance_date', today).eq('source', 'PLAID')
+    .eq('account', account).eq('balance_date', today)
   if ((count || 0) > 0) return 0
   const r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token })
-  const total = (r.accounts || []).reduce((s: number, a: any) => s + (Number(a.balances?.current) || 0), 0)
+  // Caixa = só conta de depósito; cartão de crédito (saldo = dívida) SUBTRAI.
+  const total = (r.accounts || []).reduce((s: number, a: any) => {
+    const v = Number(a.balances?.current) || 0
+    if (a.type === 'depository') return s + v
+    if (a.type === 'credit') return s - v
+    return s
+  }, 0)
   const { error } = await db.from('cash_balances').upsert([{
     balance_date: today, account, balance: total, source: 'PLAID',
     notes: (r.accounts || []).map((a: any) => `${a.name || a.official_name || 'conta'}${a.mask ? ' •' + a.mask : ''}: ${Number(a.balances?.current) || 0}`).join(' · '),

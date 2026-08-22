@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { BASE_PATH } from '@/lib/utils'
 import BlBadge from '@/components/BlBadge'
+import { sessionHeaders } from '@/components/BankReconcileCard'
 
 // ADM ▸ BANK — o UNIVERSO bancário (ordem do Márcio, 18/ago/2026): a Regions entra
 // aqui via Plaid e toda transação vira uma linha de bank_transactions. Esta tela é
@@ -33,19 +34,21 @@ export default function BankPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recent, setRecent] = useState<Tx[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [balances, setBalances] = useState<Record<string, { balance: number; date: string; source: string; notes: string | null }>>({})
   const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => { void load() }, [])
 
   const [showAll, setShowAll] = useState(false)
   async function load(all = showAll) {
-    const r = await fetch(`${BASE_PATH}/api/plaid/accounts?limit=${all ? 5000 : 300}`)
+    const r = await fetch(`${BASE_PATH}/api/plaid/accounts?limit=${all ? 5000 : 300}`, { headers: await sessionHeaders() })
     const d = await r.json().catch(() => ({}))
     setConfigured(Boolean(d.configured))
     setEnv(String(d.env || ''))
     setAccounts(d.accounts || [])
     setRecent(d.recent || [])
     setCounts(d.counts || {})
+    setBalances(d.balances || {})
   }
 
   // Carrega o script do Plaid Link uma vez, sob demanda.
@@ -87,7 +90,7 @@ export default function BankPage() {
   async function syncNow() {
     setBusy('sync')
     try {
-      const r = await fetch(`${BASE_PATH}/api/plaid/accounts`, { method: 'POST' })
+      const r = await fetch(`${BASE_PATH}/api/plaid/accounts`, { method: 'POST', headers: await sessionHeaders() })
       const d = await r.json().catch(() => ({}))
       if (d.results?.some((x: any) => x.error)) alert('Sync issues:\n' + d.results.filter((x: any) => x.error).map((x: any) => `${x.account}: ${x.error}`).join('\n'))
       await load()
@@ -106,8 +109,11 @@ export default function BankPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">BANK LINK</h1>
-        <BlBadge />
+        <div className="flex items-baseline gap-4 flex-wrap">
+          <h1 className="text-4xl font-bold">BANK LINK</h1>
+          <BlBadge />
+          <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
+        </div>
         <div className="flex gap-3">
           <Link href="/adm/reports" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           {accounts.length > 0 && (
@@ -132,6 +138,21 @@ export default function BankPage() {
         <p className="text-sm font-bold text-fuchsia-300 mb-4">⚠️ SANDBOX mode — test data only, no real bank.</p>
       )}
 
+      {/* CAIXA — o que a empresa tem agora: por conexão (nos cards) e o total de
+          todas as conexões ligadas. Fonte: último cash_balances por conta. */}
+      {accounts.length > 0 && (() => {
+        const list = accounts.map((a) => balances[a.id]).filter(Boolean)
+        const total = list.reduce((s, b) => s + b.balance, 0)
+        const oldest = list.map((b) => b.date).sort()[0]
+        return (
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 mb-6 max-w-md">
+            <p className="text-xs font-bold text-gray-500 mb-1">CAIXA TOTAL — {list.length} conex{list.length === 1 ? 'ão' : 'ões'}</p>
+            <p className={`text-4xl font-bold tabular-nums ${total < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{total < 0 ? '−' : ''}{usd(total)}</p>
+            <p className="text-xs text-gray-500 mt-1">{list.length ? `saldo mais antigo em ${oldest} · Plaid atualiza 1×/dia no sync` : 'sem saldo ainda — clique SYNC NOW'}</p>
+          </div>
+        )
+      })()}
+
       {/* Placar do universo */}
       {Object.keys(counts).length > 0 && (
         <div className="flex gap-3 mb-6 flex-wrap">
@@ -152,6 +173,13 @@ export default function BankPage() {
             <p className="text-sm text-gray-400 mt-1">
               {a.accounts ? Object.values(a.accounts).map((s) => `${s.name}${s.mask ? ' •' + s.mask : ''}`).join(' · ') : '—'}
             </p>
+            {balances[a.id] ? (
+              <div className="mt-3">
+                <p className="text-xs font-bold text-gray-500">BALANCE</p>
+                <p className={`text-2xl font-bold tabular-nums ${balances[a.id].balance < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{balances[a.id].balance < 0 ? '−' : ''}{usd(balances[a.id].balance)}</p>
+                <p className="text-xs text-gray-500">em {balances[a.id].date} · {balances[a.id].source === 'PLAID' ? 'Plaid' : 'extrato'}{balances[a.id].notes ? ` · ${balances[a.id].notes}` : ''}</p>
+              </div>
+            ) : <p className="text-xs text-gray-600 mt-3">sem saldo ainda — SYNC NOW busca</p>}
             <p className="text-xs text-gray-500 mt-2">last sync {a.last_synced_at ? new Date(a.last_synced_at).toLocaleString('en-US') : 'never'}</p>
             {a.status === 'NEEDS_REAUTH' && (
               <button onClick={connectBank} className="mt-3 bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-2xl font-bold text-sm">RECONNECT</button>
