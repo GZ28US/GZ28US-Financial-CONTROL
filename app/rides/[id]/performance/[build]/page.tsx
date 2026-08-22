@@ -621,7 +621,18 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
     load()
   }
 
-  function pullReport(p: DynoPull): string {
+  // TARGET IN THE REPORTS (user order 21/aug/2026): the GZ28US group ALWAYS sees the
+  // target and how much is still missing (or MET + the surplus); the CLIENT only hears
+  // about the target once it is reached — then with the surplus.
+  function targetLines(whpNow: number | null | undefined, audience: 'group' | 'client'): string[] {
+    if (targetBhp == null || targetWhp == null || whpNow == null) return []
+    const diff = whpNow - targetWhp
+    if (audience === 'client') return diff >= 0 ? [`🎯 *TARGET REACHED:* ${targetBhp} BHP pack target — *+${diff.toFixed(1)} WHP over*`] : []
+    return diff >= 0
+      ? [`🎯 *TARGET MET:* ${targetWhp.toFixed(1)} WHP (${targetBhp} BHP @ ${lossInUse}% loss) — *+${diff.toFixed(1)} WHP over*`]
+      : [`🎯 *TARGET:* ${targetWhp.toFixed(1)} WHP (${targetBhp} BHP @ ${lossInUse}% loss) — *${(-diff).toFixed(1)} WHP to go*`]
+  }
+  function pullReport(p: DynoPull, audience: 'group' | 'client' = 'group'): string {
     return [
       '🏁 *DYNO PULL*',
       rideTitle ? `*Ride:* ${rideTitle}` : null,
@@ -633,6 +644,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       p.bnm != null ? `*BTQ:* ${p.bnm.toFixed(2)} lb·ft` : null,
       p.pull_date ? `*Date:* ${fmtDate(p.pull_date)}` : null,
       p.dyno ? `*Dyno:* ${p.dyno}` : null,
+      ...(isBoneStock(p) ? [] : targetLines(p.whp, audience)),
     ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
   }
 
@@ -642,7 +654,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
 
   // Post the report to the WhatsApp reports group. Returns true on success.
   async function sendGroupReport(p: DynoPull): Promise<boolean> {
-    const payload: { toGroupName: string; body: string; documentUrl?: string; filename?: string } = { toGroupName: REPORTS_GROUP, body: pullReport(p) }
+    const payload: { toGroupName: string; body: string; documentUrl?: string; filename?: string } = { toGroupName: REPORTS_GROUP, body: pullReport(p, 'group') }
     if (p.document_url) { payload.documentUrl = p.document_url; payload.filename = docFilename(p) }
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -668,7 +680,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
   async function sendPull(p: DynoPull) {
     if (!client) { alert('This ride has no client on file to send to. Assign a client on the ride page first.'); return }
     const method = client.preferred_message_method || 'WhatsApp'
-    const report = pullReport(p)
+    const report = pullReport(p, 'client')
     const plain = report.replace(/\*/g, '') + (p.document_url ? `\n\nChart: ${p.document_url}` : '')
 
     if (method === 'WhatsApp') {
@@ -876,13 +888,17 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
       const latest = pulls.filter((p) => !isBoneStock(p))[0]
       const f2 = (x: number | null) => (x == null ? '—' : x.toFixed(2))
       const gain = (a: number | null, b: number | null) => (a != null && b != null ? (a - b).toFixed(2) : '—')
-      const caption = [
+      const captionBase = [
         '🏁 *GZ28US · DynoData RECEIPT:*',
         sheetTitle() ? `*${sheetTitle()}*` : null,
         bs && latest ? `WHP: FROM ${f2(bs.whp)} TO *${f2(latest.whp)}* - GAIN: *${gain(latest.whp, bs.whp)}*` : null,
         bs && latest ? `BHP: FROM ${f2(bs.bhp)} TO *${f2(latest.bhp)}* - GAIN: *${gain(latest.bhp, bs.bhp)}*` : null,
         bs && latest ? `BTQ (lb·ft): FROM ${f2(bs.bnm)} TO *${f2(latest.bnm)}* - GAIN: *${gain(latest.bnm, bs.bnm)}*` : null,
-      ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
+      ].filter(Boolean) as string[]
+      const footer = '\n\nSent by GZ28 Control App'
+      // Group: target + to-go always. Client: target only once it is reached.
+      const caption = [...captionBase, ...targetLines(latest?.whp ?? null, 'group')].join('\n') + footer
+      const captionClient = [...captionBase, ...targetLines(latest?.whp ?? null, 'client')].join('\n') + footer
 
       const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: caption, documentUrl: url, filename }) })
       const gd = await group.json().catch(() => ({}))
@@ -892,12 +908,12 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
         // Honor the client's preferred channel (SMS-only clients aren't on WhatsApp).
         // SMS / E-Mail / manual channels can't attach the PDF, so they carry its public link.
         const method = client.preferred_message_method || 'WhatsApp'
-        const plain = caption.replace(/\*/g, '') + `\n\nReceipt: ${url}`
+        const plain = captionClient.replace(/\*/g, '') + `\n\nReceipt: ${url}`
         if (method === 'WhatsApp') {
           const to = toWaNumber(client.phone, client.country)
           if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the receipt was not sent to them.') }
           else {
-            const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: caption, documentUrl: url, filename }) })
+            const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: captionClient, documentUrl: url, filename }) })
             const cd = await cli.json().catch(() => ({}))
             if (!cd.ok) { alert('Sent to the group, but the client WhatsApp send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`))); return }
           }
