@@ -1,6 +1,6 @@
 'use client'
 
-// Card "Banco sem casamento" do Data Checker (21/ago): cada linha NEW do
+// Card "Conciliação bancária" do Data Checker (21/ago; "Banco sem casamento" até 22/ago): cada linha NEW do
 // banco com os candidatos do app. MATCH casa (e backfilla a data do app),
 // TRANSFER/IGNORE tiram da fila, EXPLAIN guarda "o que foi" (QUEUED). Lê e
 // escreve por /api/bank/reconcile com o JWT da sessão (tabelas do banco são
@@ -178,7 +178,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
       <button onClick={() => setOpen(o => !o)} className="w-full text-left px-5 py-4 bg-gray-900 hover:bg-gray-800 flex items-center gap-4">
         <span className={`text-2xl font-bold tabular-nums w-14 shrink-0 ${error ? 'text-red-400' : clean ? 'text-emerald-400' : 'text-amber-300'}`}>{error ? '!' : lines ? (totalNew === 0 ? '✓' : totalNew) : '…'}</span>
         <span className="flex-1">
-          <span className="font-bold block">Banco sem casamento — linhas da Regions sem par no app</span>
+          <span className="font-bold block">CONCILIAÇÃO BANCÁRIA — linhas da Regions × lançamentos do app</span>
           <span className="text-xs text-gray-500">{error ? `erro: ${error}` : lines ? `trava: conciliação do DFC com o extrato · ${withCand} com candidato · ${feeLines} tarifas (motor)${auto && auto.pending.length ? ` · ${auto.pending.length} a conferir` : ''}` : 'carregando o banco…'}</span>
         </span>
         <span className="text-gray-500">{open ? '▴' : '▾'}</span>
