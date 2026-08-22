@@ -15,6 +15,9 @@ type Input = {
   purchase_date: string | null
   supplier: string | null
   receipt_url: string | null
+  // DONATED = sobra de um carro: não custou nada. O valor é o MSRP (preço sugerido
+  // de venda), nunca um custo (lei 22/ago/2026).
+  source_type?: string | null
 }
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -53,6 +56,7 @@ export default function ViewInputPage() {
   )
 
   const totalCost = input.quantity * input.unit_price
+  const donated = (input.source_type || '') === 'DONATED'
   const receiptUrls = parseReceiptUrls(input.receipt_url)
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
@@ -88,8 +92,9 @@ export default function ViewInputPage() {
             </div>
             {input.supplier && <div className={rowClass}><span className={labelClass}>SUPPLIER</span><span className="font-bold">{input.supplier}</span></div>}
             <div className={rowClass}><span className={labelClass}>QUANTITY</span><span className="font-bold">{input.quantity}</span></div>
-            <div className={rowClass}><span className={labelClass}>UNIT PRICE</span><span className="font-bold">{formatUSD(input.unit_price)}</span></div>
-            <div className={rowClass}><span className={labelClass}>TOTAL COST</span><span className="font-bold text-xl">{formatUSD(totalCost)}</span></div>
+            <div className={rowClass}><span className={labelClass}>{donated ? 'UNIT MSRP' : 'UNIT PRICE'}</span><span className="font-bold">{formatUSD(input.unit_price)}</span></div>
+            <div className={rowClass}><span className={labelClass}>{donated ? 'TOTAL MSRP' : 'TOTAL COST'}</span><span className="font-bold text-xl">{formatUSD(totalCost)}</span></div>
+            {donated && <div className={rowClass}><span className={labelClass}>OUR COST</span><span className="font-bold text-orange-300">DONATED</span></div>}
             <div className={rowClass}><span className={labelClass}>DATE OF PURCHASE</span><span className="font-bold">{formatDate(input.purchase_date)}</span></div>
             {receiptUrls.length > 0 && (
               <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-gray-700">

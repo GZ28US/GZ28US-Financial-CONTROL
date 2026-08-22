@@ -79,6 +79,8 @@ export default function EditInputPage() {
   const [openReceipts, setOpenReceipts] = useState(false)
   // STOCK rows live in `inventory` (reached via ?src=inventory); consumption in `inputs`.
   const [table, setTable] = useState<'inputs' | 'inventory'>('inputs')
+  // Peça DOADA (sobra de um carro) não tem custo: o valor é MSRP, e o custo é zero.
+  const [donated, setDonated] = useState(false)
 
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
@@ -97,6 +99,7 @@ export default function EditInputPage() {
     if (error || !data) { alert('Input not found'); router.push(t === 'inventory' ? '/inventory' : '/inputs'); return }
     setDescription(data.description || '')
     setCategory(data.category || 'STOCK')
+    setDonated((data.source_type || '') === 'DONATED')
     setQuantity(String(data.quantity || 1))
     const computedTotal = (parseFloat(data.unit_price) || 0) * (parseFloat(data.quantity) || 1)
     setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
@@ -214,7 +217,7 @@ export default function EditInputPage() {
             <input type="text" inputMode="decimal" value={quantity} onChange={(e) => { if (isNumeric(e.target.value)) setQuantity(e.target.value) }} className={inputClass} />
           </div>
           <div className="flex-1">
-            <label className="block mb-2 text-lg font-bold">TOTAL PRICE</label>
+            <label className="block mb-2 text-lg font-bold">{donated ? 'TOTAL MSRP' : 'TOTAL PRICE'}</label>
             <div className="relative">
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
               <input type="text" inputMode="decimal" value={totalPrice} onChange={(e) => { if (isNumeric(e.target.value)) setTotalPrice(e.target.value) }} className={`${inputClass} pl-10`} />
@@ -224,13 +227,19 @@ export default function EditInputPage() {
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 space-y-2">
           <div className="flex justify-between items-center">
-            <span className="text-gray-400 font-bold">UNIT PRICE</span>
+            <span className="text-gray-400 font-bold">{donated ? 'UNIT MSRP' : 'UNIT PRICE'}</span>
             <span className="text-lg font-bold text-gray-300">{formatUSD(unitPrice)}</span>
           </div>
           <div className="flex justify-between items-center border-t border-gray-700 pt-2">
-            <span className="text-gray-400 font-bold">TOTAL COST</span>
+            <span className="text-gray-400 font-bold">{donated ? 'TOTAL MSRP' : 'TOTAL COST'}</span>
             <span className="text-xl font-bold">{formatUSD(total)}</span>
           </div>
+          {donated && (
+            <div className="flex justify-between items-center border-t border-gray-700 pt-2">
+              <span className="text-gray-400 font-bold">OUR COST</span>
+              <span className="text-xl font-bold text-orange-300">DONATED</span>
+            </div>
+          )}
         </div>
 
         {/* ONE date only (lei 18/ago, estendida aos INPUTS 19/ago): the day it was
