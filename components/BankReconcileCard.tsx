@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
+import { BL_STAGE, BL_VERSION } from '@/lib/blVersion'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; score: number; dd: number | null }
@@ -191,7 +192,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
           <div className="bg-gray-950/60 border border-gray-800 rounded-2xl p-4">
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex-1 min-w-[16rem]">
-                <p className="font-bold">MOTORES AUTOMÁTICOS <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold border border-teal-800 bg-teal-950 text-teal-300">FEE</span> <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-800 bg-emerald-950 text-emerald-300">EXACT</span></p>
+                <p className="font-bold">MOTORES AUTOMÁTICOS <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold border border-purple-700 bg-purple-950 text-purple-300" title="Os motores vivem no Bank Link — esta é a versão que casa as linhas">BANK LINK {BL_STAGE} · v{BL_VERSION}</span> <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold border border-teal-800 bg-teal-950 text-teal-300">FEE</span> <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-800 bg-emerald-950 text-emerald-300">EXACT</span></p>
                 <p className="text-xs text-gray-500 mt-1">FEE: tarifa da Regions (wire fee, analysis charge, assessment) vira custo fixo "Regions Bank" e casa. EXACT: centavos iguais + único no app e no banco (±30d) + ≤3 dias + nome batendo. Só o certo; o resto fica como sugestão abaixo.</p>
               </div>
               {needsMigration ? (
