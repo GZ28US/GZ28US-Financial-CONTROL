@@ -112,23 +112,6 @@ export default function HomePage() {
       supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
     ])
 
-    // Stock-sale income per donor invoice (a donated part another car pulled from stock),
-    // matched via the inventory note's "From <invoice code>" prefix.
-    const stockByCode = new Map<string, { all: number; paid: number }>()
-    const [{ data: donInv }, { data: pulls }] = await Promise.all([
-      supabase.from('inventory').select('description, donor, notes').eq('category', 'STOCK').eq('source_type', 'DONATED'),
-      supabase.from('invoice_expenses').select('item, stock_donor, payment_date, price, quantity').not('stock_donor', 'is', null),
-    ])
-    const donorCodeByKey = new Map<string, string>()
-    ;(donInv || []).forEach((r: any) => { const mm = (r.notes || '').match(/^From\s+(\S+)\s+—/); if (mm) donorCodeByKey.set(`${(r.donor || '').trim().toLowerCase()}|${(r.description || '').trim().toLowerCase()}`, mm[1]) })
-    ;(pulls || []).forEach((e: any) => {
-      const code = donorCodeByKey.get(`${(e.stock_donor || '').trim().toLowerCase()}|${(e.item || '').trim().toLowerCase()}`)
-      if (!code) return
-      const amt = (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1)
-      const cur = stockByCode.get(code) || { all: 0, paid: 0 }
-      cur.all += amt; if (isValidDate(e.payment_date)) cur.paid += amt
-      stockByCode.set(code, cur)
-    })
 
     const group = <T extends { invoice_id: string }>(rs: T[] | null) => {
       const m = new Map<string, T[]>()
@@ -220,10 +203,9 @@ export default function HomePage() {
       const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
       const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
-      const ss = stockByCode.get(inv.invoice_code) || { all: 0, paid: 0 }
       const paymentsSum = ip.reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0)
-      const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0) + ss.paid
-      const totalIncomeAll = paymentsSum + ss.all
+      const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0)
+      const totalIncomeAll = paymentsSum
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
       cashFlow += totalPaid - expensesTotalPaid
@@ -257,11 +239,6 @@ export default function HomePage() {
       const desc = p.description || p.source || 'Income'
       income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc, milestone: canonMilestone(p.date_label) })
     }
-    stockByCode.forEach((v, code) => {
-      if (!Array.from(codeById.values()).includes(code)) return
-      const pending = v.all - v.paid
-      if (pending > 0.005) { const m = metaFor(undefined, code); income.push({ code, label: m.clientName || 'Stock part sold', amount: pending, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: 'Stock part sold' }) }
-    })
     // LOSS group: invoices whose FINAL MARKUP is negative (shown last, separate from incomes).
     const loss: Row[] = []
     for (const inv of invs || []) {

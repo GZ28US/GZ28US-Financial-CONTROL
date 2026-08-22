@@ -302,7 +302,9 @@ export default function EditInvoicePage() {
   const [savedPartsToStock, setSavedPartsToStock] = useState<PartsToStock[]>([])
   // part description (lowercased) -> buyer car code, paid status, income amount. Drives the
   // stock-sale income (a part this car donated and another car pulled from stock).
-  const [stockSales, setStockSales] = useState<Map<string, { buyerCode: string; paid: boolean; amount: number }>>(new Map())
+  // MSRP of every DONATED stock item (by description) — the sell price a pulled part
+  // imports into ITEMS at. Read live from inventory: the MSRP lives in ONE place.
+  const [stockMsrp, setStockMsrp] = useState<Map<string, number>>(new Map())
   const [flTaxExpenseDate, setFlTaxExpenseDate] = useState('')
   const [incomeReports, setIncomeReports] = useState<IncomeReport[] | null>(null)
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
@@ -495,26 +497,10 @@ export default function EditInvoicePage() {
       setPartsToStock(mapped)
     }
 
-    // Stock SALES: a part this car donated and another car pulled from stock carries this
-    // car's label as stock_donor on the buyer's expense. Each such pull is a stock-sale
-    // income for this donor invoice, PAID/PENDING per the buyer expense's payment_date.
-    const { data: salesData } = await supabase.from('invoice_expenses')
-      .select('item, payment_date, price, quantity, invoice_id')
-      .eq('stock_donor', rName)
-    const sales = (salesData || []).filter((s: any) => s.invoice_id && s.invoice_id !== invoiceId)
-    if (sales.length) {
-      const buyerIds = [...new Set(sales.map((s: any) => s.invoice_id))]
-      const { data: buyerInvs } = await supabase.from('invoices').select('id, invoice_code').in('id', buyerIds)
-      const codeById = new Map((buyerInvs || []).map((i: any) => [i.id, i.invoice_code]))
-      const m = new Map<string, { buyerCode: string; paid: boolean; amount: number }>()
-      sales.forEach((s: any) => {
-        const key = (s.item || '').trim().toLowerCase()
-        m.set(key, { buyerCode: String(codeById.get(s.invoice_id) || '—'), paid: isValidDate(s.payment_date), amount: (parseFloat(String(s.price)) || 0) * (parseFloat(String(s.quantity)) || 1) })
-      })
-      setStockSales(m)
-    } else {
-      setStockSales(new Map())
-    }
+    // DONATED stock = cost ZERO to whoever pulls it; the MSRP on the stock row is the
+    // sell price it imports into ITEMS at (user law 22/aug/2026).
+    const { data: donatedStock } = await supabase.from('inventory').select('description, unit_price').eq('category', 'STOCK').eq('source_type', 'DONATED')
+    setStockMsrp(new Map((donatedStock || []).map((r: any) => [String(r.description || '').trim().toLowerCase(), Number(r.unit_price) || 0])))
 
     // Aliases from the parts data bank, applied as part descriptions when
     // IMPORT INTUITIVE PARTS runs.
@@ -727,7 +713,9 @@ export default function EditInvoicePage() {
     const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
-    const amount = item.unit_price.toFixed(2)
+    // DONATED stock costs the receiving car NOTHING (user law 22/aug/2026): OUR COST = 0;
+    // its MSRP becomes the ITEMS price at import. PURCHASED stock keeps what we paid.
+    const amount = item.source_type === 'DONATED' ? '0.00' : item.unit_price.toFixed(2)
     // Carry the stock row's origin onto the expense so a future SEND TO -> STOCK
     // restores it instead of falsely re-labeling.
     const expense: Expense = {
@@ -1181,7 +1169,7 @@ export default function EditInvoicePage() {
     // Only FRESH items import; each imported item flips to EXPORTED.
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string; payment_date: string | null }>()
+    const sourceMap = new Map<string, { description: string; base: number; fixedPrice?: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string; payment_date: string | null }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (isCostLine(e.item)) return
@@ -1196,6 +1184,18 @@ export default function EditInvoicePage() {
       // in the Parts DB, as enrolled at hunt/scan/manual. If the part isn't known, fall
       // back to grossing the cost up to market by the supplier/item discount.
       const pn = normPN(e.part_number || '')
+      // A DONATED stock part sells at its MSRP (read live from inventory) and costs us
+      // nothing — the whole amount stays on THIS invoice (user law 22/aug/2026).
+      if ((e.stock_source_type || '') === 'DONATED') {
+        const msrp = stockMsrp.get(desc.toLowerCase()) || 0
+        if (!(msrp > 0)) { alert(`"${desc}" came from stock as DONATED but has no MSRP on the inventory row — set it there first.`); return }
+        const key = `|${desc.toLowerCase()}|msrp`
+        const existing = sourceMap.get(key)
+        if (existing) existing.quantity += qty
+        else sourceMap.set(key, { description: desc, base: 0, fixedPrice: msrp, quantity: qty, source_item: desc, payment_date: isValidDate(e.payment_date || '') ? (e.payment_date as string) : null })
+        importedIndices.push(idx)
+        return
+      }
       const mapFinal = ((pn ? (mapByPN.get(pn) || 0) : 0) || mapByName.get(desc.toLowerCase()) || 0)
       let marketBase: number
       if (mapFinal > 0) {
@@ -1226,7 +1226,7 @@ export default function EditInvoicePage() {
     sourceMap.forEach(src => {
       toAdd.push({
         description: aliasMap.get(src.description.trim().toLowerCase()) || src.description,
-        unit_price: (src.base * factor).toFixed(2),
+        unit_price: src.fixedPrice != null ? src.fixedPrice.toFixed(2) : (src.base * factor).toFixed(2),
         quantity: String(src.quantity),
         base_cost: String(src.base),
         kit_group: src.kit_group,
@@ -1380,12 +1380,11 @@ export default function EditInvoicePage() {
   const globalDiscountPct = parseFloat(globalDiscount) || 0
   const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
   const grandTotal = partsAndServicesTotal - globalDiscountAmount
-  // Stock-sale income: parts this car donated that another car has since pulled from stock.
-  const stockSaleIncomeAll = savedPartsToStock.reduce((s, p) => { const v = stockSales.get((p.description || '').trim().toLowerCase()); return s + (v ? v.amount : 0) }, 0)
-  const stockSaleIncomePaid = savedPartsToStock.reduce((s, p) => { const v = stockSales.get((p.description || '').trim().toLowerCase()); return s + (v && v.paid ? v.amount : 0) }, 0)
-  const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) + stockSaleIncomePaid
-  // ALL income = every income record (paid + pending) + stock-sale income. Used by FINAL MARKUP.
-  const totalIncomeAll = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) + stockSaleIncomeAll
+  // The DONOR car does not take part in any stock sale (user law 22/aug/2026): it
+  // donates the part and that's it — the money stays on the receiving car's invoice.
+  const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  // ALL income = every income record (paid + pending). Used by FINAL MARKUP.
+  const totalIncomeAll = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   const balance = totalPaid - grandTotal
   // Owed amount NOT covered by any listed payment (paid or pending): all listed
   // payments minus the grand total. Negative = still owed once pending clears.
@@ -1429,6 +1428,7 @@ export default function EditInvoicePage() {
       const next = prev.map(p => {
         if (p.base_cost == null || p.base_cost === '') return p
         const base = parseFloat(p.base_cost) || 0
+        if (!(base > 0)) return p // donated stock (cost 0) is priced at MSRP, not by margin
         const newPrice = (base * factor).toFixed(2)
         if (newPrice === p.unit_price) return p
         changed = true
@@ -1745,7 +1745,7 @@ export default function EditInvoicePage() {
         if (error) { alert(error.message); return }
         // On a GZ28BR shopping invoice (US.006), the bill is owed again in BR — unless
         // what's still marked paid covers the grand total on its own.
-        const paidAfter = payments.reduce((s, x, i) => s + ((i !== index && x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0) + stockSaleIncomePaid
+        const paidAfter = payments.reduce((s, x, i) => s + ((i !== index && x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0)
         if (paidAfter < grandTotal - 0.005) void mirrorUsInvoicePaidToBR(invoiceId, null)
       }
       const updated = [...payments]
@@ -1809,7 +1809,7 @@ export default function EditInvoicePage() {
       // GZ28BR shopping invoice (US.006): its BR expense lines only go PAID once GZ28BR
       // has settled the WHOLE bill — a PARTIAL payment leaves them owed, since an expense
       // line is paid or not, it can't be half paid. No-op on any non-mirrored invoice.
-      const paidAfter = payments.reduce((s, x, i) => s + ((i === index || x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0) + stockSaleIncomePaid
+      const paidAfter = payments.reduce((s, x, i) => s + ((i === index || x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0)
       const settled = paidAfter >= grandTotal - 0.005
       void mirrorUsInvoicePaidToBR(invoiceId, settled ? (/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr()) : null)
     }
@@ -2567,7 +2567,7 @@ export default function EditInvoicePage() {
                       <p className="text-base font-bold truncate" title={item.description}>{item.description}</p>
                       {item.source_type === 'DONATED' && item.donor && <p className="text-sm text-orange-400">DONATED by {item.donor}</p>}
                       {item.supplier && item.source_type !== 'DONATED' && <p className="text-sm text-gray-400">{item.supplier}</p>}
-                      <p className="text-sm text-gray-400">Available: {item.quantity} — {formatUSD(item.unit_price)} each</p>
+                      <p className="text-sm text-gray-400">Available: {item.quantity} — {item.source_type === 'DONATED' ? `MSRP ${formatUSD(item.unit_price)} · our cost $0` : `${formatUSD(item.unit_price)} each`}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <input type="text" inputMode="decimal" placeholder="Qty" value={stockQtyInput[item.id] || ''} onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.id]: e.target.value }))} className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center" />
@@ -3865,10 +3865,10 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-3 text-lg font-bold">ITEMS TO INVENTORY</label>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-            <p className="text-sm text-gray-400">Items removed from this car that go into our inventory as DONATED.</p>
+            <p className="text-sm text-gray-400">Items removed from this car that go into our inventory as DONATED — at ZERO cost, listed at their MSRP (the price another car sells it at when it pulls the part from stock).</p>
             <input type="text" placeholder="Description" value={newPartToStock.description} onChange={(e) => setNewPartToStock({ ...newPartToStock, description: e.target.value })} className={inputClass} />
             <div className="flex gap-3">
-              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">UNIT PRICE</label>
+              <div className="flex-1"><label className="block mb-1 text-sm text-gray-400">MSRP</label>
                 <div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                   <input type="text" inputMode="decimal" placeholder="0.00" value={newPartToStock.unit_price} onChange={(e) => { if (isNumeric(e.target.value)) setNewPartToStock({ ...newPartToStock, unit_price: e.target.value }) }} className={`${smallInputClass} w-full pl-8`} />
                 </div>
@@ -3899,15 +3899,12 @@ export default function EditInvoicePage() {
                 <p className="text-sm text-gray-500 mb-2">Actual TRACKING of PARTS</p>
                 <div className="border border-gray-700 rounded-2xl overflow-hidden">
                   {savedPartsToStock.map((p, index) => {
-                    const sale = stockSales.get((p.description || '').trim().toLowerCase())
                     return (
                     <div key={index} className={`flex items-center gap-4 px-4 py-3 ${index < savedPartsToStock.length - 1 ? 'border-b border-gray-700' : ''}`}>
                       <div className="flex-1 min-w-0">
                         <p className="text-base font-bold truncate text-orange-300" title={p.description}>{p.description}</p>
-                        <p className="text-sm text-orange-300">Qty: {p.quantity} × {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
-                        {sale
-                          ? <p className="text-sm font-bold">→ <span className="text-blue-300">{sale.buyerCode}</span> · <span className="text-green-300">INCOME {formatUSD(sale.amount)}</span> <span className={sale.paid ? 'text-green-400' : 'text-yellow-400'}>({sale.paid ? 'PAID' : 'PENDING'})</span></p>
-                          : <p className="text-sm font-bold text-sky-300">📦 IN STOCK</p>}
+                        <p className="text-sm text-orange-300">Qty: {p.quantity} × MSRP {formatUSD(parseFloat(p.unit_price) || 0)} — {formatDate(p.date)}</p>
+                        <p className="text-sm font-bold text-sky-300">📦 DONATED TO STOCK — at zero cost</p>
                       </div>
                     </div>
                     )

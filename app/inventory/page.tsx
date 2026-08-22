@@ -514,7 +514,7 @@ export default function InventoryPage() {
         {donatedValue > 0 && (
           <>
             <span className="text-gray-600">·</span>
-            <span className="text-lg font-bold text-orange-300">Donated: {formatUSD(donatedValue)}</span>
+            <span className="text-lg font-bold text-orange-300">Donated (MSRP): {formatUSD(donatedValue)}</span>
           </>
         )}
         <span className="text-gray-600">·</span>

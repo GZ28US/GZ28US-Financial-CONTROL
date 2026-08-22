@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
-type Item = { id: string; description: string | null; quantity: number; unit_price: number; supplier: string | null }
+type Item = { id: string; description: string | null; quantity: number; unit_price: number; supplier: string | null; source_type?: string | null }
 type SaleEntry = { id: string; kind: string; amount: number; entry_date: string | null; description: string | null; receipt_url: string | null }
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -34,7 +34,7 @@ export default function SellInventoryPage() {
   useEffect(() => { load() }, [id])
 
   async function load() {
-    const { data: it } = await supabase.from('inventory').select('id, description, quantity, unit_price, supplier').eq('id', id).maybeSingle()
+    const { data: it } = await supabase.from('inventory').select('id, description, quantity, unit_price, supplier, source_type').eq('id', id).maybeSingle()
     setItem((it || null) as Item | null)
     const { data } = await supabase.from('inventory_sales').select('*').eq('inventory_id', id).order('entry_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })
     setEntries((data || []) as SaleEntry[])
@@ -181,7 +181,7 @@ export default function SellInventoryPage() {
         <h1 className="text-4xl font-bold">SELL — {item?.description || '—'}</h1>
         {sold && <span className="px-3 py-1 rounded-full text-sm font-bold bg-amber-700 text-black">SOLD</span>}
       </div>
-      <p className="text-gray-400 mt-1 mb-2">{item ? `Cost: ${formatUSD((Number(item.unit_price) || 0))} · Qty ${item.quantity}${item.supplier ? ` · ${item.supplier}` : ''}` : ''}</p>
+      <p className="text-gray-400 mt-1 mb-2">{item ? `${item.source_type === 'DONATED' ? 'MSRP' : 'Cost'}: ${formatUSD((Number(item.unit_price) || 0))} · Qty ${item.quantity}${item.supplier ? ` · ${item.supplier}` : ''}` : ''}</p>
       <p className="text-xl font-bold mb-8">Net: <span className={net >= 0 ? 'text-green-400' : 'text-red-400'}>{formatUSD(net)}</span> <span className="text-gray-500 text-base font-normal">(income {formatUSD(incomeTotal)} − expenses {formatUSD(expenseTotal)})</span></p>
 
       <div className="flex gap-5 flex-wrap">
