@@ -15,7 +15,7 @@ type Entry = { version?: string; date: string; notes: string }
 const TRACKS: { title: string; stage?: string; version?: string; cls?: string; accent: string; sub?: string; entries: Entry[] }[] = [
   { title: 'CONTROL APP', accent: 'text-emerald-300', sub: 'núcleo em produção desde mai/2026 — sem selo; o git é a história (1.094+ commits)', entries: APP_CHANGELOG },
   { title: 'FINANCIAL HUB', stage: FIN_STAGE, version: FIN_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: FIN_CHANGELOG },
-  { title: 'DATA CHECKER', stage: DC_STAGE, version: DC_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: DC_CHANGELOG },
+  { title: 'DATA CHECKER', stage: DC_STAGE, version: DC_VERSION, cls: 'bg-sky-950 text-sky-300 border-sky-700', accent: 'text-sky-300', entries: DC_CHANGELOG },
   { title: 'BANK LINK', stage: BL_STAGE, version: BL_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: BL_CHANGELOG },
 ]
 
