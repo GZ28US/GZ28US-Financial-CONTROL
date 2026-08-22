@@ -15,6 +15,18 @@ export async function GET(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const db = bankDb()
+    // ?matched=1 — só os pares (tabela, id) do app já casados com linha da Regions.
+    // O Data Checker usa pra cravar paid_from = GZ28US: o banco provou quem pagou.
+    if (req.nextUrl.searchParams.get('matched') === '1') {
+      const acc: { table: string; id: string }[] = []
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id').not('matched_id', 'is', null).order('id').range(from, from + 999)
+        if (error) throw new Error(error.message)
+        for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id })
+        if (!data || data.length < 1000) break
+      }
+      return NextResponse.json({ ok: true, matched: acc })
+    }
     const limit = Math.min(5000, Math.max(1, parseInt(req.nextUrl.searchParams.get('limit') || '3000', 10) || 3000))
     const [lines, pool] = await Promise.all([newLines(db, limit), candidatePool(db)])
     const { count: totalNew } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_status', 'NEW')

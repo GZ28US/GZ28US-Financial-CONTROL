@@ -266,6 +266,7 @@ export default function EditInvoicePage() {
   const [showStockModal, setShowStockModal] = useState(false)
   const [stockItems, setStockItems] = useState<StockItem[]>([])
   const [stockQtyInput, setStockQtyInput] = useState<Record<string, string>>({})
+  const [stockSearch, setStockSearch] = useState('')
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
   const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; order_number?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
@@ -709,6 +710,7 @@ export default function EditInvoicePage() {
       .order('description')
     setStockItems((data || []) as StockItem[])
     setStockQtyInput({})
+    setStockSearch('')
     setShowStockModal(true)
   }
 
@@ -2563,11 +2565,26 @@ export default function EditInvoicePage() {
               <h2 className="text-2xl font-bold">FROM STOCK</h2>
               <button onClick={() => setShowStockModal(false)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
             </div>
+            {/* Busca por PALAVRAS em qualquer ordem (partMatches, a mesma da Parts DB):
+                varre a peça, quem entregou (fornecedor ou carro doador) e o documento. */}
+            {stockItems.length > 0 && (
+              <input
+                type="text"
+                autoFocus
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                placeholder="Search stock — part, donor car or supplier…"
+                className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-base w-full mb-3 shrink-0"
+              />
+            )}
             {stockItems.length === 0 ? (
               <p className="text-gray-400 text-lg">No stock items available.</p>
             ) : (
               <div className="overflow-y-auto space-y-3 flex-1">
-                {stockItems.map(item => (
+                {(() => {
+                  const list = stockItems.filter(item => partMatches(stockSearch, item.description, item.supplier, (item as any).order_number))
+                  if (list.length === 0) return <p className="text-gray-400 text-lg">No matches.</p>
+                  return list.map(item => (
                   <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold truncate" title={item.description}>{item.description}</p>
@@ -2580,7 +2597,8 @@ export default function EditInvoicePage() {
                       <button onClick={() => applyStockItem(item)} className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm">USE</button>
                     </div>
                   </div>
-                ))}
+                  ))
+                })()}
               </div>
             )}
           </div>
