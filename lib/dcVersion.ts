@@ -4,9 +4,10 @@
 // CHECK bumpa DC_VERSION e acrescenta uma linha no topo do changelog.
 // A era anterior (dentro do FINANCIAL v0.4.0–v0.9.x) está no changelog de lá.
 export const DC_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'BETA'
-export const DC_VERSION = '1.8.0'
+export const DC_VERSION = '1.8.1'
 
 export const DC_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '1.8.1', date: '2026-08-22', notes: 'Card do banco pós-revisão: nada fica clicável durante um lote (busy é conjunto), plano some quando os dados mudam e APLICAR só roda o plano mostrado, falha no APLICAR recarrega (o servidor pode ter aplicado parte), progresso por fatia, PENDING não deixa casar, chip "data preenchida" em A CONFERIR, contagem do cabeçalho vem do estado.' },
   { version: '1.8.0', date: '2026-08-22', notes: 'Card do banco ganha os motores do Bank Link v0.3.0: bloco MOTORES AUTOMÁTICOS (PLANEJAR → APLICAR), seção A CONFERIR com OK/DESFAZER por linha, DESFAZER LOTE e OK TODAS AS TARIFAS, filtro por motor, chip TARIFA nas linhas que o motor cuida (escondidas por padrão), Enter casa no seletor e no EXPLAIN. Histórico registra cada casamento automático como bank-auto.' },
   { version: '1.7.1', date: '2026-08-21', notes: 'Card do banco: recarrega depois de cada MATCH (candidatos são do servidor), erro de rede/401 aparece no cabeçalho com "tentar de novo" em vez de "carregando" eterno, falha de resposta avisa antes de repetir.' },
   { version: '1.7.0', date: '2026-08-21', notes: 'Card "Banco sem casamento": cada linha da Regions sem par no app, com candidatos automáticos (mesmo valor, data próxima, pedido somado) e decisão na própria linha — MATCH preenche a data de pagamento do app que faltava, TRANSFER/IGNORE tiram da fila, EXPLAIN guarda o que foi. Filtro por nome/valor/data, tudo na trilha.' },

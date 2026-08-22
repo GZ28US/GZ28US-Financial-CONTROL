@@ -7,6 +7,10 @@ alter table public.bank_transactions add column if not exists match_engine text;
 alter table public.bank_transactions add column if not exists match_batch uuid;         -- rodada do motor (DESFAZER LOTE)
 alter table public.bank_transactions add column if not exists reviewed_at timestamptz;  -- null = A CONFERIR
 create index if not exists bank_transactions_engine_idx on public.bank_transactions (match_engine, reviewed_at) where match_engine is not null;
+-- O que o MATCH escreveu no app ([{t,id,f,v}]) — DESFAZER reverte só isso (revisão #6).
+alter table public.bank_transactions add column if not exists backfill jsonb;
+-- Uma linha do app só pode estar casada com UMA linha do banco (revisão #13; hoje 0 conflitos).
+create unique index if not exists bank_transactions_matched_uidx on public.bank_transactions (matched_table, matched_id) where matched_id is not null;
 
 -- fixed_cost_expenses: tarifa criada pelo motor FEE aponta pra linha do banco que
 -- a originou — DESFAZER apaga exatamente essa linha e nenhuma outra.

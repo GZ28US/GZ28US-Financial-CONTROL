@@ -9,9 +9,12 @@
 //
 // v0.3.0 (22/ago): MOTORES — PLANEJAR mostra a seco o que FEE (tarifas da
 // Regions) e EXACT (centavos + único dos dois lados + ≤3d + nome) casariam;
-// APLICAR casa tudo numa rodada (match_batch). O que o motor casou fica em
-// A CONFERIR: OK / DESFAZER por linha, DESFAZER LOTE por rodada, OK TODAS só
-// pras tarifas. Enter no seletor de candidato = MATCH.
+// APLICAR roda o plano MOSTRADO (hash) em fatias até acabar. O que o motor
+// casou fica em A CONFERIR: OK / DESFAZER por linha, DESFAZER LOTE por
+// rodada, OK TODAS só pras tarifas. Enter no seletor de candidato = MATCH.
+// Revisão #21–#25: `busy` é um conjunto (nada fica clicável durante um lote),
+// plano some quando os dados mudam, falha no APLICAR recarrega, contagem do
+// pai vem do estado e não do closure.
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
@@ -19,10 +22,11 @@ import { BASE_PATH, formatShortDate } from '@/lib/utils'
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; score: number; dd: number | null }
 type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; candidates: Cand[] }
-type AutoLine = { id: string; date: string; amount: number; name: string; engine: string; batch: string; note: string; source: string }
+type AutoLine = { id: string; date: string; amount: number; name: string; engine: string; batch: string; note: string; source: string; backfilled: boolean }
 type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; from: string; to: string }
 type Auto = { pending: AutoLine[]; reviewed: number; batches: Batch[] }
-type Plan = { fee_create: number; fee_match: number; exact: number; total: number; skipped: Record<string, number>; samples: { fee: string[]; exact: string[] } }
+type Plan = { fee_create: number; fee_match: number; exact: number; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[] } }
+type Applied = { fee_create: number; fee_match: number; exact: number; errors: string[] }
 
 export async function sessionHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession()
@@ -30,6 +34,7 @@ export async function sessionHeaders(): Promise<Record<string, string>> {
 }
 
 const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800' }
+const BATCH_KEYS = new Set(['plan', 'apply', 'review_all'])
 
 export default function BankReconcileCard({ onCount }: { onCount?: (n: number) => void }) {
   const [lines, setLines] = useState<Line[] | null>(null)
@@ -44,19 +49,28 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
   const [shown, setShown] = useState(80)
   const [pick, setPick] = useState<Record<string, string>>({})     // line id → "table:id"
   const [explain, setExplain] = useState<Record<string, string>>({})
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy, setBusy] = useState<Set<string>>(new Set())
   const [plan, setPlan] = useState<Plan | null>(null)
   const [planOpen, setPlanOpen] = useState(false)
-  const [applied, setApplied] = useState<{ fee_create: number; fee_match: number; exact: number; errors: string[] } | null>(null)
+  const [applied, setApplied] = useState<Applied | null>(null)
+  const [progress, setProgress] = useState('')
   const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT'>('ALL')
 
+  const lock = (k: string) => setBusy(s => new Set(s).add(k))
+  const unlock = (k: string) => setBusy(s => { const n = new Set(s); n.delete(k); return n })
+  const batchBusy = [...busy].some(k => BATCH_KEYS.has(k) || k.startsWith('undo_'))
+  const anyBusy = busy.size > 0
+
+  // Contagem do pai sai do estado, nunca do closure do clique (revisão #25).
+  useEffect(() => { if (lines) onCount?.(totalNew) }, [totalNew, lines, onCount])
+
   async function load() {
-    setError('')
+    setError(''); setPlan(null)   // plano é de um instante — dados novos, plano novo (revisão #22)
     try {
       const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { headers: await sessionHeaders() })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      setLines(d.lines); setTotalNew(d.total_new); onCount?.(d.total_new)
+      setLines(d.lines); setTotalNew(d.total_new)
       setAuto(d.auto || null); setNeedsMigration(!!d.needs_migration)
       setPick(prev => {
         const p: Record<string, string> = {}
@@ -75,58 +89,78 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
   async function post(body: Record<string, unknown>) {
     const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
     const d = await r.json().catch(() => ({}))
-    if (!r.ok) throw Object.assign(new Error(d.error || `Falhou (${r.status})`), { status: r.status })
+    if (!r.ok) throw Object.assign(new Error(d.error || `Falhou (${r.status})`), { status: r.status, needs_migration: !!d.needs_migration })
     return d
+  }
+  const fail = (e: unknown) => {
+    const err = e as Error & { status?: number; needs_migration?: boolean }
+    if (err.needs_migration) setNeedsMigration(true)
+    alert(err.status ? err.message : 'Sem resposta do servidor — confira antes de repetir. ' + err.message)
+    return err
   }
 
   async function act(l: Line, action: string, extra: Record<string, unknown> = {}) {
-    setBusy(l.id)
+    if (anyBusy) return
+    lock(l.id)
     try {
       await post({ action, bank_id: l.id, ...extra })
       // MATCH tira um candidato do jogo pra TODAS as outras linhas — só o servidor sabe
       // quais ainda valem, então recarrega. Demais ações só somem com a linha.
       if (action === 'match') await load()
-      else { setLines(prev => (prev || []).filter(x => x.id !== l.id)); setTotalNew(n => n - 1); onCount?.(totalNew - 1) }
-    } catch (e) {
-      const err = e as Error & { status?: number }
-      alert(err.status ? err.message : 'Sem resposta do servidor — confira a linha antes de repetir. ' + err.message)
-      if (err.status === 409) await load()
-    } finally { setBusy(null) }
+      else { setLines(prev => (prev || []).filter(x => x.id !== l.id)); setTotalNew(n => n - 1); setPlan(null) }
+    } catch (e) { if (fail(e).status === 409) await load() } finally { unlock(l.id) }
   }
 
   // ── motores ──
   async function planRun() {
-    setBusy('plan'); setApplied(null)
+    if (anyBusy) return
+    lock('plan'); setApplied(null)
     try { const d = await post({ action: 'auto', plan: true }); setPlan(d.plan); setPlanOpen(true) }
-    catch (e) { alert(String((e as Error).message || e)) } finally { setBusy(null) }
+    catch (e) { fail(e) } finally { unlock('plan') }
   }
   async function applyRun() {
-    if (!plan || !confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} casamentos exatos. Tudo fica em A CONFERIR e pode ser desfeito.`)) return
-    setBusy('apply')
-    try { const d = await post({ action: 'auto' }); setApplied(d.applied); setPlan(null); await load() }
-    catch (e) { alert(String((e as Error).message || e)) } finally { setBusy(null) }
+    if (anyBusy || !plan) return
+    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} casamentos exatos. Tudo fica em A CONFERIR e pode ser desfeito.`)) return
+    lock('apply')
+    const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, errors: [] }
+    try {
+      // Primeira fatia valida o hash do plano mostrado; as seguintes continuam o mesmo lote.
+      let d = await post({ action: 'auto', hash: plan.hash })
+      let batch: string = d.applied.batch
+      for (let guard = 0; ; guard++) {
+        acc.fee_create += d.applied.fee_create; acc.fee_match += d.applied.fee_match; acc.exact += d.applied.exact; acc.errors.push(...d.applied.errors)
+        setProgress(`${acc.fee_create + acc.fee_match + acc.exact} de ${plan.total} aplicadas…`)
+        if (!d.applied.remaining || d.applied.errors.length || guard > 20) break
+        d = await post({ action: 'auto', batch })
+        batch = d.applied.batch
+      }
+      setApplied(acc)
+    } catch (e) { fail(e); setApplied(acc) }
+    finally { setProgress(''); unlock('apply'); await load() }   // sempre recarrega: o servidor pode ter aplicado parte (revisão #23)
   }
   async function review(a: AutoLine) {
-    setBusy(a.id)
+    if (batchBusy) return
+    lock(a.id)
     try { await post({ action: 'review', bank_id: a.id }); setAuto(prev => prev ? { ...prev, reviewed: prev.reviewed + 1, pending: prev.pending.filter(x => x.id !== a.id) } : prev) }
-    catch (e) { alert(String((e as Error).message || e)) } finally { setBusy(null) }
+    catch (e) { fail(e) } finally { unlock(a.id) }
   }
   async function undoLine(a: AutoLine) {
-    setBusy(a.id)
+    if (batchBusy) return
+    lock(a.id)
     try { await post({ action: 'unmatch', bank_id: a.id }); await load() }
-    catch (e) { alert(String((e as Error).message || e)) } finally { setBusy(null) }
+    catch (e) { fail(e); await load() } finally { unlock(a.id) }
   }
   async function reviewAllFees() {
-    if (!confirm('Marcar TODAS as tarifas casadas pelo motor como conferidas?')) return
-    setBusy('review_all')
+    if (anyBusy || !confirm('Marcar TODAS as tarifas casadas pelo motor como conferidas?')) return
+    lock('review_all')
     try { await post({ action: 'review_all' }); await load() }
-    catch (e) { alert(String((e as Error).message || e)) } finally { setBusy(null) }
+    catch (e) { fail(e) } finally { unlock('review_all') }
   }
   async function undoBatch(b: Batch) {
-    if (!confirm(`Desfazer a rodada inteira (${b.n} linhas voltam pra sem casamento; tarifas criadas são apagadas)?`)) return
-    setBusy('undo_' + b.batch)
-    try { const d = await post({ action: 'undo_batch', batch: b.batch }); if (d.errors?.length) alert('Desfeitas ' + d.undone + ', com erro: ' + d.errors.join(' | ')); await load() }
-    catch (e) { alert(String((e as Error).message || e)) } finally { setBusy(null) }
+    if (anyBusy || !confirm(`Desfazer a rodada inteira (${b.n} linhas voltam pra sem casamento; tarifas criadas são apagadas)?`)) return
+    lock('undo_' + b.batch)
+    try { const d = await post({ action: 'undo_batch', batch: b.batch }); if (d.errors?.length) alert('Desfeitas ' + d.undone + ', com erro: ' + d.errors.join(' | ')) }
+    catch (e) { fail(e) } finally { unlock('undo_' + b.batch); await load() }
   }
 
   const visible = useMemo(() => {
@@ -161,11 +195,12 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
                 <p className="text-xs text-gray-500 mt-1">FEE: tarifa da Regions (wire fee, analysis charge, assessment) vira custo fixo "Regions Bank" e casa. EXACT: centavos iguais + único no app e no banco (±30d) + ≤3 dias + nome batendo. Só o certo; o resto fica como sugestão abaixo.</p>
               </div>
               {needsMigration ? (
-                <p className="text-sm text-amber-300">Rode <b>MIGRATION_bank_reconcile_v030.sql</b> (raiz do projeto) no SQL Editor — os motores precisam das colunas match_engine / match_batch / reviewed_at.</p>
+                <p className="text-sm text-amber-300">Rode <b>MIGRATION_bank_reconcile_v030.sql</b> (raiz do projeto) no SQL Editor — os motores precisam das colunas match_engine / match_batch / reviewed_at / backfill.</p>
               ) : (
-                <div className="flex gap-2">
-                  <button disabled={busy !== null} onClick={planRun} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">{busy === 'plan' ? 'CALCULANDO…' : 'PLANEJAR'}</button>
-                  {plan && plan.total > 0 && <button disabled={busy !== null} onClick={applyRun} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">{busy === 'apply' ? 'APLICANDO…' : `APLICAR ${plan.total}`}</button>}
+                <div className="flex gap-2 items-center">
+                  {progress && <span className="text-xs text-emerald-300">{progress}</span>}
+                  <button disabled={anyBusy} onClick={planRun} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">{busy.has('plan') ? 'CALCULANDO…' : 'PLANEJAR'}</button>
+                  {plan && plan.total > 0 && <button disabled={anyBusy} onClick={applyRun} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">{busy.has('apply') ? 'APLICANDO…' : `APLICAR ${plan.total}`}</button>}
                 </div>
               )}
             </div>
@@ -189,7 +224,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
                 )}
               </div>
             )}
-            {applied && <p className="mt-3 text-sm text-emerald-300">Aplicado: {applied.fee_create} tarifas criadas · {applied.fee_match} tarifas casadas · {applied.exact} exatos.{applied.errors.length ? <span className="text-red-400"> Erros: {applied.errors.join(' | ')}</span> : ''} Confira abaixo.</p>}
+            {applied && <p className="mt-3 text-sm text-emerald-300">Aplicado: {applied.fee_create} tarifas criadas · {applied.fee_match} tarifas casadas · {applied.exact} exatos.{applied.errors.length ? <span className="text-red-400"> Erros ({applied.errors.length}): {applied.errors.slice(0, 5).join(' | ')}{applied.errors.length > 5 ? ' …' : ''}</span> : ''} Confira abaixo.</p>}
           </div>
 
           {/* ── A CONFERIR ── */}
@@ -200,14 +235,14 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
                 <div className="flex gap-1">
                   {(['ALL', 'FEE', 'EXACT'] as const).map(k => <button key={k} onClick={() => setEngineFilter(k)} className={`px-3 py-1 rounded-xl text-xs font-bold border ${engineFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : k}</button>)}
                 </div>
-                {auto.pending.some(a => a.engine === 'FEE') && <button disabled={busy !== null} onClick={reviewAllFees} className="bg-teal-800 hover:bg-teal-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">OK TODAS AS TARIFAS</button>}
+                {auto.pending.some(a => a.engine === 'FEE') && <button disabled={anyBusy} onClick={reviewAllFees} className="bg-teal-800 hover:bg-teal-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">{busy.has('review_all') ? '…' : 'OK TODAS AS TARIFAS'}</button>}
               </div>
               {auto.batches.length > 0 && (
                 <div className="flex gap-2 flex-wrap mb-3 text-xs text-gray-400">
                   {auto.batches.map(b => (
                     <span key={b.batch} className="inline-flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-3 py-1">
                       rodada {formatShortDate(b.from)}–{formatShortDate(b.to)} · {b.n} ({b.fee} FEE · {b.exact} EXACT){b.pending ? ` · ${b.pending} a conferir` : ' · conferida'}
-                      <button disabled={busy !== null} onClick={() => undoBatch(b)} className="text-red-300 hover:text-red-200 font-bold disabled:opacity-40">{busy === 'undo_' + b.batch ? '…' : 'DESFAZER LOTE'}</button>
+                      <button disabled={anyBusy} onClick={() => undoBatch(b)} className="text-red-300 hover:text-red-200 font-bold disabled:opacity-40">{busy.has('undo_' + b.batch) ? '…' : 'DESFAZER LOTE'}</button>
                     </span>
                   ))}
                 </div>
@@ -220,9 +255,9 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${ENGINE_CHIP[a.engine] || 'border-gray-700 text-gray-400'}`}>{a.engine}</span>
                       <span className="text-sm truncate max-w-[18rem]" title={a.name}>{a.name}</span>
                       <span className={`tabular-nums font-bold text-sm shrink-0 ${a.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{a.amount > 0 ? '−' : '+'}{usd(a.amount)}</span>
-                      <span className="text-xs text-gray-400 flex-1 truncate min-w-[12rem]" title={a.note}>⇄ {a.note}</span>
-                      <button disabled={busy === a.id} onClick={() => review(a)} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">OK</button>
-                      <button disabled={busy === a.id} onClick={() => undoLine(a)} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">DESFAZER</button>
+                      <span className="text-xs text-gray-400 flex-1 truncate min-w-[12rem]" title={a.note}>⇄ {a.note}{a.backfilled ? <span className="ml-2 text-[10px] text-sky-300" title="a data de pagamento do app foi preenchida com a do banco">data preenchida</span> : null}</span>
+                      <button disabled={batchBusy || busy.has(a.id)} onClick={() => review(a)} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">OK</button>
+                      <button disabled={batchBusy || busy.has(a.id)} onClick={() => undoLine(a)} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">DESFAZER</button>
                     </div>
                   ))}
                   {pendingReview.length > 150 && <p className="text-xs text-gray-500 pt-2">mostrando 150 de {pendingReview.length} — confira e recarregue</p>}
@@ -238,7 +273,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="filtrar por nome, valor ou data" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-72" />
               <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer"><input type="checkbox" checked={onlyCand} onChange={e => setOnlyCand(e.target.checked)} className="w-4 h-4" /> só com candidato</label>
               <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer"><input type="checkbox" checked={hideFee} onChange={e => setHideFee(e.target.checked)} className="w-4 h-4" /> esconder tarifas ({feeLines} — o motor FEE cuida)</label>
-              <button onClick={load} className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-3 py-1.5 rounded-xl font-bold text-xs">↻</button>
+              <button onClick={load} disabled={anyBusy} className="bg-gray-900 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">↻</button>
               <span className="text-xs text-gray-500 ml-auto">{visible.length} linhas{visible.length > shown ? ` · mostrando ${shown}` : ''}</span>
             </div>
             {!lines ? <p className="text-gray-500">Carregando o banco…</p> : visible.length === 0 ? <p className={error ? 'text-gray-500' : 'text-emerald-400 font-bold'}>{error ? 'Sem dados.' : 'Nada pendente aqui.'}</p> : (
@@ -246,24 +281,25 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
                 {visible.slice(0, shown).map(l => {
                   const sel = pick[l.id] || ''
                   const cand = l.candidates.find(c => c.table + ':' + c.id === sel)
+                  const dis = anyBusy
                   return (
                     <div key={l.id} className="py-3 px-2">
                       <div className="flex items-baseline gap-3">
                         <span className="text-gray-500 text-xs w-20 shrink-0">{formatShortDate(l.date)}</span>
-                        <span className="flex-1 truncate text-sm" title={l.raw_name}>{l.name}{l.pending && <span className="ml-2 text-xs text-amber-400">PENDING</span>}{l.fee && <span className="ml-2 text-[10px] font-bold text-teal-300">TARIFA</span>}{l.source === 'STATEMENT' && <span className="ml-2 text-xs text-gray-600">extrato</span>}</span>
+                        <span className="flex-1 truncate text-sm" title={l.raw_name}>{l.name}{l.pending && <span className="ml-2 text-xs text-amber-400" title="ainda não postou — o Plaid troca o id ao postar; MATCH só depois">PENDING</span>}{l.fee && <span className="ml-2 text-[10px] font-bold text-teal-300">TARIFA</span>}{l.source === 'STATEMENT' && <span className="ml-2 text-xs text-gray-600">extrato</span>}</span>
                         <span className={`tabular-nums font-bold text-sm shrink-0 ${l.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{l.amount > 0 ? '−' : '+'}{usd(l.amount)}</span>
                       </div>
                       <div className="mt-2 flex gap-2 flex-wrap items-center">
                         {l.candidates.length > 0 ? (
-                          <select value={sel} onChange={e => setPick({ ...pick, [l.id]: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && cand && busy !== l.id) { e.preventDefault(); act(l, 'match', { table: cand.table, row_id: cand.id }) } }} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs max-w-xl">
+                          <select value={sel} onChange={e => setPick({ ...pick, [l.id]: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && cand && !dis && !l.pending) { e.preventDefault(); act(l, 'match', { table: cand.table, row_id: cand.id }) } }} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs max-w-xl">
                             {l.candidates.map(c => <option key={c.table + c.id} value={c.table + ':' + c.id}>{c.label} — {c.date ? formatShortDate(c.date) : 'sem data'}{c.dd != null ? ` (${c.dd}d)` : ''}{c.undated ? ' · sem payment date' : ''}</option>)}
                           </select>
                         ) : <span className="text-xs text-gray-600">sem candidato no app</span>}
-                        <button disabled={!cand || busy === l.id} onClick={() => cand && act(l, 'match', { table: cand.table, row_id: cand.id })} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">MATCH</button>
-                        <button disabled={busy === l.id} onClick={() => act(l, 'transfer')} className="bg-blue-800 hover:bg-blue-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">TRANSFER</button>
-                        <button disabled={busy === l.id} onClick={() => { if (confirm('Ignorar esta linha do banco?')) act(l, 'ignore') }} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">IGNORE</button>
-                        <input value={explain[l.id] || ''} onChange={e => setExplain({ ...explain, [l.id]: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && (explain[l.id] || '').trim() && busy !== l.id) { e.preventDefault(); act(l, 'explain', { note: explain[l.id] }) } }} placeholder="o que foi? (EXPLAIN)" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs w-56" />
-                        <button disabled={!(explain[l.id] || '').trim() || busy === l.id} onClick={() => act(l, 'explain', { note: explain[l.id] })} className="bg-fuchsia-800 hover:bg-fuchsia-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">EXPLAIN</button>
+                        <button disabled={!cand || dis || l.pending} title={l.pending ? 'espere a linha postar' : ''} onClick={() => cand && act(l, 'match', { table: cand.table, row_id: cand.id })} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">{busy.has(l.id) ? '…' : 'MATCH'}</button>
+                        <button disabled={dis} onClick={() => act(l, 'transfer')} className="bg-blue-800 hover:bg-blue-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">TRANSFER</button>
+                        <button disabled={dis} onClick={() => { if (confirm('Ignorar esta linha do banco?')) act(l, 'ignore') }} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">IGNORE</button>
+                        <input value={explain[l.id] || ''} onChange={e => setExplain({ ...explain, [l.id]: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && (explain[l.id] || '').trim() && !dis) { e.preventDefault(); act(l, 'explain', { note: explain[l.id] }) } }} placeholder="o que foi? (EXPLAIN)" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs w-56" />
+                        <button disabled={!(explain[l.id] || '').trim() || dis} onClick={() => act(l, 'explain', { note: explain[l.id] })} className="bg-fuchsia-800 hover:bg-fuchsia-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">EXPLAIN</button>
                       </div>
                     </div>
                   )
