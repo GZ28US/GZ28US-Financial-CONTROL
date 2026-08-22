@@ -1241,8 +1241,9 @@ export default function EditInvoicePage() {
   }
 
   function addPartToStock() {
-    if (!newPartToStock.description || !newPartToStock.unit_price || !newPartToStock.quantity) { alert('Please fill in all fields'); return }
-    setPartsToStock(prev => [...prev, newPartToStock])
+    if (!newPartToStock.description || !newPartToStock.quantity) { alert('Please fill in the description and quantity'); return }
+    // ZERO is a valid value (user order 22/aug/2026): donated / worthless items go in at $0.
+    setPartsToStock(prev => [...prev, { ...newPartToStock, unit_price: newPartToStock.unit_price.trim() === '' ? '0' : newPartToStock.unit_price }])
     setNewPartToStock({ description: '', quantity: '1', unit_price: '', date: todayStr() })
   }
 
