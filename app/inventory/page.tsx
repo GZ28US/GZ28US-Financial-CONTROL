@@ -31,9 +31,10 @@ type ItemRow = {
   receipt_url: string | null
   created_at: string
   // PURCHASED = bought (EXPENSES → SEND TO STOCK, scan or manual add).
-  // DONATED   = came from a ride invoice's PARTS TO STOCK box; donor = origin.
+  // DONATED   = came from a ride invoice's PARTS TO STOCK box.
+  // Either way the origin lives in ONE field — `supplier`: the vendor when bought, the
+  // DONOR CAR when it came off a car's invoice (user law 22/aug/2026).
   source_type: string | null
-  donor: string | null
 }
 
 type Purchase = {
@@ -156,7 +157,7 @@ export default function InventoryPage() {
   const donatedValue = stockRows.filter(i => i.source_type === 'DONATED').reduce((s, i) => s + i.quantity * i.unit_price, 0)
 
   const term = search.trim().toLowerCase()
-  const matches = (i: ItemRow) => !term || [i.description, i.supplier, i.notes, i.donor].some(f => (f || '').toLowerCase().includes(term))
+  const matches = (i: ItemRow) => !term || [i.description, i.supplier, i.notes].some(f => (f || '').toLowerCase().includes(term))
   const visible = status === 'SOLD' ? [] : purchases.filter(p => {
     const statusOk = status === 'ALL' || (status === 'DONATED' ? p.donated : !p.donated)
     return statusOk && p.items.some(matches)
@@ -265,7 +266,7 @@ export default function InventoryPage() {
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
         source_type: 'PURCHASED',
-        donor: null,
+
       }))
     )
     if (error) { alert(error.message); return }
@@ -484,7 +485,7 @@ export default function InventoryPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search item, supplier, donor or note…"
+            placeholder="Search item, supplier or note…"
             className="w-64 sm:w-80 max-w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg"
           />
           <label className="bg-indigo-700 hover:bg-indigo-600 px-6 py-3 rounded-2xl text-lg font-bold cursor-pointer whitespace-nowrap">
@@ -563,9 +564,9 @@ export default function InventoryPage() {
                             <div className={`flex-1 min-w-0 ${p.donated ? '' : 'pl-5'}`}>
                               <h3 className="text-xl font-bold">{item.description}</h3>
                               <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                              {/* Origem numa linha só: a invoice vem do `notes`, o doador do `donor`. */}
+                              {/* Origem numa linha só: invoice (`notes`) + de onde veio (`supplier`). */}
                               {item.source_type === 'DONATED'
-                                ? (item.notes || item.donor) && <p className="text-sm text-yellow-400 mt-1">📦 {[item.notes, item.donor].filter(Boolean).join(' — ')}</p>
+                                ? (item.notes || item.supplier) && <p className="text-sm text-yellow-400 mt-1">📦 {[item.notes, item.supplier].filter(Boolean).join(' — ')}</p>
                                 : item.notes && item.notes.split('\n').map((note, i) => (
                                     <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
                                   ))}

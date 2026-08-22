@@ -62,10 +62,11 @@ type StockItem = {
   description: string
   quantity: number
   unit_price: number
+  // ORIGEM da peça — UM campo (lei 22/ago/2026): o fornecedor, ou o CARRO DOADOR quando
+  // a peça saiu da invoice de um carro. `source_type` decide o rótulo (SUPPLIER × DONOR).
   supplier: string | null
   purchase_date: string | null
   source_type: string | null
-  donor: string | null
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_from: string; paid_to: string; date: string; receipt_url: string; description: string }
@@ -702,7 +703,7 @@ export default function EditInvoicePage() {
     setStockTarget(target)
     const { data } = await supabase
       .from('inventory')
-      .select('id, description, quantity, unit_price, supplier, purchase_date, source_type, donor')
+      .select('id, description, quantity, unit_price, supplier, purchase_date, source_type')
       .eq('category', 'STOCK')
       .gt('quantity', 0)
       .order('description')
@@ -731,7 +732,7 @@ export default function EditInvoicePage() {
       payment_date: item.purchase_date || '',
       receipt_urls: [],
       stock_source_type: item.source_type || undefined,
-      stock_donor: item.donor || undefined,
+      stock_donor: item.supplier || undefined,
       export_status: 'FRESH',
       item_discount: '0',
       source: DEFAULT_SOURCE,
@@ -1095,7 +1096,6 @@ export default function EditInvoicePage() {
     if (target === 'STOCK') {
       const camFromDonated = exp.stock_source_type === 'DONATED'
       const sourceType = camFromDonated ? 'DONATED' : 'PURCHASED'
-      const donor = camFromDonated ? (exp.stock_donor || null) : null
       const note = `From ${invoiceCode}`
       const { error } = await supabase.from('inventory').insert([{
         description: exp.item,
@@ -1103,11 +1103,11 @@ export default function EditInvoicePage() {
         quantity: qtyToSend,
         unit_price: parseFloat(exp.amount) || 0,
         purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
-        supplier: exp.supplier || null,
+        // A origem volta pro MESMO campo: carro doador quando doada, fornecedor quando comprada.
+        supplier: camFromDonated ? (exp.stock_donor || null) : (exp.supplier || null),
         notes: note,
         receipt_url: receiptUrlsJson,
         source_type: sourceType,
-        donor: donor,
       }])
       if (error) { alert(error.message); return }
     } else {
@@ -2293,12 +2293,11 @@ export default function EditInvoicePage() {
         quantity: parseFloat(p.quantity) || 1,
         unit_price: parseFloat(p.unit_price) || 0,
         purchase_date: isValidDate(p.date) ? p.date : null,
-        // UM CAMPO POR INFO (lei 22/ago/2026): quem doou mora em `donor`, a invoice de
-        // origem em `notes`. `supplier` (que repetia o carro) não é mais gravado aqui.
-        supplier: null,
+        // UM CAMPO POR INFO (lei 22/ago/2026): a origem é SEMPRE `supplier` — aqui, o carro
+        // doador; a invoice de origem mora em `notes`. Não existe mais coluna `donor`.
+        supplier: donorLabel,
         notes: `From ${invoiceCode}`,
         source_type: 'DONATED',
-        donor: donorLabel,
       })))
       if (e) { alert(e.message); return }
     }
@@ -2569,7 +2568,7 @@ export default function EditInvoicePage() {
                   <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold truncate" title={item.description}>{item.description}</p>
-                      {item.source_type === 'DONATED' && item.donor && <p className="text-sm text-orange-400">DONATED by {item.donor}</p>}
+                      {item.source_type === 'DONATED' && item.supplier && <p className="text-sm text-orange-400">DONATED by {item.supplier}</p>}
                       {item.supplier && item.source_type !== 'DONATED' && <p className="text-sm text-gray-400">{item.supplier}</p>}
                       <p className="text-sm text-gray-400">Available: {item.quantity} — {item.source_type === 'DONATED' ? `MSRP ${formatUSD(item.unit_price)} · our cost $0` : `${formatUSD(item.unit_price)} each`}</p>
                     </div>
