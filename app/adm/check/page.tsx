@@ -45,8 +45,14 @@ const TYPE_OPTIONS = ['FIXED', 'APP', 'MARKETING', 'ASSET'].map(v => ({ value: v
 
 const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
 
-// matched = pares "tabela:id" do app já casados com linha da Regions (/api/bank/reconcile?matched=1).
-function buildChecks(d: FinData, matched: Set<string>): Check[] {
+// Sinal do banco (/api/bank/reconcile?matched=1): pares já casados, saídas da Regions
+// (data+valor) e a data de abertura da conta. Tudo melhor esforço — sem isso o card
+// só perde as sugestões.
+type BankSignal = { matched: Set<string>; outflows: Map<string, string[]>; opened: string }
+const REGIONS_OPENED = '2025-11-10'
+const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
+function buildChecks(d: FinData, bank: BankSignal): Check[] {
+  const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
 
@@ -353,12 +359,31 @@ function buildChecks(d: FinData, matched: Set<string>): Check[] {
   // saiu. Linha já casada com a Regions = GZ28US com certeza (o banco provou):
   // vai no bulk PREENCHER CERTOS. source GZ28BR/GZ28US vira sugestão pré-carregada.
   {
+    // Sinais, do mais forte pro mais fraco:
+    //   casada com a Regions      → GZ28US, certo (o banco provou)          [bulk PREENCHER CERTOS]
+    //   antes da conta abrir      → NÃO foi GZ28US; BR ou Beto (humano decide)
+    //   não consta na Regions     → provavelmente não foi GZ28US (item de pedido somado pode enganar)
+    //   consta na Regions (±10d)  → provavelmente GZ28US — o motor/MATCH confirma
+    //   campo SOURCE              → sugestão fraca
+    const inRegions = (amount: number, date: string | null) => {
+      if (!date || !bank.outflows.size) return null
+      const ds = bank.outflows.get(amount.toFixed(2)) || []
+      return ds.some(x => dayDiff(x, date) <= 10)
+    }
     const mk = (table: string, r: any, code: string, href: string, label: string, amount: number): Item => {
       const certain = matched.has(table + ':' + r.id)
-      const suggest = certain ? 'GZ28US' : (r.source === 'GZ28BR' || r.source === 'GZ28US') ? r.source : undefined
+      const date: string | null = r.payment_date || r.expense_date || r.purchase_date || null
+      let suggest: string | undefined, extra: string | undefined
+      if (certain) { suggest = 'GZ28US'; extra = 'casada com a Regions' }
+      else if (date && date < (bank.opened || REGIONS_OPENED)) { suggest = 'GZ28BR'; extra = 'antes da Regions abrir — não foi GZ28US' }
+      else {
+        const hit = inRegions(amount, date)
+        if (hit === false) { suggest = r.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28BR'; extra = 'não consta na Regions' }
+        else if (hit === true) { suggest = 'GZ28US'; extra = 'consta na Regions (valor igual ±10d)' }
+        else if (r.source === 'GZ28BR' || r.source === 'GZ28US') { suggest = r.source; extra = 'sugestão: ' + r.source }
+      }
       return {
-        href, code, label, amount, certain, suggest,
-        extra: certain ? 'casada com a Regions' : suggest ? 'sugestão: ' + suggest : undefined,
+        href, code, label, amount, certain, suggest, extra,
         fix: { kind: 'select' as const, table, rowId: r.id, field: 'paid_from', options: PAID_FROM_SELECT, current: null },
       }
     }
@@ -373,7 +398,7 @@ function buildChecks(d: FinData, matched: Set<string>): Check[] {
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
       key: 'paid-from', title: 'Lançamentos sem PAID FROM (quem pagou?)', blocks: 'Bank Link (pool) · DFC por caixa',
-      why: 'Sem "quem pagou" o motor do Bank Link trata a linha como possível Regions (ruído nos candidatos) e o DFC não separa o caixa dos EUA do Brasil. Linha já casada com a Regions é GZ28US na certa — o botão PREENCHER CERTOS resolve todas de uma vez; as outras têm a sugestão do campo SOURCE pré-carregada.',
+      why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Sinais: casada com a Regions = GZ28US na certa (PREENCHER CERTOS); antes de 10/nov/2025 a conta nem existia = BR ou Beto; "não consta na Regions" = provavelmente não foi GZ28US. Use o filtro (mês, invoice, fornecedor) e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -410,8 +435,10 @@ export default function DataCheckPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
-  const [matched, setMatched] = useState<Set<string>>(new Set())   // "tabela:id" já casados com a Regions
-  const [bulk, setBulk] = useState<string>('')   // progresso do PREENCHER CERTOS
+  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), outflows: new Map(), opened: REGIONS_OPENED })   // sinal da Regions
+  const [bulk, setBulk] = useState<string>('')   // progresso do bulk
+  const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
+  const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
 
   useEffect(() => {
     setD(null); setError('')
@@ -421,12 +448,16 @@ export default function DataCheckPage() {
       try {
         const r = await fetch(`${BASE_PATH}/api/bank/reconcile?matched=1`, { headers: await sessionHeaders() })
         const j = await r.json().catch(() => ({}))
-        if (r.ok && Array.isArray(j.matched)) setMatched(new Set(j.matched.map((m: { table: string; id: string }) => m.table + ':' + m.id)))
+        if (r.ok && Array.isArray(j.matched)) {
+          const outflows = new Map<string, string[]>()
+          for (const o of (j.outflows || []) as { d: string; a: number }[]) { const k = Number(o.a).toFixed(2); outflows.set(k, [...(outflows.get(k) || []), o.d]) }
+          setBank({ matched: new Set(j.matched.map((m: { table: string; id: string }) => m.table + ':' + m.id)), outflows, opened: j.account_opened || REGIONS_OPENED })
+        }
       } catch { /* sem banco, sem certeza */ }
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, matched) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, matched])
+  const checks = useMemo(() => (d ? buildChecks(d, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
 
   // Trilha agrupada por dia — a "sessão" do double-check.
@@ -460,22 +491,40 @@ export default function DataCheckPage() {
 
   // PREENCHER CERTOS: só itens com certain (prova, não palpite). Uma escrita por
   // linha + trilha; o que falhar fica na lista com o erro no alert.
-  async function applyCertain(check: Check) {
-    const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
-    if (!items.length || !confirm(`Preencher ${items.length} linhas com ${items[0].suggest}? Todas já casaram com uma linha da Regions — o banco provou quem pagou.`)) return
+  // Bulk: uma escrita por linha (só onde o campo ainda está vazio) + trilha. O que
+  // falhar fica na lista e aparece no alert. PREENCHER CERTOS = bulk dos itens com
+  // prova; MARCAR FILTRADOS = bulk do que o filtro mostra, com o valor escolhido.
+  async function applyBulk(check: Check, items: Item[], value: string, tag: string) {
     setSaving(true)
     const errors: string[] = []
     let n = 0
     for (const it of items) {
       const fix = it.fix!; const field = fixField(fix)
       setBulk(`${n + 1}/${items.length}`)
-      const { error: err } = await supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId).is(field, null)
+      const { error: err } = await supabase.from(fix.table).update({ [field]: value }).eq('id', fix.rowId).is(field, null)
       if (err) { errors.push(`${it.code} · ${it.label}: ${err.message}`); continue }
-      await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: it.suggest, label: `CERTO (Regions) · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+      await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: value, label: `${tag} · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
       setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
     }
     setBulk(''); setSaving(false)
     if (errors.length) alert(`${n} preenchidas; ${errors.length} com erro:\n` + errors.slice(0, 8).join('\n'))
+  }
+  async function applyCertain(check: Check) {
+    const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
+    if (!items.length || !confirm(`Preencher ${items.length} linhas com ${items[0].suggest}? Todas já casaram com uma linha da Regions — o banco provou quem pagou.`)) return
+    await applyBulk(check, items, items[0].suggest!, 'CERTO (Regions)')
+  }
+  const filtered = (c: Check) => {
+    const needle = (filter[c.key] || '').trim().toLowerCase()
+    if (!needle) return c.items
+    return c.items.filter(i => [i.code, i.label, i.extra || '', i.amount !== undefined ? i.amount.toFixed(2) : ''].join(' ').toLowerCase().includes(needle))
+  }
+  async function applyFiltered(c: Check) {
+    const value = bulkValue[c.key] || ''
+    const items = filtered(c).filter(i => i.fix && i.fix.kind === 'select')
+    if (!value || !items.length) return
+    if (!confirm(`Marcar ${items.length} linhas filtradas como ${value}? Só linhas ainda vazias são escritas; tudo vai pra trilha.`)) return
+    await applyBulk(c, items, value, `FILTRO "${(filter[c.key] || '').trim()}" → ${value}`)
   }
 
   if (error) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-red-400">{error}</p></main>
@@ -552,12 +601,25 @@ export default function DataCheckPage() {
                     <button disabled={saving} onClick={() => applyCertain(c)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
                       {bulk ? `PREENCHENDO ${bulk}…` : `PREENCHER CERTOS (${c.items.filter(i => i.certain).length})`}
                     </button>
-                    <span className="text-xs text-gray-500">linhas já casadas com a Regions → GZ28US; as demais seguem uma a uma pelo FIX</span>
+                    <span className="text-xs text-gray-500">linhas já casadas com a Regions → GZ28US (prova, não palpite)</span>
+                  </div>
+                )}
+                {c.key === 'paid-from' && c.items.length > 0 && (
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    <input value={filter[c.key] || ''} onChange={e => setFilter({ ...filter, [c.key]: e.target.value })} placeholder="filtrar: 2025-09, US.013, High Horse, não consta…" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-80" />
+                    <select value={bulkValue[c.key] || ''} onChange={e => setBulkValue({ ...bulkValue, [c.key]: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm">
+                      <option value="">— marcar como —</option>
+                      {PAID_FROM_SELECT.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                    <button disabled={saving || !(filter[c.key] || '').trim() || !bulkValue[c.key]} onClick={() => applyFiltered(c)} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">
+                      {bulk ? `MARCANDO ${bulk}…` : `MARCAR OS ${filtered(c).length} FILTRADOS`}
+                    </button>
+                    <span className="text-xs text-gray-500">{filtered(c).length} de {c.items.length} · {c.items.filter(i => /antes da Regions/.test(i.extra || '')).length} antes da conta · {c.items.filter(i => /não consta/.test(i.extra || '')).length} não constam · {c.items.filter(i => /consta na Regions \(/.test(i.extra || '')).length} constam</span>
                   </div>
                 )}
                 {c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
                   <div className="max-h-[32rem] overflow-y-auto divide-y divide-gray-800">
-                    {c.items.map((it, i) => {
+                    {filtered(c).map((it, i) => {
                       const fixKey = it.fix ? c.key + '|' + it.fix.rowId : ''
                       return (
                         <div key={i}>
@@ -588,7 +650,7 @@ export default function DataCheckPage() {
                                     <option value="">— escolher —</option>
                                     {it.fix.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                   </select>
-                                  {it.suggest && <p className="mt-1 text-xs text-sky-300">{it.certain ? 'Certo: esta linha já casou com uma linha da Regions.' : `Sugestão pré-carregada (campo SOURCE = ${it.suggest}) — ajuste se precisar.`}</p>}
+                                  {it.suggest && <p className="mt-1 text-xs text-sky-300">{it.certain ? 'Certo: esta linha já casou com uma linha da Regions.' : `Sugestão pré-carregada: ${it.suggest} (${it.extra || 'campo SOURCE'}) — ajuste se precisar.`}</p>}
                                 </div>
                               )}
                               {it.fix.kind === 'number' && (

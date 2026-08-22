@@ -25,7 +25,17 @@ export async function GET(req: NextRequest) {
         for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id })
         if (!data || data.length < 1000) break
       }
-      return NextResponse.json({ ok: true, matched: acc })
+      // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
+      // pra sugerir quem pagou. A conta abriu em 2025-11-10 com $0: antes disso,
+      // nada foi GZ28US.
+      const outs: { d: string; a: number }[] = []
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await db.from('bank_transactions').select('date, amount').gt('amount', 0).order('id').range(from, from + 999)
+        if (error) throw new Error(error.message)
+        for (const r of data || []) outs.push({ d: r.date, a: Math.round(num(r.amount) * 100) / 100 })
+        if (!data || data.length < 1000) break
+      }
+      return NextResponse.json({ ok: true, matched: acc, outflows: outs, account_opened: '2025-11-10' })
     }
     const limit = Math.min(5000, Math.max(1, parseInt(req.nextUrl.searchParams.get('limit') || '3000', 10) || 3000))
     const [lines, pool] = await Promise.all([newLines(db, limit), candidatePool(db)])

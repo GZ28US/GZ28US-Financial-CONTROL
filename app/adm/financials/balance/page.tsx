@@ -83,10 +83,13 @@ export default function BalancePage() {
     }
     let got = d.payments.filter(p => p.paid_to === GZ && p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
     let paid = 0
+    // Sócio (Beto) pagou conta da LLC do bolso: a LLC deve a ele — Empréstimo de
+    // sócio no passivo. RAFA era sócio da GZ28BR (assunto do lado de lá), fica fora.
+    let beto = 0
     const scan = (rows: any[], amt: (r: any) => number) => {          // eslint-disable-line @typescript-eslint/no-explicit-any
       // Sem payment_date ainda não foi pago — está em Fornecedores a Pagar;
       // contar aqui também seria o mesmo passivo duas vezes.
-      for (const r of rows) { if (!r.payment_date) continue; const sd = side(r); if (sd === 'PAID') paid += amt(r); else if (sd === 'GOT') got += amt(r) }
+      for (const r of rows) { if (!r.payment_date) continue; if (r.paid_from === 'BETO') { beto += amt(r); continue } const sd = side(r); if (sd === 'PAID') paid += amt(r); else if (sd === 'GOT') got += amt(r) }
     }
     scan(d.invExpenses, expLine); scan(d.goods, qtyLine); scan(d.goodExpenses, r => parseFloat(r.amount) || 0)
     scan(d.inputs, qtyLine); scan(d.inventory, qtyLine)
@@ -103,12 +106,12 @@ export default function BalancePage() {
     const cash = lt ? lt.cashTotal : 0
     const loans = lt ? lt.loanBalance : 0
     const totalAtivo = cash + ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn + donorCost
-    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0)
+    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0) + beto
     // Residual = ativo − passivo − capital líquido. É o resultado acumulado
     // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
     // livros e o DATA CHECK zeram. Só existe com os livros vivos.
     const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
-    return { ar, advances, wip, fleetOwn, fleetTool, donorCost, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
+    return { ar, advances, wip, fleetOwn, fleetTool, donorCost, flPayable, brNet, beto, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
   }, [d])
 
   async function downloadPdf() {
@@ -146,6 +149,7 @@ export default function BalancePage() {
             { cells: ['Adiantamentos de clientes', usd(m.advances)] },
             { cells: ['FL sales tax a recolher', usd(m.flPayable)] },
             ...(m.brNet < 0 ? [{ cells: ['Devido à GZ28BR', usd(-m.brNet)] }] : []),
+            ...(m.beto > 0 ? [{ cells: ['Empréstimo de sócio — Beto', usd(m.beto)] }] : []),
             { cells: ['Empréstimos e financiamentos', m.lt ? usd(m.lt.loanBalance) : `? (${na} — G3)`] },
             { cells: ['TOTAL DO PASSIVO (conhecido)', usd(m.totalPassivo)], bold: true },
           ],
@@ -240,6 +244,7 @@ export default function BalancePage() {
             ['Adiantamentos de clientes', m.advances],
             ['FL sales tax a recolher', m.flPayable],
             ['Devido à GZ28BR', Math.max(-m.brNet, 0)],
+            ['Empréstimo de sócio — Beto', m.beto],
           ]} />
         </div>
       </div>
@@ -271,6 +276,7 @@ export default function BalancePage() {
             <Row label="Adiantamentos de clientes" value={m.advances} chip={<Chip kind="dec" label="D9" />} note="recebido > faturado — inclui os jobs legados sem linhas" />
             <Row label="FL sales tax a recolher" value={m.flPayable} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado com fl_tax_expense_date vazio" />
             {m.brNet < 0 && <Row label="Devido à GZ28BR" value={-m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} />}
+            {m.beto > 0 && <Row label="Empréstimo de sócio — Beto" value={m.beto} chip={<Chip kind="ok" label="PAID FROM" />} note="contas da LLC que o Beto pagou do bolso (paid_from = BETO) — a LLC deve a ele" />}
             {m.lt
               ? <Row label="Empréstimos e financiamentos" value={m.lt.loanBalance} chip={<Chip kind="ok" label="LEDGERS" />} note="saldo devedor: recebido − amortizado, por contrato" />
               : <Row label="Empréstimos e financiamentos" value={null} chip={<Chip kind="gap" label="G3" />} note="rode a migration e lance os contratos em LEDGERS" />}
