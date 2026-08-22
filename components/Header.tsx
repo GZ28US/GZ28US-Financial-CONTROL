@@ -82,7 +82,7 @@ const MENU: MenuItem[] = [
       ['/adm/check', 'DATA CHECKER'],
       ['/adm/changelog', 'CHANGELOG'],
       ['/adm/reports', 'REPORTS'],
-      ['/adm/bank', 'BANK'],
+      ['/adm/bank', 'BANK LINK'],
     ],
   },
 ]

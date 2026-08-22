@@ -9,12 +9,14 @@ import Header from '@/components/Header'
 import { APP_CHANGELOG } from '@/lib/appVersion'
 import { FIN_STAGE, FIN_VERSION, FIN_CHANGELOG } from '@/lib/finVersion'
 import { DC_STAGE, DC_VERSION, DC_CHANGELOG } from '@/lib/dcVersion'
+import { BL_STAGE, BL_VERSION, BL_CHANGELOG } from '@/lib/blVersion'
 
 type Entry = { version?: string; date: string; notes: string }
 const TRACKS: { title: string; stage?: string; version?: string; cls?: string; accent: string; sub?: string; entries: Entry[] }[] = [
   { title: 'CONTROL APP', accent: 'text-emerald-300', sub: 'núcleo em produção desde mai/2026 — sem selo; o git é a história (1.094+ commits)', entries: APP_CHANGELOG },
   { title: 'FINANCIAL HUB', stage: FIN_STAGE, version: FIN_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: FIN_CHANGELOG },
   { title: 'DATA CHECKER', stage: DC_STAGE, version: DC_VERSION, cls: 'bg-sky-950 text-sky-300 border-sky-700', accent: 'text-sky-300', entries: DC_CHANGELOG },
+  { title: 'BANK LINK', stage: BL_STAGE, version: BL_VERSION, cls: 'bg-amber-950 text-amber-300 border-amber-700', accent: 'text-amber-300', entries: BL_CHANGELOG },
 ]
 
 export default function ChangelogPage() {
@@ -22,7 +24,7 @@ export default function ChangelogPage() {
     <main className="min-h-screen bg-black text-white p-8 pb-24">
       <Header />
       <h1 className="text-4xl font-bold mb-1">CHANGELOG</h1>
-      <p className="text-gray-400 mb-8 max-w-3xl">Os três tracks de versão do sistema — o núcleo do app e os dois produtos em desenvolvimento. Cada patch bumpa o track certo: demonstrações no FINANCIAL, bancada no DATA CHECK, o resto é CONTROL APP.</p>
+      <p className="text-gray-400 mb-8 max-w-3xl">Os quatro tracks do sistema — o núcleo do app e os três produtos em desenvolvimento. Cada patch bumpa o track certo: demonstrações no FINANCIAL HUB, bancada no DATA CHECKER, banco no BANK LINK, o resto é CONTROL APP.</p>
 
       <div className="space-y-10 max-w-5xl">
         {TRACKS.map(t => (

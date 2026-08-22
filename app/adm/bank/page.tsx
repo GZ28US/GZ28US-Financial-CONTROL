@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { BASE_PATH } from '@/lib/utils'
+import BlBadge from '@/components/BlBadge'
 
 // ADM ▸ BANK — o UNIVERSO bancário (ordem do Márcio, 18/ago/2026): a Regions entra
 // aqui via Plaid e toda transação vira uma linha de bank_transactions. Esta tela é
@@ -130,7 +131,8 @@ export default function BankPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">BANK</h1>
+        <h1 className="text-4xl font-bold">BANK LINK</h1>
+        <BlBadge />
         <div className="flex gap-3">
           <Link href="/adm/reports" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           {accounts.length > 0 && (
