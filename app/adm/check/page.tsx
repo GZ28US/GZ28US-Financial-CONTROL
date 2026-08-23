@@ -54,10 +54,12 @@ const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
 // (data+valor) e a data de abertura da conta. Tudo melhor esforço — sem isso o card
 // só perde as sugestões.
 type CashItem = { id: string; account: string; live: { current: number; available: number; as_of: string } | null; live_error: string | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; implied: number; pending_out: number; pending_in: number; gap: number | null } | null }
+type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
+type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
-function buildChecks(d: FinData, bank: BankSignal): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -475,6 +477,25 @@ function buildChecks(d: FinData, bank: BankSignal): Check[] {
     })
   }
 
+  // TAX · 1099-NEC — beneficiário com $600+ num ano sem classificação, ou
+  // classificado SERVIÇO sem W-9. A classificação mora no TAX HUB (/adm/tax);
+  // aqui é a cobrança. Prazo: 1099 até 31/jan do ano seguinte.
+  {
+    const items: Item[] = []
+    if (tax.state === 'error') items.push({ href: '/adm/tax', code: 'SINAL', label: 'sinal do 1099 indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja TAX HUB' })
+    if (tax.needsMigration) items.push({ href: '/adm/tax', code: 'MIGRATION', label: 'Rodar MIGRATION_tax_1099.sql no SQL Editor', extra: 'classificação/W-9 só gravam com a tabela criada' })
+    for (const y of tax.years) for (const p of y.payees) {
+      if (!p.classification) items.push({ href: '/adm/tax', code: y.year, label: `${p.name}: ${usd(p.total)} no ano — classificar (serviço? mercadoria? corporação?)`, amount: p.total, when: y.year })
+      else if (p.classification === 'SERVICE' && !p.w9_on_file) items.push({ href: '/adm/tax', code: y.year, label: `${p.name}: SERVIÇO ${usd(p.total)} sem W-9 em arquivo`, extra: `1099-NEC até 31/jan/${Number(y.year) + 1}`, amount: p.total, when: y.year })
+    }
+    checks.push({
+      group: 'TAX', key: 'tax-1099', title: '1099-NEC — contratados sem classificação ou sem W-9',
+      blocks: 'obrigação anual (31/jan) · multa por 1099 não emitido',
+      why: 'Todo beneficiário pago por Zelle, wire ou cheque com $600+ no ano precisa de um veredito: serviço (pede 1099-NEC e W-9), mercadoria, corporação ou pessoal. O extrato lista quem recebeu; o TAX HUB grava a classificação; a Drummond confirma a lei. Sem W-9 na mão, janeiro vira correria.',
+      items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+  }
+
   return checks
 }
 
@@ -490,6 +511,7 @@ export default function DataCheckPage() {
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
+  const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
@@ -519,11 +541,16 @@ export default function DataCheckPage() {
         const jb = await rb.json().catch(() => ({}))
         if (rb.ok && Array.isArray(jb.items)) setBank(prev => ({ ...prev, cash: jb.items, cashState: 'ok' }))
         else setBank(prev => ({ ...prev, cashState: 'error' }))
+        // 1099 (TAX HUB): beneficiários $600+/ano sem classificação ou serviço sem W-9.
+        const rt = await fetch(`${BASE_PATH}/api/tax/1099`, { headers: await sessionHeaders() })
+        const jt = await rt.json().catch(() => ({}))
+        if (rt.ok && Array.isArray(jt.years)) setTax({ state: 'ok', needsMigration: !!jt.needs_migration, years: jt.years })
+        else setTax(prev => ({ ...prev, state: 'error' }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank])
+  const checks = useMemo(() => (d ? buildChecks(d, bank, tax) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
   const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
 

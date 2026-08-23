@@ -10,6 +10,7 @@ import { APP_CHANGELOG } from '@/lib/appVersion'
 import { FIN_STAGE, FIN_VERSION, FIN_CHANGELOG } from '@/lib/finVersion'
 import { DC_STAGE, DC_VERSION, DC_CHANGELOG } from '@/lib/dcVersion'
 import { BL_STAGE, BL_VERSION, BL_CHANGELOG } from '@/lib/blVersion'
+import { TAX_STAGE, TAX_VERSION, TAX_CHANGELOG } from '@/lib/taxVersion'
 
 type Entry = { version?: string; date: string; notes: string }
 const TRACKS: { title: string; stage?: string; version?: string; cls?: string; accent: string; sub?: string; entries: Entry[] }[] = [
@@ -17,6 +18,7 @@ const TRACKS: { title: string; stage?: string; version?: string; cls?: string; a
   { title: 'FINANCIAL HUB', stage: FIN_STAGE, version: FIN_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: FIN_CHANGELOG },
   { title: 'DATA CHECKER', stage: DC_STAGE, version: DC_VERSION, cls: 'bg-sky-950 text-sky-300 border-sky-700', accent: 'text-sky-300', entries: DC_CHANGELOG },
   { title: 'BANK LINK', stage: BL_STAGE, version: BL_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: BL_CHANGELOG },
+  { title: 'TAX HUB', stage: TAX_STAGE, version: TAX_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: TAX_CHANGELOG },
 ]
 
 export default function ChangelogPage() {
