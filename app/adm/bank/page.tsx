@@ -40,7 +40,7 @@ export default function BankPage() {
   const [sources, setSources] = useState<{ STATEMENT: number; PLAID: number }>({ STATEMENT: 0, PLAID: 0 })
   const [balances, setBalances] = useState<Record<string, { balance: number; date: string; source: string; notes: string | null }>>({})
   // Saldo REAL (Plaid agora) + integridade do feed, por conexão — /api/plaid/balance
-  type LiveItem = { id: string; account: string; live: { current: number; available: number; as_of: string; cached: boolean } | null; live_error: string | null; last: { date: string; balance: number; source: string } | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; net_after: number; implied: number; pending_out: number; gap: number | null } | null }
+  type LiveItem = { id: string; account: string; live: { current: number; available: number; as_of: string; realtime: boolean; cached: boolean } | null; live_error: string | null; last: { date: string; balance: number; source: string } | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; net_after: number; implied: number; pending_out: number; gap: number | null } | null }
   const [liveItems, setLiveItems] = useState<LiveItem[] | null>(null)
   const [liveErr, setLiveErr] = useState('')
   async function loadLive(force = false) {
@@ -165,13 +165,13 @@ export default function BankPage() {
         return (
           <div className="flex items-end justify-between gap-6 flex-wrap border-b border-gray-800 pb-6 mb-8">
             <div>
-              <p className="text-sm font-bold tracking-widest text-gray-500">CAIXA CONSOLIDADO <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-900 bg-sky-950 text-sky-300 align-middle">SALDO REAL · PLAID</span></p>
+              <p className="text-sm font-bold tracking-widest text-gray-500">CAIXA CONSOLIDADO <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-900 bg-sky-950 text-sky-300 align-middle">SALDO DO BANCO · PLAID</span></p>
               {loading ? <p className="text-6xl font-bold tabular-nums leading-none mt-2 text-gray-600">…</p>
                 : liveOnes.length > 0 ? <p className={`text-6xl font-bold tabular-nums leading-none mt-2 ${total < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{total < 0 ? '−' : ''}{usd(total)}</p>
                 : <p className="text-6xl font-bold tabular-nums leading-none mt-2 text-amber-300">{fallback.length ? (fbTotal < 0 ? '−' : '') + usd(fbTotal) : '—'}</p>}
               <p className="text-xs text-gray-500 mt-2">
                 {loading ? 'consultando o banco…'
-                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · Plaid às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white">atualizar</button></>
+                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · {liveOnes.every((i) => i.live!.realtime) ? 'banco consultado agora' : <span title="Produto Balance desligado no painel do Plaid — saldo da última atualização do item (normalmente do mesmo dia). Ligue Balance em Plaid → Team Settings → Products pra tempo real.">Plaid · última atualização do item (sem tempo real)</span>} às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white">atualizar</button></>
                   : <span className="text-amber-300">Plaid sem resposta{liveErr ? ' — ' + liveErr : items[0]?.live_error ? ' — ' + items[0].live_error : ''} · mostrando o último saldo gravado{fallback[0] ? ` (${fallback[0].last!.date}, ${fallback[0].last!.source === 'PLAID' ? 'Plaid' : 'extrato'})` : ''} · <button onClick={() => loadLive(true)} className="underline">tentar de novo</button></span>}
               </p>
             </div>

@@ -122,9 +122,20 @@ export async function syncBankItem(db: SupabaseClient, item: BankItem): Promise<
 // current = o que o banco diz que tem; available = descontando o que ainda está
 // pendente (cartão ainda não postou). Caixa = só depósito; cartão de crédito
 // (saldo = dívida) SUBTRAI. (João, 22/ago: "quero o saldo REAL do banco ali.")
-export type LiveBalance = { current: number; available: number; as_of: string; accounts: { name: string; mask: string | null; type: string; current: number; available: number | null }[] }
+export type LiveBalance = { current: number; available: number; as_of: string; realtime: boolean; accounts: { name: string; mask: string | null; type: string; current: number; available: number | null }[] }
 export async function liveBalance(item: { plaid_access_token: string }): Promise<LiveBalance> {
-  const r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token })
+  // /accounts/balance/get força o banco a responder AGORA, mas exige o produto
+  // Balance habilitado no painel do Plaid (cobrado por chamada). Sem ele
+  // (INVALID_PRODUCT — 22/ago), /accounts/get devolve o saldo da última
+  // atualização do item pelo Plaid (geralmente do mesmo dia) — rotulado como tal.
+  let realtime = true
+  let r: any
+  try { r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token }) }
+  catch (e) {
+    if (!/INVALID_PRODUCT|not authorized to access the following products/i.test(String(e))) throw e
+    realtime = false
+    r = await plaid('/accounts/get', { access_token: item.plaid_access_token })
+  }
   const accounts = (r.accounts || []).map((a: any) => ({
     name: a.name || a.official_name || 'conta', mask: a.mask || null, type: String(a.type || ''),
     current: Number(a.balances?.current) || 0, available: a.balances?.available == null ? null : Number(a.balances.available),
@@ -132,7 +143,7 @@ export async function liveBalance(item: { plaid_access_token: string }): Promise
   const sign = (t: string) => (t === 'depository' ? 1 : t === 'credit' ? -1 : 0)
   const current = accounts.reduce((s: number, a: any) => s + sign(a.type) * a.current, 0)
   const available = accounts.reduce((s: number, a: any) => s + sign(a.type) * (a.available ?? a.current), 0)
-  return { current: Math.round(current * 100) / 100, available: Math.round(available * 100) / 100, as_of: new Date().toISOString(), accounts }
+  return { current: Math.round(current * 100) / 100, available: Math.round(available * 100) / 100, as_of: new Date().toISOString(), realtime, accounts }
 }
 
 // Grava o saldo do dia em cash_balances (source PLAID). Sobrescreve só linha

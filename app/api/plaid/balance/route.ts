@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
         if (it.status !== 'ACTIVE') live = { error: 'conexão ' + it.status }
         else {
           const s = await syncBalances(db, it)
-          live = s.balance ? { current: s.balance.current, available: s.balance.available, as_of: s.balance.as_of, accounts: s.balance.accounts, written: s.written, error: s.error || null } : { error: s.error || s.skipped || 'sem saldo' }
+          live = s.balance ? { current: s.balance.current, available: s.balance.available, as_of: s.balance.as_of, realtime: s.balance.realtime, accounts: s.balance.accounts, written: s.written, error: s.error || null } : { error: s.error || s.skipped || 'sem saldo' }
         }
         if (!live.error) CACHE.set(it.id, { at: Date.now(), data: live })
       }
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
       const current = live.error ? null : live.current
       out.push({
         id: it.id, account, status: it.status,
-        live: live.error ? null : { current: live.current, available: live.available, as_of: live.as_of, accounts: live.accounts, cached: !!cached && !force && live === cached?.data },
+        live: live.error ? null : { current: live.current, available: live.available, as_of: live.as_of, realtime: !!live.realtime, accounts: live.accounts, cached: !!cached && !force && live === cached?.data },
         live_error: live.error || null,
         last: last ? { date: last.balance_date, balance: num(last.balance), source: last.source } : null,
         integrity: anchor ? {
