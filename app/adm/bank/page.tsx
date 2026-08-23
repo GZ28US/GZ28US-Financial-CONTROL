@@ -40,7 +40,7 @@ export default function BankPage() {
   const [sources, setSources] = useState<{ STATEMENT: number; PLAID: number }>({ STATEMENT: 0, PLAID: 0 })
   const [balances, setBalances] = useState<Record<string, { balance: number; date: string; source: string; notes: string | null }>>({})
   // Saldo REAL (Plaid agora) + integridade do feed, por conexão — /api/plaid/balance
-  type LiveItem = { id: string; account: string; live: { current: number; available: number; as_of: string; realtime: boolean; cached: boolean } | null; live_error: string | null; last: { date: string; balance: number; source: string } | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; net_after: number; implied: number; pending_out: number; gap: number | null } | null }
+  type LiveItem = { id: string; account: string; live: { current: number; available: number; as_of: string; realtime: boolean; realtime_error: string | null; cap_hit: boolean; cached: boolean } | null; live_error: string | null; last: { date: string; balance: number; source: string } | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; net_after: number; implied: number; pending_out: number; pending_in: number; gap: number | null } | null }
   const [liveItems, setLiveItems] = useState<LiveItem[] | null>(null)
   const [liveErr, setLiveErr] = useState('')
   async function loadLive(force = false) {
@@ -52,7 +52,7 @@ export default function BankPage() {
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       setLiveItems(d.items || [])
-    } catch (e) { setLiveErr(String((e as Error).message || e)); setLiveItems([]) }
+    } catch (e) { setLiveErr(String((e as Error).message || e)); setLiveItems(prev => prev ?? []) }
   }
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -84,7 +84,7 @@ export default function BankPage() {
   async function connectBank() {
     setBusy('connect')
     try {
-      const r = await fetch(`${BASE_PATH}/api/plaid/link-token`, { method: 'POST' })
+      const r = await fetch(`${BASE_PATH}/api/plaid/link-token`, { method: 'POST', headers: await sessionHeaders() })
       const d = await r.json().catch(() => ({}))
       if (!r.ok || d.error) { alert(d.error || 'Could not create the link token.'); return }
       withPlaidScript(() => {
@@ -92,7 +92,7 @@ export default function BankPage() {
           token: d.link_token,
           onSuccess: async (public_token: string, metadata: any) => {
             const ex = await fetch(`${BASE_PATH}/api/plaid/exchange`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: await sessionHeaders(),
               body: JSON.stringify({ public_token, institution_name: metadata?.institution?.name || '' }),
             })
             const ed = await ex.json().catch(() => ({}))
@@ -161,9 +161,10 @@ export default function BankPage() {
         const fallback = items.filter((i) => !i.live && i.last)
         const fbTotal = fallback.reduce((s, i) => s + i.last!.balance, 0)
         const loading = liveItems === null
-        const gapTotal = items.reduce((s, i) => s + (i.integrity?.gap ?? 0), 0)
-        const pendTotal = items.reduce((s, i) => s + (i.integrity?.pending_out ?? 0), 0)
-        const bate = Math.abs(gapTotal) <= pendTotal + 1
+        // Veredito POR CONEXÃO (gaps opostos não se cancelam — #13); a tolerância é o
+        // pendente líquido (saídas − entradas pendentes) ± $1 (#12).
+        const tol = (g: { pending_out: number; pending_in: number; gap: number | null }) => g.gap == null || Math.abs(g.gap - (g.pending_out - (g.pending_in || 0))) <= 1
+        const bate = items.filter((i) => i.integrity && i.integrity.gap != null).every((i) => tol(i.integrity!))
         return (
           <div className="flex items-end justify-between gap-6 flex-wrap border-b border-gray-800 pb-6 mb-8">
             <div>
@@ -173,7 +174,7 @@ export default function BankPage() {
                 : <p className="text-6xl font-bold tabular-nums leading-none mt-2 text-amber-300">{fallback.length ? (fbTotal < 0 ? '−' : '') + usd(fbTotal) : '—'}</p>}
               <p className="text-xs text-gray-500 mt-2">
                 {loading ? 'consultando o banco…'
-                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · {liveOnes.every((i) => i.live!.realtime) ? 'banco consultado agora (chamada paga)' : <span title="Leitura grátis: saldo da última atualização do item pelo Plaid (normalmente do mesmo dia). A consulta em tempo real é paga e fica no botão.">Plaid · última atualização (grátis)</span>} às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white" title="chamada paga ao Plaid (~$0,10) · teto 3/dia">consultar o banco agora ($)</button></>
+                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · {liveOnes.every((i) => i.live!.realtime) ? 'banco consultado agora (chamada paga)' : liveOnes.some((i) => i.live!.cap_hit) ? <span className="text-amber-300">teto diário de consultas pagas atingido — leitura grátis</span> : liveOnes.some((i) => i.live!.realtime_error) ? <span className="text-amber-300" title={liveOnes.find((i) => i.live!.realtime_error)?.live!.realtime_error || ''}>tempo real indisponível ({/INVALID_PRODUCT/.test(liveOnes.find((i) => i.live!.realtime_error)?.live!.realtime_error || '') ? 'habilite o produto Balance no painel do Plaid' : 'ver detalhe'}) — leitura grátis</span> : <span title="Leitura grátis: saldo da última atualização do item pelo Plaid (normalmente do mesmo dia). A consulta em tempo real é paga e fica no botão.">Plaid · última atualização (grátis)</span>} às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white" title="chamada paga ao Plaid (~$0,10) · teto 3/dia">consultar o banco agora ($)</button>{fallback.length > 0 ? <span className="text-amber-300"> · {fallback.length} conexão(ões) sem resposta — fora do total (último gravado: {fallback.map((i) => usd(i.last!.balance) + ' em ' + i.last!.date).join(' · ')})</span> : null}</>
                   : <span className="text-amber-300">Plaid sem resposta{liveErr ? ' — ' + liveErr : items[0]?.live_error ? ' — ' + items[0].live_error : ''} · mostrando o último saldo gravado{fallback[0] ? ` (${fallback[0].last!.date}, ${fallback[0].last!.source === 'PLAID' ? 'Plaid' : 'extrato'})` : ''} · <button onClick={() => loadLive(true)} className="underline">tentar de novo</button></span>}
               </p>
             </div>
@@ -181,7 +182,7 @@ export default function BankPage() {
               <div className="text-right text-xs text-gray-500">
                 <p className="font-bold tracking-widest text-gray-500 mb-1">O FEED BATE? <span className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${liveOnes.length === 0 ? 'bg-gray-800 text-gray-400' : bate ? 'bg-emerald-950 text-emerald-300 border border-emerald-900' : 'bg-red-950 text-red-300 border border-red-900'}`}>{liveOnes.length === 0 ? 'SEM SALDO REAL' : bate ? 'BATE' : 'NÃO BATE'}</span></p>
                 {items.filter((i) => i.integrity).map((i) => (
-                  <p key={i.id}>extrato {i.integrity!.anchor_date} {usd(i.integrity!.anchor_balance)} + {i.integrity!.lines_after} linhas = <span className="text-gray-300 tabular-nums">{usd(i.integrity!.implied)}</span>{i.integrity!.gap != null ? <> · diferença <span className={`tabular-nums font-bold ${Math.abs(i.integrity!.gap) <= i.integrity!.pending_out + 1 ? 'text-emerald-300' : 'text-red-300'}`}>{i.integrity!.gap < 0 ? '−' : '+'}{usd(i.integrity!.gap)}</span> (pendente {usd(i.integrity!.pending_out)})</> : null}</p>
+                  <p key={i.id}>extrato {i.integrity!.anchor_date} {usd(i.integrity!.anchor_balance)} + {i.integrity!.lines_after} linhas = <span className="text-gray-300 tabular-nums">{usd(i.integrity!.implied)}</span>{i.integrity!.gap != null ? <> · diferença <span className={`tabular-nums font-bold ${tol(i.integrity!) ? 'text-emerald-300' : 'text-red-300'}`}>{i.integrity!.gap < 0 ? '−' : '+'}{usd(i.integrity!.gap)}</span> (pendente −{usd(i.integrity!.pending_out)} / +{usd(i.integrity!.pending_in || 0)})</> : null}</p>
                 ))}
                 <p className="mt-1">diferença além do pendente = linha faltando ou sobrando no feed → Data Checker</p>
               </div>

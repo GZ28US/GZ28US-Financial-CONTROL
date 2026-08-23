@@ -36,7 +36,7 @@ type Fix =
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
-type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean }
+type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean; signal?: string; when?: string }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 type Check = { key: string; title: string; why: string; blocks: string; items: Item[]; impact?: number }
 
@@ -48,8 +48,8 @@ const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
 // Sinal do banco (/api/bank/reconcile?matched=1): pares já casados, saídas da Regions
 // (data+valor) e a data de abertura da conta. Tudo melhor esforço — sem isso o card
 // só perde as sugestões.
-type CashItem = { id: string; account: string; live: { current: number; available: number; as_of: string } | null; live_error: string | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; implied: number; pending_out: number; gap: number | null } | null }
-type BankSignal = { matched: Set<string>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null }
+type CashItem = { id: string; account: string; live: { current: number; available: number; as_of: string } | null; live_error: string | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; implied: number; pending_out: number; pending_in: number; gap: number | null } | null }
+type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 function buildChecks(d: FinData, bank: BankSignal): Check[] {
@@ -371,20 +371,39 @@ function buildChecks(d: FinData, bank: BankSignal): Check[] {
       const ds = bank.outflows.get(amount.toFixed(2)) || []
       return ds.some(x => dayDiff(x, date) <= 10)
     }
+    // Total de cada pedido (grupo) — TODOS os itens, com ou sem paid_from: o banco
+    // cobrou o pedido inteiro, então é o total que se procura no extrato (revisão #2).
+    const groupSums = new Map<string, number>()
+    const addG = (rows: any[], amt: (r: any) => number) => { for (const r of rows) if (r.purchase_group) groupSums.set(r.purchase_group, (groupSums.get(r.purchase_group) || 0) + amt(r)) }
+    addG(d.invExpenses, expLine); addG(d.goods, qtyLine); addG(d.inputs, qtyLine); addG(d.inventory.filter((x: any) => x.source_type === 'PURCHASED'), qtyLine)
     const mk = (table: string, r: any, code: string, href: string, label: string, amount: number): Item => {
-      const certain = matched.has(table + ':' + r.id)
       const date: string | null = r.payment_date || r.expense_date || r.purchase_date || null
-      let suggest: string | undefined, extra: string | undefined
-      if (certain) { suggest = 'GZ28US'; extra = 'casada com a Regions' }
-      else if (date && date < (bank.opened || REGIONS_OPENED)) { suggest = 'GZ28BR'; extra = 'antes da Regions abrir — não foi GZ28US' }
+      const gid: string | null = r.purchase_group || null
+      const gSum = gid ? groupSums.get(gid) : undefined
+      const gBank = gid ? bank.groups.get(gid) : undefined                        // valor que o banco cobrou do pedido casado
+      const groupCertain = gid != null && gBank !== undefined && gSum !== undefined && Math.abs(gSum - gBank) < 0.011
+      const certain = matched.has(table + ':' + r.id) || groupCertain
+      let suggest: string | undefined, extra: string | undefined, signal = 'source'
+      if (certain) { suggest = 'GZ28US'; extra = groupCertain ? 'pedido casado com a Regions' : 'casada com a Regions'; signal = 'matched' }
+      else if (gid && gBank !== undefined) { suggest = 'GZ28US'; extra = 'pedido casado com a Regions (total do pedido mudou — conferir)'; signal = 'present' }
+      // Antes da conta abrir NÃO foi GZ28US — mas GZ28BR × BETO é decisão de gente:
+      // sem palpite pré-carregado (revisão #5).
+      else if (date && date < (bank.opened || REGIONS_OPENED)) { extra = 'antes da Regions abrir — GZ28BR ou BETO?'; signal = 'pre-open' }
       else {
-        const hit = inRegions(amount, date)
-        if (hit === false) { suggest = r.source === 'GZ28BR' ? 'GZ28BR' : 'GZ28BR'; extra = 'não consta na Regions' }
-        else if (hit === true) { suggest = 'GZ28US'; extra = 'consta na Regions (valor igual ±10d)' }
-        else if (r.source === 'GZ28BR' || r.source === 'GZ28US') { suggest = r.source; extra = 'sugestão: ' + r.source }
+        const hitItem = inRegions(amount, date)
+        const hitGroup = gid && gSum ? inRegions(gSum, date) : null
+        if (hitItem === true) { suggest = 'GZ28US'; extra = 'encontrada na Regions (±10d)'; signal = 'present' }
+        else if (hitGroup === true) { suggest = 'GZ28US'; extra = 'pedido somado encontrado na Regions (±10d)'; signal = 'present' }
+        else if (hitItem === false) {
+          // SOURCE contradizendo o sinal é CONFLITO, não palpite BR (revisão #3 — o
+          // ternário antigo dava GZ28BR dos dois lados).
+          if (r.source === 'GZ28US') { suggest = 'GZ28US'; extra = 'fora da Regions, mas SOURCE diz GZ28US — conferir'; signal = 'conflict' }
+          else { suggest = 'GZ28BR'; extra = 'fora da Regions'; signal = 'absent' }
+        }
+        else if (r.source === 'GZ28BR' || r.source === 'GZ28US') { suggest = r.source; extra = 'sugestão: ' + r.source; signal = 'source' }
       }
       return {
-        href, code, label, amount, certain, suggest, extra,
+        href, code, label, amount, certain, suggest, extra, signal, when: date || undefined,
         fix: { kind: 'select' as const, table, rowId: r.id, field: 'paid_from', options: PAID_FROM_SELECT, current: null },
       }
     }
@@ -399,7 +418,7 @@ function buildChecks(d: FinData, bank: BankSignal): Check[] {
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
       key: 'paid-from', title: 'Lançamentos sem PAID FROM (quem pagou?)', blocks: 'Bank Link (pool) · DFC por caixa',
-      why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Sinais: casada com a Regions = GZ28US na certa (PREENCHER CERTOS); antes de 10/nov/2025 a conta nem existia = BR ou Beto; "não consta na Regions" = provavelmente não foi GZ28US. Use o filtro (mês, invoice, fornecedor) e marque os filtrados de uma vez.',
+      why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Sinais: casada/pedido casado com a Regions = GZ28US na certa (PREENCHER CERTOS); antes de 10/nov/2025 a conta nem existia = GZ28BR ou BETO (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; conflito com SOURCE = conferir um a um. Use o filtro de SINAL + texto (mês, invoice, fornecedor) e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -410,12 +429,15 @@ function buildChecks(d: FinData, bank: BankSignal): Check[] {
   // no feed. É a régua de tudo: se isto não bate, nenhum outro número vale.
   {
     const items: Item[] = []
+    // Verificação que não rodou NÃO é verde (revisão #16).
+    if (bank.cashState !== 'ok') items.push({ href: '/adm/bank', code: 'SINAL', label: bank.cashState === 'loading' ? 'sinal do banco ainda carregando — verificação não rodou' : 'sinal do banco indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja BANK LINK' })
     for (const c of bank.cash || []) {
       if (!c.live) { items.push({ href: '/adm/bank', code: 'BANCO', label: `${c.account}: Plaid sem resposta`, extra: c.live_error || 'sem saldo real' }); continue }
       if (!c.integrity) { items.push({ href: '/adm/financials/ledgers', code: 'ÂNCORA', label: `${c.account}: nenhum extrato lançado como âncora`, extra: 'lance o saldo de um extrato em LEDGERS' }); continue }
       const g = c.integrity.gap ?? 0
-      if (Math.abs(g) > c.integrity.pending_out + 1)
-        items.push({ href: '/adm/bank', code: 'NÃO BATE', label: `${c.account}: banco ${usd(c.live.current)} · extrato ${c.integrity.anchor_date} + ${c.integrity.lines_after} linhas = ${usd(c.integrity.implied)}`, extra: `${g > 0 ? 'faltam linhas de entrada / sobram saídas' : 'faltam saídas / sobram entradas'} · pendente ${usd(c.integrity.pending_out)}`, amount: Math.abs(g) })
+      // Esperado: gap = pendente de saída − pendente de entrada; fora disso ±$1 = buraco (revisões #12/#24).
+      if (Math.abs(g - (c.integrity.pending_out - (c.integrity.pending_in || 0))) > 1)
+        items.push({ href: '/adm/bank', code: 'NÃO BATE', label: `${c.account}: banco ${usd(c.live.current)} · extrato ${c.integrity.anchor_date} + ${c.integrity.lines_after} linhas = ${usd(c.integrity.implied)}`, extra: `${g > 0 ? 'faltam linhas de entrada / sobram saídas' : 'faltam saídas / sobram entradas'} · pendente −${usd(c.integrity.pending_out)} / +${usd(c.integrity.pending_in || 0)}`, amount: Math.abs(g) })
     }
     checks.push({
       key: 'cash-match', title: 'Caixa não bate (banco real × linhas do Bank Link)', blocks: 'TUDO — é a régua do Balanço e do DFC',
@@ -434,6 +456,12 @@ function buildChecks(d: FinData, bank: BankSignal): Check[] {
       const cutoff = new Date(Date.now() - 35 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
       for (const a of lt.cashAccounts) if (a.date < cutoff)
         items.push({ href: '/adm/financials/ledgers', code: 'CAIXA', label: a.account, extra: 'último saldo ' + a.date, amount: a.balance })
+    }
+    // O Plaid grava saldo todo dia (o "último saldo" nunca envelhece mais) — a
+    // disciplina que importa agora é o EXTRATO: âncora > 45 dias = lance o mês (revisão #23).
+    for (const c of bank.cash || []) if (c.integrity) {
+      const age = Math.round((Date.now() - Date.parse(c.integrity.anchor_date)) / 864e5)
+      if (age > 45) items.push({ href: '/adm/financials/ledgers', code: 'EXTRATO', label: `${c.account}: último extrato lançado em ${c.integrity.anchor_date}`, extra: age + ' dias — lance o extrato do mês (é a âncora da régua)' })
     }
     checks.push({
       key: 'cash-stale', title: 'Saldo de caixa ausente ou envelhecido', blocks: 'Balanço (caixa) · conciliação com o banco',
@@ -456,9 +484,10 @@ export default function DataCheckPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
-  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), outflows: new Map(), opened: REGIONS_OPENED, cash: null })   // sinal da Regions
+  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
+  const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
 
   useEffect(() => {
@@ -472,13 +501,19 @@ export default function DataCheckPage() {
         if (r.ok && Array.isArray(j.matched)) {
           const outflows = new Map<string, string[]>()
           for (const o of (j.outflows || []) as { d: string; a: number }[]) { const k = Number(o.a).toFixed(2); outflows.set(k, [...(outflows.get(k) || []), o.d]) }
-          setBank(prev => ({ ...prev, matched: new Set(j.matched.map((m: { table: string; id: string }) => m.table + ':' + m.id)), outflows, opened: j.account_opened || REGIONS_OPENED }))
+          // Grupo casado carrega o VALOR do banco: membro só é "certo" enquanto o
+          // total do pedido ainda bate com o que o banco cobrou (revisão #1).
+          const groups = new Map<string, number>()
+          for (const m of j.matched as { table: string; id: string; amount: number }[]) if (m.table === 'purchase_group') groups.set(m.id, Number(m.amount) || 0)
+          setBank(prev => ({ ...prev, matched: new Set((j.matched as { table: string; id: string }[]).map(m => m.table + ':' + m.id)), groups, outflows, opened: j.account_opened || REGIONS_OPENED }))
         }
         // Saldo REAL do banco × linhas do feed — o "caixa não bate" (João, 22/ago).
+        // Estado explícito: sem resposta = verificação NÃO rodou (revisão #16).
         const rb = await fetch(`${BASE_PATH}/api/plaid/balance`, { headers: await sessionHeaders() })
         const jb = await rb.json().catch(() => ({}))
-        if (rb.ok && Array.isArray(jb.items)) setBank(prev => ({ ...prev, cash: jb.items }))
-      } catch { /* sem banco, sem certeza */ }
+        if (rb.ok && Array.isArray(jb.items)) setBank(prev => ({ ...prev, cash: jb.items, cashState: 'ok' }))
+        else setBank(prev => ({ ...prev, cashState: 'error' }))
+      } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
   }, [reloadN])
 
@@ -541,15 +576,15 @@ export default function DataCheckPage() {
   }
   const filtered = (c: Check) => {
     const needle = (filter[c.key] || '').trim().toLowerCase()
-    if (!needle) return c.items
-    return c.items.filter(i => [i.code, i.label, i.extra || '', i.amount !== undefined ? i.amount.toFixed(2) : ''].join(' ').toLowerCase().includes(needle))
+    const sig = sigFilter[c.key] || ''
+    return c.items.filter(i => (!sig || i.signal === sig) && (!needle || [i.code, i.label, i.extra || '', i.when || '', i.amount !== undefined ? i.amount.toFixed(2) : ''].join(' ').toLowerCase().includes(needle)))
   }
   async function applyFiltered(c: Check) {
     const value = bulkValue[c.key] || ''
     const items = filtered(c).filter(i => i.fix && i.fix.kind === 'select')
     if (!value || !items.length) return
     if (!confirm(`Marcar ${items.length} linhas filtradas como ${value}? Só linhas ainda vazias são escritas; tudo vai pra trilha.`)) return
-    await applyBulk(c, items, value, `FILTRO "${(filter[c.key] || '').trim()}" → ${value}`)
+    await applyBulk(c, items, value, `FILTRO "${[sigFilter[c.key], (filter[c.key] || '').trim()].filter(Boolean).join(' + ')}" → ${value}`)
   }
 
   if (error) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-red-400">{error}</p></main>
@@ -631,15 +666,24 @@ export default function DataCheckPage() {
                 )}
                 {c.key === 'paid-from' && c.items.length > 0 && (
                   <div className="flex items-center gap-2 mb-3 flex-wrap">
-                    <input value={filter[c.key] || ''} onChange={e => setFilter({ ...filter, [c.key]: e.target.value })} placeholder="filtrar: 2025-09, US.013, High Horse, não consta…" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-80" />
+                    <select value={sigFilter[c.key] || ''} onChange={e => setSigFilter({ ...sigFilter, [c.key]: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm">
+                      <option value="">sinal: todos</option>
+                      <option value="matched">casada / pedido casado (certo)</option>
+                      <option value="pre-open">antes da Regions abrir</option>
+                      <option value="absent">fora da Regions</option>
+                      <option value="present">encontrada na Regions</option>
+                      <option value="conflict">conflito com SOURCE</option>
+                      <option value="source">só SOURCE</option>
+                    </select>
+                    <input value={filter[c.key] || ''} onChange={e => setFilter({ ...filter, [c.key]: e.target.value })} placeholder="filtrar: 2025-09, US.013, High Horse…" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-72" />
                     <select value={bulkValue[c.key] || ''} onChange={e => setBulkValue({ ...bulkValue, [c.key]: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm">
                       <option value="">— marcar como —</option>
                       {PAID_FROM_SELECT.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
-                    <button disabled={saving || !(filter[c.key] || '').trim() || !bulkValue[c.key]} onClick={() => applyFiltered(c)} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">
+                    <button disabled={saving || !((filter[c.key] || '').trim() || sigFilter[c.key]) || !bulkValue[c.key]} onClick={() => applyFiltered(c)} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">
                       {bulk ? `MARCANDO ${bulk}…` : `MARCAR OS ${filtered(c).length} FILTRADOS`}
                     </button>
-                    <span className="text-xs text-gray-500">{filtered(c).length} de {c.items.length} · {c.items.filter(i => /antes da Regions/.test(i.extra || '')).length} antes da conta · {c.items.filter(i => /não consta/.test(i.extra || '')).length} não constam · {c.items.filter(i => /consta na Regions \(/.test(i.extra || '')).length} constam</span>
+                    <span className="text-xs text-gray-500">{filtered(c).length} de {c.items.length} · {c.items.filter(i => i.signal === 'pre-open').length} antes da conta · {c.items.filter(i => i.signal === 'absent').length} fora · {c.items.filter(i => i.signal === 'present').length} encontradas · {c.items.filter(i => i.signal === 'conflict').length} em conflito</span>
                   </div>
                 )}
                 {c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
@@ -682,7 +726,7 @@ export default function DataCheckPage() {
                                 <div>
                                   <label className="block mb-1 text-xs font-bold">{it.fix.field.toUpperCase()}{it.fix.suffix ? ` (${it.fix.suffix})` : ''}</label>
                                   <input type="text" inputMode="decimal" value={fixValue}
-                                    onChange={e => { if (/^d*.?d*$/.test(e.target.value)) setFixValue(e.target.value) }}
+                                    onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setFixValue(e.target.value) }}
                                     className="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm" placeholder="0" autoFocus />
                                 </div>
                               )}

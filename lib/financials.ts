@@ -72,16 +72,16 @@ export async function loadFinancials(): Promise<FinData> {
     fixedExpenses, fixedSuppliers, goods, goodExpenses, inputs, inventory, rides, clients] = await Promise.all([
     fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
     fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description'),
-    fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source'),
+    fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
     fetchAll('expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
     fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type'),
-    fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
+    fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source'),
+    fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
+    fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     // rides via '*': tabela pequena e é a que mais ganha coluna nova — select
     // explícito derrubava o dataset inteiro quando o deploy chegava antes da
     // migration (caso rides.exported). Com '*', coluna ausente vira undefined.

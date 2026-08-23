@@ -346,6 +346,23 @@ export async function writeUnmatch(db: any, line: any, changed: string[]) {
       }
     }
   }
+  // PAID FROM cravado por causa DESTE casamento (bulk CERTO do Data Checker,
+  // trilha check_key 'paid-from' + label 'CERTO (Regions)') volta a vazio —
+  // desfazer o casamento desfaz a prova (revisão #20).
+  if (line.match_status === 'MATCHED' && line.matched_table && line.matched_id) {
+    const targets: { t: string; id: string }[] = line.matched_table === 'purchase_group' ? [] : [{ t: line.matched_table, id: line.matched_id }]
+    if (line.matched_table === 'purchase_group') for (const g of ['goods', 'inputs', 'inventory', 'invoice_expenses']) {
+      const { data: ms } = await db.from(g).select('id').eq('purchase_group', line.matched_id)
+      for (const m of ms || []) targets.push({ t: g, id: m.id })
+    }
+    for (const tg of targets) {
+      const { data: fx } = await db.from('data_fixes').select('id').eq('check_key', 'paid-from').eq('table_name', tg.t).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'CERTO (Regions)%').limit(1)
+      if (fx && fx.length) {
+        const { data: r } = await db.from(tg.t).update({ paid_from: null }).eq('id', tg.id).eq('paid_from', 'GZ28US').select('id')
+        if (r && r.length) changed.push(tg.t + '.paid_from→null (era prova do casamento)')
+      }
+    }
+  }
   const update = { match_status: 'NEW', matched_table: null, matched_id: null, matched_note: null, match_engine: null, match_batch: null, reviewed_at: null, backfill: null }
   const { data, error } = await db.from('bank_transactions').update(update).eq('id', line.id).eq('match_status', line.match_status).select('id')
   if (error) throw new Error(error.message)

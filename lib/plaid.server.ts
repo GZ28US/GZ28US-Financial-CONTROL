@@ -122,7 +122,7 @@ export async function syncBankItem(db: SupabaseClient, item: BankItem): Promise<
 // current = o que o banco diz que tem; available = descontando o que ainda está
 // pendente (cartão ainda não postou). Caixa = só depósito; cartão de crédito
 // (saldo = dívida) SUBTRAI. (João, 22/ago: "quero o saldo REAL do banco ali.")
-export type LiveBalance = { current: number; available: number; as_of: string; realtime: boolean; accounts: { name: string; mask: string | null; type: string; current: number; available: number | null }[] }
+export type LiveBalance = { current: number; available: number; as_of: string; realtime: boolean; realtime_error?: string; accounts: { name: string; mask: string | null; type: string; current: number; available: number | null }[] }
 // Custo (João, 22/ago): /accounts/balance/get força o banco a responder AGORA e é
 // COBRADO por chamada (produto Balance). /accounts/get é grátis (vem com
 // Transactions) e devolve o saldo da última atualização do item pelo Plaid —
@@ -131,10 +131,13 @@ export type LiveBalance = { current: number; available: number; as_of: string; r
 // usa o grátis. Sem o produto Balance habilitado (INVALID_PRODUCT) cai no grátis.
 export async function liveBalance(item: { plaid_access_token: string }, wantRealtime = false): Promise<LiveBalance> {
   let realtime = false
+  let realtimeError: string | undefined
   let r: any
   if (wantRealtime) {
+    // Qualquer falha do endpoint pago vira CAMPO (a tela mostra o porquê) e cai
+    // na leitura grátis — nada de erro engolido (revisão #10).
     try { r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token }); realtime = true }
-    catch (e) { if (!/INVALID_PRODUCT|not authorized to access the following products/i.test(String(e))) throw e }
+    catch (e) { realtimeError = String((e as Error).message || e).slice(0, 160) }
   }
   if (!r) r = await plaid('/accounts/get', { access_token: item.plaid_access_token })
   const accounts = (r.accounts || []).map((a: any) => ({
@@ -144,7 +147,7 @@ export async function liveBalance(item: { plaid_access_token: string }, wantReal
   const sign = (t: string) => (t === 'depository' ? 1 : t === 'credit' ? -1 : 0)
   const current = accounts.reduce((s: number, a: any) => s + sign(a.type) * a.current, 0)
   const available = accounts.reduce((s: number, a: any) => s + sign(a.type) * (a.available ?? a.current), 0)
-  return { current: Math.round(current * 100) / 100, available: Math.round(available * 100) / 100, as_of: new Date().toISOString(), realtime, accounts }
+  return { current: Math.round(current * 100) / 100, available: Math.round(available * 100) / 100, as_of: new Date().toISOString(), realtime, realtime_error: realtimeError, accounts }
 }
 
 // Grava o saldo do dia em cash_balances (source PLAID). Sobrescreve só linha
@@ -159,7 +162,12 @@ export async function syncBalances(db: SupabaseClient, item: { id: string; plaid
   const account = item.display_name || item.institution
   try {
     const { data: existing } = await db.from('cash_balances').select('id, source, notes').eq('account', account).eq('balance_date', today).maybeSingle()
-    if (existing && existing.source !== 'PLAID') return { written: false, skipped: 'lançamento manual de hoje tem prioridade' }
+    // Lançamento MANUAL de hoje segura só a ESCRITA — a leitura ao vivo continua
+    // (a tela não pode ficar cega o dia inteiro por causa de um extrato — #7/#18).
+    if (existing && existing.source !== 'PLAID') {
+      const balance = await liveBalance(item, false)
+      return { written: false, balance, skipped: 'lançamento manual de hoje tem prioridade' }
+    }
     const paidToday = !!existing && /tempo real/.test(existing.notes || '')
     const want = mode === 'paid' || (mode === 'daily' && !paidToday)
     const balance = await liveBalance(item, want)

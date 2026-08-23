@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/auth.server'
 import { plaid, bankDb, syncBankItem } from '@/lib/plaid.server'
 
 // Depois do consentimento no Plaid Link: troca o public_token pelo access_token
 // permanente, registra a conexão em bank_accounts (com as sub-contas no jsonb) e
 // já dispara a PRIMEIRA sincronização — a tela BANK abre com as transações na hora.
 export async function POST(req: NextRequest) {
+  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   const publicToken = String(body.public_token || '')
   if (!publicToken) return NextResponse.json({ error: 'Missing public_token.' }, { status: 400 })

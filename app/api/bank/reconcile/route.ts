@@ -18,11 +18,14 @@ export async function GET(req: NextRequest) {
     // ?matched=1 — só os pares (tabela, id) do app já casados com linha da Regions.
     // O Data Checker usa pra cravar paid_from = GZ28US: o banco provou quem pagou.
     if (req.nextUrl.searchParams.get('matched') === '1') {
-      const acc: { table: string; id: string }[] = []
+      // Só pares SÓLIDOS viram "certo" no Data Checker: decisão humana (engine null)
+      // ou casamento de motor JÁ conferido (reviewed_at) — revisão #20. O valor do
+      // banco acompanha pra conferir grupos (total mudou = não é mais certo).
+      const acc: { table: string; id: string; amount: number }[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id').not('matched_id', 'is', null).order('id').range(from, from + 999)
+        const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id, amount, match_engine, reviewed_at').eq('match_status', 'MATCHED').not('matched_id', 'is', null).order('id').range(from, from + 999)
         if (error) throw new Error(error.message)
-        for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id })
+        for (const r of data || []) if (!r.match_engine || r.reviewed_at) acc.push({ table: r.matched_table, id: r.matched_id, amount: Math.abs(num(r.amount)) })
         if (!data || data.length < 1000) break
       }
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
@@ -30,7 +33,7 @@ export async function GET(req: NextRequest) {
       // nada foi GZ28US.
       const outs: { d: string; a: number }[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('bank_transactions').select('date, amount').gt('amount', 0).order('id').range(from, from + 999)
+        const { data, error } = await db.from('bank_transactions').select('date, amount').gt('amount', 0).neq('match_status', 'REMOVED').order('id').range(from, from + 999)
         if (error) throw new Error(error.message)
         for (const r of data || []) outs.push({ d: r.date, a: Math.round(num(r.amount) * 100) / 100 })
         if (!data || data.length < 1000) break

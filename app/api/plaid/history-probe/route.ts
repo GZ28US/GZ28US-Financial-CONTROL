@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/auth.server'
 import { plaid, plaidConfigured, bankDb } from '@/lib/plaid.server'
 
 // SONDA DE HISTÓRICO (21/ago): pergunta ao Plaid o que ele GUARDA da conexão,
@@ -7,7 +8,8 @@ import { plaid, plaidConfigured, bankDb } from '@/lib/plaid.server'
 // temos no banco (floor) e acha a mais antiga disponível. Nunca devolve token.
 export const maxDuration = 60
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!plaidConfigured()) return NextResponse.json({ error: 'Plaid not configured' }, { status: 501 })
   const db = bankDb()
   const { data: items } = await db.from('bank_accounts').select('id, display_name, plaid_access_token, status').eq('status', 'ACTIVE')

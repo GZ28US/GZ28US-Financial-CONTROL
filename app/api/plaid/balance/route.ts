@@ -39,10 +39,13 @@ export async function GET(req: NextRequest) {
         if (it.status !== 'ACTIVE') live = { error: 'conexão ' + it.status }
         else {
           const day = todayNY()
-          let mode: 'free' | 'paid' = 'free'
-          if (force) { if ((PAID.get(day) || 0) >= PAID_CAP) return NextResponse.json({ error: `teto de ${PAID_CAP} consultas pagas por dia atingido — o saldo grátis (última atualização) segue disponível` }, { status: 429 }); PAID.set(day, (PAID.get(day) || 0) + 1); mode = 'paid' }
+          // Teto do pago: estourou = degrada pra grátis (a resposta continua vindo —
+          // revisão #9); o slot só conta se a chamada paga DE FATO aconteceu (#10).
+          let mode: 'free' | 'paid' = 'free', capHit = false
+          if (force) { if ((PAID.get(day) || 0) >= PAID_CAP) capHit = true; else mode = 'paid' }
           const s = await syncBalances(db, it, mode)
-          live = s.balance ? { current: s.balance.current, available: s.balance.available, as_of: s.balance.as_of, realtime: s.balance.realtime, accounts: s.balance.accounts, written: s.written, error: s.error || null } : { error: s.error || s.skipped || 'sem saldo' }
+          if (mode === 'paid' && s.balance?.realtime) PAID.set(day, (PAID.get(day) || 0) + 1)
+          live = s.balance ? { current: s.balance.current, available: s.balance.available, as_of: s.balance.as_of, realtime: s.balance.realtime, realtime_error: s.balance.realtime_error || null, cap_hit: capHit, accounts: s.balance.accounts, written: s.written, error: s.error || null } : { error: s.error || s.skipped || 'sem saldo' }
         }
         if (!live.error) CACHE.set(it.id, { at: Date.now(), data: live })
       }
@@ -50,12 +53,12 @@ export async function GET(req: NextRequest) {
       const { data: anchor } = await db.from('cash_balances').select('balance_date, balance, notes').eq('account', account).eq('source', 'MANUAL').order('balance_date', { ascending: false }).limit(1).maybeSingle()
       // Último saldo gravado de qualquer fonte (fallback da tela quando o Plaid não responde).
       const { data: last } = await db.from('cash_balances').select('balance_date, balance, source').eq('account', account).order('balance_date', { ascending: false }).limit(1).maybeSingle()
-      let implied: number | null = null, netAfter = 0, linesAfter = 0, pendingOut = 0
+      let implied: number | null = null, netAfter = 0, linesAfter = 0, pendingOut = 0, pendingIn = 0
       if (anchor) {
         for (let from = 0; ; from += 1000) {
-          const { data, error: e2 } = await db.from('bank_transactions').select('amount, pending').eq('item_id', it.id).gt('date', anchor.balance_date).order('id').range(from, from + 999)
+          const { data, error: e2 } = await db.from('bank_transactions').select('amount, pending').eq('item_id', it.id).gt('date', anchor.balance_date).neq('match_status', 'REMOVED').order('id').range(from, from + 999)
           if (e2) throw new Error(e2.message)
-          for (const r of data || []) { netAfter -= num(r.amount); linesAfter++; if (r.pending && num(r.amount) > 0) pendingOut += num(r.amount) }
+          for (const r of data || []) { netAfter -= num(r.amount); linesAfter++; if (r.pending && num(r.amount) > 0) pendingOut += num(r.amount); if (r.pending && num(r.amount) < 0) pendingIn += -num(r.amount) }
           if (!data || data.length < 1000) break
         }
         implied = r2(num(anchor.balance) + netAfter)
@@ -63,12 +66,12 @@ export async function GET(req: NextRequest) {
       const current = live.error ? null : live.current
       out.push({
         id: it.id, account, status: it.status,
-        live: live.error ? null : { current: live.current, available: live.available, as_of: live.as_of, realtime: !!live.realtime, accounts: live.accounts, cached: !!cached && !force && live === cached?.data },
+        live: live.error ? null : { current: live.current, available: live.available, as_of: live.as_of, realtime: !!live.realtime, realtime_error: live.realtime_error || null, cap_hit: !!live.cap_hit, accounts: live.accounts, cached: !!cached && !force && live === cached?.data },
         live_error: live.error || null,
         last: last ? { date: last.balance_date, balance: num(last.balance), source: last.source } : null,
         integrity: anchor ? {
           anchor_date: anchor.balance_date, anchor_balance: num(anchor.balance), anchor_note: anchor.notes, lines_after: linesAfter, net_after: r2(netAfter), implied,
-          pending_out: r2(pendingOut), gap: current == null || implied == null ? null : r2(current - implied),
+          pending_out: r2(pendingOut), pending_in: r2(pendingIn), gap: current == null || implied == null ? null : r2(current - implied),
         } : null,
       })
     }

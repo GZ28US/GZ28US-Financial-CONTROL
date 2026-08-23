@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/auth.server'
 import { plaid, plaidConfigured } from '@/lib/plaid.server'
 
 // Cria o link_token que abre o Plaid Link (a telinha de consentimento OAuth do
@@ -12,7 +13,8 @@ import { plaid, plaidConfigured } from '@/lib/plaid.server'
 // existente (sonda /api/plaid/history-probe provou).
 const DAYS = 730
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!plaidConfigured()) {
     return NextResponse.json({ error: 'Plaid keys not set (PLAID_CLIENT_ID / PLAID_SECRET).' }, { status: 501 })
   }
