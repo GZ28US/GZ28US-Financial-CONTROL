@@ -39,9 +39,22 @@ export default function BankPage() {
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [sources, setSources] = useState<{ STATEMENT: number; PLAID: number }>({ STATEMENT: 0, PLAID: 0 })
   const [balances, setBalances] = useState<Record<string, { balance: number; date: string; source: string; notes: string | null }>>({})
+  // Saldo REAL (Plaid agora) + integridade do feed, por conexão — /api/plaid/balance
+  type LiveItem = { id: string; account: string; live: { current: number; available: number; as_of: string; cached: boolean } | null; live_error: string | null; last: { date: string; balance: number; source: string } | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; net_after: number; implied: number; pending_out: number; gap: number | null } | null }
+  const [liveItems, setLiveItems] = useState<LiveItem[] | null>(null)
+  const [liveErr, setLiveErr] = useState('')
+  async function loadLive(force = false) {
+    setLiveErr('')
+    try {
+      const r = await fetch(`${BASE_PATH}/api/plaid/balance${force ? '?force=1' : ''}`, { headers: await sessionHeaders() })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setLiveItems(d.items || [])
+    } catch (e) { setLiveErr(String((e as Error).message || e)); setLiveItems([]) }
+  }
   const [busy, setBusy] = useState<string | null>(null)
 
-  useEffect(() => { void load() }, [])
+  useEffect(() => { void load(); void loadLive() }, [])
 
   const [showAll, setShowAll] = useState(false)
   async function load(all = showAll) {
@@ -136,22 +149,41 @@ export default function BankPage() {
       {/* CAIXA CONSOLIDADO — manchete da página (Márcio, 22/ago): o que a empresa tem
           agora somando todas as conexões. Não é card: os cards são só os bancos. */}
       {accounts.length > 0 && (() => {
-        const list = accounts.map((a) => balances[a.id]).filter(Boolean)
-        const total = list.reduce((s, b) => s + b.balance, 0)
-        const oldest = list.map((b) => b.date).sort()[0]
-        const allPlaid = list.length > 0 && list.every((b) => b.source === 'PLAID')
+        // O número grande é o que o BANCO diz agora (Plaid). Se o Plaid não responder,
+        // mostra o último saldo gravado com aviso — nunca um número "calculado".
+        const items = liveItems || []
+        const liveOnes = items.filter((i) => i.live)
+        const total = liveOnes.reduce((s, i) => s + i.live!.current, 0)
+        const avail = liveOnes.reduce((s, i) => s + i.live!.available, 0)
+        const asOf = liveOnes.map((i) => i.live!.as_of).sort()[0]
+        const fallback = items.filter((i) => !i.live && i.last)
+        const fbTotal = fallback.reduce((s, i) => s + i.last!.balance, 0)
+        const loading = liveItems === null
+        const gapTotal = items.reduce((s, i) => s + (i.integrity?.gap ?? 0), 0)
+        const pendTotal = items.reduce((s, i) => s + (i.integrity?.pending_out ?? 0), 0)
+        const bate = Math.abs(gapTotal) <= pendTotal + 1
         return (
           <div className="flex items-end justify-between gap-6 flex-wrap border-b border-gray-800 pb-6 mb-8">
             <div>
-              <p className="text-sm font-bold tracking-widest text-gray-500">CAIXA CONSOLIDADO</p>
-              <p className={`text-6xl font-bold tabular-nums leading-none mt-2 ${total < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{total < 0 ? '−' : ''}{usd(total)}</p>
+              <p className="text-sm font-bold tracking-widest text-gray-500">CAIXA CONSOLIDADO <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-900 bg-sky-950 text-sky-300 align-middle">SALDO REAL · PLAID</span></p>
+              {loading ? <p className="text-6xl font-bold tabular-nums leading-none mt-2 text-gray-600">…</p>
+                : liveOnes.length > 0 ? <p className={`text-6xl font-bold tabular-nums leading-none mt-2 ${total < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{total < 0 ? '−' : ''}{usd(total)}</p>
+                : <p className="text-6xl font-bold tabular-nums leading-none mt-2 text-amber-300">{fallback.length ? (fbTotal < 0 ? '−' : '') + usd(fbTotal) : '—'}</p>}
+              <p className="text-xs text-gray-500 mt-2">
+                {loading ? 'consultando o banco…'
+                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · Plaid às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white">atualizar</button></>
+                  : <span className="text-amber-300">Plaid sem resposta{liveErr ? ' — ' + liveErr : items[0]?.live_error ? ' — ' + items[0].live_error : ''} · mostrando o último saldo gravado{fallback[0] ? ` (${fallback[0].last!.date}, ${fallback[0].last!.source === 'PLAID' ? 'Plaid' : 'extrato'})` : ''} · <button onClick={() => loadLive(true)} className="underline">tentar de novo</button></span>}
+              </p>
             </div>
-            <p className="text-sm text-gray-500 text-right">
-              {list.length === 0 ? 'sem saldo ainda — SYNC NOW busca no banco' : (
-                <>{list.length} de {accounts.length} conex{accounts.length === 1 ? 'ão' : 'ões'} com saldo · posição de {oldest}{list.length > 1 ? ' (a mais antiga)' : ''}<br />
-                {allPlaid ? 'Plaid atualiza 1×/dia no sync' : 'inclui saldo de extrato — SYNC NOW traz o do Plaid'}</>
-              )}
-            </p>
+            {items.some((i) => i.integrity) && (
+              <div className="text-right text-xs text-gray-500">
+                <p className="font-bold tracking-widest text-gray-500 mb-1">O FEED BATE? <span className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${liveOnes.length === 0 ? 'bg-gray-800 text-gray-400' : bate ? 'bg-emerald-950 text-emerald-300 border border-emerald-900' : 'bg-red-950 text-red-300 border border-red-900'}`}>{liveOnes.length === 0 ? 'SEM SALDO REAL' : bate ? 'BATE' : 'NÃO BATE'}</span></p>
+                {items.filter((i) => i.integrity).map((i) => (
+                  <p key={i.id}>extrato {i.integrity!.anchor_date} {usd(i.integrity!.anchor_balance)} + {i.integrity!.lines_after} linhas = <span className="text-gray-300 tabular-nums">{usd(i.integrity!.implied)}</span>{i.integrity!.gap != null ? <> · diferença <span className={`tabular-nums font-bold ${Math.abs(i.integrity!.gap) <= i.integrity!.pending_out + 1 ? 'text-emerald-300' : 'text-red-300'}`}>{i.integrity!.gap < 0 ? '−' : '+'}{usd(i.integrity!.gap)}</span> (pendente {usd(i.integrity!.pending_out)})</> : null}</p>
+                ))}
+                <p className="mt-1">diferença além do pendente = linha faltando ou sobrando no feed → Data Checker</p>
+              </div>
+            )}
           </div>
         )
       })()}
@@ -178,9 +210,16 @@ export default function BankPage() {
             <p className="text-sm text-gray-400 mt-1">
               {a.accounts ? Object.values(a.accounts).map((s) => `${s.name}${s.mask ? ' •' + s.mask : ''}`).join(' · ') : '—'}
             </p>
-            {balances[a.id] ? (
+            {(() => { const li = (liveItems || []).find((i) => i.id === a.id); return li && li.live ? (
               <div className="mt-3">
-                <p className="text-xs font-bold text-gray-500">BALANCE</p>
+                <p className="text-xs font-bold text-gray-500">BALANCE <span className="text-sky-300">· real</span></p>
+                <p className={`text-2xl font-bold tabular-nums ${li.live.current < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{li.live.current < 0 ? '−' : ''}{usd(li.live.current)}</p>
+                <p className="text-xs text-gray-500">disponível {usd(li.live.available)} · Plaid agora</p>
+              </div>
+            ) : null })()}
+            {!(liveItems || []).find((i) => i.id === a.id && i.live) && balances[a.id] ? (
+              <div className="mt-3">
+                <p className="text-xs font-bold text-gray-500">BALANCE <span className="text-amber-300">· último gravado</span></p>
                 <p className={`text-2xl font-bold tabular-nums ${balances[a.id].balance < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{balances[a.id].balance < 0 ? '−' : ''}{usd(balances[a.id].balance)}</p>
                 <p className="text-xs text-gray-500">em {balances[a.id].date} · {balances[a.id].source === 'PLAID' ? 'Plaid' : 'extrato'}{balances[a.id].notes ? ` · ${balances[a.id].notes}` : ''}</p>
               </div>

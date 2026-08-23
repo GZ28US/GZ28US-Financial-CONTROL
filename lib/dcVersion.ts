@@ -4,9 +4,10 @@
 // CHECK bumpa DC_VERSION e acrescenta uma linha no topo do changelog.
 // A era anterior (dentro do FINANCIAL v0.4.0–v0.9.x) está no changelog de lá.
 export const DC_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'BETA'
-export const DC_VERSION = '1.10.0'
+export const DC_VERSION = '1.11.0'
 
 export const DC_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '1.11.0', date: '2026-08-22', notes: 'Card "Caixa não bate (banco real × linhas do Bank Link)": o saldo que o Plaid traz do banco agora contra o saldo implícito (último extrato lançado + linhas desde então); diferença além do pendente vira pendência com o tamanho do buraco e a direção (faltam entradas ou saídas). É a régua de tudo — ideia do João (22/ago): se o caixa não bate, nenhum outro número vale. Também acusa Plaid sem resposta e conta sem âncora de extrato.' },
   { version: '1.10.0', date: '2026-08-22', notes: 'PAID FROM com o sinal da Regions: além de "casada" (certo), cada linha diz se é de antes da conta abrir (10/nov/2025 — não foi GZ28US), se "não consta na Regions" (valor igual em ±10d não existe — provavelmente BR ou Beto) ou se "consta" (provavelmente GZ28US); a sugestão pré-carregada segue o sinal. Filtro por mês/invoice/fornecedor/sinal e MARCAR OS N FILTRADOS como GZ28US/GZ28BR/BETO/RAFA de uma vez (só linhas vazias, tudo na trilha). Pensado pra sessão a dois (João + Márcio): decide-se um mês ou um invoice, varre-se de um golpe.' },
   { version: '1.9.0', date: '2026-08-22', notes: 'Card "Lançamentos sem PAID FROM (quem pagou?)": despesas de projeto, custos fixos, folha, goods, inputs e estoque sem paid_from, com FIX por linha (GZ28US/GZ28BR/RAFA/BETO). Linha já casada com a Regions (Bank Link) é GZ28US na certa — botão PREENCHER CERTOS resolve todas de uma vez com trilha; as demais trazem o SOURCE como sugestão pré-carregada. Motivo: paid_from vazio é ruído no pool do motor de conciliação e cega o DFC por caixa.' },
   { version: '1.8.1', date: '2026-08-22', notes: 'Card do banco pós-revisão: nada fica clicável durante um lote (busy é conjunto), plano some quando os dados mudam e APLICAR só roda o plano mostrado, falha no APLICAR recarrega (o servidor pode ter aplicado parte), progresso por fatia, PENDING não deixa casar, chip "data preenchida" em A CONFERIR, contagem do cabeçalho vem do estado.' },

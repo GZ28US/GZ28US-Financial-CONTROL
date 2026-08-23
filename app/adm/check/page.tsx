@@ -48,7 +48,8 @@ const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
 // Sinal do banco (/api/bank/reconcile?matched=1): pares já casados, saídas da Regions
 // (data+valor) e a data de abertura da conta. Tudo melhor esforço — sem isso o card
 // só perde as sugestões.
-type BankSignal = { matched: Set<string>; outflows: Map<string, string[]>; opened: string }
+type CashItem = { id: string; account: string; live: { current: number; available: number; as_of: string } | null; live_error: string | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; implied: number; pending_out: number; gap: number | null } | null }
+type BankSignal = { matched: Set<string>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 function buildChecks(d: FinData, bank: BankSignal): Check[] {
@@ -403,6 +404,26 @@ function buildChecks(d: FinData, bank: BankSignal): Check[] {
     })
   }
 
+  // 9c · CAIXA NÃO BATE — o saldo que o BANCO diz (Plaid, agora) contra o que as
+  // linhas do Bank Link implicam (último extrato lançado + linhas desde então).
+  // Diferença maior que o que ainda está pendente = linha faltando ou sobrando
+  // no feed. É a régua de tudo: se isto não bate, nenhum outro número vale.
+  {
+    const items: Item[] = []
+    for (const c of bank.cash || []) {
+      if (!c.live) { items.push({ href: '/adm/bank', code: 'BANCO', label: `${c.account}: Plaid sem resposta`, extra: c.live_error || 'sem saldo real' }); continue }
+      if (!c.integrity) { items.push({ href: '/adm/financials/ledgers', code: 'ÂNCORA', label: `${c.account}: nenhum extrato lançado como âncora`, extra: 'lance o saldo de um extrato em LEDGERS' }); continue }
+      const g = c.integrity.gap ?? 0
+      if (Math.abs(g) > c.integrity.pending_out + 1)
+        items.push({ href: '/adm/bank', code: 'NÃO BATE', label: `${c.account}: banco ${usd(c.live.current)} · extrato ${c.integrity.anchor_date} + ${c.integrity.lines_after} linhas = ${usd(c.integrity.implied)}`, extra: `${g > 0 ? 'faltam linhas de entrada / sobram saídas' : 'faltam saídas / sobram entradas'} · pendente ${usd(c.integrity.pending_out)}`, amount: Math.abs(g) })
+    }
+    checks.push({
+      key: 'cash-match', title: 'Caixa não bate (banco real × linhas do Bank Link)', blocks: 'TUDO — é a régua do Balanço e do DFC',
+      why: 'O Plaid pergunta ao banco o saldo de agora. O Bank Link implica um saldo: último extrato lançado + todas as linhas desde então. Os dois têm que ser iguais até o que ainda está pendente (cartão que não postou). Diferença maior = linha faltando ou duplicada no feed — nada mais deve ser conciliado antes de resolver isto.',
+      items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+  }
+
   // 10 · Caixa: migration pendente, nenhum saldo, ou saldo com mais de 35 dias.
   {
     const lt = ledgerTotals(d)
@@ -435,7 +456,7 @@ export default function DataCheckPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
-  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), outflows: new Map(), opened: REGIONS_OPENED })   // sinal da Regions
+  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), outflows: new Map(), opened: REGIONS_OPENED, cash: null })   // sinal da Regions
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
@@ -451,8 +472,12 @@ export default function DataCheckPage() {
         if (r.ok && Array.isArray(j.matched)) {
           const outflows = new Map<string, string[]>()
           for (const o of (j.outflows || []) as { d: string; a: number }[]) { const k = Number(o.a).toFixed(2); outflows.set(k, [...(outflows.get(k) || []), o.d]) }
-          setBank({ matched: new Set(j.matched.map((m: { table: string; id: string }) => m.table + ':' + m.id)), outflows, opened: j.account_opened || REGIONS_OPENED })
+          setBank(prev => ({ ...prev, matched: new Set(j.matched.map((m: { table: string; id: string }) => m.table + ':' + m.id)), outflows, opened: j.account_opened || REGIONS_OPENED }))
         }
+        // Saldo REAL do banco × linhas do feed — o "caixa não bate" (João, 22/ago).
+        const rb = await fetch(`${BASE_PATH}/api/plaid/balance`, { headers: await sessionHeaders() })
+        const jb = await rb.json().catch(() => ({}))
+        if (rb.ok && Array.isArray(jb.items)) setBank(prev => ({ ...prev, cash: jb.items }))
       } catch { /* sem banco, sem certeza */ }
     })()
   }, [reloadN])
