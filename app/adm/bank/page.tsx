@@ -44,6 +44,8 @@ export default function BankPage() {
   const [liveItems, setLiveItems] = useState<LiveItem[] | null>(null)
   const [liveErr, setLiveErr] = useState('')
   async function loadLive(force = false) {
+    // force = consulta PAGA ao Plaid (produto Balance, ~$0,10) — só com confirmação e dentro do teto diário.
+    if (force && !confirm('Consultar o banco AGORA custa uma chamada paga ao Plaid (~$0,10). O saldo grátis (última atualização do item) já está na tela. Continuar?')) return
     setLiveErr('')
     try {
       const r = await fetch(`${BASE_PATH}/api/plaid/balance${force ? '?force=1' : ''}`, { headers: await sessionHeaders() })
@@ -171,7 +173,7 @@ export default function BankPage() {
                 : <p className="text-6xl font-bold tabular-nums leading-none mt-2 text-amber-300">{fallback.length ? (fbTotal < 0 ? '−' : '') + usd(fbTotal) : '—'}</p>}
               <p className="text-xs text-gray-500 mt-2">
                 {loading ? 'consultando o banco…'
-                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · {liveOnes.every((i) => i.live!.realtime) ? 'banco consultado agora' : <span title="Produto Balance desligado no painel do Plaid — saldo da última atualização do item (normalmente do mesmo dia). Ligue Balance em Plaid → Team Settings → Products pra tempo real.">Plaid · última atualização do item (sem tempo real)</span>} às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white">atualizar</button></>
+                  : liveOnes.length > 0 ? <>disponível <span className="text-gray-300 font-bold tabular-nums">{usd(avail)}</span> · {liveOnes.every((i) => i.live!.realtime) ? 'banco consultado agora (chamada paga)' : <span title="Leitura grátis: saldo da última atualização do item pelo Plaid (normalmente do mesmo dia). A consulta em tempo real é paga e fica no botão.">Plaid · última atualização (grátis)</span>} às {asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'} · <button onClick={() => loadLive(true)} className="underline hover:text-white" title="chamada paga ao Plaid (~$0,10) · teto 3/dia">consultar o banco agora ($)</button></>
                   : <span className="text-amber-300">Plaid sem resposta{liveErr ? ' — ' + liveErr : items[0]?.live_error ? ' — ' + items[0].live_error : ''} · mostrando o último saldo gravado{fallback[0] ? ` (${fallback[0].last!.date}, ${fallback[0].last!.source === 'PLAID' ? 'Plaid' : 'extrato'})` : ''} · <button onClick={() => loadLive(true)} className="underline">tentar de novo</button></span>}
               </p>
             </div>

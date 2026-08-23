@@ -123,19 +123,20 @@ export async function syncBankItem(db: SupabaseClient, item: BankItem): Promise<
 // pendente (cartão ainda não postou). Caixa = só depósito; cartão de crédito
 // (saldo = dívida) SUBTRAI. (João, 22/ago: "quero o saldo REAL do banco ali.")
 export type LiveBalance = { current: number; available: number; as_of: string; realtime: boolean; accounts: { name: string; mask: string | null; type: string; current: number; available: number | null }[] }
-export async function liveBalance(item: { plaid_access_token: string }): Promise<LiveBalance> {
-  // /accounts/balance/get força o banco a responder AGORA, mas exige o produto
-  // Balance habilitado no painel do Plaid (cobrado por chamada). Sem ele
-  // (INVALID_PRODUCT — 22/ago), /accounts/get devolve o saldo da última
-  // atualização do item pelo Plaid (geralmente do mesmo dia) — rotulado como tal.
-  let realtime = true
+// Custo (João, 22/ago): /accounts/balance/get força o banco a responder AGORA e é
+// COBRADO por chamada (produto Balance). /accounts/get é grátis (vem com
+// Transactions) e devolve o saldo da última atualização do item pelo Plaid —
+// geralmente do mesmo dia. Regra: só pede o pago quando wantRealtime = true
+// (1×/dia no primeiro sync + botão CONSULTAR O BANCO AGORA, teto 3/dia); o resto
+// usa o grátis. Sem o produto Balance habilitado (INVALID_PRODUCT) cai no grátis.
+export async function liveBalance(item: { plaid_access_token: string }, wantRealtime = false): Promise<LiveBalance> {
+  let realtime = false
   let r: any
-  try { r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token }) }
-  catch (e) {
-    if (!/INVALID_PRODUCT|not authorized to access the following products/i.test(String(e))) throw e
-    realtime = false
-    r = await plaid('/accounts/get', { access_token: item.plaid_access_token })
+  if (wantRealtime) {
+    try { r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token }); realtime = true }
+    catch (e) { if (!/INVALID_PRODUCT|not authorized to access the following products/i.test(String(e))) throw e }
   }
+  if (!r) r = await plaid('/accounts/get', { access_token: item.plaid_access_token })
   const accounts = (r.accounts || []).map((a: any) => ({
     name: a.name || a.official_name || 'conta', mask: a.mask || null, type: String(a.type || ''),
     current: Number(a.balances?.current) || 0, available: a.balances?.available == null ? null : Number(a.balances.available),
@@ -151,14 +152,20 @@ export async function liveBalance(item: { plaid_access_token: string }): Promise
 // Devolve o que gravou ou o erro — nada de engolir falha (22/ago: o saldo do
 // Bank Link ficou meses mostrando o extrato de junho porque esta função falhava
 // em silêncio).
-export async function syncBalances(db: SupabaseClient, item: { id: string; plaid_access_token: string; display_name: string | null; institution: string }): Promise<{ written: boolean; balance?: LiveBalance; skipped?: string; error?: string }> {
+// mode: 'daily' = pago só se ainda não há foto paga de hoje (1×/dia), senão grátis;
+//       'free'  = nunca paga;  'paid' = paga (botão), respeitando o teto do chamador.
+export async function syncBalances(db: SupabaseClient, item: { id: string; plaid_access_token: string; display_name: string | null; institution: string }, mode: 'daily' | 'free' | 'paid' = 'daily'): Promise<{ written: boolean; balance?: LiveBalance; skipped?: string; error?: string }> {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const account = item.display_name || item.institution
   try {
-    const { data: existing } = await db.from('cash_balances').select('id, source').eq('account', account).eq('balance_date', today).maybeSingle()
+    const { data: existing } = await db.from('cash_balances').select('id, source, notes').eq('account', account).eq('balance_date', today).maybeSingle()
     if (existing && existing.source !== 'PLAID') return { written: false, skipped: 'lançamento manual de hoje tem prioridade' }
-    const balance = await liveBalance(item)
-    const row = { balance_date: today, account, balance: balance.current, source: 'PLAID', notes: `Plaid ${balance.as_of.slice(11, 16)}Z · available ${balance.available} · ` + balance.accounts.map(a => `${a.name}${a.mask ? ' •' + a.mask : ''}: ${a.current}`).join(' · ') }
+    const paidToday = !!existing && /tempo real/.test(existing.notes || '')
+    const want = mode === 'paid' || (mode === 'daily' && !paidToday)
+    const balance = await liveBalance(item, want)
+    // Foto paga de hoje não é sobrescrita por leitura grátis (a paga é a melhor do dia).
+    if (paidToday && !balance.realtime) return { written: false, balance, skipped: 'foto paga de hoje mantida' }
+    const row = { balance_date: today, account, balance: balance.current, source: 'PLAID', notes: `Plaid ${balance.realtime ? 'tempo real' : 'última atualização'} ${balance.as_of.slice(11, 16)}Z · available ${balance.available} · ` + balance.accounts.map(a => `${a.name}${a.mask ? ' •' + a.mask : ''}: ${a.current}`).join(' · ') }
     const { error } = existing ? await db.from('cash_balances').update(row).eq('id', existing.id) : await db.from('cash_balances').insert(row)
     if (error) return { written: false, balance, error: 'cash_balances: ' + error.message }
     return { written: true, balance }

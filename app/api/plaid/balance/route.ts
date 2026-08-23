@@ -16,6 +16,11 @@ const num = (v: unknown) => parseFloat(String(v)) || 0
 const r2 = (v: number) => Math.round(v * 100) / 100
 const CACHE = new Map<string, { at: number; data: any }>()
 const TTL = 10 * 60 * 1000
+// Teto de consultas PAGAS por dia (João, 22/ago: "não ficar pedindo e gastando à toa").
+// Contador em memória por instância + conferência na nota do dia em cash_balances.
+const PAID_CAP = 3
+const PAID = new Map<string, number>()   // 'YYYY-MM-DD' → chamadas pagas
+const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
 export async function GET(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -33,7 +38,10 @@ export async function GET(req: NextRequest) {
       if (!live) {
         if (it.status !== 'ACTIVE') live = { error: 'conexão ' + it.status }
         else {
-          const s = await syncBalances(db, it)
+          const day = todayNY()
+          let mode: 'free' | 'paid' = 'free'
+          if (force) { if ((PAID.get(day) || 0) >= PAID_CAP) return NextResponse.json({ error: `teto de ${PAID_CAP} consultas pagas por dia atingido — o saldo grátis (última atualização) segue disponível` }, { status: 429 }); PAID.set(day, (PAID.get(day) || 0) + 1); mode = 'paid' }
+          const s = await syncBalances(db, it, mode)
           live = s.balance ? { current: s.balance.current, available: s.balance.available, as_of: s.balance.as_of, realtime: s.balance.realtime, accounts: s.balance.accounts, written: s.written, error: s.error || null } : { error: s.error || s.skipped || 'sem saldo' }
         }
         if (!live.error) CACHE.set(it.id, { at: Date.now(), data: live })
@@ -68,7 +76,7 @@ export async function GET(req: NextRequest) {
       current: out.reduce((s, o) => s + (o.live ? o.live.current : 0), 0), available: out.reduce((s, o) => s + (o.live ? o.live.available : 0), 0),
       live_count: out.filter(o => o.live).length, n: out.length,
     }
-    return NextResponse.json({ ok: true, configured: true, items: out, totals })
+    return NextResponse.json({ ok: true, configured: true, items: out, totals, paid_today: PAID.get(todayNY()) || 0, paid_cap: PAID_CAP })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
   }
