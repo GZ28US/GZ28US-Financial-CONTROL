@@ -118,27 +118,42 @@ export async function syncBankItem(db: SupabaseClient, item: BankItem): Promise<
 // manual. Uma chamada por dia por conta (a /accounts/balance/get é cobrada):
 // se já existe linha PLAID de hoje, não chama. Chave da conta = display_name
 // da conexão, a mesma que os extratos importados usam.
-export async function syncBalances(db: SupabaseClient, item: { id: string; plaid_access_token: string; display_name: string | null; institution: string }): Promise<number> {
+// SALDO REAL, direto do banco via Plaid (/accounts/balance/get) — nunca "calculado".
+// current = o que o banco diz que tem; available = descontando o que ainda está
+// pendente (cartão ainda não postou). Caixa = só depósito; cartão de crédito
+// (saldo = dívida) SUBTRAI. (João, 22/ago: "quero o saldo REAL do banco ali.")
+export type LiveBalance = { current: number; available: number; as_of: string; accounts: { name: string; mask: string | null; type: string; current: number; available: number | null }[] }
+export async function liveBalance(item: { plaid_access_token: string }): Promise<LiveBalance> {
+  const r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token })
+  const accounts = (r.accounts || []).map((a: any) => ({
+    name: a.name || a.official_name || 'conta', mask: a.mask || null, type: String(a.type || ''),
+    current: Number(a.balances?.current) || 0, available: a.balances?.available == null ? null : Number(a.balances.available),
+  }))
+  const sign = (t: string) => (t === 'depository' ? 1 : t === 'credit' ? -1 : 0)
+  const current = accounts.reduce((s: number, a: any) => s + sign(a.type) * a.current, 0)
+  const available = accounts.reduce((s: number, a: any) => s + sign(a.type) * (a.available ?? a.current), 0)
+  return { current: Math.round(current * 100) / 100, available: Math.round(available * 100) / 100, as_of: new Date().toISOString(), accounts }
+}
+
+// Grava o saldo do dia em cash_balances (source PLAID). Sobrescreve só linha
+// PLAID do mesmo dia; linha MANUAL (extrato/lançamento) nunca é tocada.
+// Devolve o que gravou ou o erro — nada de engolir falha (22/ago: o saldo do
+// Bank Link ficou meses mostrando o extrato de junho porque esta função falhava
+// em silêncio).
+export async function syncBalances(db: SupabaseClient, item: { id: string; plaid_access_token: string; display_name: string | null; institution: string }): Promise<{ written: boolean; balance?: LiveBalance; skipped?: string; error?: string }> {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const account = item.display_name || item.institution
-  // Linha de QUALQUER source hoje (manual inclusive) ⇒ não chama nem sobrescreve.
-  const { count } = await db.from('cash_balances').select('id', { count: 'exact', head: true })
-    .eq('account', account).eq('balance_date', today)
-  if ((count || 0) > 0) return 0
-  const r = await plaid('/accounts/balance/get', { access_token: item.plaid_access_token })
-  // Caixa = só conta de depósito; cartão de crédito (saldo = dívida) SUBTRAI.
-  const total = (r.accounts || []).reduce((s: number, a: any) => {
-    const v = Number(a.balances?.current) || 0
-    if (a.type === 'depository') return s + v
-    if (a.type === 'credit') return s - v
-    return s
-  }, 0)
-  const { error } = await db.from('cash_balances').upsert([{
-    balance_date: today, account, balance: total, source: 'PLAID',
-    notes: (r.accounts || []).map((a: any) => `${a.name || a.official_name || 'conta'}${a.mask ? ' •' + a.mask : ''}: ${Number(a.balances?.current) || 0}`).join(' · '),
-  }], { onConflict: 'balance_date,account' })
-  if (error) throw new Error('cash_balances: ' + error.message)
-  return 1
+  try {
+    const { data: existing } = await db.from('cash_balances').select('id, source').eq('account', account).eq('balance_date', today).maybeSingle()
+    if (existing && existing.source !== 'PLAID') return { written: false, skipped: 'lançamento manual de hoje tem prioridade' }
+    const balance = await liveBalance(item)
+    const row = { balance_date: today, account, balance: balance.current, source: 'PLAID', notes: `Plaid ${balance.as_of.slice(11, 16)}Z · available ${balance.available} · ` + balance.accounts.map(a => `${a.name}${a.mask ? ' •' + a.mask : ''}: ${a.current}`).join(' · ') }
+    const { error } = existing ? await db.from('cash_balances').update(row).eq('id', existing.id) : await db.from('cash_balances').insert(row)
+    if (error) return { written: false, balance, error: 'cash_balances: ' + error.message }
+    return { written: true, balance }
+  } catch (e) {
+    return { written: false, error: String((e as Error).message || e).slice(0, 200) }
+  }
 }
 
 // Sincroniza TODAS as conexões ativas — usada pelo webhook e pelo cron (rede de segurança).
@@ -150,8 +165,8 @@ export async function syncAllBankItems(): Promise<Array<Record<string, unknown>>
     try {
       const r = await syncBankItem(db, it)
       // Saldo do dia é melhor esforço: falha aqui não derruba o sync das transações.
-      const balances = await syncBalances(db, it).catch(() => -1)
-      out.push({ account: it.display_name || it.institution, ...r, balances })
+      const balances = await syncBalances(db, it)
+      out.push({ account: it.display_name || it.institution, ...r, balances: balances.written ? 1 : 0, balance_error: balances.error || null, balance_current: balances.balance?.current ?? null })
     } catch (e) {
       const msg = String(e).slice(0, 200)
       // Token vencido (banco força re-auth) não derruba as outras conexões — marca
