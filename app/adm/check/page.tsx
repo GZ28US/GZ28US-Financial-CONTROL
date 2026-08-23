@@ -550,7 +550,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, bank, tax) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank])
+  const checks = useMemo(() => (d ? buildChecks(d, bank, tax) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
   const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
 
