@@ -78,11 +78,11 @@ const MENU: MenuItem[] = [
     type: 'dropdown',
     label: 'ADM',
     items: [
-      ['/whatsapp', 'WHATSAPP HUB'],
+      ['/adm/check', 'DATA CHECKER'],
       ['/adm/bank', 'BANK LINK'],
       ['/adm/financials', 'FINANCIAL HUB'],
-      ['/adm/check', 'DATA CHECKER'],
       ['/adm/tax', 'TAX SHIELD'],
+      ['/whatsapp', 'WHATSAPP HUB'],
       ['/adm/reports', 'REPORTS'],
     ],
   },
