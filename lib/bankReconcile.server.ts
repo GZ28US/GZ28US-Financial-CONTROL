@@ -50,12 +50,12 @@ export type Member = { table: string; id: string }
 export type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; group?: string | null; members?: Member[]; score?: number; dd?: number | null }
 export type Pool = { out: Cand[]; inn: Cand[] }
 export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at'; v: string }
-export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory'])
+export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'invoice_parts'])
 
 // Monta o pool de candidatos do app: saídas (OUT) e entradas (IN), já sem o
 // que outra linha do banco casou — inclusive o cruzamento grupo ⇄ item.
 export async function candidatePool(db: any): Promise<Pool> {
-  const [invExp, fixed, suppliers, expenses, goods, goodExp, inputs, inventory, payments, invoices, rides, clients, capital, finEv, financing, matched] = await Promise.all([
+  const [invExp, fixed, suppliers, expenses, goods, goodExp, inputs, inventory, payments, invParts, invoices, rides, clients, capital, finEv, financing, matched] = await Promise.all([
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, purchase_group, paid_from'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, description'),
@@ -65,6 +65,7 @@ export async function candidatePool(db: any): Promise<Pool> {
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
     fetchAll(db, 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, description, paid_to'),
+    fetchAll(db, 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, payment_date, kit_group, kit_name'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote'),
     fetchAll(db, 'rides', 'id, project_name, client_id'),
     fetchAll(db, 'clients', '*').catch(() => []),
@@ -117,6 +118,29 @@ export async function candidatePool(db: any): Promise<Pool> {
   for (const c of capital) push(c.kind === 'CONTRIBUTION' ? inn : out, { table: 'capital_events', id: c.id, label: `CAPITAL · ${c.kind === 'CONTRIBUTION' ? 'APORTE' : 'RETIRADA'} · ${c.member || ''}${c.description ? ' · ' + c.description : ''}`, date: c.event_date, amount: num(c.amount), undated: false })
   for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p)) continue
     push(inn, { table: 'invoice_payments', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at }) }
+  // CUSTO dos parts vendidos (ponto cego da 1ª rodada, João+Márcio 24/ago): o
+  // invoice_part tem preço de VENDA (unit_price) e CUSTO (base_cost) — o banco
+  // cobra o CUSTO. Kits (kit_group) viram UMA cobrança somada, como pedidos.
+  const takenKits = new Set([...taken].filter(k => k.startsWith('kit_group:')).map(k => k.slice('kit_group:'.length)))
+  const brokenKits = new Set<string>()
+  for (const p of invParts) if (p.kit_group && taken.has('invoice_parts:' + p.id)) brokenKits.add(p.kit_group)
+  const kits = new Map<string, { amount: number; date: string | null; label: string; n: number; undated: boolean; members: Member[] }>()
+  for (const p of invParts) {
+    if (!realInvoice(p.invoice_id)) continue
+    const cost = (num(p.base_cost)) * (num(p.quantity) || 1)
+    if (cost < 0.005) continue
+    const inKit = !!p.kit_group && !brokenKits.has(p.kit_group) && !takenKits.has(p.kit_group)
+    if (!(p.kit_group && takenKits.has(p.kit_group)))
+      push(out, { table: 'invoice_parts', id: p.id, group: null, label: `PART CUSTO · ${invLabel(p.invoice_id)} · ${p.description || ''}`, date: p.payment_date || null, amount: cost, undated: !okDate(p.payment_date) })
+    if (inKit) {
+      const g = kits.get(p.kit_group) || { amount: 0, date: null, label: `KIT CUSTO · ${p.kit_name || p.kit_group} · ${invLabel(p.invoice_id)}`, n: 0, undated: false, members: [] }
+      g.amount += cost; g.n++; g.members.push({ table: 'invoice_parts', id: p.id })
+      if (p.payment_date && (!g.date || p.payment_date < g.date)) g.date = p.payment_date
+      if (!okDate(p.payment_date)) g.undated = true
+      kits.set(p.kit_group, g)
+    }
+  }
+  kits.forEach((g, id) => { if (g.n > 1) push(out, { table: 'kit_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members }) })
   // Grupos de compra: um pedido com vários itens vira UMA cobrança no banco.
   // Só entram os MESMOS itens que contam (PURCHASED, livres, não-BR, invoice
   // real); grupo com item já casado não é oferecido. O grupo carrega seus
@@ -298,7 +322,7 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
   }
   if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
   else if (cand.table === 'invoice_payments') await fill('invoice_payments', [cand.id], 'paid_at', paidAtFor(line.date))
-  else if (cand.table === 'purchase_group') {
+  else if (cand.table === 'purchase_group' || cand.table === 'kit_group') {
     // Só os MEMBROS que formaram o total do grupo (revisão #18), nunca "todo mundo do grupo".
     const byTable = new Map<string, string[]>()
     for (const m of cand.members || []) byTable.set(m.table, [...(byTable.get(m.table) || []), m.id])
@@ -344,6 +368,10 @@ export async function writeUnmatch(db: any, line: any, changed: string[]) {
         if (error) throw new Error(`${g}: ${error.message}`)
         if (r && r.length) changed.push(`${g}×${r.length}.payment_date→null`)
       }
+    } else if (t === 'kit_group') {
+      const { data: r, error } = await db.from('invoice_parts').update({ payment_date: null }).eq('kit_group', id).eq('payment_date', line.date).select('id')
+      if (error) throw new Error('invoice_parts: ' + error.message)
+      if (r && r.length) changed.push(`invoice_parts×${r.length}.payment_date→null`)
     }
   }
   // PAID FROM cravado por causa DESTE casamento (bulk CERTO do Data Checker,
