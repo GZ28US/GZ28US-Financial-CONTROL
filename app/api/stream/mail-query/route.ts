@@ -208,5 +208,28 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  // Cria (ou encontra) uma pasta de caso pelo nome — idempotente, pra rodada
+  // poder arquivar sem checar antes se a pasta já existe.
+  if (op === 'mkdir') {
+    const name = (p.get('name') || '').trim()
+    if (!name) return NextResponse.json({ error: 'missing name' }, { status: 400 })
+    const ex = await fetch(`${G}/me/mailFolders?$top=200&$select=id,displayName`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    const hit = (ex?.value || []).find((f: any) => String(f.displayName).toLowerCase() === name.toLowerCase())
+    if (hit) return NextResponse.json({ account: auth.account, folder: { id: hit.id, name: hit.displayName }, existed: true })
+    const c = await fetch(`${G}/me/mailFolders`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: name }) }).then(r => r.json()).catch(() => null)
+    if (!c?.id) return NextResponse.json({ error: c?.error?.message || 'mkdir failed' }, { status: 502 })
+    return NextResponse.json({ account: auth.account, folder: { id: c.id, name: c.displayName }, existed: false })
+  }
+
+  if (op === 'move') {
+    const id = p.get('id')
+    const dest = p.get('dest')
+    if (!id || !dest) return NextResponse.json({ error: 'missing id or dest' }, { status: 400 })
+    const r = await fetch(`${G}/me/messages/${encodeURIComponent(id)}/move`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: dest }) })
+    const m = await r.json().catch(() => null)
+    if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'move failed' }, { status: 502 })
+    return NextResponse.json({ account: auth.account, moved: m.id })
+  }
+
   return NextResponse.json({ error: `unknown op ${op}` }, { status: 400 })
 }
