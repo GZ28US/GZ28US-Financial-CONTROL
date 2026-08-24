@@ -50,7 +50,23 @@ export async function POST(req: NextRequest) {
       processed_note: String(b.note || '').slice(0, 200) || null,
     }).eq('chat_id', chatId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true, chatId, processed_through: through })
+
+    // LEI SAGRADA (24/ago/2026): PROCESSADA = LIDA. Tratou no round, o badge de
+    // não-lida some do celular dele na hora. Marca nos DOIS números — o mesmo
+    // grupo aparece nos dois, e conversa de pessoa pode existir nos dois também.
+    // Best-effort: falhar aqui não desfaz o processamento.
+    const read: Record<string, unknown> = {}
+    const kk = process.env.WHATSAPP_READ_KEY || ''
+    for (const [side, host] of [['US', 'https://www.gz28us.com'], ['BR', 'https://www.gz28br.com']] as const) {
+      try {
+        const rr = await fetch(`${host}/ca/api/whatsapp/read`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: kk, chatId }),
+        })
+        read[side] = rr.ok
+      } catch { read[side] = false }
+    }
+    return NextResponse.json({ ok: true, chatId, processed_through: through, read })
   }
 
   const app = String(b.app || '').toUpperCase()
