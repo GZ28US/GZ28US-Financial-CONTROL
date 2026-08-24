@@ -160,6 +160,27 @@ export default function PartsPage() {
 
   // Provenance badge — how the part got into the database. Legacy rows (null)
   // predate source tagging and were all built by scanning, so they read SCANNED.
+  // Cadeado com recibo (24/ago): TRAVAR = conferi, congela (source_type LOCKED +
+  // locked_at/locked_by); DESTRAVAR = confirmação + trilha — editar peça travada
+  // exige destravar primeiro. Inventado pelo Márcio pra se proteger dele mesmo.
+  async function toggleLock(p: Part) {
+    const locking = !isLockedPart(p)
+    if (!locking && !confirm(`Destravar "${p.alias || p.item}"? A edição libera e o destravamento fica na trilha.`)) return
+    if (locking && !confirm(`Travar "${p.alias || p.item}"? Você está dizendo: os dados desta peça estão CONFERIDOS. Ela congela até alguém destravar.`)) return
+    const { data: u } = await supabase.auth.getUser()
+    const who = u?.user?.email || 'app'
+    const { error } = await supabase.from('parts_database').update(locking
+      ? { source_type: 'LOCKED', locked_at: new Date().toISOString(), locked_by: who, updated_at: new Date().toISOString() }
+      : { source_type: 'MANUAL', locked_at: null, locked_by: null, updated_at: new Date().toISOString() }).eq('id', p.id)
+    if (error) { alert(error.message); return }
+    await supabase.from('data_fixes').insert({
+      check_key: 'parts-lock', table_name: 'parts_database', row_id: p.id, field: 'source_type',
+      old_value: p.source_type || null, new_value: locking ? 'LOCKED' : 'MANUAL',
+      label: `${locking ? '🔒 TRAVADA' : '🔓 DESTRAVADA'} · ${p.alias || p.item} · por ${who}`.slice(0, 200),
+    }).then(() => undefined, () => undefined)
+    void load()
+  }
+
   // The part's ONE status — shared definition in lib/utils (LOCKED/HUNT/MANUAL/SCAN).
   const sourceBadge = (p: Part) => partStatusBadge(p)
 
@@ -596,10 +617,13 @@ export default function PartsPage() {
                   ) })()}
                 </div>
                 <div className="flex items-end gap-3 shrink-0">
-                  {isLockedPart(p) ? null : (
+                  {isLockedPart(p) ? (
+                    <button onClick={() => toggleLock(p)} className="bg-purple-900 hover:bg-purple-800 border border-purple-700 px-4 py-2 rounded-2xl font-bold text-sm" title="editar exige destravar — fica na trilha">🔓 DESTRAVAR</button>
+                  ) : (
                     <>
                       <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
                       <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
+                      <button onClick={() => toggleLock(p)} className="bg-purple-950 hover:bg-purple-900 border border-purple-800 px-4 py-2 rounded-2xl font-bold text-sm" title="dados conferidos? trava e congela">🔒 TRAVAR</button>
                     </>
                   )}
                 </div>
@@ -655,8 +679,11 @@ export default function PartsPage() {
                   </>
                 )}
               </div>
-              {isLockedPart(p) ? null : (
+              {isLockedPart(p) ? (
+              <div className="flex items-end gap-3 shrink-0"><button onClick={() => toggleLock(p)} className="bg-purple-900 hover:bg-purple-800 border border-purple-700 px-4 py-2 rounded-2xl font-bold text-sm" title="editar exige destravar — fica na trilha">🔓 DESTRAVAR</button></div>
+              ) : (
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
+                <div className="self-end"><button onClick={() => toggleLock(p)} className="bg-purple-950 hover:bg-purple-900 border border-purple-800 px-4 py-2 rounded-2xl font-bold text-sm" title="dados conferidos? trava e congela">🔒 TRAVAR</button></div>
                 <div>
                   <label className="block mb-1 text-xs text-gray-400 font-bold">ALIAS</label>
                   <input

@@ -8,6 +8,7 @@ import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
+import PartPicker from '@/components/PartPicker'
 import { BASE_PATH } from '@/lib/utils'
 
 // Single report queued after a successful SAVE INPUT, drives the WhatsApp modal.
@@ -71,6 +72,7 @@ export default function NewInputPage() {
   // STOCK items live in the `inventory` table (?src=inventory), consumption in `inputs`.
   const [table, setTable] = useState<'inputs' | 'inventory'>('inputs')
   const [description, setDescription] = useState('')
+  const [partId, setPartId] = useState('')   // entrada linkada ao catálogo (pré-P1 Crew Chief)
   const [category, setCategory] = useState('STOCK')
   const [quantity, setQuantity] = useState('1')
   const [totalPrice, setTotalPrice] = useState('')
@@ -141,6 +143,7 @@ export default function NewInputPage() {
 
     const { error } = await supabase.from(table).insert([{
       description, category,
+      part_id: partId || null,
       quantity: qty || 1,
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
@@ -277,6 +280,7 @@ export default function NewInputPage() {
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
         <div>
+          <div className="mb-4"><PartPicker onPick={(p) => { setPartId(p.id); if (!description) setDescription(p.alias || p.item); if (p.supplier) setSupplier(p.supplier) }} /></div>
           <label className="block mb-2 text-lg font-bold">DESCRIPTION</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="e.g. Engine Oil 5W-30" />
         </div>

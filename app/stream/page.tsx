@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
+import PartPicker from '@/components/PartPicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { STREAM_STATUS_META, guessCarrier, carrierTrackUrl, type StreamRow, type StreamStatus } from '@/lib/stream'
@@ -37,7 +38,7 @@ export default function StreamPage() {
   const [confirmCancel, setConfirmCancel] = useState<StreamRow | null>(null)
   const [editTracking, setEditTracking] = useState<{ id: string; value: string } | null>(null)
   const [showAdd, setShowAdd] = useState(false)
-  const [addForm, setAddForm] = useState({ supplier: '', item: '', order_number: '', tracking_number: '' })
+  const [addForm, setAddForm] = useState({ supplier: '', item: '', order_number: '', tracking_number: '', part_id: '' })
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
@@ -200,9 +201,10 @@ export default function StreamPage() {
       tracking_number: tracking || null,
       carrier: tracking ? guessCarrier(tracking) : null,
       status: 'BOUGHT',
+      part_id: addForm.part_id || null,
     }]).select('id').single()
     if (error) { alert(error.message); return }
-    setShowAdd(false); setAddForm({ supplier: '', item: '', order_number: '', tracking_number: '' })
+    setShowAdd(false); setAddForm({ supplier: '', item: '', order_number: '', tracking_number: '', part_id: '' })
     if (tracking && data) {
       await fetch(`${BASE_PATH}/api/stream/track`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -255,6 +257,8 @@ export default function StreamPage() {
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-lg w-full mx-4">
             <h2 className="text-2xl font-bold mb-6">📦 TRACK A PURCHASE</h2>
             <div className="space-y-4 mb-8">
+              {/* Entrada nasce linkada ao catálogo (pré-P1 Crew Chief) — escolher preenche item/fornecedor. */}
+              <PartPicker onPick={(p) => setAddForm(f => ({ ...f, part_id: p.id, item: f.item || p.alias || p.item, supplier: f.supplier || p.supplier || '' }))} />
               <div><label className="text-sm text-gray-400 font-bold">ITEM *</label><input value={addForm.item} onChange={e => setAddForm({ ...addForm, item: e.target.value })} className={inputClass} /></div>
               <div><label className="text-sm text-gray-400 font-bold">SUPPLIER</label><input value={addForm.supplier} onChange={e => setAddForm({ ...addForm, supplier: e.target.value })} className={inputClass} /></div>
               <div className="grid grid-cols-2 gap-4">
