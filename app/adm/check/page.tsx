@@ -484,7 +484,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   // aqui é a cobrança. Prazo: 1099 até 31/jan do ano seguinte.
   {
     const items: Item[] = []
-    if (tax.state === 'error') items.push({ href: '/adm/tax', code: 'SINAL', label: 'sinal do 1099 indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja TAX HUB' })
+    if (tax.state === 'error') items.push({ href: '/adm/tax', code: 'SINAL', label: 'sinal do 1099 indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja TAX SHIELD' })
     if (tax.needsMigration) items.push({ href: '/adm/tax', code: 'MIGRATION', label: 'Rodar MIGRATION_tax_1099.sql no SQL Editor', extra: 'classificação/W-9 só gravam com a tabela criada' })
     for (const y of tax.years) for (const p of y.payees) {
       if (!p.classification) items.push({ href: '/adm/tax', code: y.year, label: `${p.name}: ${usd(p.total)} no ano — classificar (serviço? mercadoria? corporação?)`, amount: p.total, when: y.year })
@@ -493,7 +493,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     checks.push({
       group: 'TAX', key: 'tax-1099', title: '1099-NEC — contratados sem classificação ou sem W-9',
       blocks: 'obrigação anual (31/jan) · multa por 1099 não emitido',
-      why: 'Todo beneficiário pago por Zelle, wire ou cheque com $600+ no ano precisa de um veredito: serviço (pede 1099-NEC e W-9), mercadoria, corporação ou pessoal. O extrato lista quem recebeu; o TAX HUB grava a classificação; a Drummond confirma a lei. Sem W-9 na mão, janeiro vira correria.',
+      why: 'Todo beneficiário pago por Zelle, wire ou cheque com $600+ no ano precisa de um veredito: serviço (pede 1099-NEC e W-9), mercadoria, corporação ou pessoal. O extrato lista quem recebeu; o TAX SHIELD grava a classificação; a Drummond confirma a lei. Sem W-9 na mão, janeiro vira correria.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }

@@ -1,6 +1,6 @@
 'use client'
 
-// TAX HUB (ADM ▸ TAX HUB, v0.1.0 · 23/ago/2026): impostos e obrigações da GZ28US.
+// TAX SHIELD (ADM ▸ TAX SHIELD; "TAX HUB" no nascimento, escudado em 23/ago/2026): impostos e obrigações da GZ28US.
 // Regra da casa: o app ORGANIZA os fatos (quem recebeu, quanto, quando — direto
 // do extrato); quem AFIRMA a lei é a Drummond. Módulo 1: rastreador de 1099-NEC.
 // Na fila: FL Sales Tax (DR-15), pacote de fim de ano, impostos de veículo.
@@ -69,7 +69,7 @@ export default function TaxHubPage() {
     <main className="min-h-screen bg-black text-white p-8 pb-24">
       <Header />
       <div className="flex items-baseline gap-4 flex-wrap mb-1">
-        <h1 className="text-4xl font-bold">TAX HUB</h1>
+        <h1 className="text-4xl font-bold">TAX SHIELD</h1>
         <TaxBadge />
         <a href={`${BASE_PATH}/adm/check`} className="text-gray-400 hover:text-white font-bold">DATA CHECKER →</a>
       </div>

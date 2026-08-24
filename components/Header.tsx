@@ -81,7 +81,7 @@ const MENU: MenuItem[] = [
       ['/adm/bank', 'BANK LINK'],
       ['/adm/financials', 'FINANCIAL HUB'],
       ['/adm/check', 'DATA CHECKER'],
-      ['/adm/tax', 'TAX HUB'],
+      ['/adm/tax', 'TAX SHIELD'],
       ['/adm/reports', 'REPORTS'],
     ],
   },
