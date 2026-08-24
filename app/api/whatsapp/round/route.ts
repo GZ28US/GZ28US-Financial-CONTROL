@@ -47,22 +47,41 @@ export async function GET(req: NextRequest) {
   if (!keyOk && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const db = waDb()
   const listOnly = p.get('view') === 'list'
-  const since = p.get('since') || '2026-08-01T00:00:00Z'
+  // Janela do round. Padrão 3 dias: é o que o round trata de fato — conversa
+  // parada há semanas não é "não-processada", é arquivo. `since` alarga quando
+  // ele quiser varrer mais fundo.
+  const days = Math.min(Math.max(parseInt(p.get('days') || '3') || 3, 1), 90)
+  const since = p.get('since') || new Date(Date.now() - days * 864e5).toISOString()
 
   try {
     const { data: chats, error: cErr } = await db.from('whatsapp_chats')
-      .select('app, chat_id, name, is_group, last_at, policy, processed_through, processed_note')
+      .select('app, chat_id, name, is_group, policy, processed_through, processed_note')
       .neq('policy', 'IGNORE')
-      .order('last_at', { ascending: false, nullsFirst: false })
-      .limit(1500)
+      .limit(3000)
     if (cErr) throw cErr
 
-    // Candidatas: têm atividade e ainda não foram processadas até o fim.
-    const open = (chats || []).filter(c => {
-      if (SELF.has(c.chat_id) || isReportGroup(c.name || '')) return false
-      if (!c.last_at || c.last_at < since) return false
-      return !c.processed_through || c.last_at > c.processed_through
-    })
+    // A ATIVIDADE REAL vem das mensagens, nunca de whatsapp_chats.last_at: o
+    // sync grava null ali quando a UltraMsg não manda a hora e apaga o que o
+    // webhook tinha posto (1.325 de 1.340 chats estavam com o campo nulo).
+    const { data: recent, error: mErr } = await db.from('whatsapp_messages')
+      .select('app, chat_id, sent_at')
+      .gte('sent_at', since)
+      .order('sent_at', { ascending: false })
+      .limit(20000)
+    if (mErr) throw mErr
+    const lastBy = new Map<string, string>()
+    for (const m of recent || []) {
+      const k = `${m.app}|${m.chat_id}`
+      if (!lastBy.has(k)) lastBy.set(k, m.sent_at)
+    }
+
+    const open = (chats || [])
+      .map(c => ({ ...c, last_at: lastBy.get(`${c.app}|${c.chat_id}`) || null }))
+      .filter(c => {
+        if (SELF.has(c.chat_id) || isReportGroup(c.name || '')) return false
+        if (!c.last_at) return false
+        return !c.processed_through || c.last_at > c.processed_through
+      })
 
     // O mesmo grupo existe nos 2 números: fica a cópia do lado do assunto.
     const dedup = new Map<string, any>()
@@ -107,11 +126,11 @@ export async function GET(req: NextRequest) {
       .select('from_me, author, pushname, type, body, media_url, sent_at, mentioned_ids')
       .eq('app', c.app).eq('chat_id', c.chat_id)
       .gt('sent_at', c.processed_through || since)
-      .order('sent_at', { ascending: true }).limit(120)
+      .order('sent_at', { ascending: false }).limit(60)
 
     return NextResponse.json({
       remaining: eligible.length,
-      next: { ...summary(c), newCount: (msgs || []).length, messages: msgs || [] },
+      next: { ...summary(c), newCount: (msgs || []).length, messages: (msgs || []).reverse() },
       queue: eligible.slice(1, 6).map(summary),
     })
   } catch (e) {

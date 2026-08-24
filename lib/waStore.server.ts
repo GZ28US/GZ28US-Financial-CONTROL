@@ -170,9 +170,14 @@ export async function waSyncInstance(opts: {
     .filter(c => c.id.includes('@'))
 
   for (let i = 0; i < chats.length; i += 200) {
-    const chunk = chats.slice(i, i + 200).map(c => ({
-      app, chat_id: c.id, name: c.name, is_group: c.id.endsWith('@g.us'), last_at: c.last_at, unread: c.unread,
-    }))
+    // last_at só entra quando a UltraMsg mandou a hora — gravar null aqui
+    // APAGAVA a hora que o webhook já tinha posto (bug achado 24/ago: 1.325 de
+    // 1.340 conversas ficaram sem last_at por causa disto).
+    const chunk = chats.slice(i, i + 200).map(c => {
+      const row: Record<string, unknown> = { app, chat_id: c.id, name: c.name, is_group: c.id.endsWith('@g.us'), unread: c.unread }
+      if (c.last_at) row.last_at = c.last_at
+      return row
+    })
     const { error } = await db.from('whatsapp_chats').upsert(chunk, { onConflict: 'app,chat_id' })
     if (error) throw new Error(`whatsapp_chats upsert: ${error.message}`)
   }
