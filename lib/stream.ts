@@ -57,6 +57,12 @@ export function guessCarrier(tracking: string): string | null {
   if (/^\d{12}$/.test(t) || /^\d{15}$/.test(t)) return 'FedEx'
   if (/^\d{20,22}$/.test(t)) return 'FedEx'
   if (/^[A-Z]{2}\d{9}US$/.test(t)) return 'USPS'
+  // 24/ago — as transportadoras que a Temu usa e o frete LTL, que o app não
+  // reconhecia: sem nome de carrier o 17TRACK cai no auto-detect e falha.
+  if (/^GFUS\d{10,}$/.test(t)) return 'GOFO'
+  if (/^SWX\d{10,}$/.test(t)) return 'SwiftX'
+  if (/^SPX[A-Z]{2,4}\d{10,}$/.test(t)) return 'SpeedX'
+  if (/^\d{3}-\d{7}$/.test(t)) return 'Estes'        // PRO number do frete LTL
   return null
 }
 

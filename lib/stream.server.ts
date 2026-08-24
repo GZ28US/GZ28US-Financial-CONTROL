@@ -43,7 +43,17 @@ async function t17(path: string, body: unknown): Promise<any> {
 // nossos números (-18019903 "Carrier cannot be detected") e o register morria em
 // silêncio — nenhuma linha nunca foi registrada, logo zero updates de entrega.
 // A cura é mandar o carrier explícito (o app já sabe qual é via guessCarrier).
-const T17_CARRIER: Record<string, number> = { FedEx: 100003, UPS: 100002, USPS: 21051, DHL: 100001 }
+// 24/ago: a tabela tinha 4 transportadoras e o STREAM congelava em toda entrega
+// que não fosse FedEx/UPS/USPS/DHL — GOFO e SwiftX (a maioria das Temu), Estes
+// (o câmbio da PowerTrade), Roadrunner (o widebody). Códigos conferidos na lista
+// oficial do 17TRACK (res.17track.net/asset/carrier/info/apicarrier.all.json).
+// A chave é regex: o nome gravado em part_streams.carrier casa por substring.
+const T17_CARRIER: Record<string, number> = {
+  FedEx: 100003, UPS: 100002, USPS: 21051, DHL: 100001,
+  GOFO: 100996, SwiftX: 101228, SpeedX: 190844, OnTrac: 100049,
+  'Estes': 100221, 'Roadrunner': 100253, LaserShip: 100052,
+  UniUni: 100134, 'Jitsu|AxleHire': 100272, Pandion: 100743, Amazon: 100308,
+}
 export function t17CarrierCode(tracking: string, carrier?: string | null): number | undefined {
   const name = carrier || guessCarrier(tracking) || ''
   for (const [k, v] of Object.entries(T17_CARRIER)) if (new RegExp(k, 'i').test(name)) return v
