@@ -87,6 +87,69 @@ function message(i: DutyIncident): string {
   return `⏱️ ${i.staff_name}, a duty "${i.label}"${car} está rodando há ${i.hours}h (limite ${MAX_HOURS}h). Se ainda está no serviço, segue firme e ignore; se esqueceu, pausa lá em DUTIES.`
 }
 
+// ── HISTÓRICO (caso Jeferson, 23/ago): segmento FECHADO acima do limite ainda é
+// hora inflada no carro — e "compensar não ligando o timer depois" transforma um
+// registro errado em vários (o total até fecha, mas o custo por carro/dia mente).
+// O card acusa os dois: o segmento absurdo (com FIX de aparar) e os dias mudos
+// que vieram depois. O aparo tira do invoice_duties.time_seconds só o EXCESSO
+// bancado no segmento (Marcelo teve 78h de relógio mas só 8h bancadas — o
+// desconto respeita o que de fato entrou na conta), grava trilha em data_fixes
+// (check_key 'duty-trim') e um duty_event TRIMMED pra história ficar legível.
+export type AbsurdSegment = { key: string; duty_id: string; staff_id: string | null; staff_name: string; label: string; car: string; start: string; end: string; wall_h: number; banked_start: number | null; banked_end: number | null }
+export type SilentComp = { key: string; staff_name: string; after: string; days: string[]; label: string }
+export async function evaluateHistory(db: SupabaseClient): Promise<{ absurd: AbsurdSegment[]; comps: SilentComp[] }> {
+  const ev: any[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from('duty_events').select('duty_id, staff_id, staff_name, action, at, seconds_banked, description, car_label').order('at').range(from, from + 999)
+    if (error) throw new Error('duty_events: ' + error.message)
+    ev.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
+  const dayOf = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const open = new Map<string, any>()
+  const segs: AbsurdSegment[] = []
+  for (const e of ev) {
+    if (e.action === 'STARTED' || e.action === 'RESUMED') { if (!open.has(e.duty_id)) open.set(e.duty_id, e) }
+    else if (e.action === 'PAUSED' || e.action === 'DONE') {
+      const s = open.get(e.duty_id)
+      if (s) {
+        const wall = (Date.parse(e.at) - Date.parse(s.at)) / 36e5
+        if (wall > MAX_HOURS) segs.push({
+          key: e.duty_id + ':' + s.at, duty_id: e.duty_id, staff_id: s.staff_id || e.staff_id || null,
+          staff_name: s.staff_name || e.staff_name || 'sem responsável', label: String(s.description || e.description || 'duty').slice(0, 120),
+          car: s.car_label || e.car_label || '', start: s.at, end: e.at, wall_h: Math.round(wall * 10) / 10,
+          banked_start: Number.isFinite(Number(s.seconds_banked)) ? Number(s.seconds_banked) : null,
+          banked_end: Number.isFinite(Number(e.seconds_banked)) ? Number(e.seconds_banked) : null,
+        })
+        open.delete(e.duty_id)
+      }
+    }
+  }
+  // já aparados saem da lista (trilha data_fixes é a memória do aparo)
+  const keys = segs.map(s => s.key)
+  const { data: trims } = keys.length ? await db.from('data_fixes').select('row_id').eq('check_key', 'duty-trim').in('row_id', keys) : { data: [] as { row_id: string }[] }
+  const trimmed = new Set((trims || []).map(t => t.row_id))
+  const absurd = segs.filter(s => !trimmed.has(s.key))
+  // compensação silenciosa: nos 5 dias seguintes ao estouro (menos domingo), a
+  // pessoa tem 2+ dias SEM NENHUM evento? Trabalho sem registro na certa.
+  const byStaffDay = new Set(ev.map(e => (e.staff_id || e.staff_name) + '|' + dayOf(e.at)))
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const comps: SilentComp[] = []
+  for (const s of segs) {
+    const sk = s.staff_id || s.staff_name
+    const quiet: string[] = []
+    for (let i = 1; i <= 5; i++) {
+      const d = new Date(Date.parse(s.end) + i * 864e5)
+      const day = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+      if (day >= today) break
+      if (d.getUTCDay() === 0) continue
+      if (!byStaffDay.has(sk + '|' + day)) quiet.push(day)
+    }
+    if (quiet.length >= 2) comps.push({ key: 'COMP:' + s.key, staff_name: s.staff_name, after: s.end.slice(0, 10), days: quiet, label: s.label })
+  }
+  return { absurd, comps }
+}
+
 // Um aviso por incidente-dia; escalação pro grupo se seguir rodando ESCALATE_MIN
 // depois do aviso. Dedupe e trilha na data_fixes (check_key 'duty-nudge').
 export async function sendNudges(db: SupabaseClient, incidents: DutyIncident[]): Promise<{ nudged: number; escalated: number; skipped: number; errors: string[] }> {

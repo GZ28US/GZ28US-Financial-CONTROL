@@ -35,6 +35,7 @@ type Fix =
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
+  | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
 type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean; signal?: string; when?: string }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
@@ -55,7 +56,9 @@ const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
 // só perde as sugestões.
 type CashItem = { id: string; account: string; live: { current: number; available: number; as_of: string } | null; live_error: string | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; implied: number; pending_out: number; pending_in: number; gap: number | null } | null }
 type DutyIncident = { key: string; kind: 'LONG' | 'OVERLAP' | 'OVERNIGHT'; duty_id: string; staff_name: string; label: string; car: string; hours: number; nudged: string | null; escalated: boolean }
-type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[] }
+type AbsurdSeg = { key: string; duty_id: string; staff_name: string; label: string; car: string; start: string; end: string; wall_h: number; banked_start: number | null; banked_end: number | null }
+type SilentComp = { key: string; staff_name: string; after: string; days: string[]; label: string }
+type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[]; history: { absurd: AbsurdSeg[]; comps: SilentComp[] } }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
@@ -508,6 +511,20 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const kindTxt = i.kind === 'OVERLAP' ? 'duas duties rodando ao mesmo tempo' : i.kind === 'OVERNIGHT' ? 'virou a noite ligada' : `rodando há ${i.hours}h (limite ${duty.maxHours}h)`
       items.push({ href: '/duties', code: i.kind === 'OVERLAP' ? 'SIMULT.' : i.kind === 'OVERNIGHT' ? 'NOITE' : 'TIMER', label: `${i.staff_name}: "${i.label}"${i.car ? ' · ' + i.car : ''} — ${kindTxt}`, extra: i.escalated ? 'avisado + escalado pro grupo' : i.nudged ? 'avisado no WhatsApp às ' + String(i.nudged).slice(11, 16) + 'Z' : 'aviso sai no próximo ciclo (30min, 07–22h)', when: i.key.slice(-10) })
     }
+    // HISTÓRICO: segmento fechado acima do limite (FIX = aparar com o fim real)
+    // e a compensação silenciosa que costuma vir atrás dele.
+    const fmtDT = (iso: string) => new Date(iso).toLocaleString('en-CA', { timeZone: 'America/New_York', hour12: false }).slice(0, 16).replace(', ', 'T')
+    for (const s of duty.history.absurd) items.push({
+      href: '/duties', code: 'HISTÓRICO', when: s.start.slice(0, 10),
+      label: `${s.staff_name}: "${s.label}"${s.car ? ' · ' + s.car : ''} — segmento de ${s.wall_h}h (${s.start.slice(0, 10)} → ${s.end.slice(0, 10)})`,
+      extra: 'FIX apara pro fim real', suggest: fmtDT(new Date(Date.parse(s.start) + duty.maxHours * 36e5).toISOString()),
+      fix: { kind: 'trim' as const, table: 'invoice_duties' as const, rowId: s.key, field: 'time_seconds' as const, dutyId: s.duty_id, segStart: s.start, segEnd: s.end, bankedStart: s.banked_start, bankedEnd: s.banked_end },
+    })
+    for (const c of duty.history.comps) items.push({
+      href: '/duties', code: 'COMPENSA?', when: c.after,
+      label: `${c.staff_name}: ${c.days.length} dia(s) sem NENHUM timer depois do estouro de ${c.after} (${c.days.join(', ')})`,
+      extra: 'trabalho sem registro? reconstruir em DUTIES — nunca compensar',
+    })
     checks.push({
       group: 'STAFF', key: 'staff-duties', title: 'Duty timer — esquecido, simultâneo ou virando a noite',
       blocks: 'horas de trabalho infladas · relatório diário da equipe',
@@ -532,7 +549,7 @@ export default function DataCheckPage() {
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
-  const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [] })   // sinal do DUTY WATCH
+  const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [], history: { absurd: [], comps: [] } })   // sinal do STAFF DUTY WATCH
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
@@ -570,7 +587,7 @@ export default function DataCheckPage() {
         // DUTY WATCH: timer esquecido / duties simultâneas / virada de noite (Márcio: 10h).
         const rd = await fetch(`${BASE_PATH}/api/staff-duties`, { headers: await sessionHeaders() })
         const jd = await rd.json().catch(() => ({}))
-        if (rd.ok && Array.isArray(jd.incidents)) setDuty({ state: 'ok', maxHours: jd.max_hours || 10, incidents: jd.incidents })
+        if (rd.ok && Array.isArray(jd.incidents)) setDuty({ state: 'ok', maxHours: jd.max_hours || 10, incidents: jd.incidents, history: jd.history || { absurd: [], comps: [] } })
         else setDuty(prev => ({ ...prev, state: 'error' }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
@@ -593,6 +610,18 @@ export default function DataCheckPage() {
 
   async function applyFix(check: Check, item: Item, value: string) {
     const fix = item.fix!
+    // APARAR (trim) escreve pelo servidor (tabelas e regras do lado de lá).
+    if (fix.kind === 'trim') {
+      setSaving(true)
+      try {
+        const r = await fetch(`${BASE_PATH}/api/staff-duties`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'trim', duty_id: fix.dutyId, seg_start: fix.segStart, seg_end: fix.segEnd, banked_start: fix.bankedStart, banked_end: fix.bankedEnd, new_end_local: value }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
     setSaving(true)
     const newValue = fix.kind === 'received' ? new Date().toISOString() : fix.kind === 'flag' ? fix.value : fix.kind === 'number' ? (parseFloat(value) || 0) : value
     const field = fixField(fix)
@@ -773,7 +802,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -803,6 +832,13 @@ export default function DataCheckPage() {
                                     className="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm" placeholder="0" autoFocus />
                                 </div>
                               )}
+                              {it.fix.kind === 'trim' && (
+                                <div>
+                                  <label className="block mb-1 text-xs font-bold">FIM REAL DO SEGMENTO (hora de Orlando)</label>
+                                  <input type="datetime-local" value={fixValue} onChange={e => setFixValue(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm" />
+                                  <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
+                                </div>
+                              )}
                               {it.fix.kind === 'flag' && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
@@ -810,7 +846,7 @@ export default function DataCheckPage() {
                                 <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>
