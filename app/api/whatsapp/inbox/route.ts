@@ -21,7 +21,11 @@ export const dynamic = 'force-dynamic'
 const POLICIES = new Set(['ALL', 'MENTION_ONLY', 'IGNORE'])
 
 export async function POST(req: NextRequest) {
-  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente fechando a
+  // conversa no round) — mesma porta que as outras rotas de WhatsApp usam.
+  const need = process.env.WHATSAPP_READ_KEY
+  const keyOk = !!need && (req.nextUrl.searchParams.get('key') === need || req.headers.get('x-wa-key') === need)
+  if (!keyOk && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const chatId = String(b.chatId || '').trim()
   if (!chatId.includes('@')) return NextResponse.json({ error: 'chatId required' }, { status: 400 })

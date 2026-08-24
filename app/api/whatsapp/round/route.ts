@@ -39,9 +39,13 @@ const mentionsMarcio = (ids: string[] | null) =>
   (ids || []).some(id => MARCIO.some(n => String(id).includes(n)))
 
 export async function GET(req: NextRequest) {
-  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const db = waDb()
+  // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente), igual às
+  // demais rotas de leitura do WhatsApp — é a mesma informação que elas servem.
   const p = req.nextUrl.searchParams
+  const key = process.env.WHATSAPP_READ_KEY
+  const keyOk = !!key && p.get('key') === key
+  if (!keyOk && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const db = waDb()
   const listOnly = p.get('view') === 'list'
   const since = p.get('since') || '2026-08-01T00:00:00Z'
 
