@@ -11,10 +11,20 @@ import { sessionHeaders } from '@/components/BankReconcileCard'
 // Times follow the subject's zone (Orlando for US, Brasília for BR) — never
 // raw UTC. Replies go out from here: US via /api/whatsapp, BR via the relay.
 
+type Policy = 'ALL' | 'MENTION_ONLY' | 'IGNORE'
 type Chat = {
   app: 'US' | 'BR'; chatId: string; name: string | null; isGroup: boolean
-  lastAt: string | null; unread: number | null
+  lastAt: string | null; unread: number | null; policy: Policy
   lastFromMe: boolean | null; lastType: string | null; lastBody: string | null
+}
+
+// POLÍTICA DE PAUTA por conversa (ordem do Márcio, 24/ago/2026): há grupos em
+// que só interessa quando ELE é marcado — o resto é conversa da equipe.
+const POLICY_LABEL: Record<Policy, string> = { ALL: 'TUDO', MENTION_ONLY: 'SÓ SE ME MARCAREM', IGNORE: 'IGNORAR' }
+const POLICY_CHIP: Record<Policy, string> = {
+  ALL: 'bg-gray-800 text-gray-400 border-gray-700',
+  MENTION_ONLY: 'bg-amber-950 text-amber-300 border-amber-800',
+  IGNORE: 'bg-red-950 text-red-400 border-red-900',
 }
 type Msg = {
   id: number; from_me: boolean; author: string | null; pushname: string | null
@@ -99,6 +109,15 @@ export default function WhatsAppPage() {
     }, 350)
     return () => clearTimeout(t)
   }, [q, appFilter])
+
+  async function setPolicy(c: Chat, policy: Policy) {
+    setChats(prev => (prev || []).map(x => x.chatId === c.chatId ? { ...x, policy } : x))
+    const r = await fetch(`${BASE_PATH}/api/whatsapp/inbox`, {
+      method: 'POST', headers: await sessionHeaders(),
+      body: JSON.stringify({ chatId: c.chatId, app: c.app, policy }),
+    })
+    if (!r.ok) { setErr('Não consegui salvar a política — recarregue'); void loadChats() }
+  }
 
   function openChat(app: 'US' | 'BR', chatId: string, name: string | null) {
     setActive({ app, chatId, name })
@@ -194,6 +213,7 @@ export default function WhatsAppPage() {
                     <span className={`px-1.5 rounded text-[10px] font-bold border ${APP_CHIP[c.app]}`}>{c.app}</span>
                     <span className="font-bold truncate">{c.name || c.chatId.replace(/@.*/, '')}</span>
                     {c.isGroup && <span className="text-[10px] text-gray-500">GROUP</span>}
+                    {c.policy !== 'ALL' && <span className={`px-1.5 rounded text-[9px] font-bold border shrink-0 ${POLICY_CHIP[c.policy]}`}>{POLICY_LABEL[c.policy]}</span>}
                     {!c.isGroup && c.lastFromMe === false && <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Awaiting reply" />}
                     <span className="ml-auto text-gray-500 text-xs shrink-0">{fmtTime(c.lastAt, c.app)}</span>
                   </div>
@@ -216,6 +236,21 @@ export default function WhatsAppPage() {
               <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-2">
                 <span className={`px-1.5 rounded text-[10px] font-bold border ${APP_CHIP[active.app]}`}>{active.app}</span>
                 <span className="font-bold">{active.name || active.chatId.replace(/@.*/, '')}</span>
+                {(() => {
+                  const c = (chats || []).find(x => x.chatId === active.chatId && x.app === active.app)
+                  if (!c) return null
+                  return (
+                    <select
+                      value={c.policy} onChange={e => void setPolicy(c, e.target.value as Policy)}
+                      title="Quando esta conversa vira pauta sua"
+                      className={`text-[10px] font-bold rounded-full border px-2 py-1 outline-none cursor-pointer ${POLICY_CHIP[c.policy]}`}
+                    >
+                      {(['ALL', 'MENTION_ONLY', 'IGNORE'] as Policy[]).map(p => (
+                        <option key={p} value={p} className="bg-gray-900 text-white">{POLICY_LABEL[p]}</option>
+                      ))}
+                    </select>
+                  )
+                })()}
                 <span className="ml-auto text-xs text-gray-500">{active.app === 'US' ? 'Orlando time' : 'horário de Brasília'}</span>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">

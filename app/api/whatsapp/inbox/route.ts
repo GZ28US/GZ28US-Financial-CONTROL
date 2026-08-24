@@ -9,8 +9,31 @@ import { waDb } from '@/lib/waStore.server'
 //   ?view=chats     &app=ALL|US|BR &q=            → chats + última mensagem
 //   ?view=messages  &app=US|BR &chatId= &limit= &before=  → uma conversa (asc)
 //   ?view=search    &q= &app= &limit=             → busca no corpo das mensagens
+//
+// POST { chatId, app, policy } muda a POLÍTICA do chat (ordem do Márcio,
+// 24/ago/2026): há grupos em que só é pauta dele se ele for MARCADO.
+//   ALL          tudo vira pauta (padrão)
+//   MENTION_ONLY só vira pauta quando o Márcio é marcado na mensagem
+//   IGNORE       nunca vira pauta
 
 export const dynamic = 'force-dynamic'
+
+const POLICIES = new Set(['ALL', 'MENTION_ONLY', 'IGNORE'])
+
+export async function POST(req: NextRequest) {
+  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const b = await req.json().catch(() => ({}))
+  const chatId = String(b.chatId || '').trim()
+  const app = String(b.app || '').toUpperCase()
+  const policy = String(b.policy || '').toUpperCase()
+  if (!chatId.includes('@') || (app !== 'US' && app !== 'BR') || !POLICIES.has(policy)) {
+    return NextResponse.json({ error: 'chatId + app=US|BR + policy=ALL|MENTION_ONLY|IGNORE required' }, { status: 400 })
+  }
+  // O mesmo grupo existe nos 2 números — a política vale para os dois.
+  const { error } = await waDb().from('whatsapp_chats').update({ policy }).eq('chat_id', chatId)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, chatId, policy })
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -24,7 +47,7 @@ export async function GET(req: NextRequest) {
   try {
     if (view === 'chats') {
       const q = (p.get('q') || '').trim()
-      let sel = db.from('whatsapp_chats').select('*').order('last_at', { ascending: false, nullsFirst: false }).limit(120)
+      let sel = db.from('whatsapp_chats').select('*').neq('policy', 'IGNORE').order('last_at', { ascending: false, nullsFirst: false }).limit(120)
       if (app === 'US' || app === 'BR') sel = sel.eq('app', app)
       if (q) sel = sel.ilike('name', `%${q}%`)
       const { data: chats, error } = await sel
@@ -52,7 +75,7 @@ export async function GET(req: NextRequest) {
           const lm = last[`${c.app}|${c.chat_id}`] || null
           return {
             app: c.app, chatId: c.chat_id, name: c.name, isGroup: c.is_group,
-            lastAt: lm?.sent_at || c.last_at, unread: c.unread,
+            lastAt: lm?.sent_at || c.last_at, unread: c.unread, policy: c.policy || 'ALL',
             lastFromMe: lm ? !!lm.from_me : null,
             lastType: lm?.type || null,
             lastBody: lm ? String(lm.body || (lm.media_url ? '[media]' : '')).slice(0, 140) : null,

@@ -29,6 +29,20 @@ export type WaRow = {
   media_url: string | null
   sent_at: string
   via: string
+  mentioned_ids: string[] | null
+}
+
+// Quem foi MARCADO na mensagem. O corpo mostra a marcação como @<LID> (número
+// interno do WhatsApp, que NÃO é o telefone), então o texto sozinho não serve
+// pra saber se o Márcio foi marcado. A UltraMsg manda os ids de verdade no
+// payload — guardamos aqui pra política MENTION_ONLY do grupo funcionar exato.
+function mentionsOf(m: any): string[] | null {
+  const raw = m?.mentionedIds ?? m?.mentioned_ids ?? m?.mentions ?? m?.quotedMsg?.mentionedIds
+  if (!raw) return null
+  const list = (Array.isArray(raw) ? raw : [raw])
+    .map((x: any) => String(x?._serialized || x?.id || x || '').trim())
+    .filter(Boolean)
+  return list.length ? list.slice(0, 40) : null
 }
 
 export function waDb(): SupabaseClient {
@@ -68,6 +82,7 @@ export function waNormalize(m: any, app: WaApp, via: string): WaRow | null {
     media_url: m?.media ? String(m.media).slice(0, 1000) : null,
     sent_at: t ? new Date(t * 1000).toISOString() : new Date().toISOString(),
     via,
+    mentioned_ids: mentionsOf(m),
   }
 }
 
@@ -91,6 +106,13 @@ export async function waStore(db: SupabaseClient, rows: WaRow[]): Promise<number
     await db.from('whatsapp_messages')
       .update({ media_url: r.media_url, type: r.type })
       .eq('app', r.app).eq('message_id', r.message_id).is('media_url', null)
+  }
+  // Mesma cura pras marcações: o sync (/chats/messages) não traz mentionedIds,
+  // só o webhook — se o sync gravou primeiro, o webhook preenche depois.
+  for (const r of rows.filter(r => r.mentioned_ids?.length).slice(0, 60)) {
+    await db.from('whatsapp_messages')
+      .update({ mentioned_ids: r.mentioned_ids })
+      .eq('app', r.app).eq('message_id', r.message_id).is('mentioned_ids', null)
   }
   return inserted
 }
