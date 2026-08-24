@@ -59,12 +59,14 @@ type DutyIncident = { key: string; kind: 'LONG' | 'OVERLAP' | 'OVERNIGHT'; duty_
 type AbsurdSeg = { key: string; duty_id: string; staff_name: string; label: string; car: string; start: string; end: string; wall_h: number; banked_start: number | null; banked_end: number | null }
 type SilentComp = { key: string; staff_name: string; after: string; days: string[]; label: string }
 type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[]; history: { absurd: AbsurdSeg[]; comps: SilentComp[] } }
+type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
+type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -533,6 +535,35 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // INVENTORY · LINKER — identidade de peças (pré-P1 do Crew Chief): estoque e
+  // stream apontando pro catálogo. PN da peça no texto = CERTO (bulk); nome/
+  // apelido = sugestão um a um. Também a higiene do catálogo (sem PN, PN dup).
+  {
+    const items: Item[] = []
+    if (linker.state === 'error' && !linker.needsMigration) items.push({ href: '/parts', code: 'SINAL', label: 'sinal do LINKER indisponível — verificação NÃO rodou', extra: 'recarregue' })
+    if (linker.needsMigration) items.push({ href: '/parts', code: 'MIGRATION', label: 'Rodar MIGRATION_parts_identity.sql no SQL Editor', extra: 'os ponteiros part_id precisam das colunas' })
+    const mk = (r: LinkerRow, code: string) => {
+      const best = r.candidates[0]
+      items.push({
+        href: r.table === 'inventory' ? '/inventory' : '/stream', code, when: undefined,
+        label: `${r.text.slice(0, 70)}${r.supplier ? ' · ' + r.supplier : ''}`,
+        extra: best ? (best.certain ? 'PN no texto — certo' : 'candidato por nome — conferir') : 'sem candidato no catálogo',
+        certain: !!best?.certain, suggest: best?.id, signal: best ? (best.certain ? 'matched' : 'source') : undefined,
+        fix: best ? { kind: 'select' as const, table: r.table, rowId: r.id, field: 'part_id', options: r.candidates.map(c => ({ value: c.id, label: (c.certain ? '✓ ' : '') + c.label })), current: null } : undefined,
+      })
+    }
+    for (const r of linker.inventory) mk(r, 'STOCK')
+    for (const r of linker.streams) mk(r, 'STREAM')
+    for (const p of linker.no_pn) items.push({ href: '/parts', code: 'SEM PN', label: p.item || '(sem nome)', extra: 'peça do catálogo sem part number — preencher em PARTS' })
+    for (const dp of linker.dup_pn) items.push({ href: '/parts', code: 'PN DUP', label: `${dp.pn}: ${dp.items.join(' × ')}`, extra: 'regra uma-linha-por-PN — unir em PARTS' })
+    checks.push({
+      group: 'INVENTORY', key: 'parts-identity', title: 'LINKER — peças sem identidade (estoque · stream · catálogo)',
+      blocks: 'Crew Chief (BOM × estoque × lead time) · catálogo canônico',
+      why: 'O Crew Chief só funciona se estoque e stream APONTAREM pra peça do catálogo em vez de descrevê-la em texto (medido: 5/47 e 21/178 achavam). PN da peça no texto = certo — o botão resolve em massa; candidato por nome = confira um a um; sem candidato = cadastre a peça em PARTS e volte. Formulários novos vão escolher do catálogo — este card liga o legado.',
+      items, impact: undefined,
+    })
+  }
+
   return checks
 }
 
@@ -550,6 +581,7 @@ export default function DataCheckPage() {
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
   const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [], history: { absurd: [], comps: [] } })   // sinal do STAFF DUTY WATCH
+  const [linker, setLinker] = useState<LinkerSignal>({ state: 'loading', needsMigration: false, totals: null, inventory: [], streams: [], no_pn: [], dup_pn: [] })   // identidade de peças
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
@@ -589,11 +621,16 @@ export default function DataCheckPage() {
         const jd = await rd.json().catch(() => ({}))
         if (rd.ok && Array.isArray(jd.incidents)) setDuty({ state: 'ok', maxHours: jd.max_hours || 10, incidents: jd.incidents, history: jd.history || { absurd: [], comps: [] } })
         else setDuty(prev => ({ ...prev, state: 'error' }))
+        // LINKER: identidade de peças (pré-P1 do Crew Chief) — inventory/stream → catálogo.
+        const rl = await fetch(`${BASE_PATH}/api/parts/link`, { headers: await sessionHeaders() })
+        const jl = await rl.json().catch(() => ({}))
+        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [] })
+        else setLinker(prev => ({ ...prev, state: 'error', needsMigration: !!jl.needs_migration }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty])
+  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty, linker) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
   const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
 
@@ -660,7 +697,24 @@ export default function DataCheckPage() {
   }
   async function applyCertain(check: Check) {
     const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
-    if (!items.length || !confirm(`Preencher ${items.length} linhas com ${items[0].suggest}? Todas já casaram com uma linha da Regions — o banco provou quem pagou.`)) return
+    if (!items.length) return
+    // LINKER: cada linha tem o SEU candidato certo (part_id próprio) — bulk um a um.
+    if (check.key === 'parts-identity') {
+      if (!confirm(`Linkar ${items.length} linhas ao catálogo? Todas têm o PN da peça no próprio texto — o número não mente. Tudo na trilha.`)) return
+      setSaving(true)
+      let n = 0
+      for (const it of items) {
+        const fix = it.fix!
+        setBulk(`${n + 1}/${items.length}`)
+        const { error: err } = await supabase.from(fix.table).update({ part_id: it.suggest }).eq('id', fix.rowId).is('part_id', null)
+        if (err) continue
+        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: 'part_id', old_value: null, new_value: it.suggest, label: `LINK CERTO · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+        setDone(prev => new Set(prev).add(fix.rowId + '|part_id')); n++
+      }
+      setBulk(''); setSaving(false)
+      return
+    }
+    if (!confirm(`Preencher ${items.length} linhas com ${items[0].suggest}? Todas já casaram com uma linha da Regions — o banco provou quem pagou.`)) return
     await applyBulk(check, items, items[0].suggest!, 'CERTO (Regions)')
   }
   const filtered = (c: Check) => {
