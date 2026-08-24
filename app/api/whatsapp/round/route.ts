@@ -64,22 +64,33 @@ export async function GET(req: NextRequest) {
     // sync grava null ali quando a UltraMsg não manda a hora e apaga o que o
     // webhook tinha posto (1.325 de 1.340 chats estavam com o campo nulo).
     const { data: recent, error: mErr } = await db.from('whatsapp_messages')
-      .select('app, chat_id, sent_at')
+      .select('app, chat_id, sent_at, from_me')
       .gte('sent_at', since)
       .order('sent_at', { ascending: false })
       .limit(20000)
     if (mErr) throw mErr
     const lastBy = new Map<string, string>()
+    const lastMine = new Map<string, boolean>()
     for (const m of recent || []) {
       const k = `${m.app}|${m.chat_id}`
-      if (!lastBy.has(k)) lastBy.set(k, m.sent_at)
+      if (!lastBy.has(k)) { lastBy.set(k, m.sent_at); lastMine.set(k, !!m.from_me) }
     }
 
+    // ?waiting=1 — só o que ESPERA POR ELE: se a última palavra foi dele, a
+    // conversa está em movimento e não é aviso (senão o vigia vira enxurrada:
+    // 12 avisos em 4 minutos, 9 deles conversa que ele já estava respondendo).
+    const waitingOnly = p.get('waiting') === '1'
+
     const open = (chats || [])
-      .map(c => ({ ...c, last_at: lastBy.get(`${c.app}|${c.chat_id}`) || null }))
+      .map(c => ({
+        ...c,
+        last_at: lastBy.get(`${c.app}|${c.chat_id}`) || null,
+        last_from_me: lastMine.get(`${c.app}|${c.chat_id}`) ?? null,
+      }))
       .filter(c => {
         if (SELF.has(c.chat_id) || isReportGroup(c.name || '')) return false
         if (!c.last_at) return false
+        if (waitingOnly && c.last_from_me) return false
         return !c.processed_through || c.last_at > c.processed_through
       })
 
@@ -108,7 +119,7 @@ export async function GET(req: NextRequest) {
 
     const summary = (c: any) => ({
       app: c.app, chatId: c.chat_id, name: c.name, isGroup: c.is_group,
-      lastAt: c.last_at, zone: zoneOf(c.app, c.name), policy: c.policy,
+      lastAt: c.last_at, zone: zoneOf(c.app, c.name), policy: c.policy, lastFromMe: c.last_from_me,
       processedThrough: c.processed_through,
     })
 
