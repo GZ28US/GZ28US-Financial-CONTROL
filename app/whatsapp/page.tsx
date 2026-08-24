@@ -6,7 +6,7 @@ import WaBadge from '@/components/WaBadge'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/components/BankReconcileCard'
 
-// WHATSAPP HUB — the two numbers (US + BR) in ONE inbox, read from the
+// INTERCOM — the two numbers (US + BR) in ONE inbox, read from the
 // permanent mirror (whatsapp_messages / whatsapp_chats in the US project).
 // Times follow the subject's zone (Orlando for US, Brasília for BR) — never
 // raw UTC. Replies go out from here: US via /api/whatsapp, BR via the relay.
@@ -172,7 +172,7 @@ export default function WhatsAppPage() {
     <main className="min-h-screen bg-black text-white p-8 pb-24">
       <Header />
       <div className="flex items-baseline gap-3 flex-wrap mb-1">
-        <h1 className="text-4xl font-bold">WHATSAPP HUB</h1>
+        <h1 className="text-4xl font-bold">INTERCOM</h1>
         <WaBadge />
       </div>
       <p className="text-gray-400 mb-6 max-w-3xl">Both numbers in one inbox — the permanent mirror of every message. US times in Orlando, BR times in Brasília.</p>

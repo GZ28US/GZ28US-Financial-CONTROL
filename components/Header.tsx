@@ -82,7 +82,7 @@ const MENU: MenuItem[] = [
       ['/adm/bank', 'BANK LINK'],
       ['/adm/financials', 'FINANCIAL HUB'],
       ['/adm/tax', 'TAX SHIELD'],
-      ['/whatsapp', 'WHATSAPP HUB'],
+      ['/whatsapp', 'INTERCOM'],
       ['/adm/reports', 'REPORTS'],
     ],
   },

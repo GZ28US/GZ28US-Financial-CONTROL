@@ -20,7 +20,7 @@ const TRACKS: { title: string; stage?: string; version?: string; cls?: string; a
   { title: 'DATA CHECKER', stage: DC_STAGE, version: DC_VERSION, cls: 'bg-sky-950 text-sky-300 border-sky-700', accent: 'text-sky-300', entries: DC_CHANGELOG },
   { title: 'BANK LINK', stage: BL_STAGE, version: BL_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: BL_CHANGELOG },
   { title: 'TAX SHIELD', stage: TAX_STAGE, version: TAX_VERSION, cls: 'bg-purple-950 text-purple-300 border-purple-700', accent: 'text-purple-300', entries: TAX_CHANGELOG },
-  { title: 'WHATSAPP HUB', stage: WA_STAGE, version: WA_VERSION, cls: 'bg-green-950 text-green-300 border-green-700', accent: 'text-green-300', entries: WA_CHANGELOG },
+  { title: 'INTERCOM', stage: WA_STAGE, version: WA_VERSION, cls: 'bg-green-950 text-green-300 border-green-700', accent: 'text-green-300', entries: WA_CHANGELOG },
 ]
 
 export default function ChangelogPage() {
