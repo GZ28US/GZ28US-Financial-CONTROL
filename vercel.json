@@ -31,6 +31,10 @@
     {
       "path": "/ca/api/cron/marketing-kill",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/ca/api/cron/whatsapp-sync",
+      "schedule": "*/10 * * * *"
     }
   ],
   "rewrites": [

@@ -78,6 +78,7 @@ const MENU: MenuItem[] = [
     type: 'dropdown',
     label: 'ADM',
     items: [
+      ['/whatsapp', 'WHATSAPP HUB'],
       ['/adm/bank', 'BANK LINK'],
       ['/adm/financials', 'FINANCIAL HUB'],
       ['/adm/check', 'DATA CHECKER'],

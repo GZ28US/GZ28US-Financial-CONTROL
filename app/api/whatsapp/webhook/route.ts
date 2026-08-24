@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { waNormalize, waStore, waTouchChat, waDb } from '@/lib/waStore.server'
 
 // ── WEBHOOK DO WHATSAPP (UltraMsg) — a porta de entrada do FINANCEIRO ─────────
 // Ordem do Márcio (27/jul/2026): "the FINANCEIRO group is the MOST IMPORTANT
@@ -33,6 +34,22 @@ export async function POST(req: NextRequest) {
   }
   const payload = await req.json().catch(() => null)
   const d = payload?.data || payload
+
+  // WHATSAPP HUB (24/ago/2026): além do FINANCEIRO, TODA mensagem do número US
+  // (recebida ou nossa) vira linha no espelho whatsapp_messages — o histórico
+  // permanente que a UltraMsg não guarda. Best-effort: erro aqui nunca derruba
+  // o webhook nem o fluxo do FINANCEIRO.
+  try {
+    const row = waNormalize(d, 'US', 'webhook')
+    if (row) {
+      const mirror = waDb()
+      await waStore(mirror, [row])
+      await waTouchChat(mirror, 'US', row.chat_id, row.sent_at)
+    }
+  } catch (e) {
+    console.error('[whatsapp-webhook] mirror', e)
+  }
+
   try {
     const chatId = String(d?.chatId || d?.from || '')
     // Só o FINANCEIRO por enquanto: é o grupo que vira dinheiro no app.
