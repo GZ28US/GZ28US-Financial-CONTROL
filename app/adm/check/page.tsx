@@ -54,12 +54,14 @@ const PAID_FROM_SELECT = PAID_FROM_OPTIONS.map(v => ({ value: v, label: v }))
 // (data+valor) e a data de abertura da conta. Tudo melhor esforço — sem isso o card
 // só perde as sugestões.
 type CashItem = { id: string; account: string; live: { current: number; available: number; as_of: string } | null; live_error: string | null; integrity: { anchor_date: string; anchor_balance: number; lines_after: number; implied: number; pending_out: number; pending_in: number; gap: number | null } | null }
+type DutyIncident = { key: string; kind: 'LONG' | 'OVERLAP' | 'OVERNIGHT'; duty_id: string; staff_name: string; label: string; car: string; hours: number; nudged: string | null; escalated: boolean }
+type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -496,6 +498,24 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal): Check[] {
     })
   }
 
+  // STAFF · DUTY WATCH — timer esquecido infla hora; o cron avisa a própria
+  // pessoa no WhatsApp (um aviso por duty/dia, escalação pro grupo em 60min);
+  // aqui é o retrato de agora. O conserto é na tela DUTIES.
+  {
+    const items: Item[] = []
+    if (duty.state === 'error') items.push({ href: '/duties', code: 'SINAL', label: 'sinal das duties indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja DUTIES' })
+    for (const i of duty.incidents) {
+      const kindTxt = i.kind === 'OVERLAP' ? 'duas duties rodando ao mesmo tempo' : i.kind === 'OVERNIGHT' ? 'virou a noite ligada' : `rodando há ${i.hours}h (limite ${duty.maxHours}h)`
+      items.push({ href: '/duties', code: i.kind === 'OVERLAP' ? 'SIMULT.' : i.kind === 'OVERNIGHT' ? 'NOITE' : 'TIMER', label: `${i.staff_name}: "${i.label}"${i.car ? ' · ' + i.car : ''} — ${kindTxt}`, extra: i.escalated ? 'avisado + escalado pro grupo' : i.nudged ? 'avisado no WhatsApp às ' + String(i.nudged).slice(11, 16) + 'Z' : 'aviso sai no próximo ciclo (30min, 07–22h)', when: i.key.slice(-10) })
+    }
+    checks.push({
+      group: 'STAFF', key: 'staff-duties', title: 'Duty timer — esquecido, simultâneo ou virando a noite',
+      blocks: 'horas de trabalho infladas · relatório diário da equipe',
+      why: `Timer que ninguém pausou vira hora que ninguém trabalhou. Regras (Márcio): ${duty.maxHours}h por duty, uma duty por vez, nada vira a noite ligado. O cron (30 em 30min, 07–22h de Orlando) avisa a PRÓPRIA pessoa no WhatsApp — um aviso por duty por dia — e escala pro grupo GZ28US - STAFF se seguir rodando 60min depois. O conserto (pausar/finalizar) é na tela DUTIES.`,
+      items,
+    })
+  }
+
   return checks
 }
 
@@ -512,6 +532,7 @@ export default function DataCheckPage() {
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
+  const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [] })   // sinal do DUTY WATCH
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
@@ -546,11 +567,16 @@ export default function DataCheckPage() {
         const jt = await rt.json().catch(() => ({}))
         if (rt.ok && Array.isArray(jt.years)) setTax({ state: 'ok', needsMigration: !!jt.needs_migration, years: jt.years })
         else setTax(prev => ({ ...prev, state: 'error' }))
+        // DUTY WATCH: timer esquecido / duties simultâneas / virada de noite (Márcio: 10h).
+        const rd = await fetch(`${BASE_PATH}/api/staff-duties`, { headers: await sessionHeaders() })
+        const jd = await rd.json().catch(() => ({}))
+        if (rd.ok && Array.isArray(jd.incidents)) setDuty({ state: 'ok', maxHours: jd.max_hours || 10, incidents: jd.incidents })
+        else setDuty(prev => ({ ...prev, state: 'error' }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, bank, tax) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax])
+  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
   const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
 
