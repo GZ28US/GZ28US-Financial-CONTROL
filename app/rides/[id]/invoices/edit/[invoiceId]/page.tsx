@@ -852,8 +852,12 @@ export default function EditInvoicePage() {
       const text = data.content?.map((c: any) => c.text || '').join('') || ''
       const clean = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
+      // MOEDA ANTES DE TUDO (lei sagrada): um comprovante em reais NÃO entra como dólar.
+      const fxIn = await scanCurrencyFx(parsed.currency)
+      if (fxIn == null) { setScanningPayment(false); return }
+      const conv = (v: any) => { const n = parseFloat(String(v ?? '')) || 0; return n > 0 ? (n * fxIn).toFixed(2) : '' }
       const list: ScannedPayment[] = (parsed.payments || []).map((p: any) => ({
-        amount: String(p.amount || ''),
+        amount: conv(p.amount),
         source: String(p.source || ''),
         paid_from: 'GZ28US',
         paid_to: 'GZ28US',

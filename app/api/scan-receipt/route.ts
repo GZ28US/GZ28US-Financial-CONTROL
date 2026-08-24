@@ -70,6 +70,7 @@ Rules:
 
     const paymentPrompt = `You are scanning a PAYMENT PROOF of money RECEIVED by an auto shop (a bank transfer confirmation, a Zelle/ACH receipt, a check image, a card receipt, or a Brazilian "Comprovante de Pix" / PIX / TED). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
+  "currency": "USD" or "BRL" — the currency the AMOUNTS on this proof are printed in — see rule 0,
   "payments": [
     {
       "amount": "payment amount as number string like 1500.00",
@@ -80,7 +81,8 @@ Rules:
   ]
 }
 Rules:
-1. amount: the money amount RECEIVED, digits only as a number string (no $ or R$ and no thousands separators; use a dot for the decimals). For a Pix use the "Valor".
+0. currency — READ THIS FIRST, before any amount. Return "USD" when the amounts are in US dollars (a "$" or "US$" sign, "USD", "Dollars", a Zelle/ACH/wire/check/US-bank document) and "BRL" when in Brazilian reais (an "R$" sign, "BRL", "reais", a Pix/TED/DOC or any Brazilian bank document). Never infer the currency from the size of the number. With no currency mark at all, default to "USD" for a Zelle/ACH/wire/check and to "BRL" for a Pix/TED/DOC.
+1. amount: the money amount RECEIVED, digits only as a number string (no $ or R$ and no thousands separators; use a dot for the decimals). For a Pix use the "Valor". NEVER convert the amount — report it exactly as printed, in the document's own currency.
 2. source: map to exactly one of CASH, ACH, ZELLE, CHECK based on clear evidence (the word "Zelle"/"ACH", a check number, "cash"). If you cannot tell, use an empty string — do NOT guess.
 3. date: the date the payment was made/settled, as YYYY-MM-DD. A Brazilian date like "09/03/2026" is DD/MM/YYYY, so it becomes 2026-03-09. Empty string if not found.${todayISO ? ` Never return a date after today, ${todayISO}.` : ''}
 4. payer: the party that SENT the money — the "from" / "De" / "pagador" / "Origem" / "Dados do pagador". This is the client who paid, NOT the recipient (the "Para" / "recebedor") and NOT the bank. Empty string if not shown.
@@ -156,7 +158,7 @@ Rules:
       return NextResponse.json({
         content: [{
           type: 'text',
-          text: JSON.stringify({ payments })
+          text: JSON.stringify({ payments, currency: String(parsed.currency || '').toUpperCase().trim() || null })
         }]
       })
     }
