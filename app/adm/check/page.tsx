@@ -60,7 +60,8 @@ type AbsurdSeg = { key: string; duty_id: string; staff_name: string; label: stri
 type SilentComp = { key: string; staff_name: string; after: string; days: string[]; label: string }
 type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[]; history: { absurd: AbsurdSeg[]; comps: SilentComp[] } }
 type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
-type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[] }
+type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[] }
+type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
@@ -564,6 +565,30 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // INVENTORY · R1 — fornecedor com identidade + higiene do catálogo.
+  {
+    const items: Item[] = []
+    if (linker.needsSupplierMigration) items.push({ href: '/parts', code: 'MIGRATION', label: 'Rodar MIGRATION_parts_refinement_r1.sql no SQL Editor', extra: 'o link peça → fornecedor precisa da coluna supplier_id' })
+    for (const r of linker.suppliers_unlinked) {
+      const best = r.candidates[0]
+      items.push({
+        href: '/parts', code: 'FORN.', label: `"${r.text}" · ${r.part}`,
+        extra: best ? (best.certain ? 'nome oficial bate — certo' : 'candidato — conferir') : 'sem candidato — cadastre em SUPPLIERS',
+        certain: !!best?.certain, suggest: best?.id, signal: best ? (best.certain ? 'matched' : 'source') : undefined,
+        fix: best ? { kind: 'select' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', options: r.candidates.map(c => ({ value: c.id, label: (c.certain ? '✓ ' : '') + c.label })), current: null } : undefined,
+      })
+    }
+    for (const m of linker.map_bad) items.push({ href: '/parts', code: 'MAP<CUSTO', label: `${m.item}: custo ${usd(m.cost)} > MAP ${usd(m.map)}`, extra: 'preço fora da lei da casa — conferir em PARTS', amount: m.cost - m.map })
+    for (const s of linker.no_source) items.push({ href: '/parts', code: 'ORIGEM', label: `${s}: sem source_type`, extra: 'classificar em PARTS' })
+    for (const k of linker.kit_mismatch) items.push({ href: '/parts', code: 'KIT?', label: `${k.item}: source_type ${k.st || '—'} × is_kit ${k.kit ? 'sim' : 'não'}`, extra: 'os dois campos discordam — acertar em PARTS' })
+    checks.push({
+      group: 'INVENTORY', key: 'parts-suppliers', title: 'Catálogo R1 — fornecedor oficial · MAP × custo · origem',
+      blocks: 'lead time por fornecedor (Crew Chief) · lei do preço da casa',
+      why: 'O catálogo escreve 188 grafias pra 40 fornecedores oficiais — o link peça → fornecedor destrava o lead time aprendido do Crew Chief (nome oficial batendo = certo, bulk resolve). MAP menor que o custo fere a lei do preço; source_type vazio ou discordando do is_kit é sujeira que confunde o cadeado.',
+      items, impact: undefined,
+    })
+  }
+
   return checks
 }
 
@@ -581,7 +606,7 @@ export default function DataCheckPage() {
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
   const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [], history: { absurd: [], comps: [] } })   // sinal do STAFF DUTY WATCH
-  const [linker, setLinker] = useState<LinkerSignal>({ state: 'loading', needsMigration: false, totals: null, inventory: [], streams: [], no_pn: [], dup_pn: [] })   // identidade de peças
+  const [linker, setLinker] = useState<LinkerSignal>({ state: 'loading', needsMigration: false, needsSupplierMigration: false, totals: null, inventory: [], streams: [], no_pn: [], dup_pn: [], suppliers_unlinked: [], map_bad: [], no_source: [], kit_mismatch: [] })   // identidade de peças
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
@@ -624,7 +649,7 @@ export default function DataCheckPage() {
         // LINKER: identidade de peças (pré-P1 do Crew Chief) — inventory/stream → catálogo.
         const rl = await fetch(`${BASE_PATH}/api/parts/link`, { headers: await sessionHeaders() })
         const jl = await rl.json().catch(() => ({}))
-        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [] })
+        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, needsSupplierMigration: !!jl.needs_supplier_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [], suppliers_unlinked: jl.suppliers_unlinked || [], map_bad: jl.map_bad || [], no_source: jl.no_source || [], kit_mismatch: jl.kit_mismatch || [] })
         else setLinker(prev => ({ ...prev, state: 'error', needsMigration: !!jl.needs_migration }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
@@ -698,18 +723,22 @@ export default function DataCheckPage() {
   async function applyCertain(check: Check) {
     const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
     if (!items.length) return
-    // LINKER: cada linha tem o SEU candidato certo (part_id próprio) — bulk um a um.
-    if (check.key === 'parts-identity') {
-      if (!confirm(`Linkar ${items.length} linhas ao catálogo? Todas têm o PN da peça no próprio texto — o número não mente. Tudo na trilha.`)) return
+    // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
+    if (check.key === 'parts-identity' || check.key === 'parts-suppliers') {
+      const msg = check.key === 'parts-suppliers'
+        ? `Linkar ${items.length} peças ao fornecedor oficial? Todas batem pelo nome/apelido exato. Tudo na trilha.`
+        : `Linkar ${items.length} linhas ao catálogo? Todas têm o PN da peça no próprio texto — o número não mente. Tudo na trilha.`
+      if (!confirm(msg)) return
       setSaving(true)
       let n = 0
       for (const it of items) {
         const fix = it.fix!
         setBulk(`${n + 1}/${items.length}`)
-        const { error: err } = await supabase.from(fix.table).update({ part_id: it.suggest }).eq('id', fix.rowId).is('part_id', null)
+        const field = fix.kind === 'select' ? fix.field : 'part_id'
+        const { error: err } = await supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId).is(field, null)
         if (err) continue
-        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: 'part_id', old_value: null, new_value: it.suggest, label: `LINK CERTO · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
-        setDone(prev => new Set(prev).add(fix.rowId + '|part_id')); n++
+        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: it.suggest, label: `LINK CERTO · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
       }
       setBulk(''); setSaving(false)
       return

@@ -31,7 +31,10 @@ export async function GET(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const db = bankDb()
-    const parts = await fetchAll(db, 'parts_database', 'id, item, alias, part_number, supplier, unit_price, locked_at')
+    let hasSupplierId = true
+    let parts: any[] = []
+    try { parts = await fetchAll(db, 'parts_database', 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit, supplier_id') }
+    catch (e) { if (!/supplier_id/.test(String(e))) throw e; hasSupplierId = false; parts = await fetchAll(db, 'parts_database', 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit') }
     const catalog = parts.map((p: any) => ({
       id: p.id, label: [p.part_number, p.item].filter(Boolean).join(' · ').slice(0, 90),
       pn: normPN(p.part_number), toks: new Set([...words(p.item), ...words(p.alias)]), locked: !!p.locked_at, supplier: p.supplier || '',
@@ -60,10 +63,34 @@ export async function GET(req: NextRequest) {
     const byPN = new Map<string, any[]>()
     for (const p of parts) { const k = normPN(p.part_number); if (k.length >= 5) byPN.set(k, [...(byPN.get(k) || []), p]) }
     const dupPN = [...byPN.entries()].filter(([, l]) => l.length > 1).map(([pn, l]) => ({ pn, items: l.map((p: any) => String(p.item || '').slice(0, 50)) }))
+    // ── R1: fornecedor com identidade (188 grafias → 40 oficiais) ──
+    const suppliers = await fetchAll(db, 'suppliers', 'id, name, aliases')
+    const supNorm = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9&' ]+/g, ' ').replace(/s+/g, ' ').trim()
+    const offRows = suppliers.map((s: any) => ({ id: s.id, name: s.name, n: supNorm(s.name), aliases: String(s.aliases || '').split(/[,\n]/).map(supNorm).filter(Boolean) }))
+    const supCandidates = (text: string) => {
+      const t = supNorm(text)
+      if (!t) return []
+      const out: { id: string; label: string; certain: boolean; score: number }[] = []
+      for (const o of offRows) {
+        if (o.n === t || o.aliases.includes(t)) { out.push({ id: o.id, label: o.name, certain: true, score: 100 }); continue }
+        const flat = t.replace(/s/g, ''), fo = o.n.replace(/s/g, '')
+        if (flat.length >= 4 && (fo.includes(flat) || flat.includes(fo.slice(0, Math.min(8, fo.length))))) out.push({ id: o.id, label: o.name, certain: false, score: Math.min(flat.length, fo.length) })
+      }
+      return out.sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
+    }
+    const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim()).map((p: any) => ({
+      id: p.id, text: String(p.supplier).slice(0, 60), part: [p.part_number, p.alias || p.item].filter(Boolean).join(' · ').slice(0, 70), candidates: supCandidates(p.supplier),
+    })) : []
+    // higiene: MAP < custo, source_type nulo, KIT × is_kit em desacordo
+    const mapBad = parts.filter((p: any) => p.map_price != null && p.unit_price != null && Number(p.map_price) > 0 && Number(p.map_price) < Number(p.unit_price))
+      .map((p: any) => ({ id: p.id, item: String(p.alias || p.item || '').slice(0, 60), cost: Number(p.unit_price), map: Number(p.map_price) }))
+    const noSource = parts.filter((p: any) => !p.source_type).map((p: any) => String(p.alias || p.item || '').slice(0, 60))
+    const kitMismatch = parts.filter((p: any) => (p.source_type === 'KIT') !== !!p.is_kit && (p.source_type === 'KIT' || p.is_kit)).map((p: any) => ({ item: String(p.alias || p.item || '').slice(0, 60), st: p.source_type, kit: !!p.is_kit }))
     return NextResponse.json({
       ok: true, needs_migration: needsMigration,
-      totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length },
+      totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length, sup_unlinked: supItems.length, map_bad: mapBad.length },
       inventory: invItems, streams: psItems, no_pn: noPN.slice(0, 200), dup_pn: dupPN.slice(0, 50),
+      suppliers_unlinked: supItems, map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
     })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
@@ -73,6 +100,22 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
+  // R1: linka o FORNECEDOR oficial na peça do catálogo (guarda is-null + trilha).
+  if (String(b.action) === 'link_supplier') {
+    const partId2 = String(b.part_id || ''), supplierId = String(b.supplier_id || '')
+    if (!partId2 || !supplierId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+    const db = bankDb()
+    const { data: sup } = await db.from('suppliers').select('id, name').eq('id', supplierId).maybeSingle()
+    if (!sup) return NextResponse.json({ error: 'fornecedor não encontrado' }, { status: 404 })
+    const { data: r, error } = await db.from('parts_database').update({ supplier_id: supplierId }).eq('id', partId2).is('supplier_id', null).select('id, item, alias')
+    if (error) return NextResponse.json({ error: error.message, needs_migration: /supplier_id/.test(error.message) }, { status: 500 })
+    if (!r || !r.length) return NextResponse.json({ error: 'peça já linkada — recarregue' }, { status: 409 })
+    await db.from('data_fixes').insert({
+      check_key: 'parts-suppliers', table_name: 'parts_database', row_id: partId2, field: 'supplier_id',
+      old_value: null, new_value: supplierId, label: (`FORNECEDOR · ${r[0].alias || r[0].item} → ${sup.name}`).slice(0, 200),
+    }).then(() => undefined, () => undefined)
+    return NextResponse.json({ ok: true })
+  }
   const table = String(b.table || ''), id = String(b.id || ''), partId = String(b.part_id || '')
   if (String(b.action) !== 'link' || !['inventory', 'part_streams'].includes(table) || !id || !partId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
   try {
