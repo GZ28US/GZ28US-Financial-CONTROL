@@ -35,7 +35,7 @@ type Part = {
   dealer_supplier: string | null
   is_kit?: boolean
   kit_items?: { part_number?: string | null; item?: string; quantity: number }[]
-  // The part STATUS is source_type — SCAN / HUNT / MANUAL / LOCKED, exactly one.
+  // ORIGEM é source_type (SCAN/HUNT/MANUAL/INVOICE); cadeado é locked_at; kit é is_kit (untangle 24/ago).
   // LOCKED = purchase-validated catalog: frozen, not editable/removable in the
   // app, and enrollOne NEVER touches it (user law 05/aug/2026).
 }
@@ -169,13 +169,15 @@ export default function PartsPage() {
     if (locking && !confirm(`Travar "${p.alias || p.item}"? Você está dizendo: os dados desta peça estão CONFERIDOS. Ela congela até alguém destravar.`)) return
     const { data: u } = await supabase.auth.getUser()
     const who = u?.user?.email || 'app'
+    // Pós-untangle o cadeado só toca locked_at/locked_by; linha legada (source_type
+    // LOCKED) recebe a origem MANUAL de volta ao destravar.
     const { error } = await supabase.from('parts_database').update(locking
-      ? { source_type: 'LOCKED', locked_at: new Date().toISOString(), locked_by: who, updated_at: new Date().toISOString() }
-      : { source_type: 'MANUAL', locked_at: null, locked_by: null, updated_at: new Date().toISOString() }).eq('id', p.id)
+      ? { locked_at: new Date().toISOString(), locked_by: who, updated_at: new Date().toISOString() }
+      : { locked_at: null, locked_by: null, updated_at: new Date().toISOString(), ...(p.source_type === 'LOCKED' ? { source_type: 'MANUAL' } : {}) }).eq('id', p.id)
     if (error) { alert(error.message); return }
     await supabase.from('data_fixes').insert({
-      check_key: 'parts-lock', table_name: 'parts_database', row_id: p.id, field: 'source_type',
-      old_value: p.source_type || null, new_value: locking ? 'LOCKED' : 'MANUAL',
+      check_key: 'parts-lock', table_name: 'parts_database', row_id: p.id, field: 'locked_at',
+      old_value: isLockedPart(p) ? 'LOCKED' : null, new_value: locking ? 'LOCKED' : 'UNLOCKED',
       label: `${locking ? '🔒 TRAVADA' : '🔓 DESTRAVADA'} · ${p.alias || p.item} · por ${who}`.slice(0, 200),
     }).then(() => undefined, () => undefined)
     void load()
@@ -293,7 +295,7 @@ export default function PartsPage() {
     if (kitMembers.length === 0) { alert('Add at least one part to the kit.'); return }
     setSaving(true)
     const row: any = {
-      item: name, is_kit: true, source_type: 'KIT',
+      item: name, is_kit: true, source_type: 'MANUAL',
       kit_items: kitMembers.map(m => ({ part_number: m.part_number || null, item: m.item, quantity: Number(m.quantity) || 1 })),
       updated_at: new Date().toISOString(),
     }

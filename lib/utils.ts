@@ -196,11 +196,15 @@ export function partMatches(query: string, ...fields: (string | null | undefined
 // LOCKED lives in source_type at the same level as SCAN / HUNT / MANUAL: locking a
 // part SETS its status to LOCKED, replacing the provenance status. Null/legacy
 // source_type reads as SCANNED (rows that predate source tagging).
-export const isLockedPart = (p: { source_type?: string | null } | null | undefined) => p?.source_type === 'LOCKED'
-export function partStatusBadge(p: { source_type?: string | null; is_kit?: boolean | null }): { label: string; cls: string } {
-  if (p?.source_type === 'LOCKED') return { label: '🔒 LOCKED', cls: 'bg-purple-800 text-purple-100' }
-  if (p?.is_kit) return { label: '📦 KIT', cls: 'bg-teal-600 text-white' }
+// Untangle (24/ago): cadeado mora em locked_at (source_type LOCKED é legado
+// tolerado até a MIGRATION_parts_untangle rodar); kit mora em is_kit; o
+// source_type volta a ser só ORIGEM (SCAN/HUNT/MANUAL/INVOICE).
+export const isLockedPart = (p: { source_type?: string | null; locked_at?: string | null } | null | undefined) => !!p && (p.locked_at != null || p.source_type === 'LOCKED')
+export function partStatusBadge(p: { source_type?: string | null; is_kit?: boolean | null; locked_at?: string | null }): { label: string; cls: string } {
+  if (isLockedPart(p)) return { label: '🔒 LOCKED', cls: 'bg-purple-800 text-purple-100' }
+  if (p?.is_kit || p?.source_type === 'KIT') return { label: '📦 KIT', cls: 'bg-teal-600 text-white' }
   if (p?.source_type === 'HUNT') return { label: '🎯 HUNTED', cls: 'bg-yellow-600 text-black' }
+  if (p?.source_type === 'INVOICE') return { label: '🧾 FROM INVOICE', cls: 'bg-emerald-700 text-white' }
   if (p?.source_type === 'MANUAL') return { label: '✍️ MANUALLY ENTERED', cls: 'bg-sky-700 text-white' }
   return { label: '🧾 SCANNED', cls: 'bg-purple-700 text-white' }
 }

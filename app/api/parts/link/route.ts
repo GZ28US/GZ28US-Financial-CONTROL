@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
+import { PART_CATEGORIES, suggestCategory } from '@/lib/partsMeta'
 
 // LINKER — identidade de peças (pré-P1 do Crew Chief, 24/ago/2026).
 // GET: pra cada linha de inventory e part_streams SEM part_id, os candidatos do
@@ -86,11 +87,18 @@ export async function GET(req: NextRequest) {
       .map((p: any) => ({ id: p.id, item: String(p.alias || p.item || '').slice(0, 60), cost: Number(p.unit_price), map: Number(p.map_price) }))
     const noSource = parts.filter((p: any) => !p.source_type).map((p: any) => String(p.alias || p.item || '').slice(0, 60))
     const kitMismatch = parts.filter((p: any) => (p.source_type === 'KIT') !== !!p.is_kit && (p.source_type === 'KIT' || p.is_kit)).map((p: any) => ({ item: String(p.alias || p.item || '').slice(0, 60), st: p.source_type, kit: !!p.is_kit }))
+    // categorias: vazia ou fora do vocabulário fechado → sugestão por palavra-chave
+    const catSet = new Set<string>(PART_CATEGORIES as unknown as string[])
+    const catItems = parts.filter((p: any) => !p.category || !catSet.has(p.category)).map((p: any) => ({
+      id: p.id, item: String(p.alias || p.item || '').slice(0, 70), current: p.category || null,
+      suggest: suggestCategory([p.item, p.alias, p.category].filter(Boolean).join(' ')),
+    }))
     return NextResponse.json({
       ok: true, needs_migration: needsMigration,
       totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length, sup_unlinked: supItems.length, map_bad: mapBad.length },
       inventory: invItems, streams: psItems, no_pn: noPN.slice(0, 200), dup_pn: dupPN.slice(0, 50),
       suppliers_unlinked: supItems, map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
+      categories: catItems, category_vocab: PART_CATEGORIES,
     })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
