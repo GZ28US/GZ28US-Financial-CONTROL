@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     const dupPN = [...byPN.entries()].filter(([, l]) => l.length > 1).map(([pn, l]) => ({ pn, items: l.map((p: any) => String(p.item || '').slice(0, 50)) }))
     // ── R1: fornecedor com identidade (188 grafias → 40 oficiais) ──
     const suppliers = await fetchAll(db, 'suppliers', 'id, name, aliases')
-    const supNorm = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9&' ]+/g, ' ').replace(/s+/g, ' ').trim()
+    const supNorm = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9&' ]+/g, ' ').replace(/\s+/g, ' ').trim()
     const offRows = suppliers.map((s: any) => ({ id: s.id, name: s.name, n: supNorm(s.name), aliases: String(s.aliases || '').split(/[,\n]/).map(supNorm).filter(Boolean) }))
     const supCandidates = (text: string) => {
       const t = supNorm(text)
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
       const out: { id: string; label: string; certain: boolean; score: number }[] = []
       for (const o of offRows) {
         if (o.n === t || o.aliases.includes(t)) { out.push({ id: o.id, label: o.name, certain: true, score: 100 }); continue }
-        const flat = t.replace(/s/g, ''), fo = o.n.replace(/s/g, '')
+        const flat = t.replace(/\s/g, ''), fo = o.n.replace(/\s/g, '')
         if (flat.length >= 4 && (fo.includes(flat) || flat.includes(fo.slice(0, Math.min(8, fo.length))))) out.push({ id: o.id, label: o.name, certain: false, score: Math.min(flat.length, fo.length) })
       }
       return out.sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
