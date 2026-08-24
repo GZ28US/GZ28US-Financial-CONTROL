@@ -24,13 +24,38 @@ export async function POST(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const chatId = String(b.chatId || '').trim()
+  if (!chatId.includes('@')) return NextResponse.json({ error: 'chatId required' }, { status: 400 })
+  const db = waDb()
+
+  // PROCESSADO ATÉ AQUI (ordem do Márcio, 24/ago/2026): a marca d'água vive no
+  // app, não num arquivo da assistente. Marca até a ÚLTIMA MENSAGEM ATUAL da
+  // conversa — o que chegar depois reabre a conversa sozinho no próximo round.
+  if (b.processed !== undefined) {
+    if (b.processed === false) {
+      const { error } = await db.from('whatsapp_chats')
+        .update({ processed_through: null, processed_at: null, processed_note: null }).eq('chat_id', chatId)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, chatId, processed_through: null })
+    }
+    const { data: last } = await db.from('whatsapp_messages')
+      .select('sent_at').eq('chat_id', chatId).order('sent_at', { ascending: false }).limit(1)
+    const through = last?.[0]?.sent_at || new Date().toISOString()
+    const { error } = await db.from('whatsapp_chats').update({
+      processed_through: through,
+      processed_at: new Date().toISOString(),
+      processed_note: String(b.note || '').slice(0, 200) || null,
+    }).eq('chat_id', chatId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, chatId, processed_through: through })
+  }
+
   const app = String(b.app || '').toUpperCase()
   const policy = String(b.policy || '').toUpperCase()
-  if (!chatId.includes('@') || (app !== 'US' && app !== 'BR') || !POLICIES.has(policy)) {
-    return NextResponse.json({ error: 'chatId + app=US|BR + policy=ALL|MENTION_ONLY|IGNORE required' }, { status: 400 })
+  if ((app !== 'US' && app !== 'BR') || !POLICIES.has(policy)) {
+    return NextResponse.json({ error: 'policy=ALL|MENTION_ONLY|IGNORE (+app), ou processed=true|false' }, { status: 400 })
   }
   // O mesmo grupo existe nos 2 números — a política vale para os dois.
-  const { error } = await waDb().from('whatsapp_chats').update({ policy }).eq('chat_id', chatId)
+  const { error } = await db.from('whatsapp_chats').update({ policy }).eq('chat_id', chatId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, chatId, policy })
 }
@@ -76,6 +101,8 @@ export async function GET(req: NextRequest) {
           return {
             app: c.app, chatId: c.chat_id, name: c.name, isGroup: c.is_group,
             lastAt: lm?.sent_at || c.last_at, unread: c.unread, policy: c.policy || 'ALL',
+            processedThrough: c.processed_through || null,
+            pending: !c.processed_through || String(lm?.sent_at || c.last_at || '') > String(c.processed_through),
             lastFromMe: lm ? !!lm.from_me : null,
             lastType: lm?.type || null,
             lastBody: lm ? String(lm.body || (lm.media_url ? '[media]' : '')).slice(0, 140) : null,

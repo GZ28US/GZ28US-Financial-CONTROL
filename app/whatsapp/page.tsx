@@ -15,6 +15,7 @@ type Policy = 'ALL' | 'MENTION_ONLY' | 'IGNORE'
 type Chat = {
   app: 'US' | 'BR'; chatId: string; name: string | null; isGroup: boolean
   lastAt: string | null; unread: number | null; policy: Policy
+  processedThrough: string | null; pending: boolean
   lastFromMe: boolean | null; lastType: string | null; lastBody: string | null
 }
 
@@ -119,6 +120,18 @@ export default function WhatsAppPage() {
     if (!r.ok) { setErr('Não consegui salvar a política — recarregue'); void loadChats() }
   }
 
+  // PROCESSADO ATÉ AQUI — fecha a conversa no round. O que chegar depois a
+  // reabre sozinho (o servidor guarda a marca d'água na última mensagem atual).
+  async function markProcessed(c: Chat, processed: boolean) {
+    setChats(prev => (prev || []).map(x => x.chatId === c.chatId ? { ...x, pending: !processed } : x))
+    const r = await fetch(`${BASE_PATH}/api/whatsapp/inbox`, {
+      method: 'POST', headers: await sessionHeaders(),
+      body: JSON.stringify({ chatId: c.chatId, processed }),
+    })
+    if (!r.ok) { setErr('Não consegui salvar — recarregue') }
+    void loadChats()
+  }
+
   function openChat(app: 'US' | 'BR', chatId: string, name: string | null) {
     setActive({ app, chatId, name })
     setMsgs(null)
@@ -153,6 +166,7 @@ export default function WhatsAppPage() {
     q.trim().length >= 2 ? (c.name || c.chatId).toLowerCase().includes(q.trim().toLowerCase()) : true
   )
   const awaiting = (chats || []).filter(c => !c.isGroup && c.lastFromMe === false).length
+  const pendingCount = (chats || []).filter(c => c.pending).length
 
   return (
     <main className="min-h-screen bg-black text-white p-8 pb-24">
@@ -170,6 +184,11 @@ export default function WhatsAppPage() {
             {f}
           </button>
         ))}
+        {pendingCount > 0 && (
+          <span className="px-3 py-1 rounded-full text-xs font-bold border bg-sky-950 text-sky-300 border-sky-800">
+            {pendingCount} NO ROUND
+          </span>
+        )}
         {awaiting > 0 && (
           <span className="px-3 py-1 rounded-full text-xs font-bold border bg-amber-950 text-amber-300 border-amber-800">
             {awaiting} AWAITING REPLY
@@ -213,6 +232,7 @@ export default function WhatsAppPage() {
                     <span className={`px-1.5 rounded text-[10px] font-bold border ${APP_CHIP[c.app]}`}>{c.app}</span>
                     <span className="font-bold truncate">{c.name || c.chatId.replace(/@.*/, '')}</span>
                     {c.isGroup && <span className="text-[10px] text-gray-500">GROUP</span>}
+                    {!c.pending && <span className="text-emerald-500 text-[10px] shrink-0" title="processada">✓</span>}
                     {c.policy !== 'ALL' && <span className={`px-1.5 rounded text-[9px] font-bold border shrink-0 ${POLICY_CHIP[c.policy]}`}>{POLICY_LABEL[c.policy]}</span>}
                     {!c.isGroup && c.lastFromMe === false && <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Awaiting reply" />}
                     <span className="ml-auto text-gray-500 text-xs shrink-0">{fmtTime(c.lastAt, c.app)}</span>
@@ -249,6 +269,17 @@ export default function WhatsAppPage() {
                         <option key={p} value={p} className="bg-gray-900 text-white">{POLICY_LABEL[p]}</option>
                       ))}
                     </select>
+                  )
+                })()}
+                {(() => {
+                  const c = (chats || []).find(x => x.chatId === active.chatId && x.app === active.app)
+                  if (!c) return null
+                  return (
+                    <button onClick={() => void markProcessed(c, c.pending)}
+                      title={c.pending ? 'Marcar tudo até a última mensagem como tratado' : 'Reabrir esta conversa no round'}
+                      className={`text-[10px] font-bold rounded-full border px-2 py-1 ${c.pending ? 'bg-gray-900 text-gray-300 border-gray-700 hover:bg-gray-800' : 'bg-emerald-950 text-emerald-300 border-emerald-800'}`}>
+                      {c.pending ? '○ MARCAR PROCESSADO' : '✓ PROCESSADO'}
+                    </button>
                   )
                 })()}
                 <span className="ml-auto text-xs text-gray-500">{active.app === 'US' ? 'Orlando time' : 'horário de Brasília'}</span>
