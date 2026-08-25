@@ -270,36 +270,31 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
     }
   }
 
-  // ── 3. Perguntar — UMA POR EXPENSE nas novas; lembrete em relógio ÚNICO ────
-  if (!quiet && group) {
-    for (const r of await pending('NEEDS_PLACEMENT')) {
-      if (r.asked_count === 0) {
+  // ── 3. Avisar — SÓ no PVT dele, NUNCA no grupo ────────────────────────────
+  // Ordem do Márcio (25/ago/2026): *"não pergunte mais no grupo, não vai
+  // funcionar. Isso roda no PESCA TEMU... eu dou destino pras coisas que o robô
+  // tiver dúvida na sessão do PESCA TEMU."*
+  // O grupo tinha perguntado 6 vezes pelo MESMO pedido sem uma resposta: o
+  // canal estava errado, não a pergunta. A fila deixa de cobrar em público e
+  // vira lista silenciosa — quem consome e decide destino é a sessão PESCA
+  // TEMU. O PVT só toca o sino de hora em hora dizendo que há trabalho.
+  if (!quiet) {
+    const needPlace = await pending('NEEDS_PLACEMENT')
+    const needItems = await pending('NEEDS_ITEMS')
+    const all = [...needPlace, ...needItems]
+    const newest = all.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
+    if (all.length && hourSince(newest)) {
+      const line = (r: StreamRow) => {
         const amt = amountOf(r.item)
         // Alarme herdado da captura: entrega fora do galpão merece destaque.
-        const addr = r.ship_to ? (/11320|space\s*blvd/i.test(r.ship_to) ? '\n📍 Entrega: galpão ✓' : `\n🚨 *Entrega fora do galpão:* ${r.ship_to}`) : ''
-        await wa(group, `🛒 *ONDE REGISTRO? — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}${addr}\n\nResponda: *${keyOf(r)}: <destino>*\n(APARTMENT, CATS, OFICINA, nome do carro ou IGNORA — "SEMPRE" no fim vira regra)`)
-        await db.from('part_streams').update({ asked_count: 1, last_asked_at: new Date().toISOString() }).eq('id', r.id)
-        asked++
+        const addr = r.ship_to && !/11320|space\s*blvd/i.test(r.ship_to) ? ' 🚨 ' + r.ship_to : ''
+        return `• ${r.order_number || r.id} — ${r.supplier || '?'} ${titleOf(r).slice(0, 34)}${amt != null ? ' — ' + usd(amt) : ''}${addr}`
       }
-    }
-    // Relógio único da cobrança (achado F4: relógio por linha virava spam a
-    // cada 5 min): só cobra quando a cobrança MAIS RECENTE já tem 1h.
-    const openAsked = (await pending('NEEDS_PLACEMENT')).filter(r => r.asked_count > 0)
-    const newestAsk = openAsked.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
-    if (openAsked.length && hourSince(newestAsk)) {
-      const lines = openAsked.map(r => `• *${keyOf(r)}* — ${r.supplier || '?'} ${titleOf(r).slice(0, 40)}${amountOf(r.item) != null ? ' — ' + usd(amountOf(r.item)!) : ''}`)
-      await wa(group, `⏳ *COMPRAS SEM DESTINO (${openAsked.length})* — sigo cobrando até zerar:\n\n${lines.join('\n')}\n\nResponda: *<chave>: <destino>*`)
+      const blk = (label: string, rows: StreamRow[]) => rows.length ? `\n\n*${label} (${rows.length})*\n${rows.map(line).join('\n')}` : ''
+      await wa(PVT, `🎣 *FILA DE COMPRAS — ${all.length} pendente(s)*${blk('Sem destino', needPlace)}${blk('Sem itens/valores', needItems)}\n\nAbre a thread *PESCA TEMU* no Claude e resolve por lá.`)
       const now = new Date().toISOString()
-      for (const r of openAsked) await db.from('part_streams').update({ asked_count: r.asked_count + 1, last_asked_at: now }).eq('id', r.id)
-      asked += openAsked.length
-    }
-    // Compras cegas: cobrar a PESCA TEMU no PVT, relógio único também
-    const needItems = await pending('NEEDS_ITEMS')
-    const newestPvt = needItems.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
-    if (needItems.length && hourSince(newestPvt)) {
-      await wa(PVT, `🎣 *PESCA TEMU pendente* — ${needItems.length} pedido(s) sem itens/valores:\n${needItems.map(r => '• ' + (r.order_number || r.id)).join('\n')}\n\nAbre a thread *PESCA TEMU* no Claude e roda o comando.`)
-      const now = new Date().toISOString()
-      for (const r of needItems) await db.from('part_streams').update({ asked_count: r.asked_count + 1, last_asked_at: now }).eq('id', r.id)
+      for (const r of all) await db.from('part_streams').update({ asked_count: r.asked_count + 1, last_asked_at: now }).eq('id', r.id)
+      asked += all.length
     }
   }
 
