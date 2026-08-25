@@ -143,7 +143,7 @@ export default function BalancePage() {
             { cells: ['Estoque doado', usd(m.stockDon)] },
             { cells: ['Imobilizado — equipamento', usd(m.equip)] },
             { cells: ['Imobilizado — veículos de serviço (TOOL)', usd(m.fleetTool)] },
-            { cells: ['Frota de marketing (OWN)', usd(m.fleetOwn)] },
+            { cells: ['Frota de marketing & desenvolvimento (OWN)', usd(m.fleetOwn)] },
             { cells: ['Carros doadores — part-out (DONOR)', usd(m.donorCost)] },
             { cells: [m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)', usd(m.totalAtivo)], bold: true },
           ],
@@ -236,7 +236,7 @@ export default function BalancePage() {
             ['WIP — oficina', m.wip - m.wipCars],
             ['WIP — carros de export', m.wipCars],
             ['Conta corrente GZ28BR', Math.max(m.brNet, 0)],
-            ['Frota de marketing (OWN)', m.fleetOwn],
+            ['Frota de marketing & desenvolvimento (OWN)', m.fleetOwn],
             ['Estoque (comprado + doado)', m.stockPurch + m.stockDon],
             ['Equipamento', m.equip],
             ['Veículos de serviço (TOOL)', m.fleetTool],
@@ -269,7 +269,7 @@ export default function BalancePage() {
           <Row label="Estoque doado" value={m.stockDon} chip={<Chip kind="dec" label="D6" />} note="valor creditado ao job doador" />
           <Row label="Imobilizado — equipamento" value={m.equip} chip={<Chip kind="dec" label="D8" />} note={`GOODS ≥ $${CAP_FLOOR.toLocaleString()} · sem depreciação ainda (G4)`} />
           <Row label="Imobilizado — veículos de serviço" value={m.fleetTool} chip={<Chip kind="ok" label="TOOL" />} note="todo o investido nas rides TOOL" />
-          <Row label="Frota de marketing" value={m.fleetOwn} chip={<Chip kind="ok" label="OWN" />} note="todo o investido nas rides OWN — GENEZIZ não deprecia, nunca será vendido" />
+          <Row label="Frota de marketing & desenvolvimento" value={m.fleetOwn} chip={<Chip kind="ok" label="OWN" />} note="todo o investido nas rides OWN — GENEZIZ não deprecia, nunca será vendido" />
           <Row label="Carros doadores (part-out)" value={m.donorCost} chip={<Chip kind="ok" label="DONOR" />} note="carcaça comprada pra virar estoque de peças; crédito de peça puxada abate via fluxo de doador" />
           <Row label={m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)'} value={m.totalAtivo} total />
         </div>
