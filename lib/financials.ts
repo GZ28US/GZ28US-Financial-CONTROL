@@ -182,12 +182,16 @@ export function fleetDepreciation(d: FinData): { own: number; tool: number; accu
   const today = new Date()
   const ym = today.getFullYear() * 12 + today.getMonth() + 1
   let any = false, own = 0, tool = 0
-  const cls = new Map<string, { scope: string; life: number; dep: boolean }>()
+  // COLECIONÁVEL (João, 25/ago — caso Devil170, Demon 170 de produção única): o
+  // CHASSI não deprecia (valorização provável fica FORA dos livros até realizar
+  // — conservadorismo; vira ganho na venda); os EXPERIMENTOS gastos nele sim.
+  // isCarLine separa chassi de mod, linha a linha — o mesmo detector validado.
+  const cls = new Map<string, { scope: string; life: number; dep: boolean; col: boolean; nick: string | null }>()
   for (const r of d.rides.values()) {
     const c = (r as any).asset_class
     if (c !== undefined) any = true
     if (r.title_scope !== 'OWN' && r.title_scope !== 'TOOL') continue
-    cls.set(r.id, { scope: r.title_scope, life: num((r as any).asset_life_months) || 60, dep: c === 'DESENVOLVIMENTO' || c === 'TRABALHO' })
+    cls.set(r.id, { scope: r.title_scope, life: num((r as any).asset_life_months) || 60, dep: c === 'DESENVOLVIMENTO' || c === 'TRABALHO' || c === 'COLECIONAVEL', col: c === 'COLECIONAVEL', nick: r.project_name || null })
   }
   if (!any) return null
   for (const e of d.invExpenses) {
@@ -195,6 +199,7 @@ export function fleetDepreciation(d: FinData): { own: number; tool: number; accu
     const k = rid && cls.get(rid)
     if (!k || !k.dep) continue
     const base = expLine(e)
+    if (k.col && isCarLine(e.item, base, k.nick)) continue   // chassi colecionável: ao custo
     const dt = String(e.payment_date || e.expense_date || '')
     if (!okDate(dt) || !base) continue
     const months = Math.max(0, ym - (Number(dt.slice(0, 4)) * 12 + Number(dt.slice(5, 7))))

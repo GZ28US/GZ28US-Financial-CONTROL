@@ -598,6 +598,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         fix: { kind: 'select' as const, table: 'rides', rowId: r.id, field: 'asset_class', current: null, options: [
           { value: 'TRABALHO', label: 'TRABALHO — transporte/serviço (deprecia, 60m)' },
           { value: 'DESENVOLVIMENTO', label: 'DESENVOLVIMENTO — laboratório (deprecia, 60m; marketing de quebra)' },
+          { value: 'COLECIONAVEL', label: 'COLECIONÁVEL — chassi ao custo (valoriza fora dos livros); mods depreciam' },
           { value: 'MONUMENTO', label: 'MONUMENTO — permanente, nunca vendido (ao custo)' },
           { value: 'RESERVA', label: 'RESERVA — ativo em carteira, pode virar algo (ao custo)' },
         ] },
@@ -605,7 +606,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     }
     if (migrated) checks.push({
       group: 'RIDES', key: 'fleet-class', title: 'Carro da frota sem natureza de ativo', blocks: 'a depreciação (G4) não sabe o que depreciar',
-      why: 'Classificação do João (25/ago): TRABALHO e DESENVOLVIMENTO depreciam linear por linha de custo (vida padrão 60 meses; trailer 120); MONUMENTO (a alma — GENEZIZ) e RESERVA ficam ao custo até virarem outra coisa. Todo carro OWN/TOOL novo cai aqui até ganhar a sua classe.',
+      why: 'Classificação do João (25/ago): TRABALHO e DESENVOLVIMENTO depreciam linear por linha de custo (vida padrão 60 meses; trailer 120); COLECIONÁVEL (Devil170 — produção única) mantém o CHASSI ao custo (valorização fica fora dos livros até a venda) e deprecia só os experimentos; MONUMENTO (a alma — GENEZIZ) e RESERVA ficam ao custo até virarem outra coisa. Todo carro OWN/TOOL novo cai aqui até ganhar a sua classe.',
       items,
     })
   }
