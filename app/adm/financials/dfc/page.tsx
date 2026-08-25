@@ -10,6 +10,7 @@ import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import { loadFinancials, buildCashEvents, CashEvent } from '@/lib/financials'
+import { sessionHeaders } from '@/components/BankReconcileCard'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd0 = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -87,11 +88,24 @@ export default function DfcPage() {
   const [error, setError] = useState('')
   const [year, setYear] = useState<string>('')          // '' = ALL (colunas viram anos)
   const [drill, setDrill] = useState<{ key: string; col: string; label: string } | null>(null)
+  const [bankImplied, setBankImplied] = useState<number | null>(null)   // extrato + linhas postadas (leitura grátis)
 
   useEffect(() => {
     loadFinancials()
       .then(d => { const ev = buildCashEvents(d); setEvents(ev); setYear(ev.length ? ev[ev.length - 1].date.slice(0, 4) : ''); setLoading(false) })
       .catch(e => { setError(String(e?.message || e)); setLoading(false) })
+    // Régua (pergunta do João, 25/ago): o acumulado do DFC deve CONVERGIR pro
+    // saldo do banco — leitura grátis (cache 10min), nunca a chamada paga.
+    ;(async () => {
+      try {
+        const r = await fetch(`${BASE_PATH}/api/plaid/balance`, { headers: await sessionHeaders() })
+        const j = await r.json().catch(() => ({}))
+        if (r.ok && Array.isArray(j.items)) {
+          const vals = j.items.map((i: any) => i?.integrity?.implied).filter((v: any) => typeof v === 'number')
+          if (vals.length) setBankImplied(vals.reduce((s: number, v: number) => s + v, 0))
+        }
+      } catch { /* sem banco, sem régua — a tela segue viva */ }
+    })()
   }, [])
 
   const years = useMemo(() => [...new Set(events.map(e => e.date.slice(0, 4)))].sort(), [events])
@@ -183,6 +197,21 @@ export default function DfcPage() {
         <a href={`${BASE_PATH}/adm/financials`} className="text-gray-400 hover:text-white font-bold">← FINANCIAL HUB</a>
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Método direto, regime de caixa (payment_date / paid_at). Clique numa célula para ver as linhas de origem. O que ainda não foi pago não aparece aqui — está no Balanço como contas a pagar.</p>
+
+      {/* RÉGUA DA CONVERGÊNCIA (João, 25/ago): quando tudo estiver lançado e
+          atribuído, acumulado do DFC = saldo do banco. A distância é a dívida
+          de dados — e encolhe no Data Checker. */}
+      {bankImplied != null && events.length > 0 && (() => {
+        const cumAll = events.reduce((s, e) => s + e.amount, 0)
+        const gap = cumAll - bankImplied
+        const ok = Math.abs(gap) <= 1
+        return (
+          <div className={`border rounded-2xl px-5 py-3 mb-6 max-w-3xl ${ok ? 'bg-emerald-950/40 border-emerald-800' : 'bg-gray-900 border-gray-700'}`}>
+            <p className="text-sm font-bold tracking-widest text-gray-500">O ACUMULADO BATE COM O BANCO? {ok ? <span className="text-emerald-300">BATE ✓</span> : <span className="text-amber-300">AINDA NÃO — distância {usd0(Math.abs(gap))}</span>}</p>
+            <p className="text-xs text-gray-500 mt-1">DFC acumulado {usd0(cumAll)} · banco (extrato + linhas postadas) {usd0(bankImplied)}. A distância encolhe a cada linha do banco lançada (TO BOOK) e cada &quot;quem pagou?&quot; respondido — <a className="underline hover:text-white" href={`${BASE_PATH}/adm/check`}>DATA CHECKER →</a></p>
+          </div>
+        )
+      })()}
 
       {/* Ano ou visão geral (colunas viram anos) + PDF */}
       <div className="flex gap-2 flex-wrap mb-6 items-center">
