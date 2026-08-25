@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -102,6 +102,9 @@ export default function DrePage() {
 
   // Visão escolhida: OFICINA tira as linhas de carro dos dois lados; o OPEX é
   // da oficina nas duas visões. COMPLETO = como sempre foi.
+  // G4: depreciação viva da frota (null até a migration rodar).
+  const dep = useMemo(() => (d ? fleetDepreciation(d) : null), [d])
+
   const v = useMemo(() => {
     if (!m) return null
     const off = scope === 'OFICINA'
@@ -116,9 +119,9 @@ export default function DrePage() {
     const liquida = brutaTotal - discount - flTax
     const lucroBruto = liquida - cost
     const ebitda = lucroBruto - m.opex
-    const resultado = ebitda - (m.juros || 0)
+    const resultado = ebitda - (m.juros || 0) - (dep?.accum || 0)
     return { parts, flTax, discount, cost, brutaTotal, liquida, lucroBruto, ebitda, resultado, margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—' }
-  }, [m, scope])
+  }, [m, scope, dep])
 
   async function downloadPdf() {
     if (!m || !v) return
@@ -142,7 +145,7 @@ export default function DrePage() {
       { cells: ['(−) Apartamento & mascotes', usd(-m.aptCats)] },
       { cells: ['(−) Não classificado', usd(-(m.fixedBy.UNCLASSIFIED || 0))] },
       { cells: ['EBITDA', usd(v.ebitda)], bold: true },
-      { cells: ['(−) Depreciação', 'sem registro (G4)'] },
+      { cells: ['(−) Depreciação da frota', dep === null ? 'rode MIGRATION_g4_fleet.sql' : usd(-dep.accum)] },
       { cells: ['(−) Resultado financeiro (juros)', m.juros === null ? 'sem lançamento (LEDGERS)' : usd(-m.juros)] },
       { cells: ['RESULTADO ACUMULADO', usd(v.resultado)], bold: true },
     ]
@@ -274,7 +277,8 @@ export default function DrePage() {
           <Row label="(−) Apartamento & mascotes" value={-m.aptCats} sub note="D10 decide se é benefício ou retirada" />
           <Row label="(−) Não classificado" value={-(m.fixedBy.UNCLASSIFIED || 0)} sub />
           <Row label="EBITDA" value={v.ebitda} />
-          <Row label="(−) Depreciação" value={null} sub note="sem registro de ativos ainda (G4)" />
+          <Row label="(−) Depreciação da frota" value={dep === null ? null : -dep.accum} sub
+            note={dep === null ? 'rode MIGRATION_g4_fleet.sql e classifique a frota' : 'linear por linha de custo, da data de cada gasto · DESENVOLVIMENTO + TRABALHO depreciam · MONUMENTO e RESERVA ao custo (G4 vivo, 25/ago)'} />
           <Row label="(−) Resultado financeiro (juros)" value={m.juros === null ? null : -m.juros} sub note={m.juros === null ? 'lance os empréstimos no livro LEDGERS' : 'juros pagos, do livro de empréstimos'} />
           <Row label="RESULTADO ACUMULADO" value={v.resultado} />
         </div>

@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -78,6 +78,13 @@ export default function BalancePage() {
         wipCars += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s: number, e: any) => s + expLine(e), 0)
       }
     }
+    // G4 (25/ago): a frota entra LÍQUIDA de depreciação — o bruto virou custo
+    // consumido; MONUMENTO e RESERVA seguem ao custo (a classe decide no motor).
+    const fdep = fleetDepreciation(d)
+    const depOwn = fdep?.own || 0, depTool = fdep?.tool || 0
+    fleetOwn = Math.max(0, fleetOwn - depOwn)
+    fleetTool = Math.max(0, fleetTool - depTool)
+
     // Conta corrente GZ28BR — mesmo algoritmo do GZ-FLOW, condensado:
     // GOT = receita nossa que entrou na conta deles; PAID = conta nossa que eles pagaram.
     const side = (r: { paid_from?: string | null; source?: string | null; paid_to?: string | null }) => {
@@ -116,7 +123,7 @@ export default function BalancePage() {
     // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
     // livros e o DATA CHECK zeram. Só existe com os livros vivos.
     const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
-    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, donorCost, flPayable, brNet, beto, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
+    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, depOwn, depTool, donorCost, flPayable, brNet, beto, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
   }, [d])
 
   async function downloadPdf() {
@@ -142,8 +149,8 @@ export default function BalancePage() {
             { cells: ['Estoque de peças', usd(m.stockPurch)] },
             { cells: ['Estoque doado', usd(m.stockDon)] },
             { cells: ['Imobilizado — equipamento', usd(m.equip)] },
-            { cells: ['Imobilizado — veículos de serviço (TOOL)', usd(m.fleetTool)] },
-            { cells: ['Frota de marketing & desenvolvimento (OWN)', usd(m.fleetOwn)] },
+            { cells: [m.depTool > 0 ? `Imobilizado — veículos de serviço (TOOL, líquido de dep. ${usd(m.depTool)})` : 'Imobilizado — veículos de serviço (TOOL)', usd(m.fleetTool)] },
+            { cells: [m.depOwn > 0 ? `Frota de marketing & desenvolvimento (OWN, líquido de dep. ${usd(m.depOwn)})` : 'Frota de marketing & desenvolvimento (OWN)', usd(m.fleetOwn)] },
             { cells: ['Carros doadores — part-out (DONOR)', usd(m.donorCost)] },
             { cells: [m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)', usd(m.totalAtivo)], bold: true },
           ],

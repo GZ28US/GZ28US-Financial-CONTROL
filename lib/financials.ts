@@ -173,6 +173,38 @@ export const invNickname = (d: FinData, invoiceId: string): string | null => {
   return (inv?.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
 }
 
+// G4 (25/ago — João classificou a frota): depreciação linear POR LINHA DE CUSTO.
+// Cada gasto do carro deprecia da SUA data (payment_date/expense_date), pela
+// vida útil da classe (padrão 60 meses). DESENVOLVIMENTO e TRABALHO depreciam;
+// MONUMENTO (a alma) e RESERVA (ativo em carteira) ficam ao custo. Retorna null
+// enquanto a MIGRATION_g4_fleet.sql não rodou (coluna ausente = sem alarme).
+export function fleetDepreciation(d: FinData): { own: number; tool: number; accum: number } | null {
+  const today = new Date()
+  const ym = today.getFullYear() * 12 + today.getMonth() + 1
+  let any = false, own = 0, tool = 0
+  const cls = new Map<string, { scope: string; life: number; dep: boolean }>()
+  for (const r of d.rides.values()) {
+    const c = (r as any).asset_class
+    if (c !== undefined) any = true
+    if (r.title_scope !== 'OWN' && r.title_scope !== 'TOOL') continue
+    cls.set(r.id, { scope: r.title_scope, life: num((r as any).asset_life_months) || 60, dep: c === 'DESENVOLVIMENTO' || c === 'TRABALHO' })
+  }
+  if (!any) return null
+  for (const e of d.invExpenses) {
+    const rid = d.invoiceById.get(e.invoice_id)?.ride_id
+    const k = rid && cls.get(rid)
+    if (!k || !k.dep) continue
+    const base = expLine(e)
+    const dt = String(e.payment_date || e.expense_date || '')
+    if (!okDate(dt) || !base) continue
+    const months = Math.max(0, ym - (Number(dt.slice(0, 4)) * 12 + Number(dt.slice(5, 7))))
+    const dep = base * Math.min(months / k.life, 1)
+    if (k.scope === 'OWN') own += dep; else tool += dep
+  }
+  const r2 = (v: number) => Math.round(v * 100) / 100
+  return { own: r2(own), tool: r2(tool), accum: r2(own + tool) }
+}
+
 export function buildCashEvents(d: FinData): CashEvent[] {
   const ev: CashEvent[] = []
   const push = (date: string | null | undefined, section: CashEvent['section'], line: string,
