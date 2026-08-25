@@ -291,7 +291,18 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         return `• ${r.order_number || r.id} — ${r.supplier || '?'} ${titleOf(r).slice(0, 34)}${amt != null ? ' — ' + usd(amt) : ''}${addr}`
       }
       const blk = (label: string, rows: StreamRow[]) => rows.length ? `\n\n*${label} (${rows.length})*\n${rows.map(line).join('\n')}` : ''
-      await wa(PVT, `🎣 *FILA DE COMPRAS — ${all.length} pendente(s)*${blk('Sem destino', needPlace)}${blk('Sem itens/valores', needItems)}\n\nAbre a thread *PESCA TEMU* no Claude e resolve por lá.`)
+      // Cada loja tem seu comando na thread da PESCA (ordem dele, 25/ago): a
+      // Temu se pesca inteira (e-mail cego), a Amazon se pesca só pelo ENDEREÇO
+      // de entrega — que é o único dado que o e-mail dela não traz e é o que
+      // decide o destino pela lei do apartamento.
+      const cmdOf = (r: StreamRow): string | null =>
+        /temu/i.test(r.supplier || '') ? 'PESCA TEMU'
+          : /amazon/i.test(r.supplier || '') ? 'PESCA AMAZON' : null
+      const cmds = [...new Set(all.map(cmdOf).filter(Boolean))] as string[]
+      const foot = cmds.length
+        ? `\n\nNa thread da PESCA, roda: *${cmds.join('*  •  *')}*`
+        : '\n\nAbre a thread da *PESCA* no Claude e resolve por lá.'
+      await wa(PVT, `🎣 *FILA DE COMPRAS — ${all.length} pendente(s)*${blk('Sem destino', needPlace)}${blk('Sem itens/valores', needItems)}${foot}`)
       const now = new Date().toISOString()
       for (const r of all) await db.from('part_streams').update({ asked_count: r.asked_count + 1, last_asked_at: now }).eq('id', r.id)
       asked += all.length
