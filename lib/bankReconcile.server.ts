@@ -47,7 +47,7 @@ async function fetchAll(db: any, table: string, select: string, filter?: (q: any
 }
 
 export type Member = { table: string; id: string }
-export type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; group?: string | null; members?: Member[]; score?: number; dd?: number | null }
+export type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; group?: string | null; members?: Member[]; href?: string; detail?: string; score?: number; dd?: number | null }
 export type Pool = { out: Cand[]; inn: Cand[] }
 export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at'; v: string }
 export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'invoice_parts'])
@@ -89,6 +89,9 @@ export async function candidatePool(db: any): Promise<Pool> {
   const lender = new Map(financing.map((f: any) => [f.id, f.lender]))
   const invLabel = (invoiceId: string) => { const i = invById.get(invoiceId); const r = i ? rideById.get(i.ride_id) : null; return i ? `${i.invoice_code || '—'} ${r?.project_name || ''}`.trim() : '—' }
   const invClient = (invoiceId: string) => { const i = invById.get(invoiceId); const r = i ? rideById.get(i.ride_id) : null; return r ? clientName.get(r.client_id) || '' : '' }
+  // "Conferir" (UX, João 25/ago): todo candidato diz DE ONDE veio e abre o registro real.
+  const invHref = (invoiceId: string) => { const i = invById.get(invoiceId); return i && i.ride_id ? `/rides/${i.ride_id}/invoices/${invoiceId}` : '/adm/reports' }
+  const dts = (pay: string | null | undefined, other: string | null | undefined, otherLabel: string) => [pay ? 'pago ' + pay : 'SEM data de pagamento', other ? otherLabel + ' ' + other : null].filter(Boolean).join(' · ')
   const realInvoice = (invoiceId: string) => { const i = invById.get(invoiceId); return !!i && !i.is_quote }
   const out: Cand[] = [], inn: Cand[] = []
   // Pagou/recebeu o Brasil ⇒ nunca passa na Regions. Datado no futuro ⇒ ainda não aconteceu.
@@ -104,20 +107,20 @@ export async function candidatePool(db: any): Promise<Pool> {
   const grp = (r: any) => (r.purchase_group as string) || null
 
   for (const e of invExp) { if (!realInvoice(e.invoice_id) || brPaid(e) || !memberFree(e)) continue
-    push(out, { table: 'invoice_expenses', id: e.id, group: grp(e), label: `${invLabel(e.invoice_id)} · ${e.item || ''}${e.supplier ? ' · ' + e.supplier : ''}`, date: e.payment_date || e.expense_date || null, amount: num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra), undated: !okDate(e.payment_date) }) }
-  for (const f of fixed) if (!brPaid(f)) push(out, { table: 'fixed_cost_expenses', id: f.id, label: `FIXO · ${supName.get(f.supplier_id) || ''} · ${f.description || ''}`, date: f.payment_date || f.expense_date || null, amount: num(f.amount), undated: !okDate(f.payment_date) })
-  for (const x of expenses) if (!brPaid(x)) push(out, { table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date) })
-  for (const g of goods) if (!brPaid(g) && memberFree(g)) push(out, { table: 'goods', id: g.id, group: grp(g), label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.purchase_date || null, amount: num(g.unit_price) * (num(g.quantity) || 1), undated: !okDate(g.payment_date) })
-  for (const g of goodExp) if (!brPaid(g)) push(out, { table: 'good_expenses', id: g.id, label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.expense_date || null, amount: num(g.amount), undated: !okDate(g.payment_date) })
-  for (const x of inputs) if (!brPaid(x) && memberFree(x)) push(out, { table: 'inputs', id: x.id, group: grp(x), label: `INPUT · ${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date) })
-  for (const x of inventory) if (x.source_type === 'PURCHASED' && !brPaid(x) && memberFree(x)) push(out, { table: 'inventory', id: x.id, group: grp(x), label: `STOCK · ${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date) })
+    push(out, { table: 'invoice_expenses', id: e.id, group: grp(e), label: `${invLabel(e.invoice_id)} · ${e.item || ''}${e.supplier ? ' · ' + e.supplier : ''}`, date: e.payment_date || e.expense_date || null, amount: num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra), undated: !okDate(e.payment_date), href: invHref(e.invoice_id), detail: `DESPESA da invoice ${invLabel(e.invoice_id)} · ${num(e.price)}×${num(e.quantity) || 1}${num(e.tax) ? ' + tax ' + num(e.tax) : ''}${num(e.extra) ? ' + extra ' + num(e.extra) : ''} · ${dts(e.payment_date, e.expense_date, 'lançada')}` }) }
+  for (const f of fixed) if (!brPaid(f)) push(out, { table: 'fixed_cost_expenses', id: f.id, label: `FIXO · ${supName.get(f.supplier_id) || ''} · ${f.description || ''}`, date: f.payment_date || f.expense_date || null, amount: num(f.amount), undated: !okDate(f.payment_date), href: f.supplier_id ? '/costs/fixed/' + f.supplier_id : '/costs/fixed', detail: `CUSTO FIXO de ${supName.get(f.supplier_id) || 'fornecedor'} · ${dts(f.payment_date, f.expense_date, 'lançado')}` })
+  for (const x of expenses) if (!brPaid(x)) push(out, { table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date), href: '/staff', detail: `${x.origin === 'PERSONAL' ? 'DESPESA PESSOAL' : 'FOLHA/STAFF'} · ${dts(x.payment_date, x.expense_date, 'lançada')}` })
+  for (const g of goods) if (!brPaid(g) && memberFree(g)) push(out, { table: 'goods', id: g.id, group: grp(g), label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.purchase_date || null, amount: num(g.unit_price) * (num(g.quantity) || 1), undated: !okDate(g.payment_date), href: '/goods', detail: `BEM/EQUIPAMENTO (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.purchase_date, 'comprado')}` })
+  for (const g of goodExp) if (!brPaid(g)) push(out, { table: 'good_expenses', id: g.id, label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.expense_date || null, amount: num(g.amount), undated: !okDate(g.payment_date), href: '/goods', detail: `DESPESA de bem/equipamento (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.expense_date, 'lançada')}` })
+  for (const x of inputs) if (!brPaid(x) && memberFree(x)) push(out, { table: 'inputs', id: x.id, group: grp(x), label: `INPUT · ${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date), href: '/inputs', detail: `INSUMO (INPUTS) · ${x.supplier || 'sem fornecedor'} · ${num(x.unit_price)}×${num(x.quantity) || 1} · ${dts(x.payment_date, x.purchase_date, 'comprado')}` })
+  for (const x of inventory) if (x.source_type === 'PURCHASED' && !brPaid(x) && memberFree(x)) push(out, { table: 'inventory', id: x.id, group: grp(x), label: `STOCK · ${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date), href: '/inventory', detail: `ESTOQUE comprado · ${x.supplier || 'sem fornecedor'} · ${num(x.unit_price)}×${num(x.quantity) || 1} · ${dts(x.payment_date, x.purchase_date, 'comprado')}` })
   for (const e of finEv) {
-    const c = { table: 'financing_events', id: e.id, label: `EMPRÉSTIMO · ${lender.get(e.financing_id) || ''} · ${e.kind}${e.description ? ' · ' + e.description : ''}`, date: e.event_date, amount: num(e.amount), undated: false }
+    const c = { table: 'financing_events', id: e.id, label: `EMPRÉSTIMO · ${lender.get(e.financing_id) || ''} · ${e.kind}${e.description ? ' · ' + e.description : ''}`, date: e.event_date, amount: num(e.amount), undated: false, href: '/adm/financials', detail: `EVENTO de empréstimo (${e.kind}) · ${lender.get(e.financing_id) || 'credor'} · em ${e.event_date}` }
     push(e.kind === 'DISBURSEMENT' ? inn : out, c)
   }
-  for (const c of capital) push(c.kind === 'CONTRIBUTION' ? inn : out, { table: 'capital_events', id: c.id, label: `CAPITAL · ${c.kind === 'CONTRIBUTION' ? 'APORTE' : 'RETIRADA'} · ${c.member || ''}${c.description ? ' · ' + c.description : ''}`, date: c.event_date, amount: num(c.amount), undated: false })
+  for (const c of capital) push(c.kind === 'CONTRIBUTION' ? inn : out, { table: 'capital_events', id: c.id, label: `CAPITAL · ${c.kind === 'CONTRIBUTION' ? 'APORTE' : 'RETIRADA'} · ${c.member || ''}${c.description ? ' · ' + c.description : ''}`, date: c.event_date, amount: num(c.amount), undated: false, href: '/adm/financials', detail: `${c.kind === 'CONTRIBUTION' ? 'APORTE de capital' : 'RETIRADA de capital'} · ${c.member || 'sócio'} · em ${c.event_date}` })
   for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p)) continue
-    push(inn, { table: 'invoice_payments', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at }) }
+    push(inn, { table: 'invoice_payments', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at, href: invHref(p.invoice_id), detail: `RECEBIMENTO da invoice ${invLabel(p.invoice_id)} · cliente ${invClient(p.invoice_id) || '—'} · ${p.paid_at ? 'baixado ' + String(p.paid_at).slice(0, 10) : 'previsto ' + (p.payment_date || '—') + ' · SEM baixa'}${p.source ? ' · via ' + p.source : ''}` }) }
   // CUSTO dos parts vendidos (ponto cego da 1ª rodada, João+Márcio 24/ago): o
   // invoice_part tem preço de VENDA (unit_price) e CUSTO (base_cost) — o banco
   // cobra o CUSTO. Kits (kit_group) viram UMA cobrança somada, como pedidos.
@@ -131,7 +134,7 @@ export async function candidatePool(db: any): Promise<Pool> {
     if (cost < 0.005) continue
     const inKit = !!p.kit_group && !brokenKits.has(p.kit_group) && !takenKits.has(p.kit_group)
     if (!(p.kit_group && takenKits.has(p.kit_group)))
-      push(out, { table: 'invoice_parts', id: p.id, group: null, label: `PART CUSTO · ${invLabel(p.invoice_id)} · ${p.description || ''}`, date: p.payment_date || null, amount: cost, undated: !okDate(p.payment_date) })
+      push(out, { table: 'invoice_parts', id: p.id, group: null, label: `PART CUSTO · ${invLabel(p.invoice_id)} · ${p.description || ''}`, date: p.payment_date || null, amount: cost, undated: !okDate(p.payment_date), href: invHref(p.invoice_id), detail: `CUSTO do part vendido na ${invLabel(p.invoice_id)} · venda ${num(p.unit_price)} × custo ${num(p.base_cost)}${(num(p.quantity) || 1) > 1 ? ' ×' + num(p.quantity) : ''}${p.kit_name ? ' · kit ' + p.kit_name : ''} · ${p.payment_date ? 'pago ' + p.payment_date : 'SEM data de pagamento'}` })
     if (inKit) {
       const g = kits.get(p.kit_group) || { amount: 0, date: null, label: `KIT CUSTO · ${p.kit_name || p.kit_group} · ${invLabel(p.invoice_id)}`, n: 0, undated: false, members: [] }
       g.amount += cost; g.n++; g.members.push({ table: 'invoice_parts', id: p.id })
@@ -140,7 +143,7 @@ export async function candidatePool(db: any): Promise<Pool> {
       kits.set(p.kit_group, g)
     }
   }
-  kits.forEach((g, id) => { if (g.n > 1) push(out, { table: 'kit_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members }) })
+  kits.forEach((g, id) => { if (g.n > 1) push(out, { table: 'kit_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members, detail: `KIT: soma do CUSTO de ${g.n} parts do mesmo kit — o banco cobra o kit inteiro de uma vez` }) })
   // Grupos de compra: um pedido com vários itens vira UMA cobrança no banco.
   // Só entram os MESMOS itens que contam (PURCHASED, livres, não-BR, invoice
   // real); grupo com item já casado não é oferecido. O grupo carrega seus
@@ -160,7 +163,7 @@ export async function candidatePool(db: any): Promise<Pool> {
       groups.set(r.purchase_group, g)
     }
   }
-  groups.forEach((g, id) => { if (g.n > 1) push(out, { table: 'purchase_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members }) })
+  groups.forEach((g, id) => { if (g.n > 1) push(out, { table: 'purchase_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members, detail: `PEDIDO: soma de ${g.n} itens comprados juntos — o banco cobra o pedido inteiro de uma vez` }) })
   return { out, inn }
 }
 

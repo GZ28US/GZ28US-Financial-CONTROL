@@ -55,6 +55,29 @@ export async function GET(req: NextRequest) {
       .not('match_engine', 'is', null).eq('match_status', 'MATCHED').order('date', { ascending: false }).range(0, 1999)
     if (autoErr) needsMigration = MIGRATION_RE.test(autoErr.message)
     else {
+      // CONFERIR também no A CONFERIR (UX #1, João 25/ago): cada casamento do motor
+      // ganha o link que abre o registro real — conferir sem link é obstáculo.
+      const pend = (autoRows || []).filter((r: any) => !r.reviewed_at)
+      const hrefOf = new Map<string, string>()
+      const want = (t: string) => [...new Set(pend.filter((r: any) => r.matched_table === t).map((r: any) => String(r.matched_id)))]
+      const grab = async (t: string, sel: string) => { const ids = want(t); if (!ids.length) return []; const { data } = await db.from(t).select(sel).in('id', ids); return data || [] }
+      const [hIe, hIp, hPay, hFx, hKg] = await Promise.all([
+        grab('invoice_expenses', 'id, invoice_id'), grab('invoice_parts', 'id, invoice_id'), grab('invoice_payments', 'id, invoice_id'),
+        grab('fixed_cost_expenses', 'id, supplier_id'),
+        (async () => { const ids = want('kit_group'); if (!ids.length) return []; const { data } = await db.from('invoice_parts').select('kit_group, invoice_id').in('kit_group', ids); return data || [] })(),
+      ])
+      const invNeed = new Map<string, string>()
+      for (const r of hIe as any[]) invNeed.set('invoice_expenses:' + r.id, r.invoice_id)
+      for (const r of hIp as any[]) invNeed.set('invoice_parts:' + r.id, r.invoice_id)
+      for (const r of hPay as any[]) invNeed.set('invoice_payments:' + r.id, r.invoice_id)
+      for (const r of hKg as any[]) if (!invNeed.has('kit_group:' + r.kit_group)) invNeed.set('kit_group:' + r.kit_group, r.invoice_id)
+      const invIds = [...new Set([...invNeed.values()])].filter(Boolean)
+      const rideOf = new Map<string, string>()
+      if (invIds.length) { const { data } = await db.from('invoices').select('id, ride_id').in('id', invIds); for (const i of data || []) if (i.ride_id) rideOf.set(i.id, i.ride_id) }
+      invNeed.forEach((inv, key) => { const ride = rideOf.get(inv); if (ride) hrefOf.set(key, `/rides/${ride}/invoices/${inv}`) })
+      for (const r of hFx as any[]) hrefOf.set('fixed_cost_expenses:' + r.id, r.supplier_id ? '/costs/fixed/' + r.supplier_id : '/costs/fixed')
+      const staticHref: Record<string, string> = { goods: '/goods', good_expenses: '/goods', inputs: '/inputs', inventory: '/inventory', expenses: '/staff', capital_events: '/adm/financials', financing_events: '/adm/financials' }
+      for (const r of pend) { const k = r.matched_table + ':' + r.matched_id; if (!hrefOf.has(k) && staticHref[r.matched_table]) hrefOf.set(k, staticHref[r.matched_table]) }
       const batches = new Map<string, { batch: string; n: number; pending: number; fee: number; exact: number; from: string; to: string }>()
       for (const r of autoRows || []) {
         const b = batches.get(r.match_batch) || { batch: r.match_batch, n: 0, pending: 0, fee: 0, exact: 0, from: r.date, to: r.date }
@@ -63,10 +86,10 @@ export async function GET(req: NextRequest) {
         batches.set(r.match_batch, b)
       }
       auto = {
-        pending: (autoRows || []).filter((r: any) => !r.reviewed_at).map((r: any) => ({
-          id: r.id, date: r.date, amount: num(r.amount), name: r.merchant || r.name || '', engine: r.match_engine, batch: r.match_batch,
+        pending: pend.map((r: any) => ({
+          id: r.id, date: r.date, amount: num(r.amount), name: r.merchant || r.name || '', raw_name: r.name || '', engine: r.match_engine, batch: r.match_batch,
           note: String(r.matched_note || '').replace(/^AUTO · (FEE|EXACT) · /, ''), source: String(r.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID',
-          backfilled: Array.isArray(r.backfill) && r.backfill.length > 0,
+          backfilled: Array.isArray(r.backfill) && r.backfill.length > 0, href: hrefOf.get(r.matched_table + ':' + r.matched_id) || null,
         })),
         reviewed: (autoRows || []).filter((r: any) => r.reviewed_at).length,
         batches: [...batches.values()],

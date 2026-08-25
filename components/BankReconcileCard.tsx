@@ -21,9 +21,9 @@ import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import { BL_STAGE, BL_VERSION } from '@/lib/blVersion'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; score: number; dd: number | null }
+type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; href?: string; detail?: string; score: number; dd: number | null }
 type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; candidates: Cand[] }
-type AutoLine = { id: string; date: string; amount: number; name: string; engine: string; batch: string; note: string; source: string; backfilled: boolean }
+type AutoLine = { id: string; date: string; amount: number; name: string; raw_name?: string; engine: string; batch: string; note: string; source: string; backfilled: boolean; href?: string | null }
 type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; from: string; to: string }
 type Auto = { pending: AutoLine[]; reviewed: number; batches: Batch[] }
 type Plan = { fee_create: number; fee_match: number; exact: number; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[] } }
@@ -48,6 +48,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
   const [onlyCand, setOnlyCand] = useState(false)
   const [hideFee, setHideFee] = useState(true)
   const [shown, setShown] = useState(80)
+  const [inspect, setInspect] = useState<Set<string>>(new Set())   // linhas com o CONFERIR aberto
   const [pick, setPick] = useState<Record<string, string>>({})     // line id → "table:id"
   const [explain, setExplain] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<Set<string>>(new Set())
@@ -254,9 +255,10 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
                     <div key={a.id} className="py-2 flex items-center gap-3 flex-wrap">
                       <span className="text-gray-500 text-xs w-20 shrink-0">{formatShortDate(a.date)}</span>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${ENGINE_CHIP[a.engine] || 'border-gray-700 text-gray-400'}`}>{a.engine}</span>
-                      <span className="text-sm truncate max-w-[18rem]" title={a.name}>{a.name}</span>
+                      <span className="text-sm truncate max-w-[18rem]" title={a.raw_name || a.name}>{a.name}</span>
                       <span className={`tabular-nums font-bold text-sm shrink-0 ${a.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{a.amount > 0 ? '−' : '+'}{usd(a.amount)}</span>
                       <span className="text-xs text-gray-400 flex-1 truncate min-w-[12rem]" title={a.note}>⇄ {a.note}{a.backfilled ? <span className="ml-2 text-[10px] text-sky-300" title="a data de pagamento do app foi preenchida com a do banco">data preenchida</span> : null}</span>
+                      {a.href && <a href={`${BASE_PATH}${a.href}`} target="_blank" rel="noreferrer" title="abre o registro que o motor escolheu, em aba nova" className="bg-gray-800 hover:bg-gray-700 border border-gray-600 px-3 py-1 rounded-xl font-bold text-xs">ABRIR ↗</a>}
                       <button disabled={batchBusy || busy.has(a.id)} onClick={() => review(a)} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">OK</button>
                       <button disabled={batchBusy || busy.has(a.id)} onClick={() => undoLine(a)} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">DESFAZER</button>
                     </div>
@@ -281,15 +283,37 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
               <div className="divide-y divide-gray-800">
                 {visible.slice(0, shown).map(l => {
                   const sel = pick[l.id] || ''
-                  const cand = l.candidates.find(c => c.table + ':' + c.id === sel)
+                  // Sem escolha explícita o <select> MOSTRA o primeiro — cand acompanha o que o olho vê.
+                  const cand = l.candidates.find(c => c.table + ':' + c.id === sel) || l.candidates[0]
                   const dis = anyBusy
                   return (
                     <div key={l.id} className="py-3 px-2">
                       <div className="flex items-baseline gap-3">
+                        <button onClick={() => setInspect(s => { const n = new Set(s); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return n })} className="text-gray-500 hover:text-white text-xs w-4 shrink-0" title="conferir as fontes">{inspect.has(l.id) ? '▾' : '▸'}</button>
                         <span className="text-gray-500 text-xs w-20 shrink-0">{formatShortDate(l.date)}</span>
                         <span className="flex-1 truncate text-sm" title={l.raw_name}>{l.name}{l.pending && <span className="ml-2 text-xs text-amber-400" title="ainda não postou — o Plaid troca o id ao postar; MATCH só depois">PENDING</span>}{l.fee && <span className="ml-2 text-[10px] font-bold text-teal-300">TARIFA</span>}{l.source === 'STATEMENT' && <span className="ml-2 text-xs text-gray-600">extrato</span>}</span>
                         <span className={`tabular-nums font-bold text-sm shrink-0 ${l.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{l.amount > 0 ? '−' : '+'}{usd(l.amount)}</span>
                       </div>
+                      {/* CONFERIR (UX #1, João 25/ago): as fontes dos dois lados, com link pro registro real. */}
+                      {inspect.has(l.id) && (
+                        <div className="mt-2 grid md:grid-cols-2 gap-3 bg-black/40 border border-gray-800 rounded-2xl p-3 text-xs">
+                          <div>
+                            <p className="font-bold text-gray-400 mb-1">🏦 O QUE O BANCO DIZ</p>
+                            <p className="text-gray-300">{l.raw_name}</p>
+                            <p className="text-gray-500 mt-1">{formatShortDate(l.date)} · {l.amount > 0 ? 'saiu' : 'entrou'} {usd(l.amount)} · {l.source === 'STATEMENT' ? 'importada do extrato em PDF' : 'feed do Plaid'}{l.pending ? ' · ainda PENDENTE (não postou)' : ''}</p>
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-400 mb-1">📒 O QUE O APP TEM {cand ? '' : '(nenhum candidato)'}</p>
+                            {cand ? (
+                              <>
+                                <p className="text-gray-300">{cand.detail || cand.label}</p>
+                                <p className="text-gray-500 mt-1">{cand.date ? 'data ' + formatShortDate(cand.date) : 'sem data'}{cand.dd != null ? ` · ${cand.dd} dia(s) do banco` : ''} · {usd(cand.amount)}</p>
+                                {cand.href && <a href={`${BASE_PATH}${cand.href}`} target="_blank" rel="noreferrer" className="inline-block mt-1 bg-gray-800 hover:bg-gray-700 border border-gray-600 px-3 py-1 rounded-xl font-bold">ABRIR REGISTRO ↗</a>}
+                              </>
+                            ) : <p className="text-gray-500">nada com esse valor no app — TRANSFER, IGNORE ou EXPLAIN</p>}
+                          </div>
+                        </div>
+                      )}
                       <div className="mt-2 flex gap-2 flex-wrap items-center">
                         {l.candidates.length > 0 ? (
                           <select value={sel} onChange={e => setPick({ ...pick, [l.id]: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && cand && !dis && !l.pending) { e.preventDefault(); act(l, 'match', { table: cand.table, row_id: cand.id }) } }} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs max-w-xl">
