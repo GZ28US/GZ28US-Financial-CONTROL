@@ -162,6 +162,22 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     ev.push({ date: String(date).slice(0, 10), section, line, amount, code, label, href })
   }
 
+  // FIN 0.9.8 (João decidiu, 25/ago — pendência #21): despesa paga por OUTRO
+  // caixa (GZ28BR; RAFA entra pela conta corrente BR, decisão de 22/ago; BETO)
+  // não saiu do caixa GZ28US — mas o custo é nosso. A saída operacional fica e
+  // nasce a entrada de FINANCIAMENTO espelhada (quem bancou): efeito zero no
+  // caixa, igual ao passivo que o Balanço já declara. paid_from vazio segue
+  // valendo GZ28US (o card "Quem pagou?" encolhe essa incerteza todo dia).
+  const FUNDERS: Record<string, { line: string; who: string }> = {
+    GZ28BR: { line: 'FUND_BR', who: 'GZ28BR (conta corrente)' },
+    RAFA: { line: 'FUND_BR', who: 'GZ28BR (conta corrente — via Rafa)' },
+    BETO: { line: 'FUND_BETO', who: 'Beto (empréstimo de sócio)' },
+  }
+  const fund = (row: { paid_from?: string | null }, date: string | null | undefined, amount: number, label: string) => {
+    const f = FUNDERS[String(row.paid_from || '').trim().toUpperCase()]
+    if (f && amount) push(date, 'FIN', f.line, amount, 'FUNDED', f.who + ' · ' + label, '/adm/check')
+  }
+
   // Recebimentos — só o que TEM paid_at (agendado ainda não é caixa). Recebido
   // pela GZ28BR (2025) é linha própria: é receita nossa que virou saldo lá.
   for (const p of d.payments) {
@@ -169,21 +185,27 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     const m = invoiceMeta(d, p.invoice_id)
     // Data do caixa é o RECEBIMENTO (paid_at); payment_date é só o agendado.
     const cashDate = String(p.paid_at).slice(0, 10)
-    push(okDate(cashDate) ? cashDate : p.payment_date, 'OPER',
+    const cd = okDate(cashDate) ? cashDate : p.payment_date
+    push(cd, 'OPER',
       p.paid_to === 'GZ28BR' ? 'RECEIPTS_BR' : 'RECEIPTS',
       num(p.amount), m.code, m.car || p.description || p.source || '', m.href)
+    // Recebeu na GZ28BR = o dinheiro ficou LÁ: espelho negativo na conta corrente.
+    if (p.paid_to === 'GZ28BR') push(cd, 'FIN', 'FUND_BR', -num(p.amount), 'FUNDED',
+      'GZ28BR (conta corrente) · recebeu por nós — ' + (m.car || p.description || ''), '/adm/check')
   }
   // Fornecedores de projeto (inclui compra de carro — separação é papo do DRE/D3).
   for (const e of d.invExpenses) {
     const m = invoiceMeta(d, e.invoice_id)
     push(e.payment_date, 'OPER', 'JOB_COST', -expLine(e), m.code,
       [m.car, e.item].filter(Boolean).join(' · '), m.href)
+    fund(e, e.payment_date, expLine(e), [m.code, e.item].filter(Boolean).join(' · '))
   }
   // Folha e retiradas — origin separa a empresa do pessoal do Márcio.
   for (const x of d.expenses) {
     push(x.payment_date, x.origin === 'PERSONAL' ? 'FIN' : 'OPER',
       x.origin === 'PERSONAL' ? 'DRAW' : 'PAYROLL',
       -num(x.amount), 'STAFF', x.description || x.type || '', '/staff')
+    fund(x, x.payment_date, num(x.amount), x.description || x.type || '')
   }
   // Custos fixos por família (cost_type do fornecedor).
   for (const f of d.fixedExpenses) {
@@ -193,18 +215,27 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     const href = ct === 'APP' ? '/costs/apps/' + f.supplier_id : (ct === 'MARKETING' || ct === 'ASSET') ? '/costs/assets/' + f.supplier_id : '/costs/fixed/' + f.supplier_id
     push(f.payment_date, 'OPER', line, -num(f.amount), ct,
       [sup?.company, f.description].filter(Boolean).join(' · '), f.supplier_id ? href : '/costs/fixed')
+    fund(f, f.payment_date, num(f.amount), [sup?.company, f.description].filter(Boolean).join(' · '))
   }
   // Consumíveis & diversos (inputs: oficina, apartamento, gatos — D10 decide depois).
-  for (const x of d.inputs)
+  for (const x of d.inputs) {
     push(x.payment_date, 'OPER', 'MISC', -qtyLine(x), (x.category || 'INPUT'), x.description || '', '/inputs')
+    fund(x, x.payment_date, qtyLine(x), x.description || '')
+  }
   // Investimento: equipamento (GOODS) e estoque comprado.
-  for (const g of d.goods)
+  for (const g of d.goods) {
     push(g.payment_date, 'INVEST', 'EQUIP', -qtyLine(g), 'GOODS', g.description || '', '/goods/' + g.id)
-  for (const g of d.goodExpenses)
+    fund(g, g.payment_date, qtyLine(g), g.description || '')
+  }
+  for (const g of d.goodExpenses) {
     push(g.payment_date, 'INVEST', 'EQUIP', -num(g.amount), 'GOODS', g.description || '', '/goods/' + g.good_id)
+    fund(g, g.payment_date, num(g.amount), g.description || '')
+  }
   for (const s of d.inventory)
-    if (s.source_type === 'PURCHASED')
+    if (s.source_type === 'PURCHASED') {
       push(s.payment_date, 'INVEST', 'STOCK', -qtyLine(s), 'STOCK', s.description || '', '/inventory')
+      fund(s, s.payment_date, qtyLine(s), s.description || '')
+    }
 
   // Fase 2 — livros: aporte/retirada de sócio e eventos de empréstimo.
   if (d.ledgersReady) {
