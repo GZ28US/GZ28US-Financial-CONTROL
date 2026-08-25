@@ -263,20 +263,25 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
-  // 6 · Despesas de projeto sem payment_date (G6).
+  // 6 · Despesa VENCIDA sem pagamento (G6 v2 — achado do João, 25/ago, caso
+  // US.047.1). No modelo do Márcio, payment_date vazio É o estado "Not paid yet"
+  // (fica em Fornecedores a pagar — estado normal, não pendência): 299 das 334
+  // linhas do card antigo eram falso positivo. Pendência de verdade é a data
+  // prevista (expense_date — espelho legado / agenda de parcelas) já VENCIDA e
+  // o pagamento sem lançar: ou atrasou, ou pagou e a data ficou de fora.
   {
-    const rows = d.invExpenses.filter((e: any) => !e.payment_date)
+    const rows = d.invExpenses.filter((e: any) => !e.payment_date && e.expense_date && String(e.expense_date).slice(0, 10) <= TODAY)
     const items = rows.map((e: any) => {
       const m = invoiceMeta(d, e.invoice_id)
       return {
         href: m.href, code: m.code, label: e.item || '(despesa sem descrição)',
-        extra: [whoFor(e.invoice_id), e.supplier].filter(Boolean).join(' · '), amount: expLine(e),
+        extra: [whoFor(e.invoice_id), e.supplier, 'previsto ' + String(e.expense_date).slice(0, 10)].filter(Boolean).join(' · '), amount: expLine(e),
         fix: { kind: 'date' as const, table: 'invoice_expenses', rowId: e.id, field: 'payment_date' },
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'FINANCIAL', key: 'undated-inv', title: 'Despesa de projeto: pagamos quando?', blocks: 'fica como conta a pagar pra sempre e some do fluxo de caixa',
-      why: 'Sem data de pagamento a linha vira contas a pagar no Balanço e fica FORA do fluxo de caixa. Se já foi paga, lance a data aqui mesmo.',
+      group: 'FINANCIAL', key: 'undated-inv', title: 'Despesa venceu e o pagamento não foi lançado', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
+      why: 'Não pago = sem data é o estado NORMAL de uma despesa (aparece como Not paid yet na invoice e em Fornecedores a pagar) — não é pendência e não entra aqui. O que entra: a linha tinha data prevista (parcela agendada ou o espelho legado) que já passou, e o pagamento continua sem lançar. Se pagou, registre a data; se atrasou, é cobrança, não conserto.',
       items, impact: rows.reduce((s: number, e: any) => s + expLine(e), 0),
     })
   }
