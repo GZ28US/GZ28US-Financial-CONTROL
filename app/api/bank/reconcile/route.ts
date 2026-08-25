@@ -123,6 +123,29 @@ export async function POST(req: NextRequest) {
       const res = await applyPlan(db, plan, { max: 150, batch: body.batch ? String(body.batch) : undefined })
       return NextResponse.json({ ok: true, applied: res, plan: summary })
     }
+    // TRIAGEM POR FAMÍLIA (João, 25/ago): EXPLAIN em massa — NEW → QUEUED (TO
+    // BOOK) com a nota da família. Guarda NEW+não-pendente no WHERE: linha já
+    // decidida ou pendente não é tocada. Reverter: unqueue (abaixo).
+    if (action === 'bulk_explain') {
+      const ids = (Array.isArray(body.ids) ? body.ids : []).map((x: any) => String(x)).filter(Boolean).slice(0, 800)
+      const note = String(body.note || '').trim().slice(0, 120)
+      if (!ids.length || !note) return NextResponse.json({ error: 'ids e note obrigatórios' }, { status: 400 })
+      const { data, error } = await db.from('bank_transactions').update({ match_status: 'QUEUED', matched_note: 'TRIAGEM · ' + note, matched_table: null, matched_id: null }).in('id', ids).eq('match_status', 'NEW').eq('pending', false).select('id')
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await db.from('data_fixes').insert({
+        check_key: 'bank-reconcile', table_name: 'bank_transactions', row_id: ids[0], field: 'match_status',
+        old_value: 'NEW', new_value: 'QUEUED', label: ('TRIAGEM · ' + note + ' · ' + (data || []).length + ' linhas').slice(0, 200),
+      }).then(() => undefined, () => undefined)
+      return NextResponse.json({ ok: true, n: (data || []).length })
+    }
+    if (action === 'unqueue') {
+      const bankId2 = String(body.bank_id || '')
+      if (!bankId2) return NextResponse.json({ error: 'bank_id required' }, { status: 400 })
+      const { data, error } = await db.from('bank_transactions').update({ match_status: 'NEW', matched_note: null }).eq('id', bankId2).eq('match_status', 'QUEUED').select('id')
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (!data || !data.length) return NextResponse.json({ error: 'linha não está em TO BOOK — recarregue' }, { status: 409 })
+      return NextResponse.json({ ok: true })
+    }
     if (action === 'undo_batch') {
       const batch = String(body.batch || '')
       if (!batch) return NextResponse.json({ error: 'batch required' }, { status: 400 })

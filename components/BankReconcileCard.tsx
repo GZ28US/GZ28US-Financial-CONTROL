@@ -34,6 +34,21 @@ export async function sessionHeaders(): Promise<Record<string, string>> {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session?.access_token || ''}` }
 }
 
+// TRIAGEM POR FAMÍLIA (João, 25/ago): o ruído de cartão do dia a dia nunca terá
+// linha no app — agrupa por família curada e decide em massa. Sem família = fora
+// dos chips (o "CARD PURCHASE" genérico mistura lojas — esse fica pro filtro de texto).
+const FAMILIES: [RegExp, string][] = [
+  [/TEMU/, 'TEMU'], [/AMAZON|AMZN/, 'AMAZON'], [/EBAY/, 'EBAY'],
+  [/BP#|WAWA|RACETRAC|CIRCLE ?K|7-ELEVEN|SHELL|CHEVRON|SUNOCO|EXXON|MOBIL/, 'COMBUSTÍVEL'],
+  [/MCDONALD|BURGER|WENDY|CHICK|TACO|SUBWAY|DUNKIN|STARBUCKS|POLLO|KFC|PIZZA|RESTAURANT|CAFE|CHIPOTLE|CULVER|PANERA|IHOP|DENNY/, 'COMIDA'],
+  [/PUBLIX|WAL-?MART|ALDI|SAMSCLUB|SAM ?S CLUB|COSTCO|WINN|TARGET|DOLLAR/, 'MERCADO'],
+  [/PAYPAL/, 'PAYPAL'], [/APPLE/, 'APPLE'], [/ANTHROPIC/, 'ANTHROPIC'],
+  [/AUTOZONE|O ?REILLY|ADVANCE AUTO|NAPA|HARBOR FREIGHT|HOME DEPOT|LOWE/, 'AUTO/FERRAMENTA'],
+  [/ROSS |MARSHALL|BURLINGTON|TJ ?MAXX|NIKE|ADIDAS/, 'ROUPA/VAREJO'],
+  [/UBER|LYFT/, 'UBER/LYFT'], [/PIN PURCHASE/, 'PIN PURCHASE'],
+]
+const famOf = (l: { name: string; raw_name: string }) => { const s = (l.name + ' ' + l.raw_name).toUpperCase(); for (const [re, f] of FAMILIES) if (re.test(s)) return f; return null }
+
 const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800' }
 const BATCH_KEYS = new Set(['plan', 'apply', 'review_all'])
 
@@ -57,6 +72,8 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
   const [applied, setApplied] = useState<Applied | null>(null)
   const [progress, setProgress] = useState('')
   const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT'>('ALL')
+  const [familyFilter, setFamilyFilter] = useState<string | null>(null)   // triagem por família
+  const [triageNote, setTriageNote] = useState('')
 
   const lock = (k: string) => setBusy(s => new Set(s).add(k))
   const unlock = (k: string) => setBusy(s => { const n = new Set(s); n.delete(k); return n })
@@ -111,6 +128,20 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
       if (action === 'match') await load()
       else { setLines(prev => (prev || []).filter(x => x.id !== l.id)); setTotalNew(n => n - 1); setPlan(null) }
     } catch (e) { if (fail(e).status === 409) await load() } finally { unlock(l.id) }
+  }
+
+  // TRIAGEM: explica TODAS as filtradas de uma vez (NEW → TO BOOK, com nota).
+  async function triageApply() {
+    const ids = visible.filter(l => !l.pending).map(l => l.id)
+    const note = triageNote.trim()
+    if (!ids.length || !note) return
+    if (!confirm(`Explicar ${ids.length} linhas como "${note}"? Saem do SEM CASAMENTO e ficam em TO BOOK (a lançar), com a nota. Nada é apagado — dá pra reverter linha a linha.`)) return
+    lock('triage')
+    try {
+      const d2 = await post({ action: 'bulk_explain', ids, note })
+      alert(`${d2.n} linhas explicadas → TO BOOK.`)
+      setFamilyFilter(null); setTriageNote(''); await load()
+    } catch (e) { fail(e) } finally { unlock('triage') }
   }
 
   // ── motores ──
@@ -168,8 +199,8 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
   const visible = useMemo(() => {
     if (!lines) return []
     const needle = q.trim().toLowerCase()
-    return lines.filter(l => (!onlyCand || l.candidates.length > 0) && (!hideFee || !l.fee) && (!needle || l.name.toLowerCase().includes(needle) || l.raw_name.toLowerCase().includes(needle) || Math.abs(l.amount).toFixed(2).includes(needle) || l.date.includes(needle)))
-  }, [lines, q, onlyCand, hideFee])
+    return lines.filter(l => (!onlyCand || l.candidates.length > 0) && (!hideFee || !l.fee) && (!familyFilter || famOf(l) === familyFilter) && (!needle || l.name.toLowerCase().includes(needle) || l.raw_name.toLowerCase().includes(needle) || Math.abs(l.amount).toFixed(2).includes(needle) || l.date.includes(needle)))
+  }, [lines, q, onlyCand, hideFee, familyFilter])
   const withCand = lines ? lines.filter(l => l.candidates.length > 0).length : 0
   const feeLines = lines ? lines.filter(l => l.fee).length : 0
   const pendingReview = auto ? auto.pending.filter(a => engineFilter === 'ALL' || a.engine === engineFilter) : []
@@ -279,6 +310,31 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
               <button onClick={load} disabled={anyBusy} className="bg-gray-900 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">↻</button>
               <span className="text-xs text-gray-500 ml-auto">{visible.length} linhas{visible.length > shown ? ` · mostrando ${shown}` : ''}</span>
             </div>
+            {/* TRIAGEM POR FAMÍLIA (João, 25/ago): o grosso do SEM CASAMENTO é cartão
+                do dia a dia sem linha no app — decide-se por família, não um a um. */}
+            {lines && lines.length > 0 && (() => {
+              const fams = new Map<string, { n: number; sum: number }>()
+              for (const l of lines) { if (l.pending || l.fee) continue; const f = famOf(l); if (!f) continue; const e = fams.get(f) || { n: 0, sum: 0 }; e.n++; e.sum += Math.abs(l.amount); fams.set(f, e) }
+              const top = [...fams.entries()].filter(([, e]) => e.n >= 3).sort((a, b) => b[1].n - a[1].n).slice(0, 14)
+              if (!top.length) return null
+              return (
+                <div className="mb-3">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <span className="text-xs font-bold text-gray-500">TRIAGEM POR FAMÍLIA:</span>
+                    {top.map(([f, e]) => (
+                      <button key={f} onClick={() => { setFamilyFilter(familyFilter === f ? null : f); setTriageNote(f === familyFilter ? '' : f.charAt(0) + f.slice(1).toLowerCase()) }} className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${familyFilter === f ? 'bg-white text-black border-white' : 'bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800'}`}>{f} ×{e.n} · {usd(e.sum)}</button>
+                    ))}
+                  </div>
+                  {familyFilter && (
+                    <div className="flex gap-2 flex-wrap items-center mt-2">
+                      <input value={triageNote} onChange={e => setTriageNote(e.target.value)} placeholder="o que foi (vira a nota do TO BOOK)" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-sm w-72" />
+                      <button disabled={anyBusy || !triageNote.trim() || !visible.some(l => !l.pending)} onClick={triageApply} className="bg-purple-800 hover:bg-purple-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">EXPLICAR AS {visible.filter(l => !l.pending).length} FILTRADAS → TO BOOK</button>
+                      <span className="text-xs text-gray-500">não é ignorar: é "sei o que foi — lanço depois", com a nota gravada</span>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
             {!lines ? <p className="text-gray-500">Carregando o banco…</p> : visible.length === 0 ? <p className={error ? 'text-gray-500' : 'text-emerald-400 font-bold'}>{error ? 'Sem dados.' : 'Nada pendente aqui.'}</p> : (
               <div className="divide-y divide-gray-800">
                 {visible.slice(0, shown).map(l => {
