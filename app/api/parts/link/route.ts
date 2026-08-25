@@ -67,15 +67,28 @@ export async function GET(req: NextRequest) {
     // ── R1: fornecedor com identidade (188 grafias → 40 oficiais) ──
     const suppliers = await fetchAll(db, 'suppliers', 'id, name, aliases')
     const supNorm = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9&' ]+/g, ' ').replace(/\s+/g, ' ').trim()
-    const offRows = suppliers.map((s: any) => ({ id: s.id, name: s.name, n: supNorm(s.name), aliases: String(s.aliases || '').split(/[,\n]/).map(supNorm).filter(Boolean) }))
+    // Fricção #3 do João (25/ago): "O&J PERFORMANCE INC" tem que achar "OJ Performance".
+    // supHard = identidade dura: só letras/números (& e pontuação caem) e sem sufixo
+    // legal no fim (INC/LLC/CORP…). Igualdade dura = mesma empresa = CERTO.
+    const SUP_SUFFIX = new Set(['INC', 'INCORPORATED', 'LLC', 'CORP', 'CORPORATION', 'LTD', 'LIMITED', 'CO'])
+    const supHard = (s: unknown) => {
+      const w = String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+      while (w.length > 1 && SUP_SUFFIX.has(w[w.length - 1])) w.pop()
+      return w.join('')
+    }
+    const offRows = suppliers.map((s: any) => {
+      const rawAliases = String(s.aliases || '').split(/[,\n]/)
+      return { id: s.id, name: s.name, n: supNorm(s.name), h: supHard(s.name), aliases: rawAliases.map(supNorm).filter(Boolean), hAliases: rawAliases.map(supHard).filter(Boolean) }
+    })
     const supCandidates = (text: string) => {
-      const t = supNorm(text)
+      const t = supNorm(text), th = supHard(text)
       if (!t) return []
       const out: { id: string; label: string; certain: boolean; score: number }[] = []
       for (const o of offRows) {
         if (o.n === t || o.aliases.includes(t)) { out.push({ id: o.id, label: o.name, certain: true, score: 100 }); continue }
-        const flat = t.replace(/\s/g, ''), fo = o.n.replace(/\s/g, '')
-        if (flat.length >= 4 && (fo.includes(flat) || flat.includes(fo.slice(0, Math.min(8, fo.length))))) out.push({ id: o.id, label: o.name, certain: false, score: Math.min(flat.length, fo.length) })
+        if (th.length >= 3 && (o.h === th || o.hAliases.includes(th))) { out.push({ id: o.id, label: o.name, certain: true, score: 95 }); continue }
+        const flat = th, fo = o.h
+        if (flat.length >= 4 && (fo.includes(flat) || flat.includes(fo) || flat.includes(fo.slice(0, Math.min(8, fo.length))))) out.push({ id: o.id, label: o.name, certain: false, score: Math.min(flat.length, fo.length) })
       }
       return out.sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
     }
