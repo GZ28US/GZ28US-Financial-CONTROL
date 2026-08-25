@@ -62,7 +62,7 @@ type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; inciden
 type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
 type CatRow = { id: string; item: string; current: string | null; suggest: string | null }
 type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null; ebay_bare?: boolean; ebay_item?: string | null }
-type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; categories: CatRow[]; category_vocab: string[] }
+type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
@@ -558,6 +558,14 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     for (const r of linker.streams) mk(r, 'STREAM')
     for (const p of linker.no_pn) items.push({ href: '/parts', code: 'SEM PN', label: p.item || '(sem nome)', extra: 'peça do catálogo sem part number — preencher em PARTS' })
     for (const dp of linker.dup_pn) items.push({ href: '/parts', code: 'PN DUP', label: `${dp.pn}: ${dp.items.join(' × ')}`, extra: 'regra uma-linha-por-PN — unir em PARTS' })
+    // PN DE ANÚNCIO (25/ago): identidade é cirurgia — sempre humano, nunca bulk.
+    for (const e of linker.ebay_pn) items.push({
+      href: '/parts', code: 'PN ANÚNCIO', label: `${e.item} · "${e.supplier}"`,
+      extra: e.suggest ? `o PN gravado (${e.listing}) é o nº do anúncio — no texto o PN real parece ser ${e.suggest}` : `o PN gravado (${e.listing}) é o nº do anúncio — confira o PN real na página`,
+      link: { href: `https://www.ebay.com/itm/${e.listing}`, label: 'ANÚNCIO ↗' },
+      suggest: e.suggest || undefined, signal: 'source',
+      fix: e.suggest ? { kind: 'select' as const, table: 'parts_database', rowId: e.id, field: 'part_number', options: [{ value: e.suggest, label: `${e.suggest} (achado no texto do item)` }], current: e.listing } : undefined,
+    })
     checks.push({
       group: 'INVENTORY', key: 'parts-identity', title: 'Esta peça é qual peça do catálogo?',
       blocks: 'estoque e compras não conversam com o catálogo',
@@ -638,7 +646,7 @@ export default function DataCheckPage() {
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
   const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [], history: { absurd: [], comps: [] } })   // sinal do STAFF DUTY WATCH
-  const [linker, setLinker] = useState<LinkerSignal>({ state: 'loading', needsMigration: false, needsSupplierMigration: false, totals: null, inventory: [], streams: [], no_pn: [], dup_pn: [], suppliers_unlinked: [], suppliers_all: [], map_bad: [], no_source: [], kit_mismatch: [], categories: [], category_vocab: [] })   // identidade de peças
+  const [linker, setLinker] = useState<LinkerSignal>({ state: 'loading', needsMigration: false, needsSupplierMigration: false, totals: null, inventory: [], streams: [], no_pn: [], dup_pn: [], suppliers_unlinked: [], suppliers_all: [], map_bad: [], no_source: [], kit_mismatch: [], ebay_pn: [], categories: [], category_vocab: [] })   // identidade de peças
   const [bulk, setBulk] = useState<string>('')   // progresso do bulk
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
@@ -682,7 +690,7 @@ export default function DataCheckPage() {
         // LINKER: identidade de peças (pré-P1 do Crew Chief) — inventory/stream → catálogo.
         const rl = await fetch(`${BASE_PATH}/api/parts/link`, { headers: await sessionHeaders() })
         const jl = await rl.json().catch(() => ({}))
-        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, needsSupplierMigration: !!jl.needs_supplier_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [], suppliers_unlinked: jl.suppliers_unlinked || [], suppliers_all: jl.suppliers_all || [], map_bad: jl.map_bad || [], no_source: jl.no_source || [], kit_mismatch: jl.kit_mismatch || [], categories: jl.categories || [], category_vocab: jl.category_vocab || [] })
+        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, needsSupplierMigration: !!jl.needs_supplier_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [], suppliers_unlinked: jl.suppliers_unlinked || [], suppliers_all: jl.suppliers_all || [], map_bad: jl.map_bad || [], no_source: jl.no_source || [], kit_mismatch: jl.kit_mismatch || [], ebay_pn: jl.ebay_pn || [], categories: jl.categories || [], category_vocab: jl.category_vocab || [] })
         else setLinker(prev => ({ ...prev, state: 'error', needsMigration: !!jl.needs_migration }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()

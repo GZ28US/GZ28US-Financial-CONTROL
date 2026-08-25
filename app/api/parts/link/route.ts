@@ -137,6 +137,18 @@ export async function GET(req: NextRequest) {
       for (const c of supCandidates(handle)) { const e = by.get(c.id); if (!e || Number(c.certain) > Number(e.certain) || c.score > e.score) by.set(c.id, c) }
       return strip([...by.values()]).sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
     }
+    // PN DE ANÚNCIO (observação aprovada, 25/ago): em linha eBay, "PN" de 9–13
+    // dígitos é o número do anúncio, não a peça. O PN real costuma estar no texto
+    // do item — 8 dígitos (GM) primeiro, senão o token alfanumérico mais longo.
+    const ebayPnRows = parts.filter((p: any) => {
+      const s = String(p.supplier || '')
+      return (ebayHandle(s) != null || /ebay/i.test(s)) && /^\d{9,13}$/.test(normPN(p.part_number))
+    }).map((p: any) => {
+      const listing = normPN(p.part_number)
+      const toks = (String([p.item, p.alias].filter(Boolean).join(' ')).toUpperCase().match(/[A-Z0-9][A-Z0-9-]{4,}/g) || []).filter((t: string) => /\d/.test(t) && normPN(t) !== listing)
+      const suggest = toks.find((t: string) => /^\d{8}$/.test(t)) || toks.sort((a: string, b: string) => b.length - a.length)[0] || null
+      return { id: p.id, item: String(p.alias || p.item || '').slice(0, 60), listing, suggest, supplier: String(p.supplier || '').slice(0, 40) }
+    })
     const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim()).map((p: any) => {
       const eb = ebayHandle(String(p.supplier || ''))
       const ebayish = eb != null || /ebay/i.test(String(p.supplier || ''))
@@ -161,6 +173,7 @@ export async function GET(req: NextRequest) {
       totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length, sup_unlinked: supItems.length, map_bad: mapBad.length },
       inventory: invItems, streams: psItems, no_pn: noPN.slice(0, 200), dup_pn: dupPN.slice(0, 50),
       suppliers_unlinked: supItems, suppliers_all: [...offRows].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(o => ({ id: o.id, name: o.name })), map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
+      ebay_pn: ebayPnRows.slice(0, 100),
       categories: catItems, category_vocab: PART_CATEGORIES,
     })
   } catch (e) {
