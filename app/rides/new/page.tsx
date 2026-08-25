@@ -87,18 +87,23 @@ export default function NewRidePage() {
     // kind's own sequence: US.### for project rides, US.QT.### for quote rides —
     // max trailing number among same-kind rides + 1, padded to 3 digits.
     try {
-      // Scope the sequence to this area's own origin so SHP.### and US.###
-      // never collide (the regex below only reads the trailing number).
-      let codeQuery = supabase.from('rides').select('project_code').not('project_code', 'is', null)
-      codeQuery = isShop ? codeQuery.eq('origin', 'SHOP') : codeQuery.eq('origin', 'PROJECT').eq('is_quote', isQuote)
-      const { data: rideData } = await codeQuery
+      // The sequence is read from the PROJECT CODE itself — never from origin/is_quote.
+      // project_code carries the unique constraint, so it is the only field that can
+      // tell us what is taken. Trusting the flags bit us on 25/aug/2026: US.QT.015 sat
+      // with origin='US' (a value that shouldn't exist), the origin filter hid it, the
+      // screen offered 015 again and the insert died on rides_project_code_key.
+      const { data: rideData } = await supabase
+        .from('rides').select('project_code').not('project_code', 'is', null)
       // Suggest the LOWEST UNUSED number in this kind's sequence (not global max+1),
       // so a deliberately high / pinned code (e.g. a themed US.170) doesn't drag every
       // new ride up behind it — new rides keep filling the sequence (…035, 036).
+      // The prefix must match EXACTLY: "US.007" belongs to US, "US.QT.007" to US.QT,
+      // and neither may read the other's numbers.
+      const seq = new RegExp(`^${wantPrefix.replace(/\./g, '\\.')}\\.(\\d+)$`)
       const used = new Set<number>()
       for (const r of (rideData || [])) {
-        const m = r.project_code?.match(/^(.+)\.(\d+)$/)
-        if (m) used.add(parseInt(m[2], 10))
+        const m = r.project_code?.match(seq)
+        if (m) used.add(parseInt(m[1], 10))
       }
       let nextNum = 1
       while (used.has(nextNum)) nextNum++
@@ -279,7 +284,24 @@ export default function NewRidePage() {
       is_quote: isQuote,
       origin: isShop ? 'SHOP' : 'PROJECT',
     }])
-    if (error) { alert(error.message); return }
+    if (error) {
+      // The code is unique DB-side. If it's taken, say which one and offer the next
+      // free number instead of showing the raw constraint name.
+      if (/duplicate key|rides_project_code_key/i.test(error.message)) {
+        const { data: taken } = await supabase.from('rides').select('project_code').not('project_code', 'is', null)
+        const seq = new RegExp(`^${(isShop ? 'SHP' : isQuote ? 'US.QT' : 'US').replace(/\./g, '\\.')}\\.(\\d+)$`)
+        const used = new Set<number>()
+        for (const r of (taken || [])) { const m = r.project_code?.match(seq); if (m) used.add(parseInt(m[1], 10)) }
+        let free = 1
+        while (used.has(free)) free++
+        const suggestion = `${isShop ? 'SHP' : isQuote ? 'US.QT' : 'US'}.${pad3(free)}`
+        setProjectCode(suggestion)
+        alert(`O código ${projectCode.trim()} já está em uso por outro ride.\n\nJá troquei para ${suggestion}, que está livre. Confira e salve de novo.`)
+        return
+      }
+      alert(error.message)
+      return
+    }
 
     // Dropbox folder sync: every new PROJECT ride gets its physical folder
     // ("CODE - Name") in GZ28US Rides. Quotes and shop rides don't. Non-blocking.
