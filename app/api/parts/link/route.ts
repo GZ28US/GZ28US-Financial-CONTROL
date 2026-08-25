@@ -26,6 +26,19 @@ const supHard = (s: unknown) => {
   while (w.length > 1 && SUP_SUFFIX.has(w[w.length - 1])) w.pop()
   return w.join('')
 }
+// A GRAMÁTICA DO EBAY (João, 25/ago): quando a compra é no eBay, o texto traz o
+// handle do vendedor — minúsculas, sem espaço ("atozwholesaleautoparts",
+// "eBay - powerteqperformance", "quirkparts (eBay)"). O fornecedor REAL é o
+// vendedor; eBay é canal (ordering_method). Devolve o handle ou null.
+const ebayHandle = (raw: string): string | null => {
+  const s = String(raw || '').trim()
+  let m = s.match(/ebay\s*[-–—·:]*\s*([a-z0-9._-]{4,})\s*$/i)
+  if (m && /[a-z]/.test(m[1])) return m[1].toLowerCase()
+  m = s.match(/^([a-z0-9._-]{4,})\s*\(\s*ebay\s*\)$/i)
+  if (m && /[a-z]/.test(m[1])) return m[1].toLowerCase()
+  if (/^[a-z0-9._-]{8,}$/.test(s) && /[a-z]/.test(s)) return s
+  return null
+}
 // A grafia vira apelido quando difere do nome na identidade dura e ainda não existe
 // — cada conserto manual ensina o casador (fricção #4: menos "sem candidato" amanhã).
 async function maybeTeachAlias(db: any, sup: any, spelling: string): Promise<boolean> {
@@ -109,9 +122,20 @@ export async function GET(req: NextRequest) {
       }
       return out.sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
     }
-    const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim()).map((p: any) => ({
-      id: p.id, text: String(p.supplier).slice(0, 60), part: [p.part_number, p.alias || p.item].filter(Boolean).join(' · ').slice(0, 70), candidates: supCandidates(p.supplier),
-    })) : []
+    // eBay: o handle também procura (identidade dura iguala "atozwholesaleautoparts"
+    // a "Atoz Wholesale Auto Parts") e o genérico "Ebay" é suprimido — com o
+    // vendedor real no texto, linkar no marketplace seria jogar informação fora.
+    const supCandidatesFor = (text: string, handle: string | null) => {
+      const base = supCandidates(text)
+      if (!handle) return base
+      const by = new Map(base.map(c => [c.id, c]))
+      for (const c of supCandidates(handle)) { const e = by.get(c.id); if (!e || Number(c.certain) > Number(e.certain) || c.score > e.score) by.set(c.id, c) }
+      return [...by.values()].filter(c => supHard(c.label) !== 'EBAY').sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
+    }
+    const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim()).map((p: any) => {
+      const eb = ebayHandle(String(p.supplier || ''))
+      return { id: p.id, text: String(p.supplier).slice(0, 60), part: [p.part_number, p.alias || p.item].filter(Boolean).join(' · ').slice(0, 70), candidates: supCandidatesFor(String(p.supplier || ''), eb), ebay: eb }
+    }) : []
     // higiene: MAP < custo, source_type nulo, KIT × is_kit em desacordo
     const mapBad = parts.filter((p: any) => p.map_price != null && p.unit_price != null && Number(p.map_price) > 0 && Number(p.map_price) < Number(p.unit_price))
       .map((p: any) => ({ id: p.id, item: String(p.alias || p.item || '').slice(0, 60), cost: Number(p.unit_price), map: Number(p.map_price) }))
@@ -145,15 +169,19 @@ export async function POST(req: NextRequest) {
     const name = String(b.name || '').trim().slice(0, 80)
     if (!name) return NextResponse.json({ error: 'nome vazio' }, { status: 400 })
     const db = bankDb()
-    const all = await fetchAll(db, 'suppliers', 'id, name, aliases')
+    const all = await fetchAll(db, 'suppliers', 'id, name, aliases, ordering_method')
     let sup = all.find((s: any) => supHard(s.name) === supHard(name)) || null
     const reused = !!sup
+    const via = String(b.via || '').trim().slice(0, 40)
     if (!sup) {
-      const { data, error } = await db.from('suppliers').insert({ name }).select('id, name, aliases')
+      const { data, error } = await db.from('suppliers').insert(via ? { name, ordering_method: via } : { name }).select('id, name, aliases')
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       sup = data![0]
+    } else if (via && !sup.ordering_method) {
+      await db.from('suppliers').update({ ordering_method: via }).eq('id', sup.id).then(() => undefined, () => undefined)
     }
-    await maybeTeachAlias(db, sup, String(b.spelling || '').trim())
+    const spellings = [String(b.spelling || ''), ...(Array.isArray(b.spellings) ? b.spellings : [])].map(s => String(s || '').trim()).filter(Boolean)
+    for (const sp of spellings) await maybeTeachAlias(db, sup, sp)
     const linkId = String(b.link_part_id || '')
     if (linkId) {
       const { data: r, error } = await db.from('parts_database').update({ supplier_id: sup.id }).eq('id', linkId).is('supplier_id', null).select('id, item, alias')
@@ -167,12 +195,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, supplier: { id: sup.id, name: sup.name }, reused })
   }
   if (String(b.action) === 'teach_alias') {
-    const supplierId = String(b.supplier_id || ''), spelling = String(b.spelling || '').trim()
-    if (!supplierId || !spelling) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+    const supplierId = String(b.supplier_id || '')
+    const spellings = [String(b.spelling || ''), ...(Array.isArray(b.spellings) ? b.spellings : [])].map((s: any) => String(s || '').trim()).filter(Boolean)
+    if (!supplierId || !spellings.length) return NextResponse.json({ error: 'bad request' }, { status: 400 })
     const db = bankDb()
-    const { data: sup } = await db.from('suppliers').select('id, name, aliases').eq('id', supplierId).maybeSingle()
-    if (!sup) return NextResponse.json({ error: 'fornecedor não encontrado' }, { status: 404 })
-    const taught = await maybeTeachAlias(db, sup, spelling)
+    let taught = false
+    for (const sp of spellings) {
+      const { data: sup } = await db.from('suppliers').select('id, name, aliases').eq('id', supplierId).maybeSingle()
+      if (!sup) return NextResponse.json({ error: 'fornecedor não encontrado' }, { status: 404 })
+      if (await maybeTeachAlias(db, sup, sp)) taught = true
+    }
     return NextResponse.json({ ok: true, taught })
   }
   // R1: linka o FORNECEDOR oficial na peça do catálogo (guarda is-null + trilha).

@@ -31,7 +31,7 @@ const CAR_RX = /car purchase|compra |challenger|charger|demon|hellcat|redeye|wid
 
 type Fix =
   | { kind: 'date'; table: string; rowId: string; field: string }
-  | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string }
+  | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string; ebay?: string | null }
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
@@ -61,7 +61,7 @@ type SilentComp = { key: string; staff_name: string; after: string; days: string
 type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[]; history: { absurd: AbsurdSeg[]; comps: SilentComp[] } }
 type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
 type CatRow = { id: string; item: string; current: string | null; suggest: string | null }
-type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[] }
+type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null }
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
@@ -581,10 +581,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         { value: '__new__', label: '➕ criar fornecedor novo…' },
       ]
       items.push({
-        href: '/parts', code: 'FORN.', label: `"${r.text}" · ${r.part}`,
-        extra: best ? (best.certain ? 'nome oficial bate — certo' : 'candidato — conferir') : 'sem candidato — escolha na lista ou crie aqui',
+        href: '/parts', code: r.ebay ? 'EBAY' : 'FORN.', label: `"${r.text}" · ${r.part}`,
+        extra: best ? (best.certain ? 'nome oficial bate — certo' : 'candidato — conferir') : r.ebay ? `vendedor do eBay "${r.ebay}" — crie o fornecedor REAL (fica marcado: via eBay)` : 'sem candidato — escolha na lista ou crie aqui',
         certain: !!best?.certain, suggest: best?.id, signal: best ? (best.certain ? 'matched' : 'source') : undefined,
-        fix: { kind: 'select' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', options, current: null, spelling: r.text },
+        fix: { kind: 'select' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', options, current: null, spelling: r.text, ebay: r.ebay || undefined },
       })
     }
     for (const m of linker.map_bad) items.push({ href: '/parts', code: 'MAP<CUSTO', label: `${m.item}: custo ${usd(m.cost)} > MAP ${usd(m.map)}`, extra: 'preço fora da lei da casa — conferir em PARTS', amount: m.cost - m.map })
@@ -719,9 +719,9 @@ export default function DataCheckPage() {
       setSaving(true)
       try {
         if (value === '__new__') {
-          const name = (window.prompt('Nome OFICIAL do novo fornecedor:', fix.spelling || '') || '').trim()
+          const name = (window.prompt(fix.ebay ? `Nome OFICIAL do vendedor do eBay "${fix.ebay}":` : 'Nome OFICIAL do novo fornecedor:', fix.ebay || fix.spelling || '') || '').trim()
           if (!name) return
-          const r = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'create_supplier', name, link_part_id: fix.rowId, spelling: fix.spelling || '' }) })
+          const r = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'create_supplier', name, link_part_id: fix.rowId, spellings: [fix.spelling, fix.ebay].filter(Boolean), via: fix.ebay ? 'eBay' : undefined }) })
           const j = await r.json().catch(() => ({}))
           if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
           if (j.supplier) setLinker(prev => prev.suppliers_all.some(s => s.id === j.supplier.id) ? prev : { ...prev, suppliers_all: [...prev.suppliers_all, j.supplier].sort((a, b) => a.name.localeCompare(b.name)) })
@@ -730,7 +730,7 @@ export default function DataCheckPage() {
           const { error: err } = await supabase.from(fix.table).update({ supplier_id: value }).eq('id', fix.rowId).is('supplier_id', null)
           if (err) { alert(err.message); return }
           await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: 'supplier_id', old_value: null, new_value: value, label: `${item.code} · ${item.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
-          fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'teach_alias', supplier_id: value, spelling: fix.spelling || '' }) }).then(() => undefined, () => undefined)
+          fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'teach_alias', supplier_id: value, spellings: [fix.spelling, fix.ebay].filter(Boolean) }) }).then(() => undefined, () => undefined)
         }
         setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
         setFixing(null); setFixValue('')
