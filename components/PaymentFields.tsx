@@ -38,11 +38,16 @@ export function defaultPayment(overrides?: Partial<PaymentInfo>): PaymentInfo {
 }
 
 // Row → PaymentInfo (for edit pages). paid = payment_date present.
+// Caso Drácula (João, 25/ago): linha EXISTENTE com paid_from NULL aparecia como
+// "GZ28US" no formulário — parecia preenchida (o Data Checker dizia que não, e o
+// Data Checker estava certo) e qualquer salvamento gravava o default fabricado.
+// Editar mostra a VERDADE: vazio = "— quem pagou? —" (o default GZ28US continua
+// só no defaultPayment, pra lançamento NOVO).
 export function paymentFromRow(row: { payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; payment_date?: string | null }): PaymentInfo {
   return {
     method: row.payment_method || 'CASH',
-    paidFrom: row.paid_from || 'GZ28US',
-    paidTo: row.paid_to || 'GZ28US',
+    paidFrom: row.paid_from || '',
+    paidTo: row.paid_to || '',
     paid: !!row.payment_date,
     paymentDate: row.payment_date || todayYmd(),
   }
@@ -79,14 +84,16 @@ export default function PaymentFields({ value, onChange, hidePaidToggle }: {
       </div>
       <div>
         <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-        <select value={value.paidFrom} onChange={(e) => set({ paidFrom: e.target.value })} className={selectClass}>
+        <select value={value.paidFrom} onChange={(e) => set({ paidFrom: e.target.value })} className={selectClass + (!value.paidFrom ? ' border-amber-500 text-amber-300' : '')}>
+          {!value.paidFrom && <option value="">— quem pagou? —</option>}
           {PAID_FROM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
           {value.paidFrom && !PAID_FROM_OPTIONS.includes(value.paidFrom as any) && <option value={value.paidFrom}>{value.paidFrom}</option>}
         </select>
       </div>
       <div>
         <label className="block mb-2 text-lg font-bold">PAID TO</label>
-        <select value={value.paidTo} onChange={(e) => set({ paidTo: e.target.value })} className={selectClass}>
+        <select value={value.paidTo} onChange={(e) => set({ paidTo: e.target.value })} className={selectClass + (!value.paidTo ? ' border-amber-500 text-amber-300' : '')}>
+          {!value.paidTo && <option value="">— de quem é a conta? —</option>}
           {PAID_TO_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
           {value.paidTo && !PAID_TO_OPTIONS.includes(value.paidTo as any) && <option value={value.paidTo}>{value.paidTo}</option>}
         </select>
