@@ -154,6 +154,25 @@ export type CashEvent = {
   amount: number; code: string; label: string; href: string
 }
 
+// CARROS × OFICINA (D2/D3 — João decidiu 25/ago): detector POR LINHA do carro
+// de export — ≥$15k + vocabulário de carro OU o apelido do próprio ride, com
+// guarda de peça (engine/kit/heads/câmbio… nunca é carro). Validado contra as
+// 41 linhas ≥$15k do banco real: zero erro depois do apelido (caso "KR TX
+// CHRYS - Joker 2nd Payment") e da guarda (caso "Demon 170 NEW Full Engine").
+const CAR_TOKENS = /car purchase|compra |challenger|charger|demon|hellcat|redeye|widebody|superstock|camaro|z\/28|vin\s|corvette|mustang|durango/i
+const CAR_PART_GUARD = /engine|kit\b|heads|camshaft|transmission|c[âa]mbio|turbo|porting|supercharger|pulley|injector/i
+export function isCarLine(text: string | null | undefined, amount: number, nickname?: string | null): boolean {
+  const t = String(text || '')
+  if (amount < 15000 || CAR_PART_GUARD.test(t)) return false
+  if (CAR_TOKENS.test(t)) return true
+  const nick = String(nickname || '').trim()
+  return nick.length >= 4 && t.toUpperCase().includes(nick.toUpperCase())
+}
+export const invNickname = (d: FinData, invoiceId: string): string | null => {
+  const inv = d.invoiceById.get(invoiceId)
+  return (inv?.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
+}
+
 export function buildCashEvents(d: FinData): CashEvent[] {
   const ev: CashEvent[] = []
   const push = (date: string | null | undefined, section: CashEvent['section'], line: string,
@@ -178,6 +197,13 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     if (f && amount) push(date, 'FIN', f.line, amount, 'FUNDED', f.who + ' · ' + label, '/adm/check')
   }
 
+  // Invoices COM carro (linha de carro na venda ou no custo): os recebimentos
+  // delas vão pra linha própria — o caixa não se aloca por linha, então a
+  // separação de ENTRADA é por invoice (a nota da tela confessa isso).
+  const carInv = new Set<string>()
+  for (const e of d.invExpenses) if (isCarLine(e.item, expLine(e), invNickname(d, e.invoice_id))) carInv.add(e.invoice_id)
+  for (const p of d.invParts) if (isCarLine(p.description, num(p.unit_price) * num(p.quantity), invNickname(d, p.invoice_id))) carInv.add(p.invoice_id)
+
   // Recebimentos — só o que TEM paid_at (agendado ainda não é caixa). Recebido
   // pela GZ28BR (2025) é linha própria: é receita nossa que virou saldo lá.
   for (const p of d.payments) {
@@ -187,7 +213,7 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     const cashDate = String(p.paid_at).slice(0, 10)
     const cd = okDate(cashDate) ? cashDate : p.payment_date
     push(cd, 'OPER',
-      p.paid_to === 'GZ28BR' ? 'RECEIPTS_BR' : 'RECEIPTS',
+      p.paid_to === 'GZ28BR' ? 'RECEIPTS_BR' : carInv.has(p.invoice_id) ? 'RECEIPTS_CARS' : 'RECEIPTS',
       num(p.amount), m.code, m.car || p.description || p.source || '', m.href)
     // Recebeu na GZ28BR = o dinheiro ficou LÁ: espelho negativo na conta corrente.
     if (p.paid_to === 'GZ28BR') push(cd, 'FIN', 'FUND_BR', -num(p.amount), 'FUNDED',
@@ -196,7 +222,8 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   // Fornecedores de projeto (inclui compra de carro — separação é papo do DRE/D3).
   for (const e of d.invExpenses) {
     const m = invoiceMeta(d, e.invoice_id)
-    push(e.payment_date, 'OPER', 'JOB_COST', -expLine(e), m.code,
+    const car = isCarLine(e.item, expLine(e), invNickname(d, e.invoice_id))
+    push(e.payment_date, 'OPER', car ? 'CAR_BUY' : 'JOB_COST', -expLine(e), m.code,
       [m.car, e.item].filter(Boolean).join(' · '), m.href)
     fund(e, e.payment_date, expLine(e), [m.code, e.item].filter(Boolean).join(' · '))
   }

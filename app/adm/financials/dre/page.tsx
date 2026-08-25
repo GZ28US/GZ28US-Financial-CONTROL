@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, recognitionDate, ledgerTotals, qtyLine, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -39,20 +39,34 @@ function Waterfall({ steps }: { steps: { label: string; value: number; kind: 'in
 export default function DrePage() {
   const [d, setD] = useState<FinData | null>(null)
   const [error, setError] = useState('')
+  const [scope, setScope] = useState<'OFICINA' | 'COMPLETO'>('OFICINA')   // CARROS × OFICINA (João, 25/ago)
   useEffect(() => { loadFinancials().then(setD).catch(e => setError(String(e?.message || e))) }, [])
 
   const m = useMemo(() => {
     if (!d) return null
     let parts = 0, services = 0, flTax = 0, discount = 0, cost = 0, wipOpen = 0, fleetCost = 0
+    let carRev = 0, carFlTax = 0, carDiscount = 0, carCost = 0
     let missingConclusion = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
-      const scope = rideScope(d, inv)
-      const ours = scope === 'OWN' || scope === 'TOOL' || scope === 'DONOR'
+      const rscope = rideScope(d, inv)
+      const ours = rscope === 'OWN' || rscope === 'TOOL' || rscope === 'DONOR'
       // Carro nosso (OWN/TOOL) não fatura pra ninguém — linha de preço em
       // invoice nossa é display, não receita. Só o custo entra (as-booked).
       if (!ours) { parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount }
       cost += t.cost
+      // CARROS × OFICINA (João, 25/ago): a linha do carro sai da visão OFICINA —
+      // venda (invoice_parts) e custo (invoice_expenses) detectados por linha.
+      const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
+      if (!ours) {
+        const cp = d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick))
+          .reduce((s: number, p: any) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0)
+        const cft = cp * ((parseFloat(inv.florida_taxes) || 0) / 100)
+        carRev += cp; carFlTax += cft
+        carDiscount += (cp + cft) * ((parseFloat(inv.global_discount) || 0) / 100)
+        carCost += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick))
+          .reduce((s: number, e: any) => s + expLine(e), 0)
+      }
       if (inv.live_status === 'CLOSED' && !recognitionDate(d, inv)) missingConclusion++
       if (ours) fleetCost += t.cost                                    // frota OWN/TOOL dentro do CPV as-booked
       else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) wipOpen += t.cost   // job aberto e carro ainda aqui (EXPORTED = entregue)
@@ -79,24 +93,42 @@ export default function DrePage() {
     return {
       juros, resultado: (lucroBruto - opex) - (juros || 0),
       parts, services, flTax, discount, brutaTotal, liquida, cost, lucroBruto,
+      carRev, carFlTax, carDiscount, carCost,
       payroll, fixedBy, consum, aptCats, smallTools, opex, ebitda: lucroBruto - opex,
       margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—',
       wipOpen, fleetCost, missingConclusion, nInvoices: d.invoices.length,
     }
   }, [d])
 
+  // Visão escolhida: OFICINA tira as linhas de carro dos dois lados; o OPEX é
+  // da oficina nas duas visões. COMPLETO = como sempre foi.
+  const v = useMemo(() => {
+    if (!m) return null
+    const off = scope === 'OFICINA'
+    const parts = m.parts - (off ? m.carRev : 0)
+    const flTax = m.flTax - (off ? m.carFlTax : 0)
+    const discount = m.discount - (off ? m.carDiscount : 0)
+    const cost = m.cost - (off ? m.carCost : 0)
+    const brutaTotal = parts + flTax + m.services
+    const liquida = brutaTotal - discount - flTax
+    const lucroBruto = liquida - cost
+    const ebitda = lucroBruto - m.opex
+    const resultado = ebitda - (m.juros || 0)
+    return { parts, flTax, discount, cost, brutaTotal, liquida, lucroBruto, ebitda, resultado, margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—' }
+  }, [m, scope])
+
   async function downloadPdf() {
-    if (!m) return
+    if (!m || !v) return
     const rows = [
-      { cells: ['Receita de peças & veículos', usd(m.parts)] },
+      { cells: [scope === 'OFICINA' ? 'Receita de peças (oficina)' : 'Receita de peças & veículos', usd(v.parts)] },
       { cells: ['Receita de serviços', usd(m.services)] },
-      { cells: ['Florida sales tax faturado', usd(m.flTax)] },
-      { cells: ['RECEITA BRUTA', usd(m.brutaTotal)], bold: true },
-      { cells: ['(−) Descontos globais', usd(-m.discount)] },
-      { cells: ['(−) FL tax repassado ao estado', usd(-m.flTax)] },
-      { cells: ['RECEITA LÍQUIDA', usd(m.liquida)], bold: true },
-      { cells: ['(−) Custo dos produtos e serviços', usd(-m.cost)] },
-      { cells: ['LUCRO BRUTO', usd(m.lucroBruto)], bold: true },
+      { cells: ['Florida sales tax faturado', usd(v.flTax)] },
+      { cells: ['RECEITA BRUTA', usd(v.brutaTotal)], bold: true },
+      { cells: ['(−) Descontos globais', usd(-v.discount)] },
+      { cells: ['(−) FL tax repassado ao estado', usd(-v.flTax)] },
+      { cells: ['RECEITA LÍQUIDA', usd(v.liquida)], bold: true },
+      { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
+      { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
       { cells: ['(−) Pessoal', usd(-m.payroll)] },
       { cells: ['(−) Ocupação, seguros & profissionais', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
@@ -106,20 +138,21 @@ export default function DrePage() {
       { cells: ['(−) Ferramental de baixo valor', usd(-m.smallTools)] },
       { cells: ['(−) Apartamento & mascotes', usd(-m.aptCats)] },
       { cells: ['(−) Não classificado', usd(-(m.fixedBy.UNCLASSIFIED || 0))] },
-      { cells: ['EBITDA', usd(m.ebitda)], bold: true },
+      { cells: ['EBITDA', usd(v.ebitda)], bold: true },
       { cells: ['(−) Depreciação', 'sem registro (G4)'] },
       { cells: ['(−) Resultado financeiro (juros)', m.juros === null ? 'sem lançamento (LEDGERS)' : usd(-m.juros)] },
-      { cells: ['RESULTADO ACUMULADO', usd(m.resultado)], bold: true },
+      { cells: ['RESULTADO ACUMULADO', usd(v.resultado)], bold: true },
     ]
+    if (scope === 'OFICINA') rows.push({ cells: ['FORA DESTA VISÃO — carros (export): faturado', usd(m.carRev) + ' · custo ' + usd(m.carCost)] })
     await downloadStatementPdf({
       filename: 'GZ28US_DRE_acumulada.pdf',
       title: 'DRE — Demonstração do Resultado',
-      subtitle: 'Acumulado desde o início · regime de competência, as-booked',
+      subtitle: `Acumulado desde o início · regime de competência, as-booked · visão ${scope}`,
       kpis: [
-        ['Receita líquida', usd(m.liquida)],
-        ['Lucro bruto', `${usd(m.lucroBruto)} (${m.margemPct})`],
+        ['Receita líquida', usd(v.liquida)],
+        ['Lucro bruto', `${usd(v.lucroBruto)} (${v.margemPct})`],
         ['Despesas operacionais', usd(-m.opex)],
-        ['EBITDA', usd(m.ebitda)],
+        ['EBITDA', usd(v.ebitda)],
       ],
       tables: [{ head: ['', 'ACUMULADO'], rows }],
       notes: [
@@ -132,7 +165,7 @@ export default function DrePage() {
   }
 
   if (error) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-red-400">{error}</p></main>
-  if (!d || !m) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-gray-400">Loading…</p></main>
+  if (!d || !m || !v) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-gray-400">Loading…</p></main>
 
   const Row = ({ label, value, sub, note }: { label: string; value: number | null; sub?: boolean; note?: string }) => (
     <div className={`px-4 py-2.5 flex justify-between gap-4 border-t border-gray-800 ${sub ? '' : 'bg-gray-900 font-bold'}`}>
@@ -153,18 +186,29 @@ export default function DrePage() {
       </div>
       <p className="text-gray-400 mb-5 max-w-3xl">Regime de competência, acumulado desde o início, as-booked. {m.nInvoices} invoices reais.</p>
 
-      <div className="flex mb-6"><button onClick={downloadPdf} className="px-4 py-2 rounded-xl font-bold bg-emerald-700 hover:bg-emerald-600 border border-emerald-500">⬇ BAIXAR PDF</button></div>
+      {/* CARROS × OFICINA (João, 25/ago): a gestão olha a oficina; o COMPLETO
+          mostra todo o dinheiro que passou. O card dos carros fica sempre à vista. */}
+      <div className="flex gap-2 mb-6 items-center flex-wrap">
+        {(['OFICINA', 'COMPLETO'] as const).map(s => (
+          <button key={s} onClick={() => setScope(s)} className={`px-4 py-2 rounded-xl font-bold border ${scope === s ? 'bg-white text-black border-white' : 'bg-gray-900 border-gray-700 hover:bg-gray-700'}`}>{s === 'OFICINA' ? 'SÓ A OFICINA' : 'COMPLETO (com carros)'}</button>
+        ))}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl px-4 py-2 text-xs text-gray-400">
+          <span className="font-bold text-gray-300">CARROS (EXPORT):</span> faturado {usd(m.carRev)} · custo {usd(m.carCost)} · margem {usd(m.carRev - m.carDiscount - m.carCost)}
+          {scope === 'OFICINA' && <span className="text-amber-300"> — fora da visão atual</span>}
+        </div>
+        <button onClick={downloadPdf} className="ml-auto px-4 py-2 rounded-xl font-bold bg-emerald-700 hover:bg-emerald-600 border border-emerald-500">⬇ BAIXAR PDF</button>
+      </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">
-        {[['RECEITA LÍQUIDA', m.liquida, 'text-gray-200'],
-          ['LUCRO BRUTO', m.lucroBruto, 'text-emerald-400'],
+        {[['RECEITA LÍQUIDA', v.liquida, 'text-gray-200'],
+          ['LUCRO BRUTO', v.lucroBruto, 'text-emerald-400'],
           ['DESPESAS OPERACIONAIS', -m.opex, 'text-red-400'],
-          ['EBITDA', m.ebitda, m.ebitda < 0 ? 'text-red-400' : 'text-emerald-400']].map(([label, v, cls]) => (
+          ['EBITDA', v.ebitda, v.ebitda < 0 ? 'text-red-400' : 'text-emerald-400']].map(([label, val, cls]) => (
           <div key={label as string} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
             <p className="text-xs font-bold text-gray-500 mb-1">{label}</p>
-            <p className={`text-2xl font-bold tabular-nums ${cls}`}>{usd(v as number)}</p>
-            {label === 'LUCRO BRUTO' && <p className="text-xs text-gray-500 mt-1">{m.margemPct} da receita líquida</p>}
+            <p className={`text-2xl font-bold tabular-nums ${cls}`}>{usd(val as number)}</p>
+            {label === 'LUCRO BRUTO' && <p className="text-xs text-gray-500 mt-1">{v.margemPct} da receita líquida</p>}
           </div>
         ))}
       </div>
@@ -174,11 +218,11 @@ export default function DrePage() {
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
           <p className="text-sm font-bold text-gray-400 mb-4">DA RECEITA AO EBITDA</p>
           <Waterfall steps={[
-            { label: 'Receita líquida', value: m.liquida, kind: 'in' },
-            { label: 'Custo dos produtos e serviços', value: m.cost, kind: 'out' },
-            { label: 'Lucro bruto', value: m.lucroBruto, kind: 'net' },
+            { label: 'Receita líquida', value: v.liquida, kind: 'in' },
+            { label: 'Custo dos produtos e serviços', value: v.cost, kind: 'out' },
+            { label: 'Lucro bruto', value: v.lucroBruto, kind: 'net' },
             { label: 'Despesas operacionais', value: m.opex, kind: 'out' },
-            { label: 'EBITDA', value: m.ebitda, kind: 'net' },
+            { label: 'EBITDA', value: v.ebitda, kind: 'net' },
           ]} />
         </div>
         {/* Abertura do OPEX */}
@@ -206,16 +250,17 @@ export default function DrePage() {
         </div>
 
         <div className="border border-gray-800 rounded-2xl overflow-hidden">
-          <Row label="Receita de peças & veículos" value={m.parts} sub />
+          <Row label={scope === 'OFICINA' ? 'Receita de peças (oficina)' : 'Receita de peças & veículos'} value={v.parts} sub
+            note={scope === 'COMPLETO' ? `dos quais carros (export): ${usd(m.carRev)}` : undefined} />
           <Row label="Receita de serviços" value={m.services} sub />
-          <Row label="Florida sales tax faturado" value={m.flTax} sub />
-          <Row label="RECEITA BRUTA" value={m.brutaTotal} />
-          <Row label="(−) Descontos globais" value={-m.discount} sub />
-          <Row label="(−) FL tax repassado ao estado" value={-m.flTax} sub note="pass-through — não é receita nossa (D5)" />
-          <Row label="RECEITA LÍQUIDA" value={m.liquida} />
-          <Row label="(−) Custo dos produtos e serviços" value={-m.cost} sub
-            note={`inclui frota própria OWN/TOOL ${usd(m.fleetCost)} — sai do custo quando D2/D3 fecharem`} />
-          <Row label="LUCRO BRUTO" value={m.lucroBruto} />
+          <Row label="Florida sales tax faturado" value={v.flTax} sub />
+          <Row label="RECEITA BRUTA" value={v.brutaTotal} />
+          <Row label="(−) Descontos globais" value={-v.discount} sub />
+          <Row label="(−) FL tax repassado ao estado" value={-v.flTax} sub note="pass-through — não é receita nossa (D5)" />
+          <Row label="RECEITA LÍQUIDA" value={v.liquida} />
+          <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub
+            note={`inclui frota própria OWN/TOOL ${usd(m.fleetCost)}${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
+          <Row label="LUCRO BRUTO" value={v.lucroBruto} />
           <Row label="(−) Pessoal" value={-m.payroll} sub />
           <Row label="(−) Ocupação, seguros & profissionais" value={-(m.fixedBy.FIXED || 0)} sub />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub />
@@ -225,13 +270,13 @@ export default function DrePage() {
           <Row label="(−) Ferramental de baixo valor" value={-m.smallTools} sub note={`GOODS abaixo do piso de $${CAP_FLOOR.toLocaleString()} (D8)`} />
           <Row label="(−) Apartamento & mascotes" value={-m.aptCats} sub note="D10 decide se é benefício ou retirada" />
           <Row label="(−) Não classificado" value={-(m.fixedBy.UNCLASSIFIED || 0)} sub />
-          <Row label="EBITDA" value={m.ebitda} />
+          <Row label="EBITDA" value={v.ebitda} />
           <Row label="(−) Depreciação" value={null} sub note="sem registro de ativos ainda (G4)" />
           <Row label="(−) Resultado financeiro (juros)" value={m.juros === null ? null : -m.juros} sub note={m.juros === null ? 'lance os empréstimos no livro LEDGERS' : 'juros pagos, do livro de empréstimos'} />
-          <Row label="RESULTADO ACUMULADO" value={m.resultado} />
+          <Row label="RESULTADO ACUMULADO" value={v.resultado} />
         </div>
 
-        <p className="mt-4 text-sm text-gray-500">Margem bruta as-booked: {m.margemPct} — deprimida porque o valor bruto dos carros de clientes passa pela receita e pelo custo (tratamento agência é a decisão D2/D3 do blueprint).</p>
+        <p className="mt-4 text-sm text-gray-500">{scope === 'OFICINA' ? `Visão SÓ A OFICINA: as linhas de carro (export) estão fora dos dois lados — faturado ${usd(m.carRev)}, custo ${usd(m.carCost)}. Esta é a margem real da operação.` : `Visão COMPLETA: o valor bruto dos carros passa pela receita e pelo custo — a margem parece menor por isso. Troque pra SÓ A OFICINA pra ver a operação.`} (D2/D3 resolvido em 25/ago — separação por linha, validada contra o banco.)</p>
       </div>
     </main>
   )

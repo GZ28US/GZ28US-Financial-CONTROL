@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -52,7 +52,7 @@ export default function BalancePage() {
 
   const m = useMemo(() => {
     if (!d) return null
-    let ar = 0, advances = 0, wip = 0, fleetOwn = 0, fleetTool = 0, donorCost = 0, flPayable = 0
+    let ar = 0, advances = 0, wip = 0, wipCars = 0, fleetOwn = 0, fleetTool = 0, donorCost = 0, flPayable = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
       const scope = rideScope(d, inv)
@@ -71,7 +71,12 @@ export default function BalancePage() {
       else if (scope === 'DONOR') donorCost += t.cost
       // Carro EXPORTED embarcou: trabalho entregue, custo não é mais obra
       // em andamento — fica no CPV as-booked, fora do WIP.
-      else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) wip += t.cost
+      else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) {
+        wip += t.cost
+        // CARROS × OFICINA (João, 25/ago): quanto do WIP é carro de export parado.
+        const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
+        wipCars += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s: number, e: any) => s + expLine(e), 0)
+      }
     }
     // Conta corrente GZ28BR — mesmo algoritmo do GZ-FLOW, condensado:
     // GOT = receita nossa que entrou na conta deles; PAID = conta nossa que eles pagaram.
@@ -111,7 +116,7 @@ export default function BalancePage() {
     // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
     // livros e o DATA CHECK zeram. Só existe com os livros vivos.
     const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
-    return { ar, advances, wip, fleetOwn, fleetTool, donorCost, flPayable, brNet, beto, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
+    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, donorCost, flPayable, brNet, beto, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
   }, [d])
 
   async function downloadPdf() {
@@ -133,7 +138,7 @@ export default function BalancePage() {
             { cells: ['Caixa e equivalentes', m.lt ? usd(m.lt.cashTotal) : `? (${na} — G5)`] },
             { cells: ['Contas a receber', usd(m.ar)] },
             ...(m.brNet > 0 ? [{ cells: ['Conta corrente GZ28BR', usd(m.brNet)] }] : []),
-            { cells: ['Obras em andamento (WIP)', usd(m.wip)] },
+            { cells: [m.wipCars > 0 ? `Obras em andamento (WIP) — oficina ${usd(m.wip - m.wipCars)} + carros export ${usd(m.wipCars)}` : 'Obras em andamento (WIP)', usd(m.wip)] },
             { cells: ['Estoque de peças', usd(m.stockPurch)] },
             { cells: ['Estoque doado', usd(m.stockDon)] },
             { cells: ['Imobilizado — equipamento', usd(m.equip)] },
@@ -228,7 +233,8 @@ export default function BalancePage() {
           <Composition items={[
             ['Caixa', m.lt ? m.lt.cashTotal : 0],
             ['Contas a receber', m.ar],
-            ['WIP (jobs abertos)', m.wip],
+            ['WIP — oficina', m.wip - m.wipCars],
+            ['WIP — carros de export', m.wipCars],
             ['Conta corrente GZ28BR', Math.max(m.brNet, 0)],
             ['Frota de marketing (OWN)', m.fleetOwn],
             ['Estoque (comprado + doado)', m.stockPurch + m.stockDon],

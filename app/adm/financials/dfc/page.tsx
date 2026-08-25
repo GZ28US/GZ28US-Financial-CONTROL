@@ -37,6 +37,13 @@ const ROWS: RowDef[] = [
   { kind: 'line', key: 'EQUIP', label: 'Equipamento de oficina (GOODS)' },
   { kind: 'line', key: 'STOCK', label: 'Estoque de peças comprado' },
   { kind: 'sub', keys: ['EQUIP', 'STOCK'], label: 'Caixa de investimentos' },
+  // CARROS × OFICINA (João, 25/ago): o trading de carros tem seção própria — a
+  // linha de ENTRADA é por invoice (recebimento não se aloca por linha; invoices
+  // de carro incluem a oficina embutida nelas), a de SAÍDA é por linha de compra.
+  { kind: 'head', label: 'CARROS (EXPORT)' },
+  { kind: 'line', key: 'RECEIPTS_CARS', label: 'Recebimentos de invoices com carro' },
+  { kind: 'line', key: 'CAR_BUY', label: 'Compra de carros' },
+  { kind: 'sub', keys: ['RECEIPTS_CARS', 'CAR_BUY'], label: 'Caixa dos carros (export)' },
   { kind: 'head', label: 'FINANCIAMENTO' },
   { kind: 'line', key: 'CAPITAL', label: 'Aportes de capital' },
   { kind: 'line', key: 'DRAW', label: 'Retiradas (sócios & pessoal)' },
@@ -49,7 +56,7 @@ const ROWS: RowDef[] = [
   { kind: 'line', key: 'FUND_BETO', label: 'Empréstimo de sócio — Beto (bancou por nós)' },
   { kind: 'sub', keys: ['CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO'], label: 'Caixa de financiamento' },
 ]
-const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'EQUIP', 'STOCK', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO']
+const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'EQUIP', 'STOCK', 'RECEIPTS_CARS', 'CAR_BUY', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO']
 
 // Gráfico: barras de entrada (verde) e saída (vermelho) por coluna + linha do
 // caixa acumulado desde o início. SVG puro, mesmo espírito do GZ-FLOW.
