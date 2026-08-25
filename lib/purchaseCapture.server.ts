@@ -216,21 +216,31 @@ function gmailBodyText(payload: any): string {
 async function scanGmail(db: SupabaseClient, seenSet: Set<string>, out: string[]): Promise<void> {
   const token = await gmailAccessToken(db)
   if (!token) return
-  const q = encodeURIComponent('newer_than:5d (subject:(order) OR subject:(receipt) OR subject:(purchase) OR subject:(payment) OR subject:(pedido))')
-  const list = await fetch(`${GM}/messages?q=${q}&maxResults=25`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
+  // O filtro de assunto do Gmail era MAIS ESTREITO que o ORDER_SUBJECT e engolia
+  // compras inteiras antes de qualquer regra nossa rodar: "subject:(order)" não
+  // casa com "Ordered:", que é exatamente como a Amazon confirma um pedido
+  // (111-9605878-5792209, 25/ago/2026 — nunca chegou ao STREAM). Filtro de loja
+  // é jogo de gato e rato; então o Gmail passa a limitar só a JANELA e quem
+  // decide se é compra é o ORDER_SUBJECT, a MESMA regra do Hotmail.
+  // Pra isso não custar caro: lê primeiro só os CABEÇALHOS e só baixa o corpo
+  // do que passou no filtro.
+  const q = encodeURIComponent('newer_than:5d -in:chats')
+  const list = await fetch(`${GM}/messages?q=${q}&maxResults=80`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
   for (const stub of list?.messages || []) {
     const key = `pc:gm:${stub.id}`
     if (seenSet.has(key)) continue
-    const m = await fetch(`${GM}/messages/${stub.id}?format=full`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
-    if (!m?.payload) continue
-    const header = (n: string) => String((m.payload.headers || []).find((h: any) => h.name?.toLowerCase() === n)?.value || '')
+    const head = await fetch(`${GM}/messages/${stub.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
+    if (!head?.payload) continue
+    const header = (n: string) => String((head.payload.headers || []).find((h: any) => h.name?.toLowerCase() === n)?.value || '')
     const fromRaw = header('from')
     const fromAddr = (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).toLowerCase().trim()
     const fromName = fromRaw.replace(/<[^>]+>/, '').replace(/"/g, '').trim()
     const subj = header('subject')
     if (!ORDER_SUBJECT.test(subj) || EXCLUDE_FROM.test(fromAddr)) continue
-    const dateStr = new Date(Number(m.internalDate || Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    const dateStr = new Date(Number(head.internalDate || Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
     if (dateStr < CAPTURE_EPOCH.slice(0, 10)) continue
+    const m = await fetch(`${GM}/messages/${stub.id}?format=full`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
+    if (!m?.payload) continue
     out.push(...await processPurchase(db, seenSet, {
       key, fromAddr, fromName, subject: subj, text: gmailBodyText(m.payload), dateStr, box: 'gmail',
     }))

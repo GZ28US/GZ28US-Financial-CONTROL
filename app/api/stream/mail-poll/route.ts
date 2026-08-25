@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel, refreshAllTracking } from '@/lib/stream.server'
-import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
+import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, carrierFromText, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
@@ -60,14 +60,35 @@ async function run(force: boolean): Promise<NextResponse> {
       // "Order confirmed" = BOUGHT, never SHIPPED — tracking only comes from
       // the shipping-confirmation email (caso eBay 25-14968-48374, 06/ago).
       if (isPurchaseConfirmation(msg)) continue
-      const trackings = extractTrackings(`${msg.subject} ${msg.text}`).filter(t => !taken.has(t))
-      if (!trackings.length) continue
+      const blob = `${msg.subject} ${msg.text}`
+      const said = carrierFromText(blob)
+      const trackings = extractTrackings(blob).filter(t => !taken.has(t))
+      // Marketplace que despacha SEM dar o número (eBay manda só "Carrier: USPS"
+      // + o link "Track package"): a linha não fica com rastreio falso, mas
+      // também não fica cega — grava transportadora e ETA e vai pra SHIPPED.
+      if (!trackings.length) {
+        if (!said) continue
+        const eta = (blob.match(/(?:estimated delivery|arriving|previs[ãa]o de entrega)[^A-Za-z0-9]{0,4}(?:by\s+)?([A-Z][a-z]{2},?\s+[A-Z][a-z]{2}\s+\d{1,2})(?:\s*[-–]\s*([A-Z][a-z]{2},?\s+[A-Z][a-z]{2}\s+\d{1,2}))?/i) || [])
+        for (const row of matchRows(open.filter(r => !r.tracking_number), msg)) {
+          await db.from('part_streams').update({
+            carrier: said, status: 'SHIPPED', shipped_at: row.shipped_at || new Date().toISOString(),
+            last_event: `Despachado — transportadora ${said} (e-mail: ${msg.subject.slice(0, 60)}). Sem nº de rastreio no e-mail${eta[1] ? `; entrega estimada ${eta[1]}${eta[2] ? ' a ' + eta[2] : ''}` : ''}.`,
+            last_event_at: new Date().toISOString(),
+          }).eq('id', row.id)
+          updated++
+          details.push(`${row.item} → SHIPPED ${said} (sem rastreio no e-mail)`)
+        }
+        continue
+      }
       const rows = matchRows(open.filter(r => !r.tracking_number), msg)
       for (let i = 0; i < rows.length && i < trackings.length; i++) {
         const row = rows[i]
         const tracking = trackings[i]
         taken.add(tracking)
-        await db.from('part_streams').update({ tracking_number: tracking, carrier: guessCarrier(tracking) }).eq('id', row.id)
+        // O que o e-mail DIZ vence o palpite por nº de dígitos — foi o palpite
+        // "12 dígitos = FedEx" que rotulou um Item ID do eBay como FedEx.
+        await db.from('part_streams').update({ tracking_number: tracking, carrier: said || guessCarrier(tracking) }).eq('id', row.id)
+        row.carrier = said || guessCarrier(tracking)
         row.tracking_number = tracking
         await t17Register(tracking, row.carrier)
         const info = (await t17GetInfo(tracking, row.carrier)) || { latest_status: { status: 'InTransit' } }
@@ -83,7 +104,11 @@ async function run(force: boolean): Promise<NextResponse> {
   // no 17TRACK (registro bloqueado sem quota extra), então linhas USPS/Temu não
   // recebem push. Quando o e-mail do vendedor/transportadora anuncia a ENTREGA
   // (casado por tracking no texto, senão matchRows), a linha vira DELIVERED.
-  const DELIVERED_WORDS = /(was|has been|got) delivered|delivered (today|on |at )|delivered notification|your (package|order|item) (was|has been) delivered|entrega (realizada|conclu[ií]da)|foi entregue/i
+  // 25/ago: +"ORDER DELIVERED" / "DELIVERED:" — é o assunto que o eBay usa, e
+  // por não casar aqui a bomba do JailBreak170 ficou 22 dias em SHIPPED mesmo
+  // com o aviso de entrega na caixa desde 04/08. matchRows já casa por número
+  // do PEDIDO antes de qualquer outra coisa, então basta a frase entrar.
+  const DELIVERED_WORDS = /(was|has been|got) delivered|delivered (today|on |at )|delivered notification|your (package|order|item) (was|has been) delivered|\b(order|package|item|shipment|pedido)\s+delivered\b|\bdelivered\s*[:：]|entrega (realizada|conclu[ií]da)|foi entregue/i
   if (msgs.length) {
     const { data: sData } = await db.from('part_streams').select('*').eq('status', 'SHIPPED')
     const shipped = (sData as StreamRow[]) || []

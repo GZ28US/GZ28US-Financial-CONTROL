@@ -128,18 +128,41 @@ const TRACKING_RES: RegExp[] = [
 // in BOTH the order-confirmation and the shipping-confirmation emails, so an
 // all-digit candidate sitting in item context is never a tracking number.
 const ITEM_ID_CONTEXT = /(?:\/itm[/:]?|\bitem\s*(?:id|number|no\.?|#)?\s*[:#]?)\s*$/i
+// ITEM_ID_CONTEXT é ancorado no FIM do trecho anterior, então só blinda a
+// PRIMEIRA cópia do número — e o eBay imprime o Item ID DUAS VEZES seguidas
+// ("Item ID: 398152407962 398152407962"). A segunda cópia entrava como se
+// fosse rastreio FedEx, porque "Track package" aparece perto e satisfaz o
+// NEAR_TRACK. Foi assim que a bomba do JailBreak170 (pedido 24-14969-99732)
+// passou 22 dias em SHIPPED com um número que não era de transportadora
+// nenhuma, enquanto o eBay já tinha avisado a entrega (25/ago/2026).
+// Agora: todo número que apareça em contexto de ITEM em QUALQUER ponto do
+// texto fica banido do resultado inteiro, não só na ocorrência rotulada.
+const ITEM_ID_ANYWHERE = /(?:\/itm[/:]?|\bitem\s*(?:id|number|no\.?|#)?\s*[:#]?)\s*(\d{9,22})/gi
 // Tracking language that must sit NEAR an ambiguous all-digit candidate.
 // "deliver" stays out on purpose — "Estimated delivery" lines sit right next
 // to item listings in marketplace emails.
 const NEAR_TRACK = /track|fedex|usps|ups\b|carrier|shipment|shipped/i
+
+// A transportadora dita em texto claro vale mais que palpite por nº de dígitos:
+// o eBay escreve "Carrier: USPS" / "Shipped with USPS" no próprio e-mail.
+const CARRIER_SAID = /(?:carrier|shipped\s+(?:with|via|by)|ship(?:ped)?\s+by)\s*[:：]?\s*(USPS|UPS|FedEx|DHL|OnTrac|LaserShip|Amazon|SpeedX|GOFO|SwiftX|UniUni|Pandion|Estes|Roadrunner)\b/i
+const CARRIER_CANON: Record<string, string> = { usps: 'USPS', ups: 'UPS', fedex: 'FedEx', dhl: 'DHL', ontrac: 'OnTrac', lasership: 'LaserShip', amazon: 'Amazon', speedx: 'SpeedX', gofo: 'GOFO', swiftx: 'SwiftX', uniuni: 'UniUni', pandion: 'Pandion', estes: 'Estes', roadrunner: 'Roadrunner' }
+export function carrierFromText(s: string): string | null {
+  const m = s.match(CARRIER_SAID)
+  return m ? (CARRIER_CANON[m[1].toLowerCase()] || m[1]) : null
+}
+
 export function extractTrackings(s: string): string[] {
   const out = new Set<string>()
+  const banned = new Set<string>()
+  for (const m of s.matchAll(ITEM_ID_ANYWHERE)) banned.add(m[1])
   for (const re of TRACKING_RES) {
     for (const m of s.matchAll(re)) {
       const t = m[0]
       const at = m.index ?? 0
       const before = s.slice(Math.max(0, at - 90), at)
       const after = s.slice(at + t.length, at + t.length + 90)
+      if (banned.has(t)) continue
       if (ITEM_ID_CONTEXT.test(before)) continue
       // An all-digit shape (FedEx 12/15) is ambiguous — eBay Item IDs, phone
       // numbers, invoice ids all collide. Only trust it when tracking language
