@@ -15,8 +15,8 @@
     },
     {
       "name": "gz28br-ca",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:\\Users\\gz28u\\Dropbox\\000 - GZ28BR\\GZ28BR Tad\\Control App", "run", "dev", "--", "--port", "3002"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\gz28u\\Dropbox\\000 - GZ28BR\\GZ28BR Tad\\Control App\\node_modules\\next\\dist\\bin\\next", "dev", "C:\\Users\\gz28u\\Dropbox\\000 - GZ28BR\\GZ28BR Tad\\Control App", "--port", "3002"],
       "port": 3002
     }
   ]
