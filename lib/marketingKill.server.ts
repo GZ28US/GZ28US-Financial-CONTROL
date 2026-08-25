@@ -8,10 +8,18 @@
 //
 // Desenho novo, em DUAS camadas (assim a lista NÃO precisa ser perfeita):
 //   1. o REMETENTE tem de estar em `marketing_senders` (auditado, ativo);
-//   2. E a mensagem tem de passar em 3 travas de conteúdo — sem anexo, com
-//      List-Unsubscribe, sem estar dentro de conversa (In-Reply-To/References) e sem
-//      NENHUM marcador transacional (nº de pedido/rastreio, valor aprovado, código,
-//      cancelamento, candidatura, reserva…).
+//   2. E a mensagem tem de passar nas travas de conteúdo — sem anexo, sem estar
+//      dentro de conversa (In-Reply-To/References) e sem NENHUM marcador
+//      transacional (nº de pedido/rastreio, valor aprovado, código, cancelamento,
+//      candidatura, reserva…) nem no assunto nem no preview.
+//
+// O `List-Unsubscribe` ERA obrigatório e SAIU em 25/ago/2026 (ordem dele: "some com
+// eles"). Motivo: remetente brasileiro em geral não manda esse cabeçalho — Nubank
+// dispara por SendGrid e Mecanizou por Mailgun, e nenhum dos dois o inclui (conferido
+// nos 57 e 61 cabeçalhos que o Graph devolveu). O resultado era um matador que
+// encontrava o e-mail toda passada e nunca podia apagar: 523 bloqueios no Mecanizou,
+// 1.158 no radiumauto, 2.609 no amenify. Para remetente que ELE já curou na lista, a
+// identidade do remetente já é a prova; o cabeçalho virou bônus, não requisito.
 // Bateu tudo  → move pra Itens Excluídos (recuperável; nunca delete permanente) e
 //               registra em `marketing_kills`.
 // Travou      → NÃO apaga: incrementa `blocked` e deixa o e-mail onde está, pro humano.
@@ -83,9 +91,8 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
           if (m.hasAttachments || HARD_STOP.test(subj)) { await block(a.account, addr, subj); continue }
           const hd = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders,bodyPreview`, { headers: H }).then(x => x.json()).catch(() => null)
           const heads: { name?: string }[] = hd?.internetMessageHeaders || []
-          const unsub = heads.some(x => /^list-unsubscribe$/i.test(String(x.name)))
           const inReply = heads.some(x => /^(in-reply-to|references)$/i.test(String(x.name)))
-          if (!unsub || inReply || HARD_STOP.test(String(hd?.bodyPreview || ''))) { await block(a.account, addr, subj); continue }
+          if (inReply || HARD_STOP.test(String(hd?.bodyPreview || ''))) { await block(a.account, addr, subj); continue }
           const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'deleteditems' }) })
           if (mv.ok) await kill(a.account, addr, subj, folder)
           else await block(a.account, addr, subj)
@@ -108,7 +115,7 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
         if (!listed.has(addr)) continue
         const subj = hv('subject')
         const hasAtt = /"filename":"[^"]+"/.test(JSON.stringify(msg?.payload?.parts || []))
-        if (!hv('list-unsubscribe') || hv('in-reply-to') || hasAtt || HARD_STOP.test(subj) || HARD_STOP.test(String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
+        if (hv('in-reply-to') || hasAtt || HARD_STOP.test(subj) || HARD_STOP.test(String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
         const t = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}/trash`, { method: 'POST', headers: H })
         if (t.ok) await kill(a.account, addr, subj, 'INBOX')
         else await block(a.account, addr, subj)
