@@ -476,9 +476,11 @@ export default function EditInvoicePage() {
         kit_name: e.kit_name || undefined,
         source: e.source || DEFAULT_SOURCE,
         // Universal payment fields — legacy rows fall back to `source` (the old
-        // who-paid marker) for PAID FROM and to the defaults for the rest.
+        // who-paid marker) for PAID FROM. Caso Drácula (João, 25/ago): NÃO fabricar
+        // DEFAULT_SOURCE ao carregar — vazio aparece vazio ("— quem pagou? —") e o
+        // Data Checker e a tela contam a MESMA história.
         payment_method: e.payment_method || 'CASH',
-        paid_from: e.paid_from || e.source || DEFAULT_SOURCE,
+        paid_from: e.paid_from || e.source || '',
         paid_to: e.paid_to || 'GZ28US',
       })))
       if (!keepUi) setExpandedGroups(new Set())
@@ -2007,14 +2009,16 @@ export default function EditInvoicePage() {
         payment_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
         payment_method: editingExpense.payment_method || 'CASH',
-        paid_from: editingExpense.paid_from || DEFAULT_SOURCE,
+        paid_from: editingExpense.paid_from || null,
         paid_to: editingExpense.paid_to || 'GZ28US',
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
-        source: editingExpense.paid_from || editingExpense.source || DEFAULT_SOURCE,
+        // Sem resposta = NULL nos dois (caso Drácula) — fabricar aqui gravava
+        // GZ28US como se fosse fato.
+        source: editingExpense.paid_from || editingExpense.source || null,
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || DEFAULT_SOURCE, id: exp.id }; setExpenses(updated)
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', id: exp.id }; setExpenses(updated)
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' }) }
@@ -2271,10 +2275,12 @@ export default function EditInvoicePage() {
         export_status: ex.export_status || 'FRESH',
         kit_name: ex.kit_name || null,
         payment_method: ex.payment_method || 'CASH',
-        paid_from: ex.paid_from || DEFAULT_SOURCE,
+        // Caso Drácula: salvar a invoice NÃO responde "quem pagou" por ninguém —
+        // linha sem resposta continua NULL no banco.
+        paid_from: ex.paid_from || null,
         paid_to: ex.paid_to || 'GZ28US',
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
-        source: ex.paid_from || ex.source || DEFAULT_SOURCE,
+        source: ex.paid_from || ex.source || null,
         position: expenses.indexOf(ex),
       }))).select('id')
       if (e) { alert(e.message); return }
@@ -3389,7 +3395,8 @@ export default function EditInvoicePage() {
                               </div>
                               <div className="flex-1 min-w-[8rem]">
                                 <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
-                                <select value={editingExpense.paid_from} onChange={(e) => setEditingExpense({ ...editingExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full`}>
+                                <select value={editingExpense.paid_from} onChange={(e) => setEditingExpense({ ...editingExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full${editingExpense.paid_from ? '' : ' border-amber-500 text-amber-300'}`}>
+                                  {!editingExpense.paid_from && <option value="">— quem pagou? —</option>}
                                   {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                                   {editingExpense.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(editingExpense.paid_from) && <option value={editingExpense.paid_from}>{editingExpense.paid_from}</option>}
                                 </select>
