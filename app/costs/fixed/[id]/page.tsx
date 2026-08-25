@@ -119,6 +119,28 @@ export default function FixedCostSupplierViewPage() {
     if (toInsert.length > 0) await supabase.from('fixed_cost_expenses').insert(toInsert)
   }
 
+  // ENCERRAMENTO FORMAL (João, 25/ago — caso Disney+ "deixar morrer"): grava o
+  // date_conclusion (o gerador já para nele) e APAGA as contas agendadas não
+  // pagas depois da data — com trilha. A vencida anterior fica: pague ou apague.
+  async function terminate() {
+    if (!s) return
+    const end = window.prompt('ENCERRAR esta assinatura/contrato — último dia de vigência (YYYY-MM-DD):', s.date_conclusion || todayYmd())
+    if (!end) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) { alert('Data inválida — use YYYY-MM-DD.'); return }
+    if (!confirm(`Encerrar em ${end}? As contas agendadas (não pagas) DEPOIS dessa data serão apagadas. Fica tudo na trilha.`)) return
+    const { error: e1 } = await supabase.from('fixed_cost_suppliers').update({ date_conclusion: end }).eq('id', id)
+    if (e1) { alert(e1.message); return }
+    const { data: del, error: e2 } = await supabase.from('fixed_cost_expenses').delete().eq('supplier_id', id).is('payment_date', null).gt('expense_date', end).select('id')
+    if (e2) { alert('Encerrada, mas falhou apagar as agendadas: ' + e2.message); load(); return }
+    await supabase.from('data_fixes').insert({
+      check_key: 'sub-ended-scheduled', table_name: 'fixed_cost_suppliers', row_id: id, field: 'date_conclusion',
+      old_value: s.date_conclusion || null, new_value: end,
+      label: (`ENCERRADA · ${s.description || s.company || ''} · ${(del || []).length} conta(s) agendada(s) apagada(s)`).slice(0, 200),
+    }).then(() => undefined, () => undefined)
+    alert(`Encerrada em ${end}. ${(del || []).length} conta(s) agendada(s) apagada(s).`)
+    load()
+  }
+
   async function remove(eid: string) {
     const { error } = await supabase.from('fixed_cost_expenses').delete().eq('id', eid)
     if (error) { alert(error.message); return }
@@ -460,6 +482,7 @@ export default function FixedCostSupplierViewPage() {
         <div className="flex gap-3 flex-wrap">
           <button onClick={openSend} className="bg-emerald-700 hover:bg-emerald-600 px-6 py-3 rounded-2xl text-lg font-bold">📤 SEND TO</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
+          {isValidDate(s.date_conclusion) ? <span className="bg-red-950 border border-red-800 text-red-300 px-6 py-3 rounded-2xl text-lg font-bold" title="date_conclusion — o gerador de contas para aqui">ENCERRADA · {fmtDate(s.date_conclusion)}</span> : <button onClick={terminate} className="bg-red-900 hover:bg-red-800 px-6 py-3 rounded-2xl text-lg font-bold" title="grava o END DATE e apaga as contas agendadas depois dele (com trilha)">ENCERRAR</button>}
         </div>
       </div>
 

@@ -3,9 +3,10 @@
 // Quando as demonstrações merecerem, troca FIN_STAGE para 'BETA' aqui e o
 // selo muda em todas as telas e relatórios de uma vez.
 export const FIN_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const FIN_VERSION = '0.9.6'
+export const FIN_VERSION = '0.9.7'
 
 export const FIN_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.9.7', date: '2026-08-25', notes: "ENCERRAMENTO FORMAL de assinatura/contrato (João, caso Disney+ que vivia de nota \"deixar morrer\" na descrição): o campo já existia (END DATE / date_conclusion — o gerador de contas para nele), faltava o rito. Botão ENCERRAR na página do fornecedor fixo: grava a data e APAGA as contas agendadas não pagas depois dela (com trilha em data_fixes); selo ENCERRADA no lugar do botão. A vencida anterior ao encerramento continua devida: pague ou apague (write-off), decisão humana. Sem migration — só o rito que faltava pro campo que já existia." },
   { version: '0.9.6', date: '2026-08-22', notes: 'Balanço: "Empréstimo de sócio — Beto" no passivo — contas da LLC pagas do bolso do Beto (paid_from = BETO) deixam de passar por caixa da empresa e viram dívida com o sócio. RAFA era sócio da GZ28BR e fica fora do Balanço dos EUA. Conta corrente GZ28BR inalterada. Ainda depende do Data Checker preencher o PAID FROM (950 linhas vazias em 22/ago).' },
   { version: '0.9.5', date: '2026-08-20', notes: 'G1 destravado (insight do Márcio): recognitionDate() deriva o mês do resultado de invoice fechado — conclusion_date explícita > delivery_date > último recebimento. DRE por período fica pronta pra nascer junto com D1/D2.' },
   { version: '0.9.4', date: '2026-08-20', notes: 'Fechar invoice exige CONCLUSION DATE (a trava oferece hoje com um clique); aviso G1 da DRE conta só as fechadas sem data — job em andamento é WIP sob D2, não pendência.' },

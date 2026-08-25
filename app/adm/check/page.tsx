@@ -34,6 +34,7 @@ type Fix =
   | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string; ebay?: string | null }
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
+  | { kind: 'trash'; table: string; rowId: string; field: string; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -295,14 +296,15 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const due = (e: any) => String(e.expense_date || '').slice(0, 10)
     const late = (e: any) => Math.floor((Date.parse(TODAY) - Date.parse(due(e))) / 864e5)
     const tag = (e: any) => due(e) ? `prevista ${due(e)} · ATRASADA há ${late(e)} dia(s)` : 'SEM DATA NENHUMA — nem o mês dá pra saber'
-    const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY))
+    const supEnd = (e: any) => { const sup = d.fixedSuppliers.get(e.supplier_id); return sup?.date_conclusion ? String(sup.date_conclusion).slice(0, 10) : null }
+    const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY) && !(supEnd(e) && due(e) && due(e) > supEnd(e)!))
     const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL' && (!due(e) || due(e) <= TODAY))
     const items: Item[] = [
       ...fx.map((e: any) => {
         const sup = d.fixedSuppliers.get(e.supplier_id)
         return {
           href: e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', code: 'FIXO',
-          label: [sup?.company, e.description].filter(Boolean).join(' · '), extra: tag(e), amount: parseFloat(e.amount) || 0,
+          label: [sup?.company, e.description].filter(Boolean).join(' · '), extra: tag(e) + (supEnd(e) ? ` · assinatura ENCERRADA em ${supEnd(e)} — pague ou apague (write-off)` : ''), amount: parseFloat(e.amount) || 0,
           fix: { kind: 'date' as const, table: 'fixed_cost_expenses', rowId: e.id, field: 'payment_date' },
         }
       }),
@@ -314,6 +316,29 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     checks.push({
       group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha vencido (ou sem data nenhuma)', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
       why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer.',
+      items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+  }
+
+  // 5c · Assinatura ENCERRADA com conta ainda agendada (caso Disney+, João 25/ago:
+  // encerrar é FORMAL — date_conclusion — não uma nota na descrição). O gerador
+  // para de criar contas no encerramento, mas as JÁ criadas ficam: fantasmas.
+  {
+    const items: Item[] = []
+    for (const e of d.fixedExpenses) {
+      if (e.payment_date) continue
+      const sup = d.fixedSuppliers.get(e.supplier_id)
+      const end = sup?.date_conclusion ? String(sup.date_conclusion).slice(0, 10) : null
+      const due2 = String(e.expense_date || '').slice(0, 10)
+      if (end && due2 && due2 > end) items.push({
+        href: e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', code: 'FANTASMA',
+        label: [sup?.company, e.description].filter(Boolean).join(' · '), extra: `assinatura encerrou ${end} · conta agendada ${due2}`, amount: parseFloat(e.amount) || 0,
+        fix: { kind: 'trash' as const, table: 'fixed_cost_expenses', rowId: e.id, field: 'DELETED', confirmText: `Apagar a conta agendada de ${due2} (${sup?.company || ''})? A assinatura encerrou em ${end} — depois disso não há serviço, não há despesa. Fica na trilha.` },
+      })
+    }
+    checks.push({
+      group: 'FINANCIAL', key: 'sub-ended-scheduled', title: 'Assinatura encerrada com conta ainda agendada', blocks: 'despesa fantasma no fluxo futuro de um serviço que já morreu',
+      why: 'Encerrar é formal: o END DATE do fornecedor (date_conclusion — botão ENCERRAR na página dele preenche e limpa as agendadas). Este card pega a sobra: conta não paga agendada DEPOIS do encerramento. Apague aqui (com trilha) — ou, se de fato ficou devendo, acerte a data do encerramento.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -748,6 +773,19 @@ export default function DataCheckPage() {
       } finally { setSaving(false) }
       return
     }
+    // APAGAR (trash): remove a linha de verdade — o painel com o confirmText é a
+    // confirmação; a trilha guarda o que era (old_value = rótulo).
+    if (fix.kind === 'trash') {
+      setSaving(true)
+      try {
+        const { error: err } = await supabase.from(fix.table).delete().eq('id', fix.rowId)
+        if (err) { alert(err.message); return }
+        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: fix.field, old_value: item.label.slice(0, 200), new_value: 'DELETED', label: `${item.code} · ${item.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
     // Fricção #4: fornecedor sem sair da tela — "criar novo" aqui mesmo, e toda
     // escolha manual ensina a grafia como apelido (o casador melhora sozinho).
     if (check.key === 'parts-suppliers' && fix.kind === 'select') {
@@ -978,7 +1016,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -1015,14 +1053,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {it.fix.kind === 'flag' && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
                                 <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>

@@ -77,7 +77,7 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
     fetchAll('expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
     fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type'),
+    fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion'),
     fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
