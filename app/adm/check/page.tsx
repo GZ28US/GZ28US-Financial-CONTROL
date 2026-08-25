@@ -38,6 +38,14 @@ type Fix =
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
 type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean; signal?: string; when?: string; link?: { href: string; label: string } }
+
+// A prova de cada PREENCHER CERTOS, na língua do card (achado do João, 25/ago:
+// a legenda da Regions aparecia até nos cards de peças).
+const CERTAIN_PROOF: Record<string, string> = {
+  'paid-from': 'linhas já casadas com a Regions → GZ28US (prova, não palpite)',
+  'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
+  'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
+}
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 // Categorias do Data Checker (João, 22/ago: inglês, casando com o menu do app).
 // STAFF, TAX e SYSTEM já existem na ordem — os cards deles chegam com as features
@@ -915,7 +923,7 @@ export default function DataCheckPage() {
                     <button disabled={saving} onClick={() => applyCertain(c)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
                       {bulk ? `PREENCHENDO ${bulk}…` : `PREENCHER CERTOS (${c.items.filter(i => i.certain).length})`}
                     </button>
-                    <span className="text-xs text-gray-500">linhas já casadas com a Regions → GZ28US (prova, não palpite)</span>
+                    <span className="text-xs text-gray-500">{CERTAIN_PROOF[c.key] || 'itens com prova, não palpite'}</span>
                   </div>
                 )}
                 {c.key === 'paid-from' && c.items.length > 0 && (
