@@ -1,12 +1,16 @@
 // SERVER-ONLY — FILA DE DESTINO DAS COMPRAS (ordem do Márcio, 19/ago/2026:
 // "quero que o APP faça tudo isso, não você"). Fecha o ciclo que faltava:
-// pescar → (PESCA TEMU quando cego) → perguntar no grupo UMA POR EXPENSE →
-// LER a resposta → registrar no lugar certo → insistir de hora em hora até
-// zerar. Nada pode ficar no limbo: enquanto houver linha aberta, a fila cobra.
+// capturar → regra decide, ou triagem pelo conteúdo decide → o que sobrar
+// espera a PESCA → registrar no lugar certo. Nada pode ficar no limbo.
+//
+// O GRUPO NÃO PERGUNTA MAIS NADA (ordem dele, 25/ago: "não pergunte mais no
+// grupo, não vai funcionar; isso roda no PESCA"). Tudo o que a fila fala sai no
+// PVT dele — relatório do que registrou sozinha e o sino de hora em hora com o
+// comando certo (PESCA TEMU / PESCA AMAZON). O ERRADO é lido nos DOIS chats.
 //
 // Estado DE VERDADE em part_streams.placement_status (nunca emoji em texto):
-//   NEEDS_ITEMS      compra cega (Temu): sem item/valor — cobra PESCA TEMU no PVT
-//   NEEDS_PLACEMENT  itens conhecidos, destino não — pergunta no grupo REPORTS
+//   NEEDS_ITEMS      compra cega (Temu): sem item/valor — só a PESCA resolve
+//   NEEDS_PLACEMENT  itens conhecidos, destino não — triagem tenta; senão PESCA
 //   PLACED           registrada (placed_ref diz onde)   IGNORED  descartada
 //
 // placed_ref carrega "DESTINO#id-da-linha-criada" quando a FILA inseriu o
@@ -65,6 +69,42 @@ const quietNow = (): boolean => {
   return h >= 23 || h < 7
 }
 const hourSince = (iso: string | null) => !iso || (Date.now() - new Date(iso).getTime()) > 3600_000
+
+// ── Triagem pelo CONTEÚDO da compra ─────────────────────────────────────────
+// Ordem do Márcio (25/ago/2026): *"vai ser muito raro enviarmos algo da oficina
+// pro apartamento; o ideal seria o robô checar os itens, e havendo algo
+// 'estranho' pro apartamento, requerer o PESCA, mas estando tudo ok, segue o
+// fluxo."*
+//
+// A lei do endereço não roda em compra de marketplace: a Amazon imprime só o
+// apelido do catálogo ("GZ28 - ORLANDO, FL"), nunca a rua. Então o que decide é
+// o que foi comprado. A triagem é DELIBERADAMENTE torta pro lado seguro: ela só
+// tem poder de dizer "isto é casa" e seguir o fluxo; qualquer cheiro de carro,
+// oficina, ferramenta ou peça — e qualquer dúvida — NÃO coloca nada, deixa na
+// fila pra PESCA conferir o endereço. Errar pro lado de perguntar custa tempo;
+// errar pro outro lado joga custo de oficina no apartamento.
+async function looksLikeHome(item: string): Promise<boolean> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return false
+  const prompt = `Uma oficina de preparação de carros (GZ28) comprou os itens abaixo. O dono também mobilia um APARTAMENTO com compras da mesma conta.
+
+ITENS: ${String(item).slice(0, 600)}
+
+Responda SOMENTE com JSON: {"home": true|false, "why": "3-8 palavras"}
+
+"home": true SOMENTE se TODOS os itens forem claramente de casa/apartamento (móvel, cama, banheiro, cozinha, decoração, organização doméstica, eletrodoméstico pequeno, roupa de cama/banho).
+"home": false se QUALQUER item puder ser de oficina, carro, ferramenta, peça automotiva, produto de lavagem/detailing, eletrônica de bancada, EPI — ou se você tiver qualquer dúvida.
+Na dúvida, SEMPRE false.`
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 120, messages: [{ role: 'user', content: prompt }] }),
+  }).then(x => x.json()).catch(() => null)
+  try {
+    const j = JSON.parse(String(r?.content?.[0]?.text || '').replace(/```json|```/g, '').trim())
+    return j.home === true
+  } catch { return false }
+}
 
 // ── Destinos ────────────────────────────────────────────────────────────────
 // Vocabulário EXATO (achado F3: "\bCAT\b" pegava "cat-back"; palavra solta em
@@ -196,15 +236,39 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       if (ref && ref !== 'NEEDS_VALUE') {
         await db.from('placement_rules').update({ hits: (rule.hits || 0) + 1 }).eq('id', rule.id)
         const amt = amountOf(r.item)
-        await wa(process.env.ULTRAMSG_GROUP_ID || '', `🛒 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
+        await wa(PVT, `🛒 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
       }
+    }
+
+    // ── 1b. Triagem pelo conteúdo: casa segue o fluxo, resto espera a PESCA ──
+    // Só linhas ainda não triadas (asked_count 0). A que não passa recebe
+    // asked_count 1 — não se re-classifica a cada 5 min e o relógio do sino
+    // começa a correr. Teto de 6 por rodada pra não pesar o cron.
+    let triaged = 0
+    for (const r of await pending('NEEDS_PLACEMENT')) {
+      if (r.asked_count > 0 || triaged >= 6) continue
+      triaged++
+      if (amountOf(r.item) == null) continue           // sem valor não vira dinheiro
+      if (!(await looksLikeHome(r.item))) {
+        await db.from('part_streams').update({ asked_count: 1 }).eq('id', r.id)
+        continue
+      }
+      const ref = await place(db, r, 'INPUTS/APARTMENT', placed)
+      if (!ref || ref === 'NEEDS_VALUE') { await db.from('part_streams').update({ asked_count: 1 }).eq('id', r.id); continue }
+      const amt = amountOf(r.item)
+      await wa(PVT, `🏠 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Só item de casa — registrada em *${refLabel(ref)}*\nSe estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
     }
   }
 
-  // ── 2. Ler respostas do grupo (sempre — resposta dele merece ação na hora) ─
+  // ── 2. Ler respostas — PVT dele E grupo (resposta merece ação na hora) ────
+  // O relatório do que a fila registrou sozinha passou a sair no PVT (25/ago),
+  // e o ERRADO tem que poder voltar pelo MESMO lugar onde ele leu — antes só o
+  // grupo era lido, então a correção morreria sem ninguém escutar. O grupo
+  // continua sendo lido por segurança: resposta antiga lá ainda funciona.
   const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN, group = process.env.ULTRAMSG_GROUP_ID
-  if (instance && tk && group) {
-    const msgs: { id?: string; body?: string; fromMe?: boolean }[] = await fetch(`https://api.ultramsg.com/${instance}/chats/messages?token=${encodeURIComponent(tk)}&chatId=${encodeURIComponent(group)}&limit=40`).then(r => r.json()).catch(() => [])
+  for (const chat of [PVT, group].filter(Boolean) as string[]) {
+    if (!instance || !tk) break
+    const msgs: { id?: string; body?: string; fromMe?: boolean }[] = await fetch(`https://api.ultramsg.com/${instance}/chats/messages?token=${encodeURIComponent(tk)}&chatId=${encodeURIComponent(chat)}&limit=40`).then(r => r.json()).catch(() => [])
     const { data: seenRows } = await db.from('stream_mail_moves').select('message_id').eq('from_addr', 'queue-answer')
     const seen = new Set((seenRows || []).map((x: any) => x.message_id))
     const open = [...await pending('NEEDS_PLACEMENT')]
@@ -223,17 +287,17 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       const err = body.match(/^ERRADO\s+([\w.-]{4,30})\s*[:\-]?\s*(.*)$/i)
       if (err) {
         const matches = done.filter(x => (x.order_number || x.id).endsWith(err[1]) || keyOf(x) === err[1])
-        if (matches.length !== 1) { await wa(group, matches.length ? `⚠️ Chave *${err[1]}* ambígua — usa o número do pedido completo.` : `⚠️ Não achei compra registrada com a chave *${err[1]}*.`); await markSeen(mid, body, 'ERRADO-NOT-FOUND'); answered++; continue }
+        if (matches.length !== 1) { await wa(chat, matches.length ? `⚠️ Chave *${err[1]}* ambígua — usa o número do pedido completo.` : `⚠️ Não achei compra registrada com a chave *${err[1]}*.`); await markSeen(mid, body, 'ERRADO-NOT-FOUND'); answered++; continue }
         const row = matches[0]
         const dest = parseDestination(err[2] || '', true)
-        if (!dest) { await wa(group, `⚠️ ERRADO ${err[1]}: me diz o destino certo — *ERRADO ${err[1]}: <APARTMENT | CATS | OFICINA | carro | IGNORA>*`); await markSeen(mid, body, 'ERRADO-NO-DEST'); answered++; continue }
-        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(group, `⚠️ Não achei carro/invoice viva pra "*${dest.slice(5)}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
+        if (!dest) { await wa(chat, `⚠️ ERRADO ${err[1]}: me diz o destino certo — *ERRADO ${err[1]}: <APARTMENT | CATS | OFICINA | carro | IGNORA>*`); await markSeen(mid, body, 'ERRADO-NO-DEST'); answered++; continue }
+        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${dest.slice(5)}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
         const [refDest, refId] = String(row.placed_ref || '').split('#')
-        if (!refId) { await wa(group, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
+        if (!refId) { await wa(chat, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
         if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
         else await db.from('invoice_expenses').delete().eq('id', refId)
         const ref = await place(db, row, dest, placed)
-        await wa(group, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} realocada: *${refLabel(ref)}*` : `⚠️ ${keyOf(row)}: desfeita, mas o novo destino falhou — segue na fila.`)
+        await wa(chat, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} realocada: *${refLabel(ref)}*` : `⚠️ ${keyOf(row)}: desfeita, mas o novo destino falhou — segue na fila.`)
         if (!ref || ref === 'NEEDS_VALUE') await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT', placed_ref: null }).eq('id', row.id)
         await markSeen(mid, body, 'ERRADO-APPLIED'); answered++; continue
       }
@@ -243,20 +307,20 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       if (kv) {
         const matches = open.filter(x => (x.order_number || x.id).endsWith(kv[1]) || keyOf(x) === kv[1])
         if (!matches.length) continue // chave não é nossa — pode ser conversa; não marca
-        if (matches.length > 1) { await wa(group, `⚠️ Chave *${kv[1]}* bate em ${matches.length} compras — usa o número do pedido completo.`); await markSeen(mid, body, 'AMBIGUOUS'); answered++; continue }
+        if (matches.length > 1) { await wa(chat, `⚠️ Chave *${kv[1]}* bate em ${matches.length} compras — usa o número do pedido completo.`); await markSeen(mid, body, 'AMBIGUOUS'); answered++; continue }
         const row = matches[0]
         const dest = parseDestination(kv[2], true)
         if (!dest) continue
         const ref = await place(db, row, dest, placed)
-        if (ref === 'NEEDS_VALUE') { await wa(group, `⚠️ ${keyOf(row)} ainda não tem valor (PESCA TEMU pendente) — repete a resposta depois da pesca.`); await markSeen(mid, body, 'NEEDS-VALUE'); answered++; continue }
-        if (!ref) { await wa(group, `⚠️ Não achei carro/invoice viva pra "*${kv[2].trim()}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
+        if (ref === 'NEEDS_VALUE') { await wa(chat, `⚠️ ${keyOf(row)} ainda não tem valor (PESCA TEMU pendente) — repete a resposta depois da pesca.`); await markSeen(mid, body, 'NEEDS-VALUE'); answered++; continue }
+        if (!ref) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${kv[2].trim()}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
         open.splice(open.indexOf(row), 1)
         answered++
         if (/\bSEMPRE\b/i.test(body) && r_supplier(row)) {
           await db.from('placement_rules').insert({ store: r_supplier(row), destination: dest, note: `aprendida da resposta: "${body.slice(0, 60)}"` })
-          await wa(group, `🧠 Regra aprendida: *${r_supplier(row)} → ${refLabel(dest)}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
+          await wa(chat, `🧠 Regra aprendida: *${r_supplier(row)} → ${refLabel(dest)}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
         } else {
-          await wa(group, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
+          await wa(chat, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
         }
         await markSeen(mid, body, 'APPLIED'); continue
       }
@@ -265,7 +329,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         if (!dest) continue
         const row = open[0]
         const ref = await place(db, row, dest, placed)
-        if (ref && ref !== 'NEEDS_VALUE') { open.pop(); answered++; await wa(group, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`); await markSeen(mid, body, 'APPLIED') }
+        if (ref && ref !== 'NEEDS_VALUE') { open.pop(); answered++; await wa(chat, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`); await markSeen(mid, body, 'APPLIED') }
       }
     }
   }
