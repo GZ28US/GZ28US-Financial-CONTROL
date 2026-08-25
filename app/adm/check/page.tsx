@@ -288,25 +288,32 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
 
   // 5 · Custos fixos e folha sem payment_date.
   {
-    const fx = d.fixedExpenses.filter((e: any) => !e.payment_date)
-    const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL')
+    // v2 (João, 25/ago): conta futura agendada NÃO é pendência — o Márcio registra
+    // meses adiante (7 Warehouse Lease "iguais" eram ago VENCIDA + set–fev futuras,
+    // sem data na linha ninguém distinguia). Entram só: VENCIDA (prevista ≤ hoje,
+    // com dias de atraso) e SEM DATA NENHUMA (nem o mês dá pra saber — defeito).
+    const due = (e: any) => String(e.expense_date || '').slice(0, 10)
+    const late = (e: any) => Math.floor((Date.parse(TODAY) - Date.parse(due(e))) / 864e5)
+    const tag = (e: any) => due(e) ? `prevista ${due(e)} · ATRASADA há ${late(e)} dia(s)` : 'SEM DATA NENHUMA — nem o mês dá pra saber'
+    const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY))
+    const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL' && (!due(e) || due(e) <= TODAY))
     const items: Item[] = [
       ...fx.map((e: any) => {
         const sup = d.fixedSuppliers.get(e.supplier_id)
         return {
           href: e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', code: 'FIXO',
-          label: [sup?.company, e.description].filter(Boolean).join(' · '), amount: parseFloat(e.amount) || 0,
+          label: [sup?.company, e.description].filter(Boolean).join(' · '), extra: tag(e), amount: parseFloat(e.amount) || 0,
           fix: { kind: 'date' as const, table: 'fixed_cost_expenses', rowId: e.id, field: 'payment_date' },
         }
       }),
       ...st.map((e: any) => ({
-        href: '/staff', code: 'FOLHA', label: e.description || e.type || '', amount: parseFloat(e.amount) || 0,
+        href: '/staff', code: 'FOLHA', label: e.description || e.type || '', extra: tag(e), amount: parseFloat(e.amount) || 0,
         fix: { kind: 'date' as const, table: 'expenses', rowId: e.id, field: 'payment_date' },
       })),
     ].sort((a, b) => (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha: pagamos quando?', blocks: 'fica como conta a pagar pra sempre e some do fluxo de caixa',
-      why: 'Mesma história do card anterior, nas tabelas de custo fixo e folha.',
+      group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha vencido (ou sem data nenhuma)', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
+      why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -378,6 +385,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       why: 'Compra de estoque sem data de pagamento não entra no caixa de investimentos.',
       items: rows.map((r: any) => ({
         href: '/inventory', code: 'STOCK', label: r.description || '', amount: qtyLine(r),
+        // João conferiu (25/ago): aqui o card está CERTO — estoque sem data é dado
+        // faltando mesmo. Só ganha a data de compra no rótulo (regra: linha se distingue).
+        extra: r.purchase_date ? `comprado ${String(r.purchase_date).slice(0, 10)}` : 'sem data de compra também',
         fix: { kind: 'date' as const, table: 'inventory', rowId: r.id, field: 'payment_date' },
       })),
       impact: rows.reduce((s: number, r: any) => s + qtyLine(r), 0),
