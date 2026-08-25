@@ -10,6 +10,7 @@ import { enrollParts, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
+import { mirrorBrShoppingInvoice, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS } from '@/components/PaymentFields'
 
@@ -197,6 +198,9 @@ export default function EditInvoicePage() {
   const [remindingIndex, setRemindingIndex] = useState<number | null>(null)
   const [remindedIndex, setRemindedIndex] = useState<number | null>(null)
   const [invoiceCode, setInvoiceCode] = useState('')
+  // Shopping invoice espelho no BR (cliente BR.085) desta invoice — lei 25/ago/2026:
+  // toda despesa PAID FROM GZ28BR vira saída de caixa no app brasileiro.
+  const [brInvoiceId, setBrInvoiceId] = useState<string | null>(null)
   // is_quote is the stored quote/invoice flag. A quote flips to an invoice on
   // SAVE once a valid HIRING DATE is present (handled in saveInvoice).
   const [isQuote, setIsQuote] = useState(false)
@@ -385,6 +389,7 @@ export default function EditInvoicePage() {
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
     if (error || !data) { alert('Invoice not found'); router.push(basePath); return }
     setInvoiceCode(data.invoice_code || '')
+    setBrInvoiceId((data as any).br_invoice_id || null)
     setIsQuote(!!data.is_quote)
     setHiringDate(data.hiring_date || '')
     setClientHiringDate(data.client_hiring_date || '')
@@ -2321,6 +2326,42 @@ export default function EditInvoicePage() {
       removedExpenseIds.length ? supabase.from('invoice_expenses').delete().in('id', removedExpenseIds) : null,
     ].filter(Boolean))
     setRemovedPartIds([]); setRemovedServiceIds([]); setRemovedPaymentIds([]); setRemovedNoteIds([]); setRemovedExpenseIds([])
+
+    // ESPELHO NO BR (lei 25/ago/2026): toda despesa PAID FROM GZ28BR é o BR pagando
+    // uma conta nossa — vira SAÍDA numa SHOPPING INVOICE do cliente BR.085 no app
+    // brasileiro, a custo puro e pelo dólar do dia de cada pagamento. Sem isso o
+    // evento só existiria de um lado e os dois Flows nunca bateriam.
+    if (!nextIsQuote) {
+      try {
+        const brItems: BrMirrorItem[] = expenses
+          .filter((e) => (e.paid_from || e.source || '') === 'GZ28BR')
+          .map((e) => {
+            const qty = parseFloat(e.quantity) || 1
+            return {
+              item: e.item,
+              supplier: e.supplier || null,
+              usdPrice: parseFloat(e.amount) || 0,
+              usdTax: qty > 0 ? (parseFloat(e.tax) || 0) / qty : 0,
+              usdExtra: qty > 0 ? (parseFloat(e.extra) || 0) / qty : 0,
+              quantity: qty,
+              paymentDate: isValidDate(e.payment_date) ? e.payment_date : null,
+            }
+          })
+        const res = await mirrorBrShoppingInvoice({
+          usInvoiceCode: invoiceCode,
+          rideName: projectCode + (projectName ? ` — ${projectName}` : ''),
+          usService: service,
+          existingBrInvoiceId: brInvoiceId,
+          items: brItems,
+        })
+        if (res.brInvoiceId !== brInvoiceId) {
+          setBrInvoiceId(res.brInvoiceId)
+          await supabase.from('invoices').update({ br_invoice_id: res.brInvoiceId }).eq('id', invoiceId)
+        }
+      } catch (err) {
+        alert('A invoice do GZ28US foi salva, mas a SHOPPING INVOICE do BR (cliente BR.085) NAO foi gravada:\n' + String(err) + '\n\nAbra e salve de novo para tentar outra vez.')
+      }
+    }
 
     // Quotes/invoices never write back to the Packs DB — edits stay local to this
     // doc; the pack template is never affected. Go straight to the post-save flow.
