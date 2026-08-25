@@ -225,12 +225,20 @@ async function scanGmail(db: SupabaseClient, seenSet: Set<string>, out: string[]
   // Pra isso não custar caro: lê primeiro só os CABEÇALHOS e só baixa o corpo
   // do que passou no filtro.
   const q = encodeURIComponent('newer_than:5d -in:chats')
-  const list = await fetch(`${GM}/messages?q=${q}&maxResults=80`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
-  for (const stub of list?.messages || []) {
-    const key = `pc:gm:${stub.id}`
-    if (seenSet.has(key)) continue
-    const head = await fetch(`${GM}/messages/${stub.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
+  const list = await fetch(`${GM}/messages?q=${q}&maxResults=60`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
+  const stubs = (list?.messages || []).filter((s: any) => !seenSet.has(`pc:gm:${s.id}`))
+  // Cabeçalhos EM PARALELO (blocos de 8): o mail-poll roda ~15 tarefas dentro
+  // de 60s e uma varredura sequencial de dezenas de mensagens estoura o tempo
+  // da função — foi o que aconteceu no primeiro teste desta mudança (25/ago).
+  const heads: any[] = []
+  for (let i = 0; i < stubs.length; i += 8) {
+    heads.push(...await Promise.all(stubs.slice(i, i + 8).map((s: any) =>
+      fetch(`${GM}/messages/${s.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, { headers: gh(token) }).then((r) => r.json()).catch(() => null))))
+  }
+  for (const head of heads) {
     if (!head?.payload) continue
+    const key = `pc:gm:${head.id}`
+    if (seenSet.has(key)) continue
     const header = (n: string) => String((head.payload.headers || []).find((h: any) => h.name?.toLowerCase() === n)?.value || '')
     const fromRaw = header('from')
     const fromAddr = (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).toLowerCase().trim()
@@ -239,7 +247,7 @@ async function scanGmail(db: SupabaseClient, seenSet: Set<string>, out: string[]
     if (!ORDER_SUBJECT.test(subj) || EXCLUDE_FROM.test(fromAddr)) continue
     const dateStr = new Date(Number(head.internalDate || Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
     if (dateStr < CAPTURE_EPOCH.slice(0, 10)) continue
-    const m = await fetch(`${GM}/messages/${stub.id}?format=full`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
+    const m = await fetch(`${GM}/messages/${head.id}?format=full`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
     if (!m?.payload) continue
     out.push(...await processPurchase(db, seenSet, {
       key, fromAddr, fromName, subject: subj, text: gmailBodyText(m.payload), dateStr, box: 'gmail',
