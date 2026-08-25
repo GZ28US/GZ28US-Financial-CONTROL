@@ -181,7 +181,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
         <span className={`text-2xl font-bold tabular-nums w-14 shrink-0 ${error ? 'text-red-400' : clean ? 'text-emerald-400' : 'text-amber-300'}`}>{error ? '!' : lines ? (totalNew === 0 ? '✓' : totalNew) : '…'}</span>
         <span className="flex-1">
           <span className="font-bold block">CONCILIAÇÃO BANCÁRIA — linhas da Regions × lançamentos do app</span>
-          <span className="text-xs text-gray-500">{error ? `erro: ${error}` : lines ? `trava: conciliação do DFC com o extrato · ${withCand} com candidato · ${feeLines} tarifas (motor)${auto && auto.pending.length ? ` · ${auto.pending.length} a conferir` : ''}` : 'carregando o banco…'}</span>
+          <span className="text-xs text-gray-500">{error ? `erro: ${error}` : lines ? `cada linha do banco precisa de um dono no app · ${withCand} com candidato · ${feeLines} tarifas (motor)${auto && auto.pending.length ? ` · ${auto.pending.length} a conferir` : ''}` : 'carregando o banco…'}</span>
         </span>
         <span className="text-gray-500">{open ? '▴' : '▾'}</span>
       </button>

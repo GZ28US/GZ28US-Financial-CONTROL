@@ -118,7 +118,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         }
       })
     checks.push({
-      group: 'INVOICES', key: 'conclusion', title: 'Invoices FECHADAS sem NENHUMA data derivável', blocks: 'DRE por período (G1)',
+      group: 'INVOICES', key: 'conclusion', title: 'Invoice fechada sem nenhuma data', blocks: 'o resultado entra no mês errado no DRE',
       why: 'Fechada com incomes datados já tem mês de resultado (deriva do último recebimento). Só aparece aqui a raridade sem conclusão, sem entrega E sem income datado — aí não tem de onde derivar.',
       items,
     })
@@ -140,7 +140,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })
     })
     checks.push({
-      group: 'RIDES', key: 'destiny', title: 'Rides sem CAR DESTINY', blocks: 'Balanço (WIP × frota × carro de cliente)',
+      group: 'RIDES', key: 'destiny', title: 'Este carro fica, vende ou exporta? (sem destino)', blocks: 'o Balanço não sabe se o carro é estoque, frota ou do cliente',
       why: 'Sem destino o Balanço não sabe se o carro é nosso (OWN/TOOL → ativo), de cliente em exportação (EXPORT) ou de cliente americano. Vitrine SHOP fica sem destino de propósito.',
       items,
     })
@@ -192,7 +192,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })
     })
     checks.push({
-      group: 'RIDES', key: 'destiny-review', title: 'DESTINY REVIEW — destinos contraditórios', blocks: 'Balanço · DRE (a classificação inteira)',
+      group: 'RIDES', key: 'destiny-review', title: 'Destino do carro: os dados discordam entre si', blocks: 'a classificação do carro no Balanço e no DRE fica em dúvida',
       why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA a LLC nunca comprou; exportação (GZ28 ou 3RD PARTY) exige ADMISSION MILEAGE abaixo de 100 mi — DELIVERY MILES; DONOR pode ter crédito de peça puxada, isso é normal. Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
       items,
     })
@@ -213,7 +213,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })
     })
     checks.push({
-      group: 'RIDES', key: 'admission-mileage', title: 'Export sem ADMISSION MILEAGE', blocks: 'validação de exportação (lei do 0km)',
+      group: 'RIDES', key: 'admission-mileage', title: 'Carro de exportação sem milhagem de entrada', blocks: 'não dá pra provar que era 0km — exigência legal da exportação',
       why: 'Todo carro de exportação — GZ28 ou por terceiro — precisa da milhagem de entrada: abaixo de 100 mi é DELIVERY MILES e pode embarcar. Lance o número aqui mesmo.',
       items,
     })
@@ -249,7 +249,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }
     })
     checks.push({
-      group: 'RIDES', key: 'delivery-cycle', title: 'Ciclo de entrega inconsistente (delivery × EXPORTED)', blocks: 'Balanço (WIP) · ciclo do carro',
+      group: 'RIDES', key: 'delivery-cycle', title: 'Entrega não bate com a exportação', blocks: 'o ciclo do carro fica impossível (entregue antes de chegar)',
       why: 'Delivery date no passado em invoice FECHADA diz que o carro saiu — aí o selo EXPORTED tem que existir (um clique aqui confirma). E EXPORTED sem delivery date em invoice nenhuma não diz QUANDO saiu. Delivery em invoice aberta é promessa, não conta.',
       items,
     })
@@ -267,7 +267,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'FINANCIAL', key: 'undated-inv', title: 'Despesas de projeto sem PAYMENT DATE', blocks: 'Fornecedores a pagar · DFC',
+      group: 'FINANCIAL', key: 'undated-inv', title: 'Despesa de projeto: pagamos quando?', blocks: 'fica como conta a pagar pra sempre e some do fluxo de caixa',
       why: 'Sem data de pagamento a linha vira contas a pagar no Balanço e fica FORA do fluxo de caixa. Se já foi paga, lance a data aqui mesmo.',
       items, impact: rows.reduce((s: number, e: any) => s + expLine(e), 0),
     })
@@ -292,7 +292,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })),
     ].sort((a, b) => (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'FINANCIAL', key: 'undated-fixed', title: 'Custos fixos & folha sem PAYMENT DATE', blocks: 'Fornecedores a pagar · DFC',
+      group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha: pagamos quando?', blocks: 'fica como conta a pagar pra sempre e some do fluxo de caixa',
       why: 'Mesma história do card anterior, nas tabelas de custo fixo e folha.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
@@ -312,7 +312,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }
     }
     checks.push({
-      group: 'INVOICES', key: 'zero-billed', title: 'Invoices com pagamento e SEM LINHAS', blocks: 'A/R · adiantamentos fantasmas (D9)',
+      group: 'INVOICES', key: 'zero-billed', title: 'Invoice recebeu dinheiro mas não tem nenhuma linha', blocks: 'dinheiro entrou por um serviço que não existe no papel',
       why: 'Dinheiro entrou mas a invoice não fatura nada — vira adiantamento de cliente eterno no Balanço. Ou as linhas são preenchidas, ou o job legado fecha contra resultado de abertura.',
       items: items.sort((a, b) => (b.amount || 0) - (a.amount || 0)), impact,
     })
@@ -332,7 +332,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       impact += tot
     })
     checks.push({
-      group: 'FINANCIAL', key: 'untyped-supplier', title: 'Fornecedores fixos sem TIPO', blocks: 'DRE (linha "não classificado")',
+      group: 'FINANCIAL', key: 'untyped-supplier', title: 'Este fornecedor fixo é de quê?', blocks: 'o DRE joga o gasto na linha "não classificado"',
       why: 'Sem cost_type (FIXED/APP/MARKETING/ASSET) o gasto cai na linha genérica da DRE em vez da família certa.',
       items, impact,
     })
@@ -351,7 +351,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'INVOICES', key: 'overdue-receipts', title: 'Recebimentos vencidos sem baixa', blocks: 'A/R · DFC (entradas)',
+      group: 'INVOICES', key: 'overdue-receipts', title: 'Recebimento venceu e ninguém deu baixa', blocks: 'ou o cliente atrasou, ou o dinheiro entrou e ficou sem registro',
       why: 'Agendado pra uma data que já passou e sem paid_at. Se o dinheiro entrou, MARK RECEIVED dá a baixa agora (caixa de hoje). Se não entrou, é cobrança.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
@@ -361,7 +361,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   {
     const rows = d.inventory.filter((s: any) => s.source_type === 'PURCHASED' && !s.payment_date)
     checks.push({
-      group: 'INVENTORY', key: 'undated-stock', title: 'Estoque comprado sem PAYMENT DATE', blocks: 'DFC (investimentos)',
+      group: 'INVENTORY', key: 'undated-stock', title: 'Compra de estoque: pagamos quando?', blocks: 'a compra some do fluxo de caixa',
       why: 'Compra de estoque sem data de pagamento não entra no caixa de investimentos.',
       items: rows.map((r: any) => ({
         href: '/inventory', code: 'STOCK', label: r.description || '', amount: qtyLine(r),
@@ -433,7 +433,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       ...d.inventory.filter((x: any) => x.source_type === 'PURCHASED' && !x.paid_from).map((x: any) => mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x))),
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'FINANCIAL', key: 'paid-from', title: 'Lançamentos sem PAID FROM (quem pagou?)', blocks: 'Bank Link (pool) · DFC por caixa',
+      group: 'FINANCIAL', key: 'paid-from', title: 'Quem pagou esta conta?', blocks: 'o caixa por banco sai errado e a conciliação não fecha',
       why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Sinais: casada/pedido casado com a Regions = GZ28US na certa (PREENCHER CERTOS); antes de 10/nov/2025 a conta nem existia = GZ28BR ou BETO (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; conflito com SOURCE = conferir um a um. Use o filtro de SINAL + texto (mês, invoice, fornecedor) e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
@@ -456,7 +456,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         items.push({ href: '/adm/bank', code: 'NÃO BATE', label: `${c.account}: banco ${usd(c.live.current)} · extrato ${c.integrity.anchor_date} + ${c.integrity.lines_after} linhas = ${usd(c.integrity.implied)}`, extra: `${g > 0 ? 'faltam linhas de entrada / sobram saídas' : 'faltam saídas / sobram entradas'} · pendente −${usd(c.integrity.pending_out)} / +${usd(c.integrity.pending_in || 0)}`, amount: Math.abs(g) })
     }
     checks.push({
-      group: 'BANK', key: 'cash-match', title: 'Caixa não bate (banco real × linhas do Bank Link)', blocks: 'TUDO — é a régua do Balanço e do DFC',
+      group: 'BANK', key: 'cash-match', title: 'O caixa do app bate com o banco?', blocks: 'TUDO — esta é a régua de todo o resto',
       why: 'O Plaid pergunta ao banco o saldo de agora. O Bank Link implica um saldo: último extrato lançado + todas as linhas desde então. Os dois têm que ser iguais até o que ainda está pendente (cartão que não postou). Diferença maior = linha faltando ou duplicada no feed — nada mais deve ser conciliado antes de resolver isto.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
@@ -480,7 +480,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       if (age > 45) items.push({ href: '/adm/financials/ledgers', code: 'EXTRATO', label: `${c.account}: último extrato lançado em ${c.integrity.anchor_date}`, extra: age + ' dias — lance o extrato do mês (é a âncora da régua)' })
     }
     checks.push({
-      group: 'FINANCIAL', key: 'cash-stale', title: 'Saldo de caixa ausente ou envelhecido', blocks: 'Balanço (caixa) · conciliação com o banco',
+      group: 'FINANCIAL', key: 'cash-stale', title: 'Saldo de caixa ausente ou velho', blocks: 'o Balanço mostra um caixa que já não existe',
       why: 'O Balanço usa o último saldo por conta. Saldo velho é caixa mentindo — lance o fechamento de cada mês em LEDGERS até o Plaid assumir.',
       items,
     })
@@ -498,8 +498,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       else if (p.classification === 'SERVICE' && !p.w9_on_file) items.push({ href: '/adm/tax', code: y.year, label: `${p.name}: SERVIÇO ${usd(p.total)} sem W-9 em arquivo`, extra: `1099-NEC até 31/jan/${Number(y.year) + 1}`, amount: p.total, when: y.year })
     }
     checks.push({
-      group: 'TAX', key: 'tax-1099', title: '1099-NEC — contratados sem classificação ou sem W-9',
-      blocks: 'obrigação anual (31/jan) · multa por 1099 não emitido',
+      group: 'TAX', key: 'tax-1099', title: 'Pagamos alguém $600+ no ano — o 1099 está em dia?',
+      blocks: 'obrigação anual (31/jan) — 1099 não emitido dá multa',
       why: 'Todo beneficiário pago por Zelle, wire ou cheque com $600+ no ano precisa de um veredito: serviço (pede 1099-NEC e W-9), mercadoria, corporação ou pessoal. O extrato lista quem recebeu; o TAX SHIELD grava a classificação; a Drummond confirma a lei. Sem W-9 na mão, janeiro vira correria.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
@@ -530,8 +530,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       extra: 'trabalho sem registro? reconstruir em DUTIES — nunca compensar',
     })
     checks.push({
-      group: 'STAFF', key: 'staff-duties', title: 'Duty timer — esquecido, simultâneo ou virando a noite',
-      blocks: 'horas de trabalho infladas · relatório diário da equipe',
+      group: 'STAFF', key: 'staff-duties', title: 'Timer de trabalho esquecido, dobrado ou virando a noite',
+      blocks: 'as horas da equipe ficam infladas e o relatório diário mente',
       why: `Timer que ninguém pausou vira hora que ninguém trabalhou. Regras (Márcio): ${duty.maxHours}h por duty, uma duty por vez, nada vira a noite ligado. O cron (30 em 30min, 07–22h de Orlando) avisa a PRÓPRIA pessoa no WhatsApp — um aviso por duty por dia — e escala pro grupo GZ28US - STAFF se seguir rodando 60min depois. O conserto (pausar/finalizar) é na tela DUTIES.`,
       items,
     })
@@ -559,8 +559,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     for (const p of linker.no_pn) items.push({ href: '/parts', code: 'SEM PN', label: p.item || '(sem nome)', extra: 'peça do catálogo sem part number — preencher em PARTS' })
     for (const dp of linker.dup_pn) items.push({ href: '/parts', code: 'PN DUP', label: `${dp.pn}: ${dp.items.join(' × ')}`, extra: 'regra uma-linha-por-PN — unir em PARTS' })
     checks.push({
-      group: 'INVENTORY', key: 'parts-identity', title: 'LINKER — peças sem identidade (estoque · stream · catálogo)',
-      blocks: 'Crew Chief (BOM × estoque × lead time) · catálogo canônico',
+      group: 'INVENTORY', key: 'parts-identity', title: 'Esta peça é qual peça do catálogo?',
+      blocks: 'estoque e compras não conversam com o catálogo',
       why: 'O Crew Chief só funciona se estoque e stream APONTAREM pra peça do catálogo em vez de descrevê-la em texto (medido: 5/47 e 21/178 achavam). PN da peça no texto = certo — o botão resolve em massa; candidato por nome = confira um a um; sem candidato = cadastre a peça em PARTS e volte. Formulários novos vão escolher do catálogo — este card liga o legado.',
       items, impact: undefined,
     })
@@ -583,8 +583,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     for (const s of linker.no_source) items.push({ href: '/parts', code: 'ORIGEM', label: `${s}: sem source_type`, extra: 'classificar em PARTS' })
     for (const k of linker.kit_mismatch) items.push({ href: '/parts', code: 'KIT?', label: `${k.item}: source_type ${k.st || '—'} × is_kit ${k.kit ? 'sim' : 'não'}`, extra: 'os dois campos discordam — acertar em PARTS' })
     checks.push({
-      group: 'INVENTORY', key: 'parts-suppliers', title: 'Catálogo R1 — fornecedor oficial · MAP × custo · origem',
-      blocks: 'lead time por fornecedor (Crew Chief) · lei do preço da casa',
+      group: 'INVENTORY', key: 'parts-suppliers', title: 'Peça sem fornecedor oficial, ou com preço estranho',
+      blocks: 'não sabemos de quem comprar nem se o preço respeita a regra da casa',
       why: 'O catálogo escreve 188 grafias pra 40 fornecedores oficiais — o link peça → fornecedor destrava o lead time aprendido do Crew Chief (nome oficial batendo = certo, bulk resolve). MAP menor que o custo fere a lei do preço; source_type vazio ou discordando do is_kit é sujeira que confunde o cadeado.',
       items, impact: undefined,
     })
@@ -603,8 +603,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       fix: vocab.length ? { kind: 'select' as const, table: 'parts_database', rowId: c.id, field: 'category', options: vocab.map(v => ({ value: v, label: v })), current: c.current } : undefined,
     })
     checks.push({
-      group: 'INVENTORY', key: 'parts-category', title: 'Catálogo — categoria (vocabulário fechado)',
-      blocks: 'BOM agrupada do Crew Chief · achar peça no catálogo',
+      group: 'INVENTORY', key: 'parts-category', title: 'Peça sem categoria', blocks: 'ninguém acha a peça na hora de montar um pacote',
       why: 'Decisão de 24/ago (João+Márcio): categoria entra pra valer, com 13 valores fechados. O app dá o palpite por palavra-chave (supercharger → ENGINE, injector → FUEL SYSTEM…); quem bate o martelo é você — por isso não tem bulk aqui: palpite não é prova.',
       items,
     })
@@ -632,6 +631,7 @@ export default function DataCheckPage() {
   const [filter, setFilter] = useState<Record<string, string>>({})     // filtro por card
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)      // chip de categoria
+  const [whyOpen, setWhyOpen] = useState<string | null>(null)              // "entender esta checagem" aberto
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
 
   useEffect(() => {
@@ -855,13 +855,17 @@ export default function DataCheckPage() {
               </span>
               <span className="flex-1">
                 <span className="font-bold block">{c.title}</span>
-                <span className="text-xs text-gray-500">trava: {c.blocks}{c.impact ? ` · impacto ${usd(c.impact)}` : ''}</span>
+                <span className="text-xs text-gray-500">se ignorar: {c.blocks}{c.impact ? ` · impacto ${usd(c.impact)}` : ''}</span>
               </span>
               <span className="text-gray-500">{open === c.key ? '▴' : '▾'}</span>
             </button>
             {open === c.key && (
               <div className="px-5 py-4 border-t border-gray-800">
-                <p className="text-sm text-gray-400 mb-3 max-w-2xl">{c.why}</p>
+                {/* UX it.2: uma linha, não um parágrafo — o porquê completo só pra quem pedir. */}
+                <div className="mb-3">
+                  <button onClick={() => setWhyOpen(whyOpen === c.key ? null : c.key)} className="text-xs text-gray-500 hover:text-gray-300 underline">{whyOpen === c.key ? 'entender esta checagem ▴' : 'entender esta checagem ▾'}</button>
+                  {whyOpen === c.key && <p className="text-sm text-gray-400 mt-2 max-w-2xl">{c.why}</p>}
+                </div>
                 {c.items.some(i => i.certain) && (
                   <div className="flex items-center gap-3 mb-3">
                     <button disabled={saving} onClick={() => applyCertain(c)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
