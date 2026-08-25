@@ -127,14 +127,23 @@ export async function GET(req: NextRequest) {
     // vendedor real no texto, linkar no marketplace seria jogar informação fora.
     const supCandidatesFor = (text: string, handle: string | null) => {
       const base = supCandidates(text)
-      if (!handle) return base
+      const ebayish = handle != null || /ebay/i.test(text)
+      const strip = (l: typeof base) => l.filter(c => supHard(c.label) !== 'EBAY')
+      // Refinamento do João (25/ago): linha eBay NUNCA sugere o genérico "Ebay" —
+      // nem a linha nua ("eBay" seco casava CERTO com ele e jogava o vendedor fora).
+      // Quem quiser o genérico ainda o acha na lista completa, à mão.
+      if (!handle) return ebayish ? strip(base) : base
       const by = new Map(base.map(c => [c.id, c]))
       for (const c of supCandidates(handle)) { const e = by.get(c.id); if (!e || Number(c.certain) > Number(e.certain) || c.score > e.score) by.set(c.id, c) }
-      return [...by.values()].filter(c => supHard(c.label) !== 'EBAY').sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
+      return strip([...by.values()]).sort((a, b) => Number(b.certain) - Number(a.certain) || b.score - a.score).slice(0, 4)
     }
     const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim()).map((p: any) => {
       const eb = ebayHandle(String(p.supplier || ''))
-      return { id: p.id, text: String(p.supplier).slice(0, 60), part: [p.part_number, p.alias || p.item].filter(Boolean).join(' · ').slice(0, 70), candidates: supCandidatesFor(String(p.supplier || ''), eb), ebay: eb }
+      const ebayish = eb != null || /ebay/i.test(String(p.supplier || ''))
+      // O número do anúncio costuma ter sido gravado como "PN" (9–13 dígitos) —
+      // ebay.com/itm/<número> mostra o VENDEDOR na página do anúncio.
+      const itm = ebayish && /^\d{9,13}$/.test(normPN(p.part_number)) ? normPN(p.part_number) : null
+      return { id: p.id, text: String(p.supplier).slice(0, 60), part: [p.part_number, p.alias || p.item].filter(Boolean).join(' · ').slice(0, 70), candidates: supCandidatesFor(String(p.supplier || ''), eb), ebay: eb, ebay_bare: ebayish && !eb, ebay_item: itm }
     }) : []
     // higiene: MAP < custo, source_type nulo, KIT × is_kit em desacordo
     const mapBad = parts.filter((p: any) => p.map_price != null && p.unit_price != null && Number(p.map_price) > 0 && Number(p.map_price) < Number(p.unit_price))

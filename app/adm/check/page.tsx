@@ -37,7 +37,7 @@ type Fix =
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
-type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean; signal?: string; when?: string }
+type Item = { href: string; code: string; label: string; extra?: string; amount?: number; fix?: Fix; suggest?: string; certain?: boolean; signal?: string; when?: string; link?: { href: string; label: string } }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 // Categorias do Data Checker (João, 22/ago: inglês, casando com o menu do app).
 // STAFF, TAX e SYSTEM já existem na ordem — os cards deles chegam com as features
@@ -61,7 +61,7 @@ type SilentComp = { key: string; staff_name: string; after: string; days: string
 type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[]; history: { absurd: AbsurdSeg[]; comps: SilentComp[] } }
 type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
 type CatRow = { id: string; item: string; current: string | null; suggest: string | null }
-type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null }
+type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null; ebay_bare?: boolean; ebay_item?: string | null }
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
@@ -581,8 +581,12 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         { value: '__new__', label: '➕ criar fornecedor novo…' },
       ]
       items.push({
-        href: '/parts', code: r.ebay ? 'EBAY' : 'FORN.', label: `"${r.text}" · ${r.part}`,
-        extra: best ? (best.certain ? 'nome oficial bate — certo' : 'candidato — conferir') : r.ebay ? `vendedor do eBay "${r.ebay}" — crie o fornecedor REAL (fica marcado: via eBay)` : 'sem candidato — escolha na lista ou crie aqui',
+        href: '/parts', code: r.ebay ? 'EBAY' : r.ebay_bare ? 'EBAY?' : 'FORN.', label: `"${r.text}" · ${r.part}`,
+        extra: best ? (best.certain ? 'nome oficial bate — certo' : 'candidato — conferir')
+          : r.ebay ? `vendedor do eBay "${r.ebay}" — crie o fornecedor REAL (fica marcado: via eBay)`
+          : r.ebay_bare ? (r.ebay_item ? 'compra no eBay sem vendedor à vista — o vendedor está na página do anúncio' : 'compra no eBay sem vendedor à vista — ache-o no histórico de compras do eBay e crie aqui')
+          : 'sem candidato — escolha na lista ou crie aqui',
+        link: r.ebay_item ? { href: `https://www.ebay.com/itm/${r.ebay_item}`, label: 'ANÚNCIO ↗' } : undefined,
         certain: !!best?.certain, suggest: best?.id, signal: best ? (best.certain ? 'matched' : 'source') : undefined,
         fix: { kind: 'select' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', options, current: null, spelling: r.text, ebay: r.ebay || undefined },
       })
@@ -938,6 +942,7 @@ export default function DataCheckPage() {
                             <span className="text-gray-400 text-xs w-20 shrink-0 font-bold">{it.code}</span>
                             <a href={`${BASE_PATH}${it.href}`} target="_blank" rel="noreferrer" className="flex-1 truncate text-sm hover:text-white hover:underline" title={`${it.code} · ${it.label}${it.extra ? ' — ' + it.extra : ''} (abre em aba nova)`}>{it.label}</a>
                             {it.extra && <span className="text-xs text-gray-500 shrink-0">{it.extra}</span>}
+                            {it.link && <a href={it.link.href} target="_blank" rel="noreferrer" className="text-xs font-bold text-sky-300 hover:underline shrink-0">{it.link.label}</a>}
                             {it.amount !== undefined && <span className="tabular-nums font-bold text-sm shrink-0">{usd(it.amount)}</span>}
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
