@@ -52,7 +52,7 @@ const famOf = (l: { name: string; raw_name: string }) => { const s = (l.name + '
 const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800' }
 const BATCH_KEYS = new Set(['plan', 'apply', 'review_all'])
 
-export default function BankReconcileCard({ onCount }: { onCount?: (n: number) => void }) {
+export default function BankReconcileCard({ onCount }: { onCount?: (n: number, aConferir?: number) => void }) {
   const [lines, setLines] = useState<Line[] | null>(null)
   const [totalNew, setTotalNew] = useState(0)
   const [auto, setAuto] = useState<Auto | null>(null)
@@ -81,7 +81,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number) =
   const anyBusy = busy.size > 0
 
   // Contagem do pai sai do estado, nunca do closure do clique (revisão #25).
-  useEffect(() => { if (lines) onCount?.(totalNew) }, [totalNew, lines, onCount])
+  useEffect(() => { if (lines) onCount?.(totalNew, auto?.pending.length || 0) }, [totalNew, lines, auto, onCount])
 
   async function load() {
     setError(''); setPlan(null)   // plano é de um instante — dados novos, plano novo (revisão #22)

@@ -724,6 +724,7 @@ export default function DataCheckPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
+  const [bankAConferir, setBankAConferir] = useState(0)   // casamentos do motor aguardando OK
   const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
   const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [], history: { absurd: [], comps: [] } })   // sinal do STAFF DUTY WATCH
@@ -791,6 +792,26 @@ export default function DataCheckPage() {
     }
     return [...byDay.entries()]
   }, [d])
+
+  // COMECE AQUI (fase 3 da reforma, 25/ago): as 3 melhores próximas ações,
+  // ranqueadas pelo que destravam — régua > martelo no motor > um-clique > volume.
+  const missions = useMemo(() => {
+    const out: { title: string; sub: string; group: string | null; open: string | null }[] = []
+    const cash = checks.find(c => c.key === 'cash-match')
+    if (cash && cash.items.length > 0) out.push({ title: 'O caixa não bate — conserte a régua primeiro', sub: 'enquanto ela estiver vermelha, nenhum outro número vale', group: 'BANK', open: 'cash-match' })
+    if (bankAConferir > 0) out.push({ title: `Conferir os ${bankAConferir} casamentos do motor`, sub: 'o banco propôs, você bate o martelo — OK ou DESFAZER, com ABRIR ↗ pra ver a prova', group: 'BANK', open: null })
+    const certoChecks = checks.filter(c => c.items.some(i => i.certain))
+    const certos = certoChecks.reduce((s, c) => s + c.items.filter(i => i.certain).length, 0)
+    if (certos > 0) {
+      const best = [...certoChecks].sort((a, b) => b.items.filter(i => i.certain).length - a.items.filter(i => i.certain).length)[0]
+      out.push({ title: `${certos} respostas prontas — um clique por card`, sub: `PREENCHER CERTOS onde há prova; comece por "${best.title}"`, group: best.group, open: best.key })
+    }
+    if (bankCount > 50) out.push({ title: `Triagem por família: ${bankCount.toLocaleString('en-US')} linhas sem casamento`, sub: 'os chips (AMAZON, COMBUSTÍVEL…) explicam centenas de uma vez', group: 'BANK', open: null })
+    const heavy = [...checks].filter(c => c.items.length > 0 && c.key !== 'cash-match' && (c.impact || 0) > 0).sort((a, b) => (b.impact || 0) - (a.impact || 0))[0]
+    if (heavy) out.push({ title: `Maior valor parado: ${heavy.title}`, sub: `${heavy.items.length} itens · ${usd(heavy.impact || 0)} — se ignorar: ${heavy.blocks}`, group: heavy.group, open: heavy.key })
+    return out.slice(0, 3)
+  }, [checks, bankCount, bankAConferir])
+  const fixesToday = useMemo(() => history?.find(([day]) => day === TODAY)?.[1].length || 0, [history])
 
   async function applyFix(check: Check, item: Item, value: string) {
     const fix = item.fix!
@@ -979,9 +1000,25 @@ export default function DataCheckPage() {
           <span className="text-2xl font-bold">{totalIssues === 0 ? 'TUDO LIMPO ✓' : `${totalIssues} pendências`}</span>
           {totalIssues > 0 && <span className="text-sm text-gray-400 ml-3">{checks.filter(c => c.items.length > 0).length} de {checks.length} verificações</span>}
         </div>
+        {fixesToday > 0 && <div className="rounded-2xl border border-sky-900 bg-sky-950/40 px-5 py-3"><span className="text-2xl font-bold text-sky-300">{fixesToday}</span><span className="text-sm text-gray-400 ml-2">conserto(s) hoje</span></div>}
         <button onClick={() => { setDone(new Set()); setReloadN(x => x + 1) }} className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-5 py-3 rounded-2xl font-bold">↻ REFRESH</button>
         <button onClick={() => setShowHistory(h => !h)} className={`px-5 py-3 rounded-2xl font-bold border ${showHistory ? 'bg-white text-black border-white' : 'bg-gray-900 hover:bg-gray-700 border-gray-700'}`}>HISTÓRICO</button>
       </div>
+
+      {/* ── COMECE AQUI (fase 3): a ordem de ataque, calculada — não adivinhada ── */}
+      {missions.length > 0 && (
+        <div className="mb-8 max-w-4xl">
+          <p className="text-sm font-bold tracking-widest text-gray-500 mb-2">COMECE AQUI</p>
+          <div className="grid sm:grid-cols-3 gap-3">
+            {missions.map((m, i) => (
+              <button key={i} onClick={() => { setGroupFilter(m.group); setOpen(m.open); document.getElementById('dc-cards')?.scrollIntoView({ behavior: 'smooth' }) }} className="text-left bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
+                <p className="font-bold text-sm">{i + 1}º · {m.title}</p>
+                <p className="text-xs text-gray-500 mt-1">{m.sub}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── HISTÓRICO — sessões de conserto, pro double-check ─────────── */}
       {showHistory && (
@@ -1012,7 +1049,7 @@ export default function DataCheckPage() {
         </div>
       )}
 
-      <div className="space-y-6 max-w-4xl">
+      <div id="dc-cards" className="space-y-6 max-w-4xl">
         {/* Chips de categoria: contagem viva, clique filtra, ✓ = categoria limpa. */}
         <div className="flex gap-2 flex-wrap">
           {GROUP_ORDER.map(g => { const has = g === 'BANK' || checks.some(c => c.group === g); if (!has) return null; const n = groupCount(g); return (
@@ -1027,7 +1064,7 @@ export default function DataCheckPage() {
             </div>
             <div className="space-y-4">
               {/* Conciliação bancária mora na categoria BANK — lê/escreve por /api/bank/reconcile. */}
-              {g === 'BANK' && <BankReconcileCard onCount={setBankCount} />}
+              {g === 'BANK' && <BankReconcileCard onCount={(n, ac) => { setBankCount(n); setBankAConferir(ac || 0) }} />}
               {checks.filter(c => c.group === g).map(c => (
           <div key={c.key} className={`border rounded-2xl overflow-hidden ${c.items.length === 0 ? 'border-emerald-900/60' : 'border-gray-700'}`}>
             <button onClick={() => setOpen(open === c.key ? null : c.key)} className="w-full text-left px-5 py-4 bg-gray-900 hover:bg-gray-800 flex items-center gap-4">
