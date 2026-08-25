@@ -74,10 +74,18 @@ export async function POST(req: NextRequest) {
   if ((app !== 'US' && app !== 'BR') || !POLICIES.has(policy)) {
     return NextResponse.json({ error: 'policy=ALL|MENTION_ONLY|IGNORE (+app), ou processed=true|false' }, { status: 400 })
   }
-  // O mesmo grupo existe nos 2 números — a política vale para os dois.
-  const { error } = await db.from('whatsapp_chats').update({ policy }).eq('chat_id', chatId)
+  // A política é da CONVERSA, não da cópia: o mesmo contato/grupo aparece nos 2
+  // números. UPSERT dos dois lados (não update) porque a cópia do outro número
+  // pode ainda não existir — foi o que aconteceu com o robô de cobrança 4004-1144
+  // em 24/ago/2026: marcamos IGNORE, a linha US nasceu depois com o default ALL
+  // e a cobrança voltou pro round. Criar a linha agora faz a decisão valer
+  // quando a primeira mensagem chegar naquele número.
+  const { error } = await db.from('whatsapp_chats').upsert(
+    [{ app: 'US', chat_id: chatId, is_group: chatId.endsWith('@g.us'), policy },
+     { app: 'BR', chat_id: chatId, is_group: chatId.endsWith('@g.us'), policy }],
+    { onConflict: 'app,chat_id' })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, chatId, policy })
+  return NextResponse.json({ ok: true, chatId, policy, sides: ['US', 'BR'] })
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
