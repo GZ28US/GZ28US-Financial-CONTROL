@@ -108,7 +108,10 @@ export default function DrePage() {
     const parts = m.parts - (off ? m.carRev : 0)
     const flTax = m.flTax - (off ? m.carFlTax : 0)
     const discount = m.discount - (off ? m.carDiscount : 0)
-    const cost = m.cost - (off ? m.carCost : 0)
+    // Frota própria (OWN/TOOL) FORA do CPV nas duas visões (João fechou a promessa
+    // do D2/D3, 25/ago): não é custo de venda — é capitalização; o Balanço já a
+    // carrega como Imobilizado. Volta ao resultado só via depreciação (G4).
+    const cost = m.cost - m.fleetCost - (off ? m.carCost : 0)
     const brutaTotal = parts + flTax + m.services
     const liquida = brutaTotal - discount - flTax
     const lucroBruto = liquida - cost
@@ -259,7 +262,7 @@ export default function DrePage() {
           <Row label="(−) FL tax repassado ao estado" value={-v.flTax} sub note="pass-through — não é receita nossa (D5)" />
           <Row label="RECEITA LÍQUIDA" value={v.liquida} />
           <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub
-            note={`inclui frota própria OWN/TOOL ${usd(m.fleetCost)}${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
+            note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
           <Row label="(−) Pessoal" value={-m.payroll} sub />
           <Row label="(−) Ocupação, seguros & profissionais" value={-(m.fixedBy.FIXED || 0)} sub />
