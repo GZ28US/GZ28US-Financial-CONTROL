@@ -38,6 +38,23 @@ function zoneOf(app: string, name: string | null): 'US' | 'BR' {
 const mentionsMarcio = (ids: string[] | null) =>
   (ids || []).some(id => MARCIO.some(n => String(id).includes(n)))
 
+// PostgREST devolve NO MÁXIMO 1000 linhas por request e IGNORA .limit() acima
+// disso — em silêncio. O round lia 1000 dos 1369 chats (369 sorteados fora) e
+// só as 1000 mensagens mais novas da janela, e por isso respondeu "0 pendentes"
+// com 100 conversas esperando (bug achado por ele em 24/ago/2026). Toda leitura
+// de volume desta rota passa por aqui.
+async function pageAll<T>(build: () => any, size = 1000, max = 120000): Promise<T[]> {
+  const out: T[] = []
+  for (let from = 0; from < max; from += size) {
+    const { data, error } = await build().range(from, from + size - 1)
+    if (error) throw error
+    const rows = (data || []) as T[]
+    out.push(...rows)
+    if (rows.length < size) break
+  }
+  return out
+}
+
 export async function GET(req: NextRequest) {
   // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente), igual às
   // demais rotas de leitura do WhatsApp — é a mesma informação que elas servem.
@@ -54,21 +71,20 @@ export async function GET(req: NextRequest) {
   const since = p.get('since') || new Date(Date.now() - days * 864e5).toISOString()
 
   try {
-    const { data: chats, error: cErr } = await db.from('whatsapp_chats')
+    const chats = await pageAll<any>(() => db.from('whatsapp_chats')
       .select('app, chat_id, name, is_group, policy, processed_through, processed_note')
       .neq('policy', 'IGNORE')
-      .limit(3000)
-    if (cErr) throw cErr
+      .order('app', { ascending: true })
+      .order('chat_id', { ascending: true }))
 
     // A ATIVIDADE REAL vem das mensagens, nunca de whatsapp_chats.last_at: o
     // sync grava null ali quando a UltraMsg não manda a hora e apaga o que o
     // webhook tinha posto (1.325 de 1.340 chats estavam com o campo nulo).
-    const { data: recent, error: mErr } = await db.from('whatsapp_messages')
+    const recent = await pageAll<any>(() => db.from('whatsapp_messages')
       .select('app, chat_id, sent_at, from_me')
       .gte('sent_at', since)
       .order('sent_at', { ascending: false })
-      .limit(20000)
-    if (mErr) throw mErr
+      .order('id', { ascending: false }))
     const lastBy = new Map<string, string>()
     const lastMine = new Map<string, boolean>()
     for (const m of recent || []) {
