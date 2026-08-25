@@ -22,9 +22,9 @@ export default function PartPicker({ onPick, placeholder = 'buscar no catálogo 
     ;(async () => {
       const acc: Row[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase.from('parts_database').select('id, item, alias, part_number, supplier, unit_price, source_type').order('item').range(from, from + 999)
+        const { data, error } = await supabase.from('parts_database').select('id, item, alias, part_number, supplier, unit_price, source_type, locked_at').order('item').range(from, from + 999)
         if (error || !data) break
-        for (const p of data) acc.push({ id: p.id, item: p.item || '', alias: p.alias, part_number: p.part_number, supplier: p.supplier, unit_price: p.unit_price == null ? null : Number(p.unit_price), locked: p.source_type === 'LOCKED', hay: [p.part_number, p.alias, p.item, p.supplier].filter(Boolean).join(' ').toUpperCase() })
+        for (const p of data) acc.push({ id: p.id, item: p.item || '', alias: p.alias, part_number: p.part_number, supplier: p.supplier, unit_price: p.unit_price == null ? null : Number(p.unit_price), locked: p.locked_at != null || p.source_type === 'LOCKED', hay: [p.part_number, p.alias, p.item, p.supplier].filter(Boolean).join(' ').toUpperCase() })
         if (data.length < 1000) break
       }
       if (live) setCatalog(acc)

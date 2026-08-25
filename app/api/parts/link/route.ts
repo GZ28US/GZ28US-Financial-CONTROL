@@ -216,6 +216,26 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, supplier: { id: sup.id, name: sup.name }, reused })
   }
+  // Card de identidade (João, 25/ago): cria a entrada MÍNIMA do catálogo e já
+  // linka a linha do estoque/stream. Nasce MANUAL e sem PN de propósito — as
+  // filas de higiene (SEM PN, categoria, fornecedor) perseguem até completar.
+  if (String(b.action) === 'create_part') {
+    const item = String(b.item || '').trim().slice(0, 120)
+    const linkTable = String(b.link_table || ''), linkId = String(b.link_id || '')
+    if (!item || !['inventory', 'part_streams'].includes(linkTable) || !linkId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+    const db = bankDb()
+    const { data: created, error: cErr } = await db.from('parts_database').insert({ item, supplier: String(b.supplier || '').trim().slice(0, 60) || null, source_type: 'MANUAL' }).select('id')
+    if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
+    const pid = created![0].id
+    const { data: linked, error: lErr } = await db.from(linkTable).update({ part_id: pid }).eq('id', linkId).is('part_id', null).select('id')
+    if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 })
+    if (!linked || !linked.length) return NextResponse.json({ error: 'linha já linkada — recarregue (a peça criada ficou no catálogo)', part_id: pid }, { status: 409 })
+    await db.from('data_fixes').insert({
+      check_key: 'parts-identity', table_name: 'parts_database', row_id: pid, field: 'CREATED',
+      old_value: null, new_value: pid, label: (`PEÇA MÍNIMA · ${item} → linkada a ${linkTable}`).slice(0, 200),
+    }).then(() => undefined, () => undefined)
+    return NextResponse.json({ ok: true, part_id: pid })
+  }
   if (String(b.action) === 'teach_alias') {
     const supplierId = String(b.supplier_id || '')
     const spellings = [String(b.spelling || ''), ...(Array.isArray(b.spellings) ? b.spellings : [])].map((s: any) => String(s || '').trim()).filter(Boolean)

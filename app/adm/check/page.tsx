@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import DcBadge from '@/components/DcBadge'
 import DatePicker from '@/components/DatePicker'
+import PartPicker from '@/components/PartPicker'
 import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCard'
 import { PAID_FROM_OPTIONS } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
@@ -31,7 +32,7 @@ const CAR_RX = /car purchase|compra |challenger|charger|demon|hellcat|redeye|wid
 
 type Fix =
   | { kind: 'date'; table: string; rowId: string; field: string }
-  | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string; ebay?: string | null }
+  | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string; sup?: string; ebay?: string | null }
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'trash'; table: string; rowId: string; field: string; confirmText: string }
@@ -594,12 +595,14 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     if (linker.needsMigration) items.push({ href: '/parts', code: 'MIGRATION', label: 'Rodar MIGRATION_parts_identity.sql no SQL Editor', extra: 'os ponteiros part_id precisam das colunas' })
     const mk = (r: LinkerRow, code: string) => {
       const best = r.candidates[0]
+      // João, 25/ago: mesma receita do fornecedor — nunca beco sem saída. Sempre
+      // dá pra buscar no catálogo INTEIRO ou criar a entrada mínima aqui mesmo.
       items.push({
         href: r.table === 'inventory' ? '/inventory' : '/stream', code, when: undefined,
         label: `${r.text.slice(0, 70)}${r.supplier ? ' · ' + r.supplier : ''}`,
-        extra: best ? (best.certain ? 'PN no texto — certo' : 'candidato por nome — conferir') : 'sem candidato no catálogo',
+        extra: best ? (best.certain ? 'PN no texto — certo' : 'candidato por nome — conferir') : 'sem candidato — busque no catálogo inteiro ou crie aqui',
         certain: !!best?.certain, suggest: best?.id, signal: best ? (best.certain ? 'matched' : 'source') : undefined,
-        fix: best ? { kind: 'select' as const, table: r.table, rowId: r.id, field: 'part_id', options: r.candidates.map(c => ({ value: c.id, label: (c.certain ? '✓ ' : '') + c.label })), current: null } : undefined,
+        fix: { kind: 'select' as const, table: r.table, rowId: r.id, field: 'part_id', options: [...r.candidates.map(c => ({ value: c.id, label: (c.certain ? '✓ ' : '≈ ') + c.label })), { value: '__search__', label: '🔎 buscar no catálogo inteiro…' }, { value: '__new__', label: '➕ criar no catálogo (nasce mínima — PN e preços depois)…' }], current: null, spelling: r.text, sup: r.supplier || undefined },
       })
     }
     for (const r of linker.inventory) mk(r, 'STOCK')
@@ -768,6 +771,30 @@ export default function DataCheckPage() {
         const r = await fetch(`${BASE_PATH}/api/staff-duties`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'trim', duty_id: fix.dutyId, seg_start: fix.segStart, seg_end: fix.segEnd, banked_start: fix.bankedStart, banked_end: fix.bankedEnd, new_end_local: value }) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
+    // Card de identidade (João, 25/ago): buscar no catálogo inteiro (PartPicker no
+    // painel) e criar entrada mínima — nasce MANUAL sem PN e as filas de higiene
+    // (SEM PN, sem categoria, sem fornecedor oficial) perseguem até completar.
+    if (check.key === 'parts-identity' && fix.kind === 'select') {
+      if (value === '__search__') { alert('Digite na busca 🔎 que abriu no painel — 2+ letras, acha por PN, nome ou apelido.'); return }
+      setSaving(true)
+      try {
+        if (value === '__new__') {
+          const name = (window.prompt('Nome da peça nova no catálogo (nasce mínima — PN, preços e categoria entram depois pelas filas de higiene):', fix.spelling || '') || '').trim()
+          if (!name) return
+          const r = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'create_part', item: name, supplier: fix.sup || '', link_table: fix.table, link_id: fix.rowId }) })
+          const j = await r.json().catch(() => ({}))
+          if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+          alert(`"${name}" criada no catálogo e linkada. Ela vai aparecer nas filas de higiene (sem PN, sem categoria) até ficar completa.`)
+        } else {
+          const { error: err } = await supabase.from(fix.table).update({ part_id: value }).eq('id', fix.rowId).is('part_id', null)
+          if (err) { alert(err.message); return }
+          await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: 'part_id', old_value: null, new_value: value, label: `${item.code} · ${item.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+        }
         setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
         setFixing(null); setFixValue('')
       } finally { setSaving(false) }
@@ -1035,6 +1062,9 @@ export default function DataCheckPage() {
                                     <option value="">— escolher —</option>
                                     {it.fix.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                   </select>
+                                  {c.key === 'parts-identity' && fixValue === '__search__' && (
+                                    <div className="mt-2"><PartPicker onPick={p => applyFix(c, it, p.id)} placeholder="buscar a peça no catálogo (PN, nome, apelido)…" /></div>
+                                  )}
                                   {it.suggest && <p className="mt-1 text-xs text-sky-300">{it.certain ? 'Certo: esta linha já casou com uma linha da Regions.' : `Sugestão pré-carregada: ${it.suggest} (${it.extra || 'campo SOURCE'}) — ajuste se precisar.`}</p>}
                                 </div>
                               )}
