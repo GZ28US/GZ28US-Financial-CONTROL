@@ -43,8 +43,13 @@ async function gmailSend(auth: any, b: any, to: string[], cc: string[]): Promise
     threadId = m.threadId
     const mid = hdr('Message-ID')
     if (mid) replyHeaders = [`In-Reply-To: ${mid}`, `References: ${[hdr('References'), mid].filter(Boolean).join(' ')}`]
+    // Assunto explícito do chamador VENCE o herdado. Herdar às cegas propaga
+    // lixo de charset: o travessão do assunto original voltou do cliente do
+    // destinatário como "Ã¢Â€Â”", nós devolvemos aquilo, ele remoeu de novo, e
+    // em 3 rodadas virou "ÃƒÂƒÃ‚Â¢ÃƒÂ‚Ã¢Â‚Â¬ÃƒÂ‚Ã¢Â€Â" (thread TAG Motorsports,
+    // 21→24/ago/2026). Sem assunto do chamador, herda como antes.
     const orig = hdr('Subject')
-    if (orig) subject = /^re:/i.test(orig) ? orig : `Re: ${orig}`
+    if (!b.subject && orig) subject = /^re:/i.test(orig) ? orig : `Re: ${orig}`
   }
 
   const encSubject = /[^\x20-\x7e]/.test(subject) ? `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=` : subject
