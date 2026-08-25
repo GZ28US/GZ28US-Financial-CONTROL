@@ -38,10 +38,28 @@ async function run(force: boolean): Promise<NextResponse> {
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ ok: false, reason: 'token refresh failed — reconnect at /api/stream/mail-auth' })
 
-  const sinceIso = auth.last_poll || new Date(now - FIRST_RUN_DAYS * 86_400_000).toISOString()
-  const msgs = await fetchRecentMessages(token, sinceIso)
-  // High-water mark moves regardless of matches — a mail scanned once is done.
-  await setMailAuth(db, { last_poll: new Date(now).toISOString() })
+  // ── AS TRÊS CAIXAS, não só a primeira (25/ago/2026) ───────────────────────
+  // O vigia lia só o slot 1 (gz28us@hotmail) porque getMailAuth() tem id=1 como
+  // padrão. Só que o fornecedor responde no endereço com que o pedido foi
+  // feito: as atualizações da High Horse dos pedidos #382224 e #382872 caíram
+  // SÓ no galpaoz28 (slot 2) — o STREAM ficou sem rastreio nenhum de um pacote
+  // de motor de $2.448,74 que já tinha embarcado. Há e-mail da HHP nas três
+  // caixas (25 / 25 / 9). Agora o poll varre as três e junta tudo antes de
+  // casar com as linhas; cada caixa carrega o próprio last_poll.
+  const msgs: Awaited<ReturnType<typeof fetchRecentMessages>> = []
+  const boxes: string[] = []
+  for (const slot of [1, 2, 3]) {
+    const a = slot === 1 ? auth : await getMailAuth(db, slot)
+    if (!a?.refresh_token) continue
+    const t = slot === 1 ? token : await freshAccessToken(db, a)
+    if (!t) continue
+    const since = a.last_poll || new Date(now - FIRST_RUN_DAYS * 86_400_000).toISOString()
+    const got = await fetchRecentMessages(t, since)
+    msgs.push(...got)
+    boxes.push(`${a.account || 'slot' + slot}:${got.length}`)
+    // High-water mark moves regardless of matches — a mail scanned once is done.
+    await setMailAuth(db, { last_poll: new Date(now).toISOString() }, slot)
+  }
 
   // ── tracking capture ──────────────────────────────────────────────────────
   let updated = 0
@@ -236,7 +254,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }
