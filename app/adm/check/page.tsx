@@ -734,6 +734,8 @@ export default function DataCheckPage() {
   const [sigFilter, setSigFilter] = useState<Record<string, string>>({})   // filtro por SINAL (exato, sem armadilha de substring — revisão #4)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)      // chip de categoria
   const [whyOpen, setWhyOpen] = useState<string | null>(null)              // "entender esta checagem" aberto
+  const [guided, setGuided] = useState<{ key: string; idx: number; start: number } | null>(null)   // MODO GUIADO
+  const [gval, setGval] = useState('')                                     // valor escolhido no item guiado
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
 
   useEffect(() => {
@@ -792,6 +794,14 @@ export default function DataCheckPage() {
     }
     return [...byDay.entries()]
   }, [d])
+
+  // MODO GUIADO: pré-carrega a sugestão do item (um Enter resolve) ou a data prevista.
+  const gPrefill = (it?: Item) => {
+    if (!it || !it.fix) return ''
+    if (it.fix.kind === 'select') { const s = it.suggest; return s && it.fix.options.some(o => o.value === s) ? s : '' }
+    if (it.fix.kind === 'date') return (it.when || '').slice(0, 10)
+    return ''
+  }
 
   // COMECE AQUI (fase 3 da reforma, 25/ago): as 3 melhores próximas ações,
   // ranqueadas pelo que destravam — régua > martelo no motor > um-clique > volume.
@@ -1077,13 +1087,89 @@ export default function DataCheckPage() {
               </span>
               <span className="text-gray-500">{open === c.key ? '▴' : '▾'}</span>
             </button>
-            {open === c.key && (
+            {open === c.key && guided?.key === c.key && (() => {
+              const list = filtered(c)
+              const resolved = Math.max(0, guided.start - list.length)
+              if (!list.length) return (
+                <div className="px-5 py-8 border-t border-gray-800 text-center">
+                  <p className="text-2xl font-bold text-emerald-400">Fila zerada aqui 🎉</p>
+                  <p className="text-sm text-gray-400 mt-1">{resolved} resolvido(s) nesta sessão guiada.</p>
+                  <button onClick={() => setGuided(null)} className="mt-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 px-4 py-2 rounded-xl font-bold text-sm">VOLTAR À LISTA</button>
+                </div>
+              )
+              const gi = Math.min(guided.idx, list.length - 1)
+              const it = list[gi]
+              const go = (n: number) => { const ni = (n + list.length) % list.length; setGuided({ ...guided, idx: ni }); setGval(gPrefill(list[ni])) }
+              const apply = (v: string) => applyFix(c, it, v).then(() => setGval(''))
+              return (
+                <div className="px-5 py-6 border-t border-gray-800">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-xs font-bold text-gray-500 shrink-0">MODO GUIADO · item {gi + 1} de {list.length}{resolved ? ` · ${resolved} resolvido(s) agora` : ''}</span>
+                    <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden"><div className="h-full bg-indigo-600" style={{ width: `${guided.start ? Math.round(100 * resolved / guided.start) : 0}%` }} /></div>
+                    <button onClick={() => setGuided(null)} className="text-xs text-gray-400 hover:text-white underline shrink-0">sair (lista completa)</button>
+                  </div>
+                  <div className="bg-black/40 border border-gray-800 rounded-2xl p-5">
+                    <div className="flex items-baseline gap-3 flex-wrap">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-800 text-gray-300">{it.code}</span>
+                      {it.when && <span className="text-xs text-gray-500">{String(it.when).slice(0, 10)}</span>}
+                      {it.amount != null && it.amount !== 0 && <span className="tabular-nums font-bold text-amber-300">{usd(it.amount)}</span>}
+                    </div>
+                    <p className="text-xl font-bold mt-2">{it.label}</p>
+                    {it.extra && <p className="text-sm text-gray-400 mt-1">{it.extra}</p>}
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      <a href={`${BASE_PATH}${it.href}`} target="_blank" rel="noreferrer" className="bg-gray-800 hover:bg-gray-700 border border-gray-600 px-3 py-1.5 rounded-xl font-bold text-xs">ABRIR REGISTRO ↗</a>
+                      {it.link && <a href={it.link.href} target="_blank" rel="noreferrer" className="bg-gray-800 hover:bg-gray-700 border border-gray-600 px-3 py-1.5 rounded-xl font-bold text-xs text-sky-300">{it.link.label}</a>}
+                    </div>
+                    <div className="mt-4">
+                      {!it.fix ? <p className="text-sm text-gray-500">só leitura — confira pelo ABRIR e PULE quando estiver ok</p>
+                        : it.fix.kind === 'select' ? (
+                          <div className="flex gap-2 items-center flex-wrap">
+                            <select value={gval} onChange={e => setGval(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && gval && gval !== '__search__' && !saving) { e.preventDefault(); apply(gval) } }} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm max-w-xl">
+                              <option value="">— escolher —</option>
+                              {it.fix.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                            <button disabled={saving || !gval || gval === '__search__'} onClick={() => apply(gval)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">APLICAR</button>
+                            {gval && gval === it.suggest && <span className="text-xs text-gray-500">sugestão pré-carregada — Enter aplica</span>}
+                          </div>
+                        ) : it.fix.kind === 'date' ? (
+                          <div className="flex gap-2 items-center flex-wrap">
+                            <input type="date" value={gval} onChange={e => setGval(e.target.value)} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm" />
+                            <button disabled={saving || !gval} onClick={() => apply(gval)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">APLICAR</button>
+                          </div>
+                        ) : it.fix.kind === 'number' ? (
+                          <div className="flex gap-2 items-center flex-wrap">
+                            <input type="number" value={gval} onChange={e => setGval(e.target.value)} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-40" />
+                            <button disabled={saving || !gval} onClick={() => apply(gval)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">APLICAR</button>
+                          </div>
+                        ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
+                        : (
+                          <div>
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : 'CONFIRMAR'}</button>
+                          </div>
+                        )}
+                      {c.key === 'parts-identity' && gval === '__search__' && it.fix && (
+                        <div className="mt-2 max-w-xl"><PartPicker onPick={p => apply(p.id)} placeholder="buscar a peça no catálogo (PN, nome, apelido)…" /></div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button onClick={() => go(gi - 1)} className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-4 py-2 rounded-xl font-bold text-sm">← VOLTAR</button>
+                    <button onClick={() => go(gi + 1)} className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-4 py-2 rounded-xl font-bold text-sm">PULAR →</button>
+                  </div>
+                </div>
+              )
+            })()}
+            {open === c.key && guided?.key !== c.key && (
               <div className="px-5 py-4 border-t border-gray-800">
                 {/* UX it.2: uma linha, não um parágrafo — o porquê completo só pra quem pedir. */}
-                <div className="mb-3">
+                <div className="mb-3 flex items-center gap-4 flex-wrap">
                   <button onClick={() => setWhyOpen(whyOpen === c.key ? null : c.key)} className="text-xs text-gray-500 hover:text-gray-300 underline">{whyOpen === c.key ? 'entender esta checagem ▴' : 'entender esta checagem ▾'}</button>
-                  {whyOpen === c.key && <p className="text-sm text-gray-400 mt-2 max-w-2xl">{c.why}</p>}
+                  {filtered(c).length > 1 && (
+                    <button onClick={() => { const l = filtered(c); setGuided({ key: c.key, idx: 0, start: l.length }); setGval(gPrefill(l[0])) }} className="bg-indigo-800 hover:bg-indigo-700 px-3 py-1.5 rounded-xl font-bold text-xs">▶ MODO GUIADO — um de cada vez</button>
+                  )}
                 </div>
+                {whyOpen === c.key && <p className="text-sm text-gray-400 -mt-1 mb-3 max-w-2xl">{c.why}</p>}
                 {c.items.some(i => i.certain) && (
                   <div className="flex items-center gap-3 mb-3">
                     <button disabled={saving} onClick={() => applyCertain(c)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
