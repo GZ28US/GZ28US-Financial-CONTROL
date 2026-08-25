@@ -32,7 +32,7 @@ const CAR_RX = /car purchase|compra |challenger|charger|demon|hellcat|redeye|wid
 
 type Fix =
   | { kind: 'date'; table: string; rowId: string; field: string }
-  | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string; sup?: string; ebay?: string | null }
+  | { kind: 'select'; table: string; rowId: string; field: string; options: { value: string; label: string }[]; current?: string | null; spelling?: string; sup?: string; ebay?: string | null; meta?: Record<string, unknown> }
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'trash'; table: string; rowId: string; field: string; confirmText: string }
@@ -555,13 +555,31 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     if (tax.state === 'error') items.push({ href: '/adm/tax', code: 'SINAL', label: 'sinal do 1099 indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja TAX SHIELD' })
     if (tax.needsMigration) items.push({ href: '/adm/tax', code: 'MIGRATION', label: 'Rodar MIGRATION_tax_1099.sql no SQL Editor', extra: 'classificação/W-9 só gravam com a tabela criada' })
     for (const y of tax.years) for (const p of y.payees) {
-      if (!p.classification) items.push({ href: '/adm/tax', code: y.year, label: `${p.name}: ${usd(p.total)} no ano — classificar (serviço? mercadoria? corporação?)`, amount: p.total, when: y.year })
-      else if (p.classification === 'SERVICE' && !p.w9_on_file) items.push({ href: '/adm/tax', code: y.year, label: `${p.name}: SERVIÇO ${usd(p.total)} sem W-9 em arquivo`, extra: `1099-NEC até 31/jan/${Number(y.year) + 1}`, amount: p.total, when: y.year })
+      // Fricção final do João (25/ago): "parece só uma lista". Agora a linha AGE:
+      // classificar e marcar W-9 aqui mesmo (o /api/tax/1099 grava e faz a trilha).
+      if (!p.classification) items.push({
+        href: '/adm/tax', code: y.year, label: `${p.name} recebeu ${usd(p.total)} em ${y.year}`,
+        extra: 'o que foi? SERVIÇO exige 1099 + W-9; o resto não exige nada', amount: p.total, when: y.year,
+        fix: { kind: 'select' as const, table: 'tax_contractors', rowId: p.key, field: 'classification', current: null, meta: { name: p.name, w9: p.w9_on_file }, options: [
+          { value: 'SERVICE', label: 'SERVIÇO — trabalhou pra nós (pede 1099 + W-9)' },
+          { value: 'GOODS', label: 'MERCADORIA — só compramos coisas (sem 1099)' },
+          { value: 'CORPORATION', label: 'CORPORAÇÃO — empresa Inc./Corp (sem 1099)' },
+          { value: 'PERSONAL', label: 'PESSOAL — não é gasto da empresa' },
+          { value: 'IGNORE', label: 'IGNORAR — ruído do extrato' },
+        ] },
+      })
+      else if (p.classification === 'SERVICE' && !p.w9_on_file) items.push({
+        href: '/adm/tax', code: y.year, label: `${p.name}: SERVIÇO de ${usd(p.total)} em ${y.year} — falta o W-9`,
+        extra: `peça o W-9 (o formulário com o SSN/EIN) e marque aqui quando chegar · 1099-NEC até 31/jan/${Number(y.year) + 1}`, amount: p.total, when: y.year,
+        fix: { kind: 'select' as const, table: 'tax_contractors', rowId: p.key, field: 'w9_on_file', current: null, meta: { name: p.name, cls: p.classification }, options: [
+          { value: 'yes', label: '✓ o W-9 chegou e está guardado' },
+        ] },
+      })
     }
     checks.push({
       group: 'TAX', key: 'tax-1099', title: 'Pagamos alguém $600+ no ano — o 1099 está em dia?',
       blocks: 'obrigação anual (31/jan) — 1099 não emitido dá multa',
-      why: 'Todo beneficiário pago por Zelle, wire ou cheque com $600+ no ano precisa de um veredito: serviço (pede 1099-NEC e W-9), mercadoria, corporação ou pessoal. O extrato lista quem recebeu; o TAX SHIELD grava a classificação; a Drummond confirma a lei. Sem W-9 na mão, janeiro vira correria.',
+      why: 'A LEI (EUA): pagou uma PESSOA ou empresa não-corporação $600+ no ano por SERVIÇO → a GZ28US é obrigada a emitir o formulário 1099-NEC até 31/jan do ano seguinte — e pra emitir precisa do W-9 dela (o cadastro onde ela informa SSN/EIN). Não emitir dá multa. ESTE CARD lê o extrato da Regions (Zelle, wire, cheque), soma quem recebeu $600+ e pergunta O QUE FOI: responda na própria linha. Mercadoria, corporação ou pessoal = sem obrigação nenhuma. A tela cheia (TAX SHIELD) tem o UNIR pra juntar grafias do mesmo beneficiário; a Drummond (contadora) confirma os casos duvidosos.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -781,6 +799,23 @@ export default function DataCheckPage() {
       setSaving(true)
       try {
         const r = await fetch(`${BASE_PATH}/api/staff-duties`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'trim', duty_id: fix.dutyId, seg_start: fix.segStart, seg_end: fix.segEnd, banked_start: fix.bankedStart, banked_end: fix.bankedEnd, new_end_local: value }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
+    // Card do 1099 (fricção final do João, 25/ago): tax_contractors é só-service-key
+    // — escreve pela API, que faz o upsert + trilha. O meta carrega os valores
+    // atuais (o upsert sobrescreve tudo — sem ele, classificar zeraria o W-9).
+    if (check.key === 'tax-1099' && fix.kind === 'select') {
+      setSaving(true)
+      try {
+        const body = fix.field === 'classification'
+          ? { key: fix.rowId, name: String(fix.meta?.name || ''), classification: value, w9_on_file: !!fix.meta?.w9 }
+          : { key: fix.rowId, name: String(fix.meta?.name || ''), classification: (fix.meta?.cls as string) || null, w9_on_file: true }
+        const r = await fetch(`${BASE_PATH}/api/tax/1099`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
         setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
