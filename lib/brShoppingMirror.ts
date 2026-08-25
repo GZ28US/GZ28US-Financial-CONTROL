@@ -26,9 +26,9 @@ const MARGIN = 0                     // reembolso puro: o BR não vende, só adi
 export type BrMirrorItem = {
   item: string
   supplier: string | null
-  usdPrice: number             // custo unitário em US$
-  usdTax: number               // tax por unidade
-  usdExtra: number             // frete/extra por unidade
+  usdPrice: number             // custo UNITÁRIO em US$
+  usdTax: number               // tax TOTAL da linha em US$ (como o app soma)
+  usdExtra: number             // frete/extra TOTAL da linha em US$
   quantity: number
   paymentDate: string | null   // YYYY-MM-DD — o dia em que o BR pagou
 }
@@ -55,11 +55,18 @@ async function rateFor(ymd: string | null): Promise<number> {
   const hit = rateCache.get(day)
   if (hit != null) return hit
   let spot = 0
-  const ymdCompact = day.replace(/-/g, '')
+  // Sábado, domingo e feriado não têm pregão: pede uma janela de 6 dias e usa a última
+  // cotação ATÉ o dia do pagamento (nunca uma posterior).
+  const back = (ymd: string, n: number) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10) }
   try {
-    const r = await fetch(`https://economia.awesomeapi.com.br/json/daily/USD-BRL/?start_date=${ymdCompact}&end_date=${ymdCompact}`)
+    const from = back(day, 6).replace(/-/g, ''), to = day.replace(/-/g, '')
+    const r = await fetch(`https://economia.awesomeapi.com.br/json/daily/USD-BRL/?start_date=${from}&end_date=${to}`)
     const j = await r.json()
-    spot = parseFloat(Array.isArray(j) ? j[0]?.bid : j?.bid) || 0
+    const rows = (Array.isArray(j) ? j : [])
+      .map((x: any) => ({ d: new Date(Number(x.timestamp) * 1000).toISOString().slice(0, 10), bid: parseFloat(x.bid) || 0 }))
+      .filter((x: any) => x.d <= day && x.bid > 0)
+      .sort((a: any, b: any) => b.d.localeCompare(a.d))
+    spot = rows[0]?.bid || 0
   } catch { /* sem histórico */ }
   if (!spot) {
     try {
@@ -159,27 +166,42 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
   items.forEach((it, i) => {
     const day = it.paymentDate || todayUTC()
     const rate = rates.get(day) || 0
-    const landedUsd = r2(it.usdPrice + it.usdTax + it.usdExtra)   // custo unitário US$
-    const landedBrl = r2(landedUsd * rate)                        // custo unitário R$ do dia
-    totalBrl += landedBrl * it.quantity
-    totalUsd += landedUsd * it.quantity
+    const qty = it.quantity || 1
+    // A LINHA é a verdade: preço unitário × qtd + tax + extra (tax/extra são totais).
+    const priceBrl = r2(it.usdPrice * rate)
+    const taxBrl = r2(it.usdTax * rate)
+    const extraBrl = r2(it.usdExtra * rate)
+    const lineBrl = r2(priceBrl * qty + taxBrl + extraBrl)        // a saída de caixa desta linha
+    const lineUsd = r2(it.usdPrice * qty + it.usdTax + it.usdExtra)
+    totalBrl = r2(totalBrl + lineBrl)
+    totalUsd = r2(totalUsd + lineUsd)
     if (it.paymentDate && (!latestPaid || it.paymentDate > latestPaid)) latestPaid = it.paymentDate
     expRows.push({
       invoice_id: brInvoiceId, item: it.item, supplier: it.supplier || null,
-      price: r2(it.usdPrice * rate), amount_usd: r2(it.usdPrice),
-      quantity: it.quantity, tax: r2(it.usdTax * rate), extra: r2(it.usdExtra * rate),
+      price: priceBrl, amount_usd: r2(it.usdPrice),
+      quantity: qty, tax: taxBrl, extra: extraBrl,
       payment_date: it.paymentDate || null, expense_date: it.paymentDate || null,
       // Quem pagou foi o GZ28BR — é a saída de caixa dele.
       source: 'GZ28BR', paid_from: 'GZ28BR', item_discount: 0, position: i,
     })
+    // O ITEM cobra exatamente o que a linha custou: preço unitário = total ÷ qtd, e o
+    // último item absorve o centavo do arredondamento para o total fechar no ponto.
     partRows.push({
       invoice_id: brInvoiceId, description: it.item,
-      unit_price: landedBrl, base_cost: landedBrl, unit_price_usd: landedUsd,
-      quantity: it.quantity, payment_date: it.paymentDate || null, position: i,
+      unit_price: r2(lineBrl / qty), base_cost: r2(lineBrl / qty), unit_price_usd: r2(lineUsd / qty),
+      quantity: qty, payment_date: it.paymentDate || null, position: i,
+      _lineBrl: lineBrl,
     })
   })
-  totalBrl = r2(totalBrl)
-  totalUsd = r2(totalUsd)
+  // Ajuste de centavo: o somatório dos itens tem que dar o mesmo que a saída de caixa.
+  const partsSum = r2(partRows.reduce((s, p) => s + p.unit_price * p.quantity, 0))
+  const drift = r2(totalBrl - partsSum)
+  if (Math.abs(drift) >= 0.005 && partRows.length) {
+    const last = partRows[partRows.length - 1]
+    last.unit_price = r2(last.unit_price + drift / (last.quantity || 1))
+    last.base_cost = last.unit_price
+  }
+  partRows.forEach((p) => { delete p._lineBrl })
 
   if (expRows.length) {
     const e1 = (await supabaseBR.from('invoice_expenses').insert(expRows)).error

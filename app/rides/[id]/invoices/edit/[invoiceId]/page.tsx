@@ -2341,8 +2341,8 @@ export default function EditInvoicePage() {
               item: e.item,
               supplier: e.supplier || null,
               usdPrice: parseFloat(e.amount) || 0,
-              usdTax: qty > 0 ? (parseFloat(e.tax) || 0) / qty : 0,
-              usdExtra: qty > 0 ? (parseFloat(e.extra) || 0) / qty : 0,
+              usdTax: parseFloat(e.tax) || 0,
+              usdExtra: parseFloat(e.extra) || 0,
               quantity: qty,
               paymentDate: isValidDate(e.payment_date) ? e.payment_date : null,
             }
