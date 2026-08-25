@@ -99,7 +99,15 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
   // Nº do pedido: padrões comuns + Transaction ID (PayPal).
   // Nº normalizado SEM '#' — o dup-check compara com linhas manuais (o '#' fez
   // a captura Walmart duplicar a linha dos pneus Atturo, 30/jul).
-  let orders = [...new Set([...text.matchAll(/(?:Order(?:\s*(?:ID|Number|No\.?))?|Pedido|Invoice|Transaction(?:\s*ID)?|Confirmation(?:\s*(?:number|#))?)\s*[#:：]?\s*([A-Z]{0,3}[-#]?[A-Z0-9][A-Z0-9-]{4,28})/gi)].map((x) => x[1].replace(/^#+/, '')).filter((o) => /\d/.test(o)))].slice(0, 5)
+  // O candidato tem que PARECER número de pedido: nada de minúscula e pelo
+  // menos 4 dígitos. Sem isso, "Order ... 16Inch Over The Door Towel Rack"
+  // virava o pedido "16Inch" e criava linha duplicada da toalheira que já
+  // estava registrada (25/ago — apareceu quando a varredura do Gmail deixou
+  // de filtrar por assunto e passou a ler também o e-mail de despacho).
+  // Pedido de verdade é dígito e MAIÚSCULA: 111-9605878-5792209, 25-15048-33740,
+  // 003531, 1BG90454E0937693T.
+  const looksLikeOrder = (o: string) => !/[a-z]/.test(o) && (o.match(/\d/g) || []).length >= 4
+  let orders = [...new Set([...text.matchAll(/(?:Order(?:\s*(?:ID|Number|No\.?))?|Pedido|Invoice|Transaction(?:\s*ID)?|Confirmation(?:\s*(?:number|#))?)\s*[#:：]?\s*([A-Z]{0,3}[-#]?[A-Z0-9][A-Z0-9-]{4,28})/gi)].map((x) => x[1].replace(/^#+/, '')).filter(looksLikeOrder))].slice(0, 5)
   const totals = [...text.matchAll(/(?:Order\s*|Grand\s*)?[Tt]otal[^$]{0,20}\$\s*([\d,]+\.\d{2})/g)].map((x) => Number(x[1].replace(/,/g, '')))
   // Sem nº de pedido mas com total → nº sintético (LOJA-DATA-VALOR), padrão que
   // já usávamos à mão. Sem pedido E sem total → skip REGISTRADO, nunca mudo.
