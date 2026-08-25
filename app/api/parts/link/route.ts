@@ -17,6 +17,33 @@ export const maxDuration = 60
 const normPN = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
 const words = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length >= 4)
 
+// Fornecedor: normalização mole (mantém & e ') e identidade DURA — só letras/
+// números, sem sufixo legal (INC/LLC/CORP…) no fim. Igualdade dura = mesma empresa.
+const supNorm = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9&' ]+/g, ' ').replace(/\s+/g, ' ').trim()
+const SUP_SUFFIX = new Set(['INC', 'INCORPORATED', 'LLC', 'CORP', 'CORPORATION', 'LTD', 'LIMITED', 'CO'])
+const supHard = (s: unknown) => {
+  const w = String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+  while (w.length > 1 && SUP_SUFFIX.has(w[w.length - 1])) w.pop()
+  return w.join('')
+}
+// A grafia vira apelido quando difere do nome na identidade dura e ainda não existe
+// — cada conserto manual ensina o casador (fricção #4: menos "sem candidato" amanhã).
+async function maybeTeachAlias(db: any, sup: any, spelling: string): Promise<boolean> {
+  if (!spelling) return false
+  const h = supHard(spelling)
+  if (h.length < 3 || h === supHard(sup.name)) return false
+  const list = String(sup.aliases || '').split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean)
+  if (list.some((a: string) => supHard(a) === h)) return false
+  const aliases = [...list, spelling.slice(0, 60)].join(', ')
+  const { error } = await db.from('suppliers').update({ aliases }).eq('id', sup.id)
+  if (error) return false
+  await db.from('data_fixes').insert({
+    check_key: 'parts-suppliers', table_name: 'suppliers', row_id: sup.id, field: 'aliases',
+    old_value: (list.join(', ') || null), new_value: aliases.slice(0, 300), label: ('APELIDO · "' + spelling + '" → ' + sup.name).slice(0, 200),
+  }).then(() => undefined, () => undefined)
+  return true
+}
+
 async function fetchAll(db: any, table: string, select: string): Promise<any[]> {
   const out: any[] = []
   for (let from = 0; ; from += 1000) {
@@ -66,16 +93,6 @@ export async function GET(req: NextRequest) {
     const dupPN = [...byPN.entries()].filter(([, l]) => l.length > 1).map(([pn, l]) => ({ pn, items: l.map((p: any) => String(p.item || '').slice(0, 50)) }))
     // ── R1: fornecedor com identidade (188 grafias → 40 oficiais) ──
     const suppliers = await fetchAll(db, 'suppliers', 'id, name, aliases')
-    const supNorm = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9&' ]+/g, ' ').replace(/\s+/g, ' ').trim()
-    // Fricção #3 do João (25/ago): "O&J PERFORMANCE INC" tem que achar "OJ Performance".
-    // supHard = identidade dura: só letras/números (& e pontuação caem) e sem sufixo
-    // legal no fim (INC/LLC/CORP…). Igualdade dura = mesma empresa = CERTO.
-    const SUP_SUFFIX = new Set(['INC', 'INCORPORATED', 'LLC', 'CORP', 'CORPORATION', 'LTD', 'LIMITED', 'CO'])
-    const supHard = (s: unknown) => {
-      const w = String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
-      while (w.length > 1 && SUP_SUFFIX.has(w[w.length - 1])) w.pop()
-      return w.join('')
-    }
     const offRows = suppliers.map((s: any) => {
       const rawAliases = String(s.aliases || '').split(/[,\n]/)
       return { id: s.id, name: s.name, n: supNorm(s.name), h: supHard(s.name), aliases: rawAliases.map(supNorm).filter(Boolean), hAliases: rawAliases.map(supHard).filter(Boolean) }
@@ -110,7 +127,7 @@ export async function GET(req: NextRequest) {
       ok: true, needs_migration: needsMigration,
       totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length, sup_unlinked: supItems.length, map_bad: mapBad.length },
       inventory: invItems, streams: psItems, no_pn: noPN.slice(0, 200), dup_pn: dupPN.slice(0, 50),
-      suppliers_unlinked: supItems, map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
+      suppliers_unlinked: supItems, suppliers_all: [...offRows].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(o => ({ id: o.id, name: o.name })), map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
       categories: catItems, category_vocab: PART_CATEGORIES,
     })
   } catch (e) {
@@ -121,6 +138,43 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
+  // Fricção #4 do João (25/ago): resolver o fornecedor SEM sair da tela.
+  // create_supplier cria (ou REUSA, por identidade dura — nada de duplicata) e já
+  // linka a peça; teach_alias grava a grafia escolhida à mão como apelido.
+  if (String(b.action) === 'create_supplier') {
+    const name = String(b.name || '').trim().slice(0, 80)
+    if (!name) return NextResponse.json({ error: 'nome vazio' }, { status: 400 })
+    const db = bankDb()
+    const all = await fetchAll(db, 'suppliers', 'id, name, aliases')
+    let sup = all.find((s: any) => supHard(s.name) === supHard(name)) || null
+    const reused = !!sup
+    if (!sup) {
+      const { data, error } = await db.from('suppliers').insert({ name }).select('id, name, aliases')
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      sup = data![0]
+    }
+    await maybeTeachAlias(db, sup, String(b.spelling || '').trim())
+    const linkId = String(b.link_part_id || '')
+    if (linkId) {
+      const { data: r, error } = await db.from('parts_database').update({ supplier_id: sup.id }).eq('id', linkId).is('supplier_id', null).select('id, item, alias')
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (!r || !r.length) return NextResponse.json({ error: 'peça já linkada — recarregue', supplier: { id: sup.id, name: sup.name } }, { status: 409 })
+      await db.from('data_fixes').insert({
+        check_key: 'parts-suppliers', table_name: 'parts_database', row_id: linkId, field: 'supplier_id',
+        old_value: null, new_value: sup.id, label: ('FORNECEDOR ' + (reused ? '(reusado)' : 'NOVO') + ' · ' + (r[0].alias || r[0].item) + ' → ' + sup.name).slice(0, 200),
+      }).then(() => undefined, () => undefined)
+    }
+    return NextResponse.json({ ok: true, supplier: { id: sup.id, name: sup.name }, reused })
+  }
+  if (String(b.action) === 'teach_alias') {
+    const supplierId = String(b.supplier_id || ''), spelling = String(b.spelling || '').trim()
+    if (!supplierId || !spelling) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+    const db = bankDb()
+    const { data: sup } = await db.from('suppliers').select('id, name, aliases').eq('id', supplierId).maybeSingle()
+    if (!sup) return NextResponse.json({ error: 'fornecedor não encontrado' }, { status: 404 })
+    const taught = await maybeTeachAlias(db, sup, spelling)
+    return NextResponse.json({ ok: true, taught })
+  }
   // R1: linka o FORNECEDOR oficial na peça do catálogo (guarda is-null + trilha).
   if (String(b.action) === 'link_supplier') {
     const partId2 = String(b.part_id || ''), supplierId = String(b.supplier_id || '')
