@@ -447,9 +447,19 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const gSum = gid ? groupSums.get(gid) : undefined
       const gBank = gid ? bank.groups.get(gid) : undefined                        // valor que o banco cobrou do pedido casado
       const groupCertain = gid != null && gBank !== undefined && gSum !== undefined && Math.abs(gSum - gBank) < 0.011
-      const certain = matched.has(table + ':' + r.id) || groupCertain
+      const bankCertain = matched.has(table + ':' + r.id) || groupCertain
+      // Colheita do SOURCE legado (auditoria do João, 25/ago): antes do paid_from
+      // existir, o campo `source` ERA o quem-pagou — valor limpo é resposta do
+      // próprio app (74×GZ28US, 4×Regions no dia da auditoria), não palpite.
+      const srcRaw = String(r.source || '').trim()
+      const srcMapped = /^regions$/i.test(srcRaw) ? 'GZ28US' : ((PAID_FROM_OPTIONS as readonly string[]).find(o => o.toLowerCase() === srcRaw.toLowerCase()) || null)
+      let certain = bankCertain
       let suggest: string | undefined, extra: string | undefined, signal = 'source'
-      if (certain) { suggest = 'GZ28US'; extra = groupCertain ? 'pedido casado com a Regions' : 'casada com a Regions'; signal = 'matched' }
+      if (bankCertain && srcMapped && srcMapped !== 'GZ28US') { certain = false; extra = `banco provou GZ28US, mas o SOURCE antigo diz ${srcMapped} — conferir`; signal = 'conflict' }
+      else if (bankCertain) { suggest = 'GZ28US'; extra = groupCertain ? 'pedido casado com a Regions' : 'casada com a Regions'; signal = 'matched' }
+      else if (srcMapped && srcMapped !== 'GZ28US') { certain = true; suggest = srcMapped; extra = `o campo antigo SOURCE já dizia: ${srcMapped}`; signal = 'source' }
+      else if (srcMapped === 'GZ28US' && inRegions(amount, date) !== false) { certain = true; suggest = 'GZ28US'; extra = 'o campo antigo SOURCE já dizia: GZ28US'; signal = 'source' }
+      else if (srcMapped === 'GZ28US') { suggest = 'GZ28US'; extra = 'SOURCE antigo diz GZ28US, mas não consta na Regions — conferir'; signal = 'conflict' }
       else if (gid && gBank !== undefined) { suggest = 'GZ28US'; extra = 'pedido casado com a Regions (total do pedido mudou — conferir)'; signal = 'present' }
       // Antes da conta abrir NÃO foi GZ28US — mas GZ28BR × BETO é decisão de gente:
       // sem palpite pré-carregado (revisão #5).
@@ -473,17 +483,19 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }
     }
     const items: Item[] = [
-      ...d.invExpenses.filter((e: any) => !e.paid_from).map((e: any) => { const m = invoiceMeta(d, e.invoice_id); return mk('invoice_expenses', e, 'PROJ', m.href, [m.code, m.car, e.item, e.supplier].filter(Boolean).join(' · '), expLine(e)) }),
-      ...d.fixedExpenses.filter((e: any) => !e.paid_from).map((e: any) => mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0)),
-      ...d.expenses.filter((e: any) => !e.paid_from).map((e: any) => mk('expenses', e, e.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', '/staff', e.description || e.type || '', parseFloat(e.amount) || 0)),
-      ...d.goods.filter((g: any) => !g.paid_from).map((g: any) => mk('goods', g, 'GOODS', '/goods', [g.description, g.supplier].filter(Boolean).join(' · '), qtyLine(g))),
-      ...d.goodExpenses.filter((g: any) => !g.paid_from).map((g: any) => mk('good_expenses', g, 'GOODS', '/goods', g.description || '', parseFloat(g.amount) || 0)),
-      ...d.inputs.filter((x: any) => !x.paid_from).map((x: any) => mk('inputs', x, 'INPUT', '/inputs', [x.description, x.category].filter(Boolean).join(' · '), qtyLine(x))),
-      ...d.inventory.filter((x: any) => x.source_type === 'PURCHASED' && !x.paid_from).map((x: any) => mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x))),
+      // Auditoria do João (25/ago): 310 das 937 eram linhas NÃO PAGAS — quem pagou?
+      // ninguém ainda. O paid_from nasce na hora do pagamento; só linha PAGA entra.
+      ...d.invExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => { const m = invoiceMeta(d, e.invoice_id); return mk('invoice_expenses', e, 'PROJ', m.href, [m.code, m.car, e.item, e.supplier].filter(Boolean).join(' · '), expLine(e)) }),
+      ...d.fixedExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0)),
+      ...d.expenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('expenses', e, e.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', '/staff', e.description || e.type || '', parseFloat(e.amount) || 0)),
+      ...d.goods.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('goods', g, 'GOODS', '/goods', [g.description, g.supplier].filter(Boolean).join(' · '), qtyLine(g))),
+      ...d.goodExpenses.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('good_expenses', g, 'GOODS', '/goods', g.description || '', parseFloat(g.amount) || 0)),
+      ...d.inputs.filter((x: any) => !x.paid_from && x.payment_date).map((x: any) => mk('inputs', x, 'INPUT', '/inputs', [x.description, x.category].filter(Boolean).join(' · '), qtyLine(x))),
+      ...d.inventory.filter((x: any) => x.source_type === 'PURCHASED' && !x.paid_from && x.payment_date).map((x: any) => mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x))),
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'paid-from', title: 'Quem pagou esta conta?', blocks: 'o caixa por banco sai errado e a conciliação não fecha',
-      why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Sinais: casada/pedido casado com a Regions = GZ28US na certa (PREENCHER CERTOS); antes de 10/nov/2025 a conta nem existia = GZ28BR ou BETO (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; conflito com SOURCE = conferir um a um. Use o filtro de SINAL + texto (mês, invoice, fornecedor) e marque os filtrados de uma vez.',
+      why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia = GZ28BR ou BETO (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -877,9 +889,11 @@ export default function DataCheckPage() {
     const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
     if (!items.length) return
     // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
-    if (check.key === 'parts-identity' || check.key === 'parts-suppliers') {
+    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from') {
       const msg = check.key === 'parts-suppliers'
         ? `Linkar ${items.length} peças ao fornecedor oficial? Todas batem pelo nome/apelido exato. Tudo na trilha.`
+        : check.key === 'paid-from'
+        ? `Preencher ${items.length} "quem pagou?"? Prova por linha: casada com a Regions (o banco) ou o campo antigo SOURCE (o app já sabia). Cada linha recebe o SEU valor. Tudo na trilha.`
         : `Linkar ${items.length} linhas ao catálogo? Todas têm o PN da peça no próprio texto — o número não mente. Tudo na trilha.`
       if (!confirm(msg)) return
       setSaving(true)
