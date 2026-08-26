@@ -12,7 +12,7 @@ import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { mirrorBrShoppingInvoice, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
-import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS } from '@/components/PaymentFields'
+import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, methodsFor } from '@/components/PaymentFields'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
@@ -79,11 +79,11 @@ type ExpenseReportItem = { item: string; amount: string; quantity: string; tax: 
 type ExpenseReport = { supplier: string; date: string; receipt_url: string; items: ExpenseReportItem[]; report: boolean; rowIds?: string[] }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
-// Income PAYMENT METHOD (stored in the legacy `source` column) = the universal
-// PAYMENT_METHODS list. GZ28BR is NOT a method — it moved to its own PAID TO field
-// (GZ28US default / GZ28BR), so an income can be paid TO GZ28BR (which then holds
-// GZ28US's money). A stored legacy value not in the list stays selectable.
-const paymentSources: string[] = ['', ...PAYMENT_METHODS]
+// Income PAYMENT METHOD (stored in the legacy `source` column) segue PAID TO:
+// dinheiro que cai na conta do BR se move por PIX/TED/cheque, o do US por
+// ACH/Zelle/wire — daí methodsFor(). GZ28BR nunca foi método, é PAID TO. Valor
+// legado fora da lista continua selecionável.
+// A renda NÃO tem PAID FROM (Márcio, 26/ago): quem paga é sempre o cliente.
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 // A row is a pure COST line (skip on import, sink to bottom) only when it's SHORT —
@@ -1657,7 +1657,7 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_from: editingPayment.paid_from || 'GZ28US', paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
@@ -2239,7 +2239,10 @@ export default function EditInvoicePage() {
         amount: parseFloat(p.amount),
         payment_date: isValidDate(p.payment_date) ? p.payment_date : null,
         source: p.source || null,
-        paid_from: p.paid_from || 'GZ28US',
+        // RENDA NÃO TEM PAID FROM (Márcio, 26/ago/2026): "it's always paid by the
+        // client". Quem paga uma invoice é o cliente, sempre — o campo só criava
+        // ruído (uma linha chegou a ficar com "MARTEZ TOMMIE" ali). O que importa
+        // é PAID TO: em qual das duas casas o dinheiro caiu.
         paid_to: p.paid_to || 'GZ28US',
         amount_brl: p.paid_to === 'GZ28BR' ? (parseFloat(p.amount_brl || '') || null) : null,
         receipt_url: p.receipt_url || null,
@@ -2679,15 +2682,8 @@ export default function EditInvoicePage() {
                     <div className="flex-1">
                       <label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                       <select value={p.source} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], source: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
-                        {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
-                        {p.source && !paymentSources.includes(p.source) && <option value={p.source}>{p.source}</option>}
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-                      <select value={p.paid_from || 'GZ28US'} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], paid_from: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
-                        {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                        {p.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(p.paid_from) && <option value={p.paid_from}>{p.paid_from}</option>}
+                        {['', ...methodsFor(p.paid_to)].map(s => <option key={s} value={s}>{s}</option>)}
+                        {p.source && !methodsFor(p.paid_to).includes(p.source) && <option value={p.source}>{p.source}</option>}
                       </select>
                     </div>
                     <div className="flex-1">
@@ -3731,14 +3727,8 @@ export default function EditInvoicePage() {
             <div className="flex gap-3 flex-wrap">
               <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                 <select value={newPayment.source} onChange={(e) => setNewPayment({ ...newPayment, source: e.target.value })} className={`${selectClass} w-full`}>
-                  {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
-                  {newPayment.source && !paymentSources.includes(newPayment.source) && <option value={newPayment.source}>{newPayment.source}</option>}
-                </select>
-              </div>
-              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-                <select value={newPayment.paid_from || 'GZ28US'} onChange={(e) => setNewPayment({ ...newPayment, paid_from: e.target.value })} className={`${selectClass} w-full`}>
-                  {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  {newPayment.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(newPayment.paid_from) && <option value={newPayment.paid_from}>{newPayment.paid_from}</option>}
+                  {['', ...methodsFor(newPayment.paid_to)].map(s => <option key={s} value={s}>{s}</option>)}
+                  {newPayment.source && !methodsFor(newPayment.paid_to).includes(newPayment.source) && <option value={newPayment.source}>{newPayment.source}</option>}
                 </select>
               </div>
               <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
@@ -3803,14 +3793,8 @@ export default function EditInvoicePage() {
                           <div className="flex gap-3 flex-wrap">
                             <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAYMENT METHOD</label>
                               <select value={editingPayment.source} onChange={(e) => setEditingPayment({ ...editingPayment, source: e.target.value })} className={`${selectClass} w-full`}>
-                                {paymentSources.map(s => <option key={s} value={s}>{s}</option>)}
-                                {editingPayment.source && !paymentSources.includes(editingPayment.source) && <option value={editingPayment.source}>{editingPayment.source}</option>}
-                              </select>
-                            </div>
-                            <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-                              <select value={editingPayment.paid_from || 'GZ28US'} onChange={(e) => setEditingPayment({ ...editingPayment, paid_from: e.target.value })} className={`${selectClass} w-full`}>
-                                {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                                {editingPayment.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(editingPayment.paid_from) && <option value={editingPayment.paid_from}>{editingPayment.paid_from}</option>}
+                                {['', ...methodsFor(editingPayment.paid_to)].map(s => <option key={s} value={s}>{s}</option>)}
+                                {editingPayment.source && !methodsFor(editingPayment.paid_to).includes(editingPayment.source) && <option value={editingPayment.source}>{editingPayment.source}</option>}
                               </select>
                             </div>
                             <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>

@@ -19,6 +19,14 @@ import DatePicker from '@/components/DatePicker'
 export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'GZ28US Regions DebitCard', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL'] as const
 // Os 3 sócios da GZ28US (João, 26/ago): Marcio/Dema, Beto e HERALDO — conta
 // paga do bolso de sócio vira empréstimo dele pra LLC (passivo no Balanço).
+// Dinheiro que cai numa conta BRASILEIRA se move por meios brasileiros — não
+// existe ACH nem Zelle no Brasil, nem PIX nos EUA. Quando PAID TO = GZ28BR, o
+// formulário troca a lista (Márcio, 26/ago/2026). São os métodos que de fato
+// aparecem nos recebimentos do app do BR.
+export const PAYMENT_METHODS_BR = ['PIX', 'TED', 'CASH', 'CHEQUE', 'CARD'] as const
+export const methodsFor = (paidTo: string | null | undefined): readonly string[] =>
+  paidTo === 'GZ28BR' ? PAYMENT_METHODS_BR : PAYMENT_METHODS
+
 export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO', 'HERALDO'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
