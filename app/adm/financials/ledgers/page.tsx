@@ -181,6 +181,9 @@ export default function LedgersPage() {
                   <label className="block mb-2 text-lg font-bold">RATE % / YEAR</label>
                   <input type="text" inputMode="decimal" value={loan.rate_apr} onChange={e => { if (isNumeric(e.target.value)) setLoan({ ...loan, rate_apr: e.target.value }) }} className={inputClass} placeholder="Optional" />
                 </div>
+                {/* João, 26/ago (caso Heraldo/Advanced Transports): o estado e o save já
+                    tinham description — faltava a CAIXA. Proveniência mora aqui. */}
+                <Field label="NOTES" value={loan.description} onChange={v => setLoan({ ...loan, description: v })} placeholder='Ex.: "Zelle de ADVANCED TRANSPORTS (conf 5711329685) — recebido para o Heraldo, held as CREDIT"' />
                 <button disabled={saving || !loan.lender.trim()} className="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold"
                   onClick={() => save('financing', { lender: loan.lender.trim(), start_date: loan.start_date || null, rate_apr: loan.rate_apr ? n(loan.rate_apr) : null, description: loan.description.trim() || null }, () => setLoan({ lender: '', start_date: '', rate_apr: '', description: '' }))}>
                   + ADD CONTRACT
@@ -196,6 +199,7 @@ export default function LedgersPage() {
                   <span className="ml-auto px-3 py-1 rounded-full text-sm font-bold bg-amber-950 text-amber-300 tabular-nums">DEVEDOR {usd(loanBalance(f.id))}</span>
                   <button onClick={() => del('financing', f.id)} className="text-gray-600 hover:text-red-400 font-bold text-lg px-1" title="Apaga o contrato e os eventos">✕</button>
                 </div>
+                {f.description && <p className="text-sm text-gray-400 mt-1">{f.description}</p>}
 
                 {finEvents.filter(e => e.financing_id === f.id).length > 0 && (
                   <div className="mt-4 border-t border-gray-800">
