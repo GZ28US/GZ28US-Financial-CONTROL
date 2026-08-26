@@ -88,7 +88,7 @@ export default function DrePage() {
     const smallTools = d.goods.filter(g => qtyLine(g) < CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) < CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const opex = payroll + (fixedBy.FIXED || 0) + (fixedBy.MARKETING || 0) + (fixedBy.APP || 0)
-      + (fixedBy.ASSET || 0) + (fixedBy.BANK || 0) + (fixedBy.VARIABLE || 0) + (fixedBy.STAFF || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
+      + (fixedBy.ASSET || 0) + (fixedBy.BANK || 0) + (fixedBy.VARIABLE || 0) + (fixedBy.STAFF || 0) + (fixedBy.FLEET || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
     // Juros pagos vêm do livro de empréstimos (null até a migration rodar).
     const lt = ledgerTotals(d)
     const juros = lt ? lt.interestPaid : null
@@ -173,7 +173,7 @@ export default function DrePage() {
         ...d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: (x.category === 'CATS' ? 'MASCOTES · ' : 'APARTAMENTO · ') + (x.description || ''), amount: qtyLine(x), href: '/inputs' })),
         ...bySupplier('STAFF').map(r => ({ ...r, label: 'BENEFÍCIO · ' + r.label })),
       ]),
-      fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
+      fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), fleetcost: cap(bySupplier('FLEET')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
       consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/inputs' }))),
       apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/inputs' }))),
       tools: cap([
@@ -203,6 +203,7 @@ export default function DrePage() {
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
       { cells: ['(−) Tarifas bancárias', usd(-(m.fixedBy.BANK || 0))] },
+      { cells: ['(−) Frota — seguros & rodagem', usd(-(m.fixedBy.FLEET || 0))] },
       { cells: ['(−) Ativos & instalações (as-booked)', usd(-(m.fixedBy.ASSET || 0))] },
       { cells: ['(−) Consumíveis de oficina', usd(-m.consum)] },
       { cells: ['(−) Ferramental de baixo valor', usd(-m.smallTools)] },
@@ -320,6 +321,7 @@ export default function DrePage() {
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
             { label: 'Tarifas bancárias', value: m.fixedBy.BANK || 0, kind: 'out' },
+            { label: 'Frota — seguros & rodagem', value: m.fixedBy.FLEET || 0, kind: 'out' },
             { label: 'Ativos & instalações', value: m.fixedBy.ASSET || 0, kind: 'out' },
             { label: 'Ferramental de baixo valor', value: m.smallTools, kind: 'out' },
             { label: 'Consumíveis de oficina', value: m.consum, kind: 'out' },
@@ -351,6 +353,7 @@ export default function DrePage() {
           <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub k="fixed" note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub k="marketing" />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub k="apps" />
+          <Row label="(−) Frota — seguros & rodagem" value={-(m.fixedBy.FLEET || 0)} sub k="fleetcost" note="seguros, placas e rodagem dos carros NOSSOS (OWN/TOOL) — o carro é ativo; mantê-lo na rua é despesa (Progressive cobre RAMbo, GENEZIZ e Devil170)" />
           <Row label="(−) Tarifas bancárias" value={-(m.fixedBy.BANK || 0)} sub k="bank" note="wire fees, análise de conta — o motor FEE lança, linkado à linha do banco (João, 26/ago: não é custo fixo)" />
           <Row label="(−) Ativos & instalações (as-booked)" value={-(m.fixedBy.ASSET || 0)} sub k="assets" note="capitaliza quando D8/G4 fecharem" />
           <Row label="(−) Consumíveis de oficina" value={-m.consum} sub k="consum" />

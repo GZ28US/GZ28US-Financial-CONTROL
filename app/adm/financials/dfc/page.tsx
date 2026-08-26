@@ -33,7 +33,8 @@ const ROWS: RowDef[] = [
   { kind: 'line', key: 'APPS', label: 'Software & assinaturas' },
   { kind: 'line', key: 'MISC', label: 'Consumíveis & diversos' },
   { kind: 'line', key: 'BANK_FEES', label: 'Tarifas bancárias' },
-  { kind: 'sub', keys: ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'BANK_FEES'], label: 'Caixa das operações' },
+  { kind: 'line', key: 'FLEET_COST', label: 'Frota — seguros & rodagem' },
+  { kind: 'sub', keys: ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'BANK_FEES', 'FLEET_COST'], label: 'Caixa das operações' },
   { kind: 'head', label: 'INVESTIMENTOS' },
   { kind: 'line', key: 'EQUIP', label: 'Equipamento de oficina (GOODS)' },
   { kind: 'line', key: 'STOCK', label: 'Estoque de peças comprado' },
@@ -58,7 +59,7 @@ const ROWS: RowDef[] = [
   { kind: 'line', key: 'FUND_HERALDO', label: 'Empréstimo de sócio — Heraldo (bancou por nós)' },
   { kind: 'sub', keys: ['CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO', 'FUND_HERALDO'], label: 'Caixa de financiamento' },
 ]
-const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'BANK_FEES', 'EQUIP', 'STOCK', 'RECEIPTS_CARS', 'CAR_BUY', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO', 'FUND_HERALDO']
+const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'BANK_FEES', 'FLEET_COST', 'EQUIP', 'STOCK', 'RECEIPTS_CARS', 'CAR_BUY', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO', 'FUND_HERALDO']
 
 // Gráfico: barras de entrada (verde) e saída (vermelho) por coluna + linha do
 // caixa acumulado desde o início. SVG puro, mesmo espírito do GZ-FLOW.
