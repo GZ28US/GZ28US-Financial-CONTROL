@@ -40,6 +40,8 @@ export default function DrePage() {
   const [d, setD] = useState<FinData | null>(null)
   const [error, setError] = useState('')
   const [scope, setScope] = useState<'OFICINA' | 'COMPLETO'>('OFICINA')   // CARROS × OFICINA (João, 25/ago)
+  const [mode, setMode] = useState<'ACUMULADA' | 'ANO' | 'TRI' | 'MES'>('ACUMULADA')   // POR PERÍODO (João, 26/ago)
+  const [pYear, setPYear] = useState('2026')
   useEffect(() => { loadFinancials().then(setD).catch(e => setError(String(e?.message || e))) }, [])
 
   const m = useMemo(() => {
@@ -190,6 +192,60 @@ export default function DrePage() {
   }, [d, m, scope, dep])
   const [dreDrill, setDreDrill] = useState<string | null>(null)
 
+  // POR PERÍODO (D1/D2 gerencial): reconhecimento na CONCLUSÃO via G1; job
+  // aberto é WIP e fica FORA das colunas; OPEX cai no período da própria data.
+  const pd = useMemo(() => {
+    if (!d || mode === 'ACUMULADA') return null
+    const off = scope === 'OFICINA'
+    const perOf = (dt: string | null | undefined): string | null => {
+      const s2 = String(dt || '').slice(0, 10)
+      if (!/^\d{4}-\d{2}/.test(s2)) return null
+      if (mode === 'ANO') return s2.slice(0, 4)
+      if (s2.slice(0, 4) !== pYear) return null
+      if (mode === 'MES') return s2.slice(0, 7)
+      return 'T' + (Math.floor((Number(s2.slice(5, 7)) - 1) / 3) + 1)
+    }
+    const acc: Record<string, Record<string, number>> = {}
+    const yearsSet = new Set<string>()
+    const seen = (dt: string | null | undefined) => { const y = String(dt || '').slice(0, 4); if (/^\d{4}$/.test(y)) yearsSet.add(y) }
+    const add = (line: string, dt: string | null | undefined, v2: number) => { seen(dt); const per = perOf(dt); if (!per || !v2) return; (acc[line] ||= {})[per] = (acc[line][per] || 0) + v2 }
+    let openJobs = 0, noDate = 0
+    for (const inv of d.invoices) {
+      const rscope2 = rideScope(d, inv)
+      if (rscope2 === 'OWN' || rscope2 === 'TOOL' || rscope2 === 'DONOR') continue
+      const rd = recognitionDate(d, inv)
+      if (!rd) { if (inv.live_status === 'CLOSED') noDate++; else openJobs++; continue }
+      if (inv.live_status !== 'CLOSED') { openJobs++; continue }
+      const t = invoiceTotals(d, inv)
+      const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
+      const carP = off ? d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick)).reduce((s3: number, p: any) => s3 + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0) : 0
+      const carC = off ? d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s3: number, e: any) => s3 + expLine(e), 0) : 0
+      const cft = carP * ((parseFloat(inv.florida_taxes) || 0) / 100)
+      const liq = (t.parts - carP) + t.services - (t.discount - (carP + cft) * ((parseFloat(inv.global_discount) || 0) / 100))
+      add('REV', rd, liq)
+      add('CPV', rd, t.cost - carC)
+    }
+    for (const f of d.fixedExpenses) {
+      const sup = d.fixedSuppliers.get(f.supplier_id)
+      const ct = sup?.cost_type || 'UNCLASSIFIED'
+      const line = ct === 'STAFF' ? 'EQUIPE' : ct === 'APP' ? 'APP' : ct === 'MARKETING' ? 'MKT' : ct === 'BANK' ? 'BANK' : ct === 'FLEET' ? 'FLEET' : ct === 'ASSET' ? 'ASSET' : ct === 'FIXED' ? 'FIXED' : 'UNCLASS'
+      add(line, f.expense_date || f.payment_date, parseFloat(f.amount) || 0)
+    }
+    for (const x of d.expenses) add('EQUIPE', x.payment_date || x.expense_date, parseFloat(x.amount) || 0)
+    for (const x of d.inputs) {
+      const line = (x.category === 'TEAM' || x.category === 'APARTMENT' || x.category === 'CATS') ? 'EQUIPE' : 'CONSUM'
+      add(line, x.purchase_date || x.payment_date, qtyLine(x))
+    }
+    for (const g of d.goods) if (qtyLine(g) < CAP_FLOOR) add('TOOLS', g.purchase_date || g.payment_date, qtyLine(g))
+    for (const g of d.goodExpenses) if ((parseFloat(g.amount) || 0) < CAP_FLOOR) add('TOOLS', g.expense_date || g.payment_date, parseFloat(g.amount) || 0)
+    for (const e of (d.financingEvents || [])) if (e.kind === 'INTEREST') add('JUROS', e.event_date, parseFloat(e.amount) || 0)
+    const periods = mode === 'ANO'
+      ? Object.values(acc).flatMap(o => Object.keys(o)).filter((v2, i, a2) => a2.indexOf(v2) === i).sort()
+      : mode === 'MES' ? Array.from({ length: 12 }, (_, i) => pYear + '-' + String(i + 1).padStart(2, '0'))
+      : ['T1', 'T2', 'T3', 'T4']
+    return { acc, periods, openJobs, noDate, years: [...yearsSet].sort() }
+  }, [d, mode, pYear, scope])
+
   async function downloadPdf() {
     if (!m || !v) return
     const rows = [
@@ -290,6 +346,62 @@ export default function DrePage() {
         <button onClick={downloadPdf} className="ml-auto px-4 py-2 rounded-xl font-bold bg-emerald-700 hover:bg-emerald-600 border border-emerald-500">⬇ BAIXAR PDF</button>
       </div>
 
+      {/* POR PERÍODO (João, 26/ago): reconhecimento na conclusão (G1). */}
+      <div className="flex gap-2 mb-6 items-center flex-wrap">
+        {(['ACUMULADA', 'ANO', 'TRI', 'MES'] as const).map(m2 => (
+          <button key={m2} onClick={() => setMode(m2)} className={`px-4 py-2 rounded-xl font-bold border ${mode === m2 ? 'bg-white text-black border-white' : 'bg-gray-900 border-gray-700 hover:bg-gray-700'}`}>{m2 === 'ACUMULADA' ? 'ACUMULADA' : m2 === 'ANO' ? 'POR ANO' : m2 === 'TRI' ? 'TRIMESTRES' : 'MESES'}</button>
+        ))}
+        {mode !== 'ACUMULADA' && mode !== 'ANO' && pd && pd.years.map(y2 => (
+          <button key={y2} onClick={() => setPYear(y2)} className={`px-3 py-1.5 rounded-xl font-bold border text-sm ${pYear === y2 ? 'bg-gray-200 text-black border-gray-200' : 'bg-gray-900 border-gray-700 hover:bg-gray-700'}`}>{y2}</button>
+        ))}
+        {mode !== 'ACUMULADA' && <span className="text-xs text-gray-500">reconhecimento na CONCLUSÃO (G1) · {pd ? `${pd.openJobs} jobs abertos = WIP, fora` : ''}{pd && pd.noDate ? ` · ${pd.noDate} fechadas sem data` : ''} · depreciação só na ACUMULADA · PDF imprime a ACUMULADA</span>}
+      </div>
+
+      {mode !== 'ACUMULADA' && pd && (() => {
+        const val = (line: string, per: string) => pd.acc[line]?.[per] || 0
+        const OPEXK = ['EQUIPE', 'CONSUM', 'FIXED', 'FLEET', 'MKT', 'APP', 'BANK', 'ASSET', 'TOOLS', 'UNCLASS']
+        const rows2: { label: string; get: (per: string) => number; bold?: boolean; neg?: boolean }[] = [
+          { label: 'Receita líquida', get: p2 => val('REV', p2), bold: true },
+          { label: '(−) CPV (projetos concluídos)', get: p2 => -val('CPV', p2), neg: true },
+          { label: 'LUCRO BRUTO', get: p2 => val('REV', p2) - val('CPV', p2), bold: true },
+          { label: '(−) Equipe — salários & bem-estar', get: p2 => -val('EQUIPE', p2), neg: true },
+          { label: '(−) Consumíveis de oficina', get: p2 => -val('CONSUM', p2), neg: true },
+          { label: '(−) Ocupação, energia & contador', get: p2 => -val('FIXED', p2), neg: true },
+          { label: '(−) Frota — seguros & rodagem', get: p2 => -val('FLEET', p2), neg: true },
+          { label: '(−) Marketing', get: p2 => -val('MKT', p2), neg: true },
+          { label: '(−) Software & assinaturas', get: p2 => -val('APP', p2), neg: true },
+          { label: '(−) Tarifas bancárias', get: p2 => -val('BANK', p2), neg: true },
+          { label: '(−) Ativos & instalações', get: p2 => -val('ASSET', p2), neg: true },
+          { label: '(−) Ferramental de baixo valor', get: p2 => -val('TOOLS', p2), neg: true },
+          { label: '(−) Não classificado', get: p2 => -val('UNCLASS', p2), neg: true },
+          { label: 'EBITDA', get: p2 => val('REV', p2) - val('CPV', p2) - OPEXK.reduce((s3, k2) => s3 + val(k2, p2), 0), bold: true },
+          { label: '(−) Juros', get: p2 => -val('JUROS', p2), neg: true },
+          { label: 'RESULTADO (ex-depreciação)', get: p2 => val('REV', p2) - val('CPV', p2) - OPEXK.reduce((s3, k2) => s3 + val(k2, p2), 0) - val('JUROS', p2), bold: true },
+        ]
+        const lbl = (p2: string) => mode === 'MES' ? ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'][Number(p2.slice(5, 7)) - 1] : p2
+        return (
+          <div className="overflow-x-auto mb-8 border border-gray-800 rounded-2xl">
+            <table className="min-w-full text-sm">
+              <thead><tr className="bg-gray-900">
+                <th className="text-left px-4 py-2.5 font-bold sticky left-0 bg-gray-900">DRE · {mode === 'ANO' ? 'POR ANO' : pYear}</th>
+                {pd.periods.map(p2 => <th key={p2} className="px-3 py-2.5 text-right font-bold text-gray-400">{lbl(p2)}</th>)}
+                <th className="px-4 py-2.5 text-right font-bold">TOTAL</th>
+              </tr></thead>
+              <tbody>
+                {rows2.map(r2 => (
+                  <tr key={r2.label} className={`border-t border-gray-800 ${r2.bold ? 'bg-gray-900/60 font-bold' : ''}`}>
+                    <td className={`px-4 py-2 sticky left-0 ${r2.bold ? 'bg-gray-900' : 'bg-black'} ${r2.neg ? 'text-gray-400' : ''}`}>{r2.label}</td>
+                    {pd.periods.map(p2 => { const v2 = r2.get(p2); return <td key={p2} className={`px-3 py-2 text-right tabular-nums ${v2 === 0 ? 'text-gray-700' : v2 < 0 ? 'text-red-400' : r2.bold ? 'text-emerald-400' : ''}`}>{v2 === 0 ? '—' : usd(v2)}</td> })}
+                    {(() => { const tt = pd.periods.reduce((s3, p2) => s3 + r2.get(p2), 0); return <td className={`px-4 py-2 text-right tabular-nums font-bold ${tt < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{tt === 0 ? '—' : usd(tt)}</td> })()}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })()}
+
+      {mode === 'ACUMULADA' && (<>
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">
         {[['RECEITA LÍQUIDA', v.liquida, 'text-gray-200'],
@@ -372,6 +484,7 @@ export default function DrePage() {
 
         <p className="mt-4 text-sm text-gray-500">{scope === 'OFICINA' ? `Visão SÓ A OFICINA: as linhas de carro (export) estão fora dos dois lados — faturado ${usd(m.carRev)}, custo ${usd(m.carCost)}. Esta é a margem real da operação.` : `Visão COMPLETA: o valor bruto dos carros passa pela receita e pelo custo — a margem parece menor por isso. Troque pra SÓ A OFICINA pra ver a operação.`} (D2/D3 resolvido em 25/ago — separação por linha, validada contra o banco.)</p>
       </div>
+      </>)}
     </main>
   )
 }
