@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel, refreshAllTracking } from '@/lib/stream.server'
-import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, carrierFromText, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
-import { runAppsSweep } from '@/lib/appsMail.server'
+import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, fetchRecentGmail, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, carrierFromText, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
+import { runAppsSweep, gmailAccessToken } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
 import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
@@ -60,6 +60,22 @@ async function run(force: boolean): Promise<NextResponse> {
     // High-water mark moves regardless of matches — a mail scanned once is done.
     await setMailAuth(db, { last_poll: new Date(now).toISOString() }, slot)
   }
+  // ── E O GMAIL (slot 4), que fala outro protocolo (26/ago/2026) ────────────
+  // A Amazon manda a nota de embarque para o gz28us@gmail. Sem esta perna, as
+  // compras de 25/ago embarcaram e o STREAM seguiu em BOUGHT sem rastreio.
+  try {
+    const a4 = await getMailAuth(db, 4)
+    if (a4?.refresh_token) {
+      const t4 = await gmailAccessToken(db)
+      if (t4) {
+        const since = a4.last_poll || new Date(now - FIRST_RUN_DAYS * 86_400_000).toISOString()
+        const got = await fetchRecentGmail(t4, since)
+        msgs.push(...got)
+        boxes.push(`${a4.account || 'gmail'}:${got.length}`)
+        await setMailAuth(db, { last_poll: new Date(now).toISOString() }, 4)
+      }
+    }
+  } catch (e) { console.error('[mail-poll gmail]', e) }
 
   // ── tracking capture ──────────────────────────────────────────────────────
   let updated = 0

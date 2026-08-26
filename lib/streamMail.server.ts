@@ -115,6 +115,48 @@ export async function fetchRecentMessages(accessToken: string, sinceIso: string)
   }))
 }
 
+// ── A QUARTA CAIXA: o Gmail (26/ago/2026) ──────────────────────────────────
+// fetchRecentMessages fala Graph, então só serve para os slots 1-3. A Amazon
+// manda a nota de embarque para o gz28us@gmail — e por isso as duas compras de
+// 25/ago embarcaram com o STREAM continuando em BOUGHT, sem rastreio nenhum.
+// Mesmo defeito de véspera (o vigia lia 1 caixa de 4), só que na caixa que fala
+// outro protocolo. Devolve o MESMO formato para o poll não precisar saber a
+// diferença.
+export async function fetchRecentGmail(accessToken: string, sinceIso: string): Promise<MailMsg[]> {
+  const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
+  const H = { Authorization: `Bearer ${accessToken}` }
+  const afterSec = Math.floor(new Date(sinceIso).getTime() / 1000)
+  const list = await fetch(`${GM}/messages?maxResults=40&q=${encodeURIComponent(`after:${afterSec} -in:chats`)}`, { headers: H }).then(r => r.json()).catch(() => null)
+  const stubs = list?.messages || []
+  const out: MailMsg[] = []
+  for (let i = 0; i < stubs.length; i += 8) {
+    const batch = await Promise.all(stubs.slice(i, i + 8).map((s: any) =>
+      fetch(`${GM}/messages/${s.id}?format=full`, { headers: H }).then(r => r.json()).catch(() => null)))
+    for (const m of batch) {
+      if (!m?.payload) continue
+      const hv = (n: string) => String((m.payload.headers || []).find((h: any) => String(h.name || '').toLowerCase() === n)?.value || '')
+      const fromRaw = hv('from')
+      const chunks: string[] = []
+      const walk = (p: any) => {
+        if (!p) return
+        if (p.body?.data && /text\/(plain|html)/.test(p.mimeType || '')) {
+          try { chunks.push(Buffer.from(String(p.body.data).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) } catch { /* skip part */ }
+        }
+        for (const c of p.parts || []) walk(c)
+      }
+      walk(m.payload)
+      out.push({
+        subject: hv('subject'),
+        from: fromRaw.replace(/<[^>]+>/, '').replace(/"/g, '').trim(),
+        fromAddr: (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).toLowerCase().trim(),
+        received: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : '',
+        text: chunks.join(' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' '),
+      })
+    }
+  }
+  return out
+}
+
 // Every tracking-number shape we can trust from an email body/subject.
 const TRACKING_RES: RegExp[] = [
   /\b1Z[0-9A-Z]{16}\b/g,             // UPS
