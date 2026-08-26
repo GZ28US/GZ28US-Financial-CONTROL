@@ -482,7 +482,7 @@ export default function FixedCostSupplierViewPage() {
         <div className="flex gap-3 flex-wrap">
           <button onClick={openSend} className="bg-emerald-700 hover:bg-emerald-600 px-6 py-3 rounded-2xl text-lg font-bold">📤 SEND TO</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
-          {isValidDate(s.date_conclusion) ? <span className="bg-red-950 border border-red-800 text-red-300 px-6 py-3 rounded-2xl text-lg font-bold" title="date_conclusion — o gerador de contas para aqui">ENCERRADA · {fmtDate(s.date_conclusion)}</span> : <button onClick={terminate} className="bg-red-900 hover:bg-red-800 px-6 py-3 rounded-2xl text-lg font-bold" title="grava o END DATE e apaga as contas agendadas depois dele (com trilha)">ENCERRAR</button>}
+          {isValidDate(s.date_conclusion) ? ((s.date_conclusion as string) <= todayYmd() ? <span className="bg-red-950 border border-red-800 text-red-300 px-6 py-3 rounded-2xl text-lg font-bold" title="date_conclusion no passado — contrato morto">ENCERRADA · {fmtDate(s.date_conclusion)}</span> : <span className="bg-amber-950 border border-amber-800 text-amber-300 px-6 py-3 rounded-2xl text-lg font-bold" title="contrato ATIVO com fim marcado — o gerador de contas para nessa data">ENCERRA · {fmtDate(s.date_conclusion)}</span>) : <button onClick={terminate} className="bg-red-900 hover:bg-red-800 px-6 py-3 rounded-2xl text-lg font-bold" title="grava o END DATE e apaga as contas agendadas depois dele (com trilha)">ENCERRAR</button>}
         </div>
       </div>
 

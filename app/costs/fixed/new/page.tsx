@@ -89,7 +89,7 @@ export default function NewFixedCostSupplierPage() {
               </select>
             </div>
             <div>
-              <label className="block mb-2 text-sm text-gray-400 font-bold">TYPE</label>
+              <label className="block mb-2 text-sm text-gray-400 font-bold">DRE BUCKET <span className="font-normal">— em que linha do DRE/DFC este fornecedor entra (não muda a recorrência)</span></label>
               <select value={costType} onChange={(e) => setCostType(e.target.value)} className={inputClass}>
                 {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
