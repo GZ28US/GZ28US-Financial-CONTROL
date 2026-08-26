@@ -30,7 +30,19 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 const G = 'https://graph.microsoft.com/v1.0'
 
 // Marcadores que não aparecem em publicidade pura e aparecem em tudo que é real.
-const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|aprovad|approved|charged|suspens|cancel|c[oó]digo|verification code|senha|password|2fa|refund|estorno|reembolso|invoice|fatura|boleto|nota fiscal|contrato|assinad|signature|signed|candidat|vaga de|check-?in|reserva confirmada|itiner|shipped|entregue|delivered|tracking|rastreio/i
+//
+// FRONTEIRA DE PALAVRA É OBRIGATÓRIA AQUI (26/ago/2026). Sem ela a trava morde
+// o MEIO das palavras, e numa oficina isso desarma o matador inteiro:
+//   signed   → rede·SIGNED, de·SIGNED        charged → super·CHARGED, turbo·CHARGED
+//   suspens  → SUSPENS·ion, SUSPENS·ão
+// Ou seja: toda propaganda de supercharger, suspensão ou peça "redesigned" ficava
+// imune — justo o marketing que mais chega aqui. Foi assim que o radiumauto
+// ("Redesigned Universal Coolant Expansion Tank") acumulou 1.158 bloqueios: o
+// mesmo e-mail reencontrado e re-travado a cada passada de 5 minutos.
+// `suspens` virou alvo estreito ("suspended"/"conta suspensa"), porque suspensão
+// é PEÇA no nosso vocabulário, não sinal de conta bloqueada.
+// +nº de pedido com hífen (111-9605878-5792209), que escapava da trava numérica.
+const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|\b\d{3}-\d{7}-\d{7}\b|\baprovad|\bapproved\b|\bcharged\b|\bsuspended\b|conta suspensa|account suspension|cancel|c[oó]digo|verification code|senha|password|2fa|refund|estorno|reembolso|invoice|fatura|boleto|nota fiscal|contrato|\bassinad|\bsignature\b|\bsigned\b|candidat|vaga de|check-?in|reserva confirmada|itiner|shipped|entregue|delivered|tracking|rastreio/i
 
 type Auth = { id: number; account: string; client_id: string; refresh_token: string }
 type Row = { email: string; hits?: number; blocked?: number }
