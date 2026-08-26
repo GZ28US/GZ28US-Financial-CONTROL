@@ -228,6 +228,7 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     GZ28BR: { line: 'FUND_BR', who: 'GZ28BR (conta corrente)' },
     RAFA: { line: 'FUND_BR', who: 'GZ28BR (conta corrente — via Rafa)' },
     BETO: { line: 'FUND_BETO', who: 'Beto (empréstimo de sócio)' },
+    HERALDO: { line: 'FUND_HERALDO', who: 'Heraldo (empréstimo de sócio)' },
   }
   const fund = (row: { paid_from?: string | null }, date: string | null | undefined, amount: number, label: string) => {
     const f = FUNDERS[String(row.paid_from || '').trim().toUpperCase()]

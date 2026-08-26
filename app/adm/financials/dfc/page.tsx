@@ -55,9 +55,10 @@ const ROWS: RowDef[] = [
   // o financiamento espelhado zera o efeito no caixa (e casa com o Balanço).
   { kind: 'line', key: 'FUND_BR', label: 'Conta corrente GZ28BR (bancou / recebeu por nós)' },
   { kind: 'line', key: 'FUND_BETO', label: 'Empréstimo de sócio — Beto (bancou por nós)' },
-  { kind: 'sub', keys: ['CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO'], label: 'Caixa de financiamento' },
+  { kind: 'line', key: 'FUND_HERALDO', label: 'Empréstimo de sócio — Heraldo (bancou por nós)' },
+  { kind: 'sub', keys: ['CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO', 'FUND_HERALDO'], label: 'Caixa de financiamento' },
 ]
-const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'BANK_FEES', 'EQUIP', 'STOCK', 'RECEIPTS_CARS', 'CAR_BUY', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO']
+const ALL_KEYS = ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST', 'PAYROLL', 'FIXED', 'MARKETING', 'APPS', 'MISC', 'BANK_FEES', 'EQUIP', 'STOCK', 'RECEIPTS_CARS', 'CAR_BUY', 'CAPITAL', 'DRAW', 'LOAN_IN', 'LOAN_PAY', 'INTEREST', 'FUND_BR', 'FUND_BETO', 'FUND_HERALDO']
 
 // Gráfico: barras de entrada (verde) e saída (vermelho) por coluna + linha do
 // caixa acumulado desde o início. SVG puro, mesmo espírito do GZ-FLOW.

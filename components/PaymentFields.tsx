@@ -17,7 +17,9 @@ import DatePicker from '@/components/DatePicker'
 // forma de pagamento própria, SEM número — o final do cartão muda quando o banco
 // reemite; o nome não. 'CARD' fica para cartões que não são o débito da Regions.
 export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'GZ28US Regions DebitCard', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL'] as const
-export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO'] as const
+// Os 3 sócios da GZ28US (João, 26/ago): Marcio/Dema, Beto e HERALDO — conta
+// paga do bolso de sócio vira empréstimo dele pra LLC (passivo no Balanço).
+export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO', 'HERALDO'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
 export type PaymentInfo = {
