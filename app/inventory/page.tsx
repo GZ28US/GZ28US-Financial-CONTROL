@@ -191,7 +191,12 @@ export default function InventoryPage() {
 
   async function confirmEdit() {
     if (!editPurchase) return
-    const patch = { supplier: editSupplier || null, purchase_date: isValidDate(editDate) ? editDate : null }
+    // Corrigir a data da compra move as DUAS — a de pagamento não fica pra trás.
+    const patch = {
+      supplier: editSupplier || null,
+      purchase_date: isValidDate(editDate) ? editDate : null,
+      payment_date: isValidDate(editDate) ? editDate : null,
+    }
     const { error } = editPurchase.groupId
       ? await supabase.from('inventory').update(patch).eq('purchase_group', editPurchase.groupId)
       : await supabase.from('inventory').update(patch).eq('id', editPurchase.items[0].id)
@@ -263,7 +268,11 @@ export default function InventoryPage() {
         category: 'STOCK',
         quantity: parseFloat(item.quantity) || 1,
         unit_price: parseFloat(item.amount) || 0,
+        // UMA DATA SÓ (lei 18/ago, reafirmada 26/ago): a data da compra É a do
+        // pagamento. O scan gravava só purchase_date e a peça ficava parecendo
+        // não paga.
         purchase_date: isValidDate(scanned.date) ? scanned.date : null,
+        payment_date: isValidDate(scanned.date) ? scanned.date : null,
         supplier: scanned.supplier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,

@@ -266,7 +266,13 @@ export default function InputsPage() {
 
   async function confirmEdit() {
     if (!editPurchase) return
-    const patch = { supplier: editSupplier || null, purchase_date: isValidDate(editDate) ? editDate : null }
+    // Corrigir a data da compra move as DUAS — senão o pagamento fica apontando
+    // pra um dia que a compra já não tem mais.
+    const patch = {
+      supplier: editSupplier || null,
+      purchase_date: isValidDate(editDate) ? editDate : null,
+      payment_date: isValidDate(editDate) ? editDate : null,
+    }
     const { error } = editPurchase.groupId
       ? await supabase.from('inputs').update(patch).eq('purchase_group', editPurchase.groupId)
       : await supabase.from('inputs').update(patch).eq('id', editPurchase.items[0].id)
@@ -342,7 +348,12 @@ export default function InputsPage() {
         category: 'CONSUMPTION',
         quantity: parseFloat(item.quantity) || 1,
         unit_price: parseFloat(item.amount) || 0,
+        // UMA DATA SÓ (lei 18/ago, reafirmada 26/ago): a data da compra É a do
+        // pagamento — insumo se paga no ato, no caixa da loja. O scan gravava só
+        // purchase_date e deixava payment_date vazio, e 28 compras ficaram
+        // parecendo "a pagar" no app. As duas andam sempre juntas.
         purchase_date: isValidDate(scanned.date) ? scanned.date : null,
+        payment_date: isValidDate(scanned.date) ? scanned.date : null,
         supplier: scanned.supplier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
