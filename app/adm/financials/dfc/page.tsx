@@ -27,7 +27,7 @@ const ROWS: RowDef[] = [
   { kind: 'line', key: 'RECEIPTS_BR', label: 'Recebimentos via GZ28BR' },
   { kind: 'line', key: 'JOB_COST', label: 'Fornecedores de projetos' },
   { kind: 'sub', keys: ['RECEIPTS', 'RECEIPTS_BR', 'JOB_COST'], label: 'Contribuição dos projetos' },
-  { kind: 'line', key: 'PAYROLL', label: 'Folha (staff)' },
+  { kind: 'line', key: 'PAYROLL', label: 'Equipe — salários & bem-estar' },
   { kind: 'line', key: 'FIXED', label: 'Ocupação, energia, seguros & contador' },
   { kind: 'line', key: 'MARKETING', label: 'Marketing' },
   { kind: 'line', key: 'APPS', label: 'Software & assinaturas' },

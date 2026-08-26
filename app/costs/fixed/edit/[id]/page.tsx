@@ -9,7 +9,7 @@ import { BASE_PATH } from '@/lib/utils'
 
 const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone']
 const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'SEMIANNUAL', 'ANNUAL']
-const COST_TYPES = ['FIXED', 'VARIABLE', 'APP', 'BANK']
+const COST_TYPES = ['FIXED', 'VARIABLE', 'APP', 'BANK', 'STAFF']
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function isNumeric(v: string) { return v === '' || /^-?\d*\.?\d*$/.test(v) }
