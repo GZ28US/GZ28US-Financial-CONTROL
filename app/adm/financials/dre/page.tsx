@@ -135,7 +135,7 @@ export default function DrePage() {
       { cells: ['RECEITA LÍQUIDA', usd(v.liquida)], bold: true },
       { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
       { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
-      { cells: ['(−) Pessoal', usd(-m.payroll)] },
+      { cells: ['(−) Folha (equipe)', usd(-m.payroll)] },
       { cells: ['(−) Ocupação, seguros & profissionais', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
@@ -237,7 +237,7 @@ export default function DrePage() {
           <p className="text-sm font-bold text-gray-400 mb-4">ONDE VIVE A DESPESA OPERACIONAL</p>
           <Waterfall steps={[
             { label: 'Ocupação, seguros & profissionais', value: m.fixedBy.FIXED || 0, kind: 'out' },
-            { label: 'Pessoal', value: m.payroll, kind: 'out' },
+            { label: 'Folha (equipe)', value: m.payroll, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
             { label: 'Tarifas bancárias', value: m.fixedBy.BANK || 0, kind: 'out' },
@@ -269,7 +269,7 @@ export default function DrePage() {
           <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
-          <Row label="(−) Pessoal" value={-m.payroll} sub />
+          <Row label="(−) Folha (equipe)" value={-m.payroll} sub note="salários e diárias da EQUIPE — o gasto PESSOAL dos sócios NÃO está aqui: é retirada de capital (DFC financiamento + Balanço)" />
           <Row label="(−) Ocupação, seguros & profissionais" value={-(m.fixedBy.FIXED || 0)} sub />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub />
