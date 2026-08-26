@@ -103,6 +103,7 @@ export function mineFamilies(data: {
     if (!e.platform) e.platform = platformOf(pk.name)
     for (const inv of invoices) {
       const hay = [
+        inv.service || '',
         ...(svcsByInv.get(inv.id) || []).map((s: any) => s.description),
         ...(partsByInv.get(inv.id) || []).map((p: any) => p.description),
       ].join(' ').toLowerCase()
