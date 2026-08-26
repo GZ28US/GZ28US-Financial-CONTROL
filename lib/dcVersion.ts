@@ -4,9 +4,10 @@
 // CHECK bumpa DC_VERSION e acrescenta uma linha no topo do changelog.
 // A era anterior (dentro do FINANCIAL v0.4.0–v0.9.x) está no changelog de lá.
 export const DC_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'BETA'
-export const DC_VERSION = '1.34.1'
+export const DC_VERSION = '1.35.0'
 
 export const DC_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '1.35.0', date: '2026-08-26', notes: "Fricção #18 (João: \"me confunde — é income sem expense? o que ele conserta? e é outra lista morta\"): o card do dinheiro-sem-linhas agora se explica — faturado ZERO + dinheiro recebido = cliente pagou por algo que o papel não conta; vira adiantamento eterno no Balanço e o DRE nunca vê o resultado. Medido: 8 invoices, $199.267 presos — 6 legadas de 2025 (alternativa contábil = D9, pendente com o Márcio) e DUAS de jul/2026 (linhas esquecidas, só preencher). Título virou \"Cliente pagou, mas a invoice não fatura NADA\"; cada linha mostra recebido×agendado, parcelas e período; e o link leva DIRETO pro EDITOR da invoice, onde as linhas se reconstroem." },
   { version: '1.34.1', date: '2026-08-25', notes: "Card da frota ganha a quinta classe: COLECIONÁVEL — chassi ao custo (a valorização fica fora dos livros até a venda), experimentos depreciam. Nascida do caso Devil170 (Demon 170, produção única)." },
   { version: '1.34.0', date: '2026-08-25', notes: "Pilar DATA CHECK no G4 recém-nascido: card novo \"Carro da frota sem natureza de ativo\" — todo OWN/TOOL novo cai nele até ganhar classe (TRABALHO/DESENVOLVIMENTO depreciam; MONUMENTO/RESERVA ao custo), com o conserto na própria linha. Só aparece depois da MIGRATION_g4_fleet.sql (sem falso alarme antes)." },
   { version: '1.33.0', date: '2026-08-25', notes: "Fase 4, o carro-chefe da reforma: MODO GUIADO. Todo card com 2+ itens ganha \"▶ um de cada vez\": a fila vira UM item grande — código, valor, data, contexto, ABRIR REGISTRO ↗ (e ANÚNCIO ↗ quando há) — com o conserto na cara: a sugestão vem PRÉ-CARREGADA (um Enter resolve), data prevista idem, e VOLTAR/PULAR navegam. Barra de progresso + \"N resolvido(s) agora\"; fila zerada vira comemoração. Os filtros do card valem no guiado (filtre pre-open e guie só por eles). Tudo passa pelo applyFix de sempre — trilhas, APIs e guardas do dia inteiro, nada novo pra errar. A sessão de limpeza vira jogo, não planilha." },

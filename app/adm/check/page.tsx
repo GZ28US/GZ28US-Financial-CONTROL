@@ -353,13 +353,21 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const sched = d.payments.filter((p: any) => p.invoice_id === inv.id).reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0)
       if (t.grand < 0.005 && sched > 0) {
         const m = invoiceMeta(d, inv.id)
-        items.push({ href: m.href, code: m.code, label: whoFor(inv.id), extra: inv.live_status + ' — precisa de linhas, abre em aba nova', amount: sched })
+        // Fricção #18 (João): a linha mostra o FORMATO do dinheiro e leva direto
+        // pro editor — reconstruir linhas é trabalho de editor, não de FIX inline.
+        const ps = d.payments.filter((p: any) => p.invoice_id === inv.id)
+        const dates = ps.map((p: any) => String(p.paid_at || p.payment_date || '').slice(0, 10)).filter(Boolean).sort()
+        items.push({
+          href: m.href.replace('/invoices/', '/invoices/edit/'), code: m.code, label: whoFor(inv.id),
+          extra: `recebido ${usd(t.received)} de ${usd(sched)} · ${ps.length} parcela(s)${dates.length ? ` · ${dates[0]} → ${dates[dates.length - 1]}` : ''} · ${inv.live_status} — abra o EDITOR e reconstrua as linhas do que foi vendido`,
+          amount: sched,
+        })
         impact += sched
       }
     }
     checks.push({
-      group: 'INVOICES', key: 'zero-billed', title: 'Invoice recebeu dinheiro mas não tem nenhuma linha', blocks: 'dinheiro entrou por um serviço que não existe no papel',
-      why: 'Dinheiro entrou mas a invoice não fatura nada — vira adiantamento de cliente eterno no Balanço. Ou as linhas são preenchidas, ou o job legado fecha contra resultado de abertura.',
+      group: 'INVOICES', key: 'zero-billed', title: 'Cliente pagou, mas a invoice não fatura NADA', blocks: 'o dinheiro vira DÍVIDA nossa com o cliente no Balanço (adiantamento eterno) — nunca vira receita',
+      why: 'O que este card pega: o total FATURADO da invoice (parts + services) é ZERO, mas há dinheiro recebido nela — o cliente pagou por algo que o papel não conta. Receita só nasce de linha faturada; sem linhas, o Balanço trata o dinheiro como ADIANTAMENTO DE CLIENTE (uma dívida nossa!) pra sempre, e o DRE nunca vê o resultado do job. Conserto real: abrir o EDITOR da invoice (a linha já leva) e reconstruir o que foi vendido — parts, services, preços — trabalho de contexto, por isso não há FIX inline. As legadas de 2025 (US.003–US.008) têm a alternativa contábil de fechar contra o resultado de abertura: essa é a decisão D9, ainda pendente com o Márcio. As de 2026 são jobs reais com linhas esquecidas — só preencher.',
       items: items.sort((a, b) => (b.amount || 0) - (a.amount || 0)), impact,
     })
   }
