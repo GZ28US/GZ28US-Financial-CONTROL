@@ -216,7 +216,9 @@ export default function LedgersPage() {
                 )}
 
                 {evt.financing_id !== f.id ? (
-                  <button onClick={() => setEvt({ financing_id: f.id, event_date: '', kind: 'DISBURSEMENT', amount: '', description: '' })}
+                  // João, 26/ago: empréstimo simples = as duas datas coincidem; o evento
+                  // nasce com a data do contrato pré-carregada (ajuste se divergir).
+                  <button onClick={() => setEvt({ financing_id: f.id, event_date: f.start_date || '', kind: 'DISBURSEMENT', amount: '', description: '' })}
                     className="mt-4 w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 px-6 py-3 rounded-2xl text-lg font-bold">+ ADD EVENT</button>
                 ) : (
                   <div className="mt-4 bg-black/40 border border-gray-800 rounded-2xl p-4 grid grid-cols-1 gap-5">
