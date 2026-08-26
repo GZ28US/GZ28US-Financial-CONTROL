@@ -95,6 +95,27 @@ function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 // Like isNumeric but allows a leading minus, for expense amounts (credits/refunds).
 function isSignedNumeric(v: string) { return v === '' || v === '-' || /^-?\d*\.?\d*$/.test(v) }
 // Implied exchange-rate label "R$ x.xx / US$" once both USD and BRL are entered.
+// Em qual das duas casas o dinheiro caiu (Márcio, 26/ago/2026: "o escaneamento
+// deve detectar automaticamente quando foi pago ao GZ28BR"). A moeda decide
+// sozinha: real só cai em conta brasileira — não existe Pix nem TED nos EUA. E
+// quando o comprovante em dólar nomeia o recebedor, o nome desempata (um wire
+// em USD pra conta do Brasil existe, é raro, e o nome impresso denuncia).
+function houseFromPayee(payee: any, docIsBRL: boolean): string {
+  if (docIsBRL) return 'GZ28BR'
+  const n = String(payee || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
+  if (/GZ28s*BR|GALPAOs*Z28|GALPAOZ28|LTDA/.test(n)) return 'GZ28BR'
+  return 'GZ28US'
+}
+
+// O método lido no papel só vale se existir na lista da casa que recebeu —
+// senão o <select> abriria vazio, como abriu no Pix da Falcao Odontologia.
+function matchIncomeMethod(source: any, paidTo: string): string {
+  const raw = String(source || '').trim()
+  if (!raw) return ''
+  const hit = methodsFor(paidTo).find(m => m.toUpperCase() === raw.toUpperCase())
+  return hit || ''
+}
+
 function brlRate(usd: string, brl: string): string {
   const u = parseFloat(usd) || 0
   const b = parseFloat(brl) || 0
@@ -863,16 +884,26 @@ export default function EditInvoicePage() {
       const fxIn = await scanCurrencyFx(parsed.currency)
       if (fxIn == null) { setScanningPayment(false); return }
       const conv = (v: any) => { const n = parseFloat(String(v ?? '')) || 0; return n > 0 ? (n * fxIn).toFixed(2) : '' }
-      const list: ScannedPayment[] = (parsed.payments || []).map((p: any) => ({
-        amount: conv(p.amount),
-        source: String(p.source || ''),
-        paid_from: 'GZ28US',
-        paid_to: 'GZ28US',
-        date: String(p.date || ''),
-        receipt_url: receiptUrl,
-        // The payer (who SENT the money) becomes the income note.
-        description: String(p.payer || ''),
-      }))
+      const docIsBRL = String(parsed.currency || 'USD').toUpperCase().trim() === 'BRL'
+      const list: ScannedPayment[] = (parsed.payments || []).map((p: any) => {
+        const paidTo = houseFromPayee(p.payee, docIsBRL)
+        const printed = parseFloat(String(p.amount ?? '')) || 0
+        return {
+          amount: conv(p.amount),
+          // Guarda o valor COMO ESTAVA IMPRESSO no comprovante (Márcio,
+          // 26/ago/2026: "deve mostrar o valor em BRL também"). O scan
+          // convertia pra dólar e jogava fora os reais do documento — daí o
+          // AMOUNT (R$) nascer 0,00 num Pix que dizia R$ na cara.
+          amount_brl: (paidTo === 'GZ28BR' && docIsBRL && printed > 0) ? printed.toFixed(2) : '',
+          source: matchIncomeMethod(p.source, paidTo),
+          paid_from: 'GZ28US',
+          paid_to: paidTo,
+          date: String(p.date || ''),
+          receipt_url: receiptUrl,
+          // The payer (who SENT the money) becomes the income note.
+          description: String(p.payer || ''),
+        }
+      })
       if (list.length === 0) list.push({ amount: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
 
       const openReview = () => setScannedPayments(list)

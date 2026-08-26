@@ -74,20 +74,24 @@ Rules:
   "payments": [
     {
       "amount": "payment amount as number string like 1500.00",
-      "source": "the payment METHOD — one of CASH, ACH, ZELLE, CHECK — or empty string if not identifiable",
+      "source": "the payment METHOD — see rule 2 — or empty string if not identifiable",
       "date": "YYYY-MM-DD format, or empty string if not found",
-      "payer": "the name of who SENT/PAID the money (the 'from' / 'De' / 'pagador' / 'Origem' / 'Dados do pagador'); empty string if not shown"
+      "payer": "the name of who SENT/PAID the money (the 'from' / 'De' / 'pagador' / 'Origem' / 'Dados do pagador'); empty string if not shown",
+      "payee": "the name of who RECEIVED the money (the 'to' / 'Para' / 'recebedor' / 'Destino' / 'Dados do recebedor' / 'Favorecido' / 'Beneficiário'); empty string if not shown"
     }
   ]
 }
 Rules:
 0. currency — READ THIS FIRST, before any amount. Return "USD" when the amounts are in US dollars (a "$" or "US$" sign, "USD", "Dollars", a Zelle/ACH/wire/check/US-bank document) and "BRL" when in Brazilian reais (an "R$" sign, "BRL", "reais", a Pix/TED/DOC or any Brazilian bank document). Never infer the currency from the size of the number. With no currency mark at all, default to "USD" for a Zelle/ACH/wire/check and to "BRL" for a Pix/TED/DOC.
 1. amount: the money amount RECEIVED, digits only as a number string (no $ or R$ and no thousands separators; use a dot for the decimals). For a Pix use the "Valor". NEVER convert the amount — report it exactly as printed, in the document's own currency.
-2. source: map to exactly one of CASH, ACH, ZELLE, CHECK based on clear evidence (the word "Zelle"/"ACH", a check number, "cash"). If you cannot tell, use an empty string — do NOT guess.
+2. source: the payment method, mapped to exactly one of the words below, based on clear evidence in the document. If you cannot tell, use an empty string — do NOT guess.
+   • On a US/dollar document: CASH, ZELLE, ACH, WIRE, CHECK, CARD, PAYPAL (the word "Zelle"/"ACH"/"wire", a check number, a card brand, "PayPal", "cash").
+   • On a Brazilian document: PIX, TED, CASH, CHEQUE, CARD ("Comprovante de Pix"/"Pix enviado"/a "Chave Pix" or an "E2E"/"ID da transação" code ⇒ PIX; "TED"/"DOC"/"Transferência" ⇒ TED; "cheque" ⇒ CHEQUE; "cartão"/"débito"/"crédito" ⇒ CARD; "dinheiro"/"espécie" ⇒ CASH).
 3. date: the date the payment was made/settled, as YYYY-MM-DD. A Brazilian date like "09/03/2026" is DD/MM/YYYY, so it becomes 2026-03-09. Empty string if not found.${todayISO ? ` Never return a date after today, ${todayISO}.` : ''}
 4. payer: the party that SENT the money — the "from" / "De" / "pagador" / "Origem" / "Dados do pagador". This is the client who paid, NOT the recipient (the "Para" / "recebedor") and NOT the bank. Empty string if not shown.
-5. If the document shows multiple payments, include one object per payment. If only one, return a single-element array.
-6. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+5. payee: the party that RECEIVED the money — the "to" / "Para" / "recebedor" / "Favorecido" / "Beneficiário" / "Dados do recebedor" / the account credited. This is the shop, NOT the client and NOT the bank. Copy the name exactly as printed (e.g. "GALPAO Z28 LTDA", "GZ28US LLC", "Marcio De Maria"). Empty string if not shown.
+6. If the document shows multiple payments, include one object per payment. If only one, return a single-element array.
+7. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
