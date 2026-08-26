@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst, seasonHourlyRate, formatMoney } from '@/lib/utils'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { normPN } from '@/lib/partsDb'
 
@@ -82,6 +82,10 @@ export default function EditPackPage() {
   // Mesma resolucao da invoice: a chave e o source_item (o nome do item no banco
   // de pecas, guardado no import) e so cai na description quando nao houver.
   const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
+  // MÃO DE OBRA — quem está em season ABERTA e tem taxa + jornada gravadas.
+  // Só entra quem o app sabe quanto custa por hora; o resto não aparece, em vez
+  // de aparecer com número inventado (Márcio, 26/ago/2026).
+  const [labor, setLabor] = useState<{ name: string; hourly: number; currency: string }[]>([])
 
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
@@ -228,6 +232,15 @@ export default function EditPackPage() {
     setMapByPN(mp)
     setMapByName(mn)
     setPnByItem(pm)
+
+    const { data: seasonRows } = await supabase.from('seasons')
+      .select('staff_id, pay_type, pay_rate, pay_currency, hours_per_day, days_per_week, staff(name)')
+      .is('date_conclusion', null)
+    setLabor((seasonRows || []).map((r: any) => ({
+      name: r.staff?.name || '—',
+      hourly: seasonHourlyRate(r) as number,
+      currency: r.pay_currency || 'USD',
+    })).filter(r => r.hourly > 0).sort((a, b) => a.name.localeCompare(b.name)))
 
     setLoading(false)
   }
@@ -1099,13 +1112,28 @@ export default function EditPackPage() {
                     )}
                   </div>
                 ))}
-                {duties.some(d => d.estimated_seconds) && (
-                  <div className="flex items-center justify-between gap-4 px-4 py-3 border-t-2 border-gray-600 bg-gray-800/60">
-                    <span className="text-sm font-bold text-gray-400 uppercase tracking-wide flex-1">⏱ Estimated Total</span>
-                    <span className="w-20 shrink-0 text-right text-base font-bold text-gray-100 tabular-nums">{fmtDutyEst(duties.reduce((t, d) => t + (Number(d.estimated_seconds) || 0), 0))}</span>
-                    {!locked && <span className="shrink-0 w-[8.5rem]" />}
-                  </div>
-                )}
+                {duties.some(d => d.estimated_seconds) && (() => {
+                  const totalSecs = duties.reduce((t, d) => t + (Number(d.estimated_seconds) || 0), 0)
+                  const hours = totalSecs / 3600
+                  return (<>
+                    <div className="flex items-center justify-between gap-4 px-4 py-3 border-t-2 border-gray-600 bg-gray-800/60">
+                      <span className="text-sm font-bold text-gray-400 uppercase tracking-wide flex-1">⏱ Estimated Total</span>
+                      <span className="w-20 shrink-0 text-right text-base font-bold text-gray-100 tabular-nums">{fmtDutyEst(totalSecs)}</span>
+                      {!locked && <span className="shrink-0 w-[8.5rem]" />}
+                    </div>
+                    {/* O QUE ESSAS HORAS CUSTAM. Uma linha por pessoa com taxa e
+                        jornada gravadas na season aberta — o custo/hora sai de lá,
+                        nunca daqui. Na moeda em que a pessoa recebe: converter
+                        exigiria um câmbio do dia, que não se inventa. */}
+                    {labor.map(p => (
+                      <div key={p.name} className="flex items-center justify-between gap-4 px-4 py-2 bg-gray-800/40 border-t border-gray-700">
+                        <span className="text-sm text-gray-400 flex-1 truncate" title={`${p.name} — ${formatMoney(p.hourly, p.currency)} per hour`}>👤 {p.name} · {formatMoney(p.hourly, p.currency)}/h</span>
+                        <span className="w-28 shrink-0 text-right text-sm font-bold text-gray-200 tabular-nums">{formatMoney(p.hourly * hours, p.currency)}</span>
+                        {!locked && <span className="shrink-0 w-[8.5rem]" />}
+                      </div>
+                    ))}
+                  </>)
+                })()}
               </div>
             )}
           </div>

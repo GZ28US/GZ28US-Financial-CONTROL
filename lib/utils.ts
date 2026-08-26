@@ -321,3 +321,24 @@ export const withDutyOrder = (order: string, desc: string) => order ? `${order}.
 export const dutyEstSeconds = (hours: string) => { const h = parseFloat(String(hours ?? '').replace(',', '.')); return h > 0 ? Math.round(h * 3600) : null }
 export const dutyEstHours = (secs: number | null | undefined) => { const s = Number(secs) || 0; return s > 0 ? String(Math.round((s / 3600) * 100) / 100) : '' }
 export const fmtDutyEst = (secs: number | null | undefined) => { const s = Math.round(Number(secs) || 0); if (s <= 0) return ''; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? (m ? `${h}h${m}m` : `${h}h`) : `${m}m` }
+
+// CUSTO POR HORA de um staff, tirado da season (Márcio, 26/ago/2026: "o Jeff
+// trabalha 9h/dia de 2a a Sab"). A season guarda a TAXA (pay_type/pay_rate) e
+// agora a JORNADA (hours_per_day/days_per_week) — o custo/hora nasce das duas.
+// 52/12 = 4,3333 semanas por mês é a média anual real; 4 semanas cravadas
+// inflaria o custo/hora em 8%. Sem jornada gravada devolve null: melhor não
+// mostrar do que mostrar um número inventado.
+export type SeasonPay = { pay_type?: string | null; pay_rate?: number | null; pay_currency?: string | null; hours_per_day?: number | null; days_per_week?: number | null }
+export function seasonHourlyRate(s: SeasonPay | null | undefined): number | null {
+  const rate = Number(s?.pay_rate) || 0
+  const hpd = Number(s?.hours_per_day) || 0
+  const dpw = Number(s?.days_per_week) || 0
+  if (rate <= 0 || hpd <= 0) return null
+  if (s?.pay_type === 'DAILY') return rate / hpd
+  if (dpw <= 0) return null
+  if (s?.pay_type === 'WEEKLY') return rate / (hpd * dpw)
+  if (s?.pay_type === 'MONTHLY') return rate / (hpd * dpw * 52 / 12)
+  return null
+}
+export const formatBRL = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+export const formatMoney = (n: number, currency?: string | null) => (currency === 'BRL' ? formatBRL(n) : formatUSD(n))

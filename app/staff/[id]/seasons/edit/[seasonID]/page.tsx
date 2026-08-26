@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, seasonHourlyRate, formatMoney } from '@/lib/utils'
 
 const inputClass = 'w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-4 text-xl'
 
@@ -26,6 +26,9 @@ export default function EditSeasonPage() {
   const [payRate, setPayRate] = useState('')
   const [payCurrency, setPayCurrency] = useState('USD')
   const [payDay, setPayDay] = useState('')
+  // JORNADA — é o que transforma a taxa em custo/hora nas duties dos packs.
+  const [hoursPerDay, setHoursPerDay] = useState('')
+  const [daysPerWeek, setDaysPerWeek] = useState('')
 
   useEffect(() => {
     loadStaffName()
@@ -61,6 +64,8 @@ export default function EditSeasonPage() {
     setPayRate(data.pay_rate != null ? String(data.pay_rate) : '')
     setPayCurrency(data.pay_currency || 'USD')
     setPayDay(data.pay_day != null ? String(data.pay_day) : '')
+    setHoursPerDay(data.hours_per_day != null ? String(data.hours_per_day) : '')
+    setDaysPerWeek(data.days_per_week != null ? String(data.days_per_week) : '')
     setLoading(false)
   }
 
@@ -100,6 +105,8 @@ export default function EditSeasonPage() {
         // pay_day é UM campo e o pay_type diz o que ele significa: dia da
         // semana no WEEKLY, dia do mês no MONTHLY. No DAILY não existe dia.
         pay_day: payType === 'WEEKLY' || payType === 'MONTHLY' ? (payDay !== '' ? parseInt(payDay, 10) : null) : null,
+        hours_per_day: hoursPerDay !== '' ? (parseFloat(hoursPerDay) || null) : null,
+        days_per_week: daysPerWeek !== '' ? (parseInt(daysPerWeek, 10) || null) : null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', seasonID)
@@ -181,6 +188,25 @@ export default function EditSeasonPage() {
                     Paid in reais by GZ28BR. Each payment stores the real amount in R$ and the dollar of the day it was issued — the app never re-converts an old line.
                   </p>
                 )}
+              </div>
+
+              {/* JORNADA — sem ela a taxa nao vira custo/hora e as duties de
+                  um pack ficam sem preco (Márcio, 26/ago/2026). */}
+              <div>
+                <label className="block mb-2 text-sm text-gray-400">WORK SCHEDULE</label>
+                <div className="flex gap-3">
+                  <input type="text" inputMode="decimal" placeholder="Hours per day" value={hoursPerDay} onChange={(e) => { if (e.target.value === '' || /^\d*\.?\d*$/.test(e.target.value)) setHoursPerDay(e.target.value) }} className={inputClass + ' flex-1'} />
+                  <select value={daysPerWeek} onChange={(e) => setDaysPerWeek(e.target.value)} className={inputClass + ' flex-1'}>
+                    <option value="">Days per week</option>
+                    {[1, 2, 3, 4, 5, 6, 7].map(d => <option key={d} value={String(d)}>{d} {d === 1 ? 'day' : 'days'} a week</option>)}
+                  </select>
+                </div>
+                {(() => {
+                  const h = seasonHourlyRate({ pay_type: payType, pay_rate: parseFloat(payRate) || 0, hours_per_day: parseFloat(hoursPerDay) || 0, days_per_week: parseInt(daysPerWeek, 10) || 0 })
+                  return h
+                    ? <p className="mt-2 text-sm font-bold text-gray-200">Costs {formatMoney(h, payCurrency)} per hour — this is what puts a price on a pack&apos;s duties.</p>
+                    : <p className="mt-2 text-sm text-gray-400">Fill both and the app learns this person&apos;s cost per hour, which is what puts a price on a pack&apos;s duties.</p>
+                })()}
               </div>
 
               {payType !== 'DAILY' && (
