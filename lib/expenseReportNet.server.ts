@@ -69,7 +69,15 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
     // EXCEÇÃO (19/ago, caso HHP #382526): compra CANCELADA/ESTORNADA fica
     // não-paga MESMO com recibo anexado — o recibo é de um pagamento que
     // voltou. O marcador [ESTORNADO]/[CANCELADO] no item blinda a linha.
-    if (/^\[(ESTORNAD|CANCELAD)/i.test(String(e.item || ''))) continue
+    //
+    // EXCEÇÃO 2 (26/ago, caso TAG #178871-D): documento anexado que é PEDIDO,
+    // não recibo. A lei "comprovante = paga" nasceu de recibo esquecido sem
+    // data; ela não vale para a nota que o vendedor manda ANTES do pagamento —
+    // o PDF da TAG diz na própria margem "THIS IS A WORK ORDER, NOT AN INVOICE!
+    // DO NOT MAKE ANY PAYMENTS FROM THIS PAPERWORK!". Sem esta trava a compra
+    // nascia paga sozinha e sumia das contas a pagar. O marcador [A PAGAR] sai
+    // do item na hora em que o pagamento for lançado.
+    if (/^\[(ESTORNAD|CANCELAD|A PAGAR|AGUARDANDO PAGAMENTO|N[ÃA]O PAGO)/i.test(String(e.item || ''))) continue
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('invoice_expenses').update(patch(e, d)).eq('id', e.id)
     if (!error) fixed++
