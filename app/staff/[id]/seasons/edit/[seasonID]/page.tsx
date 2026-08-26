@@ -7,6 +7,8 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
+const inputClass = 'w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-4 text-xl'
+
 export default function EditSeasonPage() {
   const params = useParams()
   const router = useRouter()
@@ -17,6 +19,13 @@ export default function EditSeasonPage() {
   const [staffName, setStaffName] = useState('')
   const [dateEntry, setDateEntry] = useState('')
   const [dateConclusion, setDateConclusion] = useState('')
+  // A TAXA (Márcio, 26/ago/2026). Ela sempre viveu na season, mas em nenhuma
+  // tela — só dava para mexer no banco. Sem isso ninguém sabe, pelo app,
+  // quanto uma pessoa ganha por mês.
+  const [payType, setPayType] = useState('')
+  const [payRate, setPayRate] = useState('')
+  const [payCurrency, setPayCurrency] = useState('USD')
+  const [payDay, setPayDay] = useState('')
 
   useEffect(() => {
     loadStaffName()
@@ -48,6 +57,10 @@ export default function EditSeasonPage() {
 
     setDateEntry(data.date_entry || '')
     setDateConclusion(data.date_conclusion || '')
+    setPayType(data.pay_type || '')
+    setPayRate(data.pay_rate != null ? String(data.pay_rate) : '')
+    setPayCurrency(data.pay_currency || 'USD')
+    setPayDay(data.pay_day != null ? String(data.pay_day) : '')
     setLoading(false)
   }
 
@@ -81,6 +94,12 @@ export default function EditSeasonPage() {
       .update({
         date_entry: isValidDate(dateEntry) ? dateEntry : null,
         date_conclusion: isValidDate(dateConclusion) ? dateConclusion : null,
+        pay_type: payType || null,
+        pay_rate: payType && payRate !== '' ? (parseFloat(payRate) || null) : null,
+        pay_currency: payCurrency || 'USD',
+        // pay_day é UM campo e o pay_type diz o que ele significa: dia da
+        // semana no WEEKLY, dia do mês no MONTHLY. No DAILY não existe dia.
+        pay_day: payType === 'WEEKLY' || payType === 'MONTHLY' ? (payDay !== '' ? parseInt(payDay, 10) : null) : null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', seasonID)
@@ -123,6 +142,69 @@ export default function EditSeasonPage() {
           value={dateConclusion}
           onChange={setDateConclusion}
         />
+
+        {/* PAY RATE — o que a pessoa ganha nesta season. O app gera a linha em
+            aberto no dia certo e ela fica pendente até alguém dar baixa. */}
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 space-y-4">
+          <label className="block text-lg font-bold">PAY RATE</label>
+
+          <div>
+            <label className="block mb-2 text-sm text-gray-400">HOW OFTEN</label>
+            <select value={payType} onChange={(e) => setPayType(e.target.value)} className={inputClass}>
+              <option value="">— no recurring pay —</option>
+              <option value="DAILY">DAILY</option>
+              <option value="WEEKLY">WEEKLY</option>
+              <option value="MONTHLY">MONTHLY</option>
+            </select>
+          </div>
+
+          {payType && (
+            <>
+              <div>
+                <label className="block mb-2 text-sm text-gray-400">AMOUNT</label>
+                <div className="flex gap-3">
+                  <select value={payCurrency} onChange={(e) => setPayCurrency(e.target.value)} className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-4 text-xl">
+                    <option value="USD">US$</option>
+                    <option value="BRL">R$</option>
+                  </select>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={payRate}
+                    onChange={(e) => { if (e.target.value === '' || /^\d*\.?\d*$/.test(e.target.value)) setPayRate(e.target.value) }}
+                    className={inputClass + ' flex-1'}
+                  />
+                </div>
+                {payCurrency === 'BRL' && (
+                  <p className="mt-2 text-sm text-gray-400">
+                    Paid in reais by GZ28BR. Each payment stores the real amount in R$ and the dollar of the day it was issued — the app never re-converts an old line.
+                  </p>
+                )}
+              </div>
+
+              {payType !== 'DAILY' && (
+                <div>
+                  <label className="block mb-2 text-sm text-gray-400">{payType === 'WEEKLY' ? 'PAYS EVERY' : 'PAYS ON DAY'}</label>
+                  {payType === 'WEEKLY' ? (
+                    <select value={payDay} onChange={(e) => setPayDay(e.target.value)} className={inputClass}>
+                      <option value="">Friday (default)</option>
+                      {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map((d, i) => <option key={d} value={String(i)}>{d}</option>)}
+                    </select>
+                  ) : (
+                    <select value={payDay} onChange={(e) => setPayDay(e.target.value)} className={inputClass}>
+                      <option value="">Last day of the month (default)</option>
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map(d => <option key={d} value={String(d)}>{d}</option>)}
+                    </select>
+                  )}
+                  {payType === 'MONTHLY' && Number(payDay) > 28 && (
+                    <p className="mt-2 text-sm text-amber-400">A short month can't hold day {payDay} — it pays on the last day instead.</p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
 
         <button
           onClick={saveSeason}

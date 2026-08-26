@@ -64,7 +64,7 @@ async function ensureFixedCostPayments() {
 
 // FOLHA RECORRENTE DE STAFF no Future Flow (ordem do Márcio, 28/jul/2026:
 // "quero abrir o Future Flow e ver TODAS AS CONTAS PREVISTAS, SEM EXCEÇÃO").
-// A season carrega a taxa (pay_type / pay_rate / pay_weekday) e aqui nascem, com
+// A season carrega a taxa (pay_type / pay_rate / pay_currency / pay_day) e aqui nascem, com
 // antecedência, as linhas EM ABERTO de cada período até o fim da janela — do
 // mesmo jeito que ensureFixedCostPayments faz com a conta fixa mensal. Sem isso o
 // salário só apareceria no dia do pagamento e sumiria da previsão. Enquanto o
@@ -72,7 +72,7 @@ async function ensureFixedCostPayments() {
 // de fim, é a janela de 6 meses.
 async function ensureStaffPayments() {
   const { data: seasons } = await supabase.from('seasons')
-    .select('id, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_weekday')
+    .select('id, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_currency, pay_day')
     .is('date_conclusion', null).not('pay_type', 'is', null)
   if (!seasons || seasons.length === 0) return
   const { data: existing } = await supabase.from('expenses').select('season_id, type, expense_date')
@@ -80,25 +80,49 @@ async function ensureStaffPayments() {
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const limit = horizonEnd()
+  // Taxa em reais vira dólar UMA vez, na cotação de hoje, para a previsão não
+  // ficar mentindo com câmbio velho. A linha guarda os dois valores; quem paga
+  // um salário em reais é o GZ28BR.
+  let spot = 0
+  if ((seasons as any[]).some(s => (s.pay_currency || 'USD') === 'BRL')) {
+    try {
+      const r = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL')
+      spot = parseFloat((await r.json())?.USDBRL?.bid) || 0
+    } catch { spot = 0 }
+  }
   const toInsert: any[] = []
   for (const s of seasons as any[]) {
     const rate = Number(s.pay_rate) || 0
     if (rate <= 0) continue
+    // Sem cotação não se inventa número: a season em BRL fica fora da previsão
+    // desta rodada em vez de entrar com um valor fabricado.
+    const emBRL = (s.pay_currency || 'USD') === 'BRL'
+    if (emBRL && !spot) continue
+    const valor = emBRL ? Number((rate / spot).toFixed(2)) : rate
+    const brl = emBRL ? rate : null
+    const quem = emBRL ? 'GZ28BR' : 'GZ28US'
     const cursor = new Date(today)
     if (s.pay_type === 'WEEKLY') {
-      const dia = s.pay_weekday ?? 5
+      const dia = s.pay_day ?? 5
       while (cursor.getDay() !== dia) cursor.setDate(cursor.getDate() + 1)
       for (; cursor <= limit; cursor.setDate(cursor.getDate() + 7)) {
         const key = ymd(cursor)
         if (has.has(`${s.id}|WEEKLY|${key}`)) continue
-        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: rate, expense_date: key, payment_date: null, source: 'GZ28US', description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto` })
+        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, source: quem, description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto` })
       }
     } else if (s.pay_type === 'MONTHLY') {
-      const c = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-      for (; c <= limit; c.setMonth(c.getMonth() + 2, 0)) {
+      // Uma linha por mês, no dia escolhido (sem escolha, no último dia). Mês
+      // curto não engole o pagamento: dia 31 em fevereiro cai no dia 28/29.
+      const diaDoMes = (ano: number, mes: number) => {
+        const ultimo = new Date(ano, mes + 1, 0).getDate()
+        return new Date(ano, mes, s.pay_day ? Math.min(s.pay_day, ultimo) : ultimo)
+      }
+      let c = diaDoMes(today.getFullYear(), today.getMonth())
+      if (c < today) c = diaDoMes(today.getFullYear(), today.getMonth() + 1)
+      for (; c <= limit; c = diaDoMes(c.getFullYear(), c.getMonth() + 1)) {
         const key = ymd(c)
         if (has.has(`${s.id}|MONTHLY|${key}`)) continue
-        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: rate, expense_date: key, payment_date: null, source: 'GZ28US', description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto` })
+        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, source: quem, description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto` })
       }
     }
   }

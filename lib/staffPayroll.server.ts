@@ -6,7 +6,17 @@
 // valor × dias÷7 pra sempre — número que ninguém conferia, sem data, sem
 // comprovante. Agora:
 //   • a taxa vive na SEASON  → seasons.pay_type ('DAILY'|'WEEKLY'|'MONTHLY'),
-//     seasons.pay_rate e seasons.pay_weekday (0=dom … 5=sexta, padrão sexta);
+//     seasons.pay_rate, seasons.pay_currency e seasons.pay_day;
+//
+// pay_day é UM campo só, e o pay_type diz o que ele significa: dia da semana
+// (0=dom … 5=sexta, padrão sexta) quando WEEKLY, dia do mês (1–31) quando
+// MONTHLY. Era pay_weekday e só sabia semana — o Jeff recebe todo dia 28
+// (Márcio, 26/ago/2026) e o mensal fechava no último dia do mês, sempre.
+//
+// MOEDA: a taxa pode estar em BRL (o Jeff ganha R$ 15.000/mês, pagos pelo
+// GZ28BR). Neste app o total é sempre USD, então a linha guarda os DOIS: o
+// valor real em amount_brl e o dólar do dia em amount. É a mesma lei das
+// invoices — a moeda do recibo manda, o USD é projeção.
 //   • cada pagamento é uma LINHA em expenses, com expense_date do período,
 //     `payment_date` vazio enquanto não foi pago e `paid_via` (CASH/ZELLE/…).
 //
@@ -25,7 +35,19 @@ type Season = {
   date_conclusion: string | null
   pay_type: string | null
   pay_rate: number | null
-  pay_weekday: number | null
+  pay_currency: string | null
+  pay_day: number | null
+}
+
+// Cotação comercial do dia. Se a fonte cair, NÃO inventa câmbio: devolve null e
+// a linha não nasce — melhor faltar do que nascer com um número fabricado.
+async function usdPerBrl(): Promise<number | null> {
+  try {
+    const r = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL')
+    const j: any = await r.json()
+    const spot = parseFloat(j?.USDBRL?.bid) || 0
+    return spot > 0 ? spot : null
+  } catch { return null }
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -52,15 +74,17 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
 
     let periodo: string | null = null
     if (s.pay_type === 'WEEKLY') {
-      const dia = s.pay_weekday ?? 5
+      const dia = s.pay_day ?? 5
       if (today.getUTCDay() !== dia) continue
       periodo = hoje
     } else if (s.pay_type === 'DAILY') {
       periodo = hoje
     } else if (s.pay_type === 'MONTHLY') {
-      // Mensal fecha no último dia do mês.
-      const amanha = new Date(today); amanha.setUTCDate(amanha.getUTCDate() + 1)
-      if (amanha.getUTCMonth() === today.getUTCMonth()) continue
+      // Paga no dia escolhido do mês; sem escolha, no último dia (como sempre foi).
+      // Mês curto não engole o pagamento: dia 31 em fevereiro cai no dia 28/29.
+      const ultimo = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)).getUTCDate()
+      const alvo = s.pay_day ? Math.min(s.pay_day, ultimo) : ultimo
+      if (today.getUTCDate() !== alvo) continue
       periodo = hoje
     }
     if (!periodo) continue
@@ -72,12 +96,26 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
     const label = s.pay_type === 'WEEKLY' ? `Semanal (sexta ${periodo.slice(8, 10)}/${periodo.slice(5, 7)})`
       : s.pay_type === 'DAILY' ? `Diária ${periodo.slice(8, 10)}/${periodo.slice(5, 7)}`
       : `Mensal ${periodo.slice(5, 7)}/${periodo.slice(0, 4)}`
+
+    // Taxa em reais: quem paga é o GZ28BR — real não sai de conta americana,
+    // do mesmo jeito que não existe Zelle no Brasil.
+    const emBRL = (s.pay_currency || 'USD') === 'BRL'
+    let usd = rate
+    let brl: number | null = null
+    let nota = ''
+    if (emBRL) {
+      const spot = await usdPerBrl()
+      if (!spot) continue
+      brl = rate
+      usd = Number((rate / spot).toFixed(2))
+      nota = ` · R$ ${rate.toFixed(2)} a ${spot.toFixed(4)}`
+    }
     const { error } = await db.from('expenses').insert({
-      season_id: s.id, type: s.pay_type, amount: rate,
-      expense_date: periodo, payment_date: null, source: 'GZ28US',
-      description: `${label} — gerado pelo app, aguardando pagamento`,
+      season_id: s.id, type: s.pay_type, amount: usd, amount_brl: brl,
+      expense_date: periodo, payment_date: null, source: emBRL ? 'GZ28BR' : 'GZ28US',
+      description: `${label}${nota} — gerado pelo app, aguardando pagamento`,
     })
-    if (!error) created.push(`${s.season_code || s.id.slice(0, 6)} ${periodo} $${rate}`)
+    if (!error) created.push(`${s.season_code || s.id.slice(0, 6)} ${periodo} $${usd}`)
   }
   return { created }
 }

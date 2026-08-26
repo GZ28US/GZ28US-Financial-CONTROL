@@ -12,6 +12,24 @@ type Season = {
   season_code: string
   date_entry: string | null
   date_conclusion: string | null
+  pay_type: string | null
+  pay_rate: number | null
+  pay_currency: string | null
+  pay_day: number | null
+}
+
+const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+// A taxa da season em uma linha legível. Ela sempre existiu no banco e nunca
+// aparecia na tela (Márcio, 26/ago/2026) — dava para olhar a season inteira sem
+// descobrir quanto a pessoa ganha.
+function payLabel(s: Season): string | null {
+  if (!s.pay_type || !s.pay_rate) return null
+  const moeda = (s.pay_currency || 'USD') === 'BRL' ? 'R$' : 'US$'
+  const valor = `${moeda} ${Number(s.pay_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (s.pay_type === 'DAILY') return `${valor} a day`
+  if (s.pay_type === 'WEEKLY') return `${valor} every ${WEEKDAY[s.pay_day ?? 5]}`
+  return `${valor} on day ${s.pay_day ?? 'last'} of the month`
 }
 
 type Expense = {
@@ -225,6 +243,11 @@ export default function SeasonsPage() {
                   <p className="text-lg text-gray-400">Entry: {formatDate(season.date_entry)}</p>
                   <p className="text-lg text-gray-400">Conclusion: {formatDate(season.date_conclusion)}</p>
                   <p className="text-lg text-gray-400">Days: {days}</p>
+                  {payLabel(season) ? (
+                    <p className="text-lg font-bold text-green-400">{payLabel(season)}{(season.pay_currency || 'USD') === 'BRL' ? ' · paid by GZ28BR' : ''}</p>
+                  ) : !season.date_conclusion ? (
+                    <p className="text-lg font-bold text-amber-400">No pay rate set</p>
+                  ) : null}
                 </div>
 
                 <div className="bg-red-700 rounded-2xl px-6 py-4 text-center">
