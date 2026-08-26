@@ -16,6 +16,7 @@ type Pack = {
   florida_taxes: number | null
   global_discount: number | null
   import_margin: number | null
+  show_part_numbers: boolean | null
   duties: any[]
   parts: any[]
   services: any[]
@@ -357,6 +358,11 @@ export default function NewInvoicePage() {
     const noteRows = (pack.notes || []).map((n: any) => ({ invoice_id: invoiceId, note: n.note }))
     if (noteRows.length > 0) await supabase.from('invoice_notes').insert(noteRows)
 
+    // A quote nasce já com o PART NUMBER ligado/desligado como o pack manda
+    // (Márcio, 26/ago/2026). Só escreve quando o pack pede ON — invoices já
+    // nasce com false, e um pack OFF não tem por que sobrescrever nada.
+    if (pack.show_part_numbers) await supabase.from('invoices').update({ show_part_numbers: true }).eq('id', invoiceId)
+
     // STAFF DUTIES do pack (Márcio, 26/ago/2026). O template carrega só a
     // TAREFA — quem executa se escolhe aqui, na quote, porque o Packs DB é
     // compartilhado com o BR e o staff de lá é outro. As duties nascem em
@@ -370,6 +376,9 @@ export default function NewInvoicePage() {
         description: String(d.description).trim(),
         done: false,
         priority: String(d.priority || '1'),
+        // PREVISTO do pack (Márcio, 26/ago/2026: "jamais texto, crie uma coluna
+        // nova pro tempo previsto"). Par com time_seconds, que é o REALIZADO.
+        estimated_seconds: Number(d.estimated_seconds) > 0 ? Math.round(Number(d.estimated_seconds)) : null,
       }))
     if (dutyRows.length > 0) await supabase.from('invoice_duties').insert(dutyRows)
   }

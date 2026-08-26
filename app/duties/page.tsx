@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, fmtDutyEst } from '@/lib/utils'
 
 type Duty = {
   id: string
@@ -21,6 +21,9 @@ type Duty = {
   // Time tracking: accumulated seconds + the running segment's start (null when
   // not running), plus the very first START and the final DONE timestamps.
   time_seconds: number
+  // PREVISTO da empreita, em segundos — vem do pack ou é digitado na quote.
+  // Par com time_seconds acima, que é o REALIZADO cronometrado aqui.
+  estimated_seconds: number | null
   time_started_at: string | null
   work_started_at: string | null
   work_ended_at: string | null
@@ -172,6 +175,7 @@ export default function StaffDutiesPage() {
         carLabel,
         href: inv ? `/${ownerSeg}/invoices/edit/${inv.id}` : '#',
         time_seconds: Number(d.time_seconds) || 0,
+        estimated_seconds: Number(d.estimated_seconds) > 0 ? Math.round(Number(d.estimated_seconds)) : null,
         time_started_at: d.time_started_at || null,
         work_started_at: d.work_started_at || null,
         work_ended_at: d.work_ended_at || null,
@@ -476,20 +480,33 @@ export default function StaffDutiesPage() {
                         <div className="flex items-center gap-2 min-w-0">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${dutyPriorityBadge(d.priority).cls}`}>{dutyPriorityBadge(d.priority).label}</span>
                           <p className={`text-base font-bold truncate ${d.done ? 'text-green-400 line-through' : dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
+                          {d.estimated_seconds ? <span className="px-2 py-0.5 rounded-full text-xs font-bold shrink-0 bg-gray-700 text-gray-200" title="Estimated time">⏱ {fmtDutyEst(d.estimated_seconds)}</span> : null}
                         </div>
                         <p className="text-sm text-gray-400">
                           <a href={`${BASE_PATH}${d.href}`} className="text-gray-500 hover:text-blue-400 hover:underline">{d.invoiceCode}</a>
                           {d.carLabel ? ` · ${d.carLabel}` : ''}
                         </p>
-                        {(d.time_started_at || d.time_seconds > 0 || d.work_started_at) && (
-                          <p className="text-sm">
-                            <span className={d.time_started_at ? 'text-amber-400 font-bold' : 'text-gray-400 font-bold'}>
-                              ⏱ {fmtDur((Number(d.time_seconds) || 0) + (d.time_started_at ? (Date.now() - new Date(d.time_started_at).getTime()) / 1000 : 0))}
-                              {d.time_started_at ? ' · running' : d.done ? '' : ' · paused'}
-                            </span>
-                            {d.work_started_at && <span className="text-gray-500"> · {fmtDT(d.work_started_at)}{d.work_ended_at ? ` → ${fmtDT(d.work_ended_at)}` : ''}</span>}
-                          </p>
-                        )}
+                        {(d.time_started_at || d.time_seconds > 0 || d.work_started_at) && (() => {
+                          // PREVISTO × REALIZADO: o saldo só aparece quando há previsto
+                          // gravado. Verde = sobrou tempo, vermelho = estourou.
+                          const real = (Number(d.time_seconds) || 0) + (d.time_started_at ? (Date.now() - new Date(d.time_started_at).getTime()) / 1000 : 0)
+                          const est = Number(d.estimated_seconds) || 0
+                          const diff = est > 0 ? real - est : 0
+                          return (
+                            <p className="text-sm">
+                              <span className={d.time_started_at ? 'text-amber-400 font-bold' : 'text-gray-400 font-bold'}>
+                                ⏱ {fmtDur(real)}
+                                {d.time_started_at ? ' · running' : d.done ? '' : ' · paused'}
+                              </span>
+                              {est > 0 && (
+                                <span className={diff > 0 ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
+                                  {' '}· est {fmtDutyEst(est)} ({diff > 0 ? '+' : '−'}{fmtDutyEst(Math.abs(diff))})
+                                </span>
+                              )}
+                              {d.work_started_at && <span className="text-gray-500"> · {fmtDT(d.work_started_at)}{d.work_ended_at ? ` → ${fmtDT(d.work_ended_at)}` : ''}</span>}
+                            </p>
+                          )
+                        })()}
                       </div>
                       <div className="flex gap-2 shrink-0 flex-wrap justify-end">
                         {!d.done && !d.time_started_at && (

@@ -313,3 +313,11 @@ export const dutyTextColor = (p: string) => (
 export const dutyOrderOf = (desc: string) => { const m = /^(\d{1,2})[.)]\s/.exec(desc || ''); return m ? m[1].padStart(2, '0') : '' }
 export const stripDutyOrder = (desc: string) => (desc || '').replace(/^\d{1,2}[.)]\s*/, '')
 export const withDutyOrder = (order: string, desc: string) => order ? `${order}. ${stripDutyOrder(desc).trim()}` : desc.trim()
+
+// TEMPO PREVISTO da duty (Márcio, 26/ago/2026: "jamais texto, crie uma coluna
+// nova pro tempo previsto"). Guardado em SEGUNDOS — em packs.duties[].estimated_seconds
+// e em invoice_duties.estimated_seconds — pra ficar par com time_seconds, que
+// é o REALIZADO do cronômetro. Na tela se digita em HORAS, que é como o Guí fala.
+export const dutyEstSeconds = (hours: string) => { const h = parseFloat(String(hours ?? '').replace(',', '.')); return h > 0 ? Math.round(h * 3600) : null }
+export const dutyEstHours = (secs: number | null | undefined) => { const s = Number(secs) || 0; return s > 0 ? String(Math.round((s / 3600) * 100) / 100) : '' }
+export const fmtDutyEst = (secs: number | null | undefined) => { const s = Math.round(Number(secs) || 0); if (s <= 0) return ''; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? (m ? `${h}h${m}m` : `${h}h`) : `${m}m` }
