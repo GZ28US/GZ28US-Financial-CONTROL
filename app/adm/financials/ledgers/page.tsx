@@ -175,7 +175,7 @@ export default function LedgersPage() {
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 mb-6">
               <p className="text-lg font-bold mb-4">NEW CONTRACT</p>
               <div className="grid grid-cols-1 gap-5">
-                <Field label="LENDER" value={loan.lender} onChange={v => setLoan({ ...loan, lender: v })} placeholder="K&G FINANCING, INC." />
+                <Field label="LENDER" value={loan.lender} onChange={v => setLoan({ ...loan, lender: v })} placeholder="Quem emprestou — banco, financeira ou sócio" />
                 <DatePicker label="START DATE" value={loan.start_date} onChange={v => setLoan({ ...loan, start_date: v })} />
                 <div>
                   <label className="block mb-2 text-lg font-bold">RATE % / YEAR</label>
