@@ -47,7 +47,7 @@ const ROWS: RowDef[] = [
   { kind: 'sub', keys: ['RECEIPTS_CARS', 'CAR_BUY'], label: 'Caixa dos carros (export)' },
   { kind: 'head', label: 'FINANCIAMENTO' },
   { kind: 'line', key: 'CAPITAL', label: 'Aportes de capital' },
-  { kind: 'line', key: 'DRAW', label: 'Retiradas (sócios & pessoal)' },
+  { kind: 'line', key: 'DRAW', label: 'Retiradas formais (sócios — livro LEDGERS)' },
   { kind: 'line', key: 'LOAN_IN', label: 'Empréstimos recebidos' },
   { kind: 'line', key: 'LOAN_PAY', label: 'Empréstimos amortizados' },
   { kind: 'line', key: 'INTEREST', label: 'Juros pagos' },

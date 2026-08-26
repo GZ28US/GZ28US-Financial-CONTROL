@@ -112,7 +112,9 @@ export default function BalancePage() {
     const equip = d.goods.filter(g => qtyLine(g) >= CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) >= CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const unpaid = unpaidTotals(d)
-    const draws = d.expenses.filter(e => e.origin === 'PERSONAL').reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
+    // Decisão dos sócios (26/ago): pessoal é custo de equipe — retirada aqui é
+    // SÓ a formal do LEDGERS (lt.capDraws). draws de expenses morreu.
+    const draws = 0
     const brNet = got - paid
     const lt = ledgerTotals(d)
     const cash = lt ? lt.cashTotal : 0
@@ -304,7 +306,7 @@ export default function BalancePage() {
             {m.lt
               ? <Row label="Capital integralizado" value={m.lt.contributions} chip={<Chip kind="ok" label="LEDGERS" />} note="aportes lançados no livro de capital" />
               : <Row label="Capital integralizado" value={null} chip={<Chip kind="gap" label="G2" />} note="rode a migration e lance os aportes em LEDGERS" />}
-            <Row label="Retiradas dos sócios" value={-(m.draws + (m.lt ? m.lt.capDraws : 0))} chip={<Chip kind="ok" label="AO VIVO" />} note="retiradas formais (LEDGERS) + expenses origin PERSONAL" />
+            <Row label="Retiradas dos sócios" value={-(m.draws + (m.lt ? m.lt.capDraws : 0))} chip={<Chip kind="ok" label="AO VIVO" />} note="retiradas formais do livro LEDGERS — o dia a dia pessoal dos sócios é custo de equipe (decisão Marcio+Beto, 26/ago)" />
             <Row label="Resultado acumulado + não lançado" value={m.residual} chip={<Chip kind="dec" label="RESIDUAL" />} note="ativo − passivo − capital líquido; converge pro resultado real conforme os livros enchem" />
           </div>
         </div>

@@ -268,9 +268,10 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     fund(e, e.payment_date, expLine(e), [m.code, e.item].filter(Boolean).join(' · '))
   }
   // Folha e retiradas — origin separa a empresa do pessoal do Márcio.
+  // Decisão dos sócios (26/ago): pessoal de sócio = custo de equipe, não retirada.
+  // DRAW no DFC ficou só pras retiradas FORMAIS do livro (capital_events).
   for (const x of d.expenses) {
-    push(x.payment_date, x.origin === 'PERSONAL' ? 'FIN' : 'OPER',
-      x.origin === 'PERSONAL' ? 'DRAW' : 'PAYROLL',
+    push(x.payment_date, 'OPER', 'PAYROLL',
       -num(x.amount), 'STAFF', x.description || x.type || '', '/staff')
     fund(x, x.payment_date, num(x.amount), x.description || x.type || '')
   }
@@ -368,7 +369,7 @@ export function recognitionDate(d: FinData, inv: any): string | null {
 export function unpaidTotals(d: FinData) {
   const inv = d.invExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + expLine(e), 0)
   const fixed = d.fixedExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)
-  const staff = d.expenses.filter(e => !okDate(e.payment_date) && e.origin !== 'PERSONAL').reduce((s, e) => s + num(e.amount), 0)
+  const staff = d.expenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)   // pessoal incluso (decisão 26/ago)
   const purchases = d.goods.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + qtyLine(g), 0)
     + d.goodExpenses.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + num(g.amount), 0)
     + d.inputs.filter(x => !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)

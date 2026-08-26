@@ -74,7 +74,9 @@ export default function DrePage() {
     const brutaTotal = parts + flTax + services
     const liquida = brutaTotal - discount - flTax
     const lucroBruto = liquida - cost
-    const payroll = d.expenses.filter(e => e.origin !== 'PERSONAL').reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
+    // Decisão dos sócios (Marcio+Beto, 26/ago): retiradas ao mínimo — o pessoal
+    // dos sócios é custo de equipe (sócio também é equipe). TUDO de expenses entra.
+    const payroll = d.expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
     const fixedBy: Record<string, number> = {}
     for (const f of d.fixedExpenses) {
       const ct = d.fixedSuppliers.get(f.supplier_id)?.cost_type || 'UNCLASSIFIED'
@@ -166,7 +168,7 @@ export default function DrePage() {
     for (const x of d.inputs) { if (x.category === 'APARTMENT' || x.category === 'CATS') continue; const k2 = x.category || 'SEM CATEGORIA'; consumAcc.set(k2, (consumAcc.get(k2) || 0) + qtyLine(x)) }
     return {
       parts: cap(partsL), services: cap(svcL), fltax: cap(taxL), discount: cap(discL), cost: cap(costL),
-      payroll: cap(d.expenses.filter((e: any) => e.origin !== 'PERSONAL').map((e: any) => ({ label: e.description || e.type || '—', amount: parseFloat(e.amount) || 0, href: '/staff' }))),
+      payroll: cap(d.expenses.map((e: any) => ({ label: (e.origin === 'PERSONAL' ? 'PESSOAL · ' : '') + (e.description || e.type || '—'), amount: parseFloat(e.amount) || 0, href: '/staff' }))),
       fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
       consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/inputs' }))),
       apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/inputs' }))),
@@ -343,7 +345,7 @@ export default function DrePage() {
           <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub k="cost"
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
-          <Row label="(−) Equipe — salários & bem-estar" value={-m.payroll} sub k="payroll" note="tudo que mantém a equipe operando: salários, diárias, comida da oficina. Gasto PESSOAL de sócio continua FORA — é retirada de capital, não despesa" />
+          <Row label="(−) Equipe — salários & bem-estar" value={-m.payroll} sub k="payroll" note="tudo que mantém a equipe operando e feliz: salários, diárias, comida — incluindo o dia a dia pessoal dos sócios (decisão Marcio+Beto, 26/ago: sócio também é equipe; retirada formal vive no LEDGERS)" />
           <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub k="fixed" note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub k="marketing" />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub k="apps" />
