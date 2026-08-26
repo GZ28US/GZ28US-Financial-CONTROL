@@ -126,7 +126,12 @@ export async function fetchRecentGmail(accessToken: string, sinceIso: string): P
   const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
   const H = { Authorization: `Bearer ${accessToken}` }
   const afterSec = Math.floor(new Date(sinceIso).getTime() / 1000)
-  const list = await fetch(`${GM}/messages?maxResults=40&q=${encodeURIComponent(`after:${afterSec} -in:chats`)}`, { headers: H }).then(r => r.json()).catch(() => null)
+  // Aqui o filtro por assunto É defensável (ao contrário do da captura de
+  // compras, que engolia pedido): rastreio só chega em nota de despacho, e o
+  // vocabulário dela é pequeno e estável. Sem esse recorte a perna do Gmail
+  // baixava o corpo de tudo e estourou os 60s da função no 1º deploy (26/ago).
+  const q = `after:${afterSec} -in:chats (shipped OR shipping OR tracking OR delivered OR "on its way" OR "a caminho" OR "foi enviado")`
+  const list = await fetch(`${GM}/messages?maxResults=25&q=${encodeURIComponent(q)}`, { headers: H }).then(r => r.json()).catch(() => null)
   const stubs = list?.messages || []
   const out: MailMsg[] = []
   for (let i = 0; i < stubs.length; i += 8) {
