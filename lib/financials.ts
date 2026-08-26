@@ -80,7 +80,7 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion'),
     fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('inputs', 'id, description, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
+    fetchAll('inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     // rides via '*': tabela pequena e é a que mais ganha coluna nova — select
     // explícito derrubava o dataset inteiro quando o deploy chegava antes da

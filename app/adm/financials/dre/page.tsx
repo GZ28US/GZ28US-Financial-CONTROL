@@ -83,12 +83,15 @@ export default function DrePage() {
       fixedBy[ct] = (fixedBy[ct] || 0) + (parseFloat(f.amount) || 0)
     }
     // Complemento de APARTMENT/CATS: categoria nova ou nula cai aqui, nunca some.
-    const consum = d.inputs.filter(x => x.category !== 'APARTMENT' && x.category !== 'CATS').reduce((s, x) => s + qtyLine(x), 0)
+    // Detox do blob (João, 26/ago): TEAM (comida) é Equipe; o resto (fora
+    // apto/gatos) é consumível de OFICINA até o Data Checker reclassificar.
+    const teamIn = d.inputs.filter(x => x.category === 'TEAM').reduce((s, x) => s + qtyLine(x), 0)
+    const consum = d.inputs.filter(x => x.category !== 'APARTMENT' && x.category !== 'CATS' && x.category !== 'TEAM').reduce((s, x) => s + qtyLine(x), 0)
     const aptCats = d.inputs.filter(x => x.category === 'APARTMENT' || x.category === 'CATS').reduce((s, x) => s + qtyLine(x), 0)
     const smallTools = d.goods.filter(g => qtyLine(g) < CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) < CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const opex = payroll + (fixedBy.FIXED || 0) + (fixedBy.MARKETING || 0) + (fixedBy.APP || 0)
-      + (fixedBy.ASSET || 0) + (fixedBy.BANK || 0) + (fixedBy.VARIABLE || 0) + (fixedBy.STAFF || 0) + (fixedBy.FLEET || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
+      + (fixedBy.ASSET || 0) + (fixedBy.BANK || 0) + (fixedBy.VARIABLE || 0) + (fixedBy.STAFF || 0) + (fixedBy.FLEET || 0) + consum + teamIn + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
     // Juros pagos vêm do livro de empréstimos (null até a migration rodar).
     const lt = ledgerTotals(d)
     const juros = lt ? lt.interestPaid : null
@@ -96,7 +99,7 @@ export default function DrePage() {
       juros, resultado: (lucroBruto - opex) - (juros || 0),
       parts, services, flTax, discount, brutaTotal, liquida, cost, lucroBruto,
       carRev, carFlTax, carDiscount, carCost,
-      payroll, fixedBy, consum, aptCats, smallTools, opex, ebitda: lucroBruto - opex,
+      payroll, fixedBy, consum, teamIn, aptCats, smallTools, opex, ebitda: lucroBruto - opex,
       margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—',
       wipOpen, fleetCost, missingConclusion, nInvoices: d.invoices.length,
     }
@@ -165,15 +168,16 @@ export default function DrePage() {
       return [...acc.entries()].map(([label, amount]) => ({ label, amount }))
     }
     const consumAcc = new Map<string, number>()
-    for (const x of d.inputs) { if (x.category === 'APARTMENT' || x.category === 'CATS') continue; const k2 = x.category || 'SEM CATEGORIA'; consumAcc.set(k2, (consumAcc.get(k2) || 0) + qtyLine(x)) }
+    for (const x of d.inputs) { if (x.category === 'APARTMENT' || x.category === 'CATS' || x.category === 'TEAM') continue; const k2 = x.category || 'SEM CATEGORIA'; consumAcc.set(k2, (consumAcc.get(k2) || 0) + qtyLine(x)) }
     return {
       parts: cap(partsL), services: cap(svcL), fltax: cap(taxL), discount: cap(discL), cost: cap(costL),
       payroll: cap([
         ...d.expenses.map((e: any) => ({ label: (e.origin === 'PERSONAL' ? 'PESSOAL · ' : '') + (e.description || e.type || '—'), amount: parseFloat(e.amount) || 0, href: '/staff' })),
         ...d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: (x.category === 'CATS' ? 'MASCOTES · ' : 'APARTAMENTO · ') + (x.description || ''), amount: qtyLine(x), href: '/inputs' })),
         ...bySupplier('STAFF').map(r => ({ ...r, label: 'BENEFÍCIO · ' + r.label })),
-        ...[...consumAcc.entries()].map(([c2, amount]) => ({ label: 'CONSUMÍVEL · ' + c2, amount, href: '/inputs' })),
+        ...d.inputs.filter((x: any) => x.category === 'TEAM').map((x: any) => ({ label: 'COMIDA/TEAM · ' + (x.description || ''), amount: qtyLine(x), href: '/inputs' })),
       ]),
+      consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/inputs' }))),
       fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), fleetcost: cap(bySupplier('FLEET')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
       apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/inputs' }))),
       tools: cap([
@@ -198,7 +202,8 @@ export default function DrePage() {
       { cells: ['RECEITA LÍQUIDA', usd(v.liquida)], bold: true },
       { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
       { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
-      { cells: ['(−) Equipe — salários & bem-estar', usd(-(m.payroll + m.aptCats + m.consum + (m.fixedBy.STAFF || 0)))] },
+      { cells: ['(−) Equipe — salários & bem-estar', usd(-(m.payroll + m.aptCats + m.teamIn + (m.fixedBy.STAFF || 0)))] },
+      { cells: ['(−) Consumíveis de oficina', usd(-m.consum)] },
       { cells: ['(−) Ocupação, energia, seguros & contador', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
@@ -316,7 +321,8 @@ export default function DrePage() {
           <p className="text-sm font-bold text-gray-400 mb-4">ONDE VIVE A DESPESA OPERACIONAL</p>
           <Waterfall steps={[
             { label: 'Ocupação, energia, seguros & contador', value: m.fixedBy.FIXED || 0, kind: 'out' },
-            { label: 'Equipe — salários & bem-estar', value: m.payroll + m.aptCats + m.consum + (m.fixedBy.STAFF || 0), kind: 'out' },
+            { label: 'Equipe — salários & bem-estar', value: m.payroll + m.aptCats + m.teamIn + (m.fixedBy.STAFF || 0), kind: 'out' },
+            { label: 'Consumíveis de oficina', value: m.consum, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
             { label: 'Tarifas bancárias', value: m.fixedBy.BANK || 0, kind: 'out' },
@@ -347,7 +353,8 @@ export default function DrePage() {
           <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub k="cost"
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
-          <Row label="(−) Equipe — salários & bem-estar" value={-(m.payroll + m.aptCats + m.consum + (m.fixedBy.STAFF || 0))} sub k="payroll" note="tudo que mantém a equipe operando e feliz: salários, diárias, comida, consumíveis da oficina, o dia a dia dos sócios e a moradia inteira (D10 completo, 26/ago)" />
+          <Row label="(−) Equipe — salários & bem-estar" value={-(m.payroll + m.aptCats + m.teamIn + (m.fixedBy.STAFF || 0))} sub k="payroll" note="salários, diárias, comida (TEAM), o dia a dia dos sócios e a moradia — o custo humano completo" />
+          <Row label="(−) Consumíveis de oficina" value={-m.consum} sub k="consum" note="o que mantém a OFICINA rodando: WD40, limpeza, mobília miúda — comida é Equipe (TEAM) e óleo é ESTOQUE; o card do Data Checker reclassifica o blob CONSUMPTION" />
           <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub k="fixed" note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub k="marketing" />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub k="apps" />

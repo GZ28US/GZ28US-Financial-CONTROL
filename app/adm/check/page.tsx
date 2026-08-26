@@ -619,6 +619,42 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // INPUTS · O BLOB TÓXICO (João, 26/ago): 139 insumos num "CONSUMPTION" que
+  // mistura comida (Equipe), óleo (ESTOQUE de verdade) e consumível de oficina.
+  {
+    const HINT: [RegExp, string][] = [
+      [/oil|óleo|oleo|\b[05]w[- ]?[234]0\b|quart|paint|tinta|touch.?up|brake|fluid|coolant|filtro|filter/i, '__stock__'],
+      [/food|comida|coffee|café|cafe|snack|kraft|kft|velveeta|água|agua|water|soda|drink|lunch|pizza|leite|milk|bread|pão|pao/i, 'TEAM'],
+      [/apartment|apto|mattress|bed\b|cookw|kitchen|pillow|sofa|couch/i, 'APARTMENT'],
+      [/\bcats?\b|gato|pet\b|purina/i, 'CATS'],
+      [/wd-?40|alcohol|álcool|alcool|clean|limp|paper|papel|towel|toalha|glove|luva|tape|fita|trash|lixo|shipping|parcel|box|caixa|zip|shelf|prateleira|organizer|chair|cadeira|desk|mesa/i, 'SHOP'],
+    ]
+    const items: Item[] = []
+    for (const x of d.inputs) {
+      if (x.category && x.category !== 'CONSUMPTION') continue
+      const text = String(x.description || '')
+      const sug = (HINT.find(([re]) => re.test(text)) || [])[1] as string | undefined
+      items.push({
+        href: '/inputs', code: x.category ? 'BLOB' : 'SEM CAT.', label: text.slice(0, 70) || '(sem descrição)',
+        extra: sug === '__stock__' ? 'palpite: é ESTOQUE (óleo/material de job) — mover' : sug ? 'palpite: ' + sug : 'sem palpite — decida',
+        amount: qtyLine(x), suggest: sug, signal: sug ? 'source' : undefined,
+        fix: { kind: 'select' as const, table: 'inputs', rowId: x.id, field: 'category', current: x.category || null, meta: { description: x.description, supplier: (x as any).supplier, unit_price: x.unit_price, quantity: x.quantity, purchase_date: x.purchase_date, payment_date: x.payment_date, paid_from: x.paid_from, paid_to: (x as any).paid_to, source: (x as any).source, purchase_group: x.purchase_group }, options: [
+          { value: 'SHOP', label: 'SHOP — consumível da oficina (WD40, limpeza, mobília miúda)' },
+          { value: 'TEAM', label: 'TEAM — comida & bem-estar (vira Equipe no DRE)' },
+          { value: 'APARTMENT', label: 'APARTMENT — apto (moradia da equipe)' },
+          { value: 'CATS', label: 'CATS — mascotes' },
+          { value: '__stock__', label: '📦 É ESTOQUE — mover pra INVENTORY (óleo, material de job)' },
+        ] },
+      })
+    }
+    checks.push({
+      group: 'INVENTORY', key: 'inputs-category', title: 'Insumo na categoria errada (o blob CONSUMPTION)',
+      blocks: 'comida, óleo e consumível misturados envenenam o DRE (Equipe × Consumíveis × Estoque)',
+      why: 'João achou o veneno (26/ago): 139 insumos num balaio único misturando comida (que é EQUIPE), óleo de motor (que é ESTOQUE — material de job) e consumível de verdade (o que mantém a OFICINA rodando). O palpite por palavra-chave ajuda, o martelo é humano — MODO GUIADO recomendado. SHOP fica na linha Consumíveis; TEAM vai pra Equipe; 📦 ESTOQUE cria a linha na INVENTORY e apaga o insumo, com trilha.',
+      items,
+    })
+  }
+
   // STAFF · DUTY WATCH — timer esquecido infla hora; o cron avisa a própria
   // pessoa no WhatsApp (um aviso por duty/dia, escalação pro grupo em 60min);
   // aqui é o retrato de agora. O conserto é na tela DUTIES.
@@ -867,6 +903,33 @@ export default function DataCheckPage() {
         const r = await fetch(`${BASE_PATH}/api/staff-duties`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'trim', duty_id: fix.dutyId, seg_start: fix.segStart, seg_end: fix.segEnd, banked_start: fix.bankedStart, banked_end: fix.bankedEnd, new_end_local: value }) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
+    // Detox dos insumos (João, 26/ago): reclassifica a categoria, ou 📦 MOVE a
+    // linha pro estoque de verdade (cria em inventory, apaga o input, trilha).
+    if (check.key === 'inputs-category' && fix.kind === 'select') {
+      setSaving(true)
+      try {
+        if (value === '__stock__') {
+          const src = (fix.meta || {}) as any
+          const { error: e1 } = await supabase.from('inventory').insert({
+            description: src.description || '', supplier: src.supplier || null, source_type: 'PURCHASED',
+            unit_price: src.unit_price ?? null, quantity: src.quantity ?? 1,
+            purchase_date: src.purchase_date || null, payment_date: src.payment_date || null,
+            paid_from: src.paid_from || null, paid_to: src.paid_to || null, source: src.source || null, purchase_group: src.purchase_group || null,
+          })
+          if (e1) { alert(e1.message); return }
+          const { error: e2 } = await supabase.from('inputs').delete().eq('id', fix.rowId)
+          if (e2) { alert('Criado no estoque, mas falhou apagar o insumo: ' + e2.message); return }
+          await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'inputs', row_id: fix.rowId, field: 'MOVED', old_value: String(src.description || '').slice(0, 180), new_value: 'inventory', label: ('MOVIDO PRA ESTOQUE · ' + String(src.description || '')).slice(0, 200) }).then(() => undefined, () => undefined)
+        } else {
+          const { error: err } = await supabase.from('inputs').update({ category: value }).eq('id', fix.rowId)
+          if (err) { alert(err.message); return }
+          await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'inputs', row_id: fix.rowId, field: 'category', old_value: fix.current ?? null, new_value: value, label: `${item.code} · ${item.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+        }
         setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
         setFixing(null); setFixValue('')
       } finally { setSaving(false) }
