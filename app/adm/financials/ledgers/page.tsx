@@ -14,6 +14,10 @@ import FinBadge from '@/components/FinBadge'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
+import { PAYMENT_METHODS } from '@/components/PaymentFields'
+
+// Os 3 sócios da GZ28US (João, 26/ago): vocabulário fechado > texto livre.
+const PARTNERS = ['Dema', 'Beto', 'Heraldo'] as const
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 const n = (v: unknown) => parseFloat(String(v)) || 0
@@ -123,11 +127,25 @@ export default function LedgersPage() {
               </select>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="MEMBER" value={cap.member} onChange={v => setCap({ ...cap, member: v })} placeholder="Márcio" />
+              <div>
+                <label className="block mb-2 text-lg font-bold">PARTNER</label>
+                <select value={cap.member} onChange={e => setCap({ ...cap, member: e.target.value })} className={inputClass + (!cap.member ? ' border-amber-500 text-amber-300' : '')}>
+                  {!cap.member && <option value="">— qual sócio? —</option>}
+                  {PARTNERS.map(p2 => <option key={p2} value={p2}>{p2}</option>)}
+                  {cap.member && !(PARTNERS as readonly string[]).includes(cap.member) && <option value={cap.member}>{cap.member}</option>}
+                </select>
+              </div>
               <MoneyField label="AMOUNT" value={cap.amount} onChange={v => setCap({ ...cap, amount: v })} />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="METHOD" value={cap.method} onChange={v => setCap({ ...cap, method: v })} placeholder="WIRE / ZELLE / CASH" />
+              <div>
+                <label className="block mb-2 text-lg font-bold">METHOD</label>
+                <select value={cap.method} onChange={e => setCap({ ...cap, method: e.target.value })} className={inputClass}>
+                  <option value="">— como veio/saiu? —</option>
+                  {PAYMENT_METHODS.map(m2 => <option key={m2} value={m2}>{m2}</option>)}
+                  {cap.method && !(PAYMENT_METHODS as readonly string[]).includes(cap.method) && <option value={cap.method}>{cap.method}</option>}
+                </select>
+              </div>
               <Field label="DESCRIPTION" value={cap.description} onChange={v => setCap({ ...cap, description: v })} placeholder="Optional note" />
             </div>
             <button disabled={saving || !cap.event_date || !cap.member.trim() || !n(cap.amount)} className={saveBtn}
