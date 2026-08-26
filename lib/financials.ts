@@ -276,7 +276,7 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     const sup = d.fixedSuppliers.get(f.supplier_id)
     const ct = sup?.cost_type || 'UNCLASSIFIED'
     const line = ct === 'APP' ? 'APPS' : ct === 'MARKETING' ? 'MARKETING' : ct === 'FIXED' ? 'FIXED' : ct === 'BANK' ? 'BANK_FEES' : 'MISC'
-    const href = ct === 'APP' ? '/costs/apps/' + f.supplier_id : (ct === 'MARKETING' || ct === 'ASSET') ? '/costs/assets/' + f.supplier_id : '/costs/fixed/' + f.supplier_id
+    const href = ct === 'APP' ? '/costs/apps/' + f.supplier_id : (ct === 'MARKETING' || ct === 'ASSET') ? '/costs/assets/' + f.supplier_id : ct === 'BANK' ? '/costs/bank' : '/costs/fixed/' + f.supplier_id
     push(f.payment_date, 'OPER', line, -num(f.amount), ct,
       [sup?.company, f.description].filter(Boolean).join(' · '), f.supplier_id ? href : '/costs/fixed')
     fund(f, f.payment_date, num(f.amount), [sup?.company, f.description].filter(Boolean).join(' · '))
