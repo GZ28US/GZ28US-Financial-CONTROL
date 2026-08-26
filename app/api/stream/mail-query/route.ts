@@ -108,6 +108,36 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
     const base = await meta(id)
     return NextResponse.json({ account: auth.account, provider: 'gmail', id: m.id, subject: base.subject, from: base.from, received: base.received, contentType: 'html', html })
   }
+  // ── ANEXOS no Gmail (26/ago/2026) ─────────────────────────────────────────
+  // Só o Graph tinha attachments/attach, então documento que chegava pelo Gmail
+  // era invisível para o app — e a lei do PRINTABLE INVOICE ("sempre a nota do
+  // vendedor na expense E na pasta Purchases do carro") não tinha como ser
+  // cumprida. Caso que revelou: a sales order #178871-D da TAG Motorsports das
+  // rodas do SublimeHell veio anexa num e-mail do gz28us@gmail.
+  if (op === 'attachments' || op === 'attach') {
+    const id = p.get('id')
+    if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+    const m = await (await fetch(`${API}/messages/${id}?format=full`, { headers: GH })).json()
+    if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'not found' }, { status: 404 })
+    const found: { id: string; name: string; contentType: string; size: number | null }[] = []
+    const walkA = (part: any) => {
+      if (!part) return
+      if (part.filename && part.body?.attachmentId) {
+        found.push({ id: String(part.body.attachmentId), name: String(part.filename), contentType: String(part.mimeType || 'application/octet-stream'), size: part.body.size ?? null })
+      }
+      for (const sp of part.parts || []) walkA(sp)
+    }
+    walkA(m.payload)
+    if (op === 'attachments') return NextResponse.json({ account: auth.account, provider: 'gmail', attachments: found })
+    const att = p.get('att')
+    if (!att) return NextResponse.json({ error: 'missing att' }, { status: 400 })
+    const one = await (await fetch(`${API}/messages/${id}/attachments/${encodeURIComponent(att)}`, { headers: GH })).json()
+    if (!one?.data) return NextResponse.json({ error: one?.error?.message || 'attachment not found' }, { status: 404 })
+    const meta2 = found.find(f => f.id === att)
+    // base64url → base64 padrão, pro chamador tratar igual ao Graph.
+    const contentBytes = String(one.data).replace(/-/g, '+').replace(/_/g, '/')
+    return NextResponse.json({ account: auth.account, provider: 'gmail', attachment: { id: att, name: meta2?.name || 'attachment', contentType: meta2?.contentType || 'application/octet-stream', size: one.size ?? null, contentBytes } })
+  }
   return NextResponse.json({ error: `unknown op ${op}` }, { status: 400 })
 }
 
