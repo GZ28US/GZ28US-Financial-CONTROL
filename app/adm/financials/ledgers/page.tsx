@@ -183,7 +183,7 @@ export default function LedgersPage() {
                 </div>
                 {/* João, 26/ago (caso Heraldo/Advanced Transports): o estado e o save já
                     tinham description — faltava a CAIXA. Proveniência mora aqui. */}
-                <Field label="NOTES" value={loan.description} onChange={v => setLoan({ ...loan, description: v })} placeholder='Ex.: "Zelle de ADVANCED TRANSPORTS (conf 5711329685) — recebido para o Heraldo, held as CREDIT"' />
+                <Field label="NOTES" value={loan.description} onChange={v => setLoan({ ...loan, description: v })} placeholder="A história do contrato: de onde veio o dinheiro, pra que serve, nº de confirmação…" />
                 <button disabled={saving || !loan.lender.trim()} className="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold"
                   onClick={() => save('financing', { lender: loan.lender.trim(), start_date: loan.start_date || null, rate_apr: loan.rate_apr ? n(loan.rate_apr) : null, description: loan.description.trim() || null }, () => setLoan({ lender: '', start_date: '', rate_apr: '', description: '' }))}>
                   + ADD CONTRACT
