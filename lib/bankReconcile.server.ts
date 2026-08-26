@@ -58,7 +58,7 @@ export async function candidatePool(db: any): Promise<Pool> {
   const [invExp, fixed, suppliers, expenses, goods, goodExp, inputs, inventory, payments, invParts, invoices, rides, clients, capital, finEv, financing, matched] = await Promise.all([
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, purchase_group, paid_from'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from'),
-    fetchAll(db, 'fixed_cost_suppliers', 'id, company, description'),
+    fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type'),
     fetchAll(db, 'expenses', 'id, description, type, amount, payment_date, expense_date, origin, paid_from'),
     fetchAll(db, 'goods', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
     fetchAll(db, 'good_expenses', 'id, good_id, description, supplier, amount, payment_date, expense_date, paid_from'),
@@ -86,6 +86,9 @@ export async function candidatePool(db: any): Promise<Pool> {
   const clientName = new Map(clients.map((c: any) => [c.id, c.name || c.full_name || c.company || c.nickname || '']))
   const rideById = new Map(rides.map((r: any) => [r.id, r]))
   const supName = new Map(suppliers.map((s: any) => [s.id, s.company || s.description || '']))
+  // Tarifa bancária tem casa própria (João, 26/ago): fornecedor BANK ⇒ selo
+  // TARIFA e ABRIR → /costs/bank, nunca mais "Tarifas da conta" como custo fixo.
+  const bankSup = new Set(suppliers.filter((s: any) => s.cost_type === 'BANK').map((s: any) => s.id))
   const lender = new Map(financing.map((f: any) => [f.id, f.lender]))
   const invLabel = (invoiceId: string) => { const i = invById.get(invoiceId); const r = i ? rideById.get(i.ride_id) : null; return i ? `${i.invoice_code || '—'} ${r?.project_name || ''}`.trim() : '—' }
   const invClient = (invoiceId: string) => { const i = invById.get(invoiceId); const r = i ? rideById.get(i.ride_id) : null; return r ? clientName.get(r.client_id) || '' : '' }
@@ -110,7 +113,10 @@ export async function candidatePool(db: any): Promise<Pool> {
     // Fricção do Márcio (26/ago): era a ÚNICA origem sem selo — começava direto
     // no código da invoice e virava adivinhação. EXPENSE, espelho do INCOME.
     push(out, { table: 'invoice_expenses', id: e.id, group: grp(e), label: `EXPENSE · ${invLabel(e.invoice_id)} · ${e.item || ''}${e.supplier ? ' · ' + e.supplier : ''}`, date: e.payment_date || e.expense_date || null, amount: num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra), undated: !okDate(e.payment_date), href: invHref(e.invoice_id), detail: `DESPESA da invoice ${invLabel(e.invoice_id)} · ${num(e.price)}×${num(e.quantity) || 1}${num(e.tax) ? ' + tax ' + num(e.tax) : ''}${num(e.extra) ? ' + extra ' + num(e.extra) : ''} · ${dts(e.payment_date, e.expense_date, 'lançada')}` }) }
-  for (const f of fixed) if (!brPaid(f)) push(out, { table: 'fixed_cost_expenses', id: f.id, label: `FIXO · ${supName.get(f.supplier_id) || ''} · ${f.description || ''}`, date: f.payment_date || f.expense_date || null, amount: num(f.amount), undated: !okDate(f.payment_date), href: f.supplier_id ? '/costs/fixed/' + f.supplier_id : '/costs/fixed', detail: `CUSTO FIXO de ${supName.get(f.supplier_id) || 'fornecedor'} · ${dts(f.payment_date, f.expense_date, 'lançado')}` })
+  for (const f of fixed) if (!brPaid(f)) {
+    const ehTarifa = bankSup.has(f.supplier_id)
+    push(out, { table: 'fixed_cost_expenses', id: f.id, label: `${ehTarifa ? 'TARIFA' : 'FIXO'} · ${supName.get(f.supplier_id) || ''} · ${f.description || ''}`, date: f.payment_date || f.expense_date || null, amount: num(f.amount), undated: !okDate(f.payment_date), href: ehTarifa ? '/costs/bank' : (f.supplier_id ? '/costs/fixed/' + f.supplier_id : '/costs/fixed'), detail: ehTarifa ? `TARIFA BANCÁRIA já lançada · ${dts(f.payment_date, f.expense_date, 'lançada')}` : `CUSTO FIXO de ${supName.get(f.supplier_id) || 'fornecedor'} · ${dts(f.payment_date, f.expense_date, 'lançado')}` })
+  }
   for (const x of expenses) if (!brPaid(x)) push(out, { table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date), href: '/staff', detail: `${x.origin === 'PERSONAL' ? 'DESPESA PESSOAL' : 'FOLHA/STAFF'} · ${dts(x.payment_date, x.expense_date, 'lançada')}` })
   for (const g of goods) if (!brPaid(g) && memberFree(g)) push(out, { table: 'goods', id: g.id, group: grp(g), label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.purchase_date || null, amount: num(g.unit_price) * (num(g.quantity) || 1), undated: !okDate(g.payment_date), href: '/goods', detail: `BEM/EQUIPAMENTO (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.purchase_date, 'comprado')}` })
   for (const g of goodExp) if (!brPaid(g)) push(out, { table: 'good_expenses', id: g.id, label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.expense_date || null, amount: num(g.amount), undated: !okDate(g.payment_date), href: '/goods', detail: `DESPESA de bem/equipamento (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.expense_date, 'lançada')}` })
