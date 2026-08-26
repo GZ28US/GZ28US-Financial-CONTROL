@@ -168,7 +168,10 @@ export default function DrePage() {
     for (const x of d.inputs) { if (x.category === 'APARTMENT' || x.category === 'CATS') continue; const k2 = x.category || 'SEM CATEGORIA'; consumAcc.set(k2, (consumAcc.get(k2) || 0) + qtyLine(x)) }
     return {
       parts: cap(partsL), services: cap(svcL), fltax: cap(taxL), discount: cap(discL), cost: cap(costL),
-      payroll: cap(d.expenses.map((e: any) => ({ label: (e.origin === 'PERSONAL' ? 'PESSOAL · ' : '') + (e.description || e.type || '—'), amount: parseFloat(e.amount) || 0, href: '/staff' }))),
+      payroll: cap([
+        ...d.expenses.map((e: any) => ({ label: (e.origin === 'PERSONAL' ? 'PESSOAL · ' : '') + (e.description || e.type || '—'), amount: parseFloat(e.amount) || 0, href: '/staff' })),
+        ...d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: (x.category === 'CATS' ? 'MASCOTES · ' : 'APARTAMENTO · ') + (x.description || ''), amount: qtyLine(x), href: '/inputs' })),
+      ]),
       fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
       consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/inputs' }))),
       apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/inputs' }))),
@@ -194,7 +197,7 @@ export default function DrePage() {
       { cells: ['RECEITA LÍQUIDA', usd(v.liquida)], bold: true },
       { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
       { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
-      { cells: ['(−) Equipe — salários & bem-estar', usd(-m.payroll)] },
+      { cells: ['(−) Equipe — salários & bem-estar', usd(-(m.payroll + m.aptCats))] },
       { cells: ['(−) Ocupação, energia, seguros & contador', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
@@ -202,7 +205,6 @@ export default function DrePage() {
       { cells: ['(−) Ativos & instalações (as-booked)', usd(-(m.fixedBy.ASSET || 0))] },
       { cells: ['(−) Consumíveis de oficina', usd(-m.consum)] },
       { cells: ['(−) Ferramental de baixo valor', usd(-m.smallTools)] },
-      { cells: ['(−) Apartamento & mascotes', usd(-m.aptCats)] },
       { cells: ['(−) Não classificado', usd(-(m.fixedBy.UNCLASSIFIED || 0))] },
       { cells: ['EBITDA', usd(v.ebitda)], bold: true },
       { cells: ['(−) Depreciação da frota', dep === null ? 'rode MIGRATION_g4_fleet.sql' : usd(-dep.accum)] },
@@ -313,14 +315,13 @@ export default function DrePage() {
           <p className="text-sm font-bold text-gray-400 mb-4">ONDE VIVE A DESPESA OPERACIONAL</p>
           <Waterfall steps={[
             { label: 'Ocupação, energia, seguros & contador', value: m.fixedBy.FIXED || 0, kind: 'out' },
-            { label: 'Equipe — salários & bem-estar', value: m.payroll, kind: 'out' },
+            { label: 'Equipe — salários & bem-estar', value: m.payroll + m.aptCats, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
             { label: 'Tarifas bancárias', value: m.fixedBy.BANK || 0, kind: 'out' },
             { label: 'Ativos & instalações', value: m.fixedBy.ASSET || 0, kind: 'out' },
             { label: 'Ferramental de baixo valor', value: m.smallTools, kind: 'out' },
             { label: 'Consumíveis de oficina', value: m.consum, kind: 'out' },
-            { label: 'Apartamento & mascotes', value: m.aptCats, kind: 'out' },
             { label: 'Não classificado', value: m.fixedBy.UNCLASSIFIED || 0, kind: 'out' },
           ]} />
         </div>
@@ -345,7 +346,7 @@ export default function DrePage() {
           <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub k="cost"
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
-          <Row label="(−) Equipe — salários & bem-estar" value={-m.payroll} sub k="payroll" note="tudo que mantém a equipe operando e feliz: salários, diárias, comida — incluindo o dia a dia pessoal dos sócios (decisão Marcio+Beto, 26/ago: sócio também é equipe; retirada formal vive no LEDGERS)" />
+          <Row label="(−) Equipe — salários & bem-estar" value={-(m.payroll + m.aptCats)} sub k="payroll" note="tudo que mantém a equipe operando e feliz: salários, diárias, comida, o dia a dia pessoal dos sócios E a moradia (apartamento & mascotes — D10 fechado 26/ago pelo mesmo princípio)" />
           <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub k="fixed" note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub k="marketing" />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub k="apps" />
@@ -353,7 +354,6 @@ export default function DrePage() {
           <Row label="(−) Ativos & instalações (as-booked)" value={-(m.fixedBy.ASSET || 0)} sub k="assets" note="capitaliza quando D8/G4 fecharem" />
           <Row label="(−) Consumíveis de oficina" value={-m.consum} sub k="consum" />
           <Row label="(−) Ferramental de baixo valor" value={-m.smallTools} sub k="tools" note={`GOODS abaixo do piso de $${CAP_FLOOR.toLocaleString()} (D8)`} />
-          <Row label="(−) Apartamento & mascotes" value={-m.aptCats} sub k="apt" note="D10 decide se é benefício ou retirada" />
           <Row label="(−) Não classificado" value={-(m.fixedBy.UNCLASSIFIED || 0)} sub k="unclass" />
           <Row label="EBITDA" value={v.ebitda} />
           <Row label="(−) Depreciação da frota" value={dep === null ? null : -dep.accum} sub k="dep"
