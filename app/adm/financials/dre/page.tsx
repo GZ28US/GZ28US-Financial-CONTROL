@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, invoiceMeta, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -57,7 +57,7 @@ export default function DrePage() {
       cost += t.cost
       // CARROS × OFICINA (João, 25/ago): a linha do carro sai da visão OFICINA —
       // venda (invoice_parts) e custo (invoice_expenses) detectados por linha.
-      const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
+      const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
       if (!ours) {
         const cp = d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick))
           .reduce((s: number, p: any) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0)
@@ -123,6 +123,63 @@ export default function DrePage() {
     return { parts, flTax, discount, cost, brutaTotal, liquida, lucroBruto, ebitda, resultado, margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—' }
   }, [m, scope, dep])
 
+  // DRILL (João, 26/ago): o que compõe cada linha, com valor por somador.
+  const comp = useMemo((): Record<string, { label: string; amount: number; href?: string }[]> => {
+    if (!d || !m) return {}
+    type CompRow = { label: string; amount: number; href?: string }
+    const off = scope === 'OFICINA'
+    const cap = (list: CompRow[], n2 = 30): CompRow[] => {
+      const s2 = list.filter(r => Math.abs(r.amount) > 0.004).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+      if (s2.length <= n2) return s2
+      const rest = s2.slice(n2)
+      return [...s2.slice(0, n2), { label: `… mais ${rest.length} itens`, amount: rest.reduce((s3, r) => s3 + r.amount, 0) }]
+    }
+    const partsL: CompRow[] = [], svcL: CompRow[] = [], taxL: CompRow[] = [], discL: CompRow[] = [], costL: CompRow[] = []
+    for (const inv of d.invoices) {
+      const rscope2 = rideScope(d, inv)
+      const ours = rscope2 === 'OWN' || rscope2 === 'TOOL' || rscope2 === 'DONOR'
+      if (ours) continue
+      const t = invoiceTotals(d, inv)
+      const mm = invoiceMeta(d, inv.id)
+      const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
+      const lbl = `${mm.code} ${mm.car || ''}`.trim()
+      const carP = off ? d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick)).reduce((s3: number, p: any) => s3 + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0) : 0
+      const carC = off ? d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s3: number, e: any) => s3 + expLine(e), 0) : 0
+      const cft = carP * ((parseFloat(inv.florida_taxes) || 0) / 100)
+      partsL.push({ label: lbl, amount: t.parts - carP, href: mm.href })
+      svcL.push({ label: lbl, amount: t.services, href: mm.href })
+      taxL.push({ label: lbl, amount: t.flTax - cft, href: mm.href })
+      discL.push({ label: lbl, amount: t.discount - (carP + cft) * ((parseFloat(inv.global_discount) || 0) / 100), href: mm.href })
+      costL.push({ label: lbl, amount: t.cost - carC, href: mm.href })
+    }
+    const bySupplier = (ct: string): CompRow[] => {
+      const acc = new Map<string, number>()
+      for (const f of d.fixedExpenses) {
+        const sup = d.fixedSuppliers.get(f.supplier_id)
+        if ((sup?.cost_type || 'UNCLASSIFIED') !== ct) continue
+        const k2 = sup?.company || sup?.description || '(sem fornecedor)'
+        acc.set(k2, (acc.get(k2) || 0) + (parseFloat(f.amount) || 0))
+      }
+      return [...acc.entries()].map(([label, amount]) => ({ label, amount }))
+    }
+    const consumAcc = new Map<string, number>()
+    for (const x of d.inputs) { if (x.category === 'APARTMENT' || x.category === 'CATS') continue; const k2 = x.category || 'SEM CATEGORIA'; consumAcc.set(k2, (consumAcc.get(k2) || 0) + qtyLine(x)) }
+    return {
+      parts: cap(partsL), services: cap(svcL), fltax: cap(taxL), discount: cap(discL), cost: cap(costL),
+      payroll: cap(d.expenses.filter((e: any) => e.origin !== 'PERSONAL').map((e: any) => ({ label: e.description || e.type || '—', amount: parseFloat(e.amount) || 0, href: '/staff' }))),
+      fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
+      consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/inputs' }))),
+      apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/inputs' }))),
+      tools: cap([
+        ...d.goods.filter((g: any) => qtyLine(g) < CAP_FLOOR).map((g: any) => ({ label: g.description || '—', amount: qtyLine(g), href: '/goods' })),
+        ...d.goodExpenses.filter((g: any) => (parseFloat(g.amount) || 0) < CAP_FLOOR).map((g: any) => ({ label: g.description || '—', amount: parseFloat(g.amount) || 0, href: '/goods' })),
+      ]),
+      dep: dep ? [{ label: 'Frota OWN (marketing & desenvolvimento)', amount: dep.own }, { label: 'Veículos TOOL (serviço)', amount: dep.tool }].filter(r => r.amount > 0) : [],
+      juros: cap((d.financingEvents || []).filter((e: any) => e.kind === 'INTEREST').map((e: any) => ({ label: `${e.event_date} · ${e.description || 'juros'}`, amount: parseFloat(e.amount) || 0, href: '/adm/financials/ledgers' }))),
+    }
+  }, [d, m, scope, dep])
+  const [dreDrill, setDreDrill] = useState<string | null>(null)
+
   async function downloadPdf() {
     if (!m || !v) return
     const rows = [
@@ -135,7 +192,7 @@ export default function DrePage() {
       { cells: ['RECEITA LÍQUIDA', usd(v.liquida)], bold: true },
       { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
       { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
-      { cells: ['(−) Folha (equipe)', usd(-m.payroll)] },
+      { cells: ['(−) Equipe — salários & bem-estar', usd(-m.payroll)] },
       { cells: ['(−) Ocupação, energia, seguros & contador', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
@@ -174,14 +231,31 @@ export default function DrePage() {
   if (error) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-red-400">{error}</p></main>
   if (!d || !m || !v) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-xl text-gray-400">Loading…</p></main>
 
-  const Row = ({ label, value, sub, note }: { label: string; value: number | null; sub?: boolean; note?: string }) => (
-    <div className={`px-4 py-2.5 flex justify-between gap-4 border-t border-gray-800 ${sub ? '' : 'bg-gray-900 font-bold'}`}>
-      <span className={sub ? 'text-gray-400' : ''}>{label}{note && <span className="block text-xs text-gray-600 font-normal">{note}</span>}</span>
-      <span className={`tabular-nums whitespace-nowrap ${value === null ? 'text-gray-600' : value < 0 ? 'text-red-400' : ''} ${sub ? '' : 'text-lg'}`}>
-        {value === null ? '— sem registro' : usd(value)}
-      </span>
-    </div>
-  )
+  // Linha clicável (João, 26/ago): ▸ abre os somadores da linha, com valor e link.
+  const Row = ({ label, value, sub, note, k }: { label: string; value: number | null; sub?: boolean; note?: string; k?: string }) => {
+    const rows = k ? comp[k] : undefined
+    const openD = !!k && dreDrill === k
+    return (
+      <>
+        <div onClick={rows?.length ? () => setDreDrill(openD ? null : k!) : undefined} className={`px-4 py-2.5 flex justify-between gap-4 border-t border-gray-800 ${sub ? '' : 'bg-gray-900 font-bold'} ${rows?.length ? 'cursor-pointer hover:bg-gray-800/60' : ''}`}>
+          <span className={sub ? 'text-gray-400' : ''}>{rows?.length ? <span className="text-gray-600 mr-1">{openD ? '▾' : '▸'}</span> : null}{label}{note && <span className="block text-xs text-gray-600 font-normal">{note}</span>}</span>
+          <span className={`tabular-nums whitespace-nowrap ${value === null ? 'text-gray-600' : value < 0 ? 'text-red-400' : ''} ${sub ? '' : 'text-lg'}`}>
+            {value === null ? '— sem registro' : usd(value)}
+          </span>
+        </div>
+        {openD && rows && (
+          <div className="bg-black/40">
+            {rows.map((r, i) => (
+              <div key={i} className="px-4 py-1.5 pl-10 flex justify-between gap-4 text-sm border-t border-gray-900">
+                {r.href ? <a href={`${BASE_PATH}${r.href}`} target="_blank" rel="noreferrer" className="truncate text-gray-400 hover:text-white hover:underline">{r.label}</a> : <span className="truncate text-gray-500">{r.label}</span>}
+                <span className="tabular-nums text-gray-500 whitespace-nowrap">{usd(r.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -237,7 +311,7 @@ export default function DrePage() {
           <p className="text-sm font-bold text-gray-400 mb-4">ONDE VIVE A DESPESA OPERACIONAL</p>
           <Waterfall steps={[
             { label: 'Ocupação, energia, seguros & contador', value: m.fixedBy.FIXED || 0, kind: 'out' },
-            { label: 'Folha (equipe)', value: m.payroll, kind: 'out' },
+            { label: 'Equipe — salários & bem-estar', value: m.payroll, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
             { label: 'Tarifas bancárias', value: m.fixedBy.BANK || 0, kind: 'out' },
@@ -258,31 +332,31 @@ export default function DrePage() {
         </div>
 
         <div className="border border-gray-800 rounded-2xl overflow-hidden">
-          <Row label={scope === 'OFICINA' ? 'Receita de peças (oficina)' : 'Receita de peças & veículos'} value={v.parts} sub
+          <Row label={scope === 'OFICINA' ? 'Receita de peças (oficina)' : 'Receita de peças & veículos'} value={v.parts} sub k="parts"
             note={scope === 'COMPLETO' ? `dos quais carros (export): ${usd(m.carRev)}` : undefined} />
-          <Row label="Receita de serviços" value={m.services} sub />
-          <Row label="Florida sales tax faturado" value={v.flTax} sub />
+          <Row label="Receita de serviços" value={m.services} sub k="services" />
+          <Row label="Florida sales tax faturado" value={v.flTax} sub k="fltax" />
           <Row label="RECEITA BRUTA" value={v.brutaTotal} />
-          <Row label="(−) Descontos globais" value={-v.discount} sub />
+          <Row label="(−) Descontos globais" value={-v.discount} sub k="discount" />
           <Row label="(−) FL tax repassado ao estado" value={-v.flTax} sub note="pass-through — não é receita nossa (D5)" />
           <Row label="RECEITA LÍQUIDA" value={v.liquida} />
-          <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub
+          <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub k="cost"
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
-          <Row label="(−) Folha (equipe)" value={-m.payroll} sub note="salários e diárias da EQUIPE — o gasto PESSOAL dos sócios NÃO está aqui: é retirada de capital (DFC financiamento + Balanço)" />
-          <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
-          <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub />
-          <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub />
-          <Row label="(−) Tarifas bancárias" value={-(m.fixedBy.BANK || 0)} sub note="wire fees, análise de conta — o motor FEE lança, linkado à linha do banco (João, 26/ago: não é custo fixo)" />
-          <Row label="(−) Ativos & instalações (as-booked)" value={-(m.fixedBy.ASSET || 0)} sub note="capitaliza quando D8/G4 fecharem" />
-          <Row label="(−) Consumíveis de oficina" value={-m.consum} sub />
-          <Row label="(−) Ferramental de baixo valor" value={-m.smallTools} sub note={`GOODS abaixo do piso de $${CAP_FLOOR.toLocaleString()} (D8)`} />
-          <Row label="(−) Apartamento & mascotes" value={-m.aptCats} sub note="D10 decide se é benefício ou retirada" />
-          <Row label="(−) Não classificado" value={-(m.fixedBy.UNCLASSIFIED || 0)} sub />
+          <Row label="(−) Equipe — salários & bem-estar" value={-m.payroll} sub k="payroll" note="tudo que mantém a equipe operando: salários, diárias, comida da oficina. Gasto PESSOAL de sócio continua FORA — é retirada de capital, não despesa" />
+          <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub k="fixed" note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
+          <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub k="marketing" />
+          <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub k="apps" />
+          <Row label="(−) Tarifas bancárias" value={-(m.fixedBy.BANK || 0)} sub k="bank" note="wire fees, análise de conta — o motor FEE lança, linkado à linha do banco (João, 26/ago: não é custo fixo)" />
+          <Row label="(−) Ativos & instalações (as-booked)" value={-(m.fixedBy.ASSET || 0)} sub k="assets" note="capitaliza quando D8/G4 fecharem" />
+          <Row label="(−) Consumíveis de oficina" value={-m.consum} sub k="consum" />
+          <Row label="(−) Ferramental de baixo valor" value={-m.smallTools} sub k="tools" note={`GOODS abaixo do piso de $${CAP_FLOOR.toLocaleString()} (D8)`} />
+          <Row label="(−) Apartamento & mascotes" value={-m.aptCats} sub k="apt" note="D10 decide se é benefício ou retirada" />
+          <Row label="(−) Não classificado" value={-(m.fixedBy.UNCLASSIFIED || 0)} sub k="unclass" />
           <Row label="EBITDA" value={v.ebitda} />
-          <Row label="(−) Depreciação da frota" value={dep === null ? null : -dep.accum} sub
+          <Row label="(−) Depreciação da frota" value={dep === null ? null : -dep.accum} sub k="dep"
             note={dep === null ? 'rode MIGRATION_g4_fleet.sql e classifique a frota' : 'linear por linha de custo, da data de cada gasto · DESENVOLVIMENTO + TRABALHO depreciam · MONUMENTO e RESERVA ao custo (G4 vivo, 25/ago)'} />
-          <Row label="(−) Resultado financeiro (juros)" value={m.juros === null ? null : -m.juros} sub note={m.juros === null ? 'lance os empréstimos no livro LEDGERS' : 'juros pagos, do livro de empréstimos'} />
+          <Row label="(−) Resultado financeiro (juros)" value={m.juros === null ? null : -m.juros} sub k="juros" note={m.juros === null ? 'lance os empréstimos no livro LEDGERS' : 'juros pagos, do livro de empréstimos'} />
           <Row label="RESULTADO ACUMULADO" value={v.resultado} />
         </div>
 

@@ -74,7 +74,7 @@ export default function BalancePage() {
       else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) {
         wip += t.cost
         // CARROS × OFICINA (João, 25/ago): quanto do WIP é carro de export parado.
-        const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
+        const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
         wipCars += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s: number, e: any) => s + expLine(e), 0)
       }
     }

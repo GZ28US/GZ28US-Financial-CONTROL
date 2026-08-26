@@ -170,7 +170,9 @@ export function isCarLine(text: string | null | undefined, amount: number, nickn
 }
 export const invNickname = (d: FinData, invoiceId: string): string | null => {
   const inv = d.invoiceById.get(invoiceId)
-  return (inv?.ride_id && d.rides.get(inv.ride_id)?.nickname) || null
+  // BUG corrigido 26/ago: a coluna é project_name (rides não tem nickname) — com
+  // nickname o apelido voltava null e o caso Joker (KR TX Chrys) escapava.
+  return (inv?.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
 }
 
 // G4 (25/ago — João classificou a frota): depreciação linear POR LINHA DE CUSTO.
