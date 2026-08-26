@@ -74,6 +74,10 @@ export default function EditPackPage() {
   // de cada item (Márcio, 26/ago/2026). Antes isso só existia na invoice, então
   // toda quote começava escondendo o PN e alguém tinha que lembrar de ligar.
   const [showPartNumbers, setShowPartNumbers] = useState(false)
+  // item (lowercase) -> manufacturer part number, pro toggle SHOW PART NUMBERS.
+  // Mesma resolucao da invoice: a chave e o source_item (o nome do item no banco
+  // de pecas, guardado no import) e so cai na description quando nao houver.
+  const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
 
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
@@ -190,8 +194,17 @@ export default function EditPackPage() {
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
     const mn = new Map<string, number>()
+    const pm = new Map<string, string>()
     for (const d of dbParts || []) {
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
+      // PN pelo nome do item E pelo alias — o import grava o alias como
+      // description, entao sem as duas chaves o item aliasado ficaria sem PN.
+      if (d.part_number) {
+        const it = (d.item || '').trim().toLowerCase()
+        const al = (d.alias || '').trim().toLowerCase()
+        if (it && !pm.has(it)) pm.set(it, d.part_number)
+        if (al && !pm.has(al)) pm.set(al, d.part_number)
+      }
       // Normalized PN key (same normPN as the dedupe) so formatting differences
       // ("GM-12612350" vs "12612350") still hit the part's MAP.
       const pn = normPN(d.part_number || '')
@@ -209,6 +222,7 @@ export default function EditPackPage() {
     setAliasMap(am)
     setMapByPN(mp)
     setMapByName(mn)
+    setPnByItem(pm)
 
     setLoading(false)
   }
@@ -536,6 +550,16 @@ export default function EditPackPage() {
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
   }
   const expenseLineTotal = (e: Expense) => (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+  // PN do item. As EXPENSES do proprio pack ja carregam o part_number e o
+  // IMPORT ITEMS FROM EXPENSES grava o nome da expense em source_item — entao
+  // essa e a fonte exata. So cai no parts_database (por nome) quando o item foi
+  // digitado a mao e nao veio de expense nenhuma.
+  function pnFor(part: Part): string {
+    const key = (part.source_item || part.description || '').trim().toLowerCase()
+    if (!key) return ''
+    const own = expenses.find(e => (e.item || '').trim().toLowerCase() === key)
+    return (own?.part_number || '').trim() || pnByItem.get(key) || ''
+  }
 
   function addDuty() {
     if (!newDuty.description.trim()) return
@@ -864,6 +888,7 @@ export default function EditPackPage() {
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
                           <p className="text-base font-bold truncate" title={part.description}>{part.description}</p>
+                          {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
                         </div>
                         {!locked && (
