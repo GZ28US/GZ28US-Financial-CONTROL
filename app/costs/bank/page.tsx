@@ -75,6 +75,7 @@ export default function BankFeesPage() {
                 <span className="text-gray-500 text-xs w-24 shrink-0">{f.expense_date || '—'}</span>
                 <span className="flex-1 truncate" title={f.description || ''}>{familyOf(f.description)}</span>
                 {f.bank_transaction_id && <span className="text-[10px] font-bold text-teal-300 shrink-0" title="criada pelo motor FEE, linkada à linha do banco">⛓ BANCO</span>}
+                {(() => { const m2 = String(f.description || '').match(/causada pelo wire da (\S+)/); return m2 ? <span className="text-[10px] font-bold text-sky-300 shrink-0" title="bookkeeping: o wire que causou esta tarifa (o preço cobre isso ANTES, na montagem da invoice)">→ {m2[1]}</span> : null })()}
                 {!f.payment_date && <span className="text-[10px] font-bold text-amber-300 shrink-0">NÃO PAGA?</span>}
                 <span className="tabular-nums font-bold shrink-0 text-red-400">{formatUSD(Number(f.amount) || 0)}</span>
               </div>

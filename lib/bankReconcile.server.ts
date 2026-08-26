@@ -470,29 +470,14 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
     const l = it.line
     try {
       if (it.engine === 'FEE' && it.create) {
-        // REPASSE (João, 26/ago): tarifa de WIRE pertence ao projeto que a causou.
-        // Wire único do dia (±1, mesma direção) já casado com invoice ⇒ a tarifa
-        // vira DESPESA daquela invoice — custo interno, o cliente não vê linha; a
-        // margem do projeto absorve ("preço de pagar por wire"). Ambíguo ⇒ Regions
-        // Bank (cost_type BANK), como sempre. Tudo A CONFERIR + DESFAZER.
+        // BOOKKEEPING, não cobrança (João, 26/ago, 2º ato): cobrar o cliente
+        // DEPOIS do wire é ideia morta — o preço cobre a tarifa ANTES, na
+        // montagem da invoice. A tarifa mora SEMPRE em /costs/bank; quando o
+        // wire causador já está casado (único no dia, mesma direção), a
+        // atribuição entra como ANOTAÇÃO na descrição e na nota — nada de criar
+        // despesa na invoice.
         const attr = /WIRE/i.test(String(l.name || '')) ? await wireInvoiceFor(db, l) : null
-        if (attr) {
-          const item = `Tarifa de wire — repasse (auto Bank Link) · ${String(l.name || '').trim()}`.slice(0, 180)
-          const { data: row, error } = await db.from('invoice_expenses').insert({
-            invoice_id: attr.invoice_id, item, supplier: 'Regions Bank', price: Math.abs(num(l.amount)), quantity: 1, tax: 0, extra: 0,
-            expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', source: 'GZ28US', payment_method: 'BANK ACCOUNT', export_status: 'FRESH',
-          }).select('id').single()
-          if (error || !row) throw new Error(error?.message || 'insert do repasse falhou')
-          try {
-            await writeMatch(db, l, { table: 'invoice_expenses', id: row.id }, { matched_note: ('AUTO · FEE · EXPENSE · repasse → ' + (attr.code || 'invoice') + ' · ' + String(l.name || '').trim()).slice(0, 200), match_engine: 'FEE', match_batch: batch, reviewed_at: null })
-          } catch (e) {
-            await db.from('invoice_expenses').delete().eq('id', row.id).ilike('item', '%repasse (auto Bank Link)%')
-            throw e
-          }
-          res.fee_create++
-          fixes.push(fix(l.id, 'FEE repasse → ' + (attr.code || 'invoice') + ' · ' + lineLabel(l)))
-        } else {
-        const desc = `${String(l.name || 'Tarifa bancária').trim()} — tarifa Regions •9336 (auto · Bank Link)`
+        const desc = `${String(l.name || 'Tarifa bancária').trim()} — tarifa Regions •9336 (auto · Bank Link)${attr ? ` · causada pelo wire da ${attr.code || 'invoice'}` : ''}`
         // Reaproveita se uma tentativa anterior já criou (retry idempotente).
         const { data: prev } = await db.from('fixed_cost_expenses').select('id').eq('bank_transaction_id', l.id).maybeSingle()
         let rowId: string = prev?.id || ''
@@ -505,14 +490,13 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           rowId = row.id
         }
         try {
-          await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: 'AUTO · FEE · ' + desc.slice(0, 120), match_engine: 'FEE', match_batch: batch, reviewed_at: null })
+          await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: 'AUTO · FEE · TARIFA · ' + desc.slice(0, 150), match_engine: 'FEE', match_batch: batch, reviewed_at: null })
         } catch (e) {
           if (!prev) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
           throw e
         }
         res.fee_create++
-        fixes.push(fix(l.id, 'FEE criou tarifa · ' + lineLabel(l)))
-        }
+        fixes.push(fix(l.id, 'FEE criou tarifa' + (attr ? ' (wire da ' + attr.code + ')' : '') + ' · ' + lineLabel(l)))
       } else {
         const c = it.cand!
         const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: null })
