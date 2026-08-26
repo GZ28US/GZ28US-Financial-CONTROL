@@ -58,6 +58,10 @@ export default function EditPackPage() {
   const [saving, setSaving] = useState(false)
 
   const [name, setName] = useState('')
+  // PLATFORM (CC 0.1.3): a coluna packs.platform existia desde a migration de
+  // parts identity mas nenhuma UI escrevia nela — o refresh dos packs precisa
+  // preenchê-la (famílias/variantes do CREW CHIEF: mesmo pack, base ± blocos).
+  const [platform, setPlatform] = useState('')
   const [status, setStatus] = useState('DRAFT')
   const [cars, setCars] = useState<Car[]>([])
   const locked = status === 'CLOSED'
@@ -167,6 +171,7 @@ export default function EditPackPage() {
     const { data } = await supabase.from('packs').select('*').eq('id', packId).maybeSingle()
     if (!data) { setNotFound(true); setLoading(false); return }
     setName(data.name || '')
+    setPlatform(data.platform || '')
     setStatus(data.status || 'DRAFT')
     setCars(Array.isArray(data.cars) ? data.cars.map((c: any) => ({
       manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
@@ -599,6 +604,7 @@ export default function EditPackPage() {
     setSaving(true)
     const row: any = {
       name: name.trim(),
+      platform: platform.trim().toUpperCase() || null,
       cars,
       status: nextStatus || status,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
@@ -707,6 +713,15 @@ export default function EditPackPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">PACKAGE NAME</label>
           <input value={name} onChange={(e) => setName(e.target.value)} disabled={locked} className={inputClass} placeholder="e.g. Stage 2 Turbo Kit" />
+        </div>
+
+        {/* PLATFORM — texto livre com sugestões; variantes (LT4 vs LT1) são packs irmãos */}
+        <div>
+          <label className="block mb-2 text-lg font-bold">PLATFORM</label>
+          <input value={platform} onChange={(e) => setPlatform(e.target.value.toUpperCase())} disabled={locked} className={inputClass} list="pack-platforms" placeholder="e.g. D170, TRX, HELLCAT" />
+          <datalist id="pack-platforms">
+            {['D170', 'TRX', 'HELLCAT', 'REDEYE', 'DURANGO', 'LT4', 'LT1'].map(p => <option key={p} value={p} />)}
+          </datalist>
         </div>
 
         {/* EXPENSES (first box, matching the invoice edit page) */}
