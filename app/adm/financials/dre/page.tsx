@@ -86,7 +86,7 @@ export default function DrePage() {
     const smallTools = d.goods.filter(g => qtyLine(g) < CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) < CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const opex = payroll + (fixedBy.FIXED || 0) + (fixedBy.MARKETING || 0) + (fixedBy.APP || 0)
-      + (fixedBy.ASSET || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
+      + (fixedBy.ASSET || 0) + (fixedBy.BANK || 0) + (fixedBy.VARIABLE || 0) + consum + aptCats + smallTools + (fixedBy.UNCLASSIFIED || 0)
     // Juros pagos vêm do livro de empréstimos (null até a migration rodar).
     const lt = ledgerTotals(d)
     const juros = lt ? lt.interestPaid : null
@@ -139,6 +139,7 @@ export default function DrePage() {
       { cells: ['(−) Ocupação, seguros & profissionais', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
+      { cells: ['(−) Tarifas bancárias', usd(-(m.fixedBy.BANK || 0))] },
       { cells: ['(−) Ativos & instalações (as-booked)', usd(-(m.fixedBy.ASSET || 0))] },
       { cells: ['(−) Consumíveis de oficina', usd(-m.consum)] },
       { cells: ['(−) Ferramental de baixo valor', usd(-m.smallTools)] },
@@ -239,6 +240,7 @@ export default function DrePage() {
             { label: 'Pessoal', value: m.payroll, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
+            { label: 'Tarifas bancárias', value: m.fixedBy.BANK || 0, kind: 'out' },
             { label: 'Ativos & instalações', value: m.fixedBy.ASSET || 0, kind: 'out' },
             { label: 'Ferramental de baixo valor', value: m.smallTools, kind: 'out' },
             { label: 'Consumíveis de oficina', value: m.consum, kind: 'out' },
@@ -271,6 +273,7 @@ export default function DrePage() {
           <Row label="(−) Ocupação, seguros & profissionais" value={-(m.fixedBy.FIXED || 0)} sub />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub />
+          <Row label="(−) Tarifas bancárias" value={-(m.fixedBy.BANK || 0)} sub note="wire fees, análise de conta — o motor FEE lança, linkado à linha do banco (João, 26/ago: não é custo fixo)" />
           <Row label="(−) Ativos & instalações (as-booked)" value={-(m.fixedBy.ASSET || 0)} sub note="capitaliza quando D8/G4 fecharem" />
           <Row label="(−) Consumíveis de oficina" value={-m.consum} sub />
           <Row label="(−) Ferramental de baixo valor" value={-m.smallTools} sub note={`GOODS abaixo do piso de $${CAP_FLOOR.toLocaleString()} (D8)`} />

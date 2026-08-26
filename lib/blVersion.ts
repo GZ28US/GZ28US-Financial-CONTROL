@@ -3,9 +3,10 @@
 // independente de FINANCIAL HUB (lib/finVersion) e DATA CHECKER (lib/dcVersion).
 // Todo patch do BANK LINK bumpa BL_VERSION e acrescenta uma linha no changelog.
 export const BL_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const BL_VERSION = '0.5.2'
+export const BL_VERSION = '0.5.3'
 
 export const BL_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.5.3', date: '2026-08-26', notes: "Par do FIN 0.11.2: o motor FEE passa a criar o fornecedor Regions Bank com cost_type BANK — tarifa bancária é despesa operacional com linha própria, não \"custo fixo\". Nada muda no casamento em si: mesma vocabulário, mesmo teto, mesmo link bank_transaction_id." },
   {version: "0.5.2",date: "2026-08-26",notes: "Sessão de limpeza, fricção do João: INPUT ganha a CATEGORIA no selo — “INPUT · APARTMENT · HUANUO Lap Desk…” — pra dizer de onde o insumo vem (apartamento, gatos, oficina) sem abrir nada. Vale no seletor e no painel CONFERIR."},
   {version: "0.5.1",date: "2026-08-26",notes: "Fricção do Márcio na sessão de limpeza: despesa de projeto era a ÚNICA origem SEM selo no seletor de candidatos — a linha começava direto no código da invoice (US.013.3 · item · fornecedor) enquanto todas as outras se anunciam (INCOME, FIXO, GOODS, INPUT, STOCK, PART CUSTO, PEDIDO, CAPITAL, EMPRÉSTIMO) — virava jogo de adivinhação. Agora: EXPENSE · , o espelho do INCOME. Casamentos novos gravam a nota já com o selo; os antigos em A CONFERIR mantêm o rótulo da época."},
   { version: '0.5.0', date: '2026-08-25', notes: "TRIAGEM POR FAMÍLIA (João: \"a conciliação parece grande demais\" — e a medição deu razão): das 1.217 saídas NEW, ~700 são cartão do dia a dia (AMAZON ×178, COMBUSTÍVEL ×120, AUTO/FERRAMENTA ×113, MERCADO ×111, TEMU, ROUPA…) que NUNCA terão linha no app — não é casamento, é decisão. Chips de família em cima do SEM CASAMENTO: clica no chip (vira filtro), confere a lista, escreve a nota e EXPLICAR TODAS → TO BOOK (QUEUED) de uma vez, com guarda (só NEW não-pendente) e trilha. Reverter linha a linha: action unqueue. O que sobra no SEM CASAMENTO é o que interessa casar: 23 WIREs somando $851k, Zelle $60k, PayPal $137k. Ideia descartada com medição: casar recorrência com custo fixo do mês — só 3 linhas batiam, não vale um motor." },

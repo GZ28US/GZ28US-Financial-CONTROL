@@ -406,7 +406,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[]) {
 async function regionsSupplier(db: any): Promise<string> {
   const { data } = await db.from('fixed_cost_suppliers').select('id').ilike('company', 'Regions Bank%').limit(1).maybeSingle()
   if (data?.id) return data.id
-  const { data: ins, error } = await db.from('fixed_cost_suppliers').insert({ company: 'Regions Bank', description: 'Tarifas da conta •9336 — wire fee, analysis charge, international service assessment (criado pelo motor FEE do Bank Link)', cost_type: 'FIXED', periodicity: 'MONTHLY' }).select('id').single()
+  const { data: ins, error } = await db.from('fixed_cost_suppliers').insert({ company: 'Regions Bank', description: 'Tarifas da conta •9336 — wire fee, analysis charge, international service assessment (criado pelo motor FEE do Bank Link)', cost_type: 'BANK', periodicity: 'MONTHLY' }).select('id').single()
   if (error || !ins) throw new Error('não consegui criar o fornecedor "Regions Bank": ' + (error?.message || '?'))
   return ins.id
 }
