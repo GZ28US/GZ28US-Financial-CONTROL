@@ -92,13 +92,19 @@ export default function StreamPage() {
       if ((r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today) return 0
       return { BOUGHT: 1, SHIPPED: 2, CANCELLED: 3, DELIVERED: 4, REPORTED_PT: 5, DELIVERED_BR: 6, REFUNDED: 7 }[r.status] ?? 8
     }
+    // Dentro de cada grupo, o que MEXEU por ultimo vem primeiro — e o marco mais
+    // recente da propria linha, nao a data da compra. Assim o quadro DELIVERED
+    // sai em ordem de ENTREGA (a ultima entregue no topo), que e como se olha
+    // pra ele; o que ainda esta em transito ordena pelo embarque, e o que nem
+    // embarcou, pela compra.
+    const lastMove = (r: StreamRow) => r.delivered_at || r.shipped_at || r.created_at || ''
     return rows.filter(r => {
       if (chip !== 'ALL' && r.status !== chip) return false
       if (!q) return true
       const w = r.invoice_id ? where[r.invoice_id] : undefined
       return [r.item, r.supplier, r.order_number, r.tracking_number, r.carrier, w?.invoice_code, w?.ride_name]
         .some(v => (v || '').toLowerCase().includes(q))
-    }).sort((a, b) => rank(a) - rank(b) || (a.created_at < b.created_at ? 1 : -1))
+    }).sort((a, b) => rank(a) - rank(b) || lastMove(b).localeCompare(lastMove(a)))
   }, [rows, chip, search, where])
 
   // Save a tracking number, then hand the row to the automation: 17TRACK
