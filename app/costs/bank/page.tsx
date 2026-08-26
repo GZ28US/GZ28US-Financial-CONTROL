@@ -3,9 +3,10 @@
 // TARIFAS BANCÁRIAS — a casa delas (João, 26/ago/2026: "precisamos de um lugar
 // pra elas morarem" — moravam disfarçadas de custo fixo). Mesmo padrão de
 // APPS / ASSETS & MKT: mesma tabela, cost_type próprio (BANK), página própria.
-// As tarifas NASCEM do motor FEE do Bank Link, linkadas à linha do banco;
-// tarifa de wire com wire único casado vira REPASSE na própria invoice e nem
-// passa por aqui. Editar o fornecedor continua em /costs/fixed/[id].
+// As tarifas NASCEM do motor FEE do Bank Link, linkadas à linha do banco, e
+// moram TODAS aqui (2º ato do João, 26/ago: cobrar depois do wire é ideia
+// morta — o preço cobre a tarifa ANTES, na invoice; a atribuição wire→invoice
+// é só bookkeeping, o selo → US.xxx). Editar o fornecedor: /costs/fixed/[id].
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -49,8 +50,8 @@ export default function BankFeesPage() {
       <h1 className="text-4xl font-bold mb-1">TARIFAS BANCÁRIAS</h1>
       <p className="text-gray-400 mb-6 max-w-3xl">
         Nascem do motor FEE do Bank Link, cada uma linkada à linha do banco que a cobrou — não são custo fixo, têm
-        linha própria no DRE e no DFC. Tarifa de wire com wire único casado vira <span className="text-gray-200 font-bold">repasse na própria invoice</span> e
-        nem aparece aqui: a margem do projeto absorve.
+        linha própria no DRE e no DFC, e moram <span className="text-gray-200 font-bold">todas aqui</span>. Quando o wire causador já está casado,
+        a tarifa ganha o selo <span className="text-sky-300 font-bold">→ US.xxx</span> — bookkeeping puro: quem cobre a tarifa é o <span className="text-gray-200 font-bold">preço</span>, decidido antes, na montagem da invoice.
         {sups[0] && <> Fornecedor: <Link href={`/costs/fixed/${sups[0].id}`} className="underline hover:text-white">{sups[0].company || 'Regions Bank'}</Link>.</>}
       </p>
 
