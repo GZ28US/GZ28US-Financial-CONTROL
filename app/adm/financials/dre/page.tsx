@@ -136,7 +136,7 @@ export default function DrePage() {
       { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
       { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
       { cells: ['(−) Folha (equipe)', usd(-m.payroll)] },
-      { cells: ['(−) Ocupação, seguros & profissionais', usd(-(m.fixedBy.FIXED || 0))] },
+      { cells: ['(−) Ocupação, energia, seguros & contador', usd(-(m.fixedBy.FIXED || 0))] },
       { cells: ['(−) Marketing', usd(-(m.fixedBy.MARKETING || 0))] },
       { cells: ['(−) Software & assinaturas', usd(-(m.fixedBy.APP || 0))] },
       { cells: ['(−) Tarifas bancárias', usd(-(m.fixedBy.BANK || 0))] },
@@ -236,7 +236,7 @@ export default function DrePage() {
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
           <p className="text-sm font-bold text-gray-400 mb-4">ONDE VIVE A DESPESA OPERACIONAL</p>
           <Waterfall steps={[
-            { label: 'Ocupação, seguros & profissionais', value: m.fixedBy.FIXED || 0, kind: 'out' },
+            { label: 'Ocupação, energia, seguros & contador', value: m.fixedBy.FIXED || 0, kind: 'out' },
             { label: 'Folha (equipe)', value: m.payroll, kind: 'out' },
             { label: 'Marketing', value: m.fixedBy.MARKETING || 0, kind: 'out' },
             { label: 'Software & assinaturas', value: m.fixedBy.APP || 0, kind: 'out' },
@@ -270,7 +270,7 @@ export default function DrePage() {
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
           <Row label="(−) Folha (equipe)" value={-m.payroll} sub note="salários e diárias da EQUIPE — o gasto PESSOAL dos sócios NÃO está aqui: é retirada de capital (DFC financiamento + Balanço)" />
-          <Row label="(−) Ocupação, seguros & profissionais" value={-(m.fixedBy.FIXED || 0)} sub />
+          <Row label="(−) Ocupação, energia, seguros & contador" value={-(m.fixedBy.FIXED || 0)} sub note="aluguéis (galpão + apto Luma), Duke Energy, Progressive e a Drummond — serviços contratados, NÃO folha (equipe é a linha acima)" />
           <Row label="(−) Marketing" value={-(m.fixedBy.MARKETING || 0)} sub />
           <Row label="(−) Software & assinaturas" value={-(m.fixedBy.APP || 0)} sub />
           <Row label="(−) Tarifas bancárias" value={-(m.fixedBy.BANK || 0)} sub note="wire fees, análise de conta — o motor FEE lança, linkado à linha do banco (João, 26/ago: não é custo fixo)" />
