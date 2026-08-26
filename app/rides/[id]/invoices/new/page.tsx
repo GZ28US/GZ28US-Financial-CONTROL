@@ -16,6 +16,7 @@ type Pack = {
   florida_taxes: number | null
   global_discount: number | null
   import_margin: number | null
+  duties: any[]
   parts: any[]
   services: any[]
   expenses: any[]
@@ -355,6 +356,22 @@ export default function NewInvoicePage() {
 
     const noteRows = (pack.notes || []).map((n: any) => ({ invoice_id: invoiceId, note: n.note }))
     if (noteRows.length > 0) await supabase.from('invoice_notes').insert(noteRows)
+
+    // STAFF DUTIES do pack (Márcio, 26/ago/2026). O template carrega só a
+    // TAREFA — quem executa se escolhe aqui, na quote, porque o Packs DB é
+    // compartilhado com o BR e o staff de lá é outro. As duties nascem em
+    // aberto e sem dono: aparecem na quote e no quadro /duties sob
+    // "Unassigned" até alguém ser apontado.
+    const dutyRows = (pack.duties || [])
+      .filter((d: any) => String(d?.description || '').trim())
+      .map((d: any) => ({
+        invoice_id: invoiceId,
+        staff_id: null,
+        description: String(d.description).trim(),
+        done: false,
+        priority: String(d.priority || '1'),
+      }))
+    if (dutyRows.length > 0) await supabase.from('invoice_duties').insert(dutyRows)
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'

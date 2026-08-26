@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { carLabel } from '@/lib/carData'
+import { dutyPriorityBadge } from '@/lib/utils'
 
 const money = (n: any) => (n == null || n === '' ? '—' : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
 
@@ -35,6 +36,9 @@ export default function ViewPackPage() {
   const services = pack.services || []
   const expenses = (pack.expenses || []).filter((e: any) => !IMPORT_RE.test(e.item || ''))
   const notes = pack.notes || []
+  // STAFF DUTIES — a lista de trabalho que o pack carrega. Sem responsável: o
+  // template guarda a tarefa, a quote é que aponta quem faz.
+  const duties = pack.duties || []
 
   // Profit dash — same math as the invoice: revenue (parts + FL tax + services −
   // global discount) minus cost (supplier expenses + the FL tax we owe).
@@ -143,6 +147,20 @@ export default function ViewPackPage() {
                 }
                 return <p key={i}>{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(expAmount(e))}</p>
               }) })()}
+            </div>
+          </div>
+        )}
+
+        {duties.length > 0 && (
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+            <h2 className="text-lg font-bold mb-3">STAFF DUTIES ({duties.length})</h2>
+            <div className="space-y-1 text-lg text-gray-300">
+              {duties.map((d: any, i: number) => (
+                <p key={i}>
+                  <span className={`px-2 py-0.5 mr-2 rounded-full text-xs font-bold ${dutyPriorityBadge(String(d.priority || '1')).cls}`}>{dutyPriorityBadge(String(d.priority || '1')).label}</span>
+                  {d.description}
+                </p>
+              ))}
             </div>
           </div>
         )}

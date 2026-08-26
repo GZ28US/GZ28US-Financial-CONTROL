@@ -288,3 +288,28 @@ export const isOurCar = (scope: string | null | undefined) => scope === 'OWN' ||
 // client's insurance (USA/CLIENT are never even in our name), and EXPORT has no
 // FL title or registration: the endorsed title just ships to the exporter.
 export const insuresCar = isOurCar
+
+// Selo de prioridade de uma DUTY: 0 (mais alta) → 4, depois StandBy. Vive aqui
+// porque agora três telas mostram duty — a invoice, o quadro /duties e o PACK
+// (Márcio, 26/ago/2026) — e cor divergente entre elas seria mentira visual.
+export const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, 'STANDBY': 5 }
+export const dutyPriorityBadge = (p: string) => (
+  p === 'STANDBY' ? { label: 'STANDBY', cls: 'bg-gray-700 text-gray-300' }
+  : p === '4' ? { label: 'P4', cls: 'bg-blue-900 text-blue-300' }
+  : p === '3' ? { label: 'P3', cls: 'bg-yellow-900 text-yellow-300' }
+  : p === '2' ? { label: 'P2', cls: 'bg-orange-900 text-orange-300' }
+  : p === '0' ? { label: 'P0', cls: 'bg-red-600 text-white' }
+  : { label: 'P1', cls: 'bg-red-900 text-red-300' })
+export const dutyTextColor = (p: string) => (
+  p === 'STANDBY' ? 'text-gray-400'
+  : p === '4' ? 'text-blue-300'
+  : p === '3' ? 'text-yellow-200'
+  : p === '2' ? 'text-orange-300'
+  : p === '0' ? 'text-red-200'
+  : 'text-red-300')
+
+// A ordem visual de uma duty mora no prefixo "NN. " da própria descrição — um
+// campo só, sem coluna de ordem duplicando a informação.
+export const dutyOrderOf = (desc: string) => { const m = /^(\d{1,2})[.)]\s/.exec(desc || ''); return m ? m[1].padStart(2, '0') : '' }
+export const stripDutyOrder = (desc: string) => (desc || '').replace(/^\d{1,2}[.)]\s*/, '')
+export const withDutyOrder = (order: string, desc: string) => order ? `${order}. ${stripDutyOrder(desc).trim()}` : desc.trim()

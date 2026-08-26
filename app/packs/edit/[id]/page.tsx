@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, partMatches, partStatusBadge } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder } from '@/lib/utils'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { normPN } from '@/lib/partsDb'
 
@@ -20,11 +20,21 @@ type Part = { description: string; unit_price: string; quantity: string; base_co
 type Service = { description: string; price: string }
 type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string; export_status?: string; kit_group?: string; kit_name?: string }
 type Note = { note: string }
+// A duty do PACK é só a TAREFA — sem responsável (Márcio, 26/ago/2026). O
+// Packs DB é compartilhado US/BR e um staff_id do US não existe no app do BR;
+// gravar pessoa no template quebraria do outro lado. Quem faz se escolhe na
+// quote. A ordem mora no prefixo "NN. " da descrição, como nas invoice_duties —
+// um campo só, sem coluna duplicada.
+type PackDuty = { description: string; priority: string }
 
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 // Extra/charge rows never import into PARTS (shipping, tax, handling, etc.).
 const SKIP_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
+
+const sortPackDuties = (list: PackDuty[]) => [...list].sort((a, b) =>
+  (DUTY_PRIORITY_RANK[a.priority] ?? 1) - (DUTY_PRIORITY_RANK[b.priority] ?? 1) ||
+  (a.description || '').localeCompare(b.description || '', undefined, { numeric: true, sensitivity: 'base' }))
 
 const MANUFACTURERS = Object.keys(carData)
 const brandsFor = (m: string) => (m && carData[m] ? Object.keys(carData[m]) : [])
@@ -72,6 +82,18 @@ export default function EditPackPage() {
   const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
+
+  const [duties, setDuties] = useState<PackDuty[]>([])
+  const [newDuty, setNewDuty] = useState<{ order: string; description: string; priority: string }>({ order: '', description: '', priority: '1' })
+  const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
+  const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; priority: string }>({ order: '', description: '', priority: '1' })
+  // Toda duty já escrita em qualquer invoice, para o type-ahead — a mesma
+  // datalist da tela de DUTIES, para o pack falar a língua da oficina.
+  const [dutySuggestions, setDutySuggestions] = useState<string[]>([])
+  useEffect(() => {
+    supabase.from('invoice_duties').select('description').order('created_at', { ascending: false }).limit(2000)
+      .then(({ data }) => setDutySuggestions([...new Set((data || []).map((d: any) => String(d.description || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))))
+  }, [])
 
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState('')
@@ -150,6 +172,7 @@ export default function EditPackPage() {
     setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : (p.unit_price != null ? String(p.unit_price) : undefined)), kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
     setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
     setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH', kit_group: e.kit_group || undefined, kit_name: e.kit_name || undefined })))
+    setDuties(sortPackDuties((data.duties || []).map((d: any) => ({ description: d.description || '', priority: String(d.priority || '1') }))))
     setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
 
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
@@ -506,6 +529,26 @@ export default function EditPackPage() {
   }
   const expenseLineTotal = (e: Expense) => (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 
+  function addDuty() {
+    if (!newDuty.description.trim()) return
+    setDuties(sortPackDuties([...duties, { description: withDutyOrder(newDuty.order, newDuty.description), priority: newDuty.priority }]))
+    setNewDuty({ order: '', description: '', priority: '1' })
+  }
+  function removeDuty(index: number) { setDuties(duties.filter((_, i) => i !== index)) }
+  function startEditDuty(index: number) {
+    const desc = duties[index].description
+    const order = dutyOrderOf(desc)
+    setEditingDutyIndex(index)
+    setEditingDuty({ order, description: order ? stripDutyOrder(desc) : desc, priority: duties[index].priority || '1' })
+  }
+  function saveEditDuty() {
+    if (editingDutyIndex === null || !editingDuty.description.trim()) return
+    const updated = [...duties]
+    updated[editingDutyIndex] = { description: withDutyOrder(editingDuty.order, editingDuty.description), priority: editingDuty.priority }
+    setDuties(sortPackDuties(updated))
+    setEditingDutyIndex(null)
+  }
+
   function addNote() {
     if (!newNote.trim()) return
     setNotes([...notes, { note: newNote.trim() }]); setNewNote('')
@@ -533,6 +576,7 @@ export default function EditPackPage() {
       parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null, kit_group: p.kit_group || null, kit_name: p.kit_name || null, source_item: p.source_item || null })),
       services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
       expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0, export_status: e.export_status || 'FRESH', kit_group: e.kit_group || null, kit_name: e.kit_name || null })),
+      duties: duties.filter(d => d.description.trim()).map(d => ({ description: d.description.trim(), priority: d.priority || '1' })),
       notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim() })),
       updated_at: new Date().toISOString(),
     }
@@ -927,6 +971,80 @@ export default function EditPackPage() {
           <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
             <span className="font-bold text-xl">GRAND TOTAL</span>
             <span className="text-3xl font-bold">{formatUSD(grandTotal)}</span>
+          </div>
+        </div>
+
+        {/* STAFF DUTIES — a lista de trabalho que o pack carrega. Ao aplicar o
+            pack numa quote, cada uma vira uma linha em invoice_duties. */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">STAFF DUTIES</label>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
+            <p className="text-sm text-gray-400">The job list this pack carries. Applying the pack drops every duty on the quote, waiting for you to pick who executes it.</p>
+            {!locked && (
+              <>
+                <div className="flex gap-3 flex-wrap">
+                  <select value={newDuty.order} onChange={(e) => setNewDuty({ ...newDuty, order: e.target.value })} className={smallInputClass} title="Order (01–15)">
+                    <option value="">—</option>
+                    {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <input type="text" list="pack-duty-options" placeholder="Duty description — type to search" value={newDuty.description} onChange={(e) => setNewDuty({ ...newDuty, description: e.target.value })} className={`${smallInputClass} flex-1 min-w-[14rem]`} />
+                  <datalist id="pack-duty-options">{dutySuggestions.map(d => <option key={d} value={d} />)}</datalist>
+                  <select value={newDuty.priority} onChange={(e) => setNewDuty({ ...newDuty, priority: e.target.value })} className={smallInputClass} title="Priority">
+                <option value="0">Block Priority 0</option>
+                <option value="1">Block Priority 1</option>
+                <option value="2">Block Priority 2</option>
+                <option value="3">Block Priority 3</option>
+                <option value="4">Block Priority 4</option>
+                <option value="STANDBY">Block StandBy</option>
+                  </select>
+                </div>
+                <button onClick={addDuty} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">+ ADD DUTY</button>
+              </>
+            )}
+            {duties.length > 0 && (
+              <div className="border border-gray-700 rounded-2xl overflow-hidden mt-2">
+                {duties.map((d, index) => (
+                  <div key={index}>
+                    {editingDutyIndex === index ? (
+                      <div className="p-4 space-y-3 bg-gray-800 border-l-4 border-blue-600">
+                        <div className="flex gap-3">
+                          <select value={editingDuty.order} onChange={(e) => setEditingDuty({ ...editingDuty, order: e.target.value })} className={`${smallInputClass} shrink-0`} title="Order (01–15)">
+                            <option value="">—</option>
+                            {Array.from({ length: 15 }, (_, i) => String(i + 1).padStart(2, '0')).map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                          <input type="text" list="pack-duty-options" value={editingDuty.description} onChange={(e) => setEditingDuty({ ...editingDuty, description: e.target.value })} className={`${smallInputClass} flex-1 min-w-0`} />
+                        </div>
+                        <div className="flex gap-3">
+                          <select value={editingDuty.priority} onChange={(e) => setEditingDuty({ ...editingDuty, priority: e.target.value })} className={`${smallInputClass} flex-1 min-w-0`}>
+                <option value="0">Block Priority 0</option>
+                <option value="1">Block Priority 1</option>
+                <option value="2">Block Priority 2</option>
+                <option value="3">Block Priority 3</option>
+                <option value="4">Block Priority 4</option>
+                <option value="STANDBY">Block StandBy</option>
+                          </select>
+                          <button onClick={saveEditDuty} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
+                          <button onClick={() => setEditingDutyIndex(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < duties.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${dutyPriorityBadge(d.priority).cls}`}>{dutyPriorityBadge(d.priority).label}</span>
+                          <p className={`text-base font-bold truncate ${dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
+                        </div>
+                        {!locked && (
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => startEditDuty(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                            <button onClick={() => removeDuty(index)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
