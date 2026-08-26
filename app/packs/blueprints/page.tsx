@@ -178,77 +178,77 @@ export default function BlueprintsPage() {
   const done = cands.filter(c => c.status !== 'PROPOSED')
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-neutral-100">
       <Header />
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-2xl font-bold">BLUEPRINTS · CREW CHIEF</h1>
           <CcBadge />
         </div>
-        <details className="bg-gray-900 border border-gray-800 rounded-2xl p-4 text-sm">
+        <details className="bg-white rounded-xl border p-4 text-sm">
           <summary className="cursor-pointer font-semibold">O que é isto · changelog</summary>
-          <div className="mt-2 space-y-2 text-gray-300">
+          <div className="mt-2 space-y-2 text-neutral-700">
             <p><b>O pack é o blueprint.</b> Esta tela minera as invoices reais (ao vivo, sem gravar nada) e propõe candidatos; ADOTAR abre a triagem humana; PROMOVER vira um pack DRAFT de verdade ou ENRIQUECE um pack existente ainda sem duties. Sequência combinada: Márcio+João atualizam os packs primeiro — a mineração lê o dado vivo e melhora junto.</p>
             {CC_CHANGELOG.map(c => <p key={c.version}><b>CC {c.version}</b> · {c.date} — {c.notes}</p>)}
           </div>
         </details>
         {noTables && (
-          <div className="bg-amber-950 border border-amber-700 text-amber-200 rounded-2xl p-4 text-sm">
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 text-sm">
             ⚠ Tabelas do CREW CHIEF ainda não existem — rode <b>MIGRATION_crew_chief_p1.sql</b> no SQL Editor do Supabase (US). A mineração abaixo já funciona (read-only); ADOTAR precisa da migration.
           </div>
         )}
-        {loading ? <div className="text-gray-400">Minerando ao vivo…</div> : (
+        {loading ? <div className="text-neutral-500">Minerando ao vivo…</div> : (
           <>
             <section className="space-y-3">
               <h2 className="text-lg font-bold">MESA DE TRIAGEM — {proposed.length} candidato{proposed.length === 1 ? '' : 's'}</h2>
-              {!proposed.length && <div className="text-sm text-gray-400">Nenhum candidato adotado ainda — adote um na mineração abaixo.</div>}
+              {!proposed.length && <div className="text-sm text-neutral-500">Nenhum candidato adotado ainda — adote um na mineração abaixo.</div>}
               {proposed.map(c => (
-                <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+                <div key={c.id} className="bg-white rounded-xl border p-4 space-y-3">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 font-semibold flex-1 min-w-[220px]" value={c.name} onChange={e => patchCand(c.id, x => ({ ...x, name: e.target.value }))} />
-                    <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-28" placeholder="plataforma" value={c.platform || ''} onChange={e => patchCand(c.id, x => ({ ...x, platform: e.target.value.toUpperCase() || null }))} />
-                    <span className="text-xs text-gray-400">família: {c.family} · fonte: {(c.source?.invoiceCodes || []).join(', ') || '—'}</span>
+                    <input className="border rounded px-2 py-1 font-semibold flex-1 min-w-[220px]" value={c.name} onChange={e => patchCand(c.id, x => ({ ...x, name: e.target.value }))} />
+                    <input className="border rounded px-2 py-1 w-28" placeholder="plataforma" value={c.platform || ''} onChange={e => patchCand(c.id, x => ({ ...x, platform: e.target.value.toUpperCase() || null }))} />
+                    <span className="text-xs text-neutral-500">família: {c.family} · fonte: {(c.source?.invoiceCodes || []).join(', ') || '—'}</span>
                   </div>
                   <div className="space-y-1">
                     {dutiesOf(c).map((d, i) => (
                       <div key={i} className="flex items-center gap-2">
-                        <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 flex-1 text-sm" list="cc-vocab" value={d.description}
+                        <input className="border rounded px-2 py-1 flex-1 text-sm" list="cc-vocab" value={d.description}
                           onChange={e => setDuties(c, dutiesOf(c).map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
-                        <select className="bg-gray-800 border border-gray-700 rounded px-1 py-1 text-sm" value={d.priority}
+                        <select className="border rounded px-1 py-1 text-sm" value={d.priority}
                           onChange={e => setDuties(c, dutiesOf(c).map((x, j) => j === i ? { ...x, priority: e.target.value } : x))}>
                           {PRIORITIES.map(p => <option key={p} value={p}>{p === 'STANDBY' ? 'STANDBY' : 'P' + p}</option>)}
                         </select>
-                        <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-20 text-sm text-right" placeholder="horas"
+                        <input className="border rounded px-2 py-1 w-20 text-sm text-right" placeholder="horas"
                           defaultValue={d.estimated_seconds ? (d.estimated_seconds / 3600).toFixed(1) : ''}
                           onBlur={e => setDuties(c, dutiesOf(c).map((x, j) => j === i ? { ...x, estimated_seconds: hToSec(e.target.value) } : x))} />
-                        <button className="text-red-400 text-sm px-1" onClick={() => setDuties(c, dutiesOf(c).filter((_, j) => j !== i))}>×</button>
+                        <button className="text-red-600 text-sm px-1" onClick={() => setDuties(c, dutiesOf(c).filter((_, j) => j !== i))}>×</button>
                       </div>
                     ))}
-                    <button className="text-sm text-blue-400" onClick={() => setDuties(c, [...dutiesOf(c), { description: '', priority: '1', estimated_seconds: null }])}>+ duty</button>
+                    <button className="text-sm text-blue-700" onClick={() => setDuties(c, [...dutiesOf(c), { description: '', priority: '1', estimated_seconds: null }])}>+ duty</button>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap text-sm">
-                    <button disabled={busy} className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-white" onClick={() => saveCand(c)}>SALVAR</button>
+                    <button disabled={busy} className="px-3 py-1.5 rounded bg-neutral-800 text-white" onClick={() => saveCand(c)}>SALVAR</button>
                     <button disabled={busy} className="px-3 py-1.5 rounded bg-emerald-700 text-white" onClick={() => promoteNew(c)}>PROMOVER → PACK NOVO</button>
                     {emptyPacks.length > 0 && (
-                      <select disabled={busy} className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5" value="" onChange={e => e.target.value && enrich(c, e.target.value)}>
+                      <select disabled={busy} className="border rounded px-2 py-1.5" value="" onChange={e => e.target.value && enrich(c, e.target.value)}>
                         <option value="">ENRIQUECER pack sem duties…</option>
                         {emptyPacks.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                     )}
-                    <button disabled={busy} className="px-3 py-1.5 rounded border border-gray-700 text-red-400" onClick={() => dismiss(c)}>DESCARTAR</button>
+                    <button disabled={busy} className="px-3 py-1.5 rounded border text-red-700" onClick={() => dismiss(c)}>DESCARTAR</button>
                   </div>
                 </div>
               ))}
               {done.length > 0 && (
-                <button className="text-sm text-gray-400 underline" onClick={() => setShowDone(v => !v)}>
+                <button className="text-sm text-neutral-500 underline" onClick={() => setShowDone(v => !v)}>
                   {showDone ? 'esconder' : 'mostrar'} {done.length} resolvido{done.length === 1 ? '' : 's'}
                 </button>
               )}
               {showDone && done.map(c => (
-                <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-3 text-sm text-gray-400 flex items-center gap-2 flex-wrap">
+                <div key={c.id} className="bg-white rounded-xl border p-3 text-sm text-neutral-600 flex items-center gap-2 flex-wrap">
                   <b>{c.name}</b>
-                  <span className={c.status === 'PROMOTED' ? 'text-emerald-400' : 'text-red-400'}>{c.status}</span>
-                  {c.promoted_pack_id && <Link className="text-blue-400 underline" href={`/packs/edit/${c.promoted_pack_id}`}>abrir pack</Link>}
+                  <span className={c.status === 'PROMOTED' ? 'text-emerald-700' : 'text-red-700'}>{c.status}</span>
+                  {c.promoted_pack_id && <Link className="text-blue-700 underline" href={`/packs/edit/${c.promoted_pack_id}`}>abrir pack</Link>}
                 </div>
               ))}
             </section>
@@ -256,33 +256,33 @@ export default function BlueprintsPage() {
             <section className="space-y-3">
               <h2 className="text-lg font-bold">MINERAÇÃO AO VIVO — {mined.length} família{mined.length === 1 ? '' : 's'}</h2>
               {mined.map(f => (
-                <div key={f.family} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-2">
+                <div key={f.family} className="bg-white rounded-xl border p-4 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold uppercase">{f.family}</span>
-                    {f.platform && <span className="text-xs bg-gray-800 text-gray-300 rounded px-1.5 py-0.5">{f.platform}</span>}
-                    <span className="text-xs text-gray-400">{f.invoiceIds.length} invoices</span>
+                    {f.platform && <span className="text-xs bg-neutral-200 rounded px-1.5 py-0.5">{f.platform}</span>}
+                    <span className="text-xs text-neutral-500">{f.invoiceIds.length} invoices</span>
                     <button disabled={busy} className="ml-auto px-3 py-1 rounded bg-blue-700 text-white text-sm" onClick={() => adopt(f)}>ADOTAR</button>
                   </div>
                   {f.matchingPacks.length > 0 && (
                     <div className="flex gap-1.5 flex-wrap text-xs">
                       {f.matchingPacks.map(p => (
-                        <span key={p.id} className={`rounded px-1.5 py-0.5 border ${p.dutiesCount === 0 ? 'border-red-800 text-red-400' : 'border-emerald-800 text-emerald-400'}`}>
+                        <span key={p.id} className={`rounded px-1.5 py-0.5 border ${p.dutiesCount === 0 ? 'border-red-300 text-red-700' : 'border-emerald-300 text-emerald-700'}`}>
                           {p.name} · {p.dutiesCount === 0 ? 'SEM DUTIES' : p.dutiesCount + ' duties'}
                         </span>
                       ))}
                     </div>
                   )}
-                  <div className="text-xs text-gray-400">
+                  <div className="text-xs text-neutral-600">
                     exemplares: {f.exemplars.map(e => `${codeOf.get(e.invoiceId)} (${e.dutyCount}d/${e.kitCount}k)`).join(' · ') || '—'}
                   </div>
                   {f.kitBlocks.length > 0 && (
-                    <div className="text-xs text-gray-400">
+                    <div className="text-xs text-neutral-600">
                       kits: {f.kitBlocks.map(k => `${k.kitName} ×${k.invoiceIds.length} (${k.members.length} itens)`).join(' · ')}
                     </div>
                   )}
                   {f.primarySpine && f.primarySpine.steps.length > 0 && (
                     <details className="text-sm">
-                      <summary className="cursor-pointer text-gray-300">espinha do exemplar {codeOf.get(f.primarySpine.invoiceId)} — {f.primarySpine.steps.length} passos{f.primarySpine.backlog.length ? ` + ${f.primarySpine.backlog.length} backlog` : ''}</summary>
+                      <summary className="cursor-pointer text-neutral-700">espinha do exemplar {codeOf.get(f.primarySpine.invoiceId)} — {f.primarySpine.steps.length} passos{f.primarySpine.backlog.length ? ` + ${f.primarySpine.backlog.length} backlog` : ''}</summary>
                       <ol className="mt-1 space-y-0.5">
                         {f.primarySpine.steps.map((s, i) => {
                           const v = f.vocabulary.find(x => normDuty(x.canonical) === normDuty(s.description))
@@ -290,7 +290,7 @@ export default function BlueprintsPage() {
                             <li key={i} className="flex items-center gap-2">
                               <span className={`text-[10px] rounded px-1 py-0.5 ${dutyPriorityBadge(s.priority).cls}`}>{dutyPriorityBadge(s.priority).label}</span>
                               <span>{s.description}</span>
-                              <span className="text-xs text-gray-400">{v?.medianSeconds != null ? '~' + hFmt(v.medianSeconds) : ''}{v && v.suspectStints > 0 ? ` · ⚠${v.suspectStints} stint>10h fora` : ''}</span>
+                              <span className="text-xs text-neutral-500">{v?.medianSeconds != null ? '~' + hFmt(v.medianSeconds) : ''}{v && v.suspectStints > 0 ? ` · ⚠${v.suspectStints} stint>10h fora` : ''}</span>
                             </li>
                           )
                         })}
@@ -299,12 +299,12 @@ export default function BlueprintsPage() {
                   )}
                   {f.vocabulary.length > 0 && (
                     <details className="text-sm">
-                      <summary className="cursor-pointer text-gray-300">vocabulário — {f.vocabulary.length} descrições</summary>
+                      <summary className="cursor-pointer text-neutral-700">vocabulário — {f.vocabulary.length} descrições</summary>
                       <div className="mt-1 space-y-0.5 text-xs">
                         {f.vocabulary.slice(0, 12).map(v => (
                           <div key={v.canonical} className="flex gap-2">
                             <span className="flex-1">{v.canonical}</span>
-                            <span className="text-gray-400">×{v.invoiceIds.length} inv · {v.timed.length} cronos · mediana {hFmt(v.medianSeconds)}{v.suspectStints ? ` · ⚠${v.suspectStints}` : ''}</span>
+                            <span className="text-neutral-500">×{v.invoiceIds.length} inv · {v.timed.length} cronos · mediana {hFmt(v.medianSeconds)}{v.suspectStints ? ` · ⚠${v.suspectStints}` : ''}</span>
                           </div>
                         ))}
                       </div>

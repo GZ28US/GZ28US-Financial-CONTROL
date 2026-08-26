@@ -4073,10 +4073,11 @@ export default function EditInvoicePage() {
                           <div className="flex items-center gap-2 min-w-0">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${dutyPriorityBadge(d.priority).cls}`}>{dutyPriorityBadge(d.priority).label}</span>
                             <p className={`text-base font-bold truncate ${d.done ? 'text-green-400 line-through' : dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
-                            {d.estimated_seconds ? <span className="px-2 py-0.5 rounded-full text-xs font-bold shrink-0 bg-gray-700 text-gray-200" title="Estimated time">⏱ {fmtDutyEst(d.estimated_seconds)}</span> : null}
                           </div>
                           <p className="text-sm text-purple-300">👤 {staffName(d.staff_id)}</p>
                         </div>
+                        {/* Coluna do TEMPO PREVISTO, igual à do pack. */}
+                        <span className="w-20 shrink-0 text-right text-sm font-bold text-gray-200 tabular-nums" title="Estimated time">{fmtDutyEst(d.estimated_seconds)}</span>
                         <div className="flex gap-2 shrink-0">
                           <button onClick={() => toggleDutyDone(index)} className={`px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap ${d.done ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'}`}>{d.done ? 'DONE' : 'TO DO'}</button>
                           <button onClick={() => startEditDuty(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
@@ -4086,6 +4087,13 @@ export default function EditInvoicePage() {
                     )}
                   </div>
                 ))}
+                {duties.some(d => d.estimated_seconds) && (
+                  <div className="flex items-center justify-between gap-4 px-4 py-3 border-t-2 border-gray-600 bg-gray-800/60">
+                    <span className="text-sm font-bold text-gray-400 uppercase tracking-wide flex-1">⏱ Estimated Total</span>
+                    <span className="w-20 shrink-0 text-right text-base font-bold text-gray-100 tabular-nums">{fmtDutyEst(duties.reduce((t, d) => t + (Number(d.estimated_seconds) || 0), 0))}</span>
+                    <span className="shrink-0 w-[13.5rem]" />
+                  </div>
+                )}
               </div>
             )}
           </div>
