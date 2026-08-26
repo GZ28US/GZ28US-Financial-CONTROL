@@ -101,16 +101,31 @@ async function run(force: boolean): Promise<NextResponse> {
       // + o link "Track package"): a linha não fica com rastreio falso, mas
       // também não fica cega — grava transportadora e ETA e vai pra SHIPPED.
       if (!trackings.length) {
-        if (!said) continue
+        // A Amazon não manda NEM rastreio NEM transportadora: a nota de embarque
+        // dela traz só o nº do pedido, um link pro rastreador próprio e um
+        // "Arriving today" (verificado no corpo cru dos 2 e-mails de 26/ago —
+        // zero TBA, zero UPS/FedEx/USPS). Sem este ramo as compras dela
+        // embarcavam e a linha ficava em BOUGHT pra sempre.
+        const shipSaid = /\b(shipped|on its way|out for delivery|foi enviado|a caminho)\b/i.test(blob)
+        if (!said && !shipSaid) continue
         const eta = (blob.match(/(?:estimated delivery|arriving|previs[ãa]o de entrega)[^A-Za-z0-9]{0,4}(?:by\s+)?([A-Z][a-z]{2},?\s+[A-Z][a-z]{2}\s+\d{1,2})(?:\s*[-–]\s*([A-Z][a-z]{2},?\s+[A-Z][a-z]{2}\s+\d{1,2}))?/i) || [])
+        const arriving = (blob.match(/\bArriving\s+(today|tomorrow)\b/i) || [])[1]
         for (const row of matchRows(open.filter(r => !r.tracking_number), msg)) {
+          // Sem transportadora declarada a prova tem de ser dura: só aceita
+          // quando o NÚMERO DO PEDIDO está escrito no e-mail. O casamento por
+          // fornecedor sozinho não basta pra mexer em dinheiro/logística.
+          const byOrder = !!row.order_number && blob.includes(String(row.order_number))
+          if (!said && !byOrder) continue
+          const quando = eta[1] ? `entrega estimada ${eta[1]}${eta[2] ? ' a ' + eta[2] : ''}` : arriving ? `chega ${arriving.toLowerCase() === 'today' ? 'hoje' : 'amanhã'}` : ''
           await db.from('part_streams').update({
-            carrier: said, status: 'SHIPPED', shipped_at: row.shipped_at || new Date().toISOString(),
-            last_event: `Despachado — transportadora ${said} (e-mail: ${msg.subject.slice(0, 60)}). Sem nº de rastreio no e-mail${eta[1] ? `; entrega estimada ${eta[1]}${eta[2] ? ' a ' + eta[2] : ''}` : ''}.`,
+            carrier: said || row.carrier, status: 'SHIPPED', shipped_at: row.shipped_at || new Date().toISOString(),
+            last_event: said
+              ? `Despachado — transportadora ${said} (e-mail: ${msg.subject.slice(0, 60)}). Sem nº de rastreio no e-mail${quando ? `; ${quando}` : ''}.`
+              : `Despachado — e-mail do vendedor casado pelo nº do pedido ${row.order_number} ("${msg.subject.slice(0, 50)}"). O vendedor não informa transportadora nem nº de rastreio, só o rastreador próprio dele${quando ? `; ${quando}` : ''}.`,
             last_event_at: new Date().toISOString(),
           }).eq('id', row.id)
           updated++
-          details.push(`${row.item} → SHIPPED ${said} (sem rastreio no e-mail)`)
+          details.push(`${row.item} → SHIPPED ${said || '(sem transportadora informada)'}`)
         }
         continue
       }
