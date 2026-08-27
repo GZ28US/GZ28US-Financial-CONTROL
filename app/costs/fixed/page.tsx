@@ -76,7 +76,7 @@ export default function FixedCostSuppliersPage() {
       .select('*')
       // FIXED lists only recurring bills: APP has its own page, and ASSET /
       // MARKETING live in ASSETS & MARKETING (same tables, different cost_type).
-      .or('cost_type.is.null,and(cost_type.neq.APP,cost_type.neq.ASSET,cost_type.neq.MARKETING,cost_type.neq.BANK)')
+      .or('cost_type.is.null,and(cost_type.neq.APP,cost_type.neq.ASSET,cost_type.neq.MARKETING,cost_type.neq.MERCHANDISE,cost_type.neq.BANK)')
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     setRows((data || []) as FixedCostSupplier[])

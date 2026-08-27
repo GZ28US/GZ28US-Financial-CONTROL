@@ -21,7 +21,7 @@ import { formatUSD } from '@/lib/utils'
 // do módulo APPS. Motivo: TODOS os relatórios já leem essas tabelas, então o
 // lançamento entra no custo do mês sozinho, sem costurar relatório nenhum.
 
-const TYPES = { ASSET: 'EVENTS', MARKETING: 'MARKETING' } as const
+const TYPES = { ASSET: 'EVENTS', MARKETING: 'ADVERTISEMENTS', MERCHANDISE: 'MERCHANDISE' } as const
 type Kind = keyof typeof TYPES
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -52,7 +52,7 @@ export default function AssetsPage() {
     const { data } = await supabase
       .from('fixed_cost_suppliers')
       .select('*')
-      .in('cost_type', ['ASSET', 'MARKETING'])
+      .in('cost_type', ['ASSET', 'MARKETING', 'MERCHANDISE'])
       .order('date_entry', { ascending: false })
     const list = (data || []) as Row[]
     setRows(list)
@@ -104,7 +104,7 @@ export default function AssetsPage() {
       </div>
 
       <div className="flex items-center gap-3 mb-8 flex-wrap">
-        {(['ALL', 'ASSET', 'MARKETING'] as const).map(k => (
+        {(['ALL', 'ASSET', 'MARKETING', 'MERCHANDISE'] as const).map(k => (
           <button
             key={k}
             onClick={() => setKind(k)}
@@ -128,7 +128,7 @@ export default function AssetsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-2xl font-bold">{r.description || r.company || '—'}</h2>
-                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${r.cost_type === 'ASSET' ? 'bg-purple-800 text-purple-100' : 'bg-amber-800 text-amber-100'}`}>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${r.cost_type === 'ASSET' ? 'bg-purple-800 text-purple-100' : r.cost_type === 'MERCHANDISE' ? 'bg-emerald-800 text-emerald-100' : 'bg-amber-800 text-amber-100'}`}>
                     {TYPES[(r.cost_type as Kind)] || r.cost_type}
                   </span>
                 </div>

@@ -81,7 +81,9 @@ export default function DrePage() {
     const payroll = d.expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
     const fixedBy: Record<string, number> = {}
     for (const f of d.fixedExpenses) {
-      const ct = d.fixedSuppliers.get(f.supplier_id)?.cost_type || 'UNCLASSIFIED'
+      // MERCHANDISE (26/ago) é gasto de marketing — soma na mesma linha MKT
+      const ct0 = d.fixedSuppliers.get(f.supplier_id)?.cost_type || 'UNCLASSIFIED'
+      const ct = ct0 === 'MERCHANDISE' ? 'MARKETING' : ct0
       fixedBy[ct] = (fixedBy[ct] || 0) + (parseFloat(f.amount) || 0)
     }
     // Complemento de APARTMENT/CATS: categoria nova ou nula cai aqui, nunca some.
@@ -163,7 +165,8 @@ export default function DrePage() {
       const acc = new Map<string, number>()
       for (const f of d.fixedExpenses) {
         const sup = d.fixedSuppliers.get(f.supplier_id)
-        if ((sup?.cost_type || 'UNCLASSIFIED') !== ct) continue
+        const sct0 = sup?.cost_type || 'UNCLASSIFIED'
+        if ((sct0 === 'MERCHANDISE' ? 'MARKETING' : sct0) !== ct) continue
         const k2 = sup?.company || sup?.description || '(sem fornecedor)'
         acc.set(k2, (acc.get(k2) || 0) + (parseFloat(f.amount) || 0))
       }
@@ -228,7 +231,7 @@ export default function DrePage() {
     for (const f of d.fixedExpenses) {
       const sup = d.fixedSuppliers.get(f.supplier_id)
       const ct = sup?.cost_type || 'UNCLASSIFIED'
-      const line = ct === 'STAFF' ? 'EQUIPE' : ct === 'APP' ? 'APP' : ct === 'MARKETING' ? 'MKT' : ct === 'BANK' ? 'BANK' : ct === 'FLEET' ? 'FLEET' : ct === 'ASSET' ? 'ASSET' : ct === 'FIXED' ? 'FIXED' : 'UNCLASS'
+      const line = ct === 'STAFF' ? 'EQUIPE' : ct === 'APP' ? 'APP' : (ct === 'MARKETING' || ct === 'MERCHANDISE') ? 'MKT' : ct === 'BANK' ? 'BANK' : ct === 'FLEET' ? 'FLEET' : ct === 'ASSET' ? 'ASSET' : ct === 'FIXED' ? 'FIXED' : 'UNCLASS'
       add(line, f.expense_date || f.payment_date, parseFloat(f.amount) || 0)
     }
     for (const x of d.expenses) add('EQUIPE', x.payment_date || x.expense_date, parseFloat(x.amount) || 0)

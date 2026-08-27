@@ -257,8 +257,8 @@ export default function AssetSupplierViewPage() {
 
       <div className="flex items-center gap-3 mb-1 flex-wrap">
         <h1 className="text-4xl font-bold">{s.description || s.company || '—'}</h1>
-        <span className={`px-3 py-1 rounded-full text-sm font-bold ${isAsset ? 'bg-purple-800 text-purple-100' : 'bg-amber-800 text-amber-100'}`}>
-          {isAsset ? 'EVENTS' : 'MARKETING'}
+        <span className={`px-3 py-1 rounded-full text-sm font-bold ${isAsset ? 'bg-purple-800 text-purple-100' : s.cost_type === 'MERCHANDISE' ? 'bg-emerald-800 text-emerald-100' : 'bg-amber-800 text-amber-100'}`}>
+          {isAsset ? 'EVENTS' : s.cost_type === 'MERCHANDISE' ? 'MERCHANDISE' : 'ADVERTISEMENTS'}
         </span>
       </div>
       <p className="text-gray-400 mt-1 mb-2">
