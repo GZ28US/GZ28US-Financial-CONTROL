@@ -104,11 +104,16 @@ function seasonCost(expenses: Expense[], season: Season, days: number) {
       const ref = conv[conv.length - 1]
       if (ref) { valor = mensal / (Number(ref.amount_brl) / Number(ref.amount)); cur = 'USD' }
     }
-    return { daily: valor * 12 / 365, weekly: valor * 12 / 52, monthly: valor, currency: cur, fromRate: true }
+    // CUSTO DA HORA — só existe com a JORNADA gravada (hours_per_day ×
+    // days_per_week). É o número que precifica as duties de um pack, então ele
+    // abre o quadro. Sem jornada não se estima: a linha simplesmente não aparece.
+    const horasMes = (Number(season.hours_per_day) || 0) * (Number(season.days_per_week) || 0) * 52 / 12
+    const hourly = horasMes > 0 ? valor / horasMes : null
+    return { hourly, daily: valor * 12 / 365, weekly: valor * 12 / 52, monthly: valor, currency: cur, fromRate: true }
   }
   const total = calculateSeasonTotal(expenses, season)
   const d = days > 0 ? total / days : 0
-  return { daily: d, weekly: d * 7, monthly: d * 30, currency: 'USD', fromRate: false }
+  return { hourly: null as number | null, daily: d, weekly: d * 7, monthly: d * 30, currency: 'USD', fromRate: false }
 }
 
 // Days worked in the season (entry -> conclusion, or entry -> today if still open).
@@ -323,6 +328,9 @@ export default function SeasonsPage() {
                 </div>
 
                 <div className="bg-gray-800 rounded-2xl px-5 py-4 text-sm min-w-[200px]">
+                  {cost.hourly != null && (
+                    <div className="flex justify-between gap-6 pb-2 mb-2 border-b border-gray-700"><span className="text-gray-400 font-bold">HOURLY COST</span><span className="font-bold">{formatMoney(cost.hourly, cost.currency)}</span></div>
+                  )}
                   <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{formatMoney(cost.daily, cost.currency)}</span></div>
                   <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{formatMoney(cost.weekly, cost.currency)}</span></div>
                   <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{formatMoney(cost.monthly, cost.currency)}</span></div>
