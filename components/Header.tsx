@@ -64,14 +64,18 @@ const MENU: MenuItem[] = [
   {
     type: 'dropdown',
     label: 'COSTS',
+    // Ordem narrativa (João+Claude, 26/ago): do custo mais vivo pro mais
+    // parado — gente, estrutura (trio fixed-family), consumo, marca, e por
+    // último ASSETS, que pelo critério do próprio João nem é despesa: é
+    // patrimônio, onde o dinheiro vira coisa.
     items: [
+      ['/staff', 'STAFF'],
       ['/costs/fixed', 'FIXED'],
       ['/costs/apps', 'SUBSCRIPTIONS'],
       ['/costs/bank', 'BANK FEES'],
+      ['/supplies', 'SUPPLIES'],
       ['/costs/assets', 'MARKETING'],
       ['/goods', 'ASSETS'],
-      ['/supplies', 'SUPPLIES'],
-      ['/staff', 'STAFF'],
     ],
   },
   {
