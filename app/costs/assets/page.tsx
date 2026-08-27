@@ -99,14 +99,16 @@ export default function AssetsPage() {
             por baixo é só encanamento. */}
         <h1 className="text-4xl font-bold">MARKETING — ACTIVATIONS ({rows.length})</h1>
         <Link href="/costs/fixed/new?type=ASSET" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">+ NEW ACTIVATION</Link>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search item, vendor..."
-          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg w-80"
-        />
       </div>
+
+      {/* Lei de layout de listagem: título + ADD em cima, SEARCH embaixo, chips depois. */}
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search item, vendor..."
+        className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg w-full max-w-2xl mb-4"
+      />
 
       <div className="flex items-center gap-3 mb-8 flex-wrap">
         {(['ALL', 'ASSET', 'MARKETING', 'MERCHANDISE'] as const).map(k => (
