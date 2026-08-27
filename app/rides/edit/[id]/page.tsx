@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { supabaseBR } from '@/lib/supabaseBR'
-import { BASE_PATH, CAR_DESTINY, insuresCar } from '@/lib/utils'
+import { BASE_PATH, CAR_DESTINY, insuresCar, isOurCar } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
 import { plateStatus } from '@/lib/plateExpiry'
 import {
@@ -477,10 +477,31 @@ export default function EditRidePage() {
         <div className="border-t border-gray-800 pt-5 mt-2">
           <h2 className="text-2xl font-bold mb-4">TITLE &amp; DOCS</h2>
           <label className="block mb-2 text-lg font-bold">CAR DESTINY</label>
+          {/* A lista depende de ONDE o carro vive (Márcio, 27/ago/2026): carro do
+              FLEET só escolhe entre os dois destinos de frota; carro de RIDES só
+              entre os três de cliente. Misturar as duas listas era oferecer, num
+              carro nosso, "carro do cliente americano". */}
           <select value={titleScope} onChange={(e) => setTitleScope(e.target.value)} className={selectClass}>
             <option value="">— Not set —</option>
-            {CAR_DESTINY.map(d => <option key={d.value} value={d.value}>{d.option}</option>)}
+            {CAR_DESTINY.filter(d => isOurCar(titleScope) ? isOurCar(d.value) : !isOurCar(d.value))
+              .map(d => <option key={d.value} value={d.value}>{d.option}</option>)}
           </select>
+          {/* A porta entre os dois mundos. Sem ela o filtro acima viraria uma
+              armadilha: carro que caiu no FLEET nunca mais voltaria pra RIDES,
+              porque os destinos de cliente nem apareceriam na lista. */}
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            {isOurCar(titleScope) ? (
+              <>
+                <button type="button" onClick={() => setTitleScope('')} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">MOVE TO RIDES</button>
+                <span className="text-sm text-gray-400">Este carro está no FLEET. Movê-lo devolve a escolha aos destinos de cliente.</span>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => setTitleScope('OWN')} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">MOVE TO FLEET</button>
+                <span className="text-sm text-gray-400">Passa a ser carro nosso e sai da lista de RIDES.</span>
+              </>
+            )}
+          </div>
 
           <div className="mt-4">
             <label className="block mb-2 text-lg font-bold">ADMISSION MILEAGE (mi)</label>
