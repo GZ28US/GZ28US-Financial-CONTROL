@@ -34,6 +34,11 @@ export default function PacksPage() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'ALL' | 'DRAFT' | 'CLOSED'>('ALL')
+  // Visão POR PLATAFORMA (João, 26/ago — CC 0.1.5): dois packs de mesmo nome
+  // (Demonized Durango vs TRX) só se distinguem pela plataforma. Os chips
+  // nascem dos próprios packs; o balde SEM PLATFORM é a dívida do refresh
+  // ficando visível — esvazia conforme o campo PLATFORM vai sendo preenchido.
+  const [platFilter, setPlatFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
@@ -70,8 +75,13 @@ export default function PacksPage() {
     load()
   }
 
+  const platOf = (p: any) => String(p.platform || '').trim().toUpperCase()
+  const platCounts = rows.reduce((m: Map<string, number>, p) => { const k = platOf(p) || 'SEM PLATFORM'; m.set(k, (m.get(k) || 0) + 1); return m }, new Map<string, number>())
+  const platChips = [...platCounts.keys()].sort((a, b) => (a === 'SEM PLATFORM' ? 1 : b === 'SEM PLATFORM' ? -1 : a.localeCompare(b)))
+
   // Search matches the pack NAME and any of its CARS (same token engine as the Parts DB).
   const filtered = rows.filter((p) => (filter === 'ALL' || (p.status || 'DRAFT') === filter)
+    && (platFilter == null || (platOf(p) || 'SEM PLATFORM') === platFilter)
     && partMatches(search, p.name, ...(Array.isArray(p.cars) ? p.cars.map(carLabel) : [])))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
@@ -104,9 +114,19 @@ export default function PacksPage() {
         className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg w-full max-w-2xl mb-4"
       />
 
-      <div className="flex gap-3 mb-6 flex-wrap">
+      <div className="flex gap-3 mb-3 flex-wrap">
         {(['ALL', 'DRAFT', 'CLOSED'] as const).map((f) => (
           <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
+        ))}
+      </div>
+
+      {/* PLATFORM view — chips live-derived from the packs themselves */}
+      <div className="flex gap-3 mb-6 flex-wrap">
+        <button onClick={() => setPlatFilter(null)} className={chip(platFilter == null)}>ALL PLATFORMS</button>
+        {platChips.map((k) => (
+          <button key={k} onClick={() => setPlatFilter(platFilter === k ? null : k)} className={chip(platFilter === k)}>
+            {k} ({platCounts.get(k)})
+          </button>
         ))}
       </div>
 
@@ -124,6 +144,7 @@ export default function PacksPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{p.name || '—'}</h2>
+                    {platOf(p) && <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{platOf(p)}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
                     <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">GRAND TOTAL: {formatUSD(packGrandTotal(p))}</span>
                   </div>
