@@ -8,6 +8,10 @@
 // direta (blueprint autoral); o minerador então cobre as lacunas: famílias sem
 // pack e packs ainda sem duties (ENRIQUECER). Mineração 100% ao vivo e
 // read-only — nada é gravado até um humano clicar ADOTAR.
+// Layout na lei da casa (CC 0.1.4): main p-8 largura total, título text-4xl,
+// cartões rounded-3xl p-6, botões px-5 py-3 rounded-2xl font-bold, inputs no
+// padrão do editor de packs — a tela nasceu numa coluna estreita de controles
+// miúdos e o João estranhou, com razão.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -25,6 +29,7 @@ type Candidate = { id: string; name: string; family: string | null; platform: st
 const PRIORITIES = ['0', '1', '2', '3', '4', 'STANDBY']
 const hFmt = (s: number | null) => s == null ? '—' : `${Math.floor(s / 3600)}h${String(Math.round((s % 3600) / 60)).padStart(2, '0')}`
 const hToSec = (h: string) => { const n = parseFloat(String(h).replace(',', '.')); return Number.isFinite(n) && n > 0 ? Math.round(n * 3600) : null }
+const inputCls = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg disabled:opacity-50'
 
 async function all(table: string, select: string, mod?: (q: any) => any): Promise<any[]> {
   const out: any[] = []
@@ -176,121 +181,141 @@ export default function BlueprintsPage() {
 
   const proposed = cands.filter(c => c.status === 'PROPOSED')
   const done = cands.filter(c => c.status !== 'PROPOSED')
+  const dutyRich = raw ? (raw.invDuties as any[]).length : 0
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <main className="min-h-screen bg-black text-white p-8 pb-24">
       <Header />
-      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-2xl font-bold">BLUEPRINTS · CREW CHIEF</h1>
-          <CcBadge />
+      <div className="flex items-center gap-4 flex-wrap mb-1">
+        <h1 className="text-4xl font-bold">BLUEPRINTS · CREW CHIEF</h1>
+        <CcBadge />
+      </div>
+      <p className="text-gray-400 mb-2 max-w-3xl">
+        <span className="text-gray-200 font-bold">O pack é o blueprint.</span> Esta tela minera as invoices reais — ao vivo, sem gravar nada — e propõe candidatos;
+        <span className="text-gray-200 font-bold"> ADOTAR</span> abre a triagem humana, <span className="text-gray-200 font-bold">PROMOVER</span> vira um pack DRAFT de verdade
+        ou <span className="text-gray-200 font-bold">ENRIQUECE</span> um pack existente ainda sem duties. Sequência combinada: Márcio+João atualizam os packs primeiro —
+        a mineração lê o dado vivo e melhora junto.
+      </p>
+      <details className="mb-6 max-w-3xl text-sm text-gray-500">
+        <summary className="cursor-pointer font-bold">changelog</summary>
+        {CC_CHANGELOG.map(c => <p key={c.version} className="mt-2"><span className="text-gray-300 font-bold">CC {c.version}</span> · {c.date} — {c.notes}</p>)}
+      </details>
+
+      {noTables && (
+        <div className="bg-amber-950/40 border border-amber-700 rounded-3xl p-6 max-w-2xl mb-6">
+          <p className="text-lg font-bold text-amber-300">Tabelas do CREW CHIEF ainda não existem</p>
+          <p className="text-gray-300 mt-1">Rode <span className="font-bold">MIGRATION_crew_chief_p1.sql</span> no SQL Editor do Supabase (US). A mineração abaixo já funciona (read-only); ADOTAR precisa da migration.</p>
         </div>
-        <details className="bg-gray-900 border border-gray-800 rounded-2xl p-4 text-sm">
-          <summary className="cursor-pointer font-semibold">O que é isto · changelog</summary>
-          <div className="mt-2 space-y-2 text-gray-300">
-            <p><b>O pack é o blueprint.</b> Esta tela minera as invoices reais (ao vivo, sem gravar nada) e propõe candidatos; ADOTAR abre a triagem humana; PROMOVER vira um pack DRAFT de verdade ou ENRIQUECE um pack existente ainda sem duties. Sequência combinada: Márcio+João atualizam os packs primeiro — a mineração lê o dado vivo e melhora junto.</p>
-            {CC_CHANGELOG.map(c => <p key={c.version}><b>CC {c.version}</b> · {c.date} — {c.notes}</p>)}
+      )}
+
+      {loading ? <p className="text-xl text-gray-400">Minerando ao vivo…</p> : (
+        <>
+          <div className="flex gap-4 flex-wrap mb-8">
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3"><p className="text-xs font-bold text-gray-500">FAMÍLIAS MINERADAS</p><p className="text-2xl font-bold tabular-nums">{mined.length}</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3"><p className="text-xs font-bold text-gray-500">CANDIDATOS NA MESA</p><p className="text-2xl font-bold tabular-nums">{proposed.length}</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3"><p className="text-xs font-bold text-gray-500">PACKS SEM DUTIES</p><p className="text-2xl font-bold tabular-nums text-red-400">{emptyPacks.length}</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3"><p className="text-xs font-bold text-gray-500">DUTIES NO CORPUS</p><p className="text-2xl font-bold tabular-nums">{dutyRich}</p></div>
           </div>
-        </details>
-        {noTables && (
-          <div className="bg-amber-950 border border-amber-700 text-amber-200 rounded-2xl p-4 text-sm">
-            ⚠ Tabelas do CREW CHIEF ainda não existem — rode <b>MIGRATION_crew_chief_p1.sql</b> no SQL Editor do Supabase (US). A mineração abaixo já funciona (read-only); ADOTAR precisa da migration.
-          </div>
-        )}
-        {loading ? <div className="text-gray-400">Minerando ao vivo…</div> : (
-          <>
-            <section className="space-y-3">
-              <h2 className="text-lg font-bold">MESA DE TRIAGEM — {proposed.length} candidato{proposed.length === 1 ? '' : 's'}</h2>
-              {!proposed.length && <div className="text-sm text-gray-400">Nenhum candidato adotado ainda — adote um na mineração abaixo.</div>}
+
+          <section className="mb-10">
+            <h2 className="text-2xl font-bold mb-4">MESA DE TRIAGEM ({proposed.length})</h2>
+            {!proposed.length && <p className="text-gray-500">Nenhum candidato adotado ainda — adote um na mineração abaixo.</p>}
+            <div className="space-y-4">
               {proposed.map(c => (
-                <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 font-semibold flex-1 min-w-[220px]" value={c.name} onChange={e => patchCand(c.id, x => ({ ...x, name: e.target.value }))} />
-                    <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-28" placeholder="plataforma" value={c.platform || ''} onChange={e => patchCand(c.id, x => ({ ...x, platform: e.target.value.toUpperCase() || null }))} />
-                    <span className="text-xs text-gray-400">família: {c.family} · fonte: {(c.source?.invoiceCodes || []).join(', ') || '—'}</span>
+                <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 space-y-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <input className={`${inputCls} font-bold flex-1 min-w-[260px]`} value={c.name} onChange={e => patchCand(c.id, x => ({ ...x, name: e.target.value }))} />
+                    <input className={`${inputCls} w-36`} placeholder="PLATFORM" value={c.platform || ''} onChange={e => patchCand(c.id, x => ({ ...x, platform: e.target.value.toUpperCase() || null }))} />
                   </div>
-                  <div className="space-y-1">
+                  <p className="text-sm text-gray-500">família: <span className="text-gray-300">{c.family}</span> · fonte: <span className="text-gray-300">{(c.source?.invoiceCodes || []).join(', ') || '—'}</span></p>
+                  <div className="space-y-2">
                     {dutiesOf(c).map((d, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 flex-1 text-sm" list="cc-vocab" value={d.description}
+                      <div key={i} className="flex items-center gap-2 flex-wrap">
+                        <input className={`${inputCls} flex-1 min-w-[240px]`} list="cc-vocab" value={d.description}
                           onChange={e => setDuties(c, dutiesOf(c).map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
-                        <select className="bg-gray-800 border border-gray-700 rounded px-1 py-1 text-sm" value={d.priority}
+                        <select className={inputCls} value={d.priority}
                           onChange={e => setDuties(c, dutiesOf(c).map((x, j) => j === i ? { ...x, priority: e.target.value } : x))}>
                           {PRIORITIES.map(p => <option key={p} value={p}>{p === 'STANDBY' ? 'STANDBY' : 'P' + p}</option>)}
                         </select>
-                        <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 w-20 text-sm text-right" placeholder="horas"
+                        <input className={`${inputCls} w-28 text-right`} placeholder="horas"
                           defaultValue={d.estimated_seconds ? (d.estimated_seconds / 3600).toFixed(1) : ''}
                           onBlur={e => setDuties(c, dutiesOf(c).map((x, j) => j === i ? { ...x, estimated_seconds: hToSec(e.target.value) } : x))} />
-                        <button className="text-red-400 text-sm px-1" onClick={() => setDuties(c, dutiesOf(c).filter((_, j) => j !== i))}>×</button>
+                        <button className="text-red-400 text-2xl font-bold px-2" onClick={() => setDuties(c, dutiesOf(c).filter((_, j) => j !== i))}>×</button>
                       </div>
                     ))}
-                    <button className="text-sm text-blue-400" onClick={() => setDuties(c, [...dutiesOf(c), { description: '', priority: '1', estimated_seconds: null }])}>+ duty</button>
+                    <button className="text-blue-400 font-bold" onClick={() => setDuties(c, [...dutiesOf(c), { description: '', priority: '1', estimated_seconds: null }])}>+ ADD DUTY</button>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap text-sm">
-                    <button disabled={busy} className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-white" onClick={() => saveCand(c)}>SALVAR</button>
-                    <button disabled={busy} className="px-3 py-1.5 rounded bg-emerald-700 text-white" onClick={() => promoteNew(c)}>PROMOVER → PACK NOVO</button>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button disabled={busy} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold disabled:opacity-50" onClick={() => saveCand(c)}>SALVAR</button>
+                    <button disabled={busy} className="bg-emerald-700 hover:bg-emerald-600 px-5 py-3 rounded-2xl font-bold disabled:opacity-50" onClick={() => promoteNew(c)}>PROMOVER → PACK NOVO</button>
                     {emptyPacks.length > 0 && (
-                      <select disabled={busy} className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5" value="" onChange={e => e.target.value && enrich(c, e.target.value)}>
+                      <select disabled={busy} className={inputCls} value="" onChange={e => e.target.value && enrich(c, e.target.value)}>
                         <option value="">ENRIQUECER pack sem duties…</option>
                         {emptyPacks.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                     )}
-                    <button disabled={busy} className="px-3 py-1.5 rounded border border-gray-700 text-red-400" onClick={() => dismiss(c)}>DESCARTAR</button>
+                    <button disabled={busy} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold disabled:opacity-50" onClick={() => dismiss(c)}>DESCARTAR</button>
                   </div>
                 </div>
               ))}
-              {done.length > 0 && (
-                <button className="text-sm text-gray-400 underline" onClick={() => setShowDone(v => !v)}>
-                  {showDone ? 'esconder' : 'mostrar'} {done.length} resolvido{done.length === 1 ? '' : 's'}
-                </button>
-              )}
-              {showDone && done.map(c => (
-                <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-3 text-sm text-gray-400 flex items-center gap-2 flex-wrap">
-                  <b>{c.name}</b>
-                  <span className={c.status === 'PROMOTED' ? 'text-emerald-400' : 'text-red-400'}>{c.status}</span>
-                  {c.promoted_pack_id && <Link className="text-blue-400 underline" href={`/packs/edit/${c.promoted_pack_id}`}>abrir pack</Link>}
-                </div>
-              ))}
-            </section>
+            </div>
+            {done.length > 0 && (
+              <button className="mt-4 text-gray-500 underline" onClick={() => setShowDone(v => !v)}>
+                {showDone ? 'esconder' : 'mostrar'} {done.length} resolvido{done.length === 1 ? '' : 's'}
+              </button>
+            )}
+            {showDone && (
+              <div className="mt-3 space-y-2">
+                {done.map(c => (
+                  <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3 flex items-center gap-3 flex-wrap">
+                    <span className="font-bold">{c.name}</span>
+                    <span className={`font-bold ${c.status === 'PROMOTED' ? 'text-emerald-400' : 'text-red-400'}`}>{c.status}</span>
+                    {c.promoted_pack_id && <Link className="text-blue-400 underline" href={`/packs/edit/${c.promoted_pack_id}`}>abrir pack</Link>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
 
-            <section className="space-y-3">
-              <h2 className="text-lg font-bold">MINERAÇÃO AO VIVO — {mined.length} família{mined.length === 1 ? '' : 's'}</h2>
+          <section>
+            <h2 className="text-2xl font-bold mb-4">MINERAÇÃO AO VIVO ({mined.length} famílias)</h2>
+            <div className="space-y-4">
               {mined.map(f => (
-                <div key={f.family} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold uppercase">{f.family}</span>
-                    {f.platform && <span className="text-xs bg-gray-800 text-gray-300 rounded px-1.5 py-0.5">{f.platform}</span>}
-                    <span className="text-xs text-gray-400">{f.invoiceIds.length} invoices</span>
-                    <button disabled={busy} className="ml-auto px-3 py-1 rounded bg-blue-700 text-white text-sm" onClick={() => adopt(f)}>ADOTAR</button>
+                <div key={f.family} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 space-y-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xl font-bold uppercase">{f.family}</span>
+                    {f.platform && <span className="text-xs font-bold bg-gray-800 text-gray-300 rounded px-2 py-1">{f.platform}</span>}
+                    <span className="text-gray-500">{f.invoiceIds.length} invoices</span>
+                    <button disabled={busy} className="ml-auto bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold disabled:opacity-50" onClick={() => adopt(f)}>ADOTAR</button>
                   </div>
                   {f.matchingPacks.length > 0 && (
-                    <div className="flex gap-1.5 flex-wrap text-xs">
+                    <div className="flex gap-2 flex-wrap">
                       {f.matchingPacks.map(p => (
-                        <span key={p.id} className={`rounded px-1.5 py-0.5 border ${p.dutiesCount === 0 ? 'border-red-800 text-red-400' : 'border-emerald-800 text-emerald-400'}`}>
+                        <span key={p.id} className={`text-xs font-bold rounded px-2 py-1 border ${p.dutiesCount === 0 ? 'border-red-800 text-red-400' : 'border-emerald-800 text-emerald-400'}`}>
                           {p.name} · {p.dutiesCount === 0 ? 'SEM DUTIES' : p.dutiesCount + ' duties'}
                         </span>
                       ))}
                     </div>
                   )}
-                  <div className="text-xs text-gray-400">
+                  <p className="text-sm text-gray-400">
                     exemplares: {f.exemplars.map(e => `${codeOf.get(e.invoiceId)} (${e.dutyCount}d/${e.kitCount}k)`).join(' · ') || '—'}
-                  </div>
+                  </p>
                   {f.kitBlocks.length > 0 && (
-                    <div className="text-xs text-gray-400">
+                    <p className="text-sm text-gray-400">
                       kits: {f.kitBlocks.map(k => `${k.kitName} ×${k.invoiceIds.length} (${k.members.length} itens)`).join(' · ')}
-                    </div>
+                    </p>
                   )}
                   {f.primarySpine && f.primarySpine.steps.length > 0 && (
-                    <details className="text-sm">
-                      <summary className="cursor-pointer text-gray-300">espinha do exemplar {codeOf.get(f.primarySpine.invoiceId)} — {f.primarySpine.steps.length} passos{f.primarySpine.backlog.length ? ` + ${f.primarySpine.backlog.length} backlog` : ''}</summary>
-                      <ol className="mt-1 space-y-0.5">
+                    <details>
+                      <summary className="cursor-pointer text-gray-300 font-bold">espinha do exemplar {codeOf.get(f.primarySpine.invoiceId)} — {f.primarySpine.steps.length} passos{f.primarySpine.backlog.length ? ` + ${f.primarySpine.backlog.length} backlog` : ''}</summary>
+                      <ol className="mt-2 space-y-1">
                         {f.primarySpine.steps.map((s, i) => {
                           const v = f.vocabulary.find(x => normDuty(x.canonical) === normDuty(s.description))
                           return (
-                            <li key={i} className="flex items-center gap-2">
-                              <span className={`text-[10px] rounded px-1 py-0.5 ${dutyPriorityBadge(s.priority).cls}`}>{dutyPriorityBadge(s.priority).label}</span>
+                            <li key={i} className="flex items-center gap-2 flex-wrap">
+                              <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 ${dutyPriorityBadge(s.priority).cls}`}>{dutyPriorityBadge(s.priority).label}</span>
                               <span>{s.description}</span>
-                              <span className="text-xs text-gray-400">{v?.medianSeconds != null ? '~' + hFmt(v.medianSeconds) : ''}{v && v.suspectStints > 0 ? ` · ⚠${v.suspectStints} stint>10h fora` : ''}</span>
+                              <span className="text-sm text-gray-500">{v?.medianSeconds != null ? '~' + hFmt(v.medianSeconds) : ''}{v && v.suspectStints > 0 ? ` · ⚠${v.suspectStints} stint>10h fora` : ''}</span>
                             </li>
                           )
                         })}
@@ -298,13 +323,13 @@ export default function BlueprintsPage() {
                     </details>
                   )}
                   {f.vocabulary.length > 0 && (
-                    <details className="text-sm">
-                      <summary className="cursor-pointer text-gray-300">vocabulário — {f.vocabulary.length} descrições</summary>
-                      <div className="mt-1 space-y-0.5 text-xs">
+                    <details>
+                      <summary className="cursor-pointer text-gray-300 font-bold">vocabulário — {f.vocabulary.length} descrições</summary>
+                      <div className="mt-2 space-y-1 text-sm">
                         {f.vocabulary.slice(0, 12).map(v => (
-                          <div key={v.canonical} className="flex gap-2">
-                            <span className="flex-1">{v.canonical}</span>
-                            <span className="text-gray-400">×{v.invoiceIds.length} inv · {v.timed.length} cronos · mediana {hFmt(v.medianSeconds)}{v.suspectStints ? ` · ⚠${v.suspectStints}` : ''}</span>
+                          <div key={v.canonical} className="flex gap-3 flex-wrap">
+                            <span className="flex-1 min-w-[220px]">{v.canonical}</span>
+                            <span className="text-gray-500">×{v.invoiceIds.length} inv · {v.timed.length} cronos · mediana {hFmt(v.medianSeconds)}{v.suspectStints ? ` · ⚠${v.suspectStints}` : ''}</span>
                           </div>
                         ))}
                       </div>
@@ -312,11 +337,11 @@ export default function BlueprintsPage() {
                   )}
                 </div>
               ))}
-            </section>
-            <datalist id="cc-vocab">{vocabAll.map(v => <option key={v} value={v} />)}</datalist>
-          </>
-        )}
-      </main>
-    </div>
+            </div>
+          </section>
+          <datalist id="cc-vocab">{vocabAll.map(v => <option key={v} value={v} />)}</datalist>
+        </>
+      )}
+    </main>
   )
 }
