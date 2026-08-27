@@ -185,7 +185,7 @@ export default function EditSeasonPage() {
                 </div>
                 {payCurrency === 'BRL' && (
                   <p className="mt-2 text-sm text-gray-400">
-                    Paid in reais by GZ28BR. Each payment stores the real amount in R$ and the dollar of the day it was issued — the app never re-converts an old line.
+                    The rate is in reais. Each payment stores the real amount in R$ and the dollar of the day it was issued — the app never re-converts an old line. Who pays is not this field: it is chosen at PAID FROM, on the payment itself.
                   </p>
                 )}
               </div>
