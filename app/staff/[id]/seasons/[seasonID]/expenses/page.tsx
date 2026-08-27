@@ -6,8 +6,10 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import PaymentFields, { defaultPayment, paymentFromRow, type PaymentInfo } from '@/components/PaymentFields'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { fileForScan } from '@/lib/scanFile'
+import { usdBrlSpot, usdBrlOnDate, usdOf } from '@/lib/fx'
 
 type Expense = {
   id: string
@@ -21,6 +23,12 @@ type Expense = {
   payment_date: string | null
   paid_via: string | null
   receipt_url: string | null
+  // ÂNCORA EM REAIS: quando existe, o real é o valor fixo e o dólar é
+  // consequência — vivo enquanto em aberto, congelado no dia do pagamento.
+  amount_brl: number | null
+  payment_method: string | null
+  paid_from: string | null
+  paid_to: string | null
 }
 
 type Season = {
@@ -28,6 +36,11 @@ type Season = {
   staff_id: string
   date_entry: string | null
   date_conclusion: string | null
+  // A season é o CONTRATO — o equivalente ao supplier de um custo fixo.
+  pay_type: string | null
+  pay_rate: number | null
+  pay_currency: string | null
+  pay_day: number | null
 }
 
 // One queued WhatsApp report after a scan/save. items[] feeds the bullet list.
@@ -43,6 +56,14 @@ type ExpenseReport = {
   report: boolean
 }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
+
+// Hoje no fuso da empresa (Orlando) — o dia de vencimento e o de pagamento são
+// os de lá, nunca o UTC.
+const todayEt = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+const dayOf = (d: string | null) => (d ? Number(d.slice(8, 10)) : 0)
+const fmtMonthYear = (mk: string) => new Date(mk + '-01T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+const daysLate = (due: string, today: string) =>
+  Math.max(0, Math.floor((new Date(today + 'T00:00:00').getTime() - new Date(due + 'T00:00:00').getTime()) / 86400000))
 
 // Cada linha vale o PRÓPRIO valor: DAILY/WEEKLY/MONTHLY deixaram de ser taxa
 // projetada e passaram a ser um pagamento com data (ordem do Márcio, 28/jul/2026).
@@ -100,13 +121,70 @@ export default function ExpensesPage() {
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
   const [sendingReports, setSendingReports] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
+  // RECORD PAYMENT — o mesmo fluxo do custo fixo (Márcio, 26/ago/2026: "o padrão
+  // destes pagamentos tem que ser o do fixed costs, afinal, isso é um fixed cost").
+  const [paying, setPaying] = useState<Expense | null>(null)
+  const [payAmount, setPayAmount] = useState('')
+  const [payPayment, setPayPayment] = useState<PaymentInfo>(defaultPayment())
+  const [payDate, setPayDate] = useState('')
+  const [savingPay, setSavingPay] = useState(false)
+  const [spot, setSpot] = useState<number | null>(null)
 
-  useEffect(() => { loadInfo(); loadExpenses() }, [])
+  useEffect(() => { loadInfo(); loadExpenses(); usdBrlSpot().then(setSpot) }, [])
+
+  // ── RECORD PAYMENT ───────────────────────────────────────────────────────
+  // Igual ao custo fixo: a linha nasce AGENDADA com o valor do contrato, e o
+  // pagamento sobrescreve o valor com o que realmente saiu. Para uma linha
+  // ancorada em reais o real é o que se digita, e o dólar CONGELA no câmbio
+  // comercial do dia do pagamento — "pagou, fica o valor pago, pra sempre".
+  function openAddPayment(e: Expense) {
+    setPaying(e)
+    setPayAmount(Number(e.amount_brl) > 0 ? String(e.amount_brl) : String(e.amount ?? ''))
+    setPayPayment({ ...paymentFromRow(e), paid: true })
+    setPayDate(e.payment_date || todayEt())
+  }
+
+  async function savePayment() {
+    if (!paying) return
+    const digitado = parseFloat(payAmount) || 0
+    if (digitado <= 0) { alert('Enter the amount that was paid'); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(payDate)) { alert('Pick the payment date'); return }
+    setSavingPay(true)
+    const ancorada = Number(paying.amount_brl) > 0
+    let usd = digitado
+    let brl: number | null = null
+    if (ancorada) {
+      brl = digitado
+      const taxa = await usdBrlOnDate(payDate)
+      if (!taxa) {
+        setSavingPay(false)
+        alert('This payment is anchored in R$ and the commercial rate for ' + payDate + ' could not be fetched.\n\nNOTHING was saved — try again in a moment.')
+        return
+      }
+      usd = Number((brl / taxa).toFixed(2))
+    }
+    const { error } = await supabase.from('expenses').update({
+      amount: usd,
+      amount_brl: brl,
+      payment_date: payDate,
+      payment_method: payPayment.method || null,
+      paid_from: payPayment.paidFrom || null,
+      paid_to: payPayment.paidTo || null,
+      // Legacy write-through, como nas outras telas de despesa de staff.
+      source: payPayment.paidFrom || null,
+      paid_via: payPayment.method || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', paying.id)
+    setSavingPay(false)
+    if (error) { alert(error.message); return }
+    setPaying(null)
+    loadExpenses()
+  }
 
   async function loadInfo() {
     const { data: seasonData } = await supabase
       .from('seasons')
-      .select('season_code, staff_id, date_entry, date_conclusion')
+      .select('season_code, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_currency, pay_day')
       .eq('id', seasonID)
       .single()
 
@@ -337,7 +415,7 @@ export default function ExpensesPage() {
   // A listagem para na PRÓXIMA conta (ordem do Márcio, 28/jul): as semanas
   // seguintes existem no banco pro Future Flow, mas não poluem a season — só
   // interessa aqui o que já foi pago, o que está vencido e a próxima a vencer.
-  const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const todayET = todayEt()
   const nextDueDate = expenses
     .filter(e => !e.payment_date && e.expense_date && e.expense_date > todayET)
     .reduce<string | null>((min, e) => (!min || e.expense_date! < min ? e.expense_date! : min), null)
@@ -351,6 +429,34 @@ export default function ExpensesPage() {
   const isConcluded = !!season?.date_conclusion
   const totalLabel = isConcluded ? 'FINAL GZ28US EXPENSES' : 'ACTUAL GZ28US EXPENSES'
   const personalLabel = isConcluded ? 'FINAL PERSONAL EXPENSES' : 'ACTUAL PERSONAL EXPENSES'
+
+  // ── AGRUPAMENTO POR MÊS, igual ao custo fixo ─────────────────────────────
+  const byMonth = new Map<string, Expense[]>()
+  for (const e of visibleExpenses) {
+    const k = (e.expense_date || '').slice(0, 7)
+    const key = k || 'sem-data'
+    if (!byMonth.has(key)) byMonth.set(key, [])
+    byMonth.get(key)!.push(e)
+  }
+  const months = [...byMonth.keys()].sort((a, b) => b.localeCompare(a))
+
+  // O AGENDADO de uma linha recorrente é a taxa do contrato (a season). Pagar
+  // sobrescreve o valor com o que saiu de fato — então o que passar do agendado
+  // é diferença, exatamente como a multa por atraso do custo fixo.
+  const scheduledFor = (e: Expense): number | null => {
+    if (!season || e.type === 'SINGLE') return null
+    const rate = Number(season.pay_rate) || 0
+    if (rate <= 0) return null
+    if ((season.pay_currency || 'USD') === 'BRL') return spot && spot > 0 ? rate / spot : null
+    return rate
+  }
+
+  // A linha do contrato, no mesmo formato do cartão de custo fixo.
+  const moedaTaxa = (season?.pay_currency || 'USD') === 'BRL' ? 'R$' : 'US$'
+  const scheduleLine = [season?.pay_type, 'STAFF'].filter(Boolean).join(' · ')
+  const paymentsLine = Number(season?.pay_rate) > 0
+    ? `${season?.pay_type === 'MONTHLY' ? `Day ${season?.pay_day ?? 'last'}` : season?.pay_type === 'WEEKLY' ? 'Weekly' : 'Daily'}: ${moedaTaxa} ${Number(season?.pay_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : ''
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const smallInputClass = 'bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg'
@@ -505,6 +611,37 @@ export default function ExpensesPage() {
         </div>
       )}
 
+      {/* RECORD PAYMENT — o mesmo modal do custo fixo. Registrar um pagamento
+          é PAGO por definição, então o toggle do bloco universal fica escondido. */}
+      {paying && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-lg space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">RECORD PAYMENT</h2>
+              <button onClick={() => setPaying(null)} className="text-gray-400 hover:text-white text-2xl font-bold">✕</button>
+            </div>
+            <p className="text-gray-400">{paying.description || '—'}{paying.expense_date ? ` · day ${dayOf(paying.expense_date)}` : ''}</p>
+            <div className="flex gap-3 flex-wrap items-end">
+              <div className="w-44">
+                <label className="block mb-1 text-xs text-gray-400">{Number(paying.amount_brl) > 0 ? 'AMOUNT PAID (R$)' : 'AMOUNT PAID'}</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{Number(paying.amount_brl) > 0 ? 'R$' : '$'}</span>
+                  <input type="text" inputMode="decimal" value={payAmount} onChange={(e) => { if (/^-?\d*\.?\d*$/.test(e.target.value)) setPayAmount(e.target.value) }} className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 pl-10" placeholder="0.00" />
+                </div>
+              </div>
+            </div>
+            {Number(paying.amount_brl) > 0 && (
+              <p className="text-xs text-gray-500">
+                The R$ is the anchor. On save the dollar freezes at the commercial rate of {payDate || 'the payment date'} — the dollar of the day it was paid, forever.
+              </p>
+            )}
+            <PaymentFields value={payPayment} onChange={setPayPayment} hidePaidToggle />
+            <DatePicker label="PAYMENT DATE" value={payDate} onChange={setPayDate} compact />
+            <button onClick={savePayment} disabled={savingPay} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{savingPay ? 'Saving…' : 'SAVE PAYMENT'}</button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div>
           <h1 className="text-4xl font-bold">{staffName} — {season?.season_code}</h1>
@@ -519,6 +656,20 @@ export default function ExpensesPage() {
           <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/new`} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD NEW EXPENSE</Link>
         </div>
       </div>
+
+      {/* O CONTRATO — no custo fixo é o cartão do supplier (periodicidade, dia e
+          valor, vigência). Aqui é a season, que faz o mesmo papel. */}
+      {(scheduleLine || paymentsLine) && (
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3 max-w-3xl mb-8">
+          {scheduleLine && <p className="text-sm font-bold text-gray-300">{scheduleLine}</p>}
+          {paymentsLine && <p className="text-sm text-gray-400 mt-0.5">{paymentsLine}</p>}
+          {season?.date_entry && (
+            <p className="text-xs text-gray-500 mt-1">
+              {formatDate(season.date_entry)} → {season.date_conclusion ? formatDate(season.date_conclusion) : 'Active'}
+            </p>
+          )}
+        </div>
+      )}
 
       {expenses.length > 0 && (
         <div className="flex gap-4 mb-8 flex-wrap">
@@ -543,41 +694,65 @@ export default function ExpensesPage() {
         <p className="text-2xl text-gray-400">No expenses yet.</p>
       ) : (
         <div className="space-y-5">
-          {visibleExpenses.map((expense) => {
+          {months.map((mk) => (
+          <div key={mk} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-start justify-between gap-6 flex-wrap">
+            <div className="min-w-[10rem]">
+              <h3 className="text-2xl font-bold truncate">{staffName}</h3>
+              <p className="text-lg text-gray-400">{mk === 'sem-data' ? 'No date' : fmtMonthYear(mk)}</p>
+            </div>
+            <div className="flex-1 min-w-[20rem] bg-gray-800 border border-gray-700 rounded-2xl p-4 space-y-3">
+          {byMonth.get(mk)!.map((expense) => {
             const receiptUrls = parseReceiptUrls(expense.receipt_url)
+            const paid = !!expense.payment_date
+            // O dólar de uma linha ancorada em reais só é definitivo depois de paga.
+            const shown = usdOf(expense, spot)
+            const atrasada = !paid && !!expense.expense_date && expense.expense_date < todayET
+            const diasAtraso = atrasada ? daysLate(expense.expense_date as string, todayET) : 0
+            const sched = scheduledFor(expense)
+            const dif = paid && sched != null ? shown - sched : 0
             return (
-              <div key={expense.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-4">
+              <div key={expense.id} className="flex items-start justify-between gap-3 flex-wrap border-b border-gray-700/60 pb-3 last:border-0 last:pb-0">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h2 className="text-2xl font-bold">{formatUSD(Number(expense.amount))}</h2>
-                    {/* Pago x previsto: a data de pagamento e a prova de que o dinheiro saiu. */}
-                    {expense.payment_date ? (
-                      <span className="bg-green-700 text-white text-sm font-bold px-3 py-1 rounded-full">
-                        PAID {String(expense.payment_date).slice(5, 10).split('-').reverse().join('/')}{expense.paid_via ? ' - ' + expense.paid_via : ''}
-                      </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-lg font-bold">{formatUSD(shown)}</span>
+                    {Number(expense.amount_brl) > 0 && (
+                      <span className="text-sm text-gray-400" title={paid ? 'Frozen at the rate of the day it was paid' : 'Anchored in R$ — the dollar moves every day until it is paid'}>R$ {Number(expense.amount_brl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{paid ? '' : ' · live'}</span>
+                    )}
+                    {expense.expense_date && <span className="text-gray-400 text-sm">day {dayOf(expense.expense_date)}</span>}
+                    {paid ? (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
+                    ) : atrasada ? (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({diasAtraso} {diasAtraso === 1 ? 'day' : 'days'})</span>
                     ) : (
-                      <span className="bg-yellow-600 text-black text-sm font-bold px-3 py-1 rounded-full">NOT PAID</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-700 text-yellow-100">SCHEDULED</span>
+                    )}
+                    {dif > 0.005 && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300" title={`Scheduled ${formatUSD(sched || 0)} — paid ${formatUSD(shown)}`}>ABOVE SCHEDULE: {formatUSD(dif)}</span>
                     )}
                   </div>
-                  {expense.type !== 'SINGLE' && (
-                    <p className="text-lg text-gray-400">{formatRunningLabel(expense)}</p>
+                  {paid && (
+                    <p className="text-xs text-gray-500">
+                      Paid: {formatDate(expense.payment_date)}{expense.paid_via ? ' · ' + expense.paid_via : ''}{expense.paid_from ? ' · from ' + expense.paid_from : ''}
+                    </p>
                   )}
-                  {expense.description && <p className="text-lg text-white">{expense.description}</p>}
-                  <p className="text-lg text-gray-400">{expense.type}</p>
+                  {expense.description && <p className="text-sm text-gray-300 truncate" title={expense.description}>{expense.description}</p>}
+                  <p className="text-xs text-gray-500">
+                    {expense.type}{expense.type !== 'SINGLE' ? ' · ' + formatRunningLabel(expense) : expense.expense_date ? ' · ' + formatDate(expense.expense_date) : ''}
+                  </p>
                   {expense.origin === 'PERSONAL' && (
-                    <span className="inline-block bg-orange-600 text-white text-sm font-bold px-3 py-1 rounded-full mt-1">PERSONAL</span>
+                    <span className="inline-block bg-orange-600 text-white text-xs font-bold px-2 py-0.5 rounded-full mt-1">PERSONAL</span>
                   )}
-                  {expense.source && <p className="text-lg text-gray-400">{expense.source}</p>}
-                  {expense.type === 'SINGLE' && <p className="text-lg text-gray-400">{formatDate(expense.expense_date)}</p>}
                 </div>
 
-                <div className="flex gap-3 flex-wrap shrink-0 items-center">
-                  <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                  <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                <div className="flex gap-2 flex-wrap shrink-0 items-center">
+                  {/* Baixar o pagamento é o gesto principal, como no custo fixo. */}
+                  <button onClick={() => openAddPayment(expense)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1.5 rounded-xl font-bold text-xs">{paid ? '✎ PAYMENT' : '+ PAY'}</button>
+                  <Link href={`/staff/${staffId}/seasons/${seasonID}/expenses/edit/${expense.id}`} className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-xl font-bold text-xs">EDIT</Link>
+                  <button onClick={() => setConfirmId(expense.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-xl font-bold text-xs">✕</button>
                   {receiptUrls.length > 0 && (
                     <div className="relative">
-                      <button onClick={() => setOpenReceiptsId(openReceiptsId === expense.id ? null : expense.id)} className="bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded-xl font-bold text-sm">
-                        RECEIPTS{receiptUrls.length > 1 ? ` (${receiptUrls.length})` : ''}
+                      <button onClick={() => setOpenReceiptsId(openReceiptsId === expense.id ? null : expense.id)} className="bg-purple-700 hover:bg-purple-600 px-3 py-1.5 rounded-xl font-bold text-xs">
+                        📎{receiptUrls.length > 1 ? ` ${receiptUrls.length}` : ''}
                       </button>
                       {openReceiptsId === expense.id && (
                         <div className="absolute right-0 top-10 bg-gray-800 border border-gray-600 rounded-xl p-3 z-50 min-w-48 shadow-xl space-y-2">
@@ -592,6 +767,9 @@ export default function ExpensesPage() {
               </div>
             )
           })}
+            </div>
+          </div>
+          ))}
         </div>
       )}
     </main>
