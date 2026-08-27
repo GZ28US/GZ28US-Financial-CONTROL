@@ -42,6 +42,7 @@ type Expense = {
   expense_date: string | null
   payment_date: string | null
   amount_brl: number | null
+  created_at: string | null
 }
 
 type StaffMember = {
@@ -87,6 +88,11 @@ function seasonUpcoming(expenses: Expense[], season: Season): number {
 // MOEDA: taxa em reais vira dólar pelo câmbio JÁ GRAVADO numa linha desta
 // season (amount_brl ÷ amount), nunca pelo spot de hoje — mesma lei do preço
 // apresentado. Sem nenhuma linha convertida, os números saem em R$ mesmo.
+//
+// A linha de referência é a de câmbio MAIS RECENTE (maior created_at), que é a
+// última cotação que o app de fato registrou. Antes isto pegava a última do
+// array cru do Supabase — e a consulta não tem .order(), então a ordem não é
+// garantida: com dois câmbios convivendo, o card escolheria um deles à sorte.
 function seasonCost(expenses: Expense[], season: Season, days: number) {
   const rate = Number(season.pay_rate) || 0
   const moeda = season.pay_currency || 'USD'
@@ -100,7 +106,9 @@ function seasonCost(expenses: Expense[], season: Season, days: number) {
     let valor = mensal
     let cur = moeda
     if (moeda === 'BRL') {
-      const conv = expenses.filter(e => e.season_id === season.id && Number(e.amount_brl) > 0 && Number(e.amount) > 0)
+      const conv = expenses
+        .filter(e => e.season_id === season.id && Number(e.amount_brl) > 0 && Number(e.amount) > 0)
+        .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
       const ref = conv[conv.length - 1]
       if (ref) { valor = mensal / (Number(ref.amount_brl) / Number(ref.amount)); cur = 'USD' }
     }
@@ -187,7 +195,7 @@ export default function SeasonsPage() {
       const seasonIds = seasonData.map(s => s.id)
       const { data: expenseData } = await supabase
         .from('expenses')
-        .select('id, season_id, type, amount, expense_date, payment_date, amount_brl')
+        .select('id, season_id, type, amount, expense_date, payment_date, amount_brl, created_at')
         .in('season_id', seasonIds)
 
       setExpenses(expenseData || [])
