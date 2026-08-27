@@ -133,7 +133,7 @@ export default function AppsPage() {
       )}
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">APPS ({rows.length})</h1>
+        <h1 className="text-4xl font-bold">SUBSCRIPTIONS ({rows.length})</h1>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
@@ -164,7 +164,7 @@ export default function AppsPage() {
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
       ) : filtered.length === 0 ? (
-        <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No apps yet — the Gmail watcher registers them automatically when a receipt arrives.' : 'No matches.'}</p>
+        <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No subscriptions yet — the Gmail watcher registers them automatically when a receipt arrives.' : 'No matches.'}</p>
       ) : (
         <div className="space-y-5">
           {filtered.map((r) => {

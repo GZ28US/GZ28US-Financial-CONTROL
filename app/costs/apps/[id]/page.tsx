@@ -199,7 +199,7 @@ export default function AppViewPage() {
       )}
 
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
-        <Link href="/costs/apps" className="text-gray-400 text-lg hover:text-white">← APPS</Link>
+        <Link href="/costs/apps" className="text-gray-400 text-lg hover:text-white">← SUBSCRIPTIONS</Link>
         <div className="flex gap-3 flex-wrap items-center">
           {sendStatus && <span className="text-sm text-gray-400">{sendStatus}</span>}
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
