@@ -10,6 +10,9 @@ import { BASE_PATH } from '@/lib/utils'
 const CONTACTS = ['WhatsApp', 'SMS', 'Email', 'Phone']
 const PERIODICITY = ['SINGLE', 'DAILY', 'WEEKLY', 'MONTHLY', 'SEMIANNUAL', 'ANNUAL']
 const COST_TYPES = ['FIXED', 'VARIABLE', 'APP', 'BANK', 'STAFF', 'FLEET', 'MARKETING', 'MERCHANDISE', 'ASSET']
+// Nomes de exibição (26/ago): ASSET mostra EVENTS e MARKETING mostra
+// ADVERTISEMENTS — o valor interno no banco não muda.
+const COST_TYPE_LABEL: Record<string, string> = { ASSET: 'EVENTS', MARKETING: 'ADVERTISEMENTS' }
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function isNumeric(v: string) { return v === '' || /^-?\d*\.?\d*$/.test(v) }
@@ -119,7 +122,7 @@ export default function EditFixedCostSupplierPage() {
             <div>
               <label className="block mb-2 text-sm text-gray-400 font-bold">DRE BUCKET <span className="font-normal">— em que linha do DRE/DFC este fornecedor entra (não muda a recorrência)</span></label>
               <select value={costType} onChange={(e) => setCostType(e.target.value)} className={inputClass}>
-                {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                {COST_TYPES.map((t) => <option key={t} value={t}>{COST_TYPE_LABEL[t] || t}</option>)}
               </select>
             </div>
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 space-y-4">
