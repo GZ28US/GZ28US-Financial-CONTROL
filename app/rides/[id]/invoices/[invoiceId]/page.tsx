@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
+import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 
 type Invoice = {
   id: string
@@ -121,7 +122,19 @@ export default function ViewInvoicePage() {
   // off-screen so html2canvas can capture the exact print layout to a PDF.
   const printPageRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { loadAll() }, [])
+  const [fixedMember, setFixedMember] = useState<FixedMember | null>(null)
+  const [dutySecs, setDutySecs] = useState(0)
+  useEffect(() => { loadAll(); loadLabor() }, [])
+
+  // MÃO DE OBRA DA CASA no FINAL MARKUP — as horas PREVISTAS das duties desta
+  // invoice à taxa do membro fixo, lida da season corrente dele (Márcio,
+  // 26/ago/2026: "MARKUP (grand total − expenses − staff cost)"). A tela de
+  // visualização não lista duties, então só o somatório do previsto é buscado.
+  async function loadLabor() {
+    setFixedMember(await loadFixedMember())
+    const { data } = await supabase.from('invoice_duties').select('estimated_seconds').eq('invoice_id', invoiceId)
+    setDutySecs((data || []).reduce((t: number, d: any) => t + (Number(d.estimated_seconds) || 0), 0))
+  }
 
   // Load part numbers from the parts DB (only used when SHOW PART NUMBERS is on).
   useEffect(() => {
@@ -442,8 +455,10 @@ export default function ViewInvoicePage() {
   // When no income is recorded yet, the client still owes the grand total, so use it
   // as the income basis for the markup math.
   const markupIncome = totalIncomeAll > 0.005 ? totalIncomeAll : grandTotal
-  const finalProfit = markupIncome - expensesTotalGlobal
-  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
+  const staffCost = staffCostOf(dutySecs, fixedMember)
+  const finalCost = expensesTotalGlobal + staffCost
+  const finalProfit = markupIncome - finalCost
+  const finalProfitPct = finalCost > 0 ? (finalProfit / finalCost) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
   const statusBadge = getStatusBadge(invoice)
   const feedBadge = getFeedBadge(invoice.live_status, invoice.feed_status, invoice.is_quote)

@@ -7,6 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
 import { enrollParts, normPN } from '@/lib/partsDb'
+import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } from '@/lib/laborCost'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
@@ -268,6 +269,9 @@ export default function EditInvoicePage() {
   // execute it. CRUD persists immediately (not deferred to SAVE CHANGES).
   const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([])
   const [duties, setDuties] = useState<{ id: string; staff_id: string | null; description: string; done: boolean; priority: string; estimated_seconds: number | null }[]>([])
+  // MÃO DE OBRA DA CASA — a taxa/hora do membro fixo, lida da season corrente
+  // dele. Não existe cópia na invoice: mudou o salário, o markup se corrige.
+  const [fixedMember, setFixedMember] = useState<FixedMember | null>(null)
   const [newDuty, setNewDuty] = useState<{ order: string; description: string; staff_id: string; priority: string; est: string }>({ order: '', description: '', staff_id: '', priority: '1', est: '' })
   const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
   const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; staff_id: string; priority: string; est: string }>({ order: '', description: '', staff_id: '', priority: '1', est: '' })
@@ -369,7 +373,7 @@ export default function EditInvoicePage() {
   const [savingInvoice, setSavingInvoice] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { loadData(); loadFixedMember().then(setFixedMember) }, [])
 
   // `keepUi` is set by the stay-on-page SAVE: the data is refreshed from the DB but the
   // expense groups the user had open stay open (purchase_group ids survive a save).
@@ -1459,8 +1463,16 @@ export default function EditInvoicePage() {
   // When no income is recorded yet, the client still owes the grand total, so use it
   // as the income basis for the markup math.
   const markupIncome = totalIncomeAll > 0.005 ? totalIncomeAll : grandTotal
-  const finalProfit = markupIncome - expensesTotalGlobal
-  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
+  // CUSTO DE STAFF: as horas PREVISTAS das duties desta invoice, à taxa do
+  // membro fixo. Entra no FINAL MARKUP porque mão de obra é custo (Márcio,
+  // 26/ago/2026: "MARKUP (grand total − expenses − staff cost)").
+  //
+  // Não entra no CURRENT CASH FLOW: aquele mede dinheiro que JÁ se moveu, e a
+  // folha não é paga por esta invoice — sai da season, no dia 28.
+  const staffCost = staffCostOf(sumEstimatedSeconds(duties), fixedMember)
+  const finalCost = expensesTotalGlobal + staffCost
+  const finalProfit = markupIncome - finalCost
+  const finalProfitPct = finalCost > 0 ? (finalProfit / finalCost) * 100 : 0
   const profitColor = (val: number) => val < 0 ? 'text-red-500' : 'text-blue-400'
 
   // Live IMPORT MARGIN: whenever the margin changes, re-price every imported part
@@ -4110,7 +4122,10 @@ export default function EditInvoicePage() {
           <div className="shrink-0 text-xs leading-tight">
             <div className="flex justify-between items-baseline gap-3"><span className="text-sm text-gray-400 font-bold">GRAND TOTAL</span><span className="text-xl font-bold">{formatUSD(grandTotal)}</span></div>
             {!isQuote && <div className="flex justify-between gap-3"><span className="text-gray-400 font-bold">CURRENT CASH FLOW</span><span className={`font-bold ${profitColor(currentProfit)}`}>{formatUSD(currentProfit)} / {currentProfitPct.toFixed(1)}%</span></div>}
-            <div className="flex justify-between items-baseline gap-3"><span className="text-sm text-gray-400 font-bold">FINAL MARKUP</span><span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
+            <div className="flex justify-between items-baseline gap-3">
+              <span className="text-sm text-gray-400 font-bold" title={staffCost > 0 ? `grand total − expenses − staff cost (${fmtDutyEst(sumEstimatedSeconds(duties))} at ${formatUSD(fixedMember?.hourly || 0)}/h = ${formatUSD(staffCost)})` : 'grand total − expenses'}>FINAL MARKUP</span>
+              <span className={`text-xl font-bold ${profitColor(finalProfit)}`}>{formatUSD(finalProfit)} / {finalProfitPct.toFixed(1)}%</span>
+            </div>
           </div>
           <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
           {/* SAVE keeps you in the editor (the row above confirms it landed);

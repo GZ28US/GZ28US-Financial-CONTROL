@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst, seasonHourlyRate } from '@/lib/utils'
-import { usdBrlSpot } from '@/lib/fx'
+import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
+import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } from '@/lib/laborCost'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { normPN } from '@/lib/partsDb'
 
@@ -90,8 +90,7 @@ export default function EditPackPage() {
   // Uma linha só: a taxa/hora do membro fixo × as horas somadas das duties. O
   // valor NÃO mora aqui — é lido da season corrente dele a cada abertura, então
   // mexer no salário se propaga sozinho pra todos os packs e quotes.
-  const [labor, setLabor] = useState<{ name: string; hourly: number; brlHourly: number | null } | null>(null)
-  const [spot, setSpot] = useState<number | null>(null)
+  const [labor, setLabor] = useState<FixedMember | null>(null)
 
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
@@ -239,25 +238,7 @@ export default function EditPackPage() {
     setMapByName(mn)
     setPnByItem(pm)
 
-    const spotNow = await usdBrlSpot()
-    setSpot(spotNow)
-    const { data: seasonRows } = await supabase.from('seasons')
-      .select('staff_id, pay_type, pay_rate, pay_currency, hours_per_day, days_per_week, staff(name)')
-      .is('date_conclusion', null)
-    // O MEMBRO FIXO é quem tem mensalidade e jornada gravadas na season aberta.
-    // Hoje é o Jeff, e é só ele — sem taxa ou sem jornada, ninguém entra, porque
-    // custo de hora não se estima.
-    const fixo = (seasonRows || [])
-      .filter((r: any) => r.pay_type === 'MONTHLY' && Number(r.pay_rate) > 0 && Number(r.hours_per_day) > 0 && Number(r.days_per_week) > 0)
-      .map((r: any) => {
-        const emReais = (r.pay_currency || 'USD') === 'BRL'
-        const taxa = seasonHourlyRate(r) || 0
-        // Taxa em reais é a ÂNCORA: o dólar é a conversão do comercial de hoje.
-        const usd = emReais ? (spotNow && spotNow > 0 ? taxa / spotNow : 0) : taxa
-        return { name: r.staff?.name || '—', hourly: usd, brlHourly: emReais ? taxa : null }
-      })
-      .filter((r: any) => r.hourly > 0)[0] || null
-    setLabor(fixo)
+    setLabor(await loadFixedMember())
 
     setLoading(false)
   }
@@ -439,8 +420,7 @@ export default function EditPackPage() {
   //
   // A taxa vem da season corrente (labor), não daqui: se o salário mudar, o
   // markup de todos os packs se corrige sozinho.
-  const dutyHours = duties.reduce((t, d) => t + (Number(d.estimated_seconds) || 0), 0) / 3600
-  const staffCost = labor ? labor.hourly * dutyHours : 0
+  const staffCost = staffCostOf(sumEstimatedSeconds(duties), labor)
   const totalCost = expensesTotal + staffCost
   const finalProfit = grandTotal - totalCost
   const finalProfitPct = totalCost > 0 ? (finalProfit / totalCost) * 100 : 0
