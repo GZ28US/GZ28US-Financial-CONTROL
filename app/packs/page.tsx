@@ -151,12 +151,20 @@ export default function PacksPage() {
         <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No packages yet.' : 'No matches.'}</p>
       ) : view === 'PACK' ? (
         <div className="space-y-4">
-          {[...filtered.reduce((m: Map<string, any[]>, p) => { const k = familyOf(p.name); const a = m.get(k) || []; a.push(p); m.set(k, a); return m }, new Map<string, any[]>())]
+          {/* Chave de agrupamento = NOME + PLATAFORMA (João, 26/ago: "CatAholic IS
+              for the HELLCAT platform" — a platform é métrica do PACK; as linhas
+              de dentro variam por CARRO). Poltergeist LT4 e LT1 = dois cartões. */}
+          {[...filtered.reduce((m: Map<string, any[]>, p) => { const k = familyOf(p.name) + '§' + (platOf(p) || 'SEM PLATFORM'); const a = m.get(k) || []; a.push(p); m.set(k, a); return m }, new Map<string, any[]>())]
             .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([fam, packs]) => (
-              <div key={fam} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+            .map(([key, packs]) => {
+              const [fam, plat] = key.split('§')
+              return (
+              <div key={key} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
                   <h2 className="text-2xl font-bold">{fam}</h2>
+                  {plat === 'SEM PLATFORM'
+                    ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-300">SEM PLATFORM</span>
+                    : <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{plat}</span>}
                   {packs.length > 1 && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">{packs.length} VARIANTS</span>}
                 </div>
                 <div className="space-y-3">
@@ -167,7 +175,6 @@ export default function PacksPage() {
                       <div key={p.id} className="border border-gray-800 rounded-2xl p-4 flex items-center justify-between gap-6 flex-wrap">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-1 flex-wrap">
-                            {platOf(p) ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{platOf(p)}</span> : <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-300">SEM PLATFORM</span>}
                             <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
                             <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">{formatUSD(packGrandTotal(p))}</span>
                             <span className="text-sm text-gray-500">{p.name}</span>
@@ -185,7 +192,7 @@ export default function PacksPage() {
                   })}
                 </div>
               </div>
-            ))}
+            )})}
         </div>
       ) : (
         <div className="space-y-4">
