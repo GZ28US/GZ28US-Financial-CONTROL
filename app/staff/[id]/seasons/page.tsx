@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { formatUSD, formatMoney } from '@/lib/utils'
 
 type Season = {
   id: string
@@ -16,6 +16,8 @@ type Season = {
   pay_rate: number | null
   pay_currency: string | null
   pay_day: number | null
+  hours_per_day: number | null
+  days_per_week: number | null
 }
 
 const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -38,6 +40,8 @@ type Expense = {
   type: string
   amount: number
   expense_date: string | null
+  payment_date: string | null
+  amount_brl: number | null
 }
 
 type StaffMember = {
@@ -45,13 +49,66 @@ type StaffMember = {
   name: string
 }
 
+const hoje = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
+
+// Uma linha é PREVISÃO enquanto não foi paga E ainda está no futuro. Linha
+// vencida e não paga NÃO é previsão: é dívida, e conta como custo real.
+const ehPrevisao = (e: Expense) =>
+  !e.payment_date && !!e.expense_date && new Date(e.expense_date + 'T00:00:00') > hoje()
+
 // Total da season = SOMA DOS PAGAMENTOS REAIS (ordem do Márcio, 28/jul/2026).
-// A taxa recorrente vive na season (pay_type/pay_rate) e cada pagamento é uma
-// linha com data própria — nada de projetar valor × dias.
+// FUTURO FICA DE FORA (Márcio, 26/ago/2026: "como pode um cara que ganha
+// R$ 15k/mês ter estes números?"). O robô da folha e o Future Flow gravam as
+// mensalidades dos próximos 6 meses como linhas de expense; somá-las aqui
+// fazia o ACTUAL de um mês virar meio ano de salário.
 function calculateSeasonTotal(expenses: Expense[], season: Season): number {
   return expenses
-    .filter(e => e.season_id === season.id)
+    .filter(e => e.season_id === season.id && !ehPrevisao(e))
     .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+}
+
+// O que ainda vai vencer — mostrado à parte, nunca somado ao realizado.
+function seasonUpcoming(expenses: Expense[], season: Season): number {
+  return expenses
+    .filter(e => e.season_id === season.id && ehPrevisao(e))
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+}
+
+// CUSTO DIÁRIO/SEMANAL/MENSAL.
+//
+// Quando a season TEM taxa, o custo sai da TAXA — é o número exato, e é o que
+// o rótulo promete. Antes isto era (soma de todas as linhas ÷ dias corridos),
+// que com o Future Flow ligado dividia 7 meses de salário futuro por 47 dias
+// vividos: o Jeff, de R$ 15.000/mês, aparecia custando US$ 13.339,69/mês.
+//
+// Sem taxa cadastrada, cai no observado (o que saiu ÷ dias), que é o melhor
+// que dá para dizer de uma season antiga.
+//
+// MOEDA: taxa em reais vira dólar pelo câmbio JÁ GRAVADO numa linha desta
+// season (amount_brl ÷ amount), nunca pelo spot de hoje — mesma lei do preço
+// apresentado. Sem nenhuma linha convertida, os números saem em R$ mesmo.
+function seasonCost(expenses: Expense[], season: Season, days: number) {
+  const rate = Number(season.pay_rate) || 0
+  const moeda = season.pay_currency || 'USD'
+  let mensal = 0
+  if (rate > 0) {
+    if (season.pay_type === 'MONTHLY') mensal = rate
+    else if (season.pay_type === 'WEEKLY') mensal = rate * 52 / 12
+    else if (season.pay_type === 'DAILY' && Number(season.days_per_week) > 0) mensal = rate * Number(season.days_per_week) * 52 / 12
+  }
+  if (mensal > 0) {
+    let valor = mensal
+    let cur = moeda
+    if (moeda === 'BRL') {
+      const conv = expenses.filter(e => e.season_id === season.id && Number(e.amount_brl) > 0 && Number(e.amount) > 0)
+      const ref = conv[conv.length - 1]
+      if (ref) { valor = mensal / (Number(ref.amount_brl) / Number(ref.amount)); cur = 'USD' }
+    }
+    return { daily: valor * 12 / 365, weekly: valor * 12 / 52, monthly: valor, currency: cur, fromRate: true }
+  }
+  const total = calculateSeasonTotal(expenses, season)
+  const d = days > 0 ? total / days : 0
+  return { daily: d, weekly: d * 7, monthly: d * 30, currency: 'USD', fromRate: false }
 }
 
 // Days worked in the season (entry -> conclusion, or entry -> today if still open).
@@ -125,7 +182,7 @@ export default function SeasonsPage() {
       const seasonIds = seasonData.map(s => s.id)
       const { data: expenseData } = await supabase
         .from('expenses')
-        .select('id, season_id, type, amount, expense_date')
+        .select('id, season_id, type, amount, expense_date, payment_date, amount_brl')
         .in('season_id', seasonIds)
 
       setExpenses(expenseData || [])
@@ -231,7 +288,8 @@ export default function SeasonsPage() {
             const isConcluded = !!season.date_conclusion
             const totalLabel = isConcluded ? 'FINAL EXPENSES TOTAL' : 'ACTUAL EXPENSES TOTAL'
             const days = seasonDays(season)
-            const daily = days > 0 ? total / days : 0
+            const upcoming = seasonUpcoming(expenses, season)
+            const cost = seasonCost(expenses, season, days)
 
             return (
               <div
@@ -253,15 +311,22 @@ export default function SeasonsPage() {
                   ) : null}
                 </div>
 
-                <div className="bg-red-700 rounded-2xl px-6 py-4 text-center">
-                  <p className="text-sm font-bold">{totalLabel}</p>
-                  <p className="text-3xl font-bold">{formatUSD(total)}</p>
+                <div className="text-center">
+                  <div className="bg-red-700 rounded-2xl px-6 py-4">
+                    <p className="text-sm font-bold">{totalLabel}</p>
+                    <p className="text-3xl font-bold">{formatUSD(total)}</p>
+                  </div>
+                  {/* Previsão andando ao lado do realizado, nunca somada nele. */}
+                  {upcoming > 0 && (
+                    <p className="mt-2 text-sm text-gray-400">+ {formatUSD(upcoming)} still to come</p>
+                  )}
                 </div>
 
                 <div className="bg-gray-800 rounded-2xl px-5 py-4 text-sm min-w-[200px]">
-                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{formatUSD(daily)}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{formatUSD(daily * 7)}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{formatUSD(daily * 30)}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{formatMoney(cost.daily, cost.currency)}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{formatMoney(cost.weekly, cost.currency)}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{formatMoney(cost.monthly, cost.currency)}</span></div>
+                  <p className="mt-2 text-xs text-gray-500">{cost.fromRate ? 'from the pay rate' : 'observed — no pay rate set'}</p>
                 </div>
 
                 <div className="flex gap-3 flex-wrap">
