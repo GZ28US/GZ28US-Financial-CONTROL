@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, formatMoney } from '@/lib/utils'
+import { usdBrlSpot, usdOf } from '@/lib/fx'
 
 type Season = {
   id: string
@@ -62,17 +63,17 @@ const ehPrevisao = (e: Expense) =>
 // R$ 15k/mês ter estes números?"). O robô da folha e o Future Flow gravam as
 // mensalidades dos próximos 6 meses como linhas de expense; somá-las aqui
 // fazia o ACTUAL de um mês virar meio ano de salário.
-function calculateSeasonTotal(expenses: Expense[], season: Season): number {
+function calculateSeasonTotal(expenses: Expense[], season: Season, spot: number | null): number {
   return expenses
     .filter(e => e.season_id === season.id && !ehPrevisao(e))
-    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+    .reduce((sum, e) => sum + usdOf(e, spot), 0)
 }
 
 // O que ainda vai vencer — mostrado à parte, nunca somado ao realizado.
-function seasonUpcoming(expenses: Expense[], season: Season): number {
+function seasonUpcoming(expenses: Expense[], season: Season, spot: number | null): number {
   return expenses
     .filter(e => e.season_id === season.id && ehPrevisao(e))
-    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+    .reduce((sum, e) => sum + usdOf(e, spot), 0)
 }
 
 // CUSTO DIÁRIO/SEMANAL/MENSAL.
@@ -85,15 +86,13 @@ function seasonUpcoming(expenses: Expense[], season: Season): number {
 // Sem taxa cadastrada, cai no observado (o que saiu ÷ dias), que é o melhor
 // que dá para dizer de uma season antiga.
 //
-// MOEDA: taxa em reais vira dólar pelo câmbio JÁ GRAVADO numa linha desta
-// season (amount_brl ÷ amount), nunca pelo spot de hoje — mesma lei do preço
-// apresentado. Sem nenhuma linha convertida, os números saem em R$ mesmo.
-//
-// A linha de referência é a de câmbio MAIS RECENTE (maior created_at), que é a
-// última cotação que o app de fato registrou. Antes isto pegava a última do
-// array cru do Supabase — e a consulta não tem .order(), então a ordem não é
-// garantida: com dois câmbios convivendo, o card escolheria um deles à sorte.
-function seasonCost(expenses: Expense[], season: Season, days: number) {
+// MOEDA (Márcio, 26/ago/2026): "se o membro tiver seu valor definido em R$,
+// esta é a âncora... dinâmico até ser pago". A taxa é o exemplo puro de valor
+// EM ABERTO — ela nunca foi paga, é uma recorrência. Então o dólar dela segue
+// o câmbio COMERCIAL DE HOJE, e se move sozinho a cada abertura da tela.
+// Sem cotação disponível, os números saem em R$ mesmo — nunca com câmbio velho
+// disfarçado de atual.
+function seasonCost(expenses: Expense[], season: Season, days: number, spot: number | null) {
   const rate = Number(season.pay_rate) || 0
   const moeda = season.pay_currency || 'USD'
   let mensal = 0
@@ -105,23 +104,17 @@ function seasonCost(expenses: Expense[], season: Season, days: number) {
   if (mensal > 0) {
     let valor = mensal
     let cur = moeda
-    if (moeda === 'BRL') {
-      const conv = expenses
-        .filter(e => e.season_id === season.id && Number(e.amount_brl) > 0 && Number(e.amount) > 0)
-        .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
-      const ref = conv[conv.length - 1]
-      if (ref) { valor = mensal / (Number(ref.amount_brl) / Number(ref.amount)); cur = 'USD' }
-    }
+    if (moeda === 'BRL' && spot && spot > 0) { valor = mensal / spot; cur = 'USD' }
     // CUSTO DA HORA — só existe com a JORNADA gravada (hours_per_day ×
     // days_per_week). É o número que precifica as duties de um pack, então ele
     // abre o quadro. Sem jornada não se estima: a linha simplesmente não aparece.
     const horasMes = (Number(season.hours_per_day) || 0) * (Number(season.days_per_week) || 0) * 52 / 12
     const hourly = horasMes > 0 ? valor / horasMes : null
-    return { hourly, daily: valor * 12 / 365, weekly: valor * 12 / 52, monthly: valor, currency: cur, fromRate: true }
+    return { hourly, daily: valor * 12 / 365, weekly: valor * 12 / 52, monthly: valor, currency: cur, fromRate: true, live: moeda === 'BRL' }
   }
-  const total = calculateSeasonTotal(expenses, season)
+  const total = calculateSeasonTotal(expenses, season, spot)
   const d = days > 0 ? total / days : 0
-  return { hourly: null as number | null, daily: d, weekly: d * 7, monthly: d * 30, currency: 'USD', fromRate: false }
+  return { hourly: null as number | null, daily: d, weekly: d * 7, monthly: d * 30, currency: 'USD', fromRate: false, live: false }
 }
 
 // Days worked in the season (entry -> conclusion, or entry -> today if still open).
@@ -141,10 +134,14 @@ export default function SeasonsPage() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Cotação comercial de hoje. Enquanto não chega, os valores ancorados em
+  // reais aparecem na última foto gravada; quando chega, a tela se corrige.
+  const [spot, setSpot] = useState<number | null>(null)
 
   useEffect(() => {
     loadStaff()
     loadSeasons()
+    usdBrlSpot().then(setSpot)
   }, [])
 
   async function loadStaff() {
@@ -227,7 +224,7 @@ export default function SeasonsPage() {
     })
   }
 
-  const globalTotal = seasons.reduce((sum, season) => sum + calculateSeasonTotal(expenses, season), 0)
+  const globalTotal = seasons.reduce((sum, season) => sum + calculateSeasonTotal(expenses, season, spot), 0)
   const hasActive = seasons.some(s => !s.date_conclusion)
 
   return (
@@ -297,12 +294,12 @@ export default function SeasonsPage() {
       ) : (
         <div className="space-y-5">
           {seasons.map((season) => {
-            const total = calculateSeasonTotal(expenses, season)
+            const total = calculateSeasonTotal(expenses, season, spot)
             const isConcluded = !!season.date_conclusion
             const totalLabel = isConcluded ? 'FINAL EXPENSES TOTAL' : 'ACTUAL EXPENSES TOTAL'
             const days = seasonDays(season)
-            const upcoming = seasonUpcoming(expenses, season)
-            const cost = seasonCost(expenses, season, days)
+            const upcoming = seasonUpcoming(expenses, season, spot)
+            const cost = seasonCost(expenses, season, days, spot)
 
             return (
               <div
@@ -342,7 +339,10 @@ export default function SeasonsPage() {
                   <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{formatMoney(cost.daily, cost.currency)}</span></div>
                   <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{formatMoney(cost.weekly, cost.currency)}</span></div>
                   <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{formatMoney(cost.monthly, cost.currency)}</span></div>
-                  <p className="mt-2 text-xs text-gray-500">{cost.fromRate ? 'from the pay rate' : 'observed — no pay rate set'}</p>
+                  <p className="mt-2 text-xs text-gray-500">
+                    {cost.fromRate ? 'from the pay rate' : 'observed — no pay rate set'}
+                    {cost.live && spot ? ` · US$ 1 = R$ ${spot.toFixed(4)} today` : ''}
+                  </p>
                 </div>
 
                 <div className="flex gap-3 flex-wrap">
