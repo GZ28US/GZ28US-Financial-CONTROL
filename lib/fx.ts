@@ -55,6 +55,40 @@ export function usdBrlCached(): number | null {
   return cache ? cache.spot : null
 }
 
+/**
+ * Quantos REAIS valia 1 dólar numa DATA (YYYY-MM-DD).
+ *
+ * É o câmbio que CONGELA numa linha quando ela é paga: "quando é pago, o app
+ * mostra o valor em dólar do dia que foi pago, pra sempre" (Márcio, 26/ago/2026).
+ * Baixar hoje o comercial de hoje não serve quando o pagamento é lançado com
+ * data retroativa — aí vale o fechamento daquele dia.
+ *
+ * Fim de semana e feriado não têm fechamento: a série volta o pregão anterior,
+ * que é o câmbio que valia. Data de hoje (ou futura) cai no spot.
+ * Devolve `null` quando não dá para saber — nunca um número inventado.
+ */
+export async function usdBrlOnDate(date: string | null | undefined): Promise<number | null> {
+  if (!date) return usdBrlSpot()
+  const hoje = new Date().toISOString().slice(0, 10)
+  if (date >= hoje) return usdBrlSpot()
+  const ymd = date.replace(/-/g, '')
+  // Janela de 10 dias para trás garante pegar um pregão mesmo em feriado longo.
+  const de = new Date(date + 'T00:00:00')
+  de.setDate(de.getDate() - 10)
+  const deYmd = de.toISOString().slice(0, 10).replace(/-/g, '')
+  try {
+    const r = await fetch(`https://economia.awesomeapi.com.br/json/daily/USD-BRL/?start_date=${deYmd}&end_date=${ymd}`)
+    const j: any = await r.json()
+    if (!Array.isArray(j) || j.length === 0) return null
+    // A série vem do mais novo para o mais antigo: o primeiro é o pregão da
+    // data pedida, ou o último antes dela.
+    const spot = parseFloat(j[0]?.bid) || 0
+    return spot > 0 ? spot : null
+  } catch {
+    return null
+  }
+}
+
 type MoneyRow = {
   amount?: number | null
   amount_brl?: number | null
