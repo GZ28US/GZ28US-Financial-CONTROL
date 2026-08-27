@@ -43,7 +43,13 @@ const SHIP_RE = /(?:ship(?:ping|s)?\s*(?:to|address)|deliver(?:y)?\s*(?:to|addre
 function extractShipTo(text: string): string | null {
   const m = text.match(SHIP_RE)
   if (!m) return null
-  return m[1].split(/\s+(?:Bill(?:ing)?|Payment|Order\b|Items?\b|Subtotal|Total\b|Qty|Track|View\b)/i)[0].trim().slice(0, 140) || null
+  // O endereco americano TERMINA NO PAIS. Sem esse corte o resto do e-mail entra
+  // junto — "Delivery: Aug 29-Sep 8", "Your purchase has been divided into 2
+  // orders" — e a regra de colocacao, que casa por trecho do ship_to, compara lixo.
+  let addr = m[1]
+  const pais = addr.match(/^([\s\S]*?\b(?:United States|USA|U\.S\.A\.))/i)
+  if (pais) addr = pais[1]
+  return addr.split(/\s+(?:Bill(?:ing)?|Payment|Order\b|Items?\b|Subtotal|Total\b|Qty|Track|View\b|Delivery\b|Changed?\b|Get a\b)/i)[0].trim().slice(0, 140) || null
 }
 
 // Lê o corpo do e-mail e devolve os ITENS comprados + um palpite do que a
