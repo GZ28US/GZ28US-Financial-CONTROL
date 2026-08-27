@@ -1210,7 +1210,6 @@ export default function EditPackPage() {
           <div className="flex justify-between items-center">
             <span className="text-gray-400 font-bold">
               MARKUP (grand total − expenses{staffCost > 0 ? ' − staff cost' : ''})
-              {staffCost > 0 && <span className="text-gray-500 font-normal"> · staff {formatUSD(staffCost)}</span>}
             </span>
             <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{totalCost > 0 ? ` · ${finalProfitPct.toFixed(2)}%` : ''}</span>
           </div>
