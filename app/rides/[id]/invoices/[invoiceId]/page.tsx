@@ -476,7 +476,7 @@ export default function ViewInvoicePage() {
   const T = ptPrint ? {
     quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
     clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
-    vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Pack / Serviço',
+    vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Serviço',
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Impostos Flórida', itemsTotal: 'Total dos Itens',
     services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
     payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
@@ -484,7 +484,7 @@ export default function ViewInvoicePage() {
   } : {
     quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery',
     clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail', noClient: 'No client linked',
-    vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Pack / Service',
+    vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Service',
     items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Taxes', itemsTotal: 'Items Total',
     services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
     payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
@@ -586,12 +586,21 @@ export default function ViewInvoicePage() {
                 </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>{T.noClient}</div>}
               </div>
               {!isClient && <div className="pi-info-block">
-                <div className="pi-info-title">{T.vehicle}{ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}</div>
+                {/* Numa QUOTE o carro ainda não é um projeto da casa: o apelido
+                    (project_name) é interno e não diz nada pro cliente. Só o título
+                    (Márcio, 26/ago/2026). Na invoice o nome fica, que aí é o carro
+                    dele batizado. */}
+                <div className="pi-info-title">{T.vehicle}{!invoice.is_quote && ride?.project_name && <span style={{color:'#111', fontWeight:900, textTransform:'none', letterSpacing:0}}> — {ride.project_name}</span>}</div>
                 {(ride?.manufacturer || ride?.brand) && <div className="pi-info-row"><span className="pi-info-label">{T.make}:</span><span className="pi-info-value">{[ride?.manufacturer, ride?.brand].filter(Boolean).join(' / ')}</span></div>}
-                {ride?.model && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
+                {/* A EDIÇÃO ESPECIAL é de fábrica (JailBreak, Final Edition, Super
+                    Bee) — identidade do CARRO, não algo que a gente venda. Vinha
+                    saindo na linha "Pack / Service", ao lado do nosso serviço, o que
+                    dava a entender que era pacote nosso. Lugar certo é aqui, colada
+                    na versão, que é como o carro se chama de verdade. */}
+                {ride?.model && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{ride.special_edition ? ` ${ride.special_edition}` : ''}</span></div>}
                 {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">{T.yearvin}:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
                 {(ride?.color || ride?.plate || invoice.mileage) && <div className="pi-info-row"><span className="pi-info-label">{T.colorplate}:</span><span className="pi-info-value">{[ride?.color, ride?.plate, invoice.mileage ? Number(invoice.mileage).toLocaleString('en-US') : null].filter(Boolean).join(' — ')}</span></div>}
-                {(ride?.special_edition || invoice.service) && <div className="pi-info-row"><span className="pi-info-label">{T.pack}:</span><span className="pi-info-value">{[ride?.special_edition, invoice.service].filter(Boolean).join(' — ')}</span></div>}
+                {invoice.service && <div className="pi-info-row"><span className="pi-info-label">{T.pack}:</span><span className="pi-info-value">{invoice.service}</span></div>}
               </div>}
             </div>
 
@@ -867,12 +876,12 @@ export default function ViewInvoicePage() {
               <label className="block mb-3 text-lg font-bold">VEHICLE</label>
               <div className={sectionClass}>
                 {(ride.manufacturer || ride.brand) && <div className={rowClass}><span className={labelClass}>MAKE / BRAND</span><span className="font-bold">{[ride.manufacturer, ride.brand].filter(Boolean).join(' / ')}</span></div>}
-                {ride.model && <div className={rowClass}><span className={labelClass}>MODEL</span><span className="font-bold">{ride.model}{ride.version ? ` — ${ride.version}` : ''}</span></div>}
+                {ride.model && <div className={rowClass}><span className={labelClass}>MODEL</span><span className="font-bold">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{ride.special_edition ? ` ${ride.special_edition}` : ''}</span></div>}
                 {ride.year && <div className={rowClass}><span className={labelClass}>YEAR</span><span className="font-bold">{ride.year}</span></div>}
                 {ride.color && <div className={rowClass}><span className={labelClass}>COLOR</span><span className="font-bold">{ride.color}</span></div>}
                 {ride.vin && <div className={rowClass}><span className={labelClass}>VIN</span><span className="font-bold">{ride.vin}</span></div>}
                 {ride.plate && <div className={rowClass}><span className={labelClass}>PLATE</span><span className="font-bold">{ride.plate}</span></div>}
-                {ride.special_edition && <div className={rowClass}><span className={labelClass}>PACK</span><span className="font-bold">{ride.special_edition}</span></div>}
+
               </div>
             </div>
           )}
