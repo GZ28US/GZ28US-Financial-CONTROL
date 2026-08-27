@@ -738,8 +738,11 @@ export default function EditPackPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">PLATFORM</label>
           <input value={platform} onChange={(e) => setPlatform(e.target.value.toUpperCase())} disabled={locked} className={inputClass} list="pack-platforms" placeholder="e.g. D170, TRX, HELLCAT" />
+          {/* Vocabulário do João (26/ago): GEN V SM = GM Gen V Small Block — LT1/LT4
+              são códigos de MOTOR dentro dela, não plataformas. Lista oficial completa
+              pendente dele; até lá, sugestões livres. */}
           <datalist id="pack-platforms">
-            {['D170', 'TRX', 'HELLCAT', 'REDEYE', 'DURANGO', 'LT4', 'LT1'].map(p => <option key={p} value={p} />)}
+            {['GEN V SM', 'D170', 'TRX', 'HELLCAT', 'REDEYE', 'DURANGO'].map(p => <option key={p} value={p} />)}
           </datalist>
         </div>
 

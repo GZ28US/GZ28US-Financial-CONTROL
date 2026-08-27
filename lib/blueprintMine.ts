@@ -38,8 +38,11 @@ const packTokens = (name: string) =>
     .filter(w => w.length >= 5 && !['pack', 'combo', 'full', 'stage', 'tier'].includes(w))
 
 export const platformOf = (name: string): string | null => {
+  // LT1/LT4 nos nomes são códigos de MOTOR — a plataforma é GEN V SM (João, 26/ago)
   const m = String(name || '').match(/\((D170|TRX|LT4|LT1|HELLCAT|REDEYE)\)/i)
-  return m ? m[1].toUpperCase() : null
+  if (!m) return null
+  const t = m[1].toUpperCase()
+  return (t === 'LT1' || t === 'LT4') ? 'GEN V SM' : t
 }
 
 // Duties com STINT suspeito (>10h contínuas) — telemetria envenenada, fora das

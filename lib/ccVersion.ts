@@ -3,9 +3,10 @@
 // STAFF DUTIES, commit 06aa989). Contagem própria, como FIN/DC/BL/WA.
 // Todo patch do CREW CHIEF bumpa CC_VERSION e acrescenta uma linha aqui.
 export const CC_STAGE: 'ALPHA' | 'BETA' | 'STABLE' = 'ALPHA'
-export const CC_VERSION = '0.1.7'
+export const CC_VERSION = '0.1.8'
 
 export const CC_CHANGELOG: { version: string; date: string; notes: string }[] = [
+  { version: '0.1.8', date: '2026-08-26', notes: 'Vocabulário de plataforma corrigido pelo João: GEN V SM (GM Gen V Small Block) é a plataforma — LT1/LT4 são códigos de motor DENTRO dela, puxados pelo carro. Datalist do editor e o platformOf do minerador atualizados (tokens LT1/LT4 em nomes mapeiam pra GEN V SM). Lista oficial completa de plataformas pendente do João — quando ditar, vira lei hard-coded.' },
   { version: '0.1.7', date: '2026-08-26', notes: 'Selo de PLATFORM sobe pro cartão do PACK (João: "CatAholic IS for the HELLCAT platform" — platform é métrica do pack, não da variante). Chave de agrupamento do BY PACK agora é NOME+PLATAFORMA: Poltergeist LT4 e LT1 viram dois cartões (dois blueprints, como manda a visão); as linhas de dentro variam por CARRO (Durango vs TRX) e perdem o selo individual. SEM PLATFORM em vermelho no cartão enquanto o refresh não preenche.' },
   { version: '0.1.6', date: '2026-08-26', notes: 'PACKS DB abre em BY PACK (João): um cartão por PRODUTO — família extraída do nome (cai o Z-code, o parêntese e o " - variante") — com as variantes dentro (selo de plataforma ou SEM PLATFORM em vermelho, status, total, carros que ela serve, VIEW·EDIT·REMOVE·DUPLICATE). A lista completa com nomes repetidos virou FULL LIST, só quando clicada de propósito. Hierarquia confirmada na conversa: FAMÍLIA (produto) → PLATFORM (variante de motor, eixo de mineração) → CARS (encaixe de chassi; headers diferentes C7 vs Camaro = bloco de carro no P2, não redundância da platform).' },
   { version: '0.1.5', date: '2026-08-26', notes: 'Visão POR PLATAFORMA no PACKS DB (ideia do João): chips de plataforma derivados ao vivo dos próprios packs, com contagem — clica e vê só os packs daquela plataforma; selo de plataforma no cartão distingue na hora os xarás (Demonized Durango vs TRX). O balde SEM PLATFORM é a dívida do refresh ficando visível: esvazia conforme Márcio+João preenchem o campo novo do editor. Sinergia de propósito com o CC 0.1.3.' },
