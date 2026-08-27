@@ -715,8 +715,15 @@ export default function ExpensesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-lg font-bold">{formatUSD(shown)}</span>
+                    {/* SEMPRE EM DÓLAR na tela (Márcio, 26/ago/2026). O R$ é a
+                        âncora do cálculo e vive no tooltip, não no valor. */}
                     {Number(expense.amount_brl) > 0 && (
-                      <span className="text-sm text-gray-400" title={paid ? 'Frozen at the rate of the day it was paid' : 'Anchored in R$ — the dollar moves every day until it is paid'}>R$ {Number(expense.amount_brl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{paid ? '' : ' · live'}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-xs font-bold ${paid ? 'bg-gray-700 text-gray-300' : 'bg-sky-900 text-sky-300'}`}
+                        title={`Anchored at R$ ${Number(expense.amount_brl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` + (paid ? ' — frozen at the rate of the day it was paid' : ' — the dollar moves every day until it is paid')}
+                      >
+                        {paid ? 'R$ ANCHOR' : 'LIVE R$ ANCHOR'}
+                      </span>
                     )}
                     {expense.expense_date && <span className="text-gray-400 text-sm">day {dayOf(expense.expense_date)}</span>}
                     {paid ? (

@@ -5,7 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, seasonHourlyRate, formatMoney } from '@/lib/utils'
+import { BASE_PATH, seasonHourlyRate, formatUSD } from '@/lib/utils'
+import { usdBrlSpot } from '@/lib/fx'
 
 const inputClass = 'w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-4 text-xl'
 
@@ -29,10 +30,13 @@ export default function EditSeasonPage() {
   // JORNADA — é o que transforma a taxa em custo/hora nas duties dos packs.
   const [hoursPerDay, setHoursPerDay] = useState('')
   const [daysPerWeek, setDaysPerWeek] = useState('')
+  // Câmbio comercial de hoje: a taxa pode estar em reais, mas a tela é em dólar.
+  const [spot, setSpot] = useState<number | null>(null)
 
   useEffect(() => {
     loadStaffName()
     loadSeason()
+    usdBrlSpot().then(setSpot)
   }, [])
 
   async function loadStaffName() {
@@ -203,9 +207,13 @@ export default function EditSeasonPage() {
                 </div>
                 {(() => {
                   const h = seasonHourlyRate({ pay_type: payType, pay_rate: parseFloat(payRate) || 0, hours_per_day: parseFloat(hoursPerDay) || 0, days_per_week: parseInt(daysPerWeek, 10) || 0 })
-                  return h
-                    ? <p className="mt-2 text-sm font-bold text-gray-200">Costs {formatMoney(h, payCurrency)} per hour — this is what puts a price on a pack&apos;s duties.</p>
-                    : <p className="mt-2 text-sm text-gray-400">Fill both and the app learns this person&apos;s cost per hour, which is what puts a price on a pack&apos;s duties.</p>
+                  // SEMPRE EM DÓLAR. Uma taxa em reais é a âncora do cálculo; o que
+                  // se lê na tela é o dólar do comercial de hoje.
+                  const emReais = payCurrency === 'BRL'
+                  const usd = h == null ? null : emReais ? (spot && spot > 0 ? h / spot : null) : h
+                  if (usd != null) return <p className="mt-2 text-sm font-bold text-gray-200">Costs {formatUSD(usd)} per hour — this is what puts a price on a pack&apos;s duties.</p>
+                  if (h != null && emReais) return <p className="mt-2 text-sm text-amber-400">Cost per hour is anchored in R$ and today&apos;s dollar rate could not be fetched.</p>
+                  return <p className="mt-2 text-sm text-gray-400">Fill both and the app learns this person&apos;s cost per hour, which is what puts a price on a pack&apos;s duties.</p>
                 })()}
               </div>
 

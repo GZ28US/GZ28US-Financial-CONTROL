@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst, seasonHourlyRate, formatMoney } from '@/lib/utils'
+import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst, seasonHourlyRate } from '@/lib/utils'
+import { usdBrlSpot } from '@/lib/fx'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { normPN } from '@/lib/partsDb'
 
@@ -82,10 +83,15 @@ export default function EditPackPage() {
   // Mesma resolucao da invoice: a chave e o source_item (o nome do item no banco
   // de pecas, guardado no import) e so cai na description quando nao houver.
   const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
-  // MÃO DE OBRA — quem está em season ABERTA e tem taxa + jornada gravadas.
-  // Só entra quem o app sabe quanto custa por hora; o resto não aparece, em vez
-  // de aparecer com número inventado (Márcio, 26/ago/2026).
-  const [labor, setLabor] = useState<{ name: string; hourly: number; currency: string }[]>([])
+  // MÃO DE OBRA (Márcio, 26/ago/2026): "o Jeff é o único membro fixo daqui, nos
+  // templates do Packs DB e depois nas quotes, são os valores dele que valem...
+  // sem campo duplicado, é só isso, lá na season dele já tem o valor da hora".
+  //
+  // Uma linha só: a taxa/hora do membro fixo × as horas somadas das duties. O
+  // valor NÃO mora aqui — é lido da season corrente dele a cada abertura, então
+  // mexer no salário se propaga sozinho pra todos os packs e quotes.
+  const [labor, setLabor] = useState<{ name: string; hourly: number; brlHourly: number | null } | null>(null)
+  const [spot, setSpot] = useState<number | null>(null)
 
   const [parts, setParts] = useState<Part[]>([])
   const [newPart, setNewPart] = useState<Part>({ description: '', unit_price: '', quantity: '1' })
@@ -233,14 +239,25 @@ export default function EditPackPage() {
     setMapByName(mn)
     setPnByItem(pm)
 
+    const spotNow = await usdBrlSpot()
+    setSpot(spotNow)
     const { data: seasonRows } = await supabase.from('seasons')
       .select('staff_id, pay_type, pay_rate, pay_currency, hours_per_day, days_per_week, staff(name)')
       .is('date_conclusion', null)
-    setLabor((seasonRows || []).map((r: any) => ({
-      name: r.staff?.name || '—',
-      hourly: seasonHourlyRate(r) as number,
-      currency: r.pay_currency || 'USD',
-    })).filter(r => r.hourly > 0).sort((a, b) => a.name.localeCompare(b.name)))
+    // O MEMBRO FIXO é quem tem mensalidade e jornada gravadas na season aberta.
+    // Hoje é o Jeff, e é só ele — sem taxa ou sem jornada, ninguém entra, porque
+    // custo de hora não se estima.
+    const fixo = (seasonRows || [])
+      .filter((r: any) => r.pay_type === 'MONTHLY' && Number(r.pay_rate) > 0 && Number(r.hours_per_day) > 0 && Number(r.days_per_week) > 0)
+      .map((r: any) => {
+        const emReais = (r.pay_currency || 'USD') === 'BRL'
+        const taxa = seasonHourlyRate(r) || 0
+        // Taxa em reais é a ÂNCORA: o dólar é a conversão do comercial de hoje.
+        const usd = emReais ? (spotNow && spotNow > 0 ? taxa / spotNow : 0) : taxa
+        return { name: r.staff?.name || '—', hourly: usd, brlHourly: emReais ? taxa : null }
+      })
+      .filter((r: any) => r.hourly > 0)[0] || null
+    setLabor(fixo)
 
     setLoading(false)
   }
@@ -1121,17 +1138,19 @@ export default function EditPackPage() {
                       <span className="w-20 shrink-0 text-right text-base font-bold text-gray-100 tabular-nums">{fmtDutyEst(totalSecs)}</span>
                       {!locked && <span className="shrink-0 w-[8.5rem]" />}
                     </div>
-                    {/* O QUE ESSAS HORAS CUSTAM. Uma linha por pessoa com taxa e
-                        jornada gravadas na season aberta — o custo/hora sai de lá,
-                        nunca daqui. Na moeda em que a pessoa recebe: converter
-                        exigiria um câmbio do dia, que não se inventa. */}
-                    {labor.map(p => (
-                      <div key={p.name} className="flex items-center justify-between gap-4 px-4 py-2 bg-gray-800/40 border-t border-gray-700">
-                        <span className="text-sm text-gray-400 flex-1 truncate" title={`${p.name} — ${formatMoney(p.hourly, p.currency)} per hour`}>👤 {p.name} · {formatMoney(p.hourly, p.currency)}/h</span>
-                        <span className="w-28 shrink-0 text-right text-sm font-bold text-gray-200 tabular-nums">{formatMoney(p.hourly * hours, p.currency)}</span>
+                    {/* O QUE ESSAS HORAS CUSTAM, à taxa do membro fixo da casa. A
+                        taxa é lida da season corrente dele — não existe cópia aqui.
+                        SEMPRE EM DÓLAR — o R$ da season é a âncora do cálculo, mas
+                        na tela tudo é dólar. */}
+                    {labor && (
+                      <div className="flex items-center justify-between gap-4 px-4 py-2 bg-gray-800/40 border-t border-gray-700">
+                        <span className="text-sm text-gray-400 flex-1 truncate" title={`${labor.name} — ${formatUSD(labor.hourly)} per hour`}>
+                          👤 LABOR · {labor.name} · {formatUSD(labor.hourly)}/h
+                        </span>
+                        <span className="w-28 shrink-0 text-right text-sm font-bold text-gray-200 tabular-nums">{formatUSD(labor.hourly * hours)}</span>
                         {!locked && <span className="shrink-0 w-[8.5rem]" />}
                       </div>
-                    ))}
+                    )}
                   </>)
                 })()}
               </div>

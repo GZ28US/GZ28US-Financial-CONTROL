@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, formatMoney } from '@/lib/utils'
+import { formatUSD } from '@/lib/utils'
 import { usdBrlSpot, usdOf } from '@/lib/fx'
 
 type Season = {
@@ -26,13 +26,27 @@ const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday
 // A taxa da season em uma linha legível. Ela sempre existiu no banco e nunca
 // aparecia na tela (Márcio, 26/ago/2026) — dava para olhar a season inteira sem
 // descobrir quanto a pessoa ganha.
-function payLabel(s: Season): string | null {
+// SEMPRE EM DÓLAR (Márcio, 26/ago/2026: "sempre mostrando tudo em USD"). Uma
+// taxa em reais é a ÂNCORA do cálculo — o valor fixo do contrato — mas o que se
+// lê na tela é o dólar do comercial de hoje, e ele muda todo dia. O R$ vai no
+// tooltip, que é onde o número imutável continua consultável.
+function payLabel(s: Season, spot: number | null): string | null {
   if (!s.pay_type || !s.pay_rate) return null
-  const moeda = (s.pay_currency || 'USD') === 'BRL' ? 'R$' : 'US$'
-  const valor = `${moeda} ${Number(s.pay_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const emReais = (s.pay_currency || 'USD') === 'BRL'
+  const rate = Number(s.pay_rate)
+  if (emReais && !(spot && spot > 0)) return null
+  const usd = emReais ? rate / (spot as number) : rate
+  const valor = `US$ ${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   if (s.pay_type === 'DAILY') return `${valor} a day`
   if (s.pay_type === 'WEEKLY') return `${valor} every ${WEEKDAY[s.pay_day ?? 5]}`
   return `${valor} on day ${s.pay_day ?? 'last'} of the month`
+}
+
+// O número que NÃO muda: o contrato, na moeda em que foi fechado.
+function payAnchor(s: Season): string {
+  if (!s.pay_rate) return ''
+  const moeda = (s.pay_currency || 'USD') === 'BRL' ? 'R$' : 'US$'
+  return `Anchored at ${moeda} ${Number(s.pay_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 type Expense = {
@@ -314,8 +328,8 @@ export default function SeasonsPage() {
                   {/* Só a TAXA. Quem paga não se deduz da moeda (Márcio, 26/ago/2026):
                       uma taxa em reais pode ser paga por qualquer uma das empresas, e o
                       pagador só existe no PAID FROM do pagamento em si. */}
-                  {payLabel(season) ? (
-                    <p className="text-lg font-bold text-green-400">{payLabel(season)}</p>
+                  {payLabel(season, spot) ? (
+                    <p className="text-lg font-bold text-green-400" title={payAnchor(season)}>{payLabel(season, spot)}</p>
                   ) : !season.date_conclusion ? (
                     <p className="text-lg font-bold text-amber-400">No pay rate set</p>
                   ) : null}
@@ -334,14 +348,14 @@ export default function SeasonsPage() {
 
                 <div className="bg-gray-800 rounded-2xl px-5 py-4 text-sm min-w-[200px]">
                   {cost.hourly != null && (
-                    <div className="flex justify-between gap-6 pb-2 mb-2 border-b border-gray-700"><span className="text-gray-400 font-bold">HOURLY COST</span><span className="font-bold">{formatMoney(cost.hourly, cost.currency)}</span></div>
+                    <div className="flex justify-between gap-6 pb-2 mb-2 border-b border-gray-700"><span className="text-gray-400 font-bold">HOURLY COST</span><span className="font-bold">{cost.currency === 'USD' ? formatUSD(cost.hourly as number) : '—'}</span></div>
                   )}
-                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{formatMoney(cost.daily, cost.currency)}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{formatMoney(cost.weekly, cost.currency)}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{formatMoney(cost.monthly, cost.currency)}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">DAILY COST</span><span className="font-bold">{cost.currency === 'USD' ? formatUSD(cost.daily as number) : '—'}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">WEEKLY COST</span><span className="font-bold">{cost.currency === 'USD' ? formatUSD(cost.weekly as number) : '—'}</span></div>
+                  <div className="flex justify-between gap-6"><span className="text-gray-400 font-bold">MONTHLY COST</span><span className="font-bold">{cost.currency === 'USD' ? formatUSD(cost.monthly as number) : '—'}</span></div>
                   <p className="mt-2 text-xs text-gray-500">
                     {cost.fromRate ? 'from the pay rate' : 'observed — no pay rate set'}
-                    {cost.live && spot ? ` · US$ 1 = R$ ${spot.toFixed(4)} today` : ''}
+                    {cost.live ? (spot ? ` · US$ 1 = R$ ${spot.toFixed(4)} today` : ' · today’s dollar rate unavailable') : ''}
                   </p>
                 </div>
 
