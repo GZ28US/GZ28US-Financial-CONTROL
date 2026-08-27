@@ -248,7 +248,7 @@ export default function AssetSupplierViewPage() {
       )}
 
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
-        <Link href="/costs/assets" className="text-gray-400 text-lg hover:text-white">← Assets &amp; Marketing</Link>
+        <Link href="/costs/assets" className="text-gray-400 text-lg hover:text-white">← Marketing &amp; Events</Link>
         <div className="flex gap-3 flex-wrap">
           <button onClick={openAdd} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold">+ ADD EXPENSE</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>

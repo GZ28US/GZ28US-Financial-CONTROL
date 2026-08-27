@@ -93,7 +93,7 @@ export default function AssetsPage() {
       <Header />
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">ASSETS &amp; MARKETING ({rows.length})</h1>
+        <h1 className="text-4xl font-bold">MARKETING &amp; EVENTS ({rows.length})</h1>
         <input
           type="text"
           value={search}
