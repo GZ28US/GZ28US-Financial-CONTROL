@@ -158,10 +158,16 @@ export default function PacksPage() {
             .sort((a, b) => a[0].localeCompare(b[0]))
             .map(([key, packs]) => {
               const [fam, plat] = key.split('§')
+              // Título com o NOME INTEIRO (João, 26/ago: "you've hidden the Z1000"):
+              // os Z-codes reais das variantes entram no título — um só quando a
+              // família toda compartilha ("Z1000 CatAholic"), lista quando variam
+              // ("Z1200sc/Z1250sc GoldenEye" — potências por carro).
+              const zcodes = [...new Set(packs.map((p: any) => (String(p.name || '').match(/^(Z\d+\S*)\s+/i) || [])[1]).filter(Boolean))]
+              const title = zcodes.length ? `${zcodes.join('/')} ${fam}` : fam
               return (
               <div key={key} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
-                  <h2 className="text-2xl font-bold">{fam}</h2>
+                  <h2 className="text-2xl font-bold">{title}</h2>
                   {plat === 'SEM PLATFORM'
                     ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-300">SEM PLATFORM</span>
                     : <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{plat}</span>}
