@@ -291,12 +291,16 @@ export default function ViewRidePage() {
         <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
           <h1 className="text-4xl font-bold">{ride.project_code}{ride.project_name ? ` — ${ride.project_name}` : ''}</h1>
           <div className="flex gap-3 flex-wrap justify-end">
-            {client && (
+            {/* Pedir foto ao "cliente" de um carro NOSSO não faz sentido: o
+                cliente seria a própria LLC. Some junto com a seção CLIENT. */}
+            {client && !isOurCar(ride.title_scope) && (
               <button onClick={handleSendPic} disabled={sendingPic || picSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${picSent ? 'bg-green-600' : 'bg-fuchsia-700 hover:bg-fuchsia-600'}`}>{sendingPic ? 'SENDING…' : picSent ? '✓ SENT' : '📸 PIC FROM CLIENT'}</button>
             )}
             <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
             <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
-            <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
+            {!isOurCar(ride.title_scope) && (
+              <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
+            )}
             <Link href={`/rides/${rideId}/performance`} className="bg-red-700 hover:bg-red-600 px-6 py-4 rounded-2xl text-xl font-bold">PERFORMANCE</Link>
           </div>
         </div>
@@ -411,8 +415,10 @@ export default function ViewRidePage() {
           </div>
         )}
 
-        {/* CLIENT */}
-        {client && (
+        {/* CLIENT — carro do FLEET não tem cliente: ele é sempre NOSSO
+            (Márcio, 27/ago/2026). O client_id continua no banco, apontando para
+            a própria LLC; some só a seção da tela. */}
+        {client && !isOurCar(ride.title_scope) && (
           <div>
             <label className="block mb-3 text-lg font-bold">CLIENT</label>
             <div className={sectionClass}>
