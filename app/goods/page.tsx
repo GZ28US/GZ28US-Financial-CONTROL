@@ -23,6 +23,22 @@ function todayStr() { return new Date().toISOString().slice(0, 10) }
 // separado, que ele ainda não autorizou.
 const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 
+// FLEET não é linha de `goods`: são os RIDES da casa, lidos do mesmo banco de
+// sempre (Márcio, 27/ago/2026: "use o DB dos rides... não crie nenhum campo").
+// O critério é o title_scope que o financeiro já usa: OWN = nosso, TOOL =
+// ferramenta de trabalho. As despesas de cada carro são as invoice_expenses
+// que já existem — mostradas uma por linha, no visual do GOOD EXPENSES, sem
+// copiar nada: o mesmo dinheiro nunca vive em dois lugares.
+type FleetExpense = { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null }
+type FleetCar = {
+  id: string; code: string; name: string; spec: string
+  vin: string | null; plate: string | null
+  scope: string; titleTransferred: boolean; titleNotes: string | null
+  expenses: FleetExpense[]; total: number
+}
+const fleetLine = (e: FleetExpense) =>
+  (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
+
 type Good = {
   id: string
   description: string
@@ -80,6 +96,8 @@ function parseReceiptUrls(raw: string | null | undefined): string[] {
 export default function GoodsPage() {
   const [goods, setGoods] = useState<GoodWithStats[]>([])
   const [category, setCategory] = useState<string>('ALL')
+  const [fleet, setFleet] = useState<FleetCar[]>([])
+  const [openCar, setOpenCar] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Group-level removal confirmation
@@ -111,6 +129,37 @@ export default function GoodsPage() {
 
   useEffect(() => { loadGoods() }, [])
 
+  async function loadFleet() {
+    const { data: rides } = await supabase.from('rides').select('*')
+      .or('title_scope.eq.OWN,title_scope.eq.TOOL')
+    if (!rides?.length) { setFleet([]); return }
+    const { data: invs } = await supabase.from('invoices').select('id, ride_id')
+      .in('ride_id', rides.map((r: any) => r.id))
+    const invIds = (invs || []).map((i: any) => i.id)
+    const { data: exps } = invIds.length
+      ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date').in('invoice_id', invIds)
+      : { data: [] as any[] }
+    const rideOfInv = new Map((invs || []).map((i: any) => [i.id, i.ride_id]))
+    const byRide = new Map<string, FleetExpense[]>()
+    for (const e of (exps || [])) {
+      const rid = rideOfInv.get(e.invoice_id)
+      if (!rid) continue
+      if (!byRide.has(rid)) byRide.set(rid, [])
+      byRide.get(rid)!.push(e as FleetExpense)
+    }
+    const cars: FleetCar[] = rides.map((r: any) => {
+      const ex = (byRide.get(r.id) || []).sort((a, b) => String(b.payment_date || '').localeCompare(String(a.payment_date || '')))
+      return {
+        id: r.id, code: r.project_code || '—', name: r.project_name || '',
+        spec: [r.year, r.brand || r.manufacturer, r.model, r.version].filter(Boolean).join(' '),
+        vin: r.vin || null, plate: r.plate || null,
+        scope: r.title_scope, titleTransferred: !!r.title_transferred, titleNotes: r.title_notes || null,
+        expenses: ex, total: ex.reduce((s, e) => s + fleetLine(e), 0),
+      }
+    }).sort((a: FleetCar, b: FleetCar) => b.total - a.total)
+    setFleet(cars)
+  }
+
   async function loadGoods() {
     // Order by the actual purchase_date (newest first), with created_at as a
     // tiebreaker so rows entered later for the same day still float to the top.
@@ -129,6 +178,7 @@ export default function GoodsPage() {
     }))
 
     setGoods(goodsWithStats)
+    await loadFleet()
     setLoading(false)
     // Groups start collapsed — the user opens the ones they want to inspect.
   }
@@ -564,7 +614,7 @@ export default function GoodsPage() {
       )}
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">ASSETS ({shown.length}{category !== 'ALL' ? ` de ${goods.length}` : ''})</h1>
+        <h1 className="text-4xl font-bold">ASSETS ({category === 'FLEET' ? fleet.length : category === 'ALL' ? goods.length + fleet.length : shown.length})</h1>
         <div className="flex gap-3">
           <label className="bg-indigo-700 hover:bg-indigo-600 px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer">
             🧾 SCAN A NEW ASSET
@@ -578,7 +628,9 @@ export default function GoodsPage() {
           quanto de cada um já foi classificado — hoje, nada. */}
       <div className="flex items-center gap-2 mb-8 flex-wrap">
         {['ALL', ...ASSET_CATEGORIES].map((c) => {
-          const n = c === 'ALL' ? goods.length : goods.filter(g => (g.category || '') === c).length
+          const n = c === 'ALL' ? goods.length + fleet.length
+            : c === 'FLEET' ? fleet.length
+            : goods.filter(g => (g.category || '') === c).length
           return (
             <button
               key={c}
@@ -596,9 +648,72 @@ export default function GoodsPage() {
         )}
       </div>
 
+      {/* FLEET — os carros da casa. Vêm da tabela rides (title_scope OWN/TOOL),
+          com os mesmos dados que tinham em RIDES, e cada despesa da invoice do
+          carro vira uma linha aqui, no visual do GOOD EXPENSES. */}
+      {!loading && (category === 'ALL' || category === 'FLEET') && fleet.length > 0 && (
+        <div className="space-y-5 mb-8">
+          {fleet.map((car) => {
+            const open = openCar.has(car.id)
+            return (
+              <div key={car.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+                <div className="flex items-start justify-between gap-6 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h2 className="text-2xl font-bold">{car.name || car.code}</h2>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">{car.code}</span>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${car.scope === 'OWN' ? 'bg-blue-900 text-blue-200' : 'bg-teal-900 text-teal-200'}`}>{car.scope === 'OWN' ? 'NOSSO' : 'FERRAMENTA'}</span>
+                      {car.titleTransferred
+                        ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-900 text-green-200">TÍTULO OK</span>
+                        : <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-900 text-amber-200">TÍTULO PENDENTE</span>}
+                    </div>
+                    <p className="text-lg text-gray-400 mt-1">{car.spec}</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      VIN {car.vin || '—'}{car.plate ? ` · placa ${car.plate}` : ''}
+                    </p>
+                    {car.titleNotes && <p className="text-sm text-gray-500 mt-1 max-w-2xl">{car.titleNotes}</p>}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-gray-400">INVESTIDO</p>
+                    <p className="text-3xl font-bold">{formatUSD(car.total)}</p>
+                    <p className="text-sm text-gray-500">{car.expenses.length} despesa{car.expenses.length === 1 ? '' : 's'}</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 mt-4 flex-wrap">
+                  <button
+                    onClick={() => setOpenCar(prev => { const n = new Set(prev); n.has(car.id) ? n.delete(car.id) : n.add(car.id); return n })}
+                    className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold"
+                  >
+                    {open ? 'HIDE EXPENSES' : `EXPENSES (${car.expenses.length})`}
+                  </button>
+                  <Link href={`/rides/${car.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">OPEN RIDE</Link>
+                </div>
+
+                {open && car.expenses.length > 0 && (
+                  <div className="mt-4 border border-gray-700 rounded-2xl overflow-hidden">
+                    {car.expenses.map((e, i) => (
+                      <div key={e.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${i < car.expenses.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <div className="min-w-0">
+                          <p className="text-base font-bold truncate" title={e.item || ''}>{e.item}</p>
+                          <p className="text-sm text-gray-500">
+                            {e.supplier || '—'} · {e.payment_date ? `pago ${e.payment_date}` : <span className="text-amber-400 font-bold">não paga</span>}
+                          </p>
+                        </div>
+                        <span className="font-bold shrink-0">{formatUSD(fleetLine(e))}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : shown.length === 0 ? (
+      ) : category === 'FLEET' ? null : shown.length === 0 ? (
         <p className="text-2xl text-gray-400">{goods.length === 0 ? 'No assets found.' : `Nada classificado como ${category} ainda.`}</p>
       ) : (
         <div className="space-y-5">

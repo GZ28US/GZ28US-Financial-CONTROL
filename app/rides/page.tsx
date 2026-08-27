@@ -109,7 +109,13 @@ export default function RidesPage() {
     }
     setVinTwins(twins)
 
+    // O carro DA CASA saiu daqui e passou a viver no FLEET, dentro de ASSETS
+    // (Márcio, 27/ago/2026). NADA foi apagado: a linha continua na tabela rides,
+    // com invoices, despesas, streams e duties intactos — muda a TELA onde ela
+    // aparece. title_scope OWN (nosso) e TOOL (ferramenta de trabalho: o RAMbo
+    // e o trailer) são o critério, o mesmo que o financeiro já usa em isOurRide.
     const ridesData = (data || []).filter((r: any) => {
+      if (r.title_scope === 'OWN' || r.title_scope === 'TOOL') return false
       const modeOk = m === 'shop' ? r.origin === 'SHOP' : r.origin !== 'SHOP' && (!!r.is_quote === (m === 'quote'))
       return modeOk && (!c || r.client_id === c || (soldDates[r.id] && r.client_id !== c))
     })
