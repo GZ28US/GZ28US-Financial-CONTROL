@@ -296,7 +296,10 @@ export default function ViewRidePage() {
             {client && !isOurCar(ride.title_scope) && (
               <button onClick={handleSendPic} disabled={sendingPic || picSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${picSent ? 'bg-green-600' : 'bg-fuchsia-700 hover:bg-fuchsia-600'}`}>{sendingPic ? 'SENDING…' : picSent ? '✓ SENT' : '📸 PIC FROM CLIENT'}</button>
             )}
-            <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+            {/* BACK levaria pra /rides, onde o carro do FLEET nem aparece mais. */}
+            {!isOurCar(ride.title_scope) && (
+              <Link href="/rides" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+            )}
             <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
             {!isOurCar(ride.title_scope) && (
               <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
@@ -304,6 +307,12 @@ export default function ViewRidePage() {
             <Link href={`/rides/${rideId}/performance`} className="bg-red-700 hover:bg-red-600 px-6 py-4 rounded-2xl text-xl font-bold">PERFORMANCE</Link>
           </div>
         </div>
+        {/* Carro do FLEET não tem ITEM, SERVICE nem INCOME — só despesa (Márcio,
+            27/ago/2026). Sem receita não existe markup, nem cliente devendo:
+            estes selos falariam de um lucro que nunca vai existir, e -100% em
+            todos eles é ruído, não informação. O gasto do carro está no FLEET,
+            dentro de ASSETS. */}
+        {!isOurCar(ride.title_scope) && (
         <div className="flex gap-3 flex-wrap">
           <span className={`px-3 py-1 rounded-full text-sm font-bold ${agg.currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
             CURRENT CASH FLOW: {formatUSD(agg.currentProfit)} / {aggCurrentPct.toFixed(1)}%
@@ -318,6 +327,7 @@ export default function ViewRidePage() {
             DUE by GZ28US: {formatUSD(agg.expensesBalance)}
           </span>
         </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
