@@ -30,8 +30,10 @@ const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 // que já existem — mostradas uma por linha, no visual do GOOD EXPENSES, sem
 // copiar nada: o mesmo dinheiro nunca vive em dois lugares.
 type FleetExpense = { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null }
+const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true }
 type FleetCar = {
   id: string; code: string; name: string; spec: string
+  invoiceId: string | null
   vin: string | null; plate: string | null
   scope: string; titleTransferred: boolean; titleNotes: string | null
   expenses: FleetExpense[]; total: number
@@ -98,6 +100,9 @@ export default function GoodsPage() {
   const [category, setCategory] = useState<string>('ALL')
   const [fleet, setFleet] = useState<FleetCar[]>([])
   const [openCar, setOpenCar] = useState<Set<string>>(new Set())
+  const [fleetForm, setFleetForm] = useState<typeof emptyFleetForm | null>(null)
+  const [savingFleetExp, setSavingFleetExp] = useState(false)
+  const [confirmFleetExp, setConfirmFleetExp] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Group-level removal confirmation
@@ -129,6 +134,44 @@ export default function GoodsPage() {
 
   useEffect(() => { loadGoods() }, [])
 
+  // A despesa do carro da frota vive em invoice_expenses, na invoice do proprio
+  // carro — a mesma coisa que a tela do ride faz. Aqui e so o outro lugar de
+  // onde da pra mexer nela.
+  async function saveFleetExp() {
+    if (!fleetForm) return
+    if (!fleetForm.item.trim()) { alert('Descreva a despesa.'); return }
+    const amount = parseFloat(fleetForm.amount)
+    if (!(amount > 0)) { alert('Informe o valor.'); return }
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(fleetForm.date) ? fleetForm.date : null
+    const row = {
+      item: fleetForm.item.trim(),
+      supplier: fleetForm.supplier.trim() || null,
+      price: amount, quantity: 1,
+      expense_date: d,
+      payment_date: fleetForm.paid ? d : null,
+    }
+    setSavingFleetExp(true)
+    try {
+      if (fleetForm.id) {
+        const { error } = await supabase.from('invoice_expenses').update(row).eq('id', fleetForm.id)
+        if (error) { alert(error.message); return }
+      } else {
+        if (!fleetForm.invoiceId) { alert('Este carro nao tem invoice para receber a despesa.'); return }
+        const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: fleetForm.invoiceId }])
+        if (error) { alert(error.message); return }
+      }
+      setFleetForm(null)
+      await loadFleet()
+    } finally { setSavingFleetExp(false) }
+  }
+
+  async function removeFleetExp(id: string) {
+    const { error } = await supabase.from('invoice_expenses').delete().eq('id', id)
+    if (error) { alert(error.message); return }
+    setConfirmFleetExp(null)
+    await loadFleet()
+  }
+
   async function loadFleet() {
     const { data: rides } = await supabase.from('rides').select('*')
       .or('title_scope.eq.OWN,title_scope.eq.TOOL')
@@ -149,8 +192,10 @@ export default function GoodsPage() {
     }
     const cars: FleetCar[] = rides.map((r: any) => {
       const ex = (byRide.get(r.id) || []).sort((a, b) => String(b.payment_date || '').localeCompare(String(a.payment_date || '')))
+      const rideInvs = (invs || []).filter((i: any) => i.ride_id === r.id)
       return {
         id: r.id, code: r.project_code || '—', name: r.project_name || '',
+        invoiceId: rideInvs.length ? rideInvs[0].id : null,
         spec: [r.year, r.brand || r.manufacturer, r.model, r.version].filter(Boolean).join(' '),
         vin: r.vin || null, plate: r.plate || null,
         scope: r.title_scope, titleTransferred: !!r.title_transferred, titleNotes: r.title_notes || null,
@@ -687,8 +732,29 @@ export default function GoodsPage() {
                   >
                     {open ? 'HIDE EXPENSES' : `EXPENSES (${car.expenses.length})`}
                   </button>
+                  <button
+                    onClick={() => { setOpenCar(prev => new Set(prev).add(car.id)); setFleetForm({ ...emptyFleetForm, carId: car.id, invoiceId: car.invoiceId || '', date: new Date().toISOString().slice(0, 10) }) }}
+                    className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold"
+                  >+ ADD EXPENSE</button>
                   <Link href={`/rides/${car.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">OPEN RIDE</Link>
                 </div>
+
+                {open && fleetForm && fleetForm.carId === car.id && (
+                  <div className="mt-4 bg-gray-950 border border-blue-700 rounded-2xl p-5 space-y-4">
+                    <h3 className="text-xl font-bold">{fleetForm.id ? 'EDIT EXPENSE' : 'NEW EXPENSE'}</h3>
+                    <input value={fleetForm.item} onChange={(ev) => setFleetForm({ ...fleetForm, item: ev.target.value })} placeholder="O que foi — ex.: pneus, seguro, pedágio" className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input value={fleetForm.supplier} onChange={(ev) => setFleetForm({ ...fleetForm, supplier: ev.target.value })} placeholder="Fornecedor" className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                      <input inputMode="decimal" value={fleetForm.amount} onChange={(ev) => { if (ev.target.value === '' || /^\d*\.?\d*$/.test(ev.target.value)) setFleetForm({ ...fleetForm, amount: ev.target.value }) }} placeholder="$ 0.00" className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                      <input type="date" value={fleetForm.date} onChange={(ev) => setFleetForm({ ...fleetForm, date: ev.target.value })} className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                    </div>
+                    <div className="flex gap-3 flex-wrap">
+                      <button onClick={() => setFleetForm({ ...fleetForm, paid: !fleetForm.paid })} className={`px-5 py-3 rounded-2xl font-bold ${fleetForm.paid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>{fleetForm.paid ? 'PAID ✓' : 'NOT PAID'}</button>
+                      <button onClick={saveFleetExp} disabled={savingFleetExp} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{savingFleetExp ? 'SAVING…' : 'SAVE'}</button>
+                      <button onClick={() => setFleetForm(null)} className="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-2xl font-bold">CANCEL</button>
+                    </div>
+                  </div>
+                )}
 
                 {open && car.expenses.length > 0 && (
                   <div className="mt-4 border border-gray-700 rounded-2xl overflow-hidden">
@@ -700,7 +766,20 @@ export default function GoodsPage() {
                             {e.supplier || '—'} · {e.payment_date ? `pago ${e.payment_date}` : <span className="text-amber-400 font-bold">não paga</span>}
                           </p>
                         </div>
-                        <span className="font-bold shrink-0">{formatUSD(fleetLine(e))}</span>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="font-bold">{formatUSD(fleetLine(e))}</span>
+                          {confirmFleetExp === e.id ? (
+                            <>
+                              <button onClick={() => removeFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">CONFIRM</button>
+                              <button onClick={() => setConfirmFleetExp(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setConfirmFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
