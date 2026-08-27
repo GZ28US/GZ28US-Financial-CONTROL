@@ -11,6 +11,18 @@ import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSe
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 
+// A tela era GOODS e virou ASSETS (Márcio, 27/ago/2026): patrimônio da oficina,
+// não só ferramenta. Os quatro grupos são fixos, definidos por ele — nada de
+// chip nascendo do dado, como acontece em INPUTS, porque aqui a lista é uma
+// decisão de negócio e não um reflexo do que já foi digitado.
+//   FLEET       — veículos
+//   MACHINERY   — máquina de oficina (dyno, elevador, carport)
+//   ELECTRONICS — computador, monitor, painel, interface de tuning, câmera
+//   GOODS       — ferramenta e o resto
+// A coluna goods.category nasce VAZIA e a classificação dos itens é passo
+// separado, que ele ainda não autorizou.
+const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
+
 type Good = {
   id: string
   description: string
@@ -19,6 +31,7 @@ type Good = {
   purchase_date: string | null
   supplier: string | null
   purchase_group?: string | null
+  category?: string | null
   // Stored as a JSON-stringified array of URLs (scanned purchases set one URL).
   receipt_url?: string | null
 }
@@ -66,6 +79,7 @@ function parseReceiptUrls(raw: string | null | undefined): string[] {
 
 export default function GoodsPage() {
   const [goods, setGoods] = useState<GoodWithStats[]>([])
+  const [category, setCategory] = useState<string>('ALL')
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Group-level removal confirmation
@@ -355,13 +369,16 @@ export default function GoodsPage() {
   // purchase_group we emit the whole group as a single row. Standalone goods
   // (no purchase_group) keep their own row. Net effect: most recent group/single
   // first, each group at the position of its newest item.
+  // O filtro corta ANTES do agrupamento: um grupo de compra só aparece com os
+  // itens que pertencem à categoria escolhida, e some se nenhum pertencer.
+  const shown = category === 'ALL' ? goods : goods.filter(g => (g.category || '') === category)
   const rows: { type: 'single' | 'group'; good?: GoodWithStats; groupId?: string; groupGoods?: GoodWithStats[] }[] = []
   const seenGroups = new Set<string>()
-  goods.forEach(good => {
+  shown.forEach(good => {
     if (good.purchase_group) {
       if (!seenGroups.has(good.purchase_group)) {
         seenGroups.add(good.purchase_group)
-        const groupGoods = goods.filter(g => g.purchase_group === good.purchase_group)
+        const groupGoods = shown.filter(g => g.purchase_group === good.purchase_group)
         rows.push({ type: 'group', groupId: good.purchase_group, groupGoods })
       }
     } else {
@@ -547,20 +564,42 @@ export default function GoodsPage() {
       )}
 
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">GOODS ({goods.length})</h1>
+        <h1 className="text-4xl font-bold">ASSETS ({shown.length}{category !== 'ALL' ? ` de ${goods.length}` : ''})</h1>
         <div className="flex gap-3">
           <label className="bg-indigo-700 hover:bg-indigo-600 px-6 py-4 rounded-2xl text-xl font-bold cursor-pointer">
-            🧾 SCAN A NEW GOOD
+            🧾 SCAN A NEW ASSET
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScanGood(e.target.files[0]) }} />
           </label>
-          <Link href="/goods/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW GOOD</Link>
+          <Link href="/goods/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW ASSET</Link>
         </div>
+      </div>
+
+      {/* CHIPS: os quatro grupos de patrimônio. O contador ao lado deixa claro
+          quanto de cada um já foi classificado — hoje, nada. */}
+      <div className="flex items-center gap-2 mb-8 flex-wrap">
+        {['ALL', ...ASSET_CATEGORIES].map((c) => {
+          const n = c === 'ALL' ? goods.length : goods.filter(g => (g.category || '') === c).length
+          return (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`px-4 py-2 rounded-full font-bold ${category === c ? 'bg-purple-700' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+            >
+              {c === 'ALL' ? 'ALL ASSETS' : c} <span className="opacity-60">{n}</span>
+            </button>
+          )
+        })}
+        {goods.some(g => !g.category) && (
+          <span className="ml-2 text-sm text-amber-500/80">
+            {goods.filter(g => !g.category).length} sem categoria — aparecem só em ALL ASSETS
+          </span>
+        )}
       </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : goods.length === 0 ? (
-        <p className="text-2xl text-gray-400">No goods found.</p>
+      ) : shown.length === 0 ? (
+        <p className="text-2xl text-gray-400">{goods.length === 0 ? 'No assets found.' : `Nada classificado como ${category} ainda.`}</p>
       ) : (
         <div className="space-y-5">
           {rows.map((row) => {
