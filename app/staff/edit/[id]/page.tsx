@@ -36,6 +36,10 @@ export default function EditStaffPage() {
   const [instagram, setInstagram] = useState('')
   const [cpf, setCpf] = useState('')
   const [birthDate, setBirthDate] = useState('')
+  // For foreign staff the passport IS the ID document, not the CPF/SSN — and the
+  // expiry travels with it, because an expired passport blocks boarding and visas.
+  const [passport, setPassport] = useState('')
+  const [passportExpiry, setPassportExpiry] = useState('')
   const [zip, setZip] = useState('')
   const [address, setAddress] = useState('')
   const [city, setCity] = useState('')
@@ -67,6 +71,8 @@ export default function EditStaffPage() {
     setInstagram(data.instagram || '')
     setCpf(data.cpf || '')
     setBirthDate(data.birth_date || '')
+    setPassport(data.passport || '')
+    setPassportExpiry(data.passport_expiry || '')
     setZip(data.zip || '')
     setAddress(data.address || '')
     setCity(data.city || '')
@@ -92,6 +98,8 @@ export default function EditStaffPage() {
         instagram: instagram.trim() || null,
         cpf: cpf.trim() || null,
         birth_date: birthDate || null,
+        passport: passport.trim() || null,
+        passport_expiry: passportExpiry || null,
         zip: zip.trim() || null,
         address: address.trim() || null,
         city: city.trim() || null,
@@ -183,6 +191,16 @@ export default function EditStaffPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">BIRTH DATE</label>
           <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className={inputClass} />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">PASSPORT</label>
+          <input value={passport} onChange={(e) => setPassport(e.target.value)} className={inputClass} placeholder="GN633265" />
+        </div>
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">PASSPORT EXPIRY</label>
+          <input type="date" value={passportExpiry} onChange={(e) => setPassportExpiry(e.target.value)} className={inputClass} />
         </div>
 
         <div>

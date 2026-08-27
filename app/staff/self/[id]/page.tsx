@@ -42,6 +42,7 @@ const L = {
     intro: 'Fill in your details and tap', save: 'SAVE', saving: 'SAVING…', requiredNote: 'are required.',
     name: 'FULL NAME', email: 'E-MAIL', instagram: 'INSTAGRAM', phone: 'PHONE / WHATSAPP',
     doc: 'CPF / SSN / ITIN', birth: 'BIRTH DATE', zip: 'ZIP CODE', address: 'ADDRESS', city: 'CITY', state: 'STATE',
+    passport: 'PASSPORT', passportExp: 'PASSPORT EXPIRY',
     pref: 'PREFERRED WAY TO RECEIVE MESSAGES',
     missing: 'Please fill in the required fields: ', badCpf: 'Invalid CPF. Please correct it.',
     notFoundT: 'Record not found', notFoundP: `Check the link you received or contact ${BRAND}.`,
@@ -53,6 +54,7 @@ const L = {
     intro: 'Preencha seus dados e toque em', save: 'SALVAR', saving: 'SALVANDO…', requiredNote: 'são obrigatórios.',
     name: 'NOME COMPLETO', email: 'E-MAIL', instagram: 'INSTAGRAM', phone: 'TELEFONE / WHATSAPP',
     doc: 'CPF / SSN / ITIN', birth: 'DATA DE NASCIMENTO', zip: 'ZIP CODE (CEP americano)', address: 'ENDEREÇO', city: 'CIDADE', state: 'ESTADO',
+    passport: 'PASSAPORTE', passportExp: 'VALIDADE DO PASSAPORTE',
     pref: 'COMO PREFERE RECEBER MENSAGENS',
     missing: 'Preencha os campos obrigatórios: ', badCpf: 'CPF inválido. Corrija o CPF.',
     notFoundT: 'Cadastro não encontrado', notFoundP: `Confira o link recebido ou fale com a ${BRAND}.`,
@@ -82,6 +84,8 @@ export default function StaffSelfFormPage() {
     phone: '+1 ',
     cpf: '',
     birth_date: '',
+    passport: '',
+    passport_expiry: '',
     zip: '',
     address: '',
     city: '',
@@ -105,6 +109,8 @@ export default function StaffSelfFormPage() {
       phone: data.phone || '+1 ',
       cpf: data.cpf || '',
       birth_date: data.birth_date || '',
+      passport: data.passport || '',
+      passport_expiry: data.passport_expiry || '',
       zip: data.zip || '',
       address: data.address || '',
       city: data.city || '',
@@ -142,6 +148,8 @@ export default function StaffSelfFormPage() {
         p_phone: form.phone,
         p_cpf: form.cpf.trim(),
         p_birth_date: form.birth_date || null,
+        p_passport: form.passport.trim() || null,
+        p_passport_expiry: form.passport_expiry || null,
         p_zip: form.zip,
         p_address: form.address,
         p_city: form.city,
@@ -164,6 +172,8 @@ export default function StaffSelfFormPage() {
     if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
     if (form.cpf.trim()) rows.push(`Document: ${form.cpf.trim()}`)
     if (form.birth_date) rows.push(`Birth date: ${formatBirthDateUS(form.birth_date)}`)
+    if (form.passport.trim()) rows.push(`Passport: ${form.passport.trim()}`)
+    if (form.passport_expiry) rows.push(`Passport expiry: ${formatBirthDateUS(form.passport_expiry)}`)
     if (form.zip.trim()) rows.push(`ZIP: ${form.zip.trim()}`)
     if (form.address.trim()) rows.push(`Address: ${form.address.trim()}`)
     if (form.city.trim()) rows.push(`City: ${form.city.trim()}`)
@@ -271,6 +281,17 @@ export default function StaffSelfFormPage() {
           <div>
             <label className={labelClass}>{t.birth} {req}</label>
             <input type="date" value={form.birth_date} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} className={inputClass} max={new Date().toISOString().slice(0, 10)} />
+          </div>
+
+          {/* Optional: only foreign staff carry one, so it never blocks the save. */}
+          <div>
+            <label className={labelClass}>{t.passport}</label>
+            <input value={form.passport} onChange={(e) => setForm({ ...form, passport: e.target.value.toUpperCase() })} className={inputClass} placeholder="GN633265" />
+          </div>
+
+          <div>
+            <label className={labelClass}>{t.passportExp}</label>
+            <input type="date" value={form.passport_expiry} onChange={(e) => setForm({ ...form, passport_expiry: e.target.value })} className={inputClass} />
           </div>
 
           <div>
