@@ -39,6 +39,7 @@ export default function PacksPage() {
   // nascem dos próprios packs; o balde SEM PLATFORM é a dívida do refresh
   // ficando visível — esvazia conforme o campo PLATFORM vai sendo preenchido.
   const [platFilter, setPlatFilter] = useState<string | null>(null)
+  const [view, setView] = useState<'PACK' | 'LIST'>('PACK')
   const [search, setSearch] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
@@ -76,6 +77,17 @@ export default function PacksPage() {
   }
 
   const platOf = (p: any) => String(p.platform || '').trim().toUpperCase()
+
+  // VISÃO PADRÃO = POR PACK (João, 26/ago): um cartão por PRODUTO (família),
+  // variantes (Z-code/plataforma/carros) dentro dele. A lista completa com os
+  // nomes repetidos só aparece clicando FULL LIST de propósito. A família sai
+  // do nome: cai o Z-code da frente, o parêntese e o " - variante" do fim
+  // ("Z1250sc GoldenEye Pack - RAM TRX" → "GoldenEye Pack").
+  const familyOf = (name: string) => (String(name || '')
+    .replace(/^Z\d+\S*\s+/i, '')
+    .replace(/\s*\(.*?\)\s*$/, '')
+    .replace(/\s+-\s+[^-]+$/, '')
+    .trim()) || String(name || '').trim() || '—'
   const platCounts = rows.reduce((m: Map<string, number>, p) => { const k = platOf(p) || 'SEM PLATFORM'; m.set(k, (m.get(k) || 0) + 1); return m }, new Map<string, number>())
   const platChips = [...platCounts.keys()].sort((a, b) => (a === 'SEM PLATFORM' ? 1 : b === 'SEM PLATFORM' ? -1 : a.localeCompare(b)))
 
@@ -114,7 +126,10 @@ export default function PacksPage() {
         className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 text-lg w-full max-w-2xl mb-4"
       />
 
-      <div className="flex gap-3 mb-3 flex-wrap">
+      <div className="flex gap-3 mb-3 flex-wrap items-center">
+        <button onClick={() => setView('PACK')} className={chip(view === 'PACK')}>BY PACK</button>
+        <button onClick={() => setView('LIST')} className={chip(view === 'LIST')}>FULL LIST</button>
+        <span className="w-px h-6 bg-gray-700 mx-1" />
         {(['ALL', 'DRAFT', 'CLOSED'] as const).map((f) => (
           <button key={f} onClick={() => setFilter(f)} className={chip(filter === f)}>{f}</button>
         ))}
@@ -134,6 +149,44 @@ export default function PacksPage() {
         <p className="text-2xl text-gray-400">Loading...</p>
       ) : filtered.length === 0 ? (
         <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No packages yet.' : 'No matches.'}</p>
+      ) : view === 'PACK' ? (
+        <div className="space-y-4">
+          {[...filtered.reduce((m: Map<string, any[]>, p) => { const k = familyOf(p.name); const a = m.get(k) || []; a.push(p); m.set(k, a); return m }, new Map<string, any[]>())]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([fam, packs]) => (
+              <div key={fam} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+                <div className="flex items-center gap-3 mb-4 flex-wrap">
+                  <h2 className="text-2xl font-bold">{fam}</h2>
+                  {packs.length > 1 && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">{packs.length} VARIANTS</span>}
+                </div>
+                <div className="space-y-3">
+                  {packs.map((p) => {
+                    const closed = (p.status || 'DRAFT') === 'CLOSED'
+                    const cars = Array.isArray(p.cars) ? p.cars : []
+                    return (
+                      <div key={p.id} className="border border-gray-800 rounded-2xl p-4 flex items-center justify-between gap-6 flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-1 flex-wrap">
+                            {platOf(p) ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{platOf(p)}</span> : <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-300">SEM PLATFORM</span>}
+                            <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
+                            <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">{formatUSD(packGrandTotal(p))}</span>
+                            <span className="text-sm text-gray-500">{p.name}</span>
+                          </div>
+                          <p className="text-lg text-gray-400">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
+                        </div>
+                        <div className="flex gap-3 flex-wrap shrink-0">
+                          <Link href={`/packs/${p.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                          <Link href={`/packs/edit/${p.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                          <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                          {closed && <button onClick={() => duplicatePack(p)} disabled={duplicatingId === p.id} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-black px-5 py-3 rounded-2xl font-bold">{duplicatingId === p.id ? 'DUPLICATING…' : '⧉ DUPLICATE'}</button>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+        </div>
       ) : (
         <div className="space-y-4">
           {filtered.map((p) => {
