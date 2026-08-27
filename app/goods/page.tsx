@@ -103,6 +103,7 @@ export default function GoodsPage() {
   const [fleetForm, setFleetForm] = useState<typeof emptyFleetForm | null>(null)
   const [savingFleetExp, setSavingFleetExp] = useState(false)
   const [confirmFleetExp, setConfirmFleetExp] = useState<string | null>(null)
+  const [notesCar, setNotesCar] = useState<FleetCar | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Group-level removal confirmation
@@ -693,6 +694,26 @@ export default function GoodsPage() {
         )}
       </div>
 
+      {/* NOTES do carro, em pop-up. z-50 pra ficar acima de tudo; clicar no
+          fundo escuro fecha, como nos outros diálogos do app. */}
+      {notesCar && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-6" onClick={() => setNotesCar(null)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 max-w-3xl w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-2xl font-bold">{notesCar.name || notesCar.code}</h2>
+                <p className="text-sm text-gray-400">{notesCar.code} · NOTES</p>
+              </div>
+              <button onClick={() => setNotesCar(null)} className="text-gray-400 hover:text-white text-2xl font-bold shrink-0">✕</button>
+            </div>
+            <p className="text-base text-gray-300 whitespace-pre-wrap overflow-y-auto">{notesCar.titleNotes}</p>
+            <div className="pt-4 mt-4 border-t border-gray-800 flex justify-end">
+              <button onClick={() => setNotesCar(null)} className="bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-2xl font-bold">CLOSE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FLEET — os carros da casa. Vêm da tabela rides (title_scope OWN/TOOL),
           com os mesmos dados que tinham em RIDES, e cada despesa da invoice do
           carro vira uma linha aqui, no visual do GOOD EXPENSES. */}
@@ -716,7 +737,9 @@ export default function GoodsPage() {
                     <p className="text-sm text-gray-500 mt-1">
                       VIN {car.vin || '—'}{car.plate ? ` · placa ${car.plate}` : ''}
                     </p>
-                    {car.titleNotes && <p className="text-sm text-gray-500 mt-1 max-w-2xl">{car.titleNotes}</p>}
+                    {/* A nota do título virou POP-UP (Márcio, 27/ago/2026): a do
+                        Devil170 tem 20 linhas e empurrava o carro inteiro pra
+                        baixo. Fica no botão NOTES, abaixo. */}
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-gray-400">INVESTIDO</p>
@@ -726,6 +749,9 @@ export default function GoodsPage() {
                 </div>
 
                 <div className="flex gap-3 mt-4 flex-wrap">
+                  {car.titleNotes && (
+                    <button onClick={() => setNotesCar(car)} className="bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold">NOTES</button>
+                  )}
                   <button
                     onClick={() => setOpenCar(prev => { const n = new Set(prev); n.has(car.id) ? n.delete(car.id) : n.add(car.id); return n })}
                     className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold"
