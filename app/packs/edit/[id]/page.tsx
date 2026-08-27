@@ -433,8 +433,17 @@ export default function EditPackPage() {
   // Florida taxes are a pass-through: collected as revenue (in the grand total) AND
   // owed as an expense, so they net to zero profit. Count them on the expense side.
   const expensesTotal = floridaTaxesAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
-  const finalProfit = grandTotal - expensesTotal
-  const finalProfitPct = expensesTotal > 0 ? (finalProfit / expensesTotal) * 100 : 0
+  // CUSTO DE STAFF (Márcio, 26/ago/2026): as horas previstas das duties, à taxa
+  // do membro fixo, ENTRAM NO CUSTO. Mão de obra é custo — deixar de fora inflava
+  // o markup, que passava a incluir o salário como se fosse lucro.
+  //
+  // A taxa vem da season corrente (labor), não daqui: se o salário mudar, o
+  // markup de todos os packs se corrige sozinho.
+  const dutyHours = duties.reduce((t, d) => t + (Number(d.estimated_seconds) || 0), 0) / 3600
+  const staffCost = labor ? labor.hourly * dutyHours : 0
+  const totalCost = expensesTotal + staffCost
+  const finalProfit = grandTotal - totalCost
+  const finalProfitPct = totalCost > 0 ? (finalProfit / totalCost) * 100 : 0
 
   // ---- Live IMPORT MARGIN re-pricer (same as invoice) ----
   useEffect(() => {
@@ -1199,8 +1208,11 @@ export default function EditPackPage() {
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
         <div className="max-w-2xl mx-auto px-8 flex flex-col gap-2">
           <div className="flex justify-between items-center">
-            <span className="text-gray-400 font-bold">MARKUP (grand total − expenses)</span>
-            <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{expensesTotal > 0 ? ` · ${finalProfitPct.toFixed(2)}%` : ''}</span>
+            <span className="text-gray-400 font-bold">
+              MARKUP (grand total − expenses{staffCost > 0 ? ' − staff cost' : ''})
+              {staffCost > 0 && <span className="text-gray-500 font-normal"> · staff {formatUSD(staffCost)}</span>}
+            </span>
+            <span className={`text-xl font-bold ${finalProfit < 0 ? 'text-red-500' : 'text-blue-400'}`}>{formatUSD(finalProfit)}{totalCost > 0 ? ` · ${finalProfitPct.toFixed(2)}%` : ''}</span>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
