@@ -77,8 +77,8 @@ export default function ViewInputPage() {
           </div>
         </div>
         <div className="flex gap-3">
-          <Link href={input.category === 'STOCK' ? '/inventory' : '/inputs'} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
-          <Link href={`/inputs/edit/${inputId}${input.category === 'STOCK' ? '?src=inventory' : ''}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
+          <Link href={input.category === 'STOCK' ? '/inventory' : '/supplies'} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+          <Link href={`/supplies/edit/${inputId}${input.category === 'STOCK' ? '?src=inventory' : ''}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
         </div>
       </div>
 

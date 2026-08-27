@@ -72,7 +72,7 @@ export default function ViewInputGroupPage() {
           <h1 className="text-4xl font-bold">{first.supplier || '—'}</h1>
           <span className={catBadge(first.category)}>{first.category}</span>
         </div>
-        <Link href={isStock ? '/inventory' : '/inputs'} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+        <Link href={isStock ? '/inventory' : '/supplies'} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
       </div>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
@@ -111,7 +111,7 @@ export default function ViewInputGroupPage() {
                     <p className="text-sm text-gray-400">Qty: {it.quantity} × {formatUSD(it.unit_price)} = {formatUSD((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))}</p>
                     {it.notes && <p className="text-sm text-gray-500 mt-0.5">{it.notes}</p>}
                   </div>
-                  <Link href={`/inputs/${it.id}${srcQ}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">VIEW</Link>
+                  <Link href={`/supplies/${it.id}${srcQ}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">VIEW</Link>
                 </div>
               </div>
             ))}

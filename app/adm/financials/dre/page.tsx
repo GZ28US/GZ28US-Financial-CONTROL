@@ -178,13 +178,13 @@ export default function DrePage() {
       parts: cap(partsL), services: cap(svcL), fltax: cap(taxL), discount: cap(discL), cost: cap(costL),
       payroll: cap([
         ...d.expenses.map((e: any) => ({ label: (e.origin === 'PERSONAL' ? 'PESSOAL · ' : '') + (e.description || e.type || '—'), amount: parseFloat(e.amount) || 0, href: '/staff' })),
-        ...d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: (x.category === 'CATS' ? 'MASCOTES · ' : 'APARTAMENTO · ') + (x.description || ''), amount: qtyLine(x), href: '/inputs' })),
+        ...d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: (x.category === 'CATS' ? 'MASCOTES · ' : 'APARTAMENTO · ') + (x.description || ''), amount: qtyLine(x), href: '/supplies' })),
         ...bySupplier('STAFF').map(r => ({ ...r, label: 'BENEFÍCIO · ' + r.label })),
-        ...d.inputs.filter((x: any) => x.category === 'TEAM').map((x: any) => ({ label: 'COMIDA/TEAM · ' + (x.description || ''), amount: qtyLine(x), href: '/inputs' })),
+        ...d.inputs.filter((x: any) => x.category === 'TEAM').map((x: any) => ({ label: 'COMIDA/TEAM · ' + (x.description || ''), amount: qtyLine(x), href: '/supplies' })),
       ]),
-      consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/inputs' }))),
+      consum: cap([...consumAcc.entries()].map(([label, amount]) => ({ label, amount, href: '/supplies' }))),
       fixed: cap(bySupplier('FIXED')), marketing: cap(bySupplier('MARKETING')), apps: cap(bySupplier('APP')), bank: cap(bySupplier('BANK')), fleetcost: cap(bySupplier('FLEET')), assets: cap(bySupplier('ASSET')), unclass: cap(bySupplier('UNCLASSIFIED')),
-      apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/inputs' }))),
+      apt: cap(d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: `${x.category} · ${x.description || ''}`, amount: qtyLine(x), href: '/supplies' }))),
       tools: cap([
         ...d.goods.filter((g: any) => qtyLine(g) < CAP_FLOOR).map((g: any) => ({ label: g.description || '—', amount: qtyLine(g), href: '/goods' })),
         ...d.goodExpenses.filter((g: any) => (parseFloat(g.amount) || 0) < CAP_FLOOR).map((g: any) => ({ label: g.description || '—', amount: parseFloat(g.amount) || 0, href: '/goods' })),

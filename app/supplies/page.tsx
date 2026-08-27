@@ -570,7 +570,7 @@ export default function InputsPage() {
 
       {/* TOP LINE: title + search + actions */}
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">SHOP INPUTS ({visible.length})</h1>
+        <h1 className="text-4xl font-bold">SUPPLIES ({visible.length})</h1>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
@@ -583,7 +583,7 @@ export default function InputsPage() {
             🧾 SCAN PURCHASE
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScan(e.target.files[0]) }} />
           </label>
-          <Link href={`/inputs/new?category=${category === 'ALL' ? 'CONSUMPTION' : category}`} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD MANUALLY</Link>
+          <Link href={`/supplies/new?category=${category === 'ALL' ? 'CONSUMPTION' : category}`} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD MANUALLY</Link>
         </div>
       </div>
 
@@ -666,10 +666,10 @@ export default function InputsPage() {
                     </div>
                     <div className="flex gap-3 flex-wrap shrink-0">
                       {single
-                        ? <Link href={`/inputs/${p.items[0].id}`} title="View purchase" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
-                        : p.groupId && <Link href={`/inputs/group/${p.groupId}`} title="View purchase" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
+                        ? <Link href={`/supplies/${p.items[0].id}`} title="View purchase" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
+                        : p.groupId && <Link href={`/supplies/group/${p.groupId}`} title="View purchase" className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
                       {single
-                        ? <Link href={`/inputs/edit/${p.items[0].id}`} title="Edit purchase" className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+                        ? <Link href={`/supplies/edit/${p.items[0].id}`} title="Edit purchase" className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                         : <button onClick={() => startEdit(p)} title="Edit purchase" className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>}
                       <button onClick={() => setConfirmPurchase(p)} title="Remove purchase" className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                     </div>
@@ -703,8 +703,8 @@ export default function InputsPage() {
                             ))}
                           </div>
                           <div className="flex gap-3 shrink-0">
-                            <Link href={`/inputs/${item.id}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
-                            <Link href={`/inputs/edit/${item.id}`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
+                            <Link href={`/supplies/${item.id}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
+                            <Link href={`/supplies/edit/${item.id}`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
                             <button onClick={() => setConfirmItemId(item.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
                           </div>
                         </div>

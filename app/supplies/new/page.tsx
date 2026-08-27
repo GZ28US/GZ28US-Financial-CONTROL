@@ -1,34 +1,43 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
+import PartPicker from '@/components/PartPicker'
 import { BASE_PATH } from '@/lib/utils'
+
+// Single report queued after a successful SAVE INPUT, drives the WhatsApp modal.
+type ExpenseReportItem = { item: string; amount: string; quantity: string }
+type ExpenseReport = {
+  category: string // STOCK or CONSUMPTION
+  supplier: string
+  date: string
+  receipt_url: string
+  items: ExpenseReportItem[]
+  report: boolean
+}
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
-function parseReceiptUrls(raw: string | null): string[] {
-  if (!raw) return []
-  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] } catch { return raw ? [raw] : [] }
+function formatDate(d: string) {
+  if (!isValidDate(d)) return '—'
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 const NEW_SUPPLIER = '+ NEW SUPPLIER'
 const categories = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS']
 
 function SupplierField({ suppliers, value, onChange }: { suppliers: string[], value: string, onChange: (v: string) => void }) {
-  const [showNew, setShowNew] = useState(false)
+  const [showNew, setShowNew] = useState(suppliers.length === 0)
   const [newValue, setNewValue] = useState('')
 
-  useEffect(() => {
-    if (suppliers.length === 0) setShowNew(true)
-    else if (value && !suppliers.includes(value)) { setShowNew(true); setNewValue(value) }
-  }, [suppliers])
+  useEffect(() => { if (suppliers.length === 0) setShowNew(true) }, [suppliers])
 
   function handleSelect(v: string) {
     if (v === NEW_SUPPLIER) { setShowNew(true); setNewValue(''); onChange('') }
@@ -56,14 +65,14 @@ function SupplierField({ suppliers, value, onChange }: { suppliers: string[], va
   )
 }
 
-export default function EditInputPage() {
-  const params = useParams()
+export default function NewInputPage() {
   const router = useRouter()
-  const inputId = String(params.id)
 
-  const [loading, setLoading] = useState(true)
   const [suppliers, setSuppliers] = useState<string[]>([])
+  // STOCK items live in the `inventory` table (?src=inventory), consumption in `inputs`.
+  const [table, setTable] = useState<'inputs' | 'inventory'>('inputs')
   const [description, setDescription] = useState('')
+  const [partId, setPartId] = useState('')   // entrada linkada ao catálogo (pré-P1 Crew Chief)
   const [category, setCategory] = useState('STOCK')
   const [quantity, setQuantity] = useState('1')
   const [totalPrice, setTotalPrice] = useState('')
@@ -71,47 +80,33 @@ export default function EditInputPage() {
   const [supplier, setSupplier] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
   const [notes, setNotes] = useState('')
-  const [source, setSource] = useState('')
+  const [source, setSource] = useState(DEFAULT_SOURCE)
   // Universal payment block (inputs keep their own `source` field — no write-through).
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [openReceipts, setOpenReceipts] = useState(false)
-  // STOCK rows live in `inventory` (reached via ?src=inventory); consumption in `inputs`.
-  const [table, setTable] = useState<'inputs' | 'inventory'>('inputs')
-  // Peça DOADA (sobra de um carro) não tem custo: o valor é MSRP, e o custo é zero.
-  const [donated, setDonated] = useState(false)
+
+  // WhatsApp report state — set after a successful SAVE, drives the modal.
+  const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
+  const [sendingReports, setSendingReports] = useState(false)
 
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
-    setTable(t)
     loadSuppliers()
-    loadInput(t)
+    // Default the category + target table from the query params (set by the INPUTS
+    // vs INVENTORY list pages) so each "ADD NEW" lands in the right place.
+    const sp = new URLSearchParams(window.location.search)
+    const c = sp.get('category')
+    if (c && categories.includes(c)) setCategory(c)
+    if (sp.get('src') === 'inventory') setTable('inventory')
   }, [])
+
+  // After saving, return to the list the item belongs to.
+  const listHref = () => (table === 'inventory' ? '/inventory' : '/supplies')
 
   async function loadSuppliers() {
     const { data } = await supabase.from('suppliers').select('name').order('name')
     if (data) setSuppliers(data.map(s => s.name))
-  }
-
-  async function loadInput(t: 'inputs' | 'inventory') {
-    const { data, error } = await supabase.from(t).select('*').eq('id', inputId).single()
-    if (error || !data) { alert('Input not found'); router.push(t === 'inventory' ? '/inventory' : '/inputs'); return }
-    setDescription(data.description || '')
-    setCategory(data.category || 'STOCK')
-    setDonated((data.source_type || '') === 'DONATED')
-    setQuantity(String(data.quantity || 1))
-    const computedTotal = (parseFloat(data.unit_price) || 0) * (parseFloat(data.quantity) || 1)
-    setTotalPrice(computedTotal > 0 ? computedTotal.toFixed(2) : '')
-    setPurchaseDate(data.purchase_date || '')
-    setSupplier(data.supplier || '')
-    setOrderNumber(data.order_number || '')
-    setNotes(data.notes || '')
-    setSource(data.source || DEFAULT_SOURCE)
-    // Initialize the payment block from the row so an untouched save round-trips.
-    setPayment(paymentFromRow(data))
-    setReceiptUrls(parseReceiptUrls(data.receipt_url))
-    setLoading(false)
   }
 
   async function ensureSupplier(name: string) {
@@ -130,29 +125,25 @@ export default function EditInputPage() {
     const urls = [...receiptUrls]
     for (const file of Array.from(files)) {
       const ext = file.name.split('.').pop()
-      const path = `inputs/${inputId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const path = `inputs/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { error } = await supabase.storage.from('good-receipts').upload(path, file, { upsert: true })
       if (error) { alert(error.message); continue }
       const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
       urls.push(urlData.publicUrl)
     }
     setReceiptUrls(urls)
-    await supabase.from('inputs').update({ receipt_url: urls.length > 0 ? JSON.stringify(urls) : null }).eq('id', inputId)
     setUploading(false)
   }
 
-  async function removeReceiptUrl(index: number) {
-    const updated = receiptUrls.filter((_, i) => i !== index)
-    setReceiptUrls(updated)
-    await supabase.from('inputs').update({ receipt_url: updated.length > 0 ? JSON.stringify(updated) : null }).eq('id', inputId)
-  }
+  function removeReceiptUrl(index: number) { setReceiptUrls(receiptUrls.filter((_, i) => i !== index)) }
 
   async function saveInput() {
     if (!description) { alert('Please enter a description'); return }
     await ensureSupplier(supplier)
 
-    const { error } = await supabase.from(table).update({
+    const { error } = await supabase.from(table).insert([{
       description, category,
+      part_id: partId || null,
       quantity: qty || 1,
       unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
@@ -164,29 +155,134 @@ export default function EditInputPage() {
       // Registered = paid (Comprovante = PAGA); payment_date is a mirror of the
       // single DATE — never a second date. No date yet → both stay empty.
       ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', inputId)
+    }])
     if (error) { alert(error.message); return }
-    router.push(category === 'STOCK' ? '/inventory' : '/inputs')
+
+    // Queue the optional WhatsApp report for this input.
+    if (total > 0) {
+      const report: ExpenseReport = {
+        category,
+        supplier: supplier.trim(),
+        date: purchaseDate,
+        receipt_url: receiptUrls[0] || '',
+        items: [{ item: description, amount: String(unitPrice), quantity: String(qty || 1) }],
+        report: true,
+      }
+      setExpenseReports([report])
+      return
+    }
+
+    router.push(listHref())
+  }
+
+  function buildExpenseCaption(exp: ExpenseReport) {
+    const dateStr = isValidDate(exp.date) ? formatDate(exp.date) : '—'
+    const t = exp.items.reduce((s, i) => s + (parseFloat(i.amount) || 0) * (parseFloat(i.quantity) || 1), 0)
+    const amountStr = formatUSD(t)
+    const lines: string[] = [
+      `*EXPENSE — ${exp.category}*`,
+      `${dateStr} — *${amountStr}*`,
+    ]
+    if (exp.supplier && exp.supplier.trim()) lines.push(exp.supplier.trim())
+
+    // Item bullets — always shown.
+    lines.push('')
+    exp.items.forEach(it => {
+      const qtyN = parseFloat(it.quantity) || 1
+      const price = parseFloat(it.amount) || 0
+      const itemTotal = price * qtyN
+      lines.push(`• ${it.item} — ${qtyN} × ${formatUSD(price)} = ${formatUSD(itemTotal)}`)
+    })
+
+    return lines.join('\n') + '\n\nSent by GZ28 Control App'
+  }
+
+  async function sendExpenseReports() {
+    const chosen = (expenseReports || []).filter(r => r.report)
+    setSendingReports(true)
+    let failures = 0
+    for (const exp of chosen) {
+      const caption = buildExpenseCaption(exp)
+      const payload: any = { body: caption }
+      if (exp.receipt_url) {
+        payload.documentUrl = exp.receipt_url
+        payload.filename = `expense-${exp.supplier || 'purchase'}.${exp.receipt_url.split('.').pop()?.split('?')[0] || 'pdf'}`
+      }
+      try {
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!data.ok) failures++
+      } catch {
+        failures++
+      }
+    }
+    setSendingReports(false)
+    if (failures > 0) alert(`${failures} expense report(s) failed to send. The input was still saved.`)
+    setExpenseReports(null)
+    router.push(listHref())
   }
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
   const selectClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 
-  if (loading) return (
-    <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
-  )
-
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">EDIT INPUT</h1>
+
+      {/* REPORT ON WHATSAPP? */}
+      {expenseReports && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">REPORT ON WHATSAPP?</h2>
+            </div>
+            <p className="text-gray-400 text-base">Choose whether to report this input to the WhatsApp group.</p>
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {expenseReports.map((exp, i) => {
+                const t = exp.items.reduce((s, it) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
+                const titleText = exp.items.map(it => it.item).filter(Boolean).join(', ')
+                return (
+                  <div key={i} className="border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold">EXPENSE — {exp.category} — {formatUSD(t)}</p>
+                      <p className="text-sm text-gray-400 truncate" title={`${titleText || 'Input'}${exp.supplier ? ` — ${exp.supplier}` : ''}`}>{titleText || 'Input'}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
+                      <p className="text-sm text-gray-400">{isValidDate(exp.date) ? formatDate(exp.date) : 'No date'}</p>
+                      <p className="text-sm text-gray-500">{exp.receipt_url ? '📎 Receipt attached' : 'No receipt (text only)'}</p>
+                    </div>
+                    <button
+                      onClick={() => { const a = [...expenseReports]; a[i] = { ...a[i], report: !a[i].report }; setExpenseReports(a) }}
+                      className={`px-5 py-3 rounded-2xl font-bold text-base whitespace-nowrap ${exp.report ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}
+                    >
+                      {exp.report ? 'REPORT: YES' : 'REPORT: NO'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-3 pt-2 border-t border-gray-700">
+              <div className="flex-1 text-gray-400 font-bold self-center">
+                {expenseReports.filter(r => r.report).length} of {expenseReports.length} will be reported
+              </div>
+              <button onClick={sendExpenseReports} disabled={sendingReports} className={`px-6 py-3 rounded-2xl font-bold text-lg ${sendingReports ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
+                {sendingReports ? 'SENDING...' : 'DONE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <h1 className="text-4xl font-bold mb-8">ADD A NEW SUPPLY</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
         <div>
+          <div className="mb-4"><PartPicker onPick={(p) => { setPartId(p.id); if (!description) setDescription(p.alias || p.item); if (p.supplier) setSupplier(p.supplier) }} /></div>
           <label className="block mb-2 text-lg font-bold">DESCRIPTION</label>
-          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} />
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="e.g. Engine Oil 5W-30" />
         </div>
 
         <div>
@@ -197,65 +293,49 @@ export default function EditInputPage() {
         </div>
 
         <div>
-          {/* Peça DOADA: quem entregou é o CARRO, não um fornecedor — e nada foi pago,
-              então ORDER NUMBER (que guarda a invoice de origem), PAID FROM, RECEIPT e o
-              bloco de pagamento não aparecem (lei 22/ago/2026). */}
-          <label className="block mb-2 text-lg font-bold">{donated ? 'DONOR' : 'SUPPLIER'}</label>
-          {donated
-            ? <div className={`${inputClass} text-gray-300`}>{supplier || '—'}</div>
-            : <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />}
+          <label className="block mb-2 text-lg font-bold">SUPPLIER</label>
+          <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
         </div>
 
-        {!donated && (
         <div>
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
         </div>
-        )}
 
-        {!donated && (
         <div>
           <label className="block mb-2 text-lg font-bold">PAID FROM</label>
           <SourceSelect value={source} onChange={setSource} className={selectClass} />
         </div>
-        )}
 
         <div className="flex gap-4">
           <div className="flex-1">
             <label className="block mb-2 text-lg font-bold">QUANTITY</label>
-            <input type="text" inputMode="decimal" value={quantity} onChange={(e) => { if (isNumeric(e.target.value)) setQuantity(e.target.value) }} className={inputClass} />
+            <input type="text" inputMode="decimal" value={quantity} onChange={(e) => { if (isNumeric(e.target.value)) setQuantity(e.target.value) }} className={inputClass} placeholder="1" />
           </div>
           <div className="flex-1">
-            <label className="block mb-2 text-lg font-bold">{donated ? 'TOTAL MSRP' : 'TOTAL PRICE'}</label>
+            <label className="block mb-2 text-lg font-bold">TOTAL PRICE</label>
             <div className="relative">
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-              <input type="text" inputMode="decimal" value={totalPrice} onChange={(e) => { if (isNumeric(e.target.value)) setTotalPrice(e.target.value) }} className={`${inputClass} pl-10`} />
+              <input type="text" inputMode="decimal" value={totalPrice} onChange={(e) => { if (isNumeric(e.target.value)) setTotalPrice(e.target.value) }} className={`${inputClass} pl-10`} placeholder="0.00" />
             </div>
           </div>
         </div>
 
         <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 space-y-2">
           <div className="flex justify-between items-center">
-            <span className="text-gray-400 font-bold">{donated ? 'UNIT MSRP' : 'UNIT PRICE'}</span>
+            <span className="text-gray-400 font-bold">UNIT PRICE</span>
             <span className="text-lg font-bold text-gray-300">{formatUSD(unitPrice)}</span>
           </div>
           <div className="flex justify-between items-center border-t border-gray-700 pt-2">
-            <span className="text-gray-400 font-bold">{donated ? 'TOTAL MSRP' : 'TOTAL COST'}</span>
+            <span className="text-gray-400 font-bold">TOTAL COST</span>
             <span className="text-xl font-bold">{formatUSD(total)}</span>
           </div>
-          {donated && (
-            <div className="flex justify-between items-center border-t border-gray-700 pt-2">
-              <span className="text-gray-400 font-bold">OUR COST</span>
-              <span className="text-xl font-bold text-orange-300">DONATED</span>
-            </div>
-          )}
         </div>
 
         {/* ONE date only (lei 18/ago, estendida aos INPUTS 19/ago): the day it was
             bought IS the day it was paid — payment_date mirrors this field. */}
         <DatePicker label="DATE" value={purchaseDate} onChange={setPurchaseDate} />
 
-        {!donated && (
         <div>
           <label className="block mb-2 text-lg font-bold">RECEIPT</label>
           <div className="flex items-center gap-3 flex-wrap">
@@ -282,18 +362,17 @@ export default function EditInputPage() {
             )}
           </div>
         </div>
-        )}
 
-        {/* UNIVERSAL PAYMENT BLOCK — payment date = purchase date when PAID */}
-        {!donated && <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />}
+        {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
+        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
 
         <div>
           <label className="block mb-2 text-lg font-bold">NOTES</label>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Human notes only — tracking, payment and order data have their own fields." className={`${inputClass} resize-y`} />
         </div>
 
-        <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
-        <a href={`${BASE_PATH}${category === 'STOCK' ? '/inventory' : '/inputs'}`} className="text-gray-400 text-xl">Cancel</a>
+        <button onClick={saveInput} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE INPUT</button>
+        <a href={`${BASE_PATH}${listHref()}`} className="text-gray-400 text-xl">Cancel</a>
       </div>
     </main>
   )

@@ -151,7 +151,7 @@ export default function PaymentsPage() {
       href: `${BASE_PATH}/costs/fixed/${e.supplier_id}`,
     }))
 
-    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/inputs'), ...purchaseRows(goodsD || [], 'GOOD', '/goods'), ...fixedCostRows, ...saleExpenseRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/supplies'), ...purchaseRows(goodsD || [], 'GOOD', '/goods'), ...fixedCostRows, ...saleExpenseRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     setClientRows(cRows)
     setGzRows(gRows)

@@ -70,7 +70,7 @@ const MENU: MenuItem[] = [
       ['/costs/bank', 'BANK FEES'],
       ['/costs/assets', 'MARKETING'],
       ['/goods', 'ASSETS'],
-      ['/inputs', 'INPUTS'],
+      ['/supplies', 'SUPPLIES'],
       ['/staff', 'STAFF'],
     ],
   },

@@ -503,7 +503,7 @@ export default function InventoryPage() {
             🧾 SCAN PURCHASE
             <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleScan(e.target.files[0]) }} />
           </label>
-          <Link href="/inputs/new?category=STOCK&src=inventory" className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD MANUALLY</Link>
+          <Link href="/supplies/new?category=STOCK&src=inventory" className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold whitespace-nowrap">ADD MANUALLY</Link>
         </div>
       </div>
 
@@ -563,7 +563,7 @@ export default function InventoryPage() {
                         </p>
                       </div>
                       <div className="flex gap-3 flex-wrap shrink-0">
-                        {p.groupId && <Link href={`/inputs/group/${p.groupId}?src=inventory`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
+                        {p.groupId && <Link href={`/supplies/group/${p.groupId}?src=inventory`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
                         <button onClick={() => startEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</button>
                         <button onClick={() => setConfirmPurchase(p)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
                       </div>
@@ -590,8 +590,8 @@ export default function InventoryPage() {
                             </div>
                             <div className="flex gap-3 shrink-0">
                               <Link href={`/inventory/sell/${item.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-2xl font-bold text-sm">💲 SELL</Link>
-                              <Link href={`/inputs/${item.id}?src=inventory`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
-                              <Link href={`/inputs/edit/${item.id}?src=inventory`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
+                              <Link href={`/supplies/${item.id}?src=inventory`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
+                              <Link href={`/supplies/edit/${item.id}?src=inventory`} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</Link>
                               <button onClick={() => setConfirmItemId(item.id)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
                             </div>
                           </div>

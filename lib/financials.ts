@@ -287,7 +287,7 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   }
   // Consumíveis & diversos (inputs: oficina, apartamento, gatos — D10 decide depois).
   for (const x of d.inputs) {
-    push(x.payment_date, 'OPER', 'MISC', -qtyLine(x), (x.category || 'INPUT'), x.description || '', '/inputs')
+    push(x.payment_date, 'OPER', 'MISC', -qtyLine(x), (x.category || 'SUPPLY'), x.description || '', '/supplies')
     fund(x, x.payment_date, qtyLine(x), x.description || '')
   }
   // Investimento: equipamento (GOODS) e estoque comprado.
