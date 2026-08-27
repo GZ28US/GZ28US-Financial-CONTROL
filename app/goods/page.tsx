@@ -31,9 +31,18 @@ const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 // copiar nada: o mesmo dinheiro nunca vive em dois lugares.
 type FleetExpense = { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null }
 const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true }
+// Duas coisas diferentes se chamam "nota" num carro:
+//   titleNotes  — rides.title_notes, o DOSSIÊ do documento. Bloco único, escrito
+//                 em TITLE & DOCS na tela do ride. Aqui só se lê.
+//   notes       — invoice_notes, a LISTA de anotações do carro. É nela que o
+//                 NEW / EDIT / REMOVE trabalha (Márcio, 27/ago/2026) — só uma
+//                 lista aceita "novo".
+type FleetNote = { id: string; note: string | null }
+const emptyNoteForm = { id: '', carId: '', invoiceId: '', text: '' }
 type FleetCar = {
   id: string; code: string; name: string; spec: string
   invoiceId: string | null
+  notes: FleetNote[]
   vin: string | null; plate: string | null
   scope: string; titleTransferred: boolean; titleNotes: string | null
   expenses: FleetExpense[]; total: number
@@ -104,6 +113,9 @@ export default function GoodsPage() {
   const [savingFleetExp, setSavingFleetExp] = useState(false)
   const [confirmFleetExp, setConfirmFleetExp] = useState<string | null>(null)
   const [notesCar, setNotesCar] = useState<FleetCar | null>(null)
+  const [noteForm, setNoteForm] = useState<typeof emptyNoteForm | null>(null)
+  const [savingNote, setSavingNote] = useState(false)
+  const [confirmNote, setConfirmNote] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // Group-level removal confirmation
@@ -138,6 +150,38 @@ export default function GoodsPage() {
   // A despesa do carro da frota vive em invoice_expenses, na invoice do proprio
   // carro — a mesma coisa que a tela do ride faz. Aqui e so o outro lugar de
   // onde da pra mexer nela.
+  async function saveNote() {
+    if (!noteForm) return
+    if (!noteForm.text.trim()) { alert('Escreva a nota.'); return }
+    setSavingNote(true)
+    try {
+      if (noteForm.id) {
+        const { error } = await supabase.from('invoice_notes').update({ note: noteForm.text.trim() }).eq('id', noteForm.id)
+        if (error) { alert(error.message); return }
+      } else {
+        if (!noteForm.invoiceId) { alert('Este carro nao tem invoice para receber a nota.'); return }
+        const { error } = await supabase.from('invoice_notes').insert([{ invoice_id: noteForm.invoiceId, note: noteForm.text.trim() }])
+        if (error) { alert(error.message); return }
+      }
+      setNoteForm(null)
+      await reloadNotesCar(noteForm.carId)
+    } finally { setSavingNote(false) }
+  }
+
+  async function removeNote(id: string, carId: string) {
+    const { error } = await supabase.from('invoice_notes').delete().eq('id', id)
+    if (error) { alert(error.message); return }
+    setConfirmNote(null)
+    await reloadNotesCar(carId)
+  }
+
+  // Recarrega a frota e mantem o pop-up aberto no mesmo carro.
+  async function reloadNotesCar(carId: string) {
+    const fresh = await loadFleet()
+    const car = (fresh || []).find(c => c.id === carId) || null
+    setNotesCar(car)
+  }
+
   async function saveFleetExp() {
     if (!fleetForm) return
     if (!fleetForm.item.trim()) { alert('Descreva a despesa.'); return }
@@ -183,6 +227,9 @@ export default function GoodsPage() {
     const { data: exps } = invIds.length
       ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date').in('invoice_id', invIds)
       : { data: [] as any[] }
+    const { data: notesData } = invIds.length
+      ? await supabase.from('invoice_notes').select('id, invoice_id, note').in('invoice_id', invIds).order('created_at', { ascending: true })
+      : { data: [] as any[] }
     const rideOfInv = new Map((invs || []).map((i: any) => [i.id, i.ride_id]))
     const byRide = new Map<string, FleetExpense[]>()
     for (const e of (exps || [])) {
@@ -194,9 +241,12 @@ export default function GoodsPage() {
     const cars: FleetCar[] = rides.map((r: any) => {
       const ex = (byRide.get(r.id) || []).sort((a, b) => String(b.payment_date || '').localeCompare(String(a.payment_date || '')))
       const rideInvs = (invs || []).filter((i: any) => i.ride_id === r.id)
+      const rideInvIds = new Set(rideInvs.map((i: any) => i.id))
+      const rideNotes = (notesData || []).filter((n: any) => rideInvIds.has(n.invoice_id)).map((n: any) => ({ id: n.id, note: n.note }))
       return {
         id: r.id, code: r.project_code || '—', name: r.project_name || '',
         invoiceId: rideInvs.length ? rideInvs[0].id : null,
+        notes: rideNotes,
         spec: [r.year, r.brand || r.manufacturer, r.model, r.version].filter(Boolean).join(' '),
         vin: r.vin || null, plate: r.plate || null,
         scope: r.title_scope, titleTransferred: !!r.title_transferred, titleNotes: r.title_notes || null,
@@ -204,6 +254,7 @@ export default function GoodsPage() {
       }
     }).sort((a: FleetCar, b: FleetCar) => b.total - a.total)
     setFleet(cars)
+    return cars
   }
 
   async function loadGoods() {
@@ -706,9 +757,71 @@ export default function GoodsPage() {
               </div>
               <button onClick={() => setNotesCar(null)} className="text-gray-400 hover:text-white text-2xl font-bold shrink-0">✕</button>
             </div>
-            <p className="text-base text-gray-300 whitespace-pre-wrap overflow-y-auto">{notesCar.titleNotes}</p>
+            <div className="overflow-y-auto space-y-6">
+              {/* A LISTA — é aqui que NEW / EDIT / REMOVE trabalham. */}
+              <div>
+                <div className="flex items-center justify-between gap-4 mb-3">
+                  <h3 className="text-lg font-bold">NOTES ({notesCar.notes.length})</h3>
+                  {!noteForm && (
+                    <button onClick={() => setNoteForm({ ...emptyNoteForm, carId: notesCar.id, invoiceId: notesCar.invoiceId || '' })} className="bg-green-700 hover:bg-green-600 px-5 py-2 rounded-2xl font-bold">+ NEW</button>
+                  )}
+                </div>
+
+                {noteForm && noteForm.carId === notesCar.id && (
+                  <div className="bg-gray-950 border border-blue-700 rounded-2xl p-4 mb-3 space-y-3">
+                    <textarea
+                      value={noteForm.text}
+                      onChange={(e) => setNoteForm({ ...noteForm, text: e.target.value })}
+                      rows={4}
+                      placeholder="O que aconteceu com o carro…"
+                      className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-base resize-none"
+                    />
+                    <div className="flex gap-3 flex-wrap">
+                      <button onClick={saveNote} disabled={savingNote} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-2 rounded-2xl font-bold">{savingNote ? 'SAVING…' : 'SAVE'}</button>
+                      <button onClick={() => setNoteForm(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-2 rounded-2xl font-bold">CANCEL</button>
+                    </div>
+                  </div>
+                )}
+
+                {notesCar.notes.length === 0 ? (
+                  <p className="text-base text-gray-500">Nenhuma nota ainda.</p>
+                ) : (
+                  <div className="border border-gray-700 rounded-2xl overflow-hidden">
+                    {notesCar.notes.map((n, i) => (
+                      <div key={n.id} className={`flex items-start justify-between gap-4 px-4 py-3 ${i < notesCar.notes.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <p className="flex-1 text-base text-gray-300 whitespace-pre-wrap">{n.note}</p>
+                        <div className="flex gap-2 shrink-0">
+                          {confirmNote === n.id ? (
+                            <>
+                              <button onClick={() => removeNote(n.id, notesCar.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">CONFIRM</button>
+                              <button onClick={() => setConfirmNote(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => setNoteForm({ id: n.id, carId: notesCar.id, invoiceId: notesCar.invoiceId || '', text: n.note || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setConfirmNote(n.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* O DOSSIÊ DO DOCUMENTO — bloco único, mora no ride. Só leitura
+                  aqui, para não existirem dois lugares editando o mesmo texto. */}
+              {notesCar.titleNotes && (
+                <div>
+                  <h3 className="text-lg font-bold mb-2">TITLE &amp; DOCS</h3>
+                  <p className="text-sm text-gray-400 mb-2">Dossiê do documento — edita-se no EDIT do carro.</p>
+                  <p className="text-base text-gray-300 whitespace-pre-wrap bg-gray-950 border border-gray-800 rounded-2xl p-4">{notesCar.titleNotes}</p>
+                </div>
+              )}
+            </div>
+
             <div className="pt-4 mt-4 border-t border-gray-800 flex justify-end">
-              <button onClick={() => setNotesCar(null)} className="bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-2xl font-bold">CLOSE</button>
+              <button onClick={() => { setNoteForm(null); setConfirmNote(null); setNotesCar(null) }} className="bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-2xl font-bold">CLOSE</button>
             </div>
           </div>
         </div>
@@ -749,9 +862,9 @@ export default function GoodsPage() {
                 </div>
 
                 <div className="flex gap-3 mt-4 flex-wrap">
-                  {car.titleNotes && (
-                    <button onClick={() => setNotesCar(car)} className="bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold">NOTES</button>
-                  )}
+                  <button onClick={() => setNotesCar(car)} className="bg-amber-700 hover:bg-amber-600 px-5 py-3 rounded-2xl font-bold">
+                    NOTES{car.notes.length ? ` (${car.notes.length})` : ''}
+                  </button>
                   <button
                     onClick={() => setOpenCar(prev => { const n = new Set(prev); n.has(car.id) ? n.delete(car.id) : n.add(car.id); return n })}
                     className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold"
