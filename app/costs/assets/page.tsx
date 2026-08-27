@@ -21,7 +21,7 @@ import { formatUSD } from '@/lib/utils'
 // do módulo APPS. Motivo: TODOS os relatórios já leem essas tabelas, então o
 // lançamento entra no custo do mês sozinho, sem costurar relatório nenhum.
 
-const TYPES = { ASSET: 'ASSETS', MARKETING: 'MARKETING' } as const
+const TYPES = { ASSET: 'EVENTS', MARKETING: 'MARKETING' } as const
 type Kind = keyof typeof TYPES
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -93,7 +93,7 @@ export default function AssetsPage() {
       <Header />
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">MARKETING &amp; EVENTS ({rows.length})</h1>
+        <h1 className="text-4xl font-bold">MARKETING ({rows.length})</h1>
         <input
           type="text"
           value={search}

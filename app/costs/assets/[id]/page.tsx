@@ -248,7 +248,7 @@ export default function AssetSupplierViewPage() {
       )}
 
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
-        <Link href="/costs/assets" className="text-gray-400 text-lg hover:text-white">← Marketing &amp; Events</Link>
+        <Link href="/costs/assets" className="text-gray-400 text-lg hover:text-white">← Marketing</Link>
         <div className="flex gap-3 flex-wrap">
           <button onClick={openAdd} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl text-lg font-bold">+ ADD EXPENSE</button>
           <Link href={`/costs/fixed/edit/${s.id}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-3 rounded-2xl text-lg font-bold">EDIT</Link>
@@ -258,7 +258,7 @@ export default function AssetSupplierViewPage() {
       <div className="flex items-center gap-3 mb-1 flex-wrap">
         <h1 className="text-4xl font-bold">{s.description || s.company || '—'}</h1>
         <span className={`px-3 py-1 rounded-full text-sm font-bold ${isAsset ? 'bg-purple-800 text-purple-100' : 'bg-amber-800 text-amber-100'}`}>
-          {isAsset ? 'ASSET' : 'MARKETING'}
+          {isAsset ? 'EVENTS' : 'MARKETING'}
         </span>
       </div>
       <p className="text-gray-400 mt-1 mb-2">
