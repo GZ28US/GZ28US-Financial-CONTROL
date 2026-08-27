@@ -31,6 +31,8 @@ export default function EditFixedCostSupplierPage() {
   const [endDate, setEndDate] = useState('')
   const [periodicity, setPeriodicity] = useState('MONTHLY')
   const [costType, setCostType] = useState('FIXED')
+  // ATIVAÇÃO (26/ago): traje sem contato/periodicidade/dias — ver fixed/new.
+  const isActivation = ['ASSET', 'MARKETING', 'MERCHANDISE'].includes(costType)
   const [day1, setDay1] = useState('')
   const [amount1, setAmount1] = useState('')
   const [show2nd, setShow2nd] = useState(false)
@@ -77,16 +79,16 @@ export default function EditFixedCostSupplierPage() {
       preferred_contact: preferred,
       date_entry: isValidDate(startDate) ? startDate : null,
       date_conclusion: isValidDate(endDate) ? endDate : null,
-      periodicity,
+      periodicity: isActivation ? 'SINGLE' : periodicity,
       cost_type: costType,
-      payment_day_1: day1 !== '' ? (parseInt(day1, 10) || null) : null,
-      amount_1: amount1 !== '' ? (parseFloat(amount1) || 0) : null,
-      payment_day_2: (show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
-      amount_2: (show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
+      payment_day_1: (!isActivation && day1 !== '') ? (parseInt(day1, 10) || null) : null,
+      amount_1: (!isActivation && amount1 !== '') ? (parseFloat(amount1) || 0) : null,
+      payment_day_2: (!isActivation && show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
+      amount_2: (!isActivation && show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
       updated_at: new Date().toISOString(),
     }).eq('id', id)
     if (error) { alert(error.message); setSaving(false); return }
-    router.push(costType === 'APP' ? `/costs/apps/${id}` : `/costs/fixed/${id}`)
+    router.push(isActivation ? `/costs/assets/${id}` : costType === 'APP' ? `/costs/apps/${id}` : `/costs/fixed/${id}`)
   }
 
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
@@ -94,11 +96,12 @@ export default function EditFixedCostSupplierPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">EDIT FIXED COST SUPPLIER</h1>
+      <h1 className="text-4xl font-bold mb-8">{isActivation ? 'EDIT ACTIVATION' : 'EDIT FIXED COST SUPPLIER'}</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
         <Field label="DESCRIPTION" value={description} onChange={setDescription} />
         <Field label="COMPANY" value={company} onChange={setCompany} />
+        {!isActivation && (<>
         <Field label="MAIN CONTACT NAME" value={contactName} onChange={setContactName} />
         <Field label="PHONE" value={phone} onChange={setPhone} placeholder="+1 555 000 0000" />
         <Field label="EMAIL" value={email} onChange={setEmail} type="email" />
@@ -108,23 +111,27 @@ export default function EditFixedCostSupplierPage() {
             {CONTACTS.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
+        </>)}
 
         <div className="border-t border-gray-800 pt-5 mt-2">
-          <h2 className="text-2xl font-bold mb-4">PAYMENT SCHEDULE</h2>
+          <h2 className="text-2xl font-bold mb-4">{isActivation ? 'ACTIVATION WINDOW' : 'PAYMENT SCHEDULE'}</h2>
           <div className="grid grid-cols-1 gap-5">
-            <DatePicker label="START DATE" value={startDate} onChange={setStartDate} />
+            <DatePicker label={isActivation ? 'ACTIVATION START' : 'START DATE'} value={startDate} onChange={setStartDate} />
+            {!isActivation && (
             <div>
               <label className="block mb-2 text-sm text-gray-400 font-bold">PAYMENT PERIODICITY</label>
               <select value={periodicity} onChange={(e) => setPeriodicity(e.target.value)} className={inputClass}>
                 {PERIODICITY.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
+            )}
             <div>
               <label className="block mb-2 text-sm text-gray-400 font-bold">DRE BUCKET <span className="font-normal">— em que linha do DRE/DFC este fornecedor entra (não muda a recorrência)</span></label>
               <select value={costType} onChange={(e) => setCostType(e.target.value)} className={inputClass}>
                 {COST_TYPES.map((t) => <option key={t} value={t}>{COST_TYPE_LABEL[t] || t}</option>)}
               </select>
             </div>
+            {!isActivation && (
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 space-y-4">
               <div className="flex gap-3 items-end flex-wrap">
                 <div className="w-28">
@@ -163,7 +170,8 @@ export default function EditFixedCostSupplierPage() {
                 </div>
               )}
             </div>
-            <DatePicker label="END DATE" value={endDate} onChange={setEndDate} />
+            )}
+            <DatePicker label={isActivation ? 'ACTIVATION END' : 'END DATE'} value={endDate} onChange={setEndDate} />
           </div>
         </div>
       </div>

@@ -28,8 +28,13 @@ export default function NewFixedCostSupplierPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [periodicity, setPeriodicity] = useState('MONTHLY')
-  // ?type=APP (vindo da página APPS) pré-seleciona o tipo e devolve pra lá.
-  const [costType, setCostType] = useState(() => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('type') === 'APP') ? 'APP' : 'FIXED')
+  // ?type=X pré-seleciona o tipo e devolve pra página de origem (APP vem de
+  // APPS; ASSET/MARKETING/MERCHANDISE vêm do + NEW ACTIVATION em MARKETING).
+  const [costType, setCostType] = useState(() => { const t = (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('type')) || ''; return COST_TYPES.includes(t) ? t : 'FIXED' })
+  // ATIVAÇÃO (26/ago): o mesmo formulário veste dois trajes. Ativação não é
+  // contraparte recorrente — sem contato, sem periodicidade, sem dias de
+  // pagamento (o gerador da HOME também as ignora); as datas viram a JANELA.
+  const isActivation = ['ASSET', 'MARKETING', 'MERCHANDISE'].includes(costType)
   const [day1, setDay1] = useState('')
   const [amount1, setAmount1] = useState('')
   const [show2nd, setShow2nd] = useState(false)
@@ -51,26 +56,27 @@ export default function NewFixedCostSupplierPage() {
       preferred_contact: preferred,
       date_entry: isValidDate(startDate) ? startDate : null,
       date_conclusion: isValidDate(endDate) ? endDate : null,
-      periodicity,
+      periodicity: isActivation ? 'SINGLE' : periodicity,
       cost_type: costType,
-      payment_day_1: day1 !== '' ? (parseInt(day1, 10) || null) : null,
-      amount_1: amount1 !== '' ? (parseFloat(amount1) || 0) : null,
-      payment_day_2: (show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
-      amount_2: (show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
+      payment_day_1: (!isActivation && day1 !== '') ? (parseInt(day1, 10) || null) : null,
+      amount_1: (!isActivation && amount1 !== '') ? (parseFloat(amount1) || 0) : null,
+      payment_day_2: (!isActivation && show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
+      amount_2: (!isActivation && show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
       updated_at: new Date().toISOString(),
     })
     if (error) { alert(error.message); setSaving(false); return }
-    router.push(costType === 'APP' ? '/costs/apps' : '/costs/fixed')
+    router.push(isActivation ? '/costs/assets' : costType === 'APP' ? '/costs/apps' : '/costs/fixed')
   }
 
   return (
     <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
-      <h1 className="text-4xl font-bold mb-8">NEW FIXED COST SUPPLIER</h1>
+      <h1 className="text-4xl font-bold mb-8">{isActivation ? 'NEW ACTIVATION' : 'NEW FIXED COST SUPPLIER'}</h1>
 
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
-        <Field label="DESCRIPTION" value={description} onChange={setDescription} placeholder="e.g. Internet, Rent, Accounting…" />
-        <Field label="COMPANY" value={company} onChange={setCompany} placeholder="Company name" />
+        <Field label="DESCRIPTION" value={description} onChange={setDescription} placeholder={isActivation ? 'e.g. SEMA 2026, IG Ads Q3, Merch drop #1…' : 'e.g. Internet, Rent, Accounting…'} />
+        <Field label="COMPANY" value={company} onChange={setCompany} placeholder={isActivation ? 'Who gets paid (optional)' : 'Company name'} />
+        {!isActivation && (<>
         <Field label="MAIN CONTACT NAME" value={contactName} onChange={setContactName} placeholder="Contact person" />
         <Field label="PHONE" value={phone} onChange={setPhone} placeholder="+1 555 000 0000" />
         <Field label="EMAIL" value={email} onChange={setEmail} placeholder="contact@company.com" type="email" />
@@ -80,23 +86,27 @@ export default function NewFixedCostSupplierPage() {
             {CONTACTS.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
+        </>)}
 
         <div className="border-t border-gray-800 pt-5 mt-2">
-          <h2 className="text-2xl font-bold mb-4">PAYMENT SCHEDULE</h2>
+          <h2 className="text-2xl font-bold mb-4">{isActivation ? 'ACTIVATION WINDOW' : 'PAYMENT SCHEDULE'}</h2>
           <div className="grid grid-cols-1 gap-5">
-            <DatePicker label="START DATE" value={startDate} onChange={setStartDate} />
+            <DatePicker label={isActivation ? 'ACTIVATION START' : 'START DATE'} value={startDate} onChange={setStartDate} />
+            {!isActivation && (
             <div>
               <label className="block mb-2 text-sm text-gray-400 font-bold">PAYMENT PERIODICITY</label>
               <select value={periodicity} onChange={(e) => setPeriodicity(e.target.value)} className={inputClass}>
                 {PERIODICITY.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
+            )}
             <div>
               <label className="block mb-2 text-sm text-gray-400 font-bold">DRE BUCKET <span className="font-normal">— em que linha do DRE/DFC este fornecedor entra (não muda a recorrência)</span></label>
               <select value={costType} onChange={(e) => setCostType(e.target.value)} className={inputClass}>
                 {COST_TYPES.map((t) => <option key={t} value={t}>{COST_TYPE_LABEL[t] || t}</option>)}
               </select>
             </div>
+            {!isActivation && (
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5 space-y-4">
               <div className="flex gap-3 items-end flex-wrap">
                 <div className="w-28">
@@ -135,16 +145,17 @@ export default function NewFixedCostSupplierPage() {
                 </div>
               )}
             </div>
-            <DatePicker label="END DATE" value={endDate} onChange={setEndDate} />
+            )}
+            <DatePicker label={isActivation ? 'ACTIVATION END' : 'END DATE'} value={endDate} onChange={setEndDate} />
           </div>
         </div>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur border-t border-gray-800 p-4 z-40">
         <div className="max-w-2xl mx-auto px-8 flex items-center gap-6">
-          <a href={`${BASE_PATH}/costs/fixed`} className="text-gray-400 text-xl">Cancel</a>
+          <a href={`${BASE_PATH}${isActivation ? '/costs/assets' : '/costs/fixed'}`} className="text-gray-400 text-xl">Cancel</a>
           <button onClick={save} disabled={saving} className={`flex-1 px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>
-            {saving ? 'SAVING...' : 'ADD FIXED COST SUPPLIER'}
+            {saving ? 'SAVING...' : isActivation ? 'ADD ACTIVATION' : 'ADD FIXED COST SUPPLIER'}
           </button>
         </div>
       </div>

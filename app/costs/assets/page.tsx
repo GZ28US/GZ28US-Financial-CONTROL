@@ -98,6 +98,7 @@ export default function AssetsPage() {
             vida útil e pagamentos. Não é "fornecedor de custo fixo"; a tabela
             por baixo é só encanamento. */}
         <h1 className="text-4xl font-bold">MARKETING — ACTIVATIONS ({rows.length})</h1>
+        <Link href="/costs/fixed/new?type=ASSET" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">+ NEW ACTIVATION</Link>
         <input
           type="text"
           value={search}

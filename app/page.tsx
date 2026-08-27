@@ -38,6 +38,10 @@ async function ensureFixedCostPayments() {
   const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
   const toInsert: any[] = []
   for (const sup of sups as any[]) {
+    // ATIVAÇÕES (MARKETING: ASSET/MARKETING/MERCHANDISE) nunca geram conta
+    // agendada — não são custo recorrente (26/ago; a SEMA estava MONTHLY por
+    // culpa do formulário e ia virar conta-fantasma).
+    if (['ASSET', 'MARKETING', 'MERCHANDISE'].includes(sup.cost_type)) continue
     if (sup.periodicity !== 'MONTHLY' || !sup.date_entry) continue
     const slots: { day: number; amount: number }[] = []
     if (sup.payment_day_1 != null && sup.amount_1 != null) slots.push({ day: Number(sup.payment_day_1), amount: Number(sup.amount_1) })
