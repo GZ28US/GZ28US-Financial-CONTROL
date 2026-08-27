@@ -62,6 +62,18 @@ type Invoice = {
   fl_tax_expense_date: string | null
 }
 
+// DESPESA DO CARRO DA FROTA (Márcio, 27/ago/2026). Vive em invoice_expenses,
+// como sempre viveu — o carro do FLEET não mostra invoice na tela, mas é lá que
+// o gasto dele mora, e é de lá que o card do ASSETS lê. Nenhuma tabela nova.
+type FleetExp = {
+  id: string; item: string | null; supplier: string | null
+  price: number; quantity: number; tax: number; extra: number; item_discount: number
+  expense_date: string | null; payment_date: string | null
+}
+const expLine = (e: FleetExp) =>
+  (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
+const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true }
+
 type Stats = {
   currentProfit: number
   currentProfitPct: number
@@ -93,6 +105,10 @@ export default function ViewRidePage() {
   const [client, setClient] = useState<Client | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [invoiceStats, setInvoiceStats] = useState<Record<string, Stats>>({})
+  const [fleetExps, setFleetExps] = useState<FleetExp[]>([])
+  const [expForm, setExpForm] = useState<typeof emptyExpForm | null>(null)
+  const [savingExp, setSavingExp] = useState(false)
+  const [confirmExpId, setConfirmExpId] = useState<string | null>(null)
   const [sendingPic, setSendingPic] = useState(false)
   const [picSent, setPicSent] = useState(false)
 
@@ -186,6 +202,56 @@ export default function ViewRidePage() {
     }
   }
 
+  // Todas as despesas do carro, de todas as invoices dele, mais recente primeiro.
+  async function loadFleetExps(invoiceIds: string[]) {
+    const { data } = await supabase
+      .from('invoice_expenses')
+      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date')
+      .in('invoice_id', invoiceIds)
+    const list = (data || []) as FleetExp[]
+    list.sort((a, b) => String(b.payment_date || b.expense_date || '').localeCompare(String(a.payment_date || a.expense_date || '')))
+    setFleetExps(list)
+  }
+
+  async function saveFleetExp() {
+    if (!expForm) return
+    if (!expForm.item.trim()) { alert('Descreva a despesa.'); return }
+    const amount = parseFloat(expForm.amount)
+    if (!(amount > 0)) { alert('Informe o valor.'); return }
+    // A data é a do PAGAMENTO (lei do Márcio): quando pago, ela vale para as
+    // duas colunas; não pago, fica só como data do lançamento.
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(expForm.date) ? expForm.date : null
+    const row = {
+      item: expForm.item.trim(),
+      supplier: expForm.supplier.trim() || null,
+      price: amount, quantity: 1,
+      expense_date: d,
+      payment_date: expForm.paid ? d : null,
+    }
+    setSavingExp(true)
+    try {
+      if (expForm.id) {
+        const { error } = await supabase.from('invoice_expenses').update(row).eq('id', expForm.id)
+        if (error) { alert(error.message); return }
+      } else {
+        // Sem invoice não há onde pendurar o gasto — o carro da frota sempre tem
+        // a sua (a mais antiga é a conta do carro).
+        if (!invoices.length) { alert('Este carro não tem invoice para receber a despesa.'); return }
+        const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: invoices[0].id }])
+        if (error) { alert(error.message); return }
+      }
+      setExpForm(null)
+      await loadFleetExps(invoices.map(i => i.id))
+    } finally { setSavingExp(false) }
+  }
+
+  async function removeFleetExp(id: string) {
+    const { error } = await supabase.from('invoice_expenses').delete().eq('id', id)
+    if (error) { alert(error.message); return }
+    setConfirmExpId(null)
+    await loadFleetExps(invoices.map(i => i.id))
+  }
+
   async function loadAll() {
     const { data: rideData } = await supabase.from('rides').select('*').eq('id', rideId).single()
     if (!rideData) { setLoading(false); return }
@@ -200,6 +266,9 @@ export default function ViewRidePage() {
       .from('invoices').select('*').eq('ride_id', rideId).order('invoice_code', { ascending: true })
     if (invoicesData) {
       setInvoices(invoicesData)
+      if (isOurCar(rideData.title_scope) && invoicesData.length) {
+        await loadFleetExps(invoicesData.map((i: any) => i.id))
+      }
 
 
       const stats: Record<string, Stats> = {}
@@ -303,6 +372,9 @@ export default function ViewRidePage() {
             <Link href={`/rides/edit/${rideId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
             {!isOurCar(ride.title_scope) && (
               <Link href={`/rides/${rideId}/invoices`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">INVOICES</Link>
+            )}
+            {isOurCar(ride.title_scope) && (
+              <button type="button" onClick={() => setExpForm({ ...emptyExpForm, date: new Date().toISOString().slice(0, 10) })} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">+ ADD EXPENSE</button>
             )}
             <Link href={`/rides/${rideId}/performance`} className="bg-red-700 hover:bg-red-600 px-6 py-4 rounded-2xl text-xl font-bold">PERFORMANCE</Link>
           </div>
@@ -422,6 +494,85 @@ export default function ViewRidePage() {
               ) })()}
               {ride.title_notes && <div className={rowClass}><span className={labelClass}>NOTES</span><span className="font-bold text-right">{ride.title_notes}</span></div>}
             </div>
+          </div>
+        )}
+
+        {/* EXPENSES — o gasto do carro da frota, uma linha por despesa, no
+            mesmo formato do GOOD EXPENSES. É a única coisa que um carro nosso
+            tem: sem item, sem serviço, sem receita. */}
+        {isOurCar(ride.title_scope) && (
+          <div>
+            <div className="flex items-baseline justify-between gap-4 mb-3">
+              <label className="block text-lg font-bold">EXPENSES ({fleetExps.length})</label>
+              <span className="text-xl font-bold">{formatUSD(fleetExps.reduce((a, e) => a + expLine(e), 0))}</span>
+            </div>
+
+            {expForm && (
+              <div className="bg-gray-900 border border-blue-700 rounded-2xl p-5 mb-4 space-y-4">
+                <h3 className="text-xl font-bold">{expForm.id ? 'EDIT EXPENSE' : 'NEW EXPENSE'}</h3>
+                <div>
+                  <label className="block mb-2 text-sm text-gray-400">WHAT</label>
+                  <input value={expForm.item} onChange={(e) => setExpForm({ ...expForm, item: e.target.value })} placeholder="Ex.: pneus, seguro, pedágio" className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block mb-2 text-sm text-gray-400">SUPPLIER</label>
+                    <input value={expForm.supplier} onChange={(e) => setExpForm({ ...expForm, supplier: e.target.value })} className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                  </div>
+                  <div>
+                    <label className="block mb-2 text-sm text-gray-400">AMOUNT</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-lg">$</span>
+                      <input inputMode="decimal" value={expForm.amount} onChange={(e) => { if (e.target.value === '' || /^\d*\.?\d*$/.test(e.target.value)) setExpForm({ ...expForm, amount: e.target.value }) }} placeholder="0.00" className="w-full bg-gray-800 border border-gray-600 rounded-2xl pl-9 pr-4 py-3 text-lg" />
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                  <div>
+                    <label className="block mb-2 text-sm text-gray-400">DATE</label>
+                    <input type="date" value={expForm.date} onChange={(e) => setExpForm({ ...expForm, date: e.target.value })} className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                  </div>
+                  <button type="button" onClick={() => setExpForm({ ...expForm, paid: !expForm.paid })} className={`px-6 py-3 rounded-2xl text-lg font-bold ${expForm.paid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                    {expForm.paid ? 'PAID ✓' : 'NOT PAID'}
+                  </button>
+                </div>
+                <div className="flex gap-3 flex-wrap">
+                  <button type="button" onClick={saveFleetExp} disabled={savingExp} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl text-lg font-bold">{savingExp ? 'SAVING…' : 'SAVE'}</button>
+                  <button type="button" onClick={() => setExpForm(null)} className="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-2xl text-lg font-bold">CANCEL</button>
+                </div>
+              </div>
+            )}
+
+            {fleetExps.length === 0 ? (
+              <p className="text-lg text-gray-400">Nenhuma despesa lançada neste carro.</p>
+            ) : (
+              <div className={sectionClass}>
+                {fleetExps.map((e) => (
+                  <div key={e.id} className={rowClass}>
+                    <div className="min-w-0">
+                      <p className="text-base font-bold truncate" title={e.item || ''}>{e.item}</p>
+                      <p className="text-sm text-gray-500">
+                        {e.supplier || '—'} · {e.payment_date ? `pago ${formatDate(e.payment_date)}` : <span className="text-amber-400 font-bold">não paga</span>}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="font-bold">{formatUSD(expLine(e))}</span>
+                      {confirmExpId === e.id ? (
+                        <>
+                          <button onClick={() => removeFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">CONFIRM</button>
+                          <button onClick={() => setConfirmExpId(null)} className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded-xl font-bold text-sm">CANCEL</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => setConfirmExpId(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
