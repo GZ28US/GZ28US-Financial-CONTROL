@@ -97,6 +97,21 @@ export default function PacksPage() {
     && partMatches(search, p.name, ...(Array.isArray(p.cars) ? p.cars.map(carLabel) : [])))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
+  // ESPÉCIES (João, 26/ago: "add-on não é um pack, é um serviço opcional"):
+  // moram na mesma tabela/editor, mas o catálogo apresenta cada uma na sua
+  // seção — add-on nunca aparece como pack.
+  const kindOf = (p: any) => String(p.kind || 'PACK').toUpperCase()
+  const sections: [string, any[]][] = ([
+    ['PACKS', filtered.filter((p) => kindOf(p) === 'PACK')],
+    ['ADD-ONS & OPTIONAL SERVICES', filtered.filter((p) => kindOf(p) === 'ADDON')],
+    ['BLOCKS — BUILDING UNITS', filtered.filter((p) => kindOf(p) === 'BLOCK')],
+  ] as [string, any[]][]).filter((s) => s[1].length > 0)
+  const kindBadge = (p: any) => kindOf(p) === 'ADDON'
+    ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-purple-900 text-purple-300">ADD-ON</span>
+    : kindOf(p) === 'BLOCK'
+      ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-teal-900 text-teal-300">BLOCK</span>
+      : null
+
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
@@ -150,11 +165,17 @@ export default function PacksPage() {
       ) : filtered.length === 0 ? (
         <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No packages yet.' : 'No matches.'}</p>
       ) : view === 'PACK' ? (
-        <div className="space-y-4">
+        <div className="space-y-8">
           {/* Chave de agrupamento = NOME + PLATAFORMA (João, 26/ago: "CatAholic IS
               for the HELLCAT platform" — a platform é métrica do PACK; as linhas
-              de dentro variam por CARRO). Poltergeist LT4 e LT1 = dois cartões. */}
-          {[...filtered.reduce((m: Map<string, any[]>, p) => { const k = familyOf(p.name) + '§' + (platOf(p) || 'SEM PLATFORM'); const a = m.get(k) || []; a.push(p); m.set(k, a); return m }, new Map<string, any[]>())]
+              de dentro variam por CARRO). Poltergeist LT4 e LT1 = dois cartões.
+              Espécies em seções próprias: PACKS · ADD-ONS · BLOCKS (add-on não
+              é um pack — João). */}
+          {sections.map(([label, rows]) => (
+            <div key={label}>
+              {(sections.length > 1 || label !== 'PACKS') && <h2 className="text-xl font-bold text-gray-500 mb-3">{label}</h2>}
+              <div className="space-y-4">
+          {[...rows.reduce((m: Map<string, any[]>, p: any) => { const k = familyOf(p.name) + '§' + (platOf(p) || 'SEM PLATFORM'); const a = m.get(k) || []; a.push(p); m.set(k, a); return m }, new Map<string, any[]>())]
             .sort((a, b) => a[0].localeCompare(b[0]))
             .map(([key, packs]) => {
               const [fam, plat] = key.split('§')
@@ -199,6 +220,9 @@ export default function PacksPage() {
                 </div>
               </div>
             )})}
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-4">
@@ -210,6 +234,7 @@ export default function PacksPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{p.name || '—'}</h2>
+                    {kindBadge(p)}
                     {platOf(p) && <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{platOf(p)}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
                     <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">GRAND TOTAL: {formatUSD(packGrandTotal(p))}</span>

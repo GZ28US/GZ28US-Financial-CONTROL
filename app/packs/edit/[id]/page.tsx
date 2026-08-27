@@ -63,6 +63,12 @@ export default function EditPackPage() {
   // parts identity mas nenhuma UI escrevia nela — o refresh dos packs precisa
   // preenchê-la (famílias/variantes do CREW CHIEF: mesmo pack, base ± blocos).
   const [platform, setPlatform] = useState('')
+  // KIND (CC 0.2.1, João): PACK = produto principal · ADDON = opcional de venda
+  // ("Demonized PLUS Lowering Springs") · BLOCK = unidade de construção (Engine
+  // Build) composta via IMPORT A BLOCK. kindSupported detecta se a coluna já
+  // existe no banco (MIGRATION_pack_kind.sql) — sem ela, o save não envia kind.
+  const [kind, setKind] = useState('PACK')
+  const [kindSupported, setKindSupported] = useState(false)
   const [status, setStatus] = useState('DRAFT')
   const [cars, setCars] = useState<Car[]>([])
   const locked = status === 'CLOSED'
@@ -214,6 +220,8 @@ export default function EditPackPage() {
       .then(({ data: pks }) => setBlockPacks(pks || []))
     setName(data.name || '')
     setPlatform(data.platform || '')
+    setKind(data.kind || 'PACK')
+    setKindSupported(data.kind !== undefined)
     setStatus(data.status || 'DRAFT')
     setCars(Array.isArray(data.cars) ? data.cars.map((c: any) => ({
       manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
@@ -657,6 +665,7 @@ export default function EditPackPage() {
     const row: any = {
       name: name.trim(),
       platform: platform.trim().toUpperCase() || null,
+      ...(kindSupported ? { kind } : {}),
       cars,
       status: nextStatus || status,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
@@ -777,6 +786,17 @@ export default function EditPackPage() {
           <datalist id="pack-platforms">
             {['GEN V SM', 'D170', 'TRX', 'HELLCAT', 'REDEYE', 'DURANGO'].map(p => <option key={p} value={p} />)}
           </datalist>
+        </div>
+
+        {/* KIND — papel no catálogo; a anatomia é a mesma */}
+        <div>
+          <label className="block mb-2 text-lg font-bold">KIND</label>
+          <select value={kind} onChange={(e) => setKind(e.target.value)} disabled={locked || !kindSupported} className={smallInputClass}>
+            <option value="PACK">PACK — produto principal</option>
+            <option value="ADDON">ADD-ON — serviço OPCIONAL de venda (não é um pack; vai por cima de um)</option>
+            <option value="BLOCK">BLOCK — unidade de construção (importada em packs)</option>
+          </select>
+          {!kindSupported && <p className="text-amber-300 mt-2">Rode MIGRATION_pack_kind.sql no SQL Editor pra habilitar o KIND.</p>}
         </div>
 
         {/* 🧱 BLOCKS v0 — funde outro pack (um BLOCO: Engine Build, Crank Pinning…)
