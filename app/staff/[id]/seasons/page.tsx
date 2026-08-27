@@ -243,8 +243,11 @@ export default function SeasonsPage() {
                   <p className="text-lg text-gray-400">Entry: {formatDate(season.date_entry)}</p>
                   <p className="text-lg text-gray-400">Conclusion: {formatDate(season.date_conclusion)}</p>
                   <p className="text-lg text-gray-400">Days: {days}</p>
+                  {/* Só a TAXA. Quem paga não se deduz da moeda (Márcio, 26/ago/2026):
+                      uma taxa em reais pode ser paga por qualquer uma das empresas, e o
+                      pagador só existe no PAID FROM do pagamento em si. */}
                   {payLabel(season) ? (
-                    <p className="text-lg font-bold text-green-400">{payLabel(season)}{(season.pay_currency || 'USD') === 'BRL' ? ' · paid by GZ28BR' : ''}</p>
+                    <p className="text-lg font-bold text-green-400">{payLabel(season)}</p>
                   ) : !season.date_conclusion ? (
                     <p className="text-lg font-bold text-amber-400">No pay rate set</p>
                   ) : null}

@@ -81,8 +81,9 @@ async function ensureStaffPayments() {
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const limit = horizonEnd()
   // Taxa em reais vira dólar UMA vez, na cotação de hoje, para a previsão não
-  // ficar mentindo com câmbio velho. A linha guarda os dois valores; quem paga
-  // um salário em reais é o GZ28BR.
+  // ficar mentindo com câmbio velho. A linha guarda os dois valores.
+  // A MOEDA NÃO DIZ QUEM PAGA (Márcio, 26/ago/2026) — a previsão nasce sem
+  // pagador, que só existe no PAID FROM, na hora do pagamento.
   let spot = 0
   if ((seasons as any[]).some(s => (s.pay_currency || 'USD') === 'BRL')) {
     try {
@@ -100,7 +101,6 @@ async function ensureStaffPayments() {
     if (emBRL && !spot) continue
     const valor = emBRL ? Number((rate / spot).toFixed(2)) : rate
     const brl = emBRL ? rate : null
-    const quem = emBRL ? 'GZ28BR' : 'GZ28US'
     const cursor = new Date(today)
     if (s.pay_type === 'WEEKLY') {
       const dia = s.pay_day ?? 5
@@ -108,7 +108,7 @@ async function ensureStaffPayments() {
       for (; cursor <= limit; cursor.setDate(cursor.getDate() + 7)) {
         const key = ymd(cursor)
         if (has.has(`${s.id}|WEEKLY|${key}`)) continue
-        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, source: quem, description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto` })
+        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto` })
       }
     } else if (s.pay_type === 'MONTHLY') {
       // Uma linha por mês, no dia escolhido (sem escolha, no último dia). Mês
@@ -122,7 +122,7 @@ async function ensureStaffPayments() {
       for (; c <= limit; c = diaDoMes(c.getFullYear(), c.getMonth() + 1)) {
         const key = ymd(c)
         if (has.has(`${s.id}|MONTHLY|${key}`)) continue
-        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, source: quem, description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto` })
+        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto` })
       }
     }
   }

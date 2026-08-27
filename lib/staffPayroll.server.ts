@@ -13,10 +13,17 @@
 // MONTHLY. Era pay_weekday e só sabia semana — o Jeff recebe todo dia 28
 // (Márcio, 26/ago/2026) e o mensal fechava no último dia do mês, sempre.
 //
-// MOEDA: a taxa pode estar em BRL (o Jeff ganha R$ 15.000/mês, pagos pelo
-// GZ28BR). Neste app o total é sempre USD, então a linha guarda os DOIS: o
-// valor real em amount_brl e o dólar do dia em amount. É a mesma lei das
-// invoices — a moeda do recibo manda, o USD é projeção.
+// MOEDA: a taxa pode estar em BRL (o Jeff ganha R$ 15.000/mês fixos). Neste
+// app o total é sempre USD, então a linha guarda os DOIS: o valor real em
+// amount_brl e o dólar do dia em amount. É a mesma lei das invoices — a
+// moeda do recibo manda, o USD é projeção.
+//
+// A MOEDA NÃO DIZ QUEM PAGA (Márcio, 26/ago/2026: "eu não disse quem paga, só
+// disse que o salário dele é R$ 15k por mês, fixo. Quem paga é definido no
+// campo PAID FROM quando se paga, isso é outra coisa"). Uma taxa em reais pode
+// ser paga por qualquer uma das empresas. Esta linha nasce SEM pagador — o
+// `paid_from` é preenchido na hora do pagamento, e o Data Checker só o cobra
+// de linha que já tem payment_date.
 //   • cada pagamento é uma LINHA em expenses, com expense_date do período,
 //     `payment_date` vazio enquanto não foi pago e `paid_via` (CASH/ZELLE/…).
 //
@@ -97,8 +104,8 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
       : s.pay_type === 'DAILY' ? `Diária ${periodo.slice(8, 10)}/${periodo.slice(5, 7)}`
       : `Mensal ${periodo.slice(5, 7)}/${periodo.slice(0, 4)}`
 
-    // Taxa em reais: quem paga é o GZ28BR — real não sai de conta americana,
-    // do mesmo jeito que não existe Zelle no Brasil.
+    // A moeda decide em qual COLUNA o valor cai (amount_brl + amount em USD),
+    // e mais nada. Quem paga não se deduz daqui.
     const emBRL = (s.pay_currency || 'USD') === 'BRL'
     let usd = rate
     let brl: number | null = null
@@ -112,7 +119,7 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
     }
     const { error } = await db.from('expenses').insert({
       season_id: s.id, type: s.pay_type, amount: usd, amount_brl: brl,
-      expense_date: periodo, payment_date: null, source: emBRL ? 'GZ28BR' : 'GZ28US',
+      expense_date: periodo, payment_date: null,
       description: `${label}${nota} — gerado pelo app, aguardando pagamento`,
     })
     if (!error) created.push(`${s.season_code || s.id.slice(0, 6)} ${periodo} $${usd}`)
