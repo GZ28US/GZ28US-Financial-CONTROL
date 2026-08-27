@@ -100,16 +100,16 @@ export default function PacksPage() {
   // ESPÉCIES (João, 26/ago: "add-on não é um pack, é um serviço opcional"):
   // moram na mesma tabela/editor, mas o catálogo apresenta cada uma na sua
   // seção — add-on nunca aparece como pack.
-  const kindOf = (p: any) => String(p.kind || 'PACK').toUpperCase()
+  const kindOf = (p: any) => { const k = String(p.kind || 'PACK').toUpperCase(); return k === 'BLOCK' ? 'SERVICE' : k }
   const sections: [string, any[]][] = ([
     ['PACKS', filtered.filter((p) => kindOf(p) === 'PACK')],
-    ['ADD-ONS & OPTIONAL SERVICES', filtered.filter((p) => kindOf(p) === 'ADDON')],
-    ['BLOCKS — BUILDING UNITS', filtered.filter((p) => kindOf(p) === 'BLOCK')],
+    ['ADD-ONS — OPTIONALS', filtered.filter((p) => kindOf(p) === 'ADDON')],
+    ['SERVICES & MAINTENANCE', filtered.filter((p) => kindOf(p) === 'SERVICE')],
   ] as [string, any[]][]).filter((s) => s[1].length > 0)
   const kindBadge = (p: any) => kindOf(p) === 'ADDON'
     ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-purple-900 text-purple-300">ADD-ON</span>
-    : kindOf(p) === 'BLOCK'
-      ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-teal-900 text-teal-300">BLOCK</span>
+    : kindOf(p) === 'SERVICE'
+      ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-teal-900 text-teal-300">SERVICE</span>
       : null
 
   return (

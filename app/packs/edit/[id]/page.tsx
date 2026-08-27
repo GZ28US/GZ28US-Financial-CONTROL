@@ -761,7 +761,7 @@ export default function EditPackPage() {
           <select value={kind} onChange={(e) => setKind(e.target.value)} disabled={locked || !kindSupported} className={smallInputClass}>
             <option value="PACK">PACK — produto principal</option>
             <option value="ADDON">ADD-ON — serviço OPCIONAL de venda (não é um pack; vai por cima de um)</option>
-            <option value="BLOCK">BLOCK — unidade de construção (importada em packs)</option>
+            <option value="SERVICE">SERVICE — serviço avulso / manutenção (troca de óleo, revisão…)</option>
           </select>
           {!kindSupported && <p className="text-amber-300 mt-2">Rode MIGRATION_pack_kind.sql no SQL Editor pra habilitar o KIND.</p>}
         </div>

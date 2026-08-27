@@ -12,6 +12,7 @@ const FULL_PROJECT_LABOR = 'Full Project Labor'
 type Pack = {
   id: string
   name: string
+  kind?: string | null
   target_grand_total: number | null
   florida_taxes: number | null
   global_discount: number | null
@@ -56,6 +57,12 @@ export default function NewInvoicePage() {
   // Ride-only: saved packs for this car spec, and which one (if any) is chosen.
   // selectedPackId: '' = none, '__new__' = naming a brand-new pack, else a pack id.
   const [packs, setPacks] = useState<Pack[]>([])
+  // ADD-ONs (CC 0.2.3, João): opcionais de venda por cima do pack — na quote
+  // nova, escolhe o pack como sempre E marca zero ou mais add-ons; cada um
+  // aplicado por cima via o MESMO applyPack (as duties do add-on entram com a
+  // própria numeração "NN." — mais uma frente de trabalho, padrão já existente).
+  const [addons, setAddons] = useState<Pack[]>([])
+  const [selectedAddonIds, setSelectedAddonIds] = useState<Set<string>>(new Set())
   const [selectedPackId, setSelectedPackId] = useState('')
   // DUPLICATE QUOTE: arrives via ?duplicateFrom=<sourceInvoiceId>. We copy that
   // quote's config + items/services/expenses/notes onto a brand-new quote for the
@@ -204,7 +211,11 @@ export default function NewInvoicePage() {
       const carList = Array.isArray(p.cars) && p.cars.length ? p.cars : [{ manufacturer: p.manufacturer, model: p.model, year: p.year }]
       return carList.some(carMatches)
     })
-    setPacks(matched as Pack[])
+    // Espécies (kind): PACK e SERVICE (manutenção) entram no dropdown principal;
+    // ADDON vira checkbox opcional por cima. Legado sem kind = PACK.
+    const kindOf = (p: any) => { const k = String(p.kind || 'PACK').toUpperCase(); return k === 'BLOCK' ? 'SERVICE' : k }
+    setPacks(matched.filter((p: any) => kindOf(p) !== 'ADDON') as Pack[])
+    setAddons(matched.filter((p: any) => kindOf(p) === 'ADDON') as Pack[])
   }
 
   function onPackSelect(value: string) {
@@ -282,12 +293,15 @@ export default function NewInvoicePage() {
     const { data: invoice, error } = await supabase.from('invoices').insert([row]).select().single()
     if (error || !invoice) { alert(error?.message || `Error creating ${isQuote ? 'quote' : 'invoice'}`); setSaving(false); return }
 
+    const chosenAddons = addons.filter(a => selectedAddonIds.has(a.id))
     if (pack) {
       await applyPack(invoice.id, pack)
-    } else {
+    } else if (!chosenAddons.length) {
       // Seed the default Full Project Labor service so EDIT opens ready to fill.
       await supabase.from('invoice_services').insert([{ invoice_id: invoice.id, description: FULL_PROJECT_LABOR, price: 0 }])
     }
+    // Add-ons escolhidos aplicam POR CIMA, na ordem marcada — mesmo applyPack.
+    for (const a of chosenAddons) await applyPack(invoice.id, a)
 
     router.push(`${basePath}/edit/${invoice.id}`)
   }
@@ -439,6 +453,18 @@ export default function NewInvoicePage() {
               </select>
               {selectedPackId === '__new__' && (
                 <input type="text" value={service} onChange={(e) => setService(e.target.value)} className={`${inputClass} mt-3`} placeholder="New service / pack name" autoFocus />
+              )}
+              {/* OPTIONAL ADD-ONS — zero ou mais, aplicados por cima do escolhido */}
+              {addons.length > 0 && (
+                <div className="mt-3 bg-gray-900 border border-gray-700 rounded-2xl p-4">
+                  <p className="text-sm font-bold text-purple-300 mb-2">OPTIONAL ADD-ONS</p>
+                  {addons.map(a => (
+                    <label key={a.id} className="flex items-center gap-3 py-1 cursor-pointer">
+                      <input type="checkbox" checked={selectedAddonIds.has(a.id)} onChange={() => { const s = new Set(selectedAddonIds); if (s.has(a.id)) s.delete(a.id); else s.add(a.id); setSelectedAddonIds(s) }} className="w-5 h-5 accent-purple-600" />
+                      <span className="text-lg">{a.name}</span>
+                    </label>
+                  ))}
+                </div>
               )}
             </>
           )}
