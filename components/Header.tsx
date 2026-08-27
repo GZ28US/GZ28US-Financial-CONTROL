@@ -68,12 +68,14 @@ const MENU: MenuItem[] = [
     // parado — gente, estrutura (trio fixed-family), consumo, marca, e por
     // último ASSETS, que pelo critério do próprio João nem é despesa: é
     // patrimônio, onde o dinheiro vira coisa.
+    // SUPPLIES no topo (João, 26/ago): critério de USO vence narrativa — é a
+    // porta mais aberta no dia a dia. O resto segue do vivo pro parado.
     items: [
+      ['/supplies', 'SUPPLIES'],
       ['/staff', 'STAFF'],
       ['/costs/fixed', 'FIXED'],
       ['/costs/apps', 'SUBSCRIPTIONS'],
       ['/costs/bank', 'BANK FEES'],
-      ['/supplies', 'SUPPLIES'],
       ['/costs/assets', 'MARKETING'],
       ['/goods', 'ASSETS'],
     ],
