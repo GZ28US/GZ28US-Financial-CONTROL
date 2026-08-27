@@ -66,7 +66,6 @@ const MENU: MenuItem[] = [
     label: 'COSTS',
     items: [
       ['/costs/fixed', 'FIXED'],
-      ['/costs/variable', 'VARIABLE'],
       ['/costs/apps', 'APPS'],
       ['/costs/bank', 'BANK FEES'],
       ['/costs/assets', 'MARKETING'],
