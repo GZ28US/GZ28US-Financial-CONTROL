@@ -39,7 +39,7 @@ type Flight = {
   expense_id: string | null; welcome_sent_at: string | null
 }
 
-export function buildWelcome(f: Flight, nome: string, supplier?: string | null): string {
+export function buildWelcome(f: Flight, nome: string): string {
   const primeiro = String(nome || '').trim().split(/\s+/)[0] || ''
   const ida = f.direction !== 'OUTBOUND'
   const saida = quando(f.departure_local)
@@ -79,14 +79,9 @@ export function buildWelcome(f: Flight, nome: string, supplier?: string | null):
   // vira aviso, porque é a surpresa que estraga um embarque.
   if (f.baggage_included === false) {
     L.push(''); L.push('*BAGAGEM*')
-    L.push('⚠️ Esta tarifa *não inclui bagagem despachada*. Fale com a gente antes de ir pro aeroporto.')
+    L.push('⚠️ Esta tarifa *não inclui bagagem despachada*.')
   } else if (f.baggage_included === true) {
     L.push(''); L.push('*BAGAGEM* — despachada inclusa.')
-  }
-
-  if (f.booking_ref) {
-    L.push('')
-    L.push(`Reserva da agência: ${f.booking_ref}${supplier ? ` (${supplier})` : ''} — serve pra remarcar, *não serve no check-in*.`)
   }
 
   L.push(''); L.push('Qualquer dúvida, é só responder aqui.')
@@ -101,10 +96,7 @@ async function carregar(db: ReturnType<typeof bankDb>, flightId: string) {
   if (!f) return { erro: 'passagem não encontrada' as const }
   const { data: st } = await db.from('staff').select('name, phone, staff_code').eq('id', f.staff_id).maybeSingle()
   if (!st) return { erro: 'membro não encontrado' as const }
-  const { data: ex } = f.expense_id
-    ? await db.from('expenses').select('supplier').eq('id', f.expense_id).maybeSingle()
-    : { data: null }
-  return { f: f as Flight, st: st as Membro, supplier: (ex?.supplier as string | null) ?? null }
+  return { f: f as Flight, st: st as Membro }
 }
 
 export async function GET(req: NextRequest) {
@@ -116,7 +108,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true, to: r.st.phone, name: r.st.name,
     already_sent_at: r.f.welcome_sent_at,
-    body: buildWelcome(r.f, r.st.name, r.supplier),
+    body: buildWelcome(r.f, r.st.name),
   })
 }
 
@@ -140,7 +132,7 @@ export async function POST(req: NextRequest) {
   const token = process.env.ULTRAMSG_TOKEN
   if (!instance || !token) return NextResponse.json({ error: 'WhatsApp não configurado' }, { status: 500 })
 
-  const body = buildWelcome(r.f, r.st.name, r.supplier)
+  const body = buildWelcome(r.f, r.st.name)
   const res = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ token, to: `${fone}@c.us`, body }),
