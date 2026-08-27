@@ -48,11 +48,11 @@ export function buildWelcome(f: Flight, nome: string): string {
 
   L.push(ida
     ? `✈️ *BEM-VINDO À GZ28 V8 SPEEDSHOP${primeiro ? `, ${primeiro.toUpperCase()}` : ''}!*`
-    : `✈️ *SUA VOLTA ESTÁ MARCADA${primeiro ? `, ${primeiro.toUpperCase()}` : ''}*`)
+    : `✈️ *OBRIGADO POR TUDO${primeiro ? `, ${primeiro.toUpperCase()}` : ''}!*`)
   L.push('')
   L.push(ida
     ? 'Sua passagem está *comprada e paga*. Guarde estes dados — o localizador é o que vale no balcão da companhia:'
-    : 'Sua passagem de volta está *comprada e paga*. Os dados:')
+    : 'Foi muito bom ter você com a gente. Sua volta está *comprada e paga* — o localizador é o que vale no balcão da companhia:')
 
   // O localizador vem primeiro e sozinho: é o que a pessoa precisa no balcão.
   if (f.locator) { L.push(''); L.push(`*LOCALIZADOR (check-in): ${f.locator}*`) }
@@ -67,7 +67,10 @@ export function buildWelcome(f: Flight, nome: string): string {
   if (saida || chegada) {
     L.push('')
     if (saida) L.push(`*SAÍDA* — ${ondeFica(f.from_city, f.from_airport) || '—'} às ${saida.hora}`)
-    if (chegada) L.push(`*CHEGADA* — ${ondeFica(f.to_city, f.to_airport) || '—'} às ${chegada.hora}`)
+    // Voo que vira o dia: a data da chegada aparece, senão "chega 07:50" num
+    // voo que saiu 22:15 parece o mesmo dia — e é o embarque que se perde.
+    if (chegada) L.push(`*CHEGADA* — ${ondeFica(f.to_city, f.to_airport) || '—'} às ${chegada.hora}`
+      + (saida && chegada.data !== saida.data ? ` — *${chegada.dia}, ${chegada.data}*` : ''))
     const extras: string[] = []
     if (f.duration_minutes) extras.push(`duração ${Math.floor(f.duration_minutes / 60)}h${String(f.duration_minutes % 60).padStart(2, '0')}`)
     extras.push(ida ? 'só ida' : 'volta')
@@ -84,7 +87,8 @@ export function buildWelcome(f: Flight, nome: string): string {
     L.push(''); L.push('*BAGAGEM* — despachada inclusa.')
   }
 
-  L.push(''); L.push('Qualquer dúvida, é só responder aqui.')
+  L.push('')
+  L.push(ida ? 'Qualquer dúvida, é só responder aqui.' : 'Boa viagem — e obrigado pelo trabalho aqui!')
   L.push(''); L.push('— *Claudinha* 👩🏻‍💻')
   return L.join('\n')
 }
