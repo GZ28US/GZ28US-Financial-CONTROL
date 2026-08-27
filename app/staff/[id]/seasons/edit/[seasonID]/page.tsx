@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import SeasonFlight from '@/components/SeasonFlight'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, seasonHourlyRate, formatUSD } from '@/lib/utils'
 import { usdBrlSpot } from '@/lib/fx'
@@ -239,6 +240,8 @@ export default function EditSeasonPage() {
             </>
           )}
         </div>
+
+        <SeasonFlight staffId={staffId} seasonId={seasonID} />
 
         <button
           onClick={saveSeason}
