@@ -8,6 +8,7 @@ import { runPurchaseCapture } from '@/lib/purchaseCapture.server'
 import { runInboxZero, alertVipMail } from '@/lib/inboxZero.server'
 import { runZelleWatch } from '@/lib/zelleWatch.server'
 import { runDutyWatch } from '@/lib/dutyWatch.server'
+import { runMailWatch } from '@/lib/mailWatch.server'
 // runStreamAnswers foi SUBSTITUÍDO pela fila de destino (cron purchase-queue,
 // 19/ago) — dois leitores no mesmo grupo aplicariam a mesma resposta duas vezes.
 import { runStaffPayroll } from '@/lib/staffPayroll.server'
@@ -254,6 +255,12 @@ async function run(force: boolean): Promise<NextResponse> {
   // com histórico e alerta o resto. Roda ANTES do inbox-zero, que arquiva.
   let zelle: { booked: string[]; pending: string[] } = { booked: [], pending: [] }
   try { zelle = await runZelleWatch(db) } catch (e) { console.error('[zelle-watch]', e) }
+  // ── MAIL WATCH (27/ago) — resposta que ele está ESPERANDO não pode ficar
+  // dormindo na caixa até a ronda humana. As regras moram em `mail_watches`
+  // (remetente/assunto), então vigiar um novo interlocutor é um INSERT, não um
+  // deploy. Antes do inbox-zero, como os outros watchers.
+  let mailWatch: { alerts: string[] } = { alerts: [] }
+  try { mailWatch = await runMailWatch(db) } catch (e) { console.error('[mail-watch]', e) }
   // ── DUTY WATCH (LEI 20/ago, caso BONOSS #207546) — com o de minimis morto,
   // toda importação gera uma 2ª cobrança (imposto + desembaraço) que chega
   // sozinha semanas DEPOIS da caixa. A fatura do carrier bate pelo waybill com
@@ -285,7 +292,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }
