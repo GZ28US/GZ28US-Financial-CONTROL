@@ -31,6 +31,7 @@ type Flight = {
   departure_local: string
   arrival_local: string
   duration_minutes: string
+  taxes_usd: string
   baggage_included: string   // '' | 'yes' | 'no' — vazio = ainda não se sabe
   welcome_sent_at: string | null
 }
@@ -38,7 +39,7 @@ type Flight = {
 const VAZIO: Flight = {
   direction: 'INBOUND', locator: '', booking_ref: '', airline: '', flight_number: '',
   operated_by: '', from_city: '', from_airport: '', to_city: '', to_airport: '',
-  departure_local: '', arrival_local: '', duration_minutes: '', baggage_included: '',
+  departure_local: '', arrival_local: '', duration_minutes: '', taxes_usd: '', baggage_included: '',
   welcome_sent_at: null,
 }
 
@@ -67,6 +68,7 @@ export default function SeasonFlight({ staffId, seasonId }: { staffId: string; s
         to_city: r.to_city || '', to_airport: r.to_airport || '',
         departure_local: paraInput(r.departure_local), arrival_local: paraInput(r.arrival_local),
         duration_minutes: r.duration_minutes != null ? String(r.duration_minutes) : '',
+        taxes_usd: r.taxes_usd != null ? String(r.taxes_usd) : '',
         baggage_included: r.baggage_included === true ? 'yes' : r.baggage_included === false ? 'no' : '',
         welcome_sent_at: r.welcome_sent_at || null,
       })
@@ -89,6 +91,7 @@ export default function SeasonFlight({ staffId, seasonId }: { staffId: string; s
       departure_local: f.departure_local || null,
       arrival_local: f.arrival_local || null,
       duration_minutes: f.duration_minutes !== '' ? parseInt(f.duration_minutes, 10) || null : null,
+      taxes_usd: f.taxes_usd !== '' ? parseFloat(f.taxes_usd) || null : null,
       baggage_included: f.baggage_included === 'yes' ? true : f.baggage_included === 'no' ? false : null,
       updated_at: new Date().toISOString(),
     }
@@ -209,11 +212,17 @@ export default function SeasonFlight({ staffId, seasonId }: { staffId: string; s
           <input type="datetime-local" value={f.arrival_local} onChange={(e) => setF({ ...f, arrival_local: e.target.value })} className={inputClass} />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className={smallLabel}>DURATION (minutes)</label>
             <input type="number" min="0" value={f.duration_minutes} onChange={(e) => setF({ ...f, duration_minutes: e.target.value })} className={inputClass} placeholder="545" />
           </div>
+          <div>
+            {/* Taxas do bilhete: estao no recibo e sao parte do preco. */}
+            <label className={smallLabel}>TAXES (USD)</label>
+            <input type="number" min="0" step="0.01" value={f.taxes_usd} onChange={(e) => setF({ ...f, taxes_usd: e.target.value })} className={inputClass} placeholder="53.20" />
+          </div>
+
           <div>
             <label className={smallLabel}>CHECKED BAGGAGE</label>
             <select value={f.baggage_included} onChange={(e) => setF({ ...f, baggage_included: e.target.value })} className={inputClass}>

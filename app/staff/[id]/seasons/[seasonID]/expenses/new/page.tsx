@@ -56,6 +56,7 @@ export default function NewExpensePage() {
   const [amount, setAmount] = useState('')
   const [origin, setOrigin] = useState('GZ28US')
   const [supplier, setSupplier] = useState('')
+  const [paymentReference, setPaymentReference] = useState('')
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [expenseDate, setExpenseDate] = useState(getTodayString())
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
@@ -120,6 +121,7 @@ export default function NewExpensePage() {
       amount: parseFloat(amount),
       origin,
       supplier: supplier.trim() || null,
+      payment_reference: paymentReference.trim() || null,
       ...paymentCols,
       // Legacy write-through (older screens still read these):
       source: payment.paidFrom,
@@ -279,6 +281,13 @@ export default function NewExpensePage() {
         </div>
 
         <PaymentFields value={payment} onChange={setPayment} hidePaidToggle={type !== 'SINGLE'} />
+
+        <div>
+          <label className="block mb-2 text-lg font-bold">PAYMENT REFERENCE</label>
+          {/* Como se acha o pagamento na origem: ID do PayPal, confirmacao do
+              Zelle, numero do wire. Vivia no meio da descricao. */}
+          <input type="text" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} className={inputClass} placeholder="PayPal 8A88…, Zelle confirmation, wire ref" />
+        </div>
 
         <div>
           <label className="block mb-2 text-lg font-bold">RECEIPT</label>
