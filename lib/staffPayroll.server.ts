@@ -100,7 +100,10 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
       .eq('season_id', s.id).eq('type', s.pay_type).eq('expense_date', periodo).limit(1)
     if (dup?.length) continue
 
-    const label = s.pay_type === 'WEEKLY' ? `Semanal (sexta ${periodo.slice(8, 10)}/${periodo.slice(5, 7)})`
+    // O dia sai do pay_day da season, nao fixo: o Kaue recebe sexta, o Eliel sabado.
+    const DIA_SEMANA = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado']
+    const diaNome = DIA_SEMANA[s.pay_day ?? 5] || 'sexta'
+    const label = s.pay_type === 'WEEKLY' ? `Semanal (${diaNome} ${periodo.slice(8, 10)}/${periodo.slice(5, 7)})`
       : s.pay_type === 'DAILY' ? `Diária ${periodo.slice(8, 10)}/${periodo.slice(5, 7)}`
       : `Mensal ${periodo.slice(5, 7)}/${periodo.slice(0, 4)}`
 
