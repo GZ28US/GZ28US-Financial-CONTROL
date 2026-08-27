@@ -93,7 +93,11 @@ export default function AssetsPage() {
       <Header />
 
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">MARKETING ({rows.length})</h1>
+        {/* ACTIVATIONS (João, 26/ago): cada linha é uma ATIVAÇÃO — iniciativa
+            nomeada de gasto de marca (evento, campanha, drop de merch), com
+            vida útil e pagamentos. Não é "fornecedor de custo fixo"; a tabela
+            por baixo é só encanamento. */}
+        <h1 className="text-4xl font-bold">MARKETING — ACTIVATIONS ({rows.length})</h1>
         <input
           type="text"
           value={search}
@@ -120,7 +124,7 @@ export default function AssetsPage() {
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
       ) : filtered.length === 0 ? (
-        <p className="text-2xl text-gray-400">{rows.length === 0 ? 'Nothing here yet — shop assets and marketing spend live on this page.' : 'No matches.'}</p>
+        <p className="text-2xl text-gray-400">{rows.length === 0 ? 'No activations yet — events, advertisements and merchandise live on this page.' : 'No matches.'}</p>
       ) : (
         <div className="space-y-5">
           {filtered.map(r => (
