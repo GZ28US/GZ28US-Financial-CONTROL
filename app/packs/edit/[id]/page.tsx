@@ -114,13 +114,6 @@ export default function EditPackPage() {
   const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', item_discount: '0', export_status: 'FRESH' })
 
   const [duties, setDuties] = useState<PackDuty[]>([])
-  // BLOCKS v0 (CC 0.2.0, João 26/ago: "where should I build the blocks?"): um
-  // bloco É um pack pequeno (Engine Build, Crank Pinning...). IMPORT A BLOCK
-  // funde o conteúdo de outro pack DENTRO deste, no formulário (só grava no
-  // SAVE): parts/expenses com kit_groups novos, services, duties renumeradas
-  // em sequência depois das existentes. Compor pack grande = importar blocos.
-  const [blockPacks, setBlockPacks] = useState<any[]>([])
-  const [blockPick, setBlockPick] = useState('')
   const [newDuty, setNewDuty] = useState<{ order: string; description: string; priority: string; est: string }>({ order: '', description: '', priority: '1', est: '' })
   const [editingDutyIndex, setEditingDutyIndex] = useState<number | null>(null)
   const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; priority: string; est: string }>({ order: '', description: '', priority: '1', est: '' })
@@ -189,35 +182,9 @@ export default function EditPackPage() {
 
   useEffect(() => { if (id) load(id) }, [id])
 
-  // BLOCKS v0: funde o conteúdo do pack escolhido no formulário atual. Nada é
-  // gravado aqui — o merge vive no estado até o SAVE (dá pra desfazer saindo).
-  async function importBlock() {
-    if (!blockPick) return
-    const { data: src } = await supabase.from('packs').select('*').eq('id', blockPick).maybeSingle()
-    if (!src) { alert('Pack not found.'); return }
-    // kit_groups do bloco ganham uuids NOVOS (importar o mesmo bloco 2× = 2 kits)
-    const kgMap = new Map<string, string>()
-    const newKg = (g: any) => { if (!g) return undefined; if (!kgMap.has(g)) kgMap.set(g, crypto.randomUUID()); return kgMap.get(g) }
-    setParts([...parts, ...(src.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : undefined, kit_group: newKg(p.kit_group), kit_name: p.kit_name || undefined, source_item: p.source_item || undefined }))])
-    setServices([...services, ...(src.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' }))])
-    setExpenses([...expenses, ...(src.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH', kit_group: newKg(e.kit_group), kit_name: e.kit_name || undefined }))])
-    // duties do bloco entram DEPOIS das existentes, renumeradas em sequência
-    let n = duties.reduce((m, d) => Math.max(m, Number(dutyOrderOf(d.description)) || 0), 0)
-    const imported = (src.duties || []).map((d: any) => {
-      const desc = String(d.description || '')
-      const ordered = !!dutyOrderOf(desc)
-      if (ordered) n += 1
-      return { description: ordered ? withDutyOrder(String(n).padStart(2, '0'), stripDutyOrder(desc)) : desc, priority: String(d.priority || '1'), estimated_seconds: Number(d.estimated_seconds) > 0 ? Math.round(Number(d.estimated_seconds)) : null }
-    })
-    setDuties(sortPackDuties([...duties, ...imported]))
-    setBlockPick('')
-  }
-
   async function load(packId: string) {
     const { data } = await supabase.from('packs').select('*').eq('id', packId).maybeSingle()
     if (!data) { setNotFound(true); setLoading(false); return }
-    supabase.from('packs').select('id, name, platform, status').eq('zone', 'US').neq('id', packId).order('name')
-      .then(({ data: pks }) => setBlockPacks(pks || []))
     setName(data.name || '')
     setPlatform(data.platform || '')
     setKind(data.kind || 'PACK')
@@ -799,21 +766,6 @@ export default function EditPackPage() {
           {!kindSupported && <p className="text-amber-300 mt-2">Rode MIGRATION_pack_kind.sql no SQL Editor pra habilitar o KIND.</p>}
         </div>
 
-        {/* 🧱 BLOCKS v0 — funde outro pack (um BLOCO: Engine Build, Crank Pinning…)
-            dentro deste, no formulário; revise e SALVE. Duties entram renumeradas
-            no fim da espinha; kits ganham grupos novos (importar 2× = 2 grupos). */}
-        {!locked && blockPacks.length > 0 && (
-          <div>
-            <label className="block mb-2 text-lg font-bold">🧱 IMPORT A BLOCK (another pack)</label>
-            <div className="flex gap-3 flex-wrap">
-              <select value={blockPick} onChange={(e) => setBlockPick(e.target.value)} className={`${smallInputClass} flex-1 min-w-[280px]`}>
-                <option value="">— pick a pack to merge into this one —</option>
-                {blockPacks.map((p: any) => <option key={p.id} value={p.id}>{p.name}{p.platform ? ` · ${p.platform}` : ''}{p.status === 'DRAFT' ? ' · DRAFT' : ''}</option>)}
-              </select>
-              <button onClick={importBlock} disabled={!blockPick} className="bg-teal-700 hover:bg-teal-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold">IMPORT</button>
-            </div>
-          </div>
-        )}
 
         {/* EXPENSES (first box, matching the invoice edit page) */}
         <div>
