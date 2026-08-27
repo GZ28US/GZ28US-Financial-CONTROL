@@ -58,7 +58,7 @@ export default function BalancePage() {
       const scope = rideScope(d, inv)
       // DONOR entra no guard: crédito de peça puxada do doador não é
       // adiantamento de cliente, e doador não gera A/R.
-      const ours = scope === 'OWN' || scope === 'TOOL' || scope === 'DONOR'
+      const ours = scope === 'OWN' || scope === 'TOOL'
       // Carro nosso não gera A/R, adiantamento nem FL tax — ninguém nos deve
       // pelo nosso próprio carro; linha de preço em invoice nossa é display.
       if (!ours) {
@@ -68,7 +68,6 @@ export default function BalancePage() {
       }
       if (scope === 'OWN') fleetOwn += t.cost
       else if (scope === 'TOOL') fleetTool += t.cost
-      else if (scope === 'DONOR') donorCost += t.cost
       // Carro EXPORTED embarcou: trabalho entregue, custo não é mais obra
       // em andamento — fica no CPV as-booked, fora do WIP.
       else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) {
@@ -153,7 +152,6 @@ export default function BalancePage() {
             { cells: ['Imobilizado — equipamento', usd(m.equip)] },
             { cells: [m.depTool > 0 ? `Imobilizado — veículos de serviço (TOOL, líquido de dep. ${usd(m.depTool)})` : 'Imobilizado — veículos de serviço (TOOL)', usd(m.fleetTool)] },
             { cells: [m.depOwn > 0 ? `Frota de marketing & desenvolvimento (OWN, líquido de dep. ${usd(m.depOwn)})` : 'Frota de marketing & desenvolvimento (OWN)', usd(m.fleetOwn)] },
-            { cells: ['Carros doadores — part-out (DONOR)', usd(m.donorCost)] },
             { cells: [m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)', usd(m.totalAtivo)], bold: true },
           ],
         },
@@ -281,7 +279,6 @@ export default function BalancePage() {
           <Row label="Imobilizado — equipamento" value={m.equip} chip={<Chip kind="dec" label="D8" />} note={`GOODS ≥ $${CAP_FLOOR.toLocaleString()} · sem depreciação ainda (G4)`} />
           <Row label="Imobilizado — veículos de serviço" value={m.fleetTool} chip={<Chip kind="ok" label="TOOL" />} note="todo o investido nas rides TOOL" />
           <Row label="Frota de marketing & desenvolvimento" value={m.fleetOwn} chip={<Chip kind="ok" label="OWN" />} note="todo o investido nas rides OWN — GENEZIZ não deprecia, nunca será vendido" />
-          <Row label="Carros doadores (part-out)" value={m.donorCost} chip={<Chip kind="ok" label="DONOR" />} note="carcaça comprada pra virar estoque de peças; crédito de peça puxada abate via fluxo de doador" />
           <Row label={m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (ex-caixa)'} value={m.totalAtivo} total />
         </div>
 

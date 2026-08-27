@@ -272,8 +272,14 @@ export const CAR_DESTINY = [
     option: 'GZ28US OWN — our showcase & marketing fleet (an asset, not a job)' },
   { value: 'TOOL',   badge: 'GZ28US TOOL',  cls: 'bg-emerald-900 text-emerald-300',
     option: 'GZ28US TOOL — our service vehicle or rig (depreciates like equipment)' },
-  { value: 'DONOR',  badge: 'DONOR — PART-OUT', cls: 'bg-rose-900 text-rose-300',
-    option: 'DONOR — bought to part-out; the carcass becomes parts inventory' },
+  // DONOR — PART-OUT foi ELIMINADO (Márcio, 27/ago/2026): "o 6o não existe
+  // mais". Os dois carros que estavam assim — ScatPrisionPack US.038 e C7 Burnt
+  // US.027 — viraram GZ28US OWN por decisão dele, sem impacto nenhum no
+  // Balanço: os dois tinham zero despesa lançada.
+  //
+  // Onde cada destino aparece agora: USA / EXPORT / CLIENT vivem na tela de
+  // RIDES; OWN e TOOL vivem no FLEET, dentro de ASSETS. Ride sem destino
+  // escolhido continua em RIDES — quote nova nasce assim.
 ] as const
 
 export function carDestiny(scope: string | null | undefined) {

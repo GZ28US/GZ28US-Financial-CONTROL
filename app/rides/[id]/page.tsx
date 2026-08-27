@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar } from '@/lib/utils'
+import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 
 type Ride = {
@@ -425,8 +425,10 @@ export default function ViewRidePage() {
           </div>
         )}
 
-        {/* INVOICES */}
-        {invoices.length > 0 && (
+        {/* INVOICES — carro do FLEET (nosso) NÃO tem invoice: não existe cliente
+            para faturar (Márcio, 27/ago/2026). As invoices continuam no banco,
+            porque é delas que o FLEET lê as despesas do carro; some só a seção. */}
+        {invoices.length > 0 && !isOurCar(ride.title_scope) && (
           <div>
             <label className="block mb-3 text-lg font-bold">INVOICES ({invoices.length})</label>
             <div className="space-y-3">
