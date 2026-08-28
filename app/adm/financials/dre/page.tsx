@@ -79,8 +79,14 @@ export default function DrePage() {
     // Decisão dos sócios (Marcio+Beto, 26/ago): retiradas ao mínimo — o pessoal
     // dos sócios é custo de equipe (sócio também é equipe). TUDO de expenses entra.
     const payroll = d.expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
+    // FIN 0.13.1: conta AGENDADA do futuro (o gerador cria 6 meses à frente)
+    // NÃO é custo incorrido — 67 linhas/$70k inflavam o OPEX acumulado.
+    // Passada sem baixa continua contando (competência: a conta venceu).
+    const todayYmd = new Date().toISOString().slice(0, 10)
+    const incurred = (f: any) => !!f.payment_date || !f.expense_date || String(f.expense_date) <= todayYmd
     const fixedBy: Record<string, number> = {}
     for (const f of d.fixedExpenses) {
+      if (!incurred(f)) continue
       // MERCHANDISE (26/ago) é gasto de marketing — soma na mesma linha MKT
       const ct0 = d.fixedSuppliers.get(f.supplier_id)?.cost_type || 'UNCLASSIFIED'
       const ct = ct0 === 'MERCHANDISE' ? 'MARKETING' : ct0
@@ -164,6 +170,7 @@ export default function DrePage() {
     const bySupplier = (ct: string): CompRow[] => {
       const acc = new Map<string, number>()
       for (const f of d.fixedExpenses) {
+        if (!(f.payment_date || !f.expense_date || String(f.expense_date) <= new Date().toISOString().slice(0, 10))) continue
         const sup = d.fixedSuppliers.get(f.supplier_id)
         const sct0 = sup?.cost_type || 'UNCLASSIFIED'
         if ((sct0 === 'MERCHANDISE' ? 'MARKETING' : sct0) !== ct) continue
@@ -229,6 +236,7 @@ export default function DrePage() {
       add('CPV', rd, t.cost - carC)
     }
     for (const f of d.fixedExpenses) {
+      if (!(f.payment_date || !f.expense_date || String(f.expense_date) <= new Date().toISOString().slice(0, 10))) continue
       const sup = d.fixedSuppliers.get(f.supplier_id)
       const ct = sup?.cost_type || 'UNCLASSIFIED'
       const line = ct === 'STAFF' ? 'EQUIPE' : ct === 'APP' ? 'APP' : (ct === 'MARKETING' || ct === 'MERCHANDISE') ? 'MKT' : ct === 'BANK' ? 'BANK' : ct === 'FLEET' ? 'FLEET' : ct === 'ASSET' ? 'ASSET' : ct === 'FIXED' ? 'FIXED' : 'UNCLASS'
