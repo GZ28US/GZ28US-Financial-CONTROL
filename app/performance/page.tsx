@@ -18,95 +18,75 @@ type Tab = typeof TABS[number]
 const SCOPES = ['ALL', 'US', 'BR'] as const
 type Scope = typeof SCOPES[number]
 
-const HP_TO_CV = 1.01387
+// ── O DIALETO DA CASA É O DO APP DO US ───────────────────────────────────────
+// A tela de dyno do ride US fala UMA língua: potência corrigida STD, torque em lb·ft,
+// UM número por célula. Ela não discute fator de correção com o cliente — a casa já
+// assumiu STD, converte a folha estrangeira NA ENTRADA e imprime o resultado.
+// A tela do BR é outro contrato: lá o cliente discute fator, então ela mostra as duas
+// verdades lado a lado (o que a máquina mediu e o que a folha declara corrigido), com
+// cv e kgf·m. Aquela tabela de 10 colunas é do app do BR e lá está certa.
+// Este placar assina o contrato do US — são dois contratos, não duas formatações.
 const KGFM_TO_LBFT = 9.80665 / 1.3558179 // kgf·m → lb·ft
 const SAE_TO_STD = 1.04
-
-function numOrNull(v: string): number | null { const n = parseFloat(v); return isFinite(n) ? n : null }
-function r2(x: number) { return Math.round(x * 100) / 100 }
-
-// ── A MESMA CONTA DA TELA DO RIDE ────────────────────────────────────────────
-// computeDyno / toLocalDialect / calcFromPull são cópias literais do que a tela de
-// passadas do ride roda (app/rides/[id]/performance/[build]/page.tsx, e a gêmea no
-// app do BR). Elas vivem em escopo de módulo dentro daquele arquivo 'use client' e
-// não são exportadas — então aqui se replica a CHAMADA, não a fórmula: nenhum
-// número deste ranking pode discordar do número que aparece na página do carro.
-type DynoCalc = {
-  loss: number
-  sae: number
-  net: { whp: number | null; wkgfm: number | null; hp: number | null; kgf: number | null }
-  corr: { whp: number | null; wkgfm: number | null; hp: number | null; cv: number | null; kgfm: number | null }
-}
-function computeDyno(whpS: string, wkgfmS: string, lossS: string, corrS: string): DynoCalc {
-  const W = numOrNull(whpS)
-  const K = numOrNull(wkgfmS)
-  const L = lossS === '' ? 0 : (numOrNull(lossS) ?? 0)
-  const C = corrS === '' ? 1 : (numOrNull(corrS) ?? 1)
-  const denom = 1 - L / 100
-  const ok = denom > 0
-  const netHp = (W != null && ok) ? r2(W / denom) : null
-  const netKgf = (K != null && ok) ? r2(K / denom) : null
-  const cWhp = W != null ? r2(W * C) : null
-  const cWkgfm = K != null ? r2(K * C) : null
-  const cHp = (cWhp != null && ok) ? r2(cWhp / denom) : null
-  const cCv = cHp != null ? r2(cHp * HP_TO_CV) : null
-  const cKgfm = (cWkgfm != null && ok) ? r2(cWkgfm / denom) : null
-  return {
-    loss: L, sae: C,
-    net: { whp: W != null ? r2(W) : null, wkgfm: K != null ? r2(K) : null, hp: netHp, kgf: netKgf },
-    corr: { whp: cWhp, wkgfm: cWkgfm, hp: cHp, cv: cCv, kgfm: cKgfm },
-  }
-}
 
 type DynoPull = {
   id: string; ride_code: string | null; pack: string | null
   whp: number | null; wnm: number | null; loss_pct: number | null
   correction_factor: number | null; bhp: number | null; bnm: number | null
   pull_date: string | null; dyno: string | null; origin: string | null
+  document_url: string | null
+  // `foreign` NÃO vem do banco: é o carimbo que toLocalDialect põe na passada que ELE
+  // converteu. É o único selo do dialeto do US que atravessa pra cá, e é um selo de
+  // honestidade — diz que aquele número não é o que a folha imprimiu, é o que a
+  // conversão fez com ele.
+  foreign?: boolean
 }
 
-// PADRÃO STD (Márcio, 28/ago/2026): a casa fala STD nos dois apps. O banco, porém,
-// guarda coisas diferentes conforme quem gravou:
-//   origem US → whp já CORRIGIDO, fator impresso na folha já em STD
-//   origem BR → whp CRU, fator em SAE (é o que a folha da Servitec imprime)
-// Para os dois caírem na mesma régua: o US volta ao cru (÷ fator) e mantém o fator;
-// o BR mantém o cru e converte o fator, SAE × 1,04 = STD. Daí o corrigido de ambos
-// sai da mesma conta lá em computeDyno (cru × fator ÷ perda).
-// Torque: o US grava lb·ft e esta tabela mostra kgf·m — conversão de UNIDADE,
-// independente do padrão de correção.
-// Sem fator gravado não dá para separar cru de corrigido: a linha fica como está,
-// em vez de receber número inventado (é o caso das folhas do DynoJet daqui).
+// CÓPIA DELIBERADA, palavra por palavra, da tela de dyno do ride US
+// (app/rides/[id]/performance/[build]/page.tsx, linhas 57-72). O original vive em escopo
+// de módulo de um arquivo 'use client' e não é exportado — então aqui se replica o CORPO,
+// não se inventa fórmula. Só a assinatura foi re-tipada contra o DynoPull deste arquivo.
+// Se um dia aquele arquivo mudar a conta, esta muda junto: no minuto em que as duas
+// divergirem, o placar passa a mentir sobre a página do carro.
+//
+// O QUE ELA FAZ, e por quê:
+//   origem US → passa direto, byte a byte. O que está gravado é o que a tela do carro
+//               mostra, e é o que este placar mostra. Sem recálculo, sem palpite. Se o
+//               bhp gravado divergisse de whp/(1−perda), a tela mostraria o GRAVADO — e
+//               a lei manda o placar mostrar o mesmo, não "consertar" pelas costas.
+//   origem BR → a folha da Servitec grava roda CRUA, torque em kgf·m e fator SAE. Sobe
+//               pro corrigido STD (fator × 1,04), converte o torque pra lb·ft e RE-DERIVA
+//               o motor a partir do número já convertido. Os bhp/bnm gravados da linha BR
+//               são descartados de propósito: foram calculados na régua de lá.
+//
+// DUAS HERANÇAS ACEITAS DE OLHOS ABERTOS — corrigir AQUI e não lá faria o placar
+// discordar da página do carro, que é exatamente o pecado que esta página existe pra
+// não cometer. O conserto, se um dia for preciso, é nos dois arquivos:
+//   · fator NULO em linha BR vira 1,04 — o app ASSUME folha SAE e sobe 4%. Isso é
+//     suposição, não leitura. Hoje não dispara (as 24 linhas BR têm fator gravado), e o
+//     rodapé denuncia na hora se um dia disparar.
+//   · fator ZERO em linha BR zeraria a linha inteira e jogaria o carro pro último lugar
+//     com 0.00. Hoje o menor fator do banco é 1,00 (BR.501).
 function toLocalDialect(p: DynoPull): DynoPull {
-  const r4 = (x: number) => Math.round(x * 10000) / 10000
-  const cf = p.correction_factor && p.correction_factor > 0 ? p.correction_factor : null
-
-  if (p.origin === 'US') {
-    const un = (v: number) => cf ? v / cf : v
-    return {
-      ...p,
-      whp: p.whp != null ? r2(un(p.whp)) : null,
-      wnm: p.wnm != null ? r2(un(p.wnm) / KGFM_TO_LBFT) : null,
-      bhp: p.bhp != null ? r2(un(p.bhp)) : null,
-      bnm: p.bnm != null ? r2(un(p.bnm) / KGFM_TO_LBFT) : null,
-      correction_factor: cf,
-    }
+  if (p.origin !== 'BR') return p
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
+  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
+  const whp = p.whp != null ? r2(p.whp * cf) : null
+  const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_LBFT) : null
+  return {
+    ...p,
+    whp, wnm,
+    bhp: whp != null && denom != null ? r2(whp / denom) : null,
+    bnm: wnm != null && denom != null ? r2(wnm / denom) : null,
+    foreign: true,
   }
-
-  if (!cf) return p
-  return { ...p, correction_factor: r4(cf * SAE_TO_STD) }
 }
 
-function calcFromPull(p: DynoPull): DynoCalc {
-  return computeDyno(
-    p.whp != null ? String(p.whp) : '',
-    p.wnm != null ? String(p.wnm) : '',
-    p.loss_pct != null ? String(p.loss_pct) : '',
-    p.correction_factor != null ? String(p.correction_factor) : '',
-  )
-}
-
-const fp = (x: number | null) => (x == null ? '—' : x.toFixed(1)) // power
-const ft = (x: number | null) => (x == null ? '—' : x.toFixed(2)) // torque
+// O MESMO FORMATO DA CÉLULA DA TELA DO CARRO: duas casas e a unidade colada no número.
+// O cabeçalho já declara a unidade e isso repete o sufixo 60 vezes — mas a tela do ride
+// faz assim, e a lei aqui é concordar com ela, não economizar caractere.
+const num = (x: number | null, unit: string) => (x == null ? '—' : `${x.toFixed(2)} ${unit}`)
 
 function fmtDate(d: string | null) {
   if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
@@ -115,11 +95,15 @@ function fmtDate(d: string | null) {
 
 // Uma linha por CARRO: a melhor passada dele. `rideId` só existe para carro US —
 // o ride do carro BR mora no banco do BR e não tem página neste app (ver load()).
-type Entry = { code: string; name: string; rideId: string | null; pull: DynoPull; calc: DynoCalc }
+type Entry = { code: string; name: string; rideId: string | null; pull: DynoPull }
 
 export default function PerformancePage() {
   const [tab, setTab] = useState<Tab>('DYNO')
-  const [scope, setScope] = useState<Scope>('ALL')
+  // ABRE NA CASA (Márcio, 28/ago/2026: "a exibição padrão no US é só US e no BR só BR,
+  // o usuário alterna os filtros se quiser"). O banco de passadas é um só e serve os dois
+  // apps — mas quem entra aqui está na oficina de Orlando e quer ver a frota daqui
+  // primeiro. ALL e BR continuam a um clique.
+  const [scope, setScope] = useState<Scope>('US')
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   // LEITURA QUE FALHA NÃO É LISTA VAZIA. supabase-js não estoura em erro de HTTP:
@@ -128,15 +112,24 @@ export default function PerformancePage() {
   const [err, setErr] = useState<string | null>(null)
   const [namesWarn, setNamesWarn] = useState(false)
   const [totalPulls, setTotalPulls] = useState(0)
+  // CARRO NÃO SOME CALADO. No dialeto do US o bhp de uma passada BR vira null quando a
+  // perda não está gravada (ou é >= 100%) — e num placar ordenado por bhp isso apagaria
+  // o carro inteiro da tela sem uma palavra. Guardo aqui os códigos que TÊM passada
+  // ranqueável e mesmo assim não deram número, pra o rodapé dizer quantos e por quê.
+  const [unranked, setUnranked] = useState<string[]>([])
 
   async function load() {
     try {
       setErr(null)
       setNamesWarn(false)
+      setUnranked([])
       // dyno_pulls mora SÓ no banco do US — as passadas dos carros BR estão aqui também.
+      // loss_pct e correction_factor continuam no select mesmo sem coluna de fator na
+      // tela: sem eles a passada BR não se converte. document_url é a FOLHA — a prova do
+      // número, e a única saída pra quem quiser conferir uma linha sem fator declarado.
       const { data: raw, error } = await supabase
         .from('dyno_pulls')
-        .select('id, ride_code, pack, whp, wnm, loss_pct, correction_factor, bhp, bnm, pull_date, dyno, origin')
+        .select('id, ride_code, pack, whp, wnm, loss_pct, correction_factor, bhp, bnm, pull_date, dyno, origin, document_url')
       if (error) throw new Error(error.message)
       setTotalPulls((raw || []).length)
 
@@ -179,23 +172,27 @@ export default function PerformancePage() {
         names.set(r.project_code, r.project_name || '')
       }
 
-      // A melhor passada do carro é a de maior hp de MOTOR CORRIGIDO — é o número que
-      // a página do carro estampa e o que o mercado chama de bhp. whp premiaria quem
-      // tem menos perda na transmissão, não quem tem mais motor.
+      // A melhor passada do carro é a de maior BHP — hp de MOTOR, ordem do Márcio. É o
+      // número que a página do carro estampa na coluna BHP, e é o que o mercado compara.
+      // whp premiaria quem tem menos perda na transmissão, não quem tem mais motor.
       const best = new Map<string, Entry>()
+      const withPulls = new Set<string>()
       for (const p of pulls) {
         const code = String(p.ride_code)
-        const calc = calcFromPull(p)
-        if (calc.corr.hp == null) continue
+        withPulls.add(code)
+        if (p.bhp == null) continue
         const cur = best.get(code)
-        if (cur && (cur.calc.corr.hp ?? 0) >= calc.corr.hp) continue
-        best.set(code, { code, name: names.get(code) || '', rideId: usIds.get(code) || null, pull: p, calc })
+        if (cur && (cur.pull.bhp ?? 0) >= p.bhp) continue
+        best.set(code, { code, name: names.get(code) || '', rideId: usIds.get(code) || null, pull: p })
       }
+      // O carro que tem passada e mesmo assim não deu bhp fica de fora da tabela — mas
+      // não do conhecimento da página: o rodapé conta quantos são.
+      setUnranked([...withPulls].filter((c) => !best.has(c)).sort())
 
       // Empate desempata pelo código, para a ordem não depender do que o Postgres
       // devolveu primeiro — placar tem de sair igual em toda visita.
       setEntries([...best.values()].sort((a, b) =>
-        ((b.calc.corr.hp ?? 0) - (a.calc.corr.hp ?? 0)) || a.code.localeCompare(b.code)))
+        ((b.pull.bhp ?? 0) - (a.pull.bhp ?? 0)) || a.code.localeCompare(b.code)))
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
       setEntries([])
@@ -209,10 +206,25 @@ export default function PerformancePage() {
   const shown = entries.filter((e) => scope === 'ALL' || e.code.startsWith(`${scope}.`))
   const countFor = (s: Scope) => entries.filter((e) => s === 'ALL' || e.code.startsWith(`${s}.`)).length
   const settled = !loading && !err
+  // ── O QUE ESTA PÁGINA PODE E NÃO PODE AFIRMAR SOBRE CORREÇÃO ─────────────────
+  // No dialeto do US não existe coluna de fator pra virar traço, nem metade "sem
+  // correção" pra apagar. Então a ressalva migra pro TEXTO, e ela é diferente conforme
+  // quem gravou a folha:
+  //   · folha sem fator, origem US (as do DynoJet daqui — o scan ainda não lê o fator):
+  //     o número é impresso exatamente como foi gravado. Ninguém sabe se aquela folha já
+  //     saiu corrigida. A página NÃO carimba "STD" em cima disso.
+  //   · folha sem fator, origem BR: pior — a conversão ASSUMIU SAE e somou 4%. Aí não é
+  //     desconhecimento, é suposição declarada, e tem de ser dita com outras palavras.
+  // Os dois contadores olham só o que está NA TELA (`shown`): rodapé que conta linha
+  // fora do escopo está contando o que o leitor não pode ver.
   const noCf = shown.filter((e) => e.pull.correction_factor == null).length
+  const assumedCf = shown.filter((e) => e.pull.correction_factor == null && e.pull.origin === 'BR').length
+  const unrankedShown = unranked.filter((c) => scope === 'ALL' || c.startsWith(`${scope}.`))
+  // Quantas linhas na tela não são leitura direta, e sim conversão feita aqui na entrada.
+  const foreignShown = shown.filter((e) => e.pull.foreign).length
 
   // Pódio discreto: a posição ganha cor, a linha ganha um fundo de leve. Sem cor
-  // gritante — a tabela tem 10 números por linha e eles é que têm de ser lidos.
+  // gritante — os quatro números da linha é que têm de ser lidos.
   const podium = (i: number) =>
     i === 0 ? 'bg-amber-500/10 border-l-4 border-l-amber-400'
     : i === 1 ? 'bg-gray-400/10 border-l-4 border-l-gray-400'
@@ -258,7 +270,9 @@ export default function PerformancePage() {
             {/* Contador só depois de ler o banco: enquanto carrega, "0 cars" seria
                 um resultado, e resultado nenhum foi apurado ainda. */}
             <span className="ml-2 text-lg text-gray-400">
-              {settled ? `${shown.length} ${shown.length === 1 ? 'car' : 'cars'} · best pull of each` : 'reading the dyno bank…'}
+              {settled
+                ? `${shown.length} ${shown.length === 1 ? 'car' : 'cars'} · best pull of each`
+                : err ? 'read failed' : 'reading the dyno bank…'}
             </span>
           </div>
 
@@ -273,108 +287,146 @@ export default function PerformancePage() {
               <button onClick={() => { setLoading(true); load() }} className="mt-4 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-2xl font-bold">TRY AGAIN</button>
             </div>
           ) : shown.length === 0 ? (
-            <p className="text-2xl text-gray-400">
-              {entries.length === 0 && totalPulls > 0
-                ? 'No ranked pull yet — every pull on file is a baseline (BoneStock / Stock), and a baseline is where the car started, not a result.'
-                : `No dyno pull on file for ${scope === 'ALL' ? 'any car' : `${scope} cars`} yet — baselines (BoneStock / Stock) don't count as a result.`}
-            </p>
+            // TRÊS VAZIOS DIFERENTES, E ELES NÃO SIGNIFICAM A MESMA COISA. O pior é o
+            // primeiro: RLS que filtra LINHA devolve HTTP 200 com [] e error nulo, então
+            // a query "deu certo" e não veio nada. Dizer "nenhum carro correu" nesse caso
+            // é a mentira mais fácil desta página — a tabela tem 47 linhas.
+            <div className="text-2xl text-gray-400 space-y-2">
+              {totalPulls === 0 ? (
+                <>
+                  <p className="text-amber-300 font-bold">The dyno bank came back with nothing at all.</p>
+                  <p className="text-lg">That is either a genuinely empty table or a read that was silently filtered — it is NOT a statement that no car has ever run.</p>
+                  <button onClick={() => { setLoading(true); load() }} className="mt-2 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-2xl font-bold text-base">TRY AGAIN</button>
+                </>
+              ) : entries.length === 0 ? (
+                <p>No ranked pull yet — every pull on file is a baseline (BoneStock / Stock), and a baseline is where the car started, not a result.</p>
+              ) : (
+                <p>No dyno pull on file for {scope === 'ALL' ? 'any car' : `${scope} cars`} yet — baselines (BoneStock / Stock) don&apos;t count as a result.</p>
+              )}
+              {unrankedShown.length > 0 && (
+                <p className="text-base text-amber-400/80">
+                  {unrankedShown.length} {unrankedShown.length === 1 ? 'car has a pull that' : 'cars have pulls that'} couldn&apos;t be ranked — no transmission loss on file, so engine hp can&apos;t be worked out ({unrankedShown.join(', ')}).
+                </p>
+              )}
+            </div>
           ) : (
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 overflow-x-auto">
+              {/* AS COLUNAS SÃO AS DA TELA DE DYNO DO RIDE US, na ordem dela: PACK, WHP,
+                  WTQ (lb·ft), BHP, BTQ (lb·ft), DATE, DYNO, DOC — inclusive DATE ANTES de
+                  DYNO. Na frente entram as duas colunas que só o placar tem, porque só
+                  aqui existe comparação entre carros: a posição e o CARRO. */}
               <table className="w-full text-left whitespace-nowrap">
                 <thead>
-                  <tr className="text-gray-400 text-xs border-b border-gray-700">
-                    <th rowSpan={3} className="py-2 px-2 font-bold align-bottom">#</th>
-                    <th rowSpan={3} className="py-2 px-2 font-bold align-bottom">CAR</th>
-                    <th rowSpan={3} className="py-2 px-2 font-bold align-bottom">PACK</th>
-                    <th colSpan={4} className="py-1 px-2 font-bold text-center text-red-300 bg-red-900/30 border-l border-gray-700">No Correction (net)</th>
-                    <th colSpan={6} className="py-1 px-2 font-bold text-center text-blue-300 bg-blue-900/30 border-l border-gray-700">Corrected (STD standard)</th>
-                    <th rowSpan={3} className="py-2 px-2 font-bold align-bottom border-l border-gray-700">DYNO</th>
-                    <th rowSpan={3} className="py-2 px-2 font-bold align-bottom">DATE</th>
-                  </tr>
-                  <tr className="text-gray-400 text-xs border-b border-gray-700">
-                    <th colSpan={2} className="py-1 px-2 text-center border-l border-gray-700">WHEELS</th>
-                    <th colSpan={2} className="py-1 px-2 text-center">ENGINE</th>
-                    <th rowSpan={2} className="py-1 px-2 text-center align-bottom border-l border-gray-700">STD</th>
-                    <th colSpan={2} className="py-1 px-2 text-center">WHEELS</th>
-                    <th colSpan={3} className="py-1 px-2 text-center">ENGINE</th>
-                  </tr>
-                  <tr className="text-gray-500 text-xs border-b border-gray-700">
-                    <th className="py-1 px-2 border-l border-gray-700">whp</th>
-                    <th className="py-1 px-2">wkgfm</th>
-                    <th className="py-1 px-2">hp</th>
-                    <th className="py-1 px-2">kgf</th>
-                    <th className="py-1 px-2 border-l border-gray-700">whp</th>
-                    <th className="py-1 px-2">wkgfm</th>
-                    <th className="py-1 px-2">hp</th>
-                    <th className="py-1 px-2">cv</th>
-                    <th className="py-1 px-2">kgfm</th>
+                  <tr className="text-gray-400 text-sm border-b border-gray-700">
+                    <th className="py-2 pr-4 font-bold">#</th>
+                    <th className="py-2 pr-4 font-bold">CAR</th>
+                    <th className="py-2 pr-4 font-bold">PACK</th>
+                    <th className="py-2 pr-4 font-bold">WHP</th>
+                    <th className="py-2 pr-4 font-bold">WTQ (lb·ft)</th>
+                    <th className="py-2 pr-4 font-bold">BHP</th>
+                    <th className="py-2 pr-4 font-bold">BTQ (lb·ft)</th>
+                    <th className="py-2 pr-4 font-bold">DATE</th>
+                    <th className="py-2 pr-4 font-bold">DYNO</th>
+                    <th className="py-2 pr-4 font-bold">DOC</th>
                   </tr>
                 </thead>
                 <tbody>
                   {shown.map((e, i) => {
-                    const c = e.calc
+                    const p = e.pull
                     // Carro BR não tem página de ride NESTE app (o ride mora no banco do
                     // BR): a linha existe no placar, mas não leva a lugar nenhum.
                     const clickable = !!e.rideId
-                    // SEM FATOR NA FOLHA, METADE DA LINHA É DESCONHECIDA — e qual metade
-                    // depende de quem gravou a passada:
-                    //   US grava o número JÁ CORRIGIDO → o "sem correção" é que não se sabe
-                    //   BR grava o número CRU          → o "corrigido" é que não se sabe
-                    // Antes as duas metades repetiam o mesmo número e o fator saía 1.000,
-                    // como se a folha declarasse ar padrão. Traço é a verdade; 1.000 não é.
-                    const cfOff = e.pull.correction_factor == null
-                    const netOff = cfOff && e.pull.origin === 'US'
-                    const corrOff = cfOff && e.pull.origin !== 'US'
-                    const whyNet = 'No correction factor on file — this sheet prints corrected power, so the net figure can\'t be recovered.'
-                    const whyCorr = 'No correction factor on file — shown uncorrected.'
-                    const dim = corrOff ? ' text-gray-500' : ''
+                    // O ASTERISCO É A ÚNICA RESSALVA QUE CABE NO DIALETO DO US. Sem coluna
+                    // de fator, marcar a folha sem fator vira nota de rodapé clássica:
+                    // sinal discreto no número RANQUEADO (o bhp, que é sobre o que o placar
+                    // faz afirmação) + legenda embaixo. Não inventa coluna, não inventa
+                    // número, e nunca imprime 1.000 como se fosse fator declarado.
+                    const cfOff = p.correction_factor == null
+                    const whyCf = cfOff && p.origin === 'BR'
+                      ? 'No correction factor on this BR sheet — the conversion to STD assumed an SAE sheet (+4%). That is an assumption, not a reading.'
+                      : 'No correction factor on file for this sheet — the figures are printed exactly as recorded. Whether the sheet already came out corrected is not known here. Open DOC to read it.'
                     return (
                       <tr
                         key={e.code}
                         onClick={() => { if (e.rideId) window.location.href = `${BASE_PATH}/rides/${e.rideId}` }}
                         className={`border-b border-gray-800 text-sm ${podium(i)} ${clickable ? 'cursor-pointer hover:bg-gray-800/60' : ''}`}
                       >
-                        <td className={`py-3 px-2 text-2xl font-bold ${posColor(i)}`}>{i + 1}</td>
-                        <td className="py-3 px-2">
+                        <td className={`py-3 pr-4 text-2xl font-bold ${posColor(i)}`}>{i + 1}</td>
+                        <td className="py-3 pr-4">
                           <span className="font-bold text-base">{e.name || e.code}</span>
                           {e.name ? <span className="ml-2 text-xs text-gray-500">{e.code}</span> : null}
-                          {e.pull.origin && !e.code.startsWith(`${e.pull.origin}.`) ? (
-                            <span
-                              className="ml-2 text-xs text-gray-500"
-                              title={`Pull recorded on a ${e.pull.origin} dyno — the car itself is ${e.code.slice(0, 2)}`}
-                            >
-                              {e.pull.origin === 'BR' ? '🇧🇷' : '🇺🇸'}
-                            </span>
-                          ) : null}
                         </td>
-                        <td className="py-3 px-2 text-gray-300">{e.pull.pack || '—'}</td>
-                        {/* Sem correção */}
-                        <td title={netOff ? whyNet : undefined} className="py-3 px-2 border-l border-gray-800 font-bold text-red-300">{netOff ? '—' : fp(c.net.whp)}</td>
-                        <td title={netOff ? whyNet : undefined} className="py-3 px-2 font-bold text-red-300">{netOff ? '—' : ft(c.net.wkgfm)}</td>
-                        <td title={netOff ? whyNet : undefined} className="py-3 px-2 text-gray-300">{netOff ? '—' : fp(c.net.hp)}</td>
-                        <td title={netOff ? whyNet : undefined} className="py-3 px-2 text-gray-300">{netOff ? '—' : ft(c.net.kgf)}</td>
-                        {/* Corrigido (STD) */}
-                        <td title={cfOff ? 'No correction factor on file.' : undefined} className="py-3 px-2 border-l border-gray-800 text-gray-400">{cfOff ? '—' : c.sae.toFixed(3)}</td>
-                        <td title={corrOff ? whyCorr : undefined} className={`py-3 px-2${dim}`}>{fp(c.corr.whp)}</td>
-                        <td title={corrOff ? whyCorr : undefined} className={`py-3 px-2${dim}`}>{ft(c.corr.wkgfm)}</td>
-                        <td title={corrOff ? whyCorr : undefined} className={`py-3 px-2 font-bold ${corrOff ? 'text-gray-500' : 'text-gray-300'}`}>{fp(c.corr.hp)}</td>
-                        <td title={corrOff ? whyCorr : undefined} className={`py-3 px-2 font-bold ${corrOff ? 'text-gray-500' : 'text-blue-300'}`}>{fp(c.corr.cv)}</td>
-                        <td title={corrOff ? whyCorr : undefined} className={`py-3 px-2 font-bold ${corrOff ? 'text-gray-500' : 'text-blue-300'}`}>{ft(c.corr.kgfm)}</td>
-                        <td className="py-3 px-2 border-l border-gray-800 text-gray-400">{e.pull.dyno || '—'}</td>
-                        <td className="py-3 px-2 text-gray-400">{fmtDate(e.pull.pull_date)}</td>
+                        {/* O SELO 🇧🇷 BR vive na célula do PACK, igual à tela do carro, e diz
+                            o que ela diz: este número foi CONVERTIDO, não é o que a folha
+                            imprimiu. O selo antigo dizia outra coisa (onde a passada foi
+                            medida) — isso a coluna DYNO já conta, e dois selos na mesma
+                            célula só confundem qual dos dois fala do número. */}
+                        <td className="py-3 pr-4 text-gray-300">
+                          {p.pack || '—'}
+                          {p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}
+                        </td>
+                        <td className="py-3 pr-4">{num(p.whp, 'whp')}</td>
+                        <td className="py-3 pr-4">{num(p.wnm, 'lb·ft')}</td>
+                        <td className="py-3 pr-4 font-bold">
+                          {num(p.bhp, 'bhp')}
+                          {cfOff ? <span className="ml-1 text-xs font-normal text-amber-400/80" title={whyCf}>*</span> : null}
+                        </td>
+                        <td className="py-3 pr-4">{num(p.bnm, 'lb·ft')}</td>
+                        <td className="py-3 pr-4 text-gray-400">{fmtDate(p.pull_date)}</td>
+                        <td className="py-3 pr-4">{p.dyno || '—'}</td>
+                        {/* A FOLHA é a prova do número — e para as linhas sem fator declarado
+                            é o único jeito de qualquer um conferir o que esta página não
+                            pode afirmar. O clique no link não pode virar navegação pro ride:
+                            a linha inteira é clicável. */}
+                        <td className="py-3 pr-4">
+                          {p.document_url
+                            ? <a href={p.document_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} className="text-blue-400 hover:text-blue-300 underline font-bold">VIEW</a>
+                            : '—'}
+                        </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
+              {/* A FRASE PERDEU O CARIMBO "(STD)" DE PROPÓSITO. Ela era a única afirmação
+                  de correção que sobrava na página, e era falsa para toda linha vinda de
+                  folha sem fator — as do DynoJet daqui. O que a página PODE afirmar é o
+                  que ela de fato faz: ordena pelo BHP, o mesmo número que a tabela do
+                  carro estampa. Quem corrigiu o quê, os avisos abaixo dizem. */}
               <p className="text-xs text-gray-500 mt-4">
-                Ranked by corrected ENGINE hp (STD) — the same figure the car&apos;s own dyno table shows. Baselines are excluded.
+                Ranked by ENGINE hp (BHP), in this app&apos;s dialect: corrected STD, torque in lb·ft. Baselines are excluded.
               </p>
+              {/* A FRASE "O MESMO NÚMERO DA PÁGINA DO CARRO" SÓ VALE PRA CASA. Ela era
+                  redonda demais: dos 15 carros, 9 são BR e não têm página de ride NESTE
+                  app — a única tabela de dyno deles é a do app do BR, e lá o número é
+                  outro (o BR.492 tem 1296,48 bhp gravado e aqui estampa 1348,33, +4%,
+                  porque a régua de lá é SAE e a daqui é STD). Prometer identidade sobre
+                  60% das linhas seria mentira; o selo 🇧🇷 e esta linha dizem a verdade. */}
+              {foreignShown > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  A US car reads here exactly as on its own dyno page in this app. The {foreignShown} 🇧🇷 {foreignShown === 1 ? 'row was' : 'rows were'} recorded in the BR app and converted on the way in — that car reads differently over there, on the BR ruler.
+                </p>
+              )}
               {/* O placar não esconde o que não sabe: quantas linhas vieram de folha
-                  sem fator declarado, e o que isso deixa em aberto. */}
-              {noCf > 0 && (
+                  sem fator declarado, e o que exatamente isso deixa em aberto.
+                  Só entram aqui as que foram impressas COMO GRAVADAS — a linha BR sem
+                  fator não é essa história, é a de baixo, e contá-la nas duas faria os
+                  dois parágrafos se contradizerem. */}
+              {noCf - assumedCf > 0 && (
                 <p className="text-xs text-amber-400/80 mt-1">
-                  {noCf} of these {noCf === 1 ? 'sheets carries' : 'sheets carry'} no correction factor on file — the dashes mark what can&apos;t be worked out from it.
+                  * {noCf - assumedCf} of these {noCf - assumedCf === 1 ? 'sheets carries' : 'sheets carry'} no correction factor on file — printed exactly as recorded. Whether those sheets already came out corrected isn&apos;t known here; open DOC to read them.
+                </p>
+              )}
+              {/* Caso diferente e pior: aqui a página não desconhece, ela SUPÕE. */}
+              {assumedCf > 0 && (
+                <p className="text-xs text-amber-400/80 mt-1">
+                  {assumedCf} of {assumedCf === 1 ? 'those was' : 'those were'} recorded in the BR app with no factor either — converted assuming an SAE sheet (+4%). That is an assumption, not a reading.
+                </p>
+              )}
+              {/* Carro que tem passada e não entrou: dito em voz alta, nunca sumido. */}
+              {unrankedShown.length > 0 && (
+                <p className="text-xs text-amber-400/80 mt-1">
+                  {unrankedShown.length} {unrankedShown.length === 1 ? 'car has pulls' : 'cars have pulls'} on file but no engine figure could be worked out (no crank&nbsp;→&nbsp;wheel loss recorded), so {unrankedShown.length === 1 ? 'it is' : 'they are'} not ranked here: {unrankedShown.join(', ')}.
                 </p>
               )}
               {namesWarn && (
