@@ -144,6 +144,13 @@ export function transmissionOptionsFor(
   if (b === 'LAND ROVER' && m === 'DEFENDER') return y >= 2012 ? ['MT82 (Manual6)'] : ['R380 (Manual5)']
   if (b === 'MITSUBISHI' && m === 'ECLIPSE') return ['F5M33 (Manual5)', 'INVECS-II (Auto4)']
   if (b === 'MERCEDES-BENZ' && m === '300 SEL') return ['W3A 040 K4A 050 (Auto4)']
+  // S63 W222/C217/A217: uma caixa por fase, sem manual e sem alternativa em nenhum ano —
+  // a MCT (Multi-Clutch Technology) da AMG é derivada da 7G-TRONIC mas usa embreagem
+  // úmida de partida no lugar do conversor; no catálogo roda como automática. O corte é
+  // por ANO e não pelo texto da versão de propósito: o ano-modelo 2018 é o facelift em
+  // TODAS as três carrocerias, então y >= 2018 separa 7G de 9G sem depender de como o
+  // rótulo da versão estiver escrito.
+  if (b === 'MERCEDES-BENZ' && m === 'S63 AMG') return y >= 2018 ? ['AMG SPEEDSHIFT MCT 9G (Auto9)'] : ['AMG SPEEDSHIFT MCT 7G (Auto7)']
 
   return []
 }

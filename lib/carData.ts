@@ -585,6 +585,77 @@ for (let y = 2007; y <= 2009; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── Mercedes-AMG S63 — geração W222 (a "geração da 2015", anos-modelo 2014–2021) ──
+// UMA geração, TRÊS carrocerias irmãs sobre o mesmo chassi: sedã de batalha longa V222
+// (nos EUA só veio a longa), cupê C217 e conversível A217. O facelift apresentado em
+// abr/2017 e em linha desde jul/2017 (= ano-modelo 2018) NÃO abre geração nova — o
+// chassi continua W222/C217/A217 —, mas troca o que define trim nesta casa: o motor
+// (M157 5.5 biturbo, 577 hp / 664 lb-ft → M177 4.0 biturbo, 603 hp / mesmos 664 lb-ft),
+// o câmbio (AMG SPEEDSHIFT MCT 7G → 9G) e o nome da tração (4MATIC → 4MATIC+). Por isso
+// a geração rende SEIS versões: 3 carrocerias × 2 fases de motor, e não um "modelo
+// facelift" separado.
+// As janelas de ano-modelo americanas NÃO batem entre as carrocerias, e é isso que o
+// mapa por ano resolve: sedã 2014–2020 (não existe S63 sedã 2021 — o W223 assumiu),
+// cupê 2015–2021, conversível 2017–2021. Um loop único 2014–2021 para as três criaria
+// um sedã 2021 que nunca existiu.
+// Só a linha AMERICANA entra, e nela a S63 dessa geração foi SEMPRE 4MATIC. As S63 RWD
+// (cupê europeu confirmado, sedã curto europeu) e o sedã de batalha curta W222 ficaram
+// deliberadamente de fora: são linha que ninguém da oficina escolheria e ainda abririam
+// a porta para alguém carimbar como traseiro um carro que é integral. A tração vai
+// escrita na versão justamente para deixar isso explícito na tela do ride.
+// Série limitada e pacote de aparência NÃO viram trim (lei das edições especiais):
+// nenhuma delas mexeu em motor, carroceria ou tração. Edition 1 (cupê 2015, pintura
+// designo Alanite Grey Magno amarrada), Edition 130 (conversível 2017, 130 unidades no
+// mundo, Alubeam Silver — cor que nenhuma outra S63 da geração teve) e Yellow Night
+// Edition (cupê 2018, só nos dois magno) vivem em specialEditions do trim base, com a
+// pintura forçada em colorsByConfiguration.
+const mercedesS63W222Colors = ['Black', 'Obsidian Black Metallic', 'Magnetite Black Metallic', 'Ruby Black Metallic', 'Iridium Silver Metallic', 'Diamond Silver Metallic', 'Palladium Silver Metallic', 'Dune Silver Metallic', 'Selenite Grey Metallic', 'Anthracite Blue Metallic', 'Lunar Blue Metallic', 'Emerald Green Metallic', 'Verde Brook Metallic', 'designo Diamond White Metallic', 'designo Mocha Black Metallic', 'designo Cashmere White Magno', 'designo Alanite Grey Magno', 'designo Selenite Grey Magno', 'designo Night Black Magno', 'designo MANUFAKTUR Arabian Grey', "designo MANUFAKTUR Cote d'Azur Dark Blue Metallic", "designo MANUFAKTUR Cote d'Azur Light Blue Metallic", 'designo MANUFAKTUR Deep Green', 'designo MANUFAKTUR Graphite Metallic', 'designo MANUFAKTUR Midnight Blue', 'designo MANUFAKTUR Teide Light Grey']
+const mercedesS63W222Versions = (y: number): string[] => {
+  const v: string[] = []
+  // Sedã V222 (batalha longa): entra no MY2014 e MORRE no MY2020.
+  if (y <= 2017) v.push('V222 Sedan 5.5 TT V8 4MATIC')
+  else if (y <= 2020) v.push('V222 Sedan 4.0 TT V8 4MATIC+')
+  // Cupê C217: estreia MY2015 e segue até MY2021, um ano além do sedã.
+  if (y >= 2015 && y <= 2017) v.push('C217 Coupe 5.5 TT V8 4MATIC')
+  if (y >= 2018) v.push('C217 Coupe 4.0 TT V8 4MATIC+')
+  // Conversível A217: o ano-modelo americano da S63 cabrio só começa em 2017 — o M157
+  // pega um único ano antes de o facelift trocar o motor.
+  if (y === 2017) v.push('A217 Cabriolet 5.5 TT V8 4MATIC')
+  if (y >= 2018) v.push('A217 Cabriolet 4.0 TT V8 4MATIC+')
+  return v
+}
+for (let y = 2014; y <= 2021; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('MERCEDES-BENZ')) manufacturersByYear[y].push('MERCEDES-BENZ')
+  // Anexa em vez de atribuir: o bloco do 300 SEL (fim do arquivo) ATRIBUI array literal
+  // nesses mesmos mapas. Hoje os anos não se cruzam (1968–1972 × 2014–2021), mas a
+  // próxima Mercedes cadastrada nesta faixa apagaria a S63 em silêncio se aqui fosse
+  // atribuição — união é a única forma segura.
+  brandsByManufacturerAndYear['MERCEDES-BENZ'] = brandsByManufacturerAndYear['MERCEDES-BENZ'] || {}
+  brandsByManufacturerAndYear['MERCEDES-BENZ'][y] = brandsByManufacturerAndYear['MERCEDES-BENZ'][y] || []
+  if (!brandsByManufacturerAndYear['MERCEDES-BENZ'][y].includes('MERCEDES-BENZ')) brandsByManufacturerAndYear['MERCEDES-BENZ'][y].push('MERCEDES-BENZ')
+  modelsByBrandAndYear['MERCEDES-BENZ'] = modelsByBrandAndYear['MERCEDES-BENZ'] || {}
+  modelsByBrandAndYear['MERCEDES-BENZ'][y] = modelsByBrandAndYear['MERCEDES-BENZ'][y] || []
+  if (!modelsByBrandAndYear['MERCEDES-BENZ'][y].includes('S63 AMG')) modelsByBrandAndYear['MERCEDES-BENZ'][y].push('S63 AMG')
+  versionsByModelAndYear['S63 AMG'] = versionsByModelAndYear['S63 AMG'] || {}
+  versionsByModelAndYear['S63 AMG'][y] = mercedesS63W222Versions(y)
+}
+years.sort((a, b) => a - b)
+// As três edições confirmadas da geração, cada uma no ANO e na CARROCERIA em que saiu.
+// A Edition 130 é do conversível e a Edition 1 / Yellow Night são do cupê — por isso
+// nenhuma chave de sedã aparece aqui.
+// Fora de propósito: 'Exclusive Edition' (MY2019) existe na Classe S cupê/cabrio, mas
+// não se confirmou se cobria a AMG S63 ou só a S560 — não se chuta edição. 'S63 Final
+// Edition' aparece em um único blog e a descrição é a da S65 Final Edition (V12, outro
+// carro) — tratada como confusão. 'Grand Edition' é acabamento de S 560 e SL, não da S63.
+Object.assign(specialEditions, {
+  '2015-S63 AMG-C217 Coupe 5.5 TT V8 4MATIC': ['None', 'Edition 1'],
+  '2017-S63 AMG-A217 Cabriolet 5.5 TT V8 4MATIC': ['None', 'Edition 130'],
+  // Yellow Night Edition: janela de pedido de seis meses, abriu o facelift do cupê. Só
+  // se achou preço em euro — a confirmação de venda nos EUA segue pendente.
+  '2018-S63 AMG-C217 Coupe 4.0 TT V8 4MATIC+': ['None', 'Yellow Night Edition'],
+})
 
 // ── F-body 4th Gen — Camaro Z28/SS + Firebird Formula/Trans Am (1993–2002, V8 only) ──
 // LT1 350 through 1997; LS1 5.7 from 1998. Camaro: Z28 every year, SLP-built SS from
@@ -1536,6 +1607,13 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2022-MUSTANG-GT 5.0-Ice White Edition': ['Oxford White'],
   '2022-MUSTANG-Shelby GT500 5.2 SC-Heritage Edition': ['Brittany Blue'],
   '2025-MUSTANG-GT 5.0-60th Anniversary': ['Race Red', 'Vapor Blue', 'Wimbledon White', 'Brittany Blue'],
+  // Mercedes-AMG S63 W222 — as três edições saíram com a pintura amarrada de fábrica.
+  // Alubeam Silver (alto brilho, capota de lona vermelha) é EXCLUSIVA da Edition 130 e
+  // por isso não existe na paleta geral; as outras duas restringem cores que a linha
+  // normal também oferecia.
+  '2015-S63 AMG-C217 Coupe 5.5 TT V8 4MATIC-Edition 1': ['designo Alanite Grey Magno'],
+  '2017-S63 AMG-A217 Cabriolet 5.5 TT V8 4MATIC-Edition 130': ['Alubeam Silver'],
+  '2018-S63 AMG-C217 Coupe 4.0 TT V8 4MATIC+-Yellow Night Edition': ['designo Selenite Grey Magno', 'designo Night Black Magno'],
 }
 
 export function getAvailableColors(year: number, brand: string, model: string, version: string, specialEdition: string): string[] {
@@ -1546,6 +1624,12 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors
   if (model === 'X6') return bmwX6G06Colors
   if (model === '911') return porsche997TurboColors
+  // Paleta única para a geração W222 inteira: a lista de fábrica mexeu ao longo dos anos
+  // (Palladium Silver e Verde Brook somem depois de 2016, Dune Silver e os designo
+  // MANUFAKTUR só aparecem no fim), mas o ano exato de entrada/saída de cada cor não está
+  // confirmado — recortar por ano exigiria precisão que não se tem. Sem este if o carro
+  // cairia no fallback final e ofereceria tinta Mopar (Go Mango num S63).
+  if (model === 'S63 AMG') return mercedesS63W222Colors
   if (model === 'CAMARO' && camaroGen1ColorsByYear[year]) return camaroGen1ColorsByYear[year]
   if (model === 'CAMARO' && camaroGen3ColorsByYear[year]) return camaroGen3ColorsByYear[year]
   if (model === 'CAMARO' && fbodyGen4ColorsByYear[year]) return fbodyGen4ColorsByYear[year]
@@ -1626,6 +1710,14 @@ carData['LAND ROVER']['LAND ROVER']['DEFENDER'] = [...new Set(Object.values(vers
 carData['BMW'] = { BMW: { M5: [...new Set(Object.values(versionsByModelAndYear['M5']).flat())], M3: [...new Set(Object.values(versionsByModelAndYear['M3']).flat())], X6: [...new Set(Object.values(versionsByModelAndYear['X6']).flat())] } }
 carData['MITSUBISHI'] = { MITSUBISHI: { ECLIPSE: ['GS-T 2.0 Turbo', 'GSX 2.0 Turbo AWD'] } }
 carData['PORSCHE'] = { PORSCHE: { '911': [...new Set(Object.values(versionsByModelAndYear['911']).flat())] } }
+// Mercedes-Benz: fabricante e marca são a mesma string, como em LAND ROVER e PORSCHE.
+// Sem esta linha a marca simplesmente não existe no seletor de carro dos packs, que lê
+// Object.keys(carData). A união roda AQUI porque o bloco de geração da S63 está lá em
+// cima, junto das outras gerações — se estivesse no fim do arquivo (como o do 300 SEL),
+// versionsByModelAndYear['S63 AMG'] ainda seria undefined nesta altura e o import
+// inteiro estouraria. O 300 SEL, que é o caso contrário, entra no flat no FIM do
+// arquivo, logo depois do bloco dele — ver a última linha.
+carData['MERCEDES-BENZ'] = { 'MERCEDES-BENZ': { 'S63 AMG': [...new Set(Object.values(versionsByModelAndYear['S63 AMG']).flat())] } }
 // Camaro flat list = union of every era's versions (modern gen5+ entries already present).
 carData['GM']['CHEVROLET']['CAMARO'] = [...new Set([
   ...(carData['GM']['CHEVROLET']['CAMARO'] || []),
@@ -1674,3 +1766,10 @@ for (let y = 1968; y <= 1972; y++) {
   versionsByModelAndYear['300 SEL'][y] = ['6.3 (M100 V8)']
 }
 years.sort((a, b) => a - b)
+
+// A 300 SEL TAMBÉM ENTRA NO FLAT — e tem de ser AQUI, não lá em cima. O bloco dela roda
+// no fim do arquivo, depois da união da MERCEDES-BENZ, então versionsByModelAndYear
+// ['300 SEL'] só existe a partir desta linha. Enquanto a marca não estava no flat, a
+// ausência dela era invisível; agora que a S63 pôs MERCEDES-BENZ no seletor dos PACKS,
+// abrir a marca e ver só a S63 seria dizer que a 300 SEL não existe.
+carData['MERCEDES-BENZ']['MERCEDES-BENZ']['300 SEL'] = [...new Set(Object.values(versionsByModelAndYear['300 SEL']).flat())]
