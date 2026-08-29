@@ -94,13 +94,27 @@ export default function SuppliersPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
+      <div className="flex items-center justify-between mb-3 gap-4 flex-wrap">
         <h1 className="text-4xl font-bold">SUPPLIERS ({visibleSuppliers.length})</h1>
         <div className="flex items-center gap-3 flex-wrap">
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search suppliers…" className="bg-gray-800 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-72" />
-          <Link href="/suppliers/dealership/new" className="bg-yellow-600 hover:bg-yellow-500 text-black px-6 py-4 rounded-2xl text-xl font-bold">+ ADD A NEW DEALERSHIP SUPPLIER</Link>
-          <Link href="/suppliers/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A NEW SUPPLIER</Link>
+          <Link href="/suppliers/dealership/new" className="bg-yellow-600 hover:bg-yellow-500 text-black px-6 py-4 rounded-2xl text-xl font-bold">+ ADD AN OFFICIAL SUPPLIER</Link>
+          <Link href="/suppliers/new" className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">ADD A SUPPLIER</Link>
         </div>
+      </div>
+
+      {/* THE LAW, spelled out on screen so the two can never be confused:
+          SUPPLIER  = anyone we have ever bought from.
+          OFFICIAL SUPPLIER = only those we hold a dealership / wholesale contract with. */}
+      <div className="mb-8 flex items-center gap-6 flex-wrap text-base text-gray-400">
+        <span className="flex items-center gap-2">
+          <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">SUPPLIER</span>
+          anyone we have bought from
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="px-3 py-1 rounded-full text-xs font-bold bg-yellow-600 text-black">OFFICIAL SUPPLIER</span>
+          dealership / wholesale contract
+        </span>
       </div>
 
       {loading ? (
@@ -117,7 +131,9 @@ export default function SuppliersPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   <h2 className="text-2xl font-bold">{supplier.name}</h2>
-                  {isDealer && <span className="px-3 py-1 rounded-full text-sm font-bold bg-yellow-600 text-black">DEALERSHIP · D-{pad3(supplier.account_number)}</span>}
+                  {isDealer
+                    ? <span className="px-3 py-1 rounded-full text-sm font-bold bg-yellow-600 text-black">OFFICIAL SUPPLIER · D-{pad3(supplier.account_number)}</span>
+                    : <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-200">SUPPLIER</span>}
                   {supplier.is_car_dealer && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gradient-to-r from-slate-300 to-slate-100 text-black">🏆 CAR DEALER</span>}
                 </div>
                 {supplier.is_car_dealer ? (

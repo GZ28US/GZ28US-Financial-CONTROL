@@ -647,7 +647,16 @@ export default function PartsPage() {
                   {(() => { const b = sourceBadge(p); return <span className={`px-3 py-1 rounded-full text-xs font-bold ${b.cls}`}>{b.label}</span> })()}
                   {p.part_number && <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">PN: {p.part_number}</span>}
                   {p.is_extra && <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-black">EXTRA</span>}
-                  {p.supplier && <span className="text-sm text-gray-400">{p.supplier}</span>}
+                  {/* SUPPLIER = anyone we bought from. OFFICIAL SUPPLIER = dealership/wholesale
+                      contract (dealer_supplier). Never show one as if it were the other. */}
+                  {(p.dealer_supplier || p.supplier) && (
+                    <span className="flex items-center gap-2 text-sm text-gray-400">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.dealer_supplier ? 'bg-yellow-600 text-black' : 'bg-gray-700 text-gray-200'}`}>
+                        {p.dealer_supplier ? 'OFFICIAL SUPPLIER' : 'SUPPLIER'}
+                      </span>
+                      {p.dealer_supplier || p.supplier}
+                    </span>
+                  )}
                 </div>
                 {p.alias && <p className="text-sm text-gray-400 mb-1">{p.item}</p>}
                 {isHunt(p) ? (
