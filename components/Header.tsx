@@ -38,6 +38,7 @@ const MENU: MenuItem[] = [
       ['/clients?mode=project', 'CLIENTS'],
       ['/rides?mode=project', 'RIDES'],
       ['/invoices', 'INVOICES'],
+      ['/performance', 'PERFORMANCE'],
     ],
   },
   {
