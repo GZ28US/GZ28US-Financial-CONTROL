@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 type Order = {
   id: string
@@ -43,6 +44,9 @@ export default function SupplierOrdersPage() {
   const supplierId = String(params.id)
   const [supplierName, setSupplierName] = useState('')
   const [orders, setOrders] = useState<Order[]>([])
+  // Semáforo do STREAM: o registro do pedido ganha o estado da remessa por JOIN
+  // (order_number normalizado) — tracking nunca se digita nesta tela.
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [loading, setLoading] = useState(true)
   const [region, setRegion] = useState<'ALL' | 'US' | 'BR'>('ALL')
   const [search, setSearch] = useState('')
@@ -60,6 +64,7 @@ export default function SupplierOrdersPage() {
         .or(`supplier_id.eq.${supplierId}${name ? `,supplier_name.ilike.${name}` : ''}`)
         .order('order_date', { ascending: false, nullsFirst: false })
       setOrders((data || []) as Order[])
+      setStreams(await loadStreamMap())
       setLoading(false)
     })()
   }, [supplierId])
@@ -151,6 +156,8 @@ export default function SupplierOrdersPage() {
             <div key={o.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="font-mono font-bold text-lg">{o.order_number || '—'}</span>
+                {/* Semáforo do STREAM ao lado do pedido (join por order_number). */}
+                {(() => { const st = streamFor(streams, o.order_number); return st ? <StreamChip st={st} /> : null })()}
                 <span className="text-gray-400">{o.order_date || 'no date'}</span>
                 {(() => { const ed = effectiveDate(o); return ed && ed !== o.order_date ? <span className="text-green-500 text-sm">→ paid {ed}</span> : null })()}
                 {o.region && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${o.region === 'BR' ? 'bg-emerald-900 text-emerald-200' : 'bg-blue-900 text-blue-200'}`}>{o.region === 'BR' ? '🇧🇷 BR · PowerTrade' : '🇺🇸 US'}</span>}

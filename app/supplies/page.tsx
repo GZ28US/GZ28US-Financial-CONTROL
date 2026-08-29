@@ -145,6 +145,9 @@ export default function InputsPage() {
   const [scanned, setScanned] = useState<{
     supplier: string
     date: string
+    // ORDER NUMBER é SAGRADO (29/ago/2026): o scan lê e a compra grava — sem
+    // ele o join com o STREAM (que já existe nesta tela) nunca acende.
+    orderNumber: string
     items: { description: string; amount: string; quantity: string }[]
     receiptUrl: string
   } | null>(null)
@@ -308,13 +311,15 @@ export default function InputsPage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
+      // O nº do pedido vem do scan como impresso (zeros à esquerda, hífens, sem '#').
+      const orderNumber = String(parsed.order_number || '').trim()
       const items = (parsed.items || []).map((i: any) => ({
         description: String(i.description || ''),
         amount: (((parseFloat(i.amount) || 0) * fx)).toFixed(2),
         quantity: String(i.quantity || '1'),
       }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
-      const openReview = () => setScanned({ supplier, date, items, receiptUrl })
+      const openReview = () => setScanned({ supplier, date, orderNumber, items, receiptUrl })
 
       // Same supplier + date + total (per purchase) = probable re-scan.
       if (supplier && date && total > 0) {
@@ -355,6 +360,9 @@ export default function InputsPage() {
         purchase_date: isValidDate(scanned.date) ? scanned.date : null,
         payment_date: isValidDate(scanned.date) ? scanned.date : null,
         supplier: scanned.supplier || null,
+        // ORDER NUMBER sagrado: o scan agora GRAVA o pedido — é ele que liga a
+        // compra ao STREAM (o join desta tela já existia, faltava a captura).
+        order_number: scanned.orderNumber || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
       }))

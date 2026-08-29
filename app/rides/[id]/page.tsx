@@ -69,10 +69,13 @@ type FleetExp = {
   id: string; item: string | null; supplier: string | null
   price: number; quantity: number; tax: number; extra: number; item_discount: number
   expense_date: string | null; payment_date: string | null
+  // ORDER NUMBER é SAGRADO (29/ago/2026): a despesa da frota também nasce com
+  // o pedido; o tracking mora só em part_streams (join nas telas de lista).
+  order_number: string | null
 }
 const expLine = (e: FleetExp) =>
   (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
-const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true }
+const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '' }
 
 type Stats = {
   currentProfit: number
@@ -206,7 +209,7 @@ export default function ViewRidePage() {
   async function loadFleetExps(invoiceIds: string[]) {
     const { data } = await supabase
       .from('invoice_expenses')
-      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date')
+      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number')
       .in('invoice_id', invoiceIds)
     const list = (data || []) as FleetExp[]
     list.sort((a, b) => String(b.payment_date || b.expense_date || '').localeCompare(String(a.payment_date || a.expense_date || '')))
@@ -227,6 +230,8 @@ export default function ViewRidePage() {
       price: amount, quantity: 1,
       expense_date: d,
       payment_date: expForm.paid ? d : null,
+      // ORDER NUMBER sagrado: o form da frota registra o pedido junto.
+      order_number: expForm.orderNumber.trim() || null,
     }
     setSavingExp(true)
     try {
@@ -519,6 +524,11 @@ export default function ViewRidePage() {
                     <label className="block mb-2 text-sm text-gray-400">SUPPLIER</label>
                     <input value={expForm.supplier} onChange={(e) => setExpForm({ ...expForm, supplier: e.target.value })} className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                   </div>
+                  {/* ORDER NUMBER é SAGRADO: dado da COMPRA, mora ao lado do fornecedor. */}
+                  <div>
+                    <label className="block mb-2 text-sm text-gray-400">ORDER NUMBER</label>
+                    <input value={expForm.orderNumber} onChange={(e) => setExpForm({ ...expForm, orderNumber: e.target.value })} placeholder="e.g. 2000149-80525197" className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                  </div>
                   <div>
                     <label className="block mb-2 text-sm text-gray-400">AMOUNT</label>
                     <div className="relative">
@@ -564,7 +574,7 @@ export default function ViewRidePage() {
                         </>
                       ) : (
                         <>
-                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => setConfirmExpId(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </>
                       )}

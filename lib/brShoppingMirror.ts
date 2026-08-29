@@ -31,6 +31,9 @@ export type BrMirrorItem = {
   usdExtra: number             // frete/extra TOTAL da linha em US$
   quantity: number
   paymentDate: string | null   // YYYY-MM-DD — o dia em que o BR pagou
+  // ORDER NUMBER é SAGRADO (29/ago/2026): o pedido da loja viaja com o espelho
+  // — é ele que liga a linha espelhada no BR ao STREAM da remessa.
+  orderNumber?: string | null
 }
 
 export type BrMirrorInput = {
@@ -183,6 +186,8 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
       payment_date: it.paymentDate || null, expense_date: it.paymentDate || null,
       // Quem pagou foi o GZ28BR — é a saída de caixa dele.
       source: 'GZ28BR', paid_from: 'GZ28BR', item_discount: 0, position: i,
+      // O pedido acompanha o espelho: sem ele a linha do BR ficaria órfã do STREAM.
+      order_number: (it.orderNumber || '').trim() || null,
     })
     // O ITEM cobra exatamente o que a linha custou: preço unitário = total ÷ qtd, e o
     // último item absorve o centavo do arredondamento para o total fechar no ponto.

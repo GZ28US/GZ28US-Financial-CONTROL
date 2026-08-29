@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 type Input = {
   id: string
@@ -18,6 +19,10 @@ type Input = {
   // DONATED = sobra de um carro: não custou nada. O valor é o MSRP (preço sugerido
   // de venda), nunca um custo (lei 22/ago/2026).
   source_type?: string | null
+  // ORDER NUMBER é SAGRADO (29/ago/2026): pedido da loja na compra; numa DONATED
+  // o campo guarda a invoice DOADORA (origem) e por isso não vira chip de pedido.
+  // Esta tela serve inputs E inventory (?src=inventory) — vale pros dois.
+  order_number?: string | null
 }
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -36,6 +41,8 @@ export default function ViewInputPage() {
 
   const [loading, setLoading] = useState(true)
   const [input, setInput] = useState<Input | null>(null)
+  // Semáforo do STREAM (join por order_number — tracking nunca mora na origem).
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [openReceipts, setOpenReceipts] = useState(false)
 
   useEffect(() => { loadInput() }, [])
@@ -45,6 +52,7 @@ export default function ViewInputPage() {
     const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
     const { data } = await supabase.from(t).select('*').eq('id', inputId).single()
     if (data) setInput(data)
+    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -91,6 +99,16 @@ export default function ViewInputPage() {
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${input.category === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`}>{input.category}</span>
             </div>
             {input.supplier && <div className={rowClass}><span className={labelClass}>{donated ? 'DONOR' : 'SUPPLIER'}</span><span className="font-bold">{input.supplier}</span></div>}
+            {/* ORDER NUMBER + semáforo do STREAM. DONATED fica de fora: o campo
+                dela guarda a invoice doadora (origem), não um pedido de loja. */}
+            {!donated && String(input.order_number || '').trim() && (
+              <div className={rowClass}><span className={labelClass}>ORDER NUMBER</span>
+                <span className="flex items-center gap-2 flex-wrap justify-end">
+                  <OrderChip order={String(input.order_number || '').trim()} />
+                  {(() => { const st = streamFor(streams, input.order_number); return st ? <StreamChip st={st} /> : null })()}
+                </span>
+              </div>
+            )}
             <div className={rowClass}><span className={labelClass}>QUANTITY</span><span className="font-bold">{input.quantity}</span></div>
             <div className={rowClass}><span className={labelClass}>{donated ? 'UNIT MSRP' : 'UNIT PRICE'}</span><span className="font-bold">{formatUSD(input.unit_price)}</span></div>
             <div className={rowClass}><span className={labelClass}>{donated ? 'TOTAL MSRP' : 'TOTAL COST'}</span><span className="font-bold text-xl">{formatUSD(totalCost)}</span></div>

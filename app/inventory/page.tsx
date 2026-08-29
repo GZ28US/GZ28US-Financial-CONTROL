@@ -17,6 +17,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
+import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 type ItemRow = {
   id: string
@@ -83,6 +84,9 @@ function firstReceipt(raw: string | null): string | null {
 
 export default function InventoryPage() {
   const [rows, setRows] = useState<ItemRow[]>([])
+  // Semáforo do STREAM por order_number normalizado — só as linhas PURCHASED
+  // usam (o order_number de uma DONATED é a invoice doadora, não um pedido).
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [soldIds, setSoldIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -99,6 +103,9 @@ export default function InventoryPage() {
   const [scanned, setScanned] = useState<{
     supplier: string
     date: string
+    // ORDER NUMBER é SAGRADO (29/ago/2026): só linhas PURCHASED nascem por
+    // aqui, e toda compra escaneada grava o pedido.
+    orderNumber: string
     items: { description: string; amount: string; quantity: string }[]
     receiptUrl: string
   } | null>(null)
@@ -124,6 +131,8 @@ export default function InventoryPage() {
       const { data: sales } = await supabase.from('inventory_sales').select('inventory_id').eq('kind', 'INCOME').in('inventory_id', ids)
       setSoldIds(new Set((sales || []).map((x: any) => x.inventory_id)))
     } else setSoldIds(new Set())
+    // Join com o STREAM (leitura pura): o tracking mora só em part_streams.
+    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -229,13 +238,15 @@ export default function InventoryPage() {
 
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
+      // Nº do pedido como impresso no documento (zeros à esquerda, hífens, sem '#').
+      const orderNumber = String(parsed.order_number || '').trim()
       const items = (parsed.items || []).map((i: any) => ({
         description: String(i.description || ''),
         amount: (((parseFloat(i.amount) || 0) * fx)).toFixed(2),
         quantity: String(i.quantity || '1'),
       }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
-      const openReview = () => setScanned({ supplier, date, items, receiptUrl })
+      const openReview = () => setScanned({ supplier, date, orderNumber, items, receiptUrl })
 
       if (supplier && date && total > 0) {
         const match = purchases.find(p =>
@@ -274,6 +285,9 @@ export default function InventoryPage() {
         purchase_date: isValidDate(scanned.date) ? scanned.date : null,
         payment_date: isValidDate(scanned.date) ? scanned.date : null,
         supplier: scanned.supplier || null,
+        // ORDER NUMBER sagrado: o pedido REAL da compra (linhas PURCHASED).
+        // Nunca confundir com o uso do campo nas DONATED (invoice doadora).
+        order_number: scanned.orderNumber || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
         source_type: 'PURCHASED',
@@ -538,6 +552,12 @@ export default function InventoryPage() {
           {visible.length > 0 && (
             <div className="space-y-5">
               {visible.map((p) => {
+                // Molde da supplies page (commonOf): pedidos distintos das linhas
+                // PURCHASED do grupo — o chip sobe pro cabeçalho; o semáforo do
+                // STREAM sobe junto quando o pedido é um só. DONATED fica fora:
+                // o order_number dela é a invoice doadora, não um pedido.
+                const pOrders = Array.from(new Set(p.items.filter(i => i.source_type !== 'DONATED').map(i => (i.order_number || '').trim()).filter(Boolean)))
+                const pStream = pOrders.length === 1 ? streamFor(streams, pOrders[0]) : undefined
                 return (
                   <div key={p.key} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
                     {/* DOAÇÃO não tem cabeçalho de grupo (ordem 22/ago/2026): o carro e a
@@ -561,6 +581,14 @@ export default function InventoryPage() {
                             </>
                           )}
                         </p>
+                        {/* ORDER NUMBER sempre visível na compra + semáforo do STREAM
+                            (join por order_number — tracking nunca se digita aqui). */}
+                        {pOrders.length > 0 && (
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            {pOrders.map(o => <OrderChip key={o} order={o} />)}
+                            {pStream && <StreamChip st={pStream} />}
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-3 flex-wrap shrink-0">
                         {p.groupId && <Link href={`/supplies/group/${p.groupId}?src=inventory`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
@@ -587,6 +615,15 @@ export default function InventoryPage() {
                                 : item.notes && item.notes.split('\n').map((note, i) => (
                                     <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
                                   ))}
+                              {/* Molde commonOf: o chip do pedido desce pra linha só
+                                  quando o grupo tem pedidos DIVERGENTES. DONATED nunca
+                                  ganha chip (o campo dela é origem, não pedido). */}
+                              {item.source_type !== 'DONATED' && (item.order_number || '').trim() && pOrders.length > 1 && (
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                  <OrderChip order={(item.order_number || '').trim()} />
+                                  {(() => { const st = streamFor(streams, item.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                </div>
+                              )}
                             </div>
                             <div className="flex gap-3 shrink-0">
                               <Link href={`/inventory/sell/${item.id}`} className="bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-2xl font-bold text-sm">💲 SELL</Link>

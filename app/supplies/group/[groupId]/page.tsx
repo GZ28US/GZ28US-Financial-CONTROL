@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 // Read-only VIEW of a whole input PURCHASE (every row sharing a purchase_group):
 // supplier, category, date, all line items, grand total and receipts. Linked from
@@ -20,6 +21,11 @@ type Input = {
   supplier: string | null
   receipt_url: string | null
   notes: string | null
+  // ORDER NUMBER é SAGRADO (29/ago/2026): pedido da compra; o tracking chega
+  // por JOIN com part_streams. Numa linha DONATED do inventory o campo é a
+  // invoice doadora — origem, não pedido — e fica fora do chip.
+  order_number?: string | null
+  source_type?: string | null
 }
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -38,6 +44,8 @@ export default function ViewInputGroupPage() {
 
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<Input[]>([])
+  // Semáforo do STREAM por order_number normalizado (leitura pura).
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [openReceipts, setOpenReceipts] = useState(false)
 
   const isStock = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('src') === 'inventory'
@@ -48,6 +56,7 @@ export default function ViewInputGroupPage() {
     const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
     const { data } = await supabase.from(t).select('*').eq('purchase_group', groupId).order('created_at', { ascending: true })
     setItems(data || [])
+    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -57,6 +66,10 @@ export default function ViewInputGroupPage() {
   const first = items[0]
   const grandTotal = items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0)
   const receiptUrls = Array.from(new Set(items.flatMap(i => parseReceiptUrls(i.receipt_url))))
+  // Pedidos distintos das linhas COMPRADAS do grupo (DONATED fora — origem, não
+  // pedido); o semáforo do STREAM sobe quando o pedido é um só (molde supplies).
+  const gOrders = Array.from(new Set(items.filter(i => (i.source_type || '') !== 'DONATED').map(i => String(i.order_number || '').trim()).filter(Boolean)))
+  const gStream = gOrders.length === 1 ? streamFor(streams, gOrders[0]) : undefined
   const catBadge = (c: string) => `px-3 py-1 rounded-full text-sm font-bold ${c === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
@@ -82,6 +95,15 @@ export default function ViewInputGroupPage() {
             <div className={rowClass}><span className={labelClass}>SUPPLIER</span><span className="font-bold">{first.supplier || '—'}</span></div>
             <div className={rowClass}><span className={labelClass}>CATEGORY</span><span className={catBadge(first.category)}>{first.category}</span></div>
             <div className={rowClass}><span className={labelClass}>DATE</span><span className="font-bold">{formatDate(first.purchase_date)}</span></div>
+            {/* ORDER NUMBER da compra + semáforo do STREAM (join, nunca digitado). */}
+            {gOrders.length > 0 && (
+              <div className={rowClass}><span className={labelClass}>ORDER NUMBER</span>
+                <span className="flex items-center gap-2 flex-wrap justify-end">
+                  {gOrders.map(o => <OrderChip key={o} order={o} />)}
+                  {gStream && <StreamChip st={gStream} />}
+                </span>
+              </div>
+            )}
             <div className={rowClass}><span className={labelClass}>ITEMS</span><span className="font-bold">{items.length}</span></div>
             <div className={rowClass}><span className={labelClass}>GRAND TOTAL</span><span className="font-bold text-xl">{formatUSD(grandTotal)}</span></div>
             {receiptUrls.length > 0 && (
@@ -109,6 +131,13 @@ export default function ViewInputGroupPage() {
                   <div className="min-w-0">
                     <p className="font-bold truncate" title={it.description}>{it.description}</p>
                     <p className="text-sm text-gray-400">Qty: {it.quantity} × {formatUSD(it.unit_price)} = {formatUSD((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))}</p>
+                    {/* Molde commonOf: o chip desce pra linha só quando os pedidos divergem. */}
+                    {(it.source_type || '') !== 'DONATED' && String(it.order_number || '').trim() && gOrders.length > 1 && (
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <OrderChip order={String(it.order_number || '').trim()} />
+                        {(() => { const st = streamFor(streams, it.order_number); return st ? <StreamChip st={st} /> : null })()}
+                      </div>
+                    )}
                     {it.notes && <p className="text-sm text-gray-500 mt-0.5">{it.notes}</p>}
                   </div>
                   <Link href={`/supplies/${it.id}${srcQ}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm shrink-0">VIEW</Link>

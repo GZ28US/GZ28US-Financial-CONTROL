@@ -638,7 +638,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         href: '/supplies', code: x.category ? 'BLOB' : 'SEM CAT.', label: text.slice(0, 70) || '(sem descrição)',
         extra: sug === '__stock__' ? 'palpite: é ESTOQUE (óleo/material de job) — mover' : sug ? 'palpite: ' + sug : 'sem palpite — decida',
         amount: qtyLine(x), suggest: sug, signal: sug ? 'source' : undefined,
-        fix: { kind: 'select' as const, table: 'inputs', rowId: x.id, field: 'category', current: x.category || null, meta: { description: x.description, supplier: (x as any).supplier, unit_price: x.unit_price, quantity: x.quantity, purchase_date: x.purchase_date, payment_date: x.payment_date, paid_from: x.paid_from, paid_to: (x as any).paid_to, source: (x as any).source, purchase_group: x.purchase_group }, options: [
+        fix: { kind: 'select' as const, table: 'inputs', rowId: x.id, field: 'category', current: x.category || null, meta: { description: x.description, supplier: (x as any).supplier, unit_price: x.unit_price, quantity: x.quantity, purchase_date: x.purchase_date, payment_date: x.payment_date, paid_from: x.paid_from, paid_to: (x as any).paid_to, source: (x as any).source, purchase_group: x.purchase_group, order_number: (x as any).order_number }, options: [
           { value: 'SHOP', label: 'SHOP — consumível da oficina (WD40, limpeza, mobília miúda)' },
           { value: 'TEAM', label: 'TEAM — comida & bem-estar (vira Equipe no DRE)' },
           { value: 'APARTMENT', label: 'APARTMENT — apto (moradia da equipe)' },
@@ -920,6 +920,9 @@ export default function DataCheckPage() {
             unit_price: src.unit_price ?? null, quantity: src.quantity ?? 1,
             purchase_date: src.purchase_date || null, payment_date: src.payment_date || null,
             paid_from: src.paid_from || null, paid_to: src.paid_to || null, source: src.source || null, purchase_group: src.purchase_group || null,
+            // ORDER NUMBER é SAGRADO (29/ago/2026): mover o insumo pro estoque
+            // leva o pedido junto — a linha PURCHASED nasce rastreável.
+            order_number: src.order_number || null,
           })
           if (e1) { alert(e1.message); return }
           const { error: e2 } = await supabase.from('inputs').delete().eq('id', fix.rowId)

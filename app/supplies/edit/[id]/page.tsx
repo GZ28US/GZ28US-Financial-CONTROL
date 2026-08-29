@@ -9,6 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
+import { StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -70,6 +71,9 @@ export default function EditInputPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
+  // Semáforo do STREAM ao lado do campo: o join (por order_number normalizado)
+  // mostra a remessa ao vivo — tracking NUNCA se digita nem se grava aqui.
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [notes, setNotes] = useState('')
   const [source, setSource] = useState('')
   // Universal payment block (inputs keep their own `source` field — no write-through).
@@ -87,6 +91,7 @@ export default function EditInputPage() {
     setTable(t)
     loadSuppliers()
     loadInput(t)
+    loadStreamMap().then(setStreams)
   }, [])
 
   async function loadSuppliers() {
@@ -210,6 +215,9 @@ export default function EditInputPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
+          {/* Semáforo do STREAM ao lado do campo: informa a remessa deste pedido.
+              É leitura pura do join — o tracking continua morando SÓ no STREAM. */}
+          {(() => { const st = streamFor(streams, orderNumber); return st ? <div className="mt-2"><StreamChip st={st} /></div> : null })()}
         </div>
         )}
 

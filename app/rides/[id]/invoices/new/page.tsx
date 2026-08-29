@@ -140,6 +140,9 @@ export default function NewInvoicePage() {
         payment_date: e.payment_date, receipt_url: e.receipt_url,
         // Universal payment fields + legacy who-paid marker travel with the clone.
         source: e.source, payment_method: e.payment_method, paid_from: e.paid_from, paid_to: e.paid_to,
+        // ORDER NUMBER é SAGRADO (29/ago/2026): o clone é cópia fiel — o pedido
+        // viaja junto, senão a duplicata perderia o elo com o STREAM.
+        order_number: e.order_number ?? null,
       }))
       if (expRows.length) { const { error: ee } = await supabase.from('invoice_expenses').insert(expRows); if (ee) throw new Error('expenses: ' + ee.message) }
 

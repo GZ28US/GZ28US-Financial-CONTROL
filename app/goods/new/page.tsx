@@ -17,6 +17,9 @@ type Expense = {
   supplier: string
   source: string
   receipt_urls: string[]
+  // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
+  // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
+  order_number: string
 }
 
 // One ExpenseReport = one optional WhatsApp message. We queue one for the GOOD
@@ -81,15 +84,18 @@ export default function NewGoodPage() {
   const [totalPrice, setTotalPrice] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
+  // ORDER NUMBER é SAGRADO (29/ago/2026): todo formulário manual de compra tem
+  // o campo. O tracking NÃO — ele mora só em part_streams e chega por JOIN.
+  const [orderNumber, setOrderNumber] = useState('')
   // Universal payment block — PAID FROM here also feeds the legacy `source` column.
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
   const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
@@ -165,7 +171,7 @@ export default function NewGoodPage() {
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
   }
 
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
@@ -173,9 +179,9 @@ export default function NewGoodPage() {
   function saveEditExpense() {
     if (!editingExpense.description || !editingExpense.amount) { alert('Please enter description and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [] }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
@@ -189,6 +195,8 @@ export default function NewGoodPage() {
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       // Registered = paid; payment_date espelha a data única (vazia → vazia).
       supplier: supplier.trim() || null,
+      // ORDER NUMBER sagrado: o pedido entra junto com a compra manual.
+      order_number: orderNumber.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
       ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
@@ -204,6 +212,8 @@ export default function NewGoodPage() {
         payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
+        // A despesa extra carrega o número do SEU pedido (pode divergir do good).
+        order_number: ex.order_number.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
       if (e) { alert(e.message); return }
@@ -352,6 +362,13 @@ export default function NewGoodPage() {
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
         </div>
 
+        {/* ORDER NUMBER é SAGRADO — molde do app/supplies/new. Tracking aqui NÃO:
+            ele mora só em part_streams e aparece por JOIN nas listas. */}
+        <div>
+          <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
+          <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
+        </div>
+
         <div className="flex gap-4">
           <div className="flex-1">
             <label className="block mb-2 text-lg font-bold">QUANTITY</label>
@@ -421,6 +438,11 @@ export default function NewGoodPage() {
               <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
               <SupplierField suppliers={suppliers} value={newExpense.supplier} onChange={(v) => setNewExpense({ ...newExpense, supplier: v })} />
             </div>
+            {/* ORDER NUMBER da despesa extra — o número mora na linha (lei 29/ago/2026). */}
+            <div>
+              <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
+              <input type="text" value={newExpense.order_number} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
+            </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
               <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
@@ -448,6 +470,10 @@ export default function NewGoodPage() {
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">SUPPLIER</label>
                           <SupplierField suppliers={suppliers} value={editingExpense.supplier} onChange={(v) => setEditingExpense({ ...editingExpense, supplier: v })} />
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
+                          <input type="text" value={editingExpense.order_number} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
                         </div>
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>

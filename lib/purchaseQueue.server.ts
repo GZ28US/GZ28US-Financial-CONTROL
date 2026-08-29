@@ -158,7 +158,18 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
         purchase_date: today, payment_date: today, supplier: r.supplier,
         order_number: r.order_number, payment_method: methodOf(r), paid_from: 'GZ28US',
       }).select('id').single()
-      if (ins?.id) ref = `${dest}#${ins.id}`
+      if (ins?.id) {
+        ref = `${dest}#${ins.id}`
+        // PONTE item↔remessa (29/ago/2026): no ato de colocar a compra, a fila
+        // liga o STREAM à linha de dinheiro que ELA MESMA acabou de criar — o
+        // vínculo nasce de graça, casado pelo pedido (matched_by 'ORDER').
+        // part_stream_items mora no banco US, o mesmo `db` desta fila. Falha
+        // aqui não pode derrubar o lançamento: o dinheiro já está registrado.
+        await db.from('part_stream_items').insert({
+          stream_id: r.id, source_app: 'US', source_table: 'inputs',
+          source_id: ins.id, qty: 1, matched_by: 'ORDER',
+        }).then(() => undefined, () => undefined)
+      }
     }
     await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, where_label: category }).eq('id', r.id)
     out.push(`${keyOf(r)} → ${dest}`)
@@ -178,7 +189,16 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
         source: 'GZ28US', payment_method: methodOf(r), paid_from: 'GZ28US', paid_to: 'GZ28US',
         payment_date: today, expense_date: today, order_number: r.order_number,
       }).select('id').single()
-      if (ins?.id) ref = `${inv.code}#${ins.id}`
+      if (ins?.id) {
+        ref = `${inv.code}#${ins.id}`
+        // PONTE item↔remessa (29/ago/2026): mesma regra do destino INPUTS — a
+        // linha de dinheiro recém-criada pela fila é ligada ao STREAM na hora
+        // (matched_by 'ORDER'). Best-effort: nunca derruba o lançamento.
+        await db.from('part_stream_items').insert({
+          stream_id: r.id, source_app: 'US', source_table: 'invoice_expenses',
+          source_id: ins.id, qty: 1, matched_by: 'ORDER',
+        }).then(() => undefined, () => undefined)
+      }
     }
     await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, invoice_id: inv.id, where_label: inv.code }).eq('id', r.id)
     out.push(`${keyOf(r)} → ${inv.code}`)
@@ -294,6 +314,9 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${dest.slice(5)}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
         const [refDest, refId] = String(row.placed_ref || '').split('#')
         if (!refId) { await wa(chat, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
+        // A ponte item↔remessa morre junto com a linha de dinheiro desfeita —
+        // sem isso part_stream_items apontaria para um id que não existe mais.
+        await db.from('part_stream_items').delete().eq('source_id', refId).then(() => undefined, () => undefined)
         if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
         else await db.from('invoice_expenses').delete().eq('id', refId)
         const ref = await place(db, row, dest, placed)

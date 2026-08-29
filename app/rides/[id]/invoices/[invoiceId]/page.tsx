@@ -8,6 +8,7 @@ import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
+import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 type Invoice = {
   id: string
@@ -47,7 +48,9 @@ type Part = { id: string; description: string; unit_price: number; quantity: num
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
-type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
+// order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — o pedido mora na linha;
+// o tracking mora SÓ em part_streams e aparece aqui por JOIN (chip do STREAM).
+type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; order_number?: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
@@ -111,6 +114,8 @@ export default function ViewInvoicePage() {
   const [payments, setPayments] = useState<Payment[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
+  // Semáforo do STREAM por order_number normalizado (join de leitura pura).
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [sending, setSending] = useState(false)
   // Archived pre-conversion quote (if this invoice was once a quote) + its modal.
@@ -185,6 +190,8 @@ export default function ViewInvoicePage() {
     if (notesData) setNotes(notesData)
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData)
+    // Join com o STREAM: tracking mora só em part_streams, chega por leitura.
+    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -1059,6 +1066,14 @@ export default function ViewInvoicePage() {
                           <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}{((exp.tax || 0) > 0 || (exp.extra || 0) > 0) ? ` · TOTAL: ${formatUSD(exp.price * (exp.quantity || 1) + (exp.tax || 0) + (exp.extra || 0))}` : ''}</p>
                           {/* Uma data só (lei 18/ago/2026): a da expense é a do PAGAMENTO. */}
                           {!invoice.is_quote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}{exp.payment_method ? ` · ${exp.payment_method}` : ''}{(exp.paid_from || exp.paid_to) ? ` · ${exp.paid_from || 'GZ28US'} → ${exp.paid_to || 'GZ28US'}` : ''}</p>}
+                          {/* ORDER NUMBER sagrado + semáforo do STREAM (join por
+                              order_number normalizado — tracking nunca mora aqui). */}
+                          {String(exp.order_number || '').trim() && (
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <OrderChip order={String(exp.order_number || '').trim()} />
+                              {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}
+                            </div>
+                          )}
                         </div>
                         {receiptUrls.length > 0 && (
                           <div className="relative shrink-0">

@@ -80,7 +80,9 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion'),
     fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
+    // order_number entra no select (29/ago/2026): o MOVE pra estoque do Data
+    // Checker leva o pedido junto — ORDER NUMBER é sagrado e não se perde.
+    fetchAll('inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, order_number'),
     fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     // rides via '*': tabela pequena e é a que mais ganha coluna nova — select
     // explícito derrubava o dataset inteiro quando o deploy chegava antes da

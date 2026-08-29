@@ -14,6 +14,7 @@ import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { mirrorBrShoppingInvoice, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, methodsFor } from '@/components/PaymentFields'
+import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
@@ -58,6 +59,10 @@ type Expense = {
   payment_method: string
   paid_from: string
   paid_to: string
+  // ORDER NUMBER é SAGRADO (lei 29/ago/2026): o número do pedido na loja é dado
+  // da COMPRA (não do dinheiro) e vive aqui na origem; o TRACKING nunca — ele
+  // mora só em part_streams e chega por JOIN pelo order_number.
+  order_number?: string
 }
 type StockItem = {
   id: string
@@ -69,6 +74,10 @@ type StockItem = {
   supplier: string | null
   purchase_date: string | null
   source_type: string | null
+  // Pedido de origem da peça COMPRADA. Numa linha DONATED o campo carrega o
+  // código da invoice doadora (US.016.1) — isso é ORIGEM, não pedido, e nunca
+  // deve viajar como order number de compra.
+  order_number: string | null
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_from: string; paid_to: string; date: string; receipt_url: string; description: string }
@@ -287,9 +296,9 @@ export default function EditInvoicePage() {
   useEffect(() => {
     supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs, currency').neq('currency', 'BRL').limit(3000).then(({ data }) => setDbRef(data || []))
   }, [])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '' })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -302,10 +311,16 @@ export default function EditInvoicePage() {
   // STREAM ask — after a scanned purchase confirms, offer to follow the order
   // on the STREAM board (BOUGHT → SHIPPED → DELIVERED, 17TRACK automation).
   const [streamAsk, setStreamAsk] = useState<{ supplier: string; orderNumber: string; summary: string; group: string; count: number } | null>(null)
+  // Semáforo do STREAM por order_number NORMALIZADO (join de leitura — o
+  // tracking mora SÓ em part_streams; aqui nunca se digita nem se grava).
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [editingPurchaseGroupId, setEditingPurchaseGroupId] = useState<string | null>(null)
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingPurchaseSource, setEditingPurchaseSource] = useState(DEFAULT_SOURCE)
+  // ORDER NUMBER é dado da COMPRA (um pedido = um grupo), então se edita aqui,
+  // no diálogo do grupo, e vale para todas as linhas dele.
+  const [editingPurchaseOrderNumber, setEditingPurchaseOrderNumber] = useState('')
   const [editingGroupItemIndex, setEditingGroupItemIndex] = useState<number | null>(null)
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }>({ description: '', amount: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' })
   // sendToConfirm: the SEND TO button on an expense row opens this modal. The user
@@ -373,7 +388,7 @@ export default function EditInvoicePage() {
   const [savingInvoice, setSavingInvoice] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
 
-  useEffect(() => { loadData(); loadFixedMember().then(setFixedMember) }, [])
+  useEffect(() => { loadData(); loadFixedMember().then(setFixedMember); loadStreamMap().then(setStreams) }, [])
 
   // `keepUi` is set by the stay-on-page SAVE: the data is refreshed from the DB but the
   // expense groups the user had open stay open (purchase_group ids survive a save).
@@ -507,6 +522,7 @@ export default function EditInvoicePage() {
         payment_method: e.payment_method || 'CASH',
         paid_from: e.paid_from || e.source || '',
         paid_to: e.paid_to || 'GZ28US',
+        order_number: e.order_number || '',
       })))
       if (!keepUi) setExpandedGroups(new Set())
     }
@@ -736,7 +752,10 @@ export default function EditInvoicePage() {
     setStockTarget(target)
     const { data } = await supabase
       .from('inventory')
-      .select('id, description, quantity, unit_price, supplier, purchase_date, source_type')
+      // order_number entra no select: a busca do modal já procura por ele
+      // (partMatches lê (item as any).order_number) e ele volta pro rastreio
+      // quando a peça COMPRADA entra na invoice.
+      .select('id, description, quantity, unit_price, supplier, purchase_date, source_type, order_number')
       .eq('category', 'STOCK')
       .gt('quantity', 0)
       .order('description')
@@ -773,6 +792,10 @@ export default function EditInvoicePage() {
       payment_method: 'CASH',
       paid_from: DEFAULT_SOURCE,
       paid_to: 'GZ28US',
+      // Peça COMPRADA puxada do estoque mantém o pedido de origem — o rastreio
+      // não se perde no caminho. DOADA não: o order_number dela é a invoice
+      // doadora (origem), nunca um pedido de loja.
+      order_number: item.source_type === 'DONATED' ? '' : (item.order_number || ''),
     }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -984,6 +1007,11 @@ export default function EditInvoicePage() {
       // The scanned payer (matched to GZ28US/GZ28BR) is who PAID the invoice.
       paid_from: scannedPurchase.source || DEFAULT_SOURCE,
       paid_to: 'GZ28US',
+      // ORDER NUMBER é SAGRADO (29/ago/2026): o número lido no scan entra em
+      // TODAS as linhas do grupo AQUI, no ato do confirm — MESMO que o usuário
+      // clique SKIP no diálogo do STREAM logo adiante. O SKIP é sobre o
+      // rastreio (seguir ou não a remessa no quadro), nunca sobre o campo.
+      order_number: scannedPurchase.order_number || '',
     }))
     // Override: an official purchase replaces the matching quote estimate. Match by
     // part number (or item name when a line has no PN); drop those lines before adding
@@ -1048,6 +1076,8 @@ export default function EditInvoicePage() {
       status: 'BOUGHT',
     }])
     if (error) alert('STREAM enroll failed: ' + error.message)
+    // A linha nova do STREAM alimenta o semáforo na hora (chip BOUGHT cinza).
+    else loadStreamMap().then(setStreams)
     setStreamAsk(null)
   }
 
@@ -1074,15 +1104,18 @@ export default function EditInvoicePage() {
     // A data da compra É a data em que foi paga (lei de 18/ago/2026).
     setEditingPurchaseDate(first.payment_date || '')
     setEditingPurchaseSource(first.source || DEFAULT_SOURCE)
+    setEditingPurchaseOrderNumber(first.order_number || '')
   }
 
   async function confirmEditPurchase() {
     // A data do diálogo é a data do PAGAMENTO da compra (uma compra = um pagamento):
     // com data, o grupo inteiro fica pago nela; sem data, o grupo inteiro fica devendo.
     const payDate = isValidDate(editingPurchaseDate) ? editingPurchaseDate : ''
+    // Um pedido = um grupo: o ORDER NUMBER editado aqui vale pra TODAS as linhas.
+    const orderNo = editingPurchaseOrderNumber.trim()
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, source: editingPurchaseSource, paid_from: editingPurchaseSource }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, source: editingPurchaseSource, paid_from: editingPurchaseSource, order_number: orderNo }
         : e
     ))
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
@@ -1094,6 +1127,7 @@ export default function EditInvoicePage() {
           payment_date: payDate || null,
           source: editingPurchaseSource || DEFAULT_SOURCE,
           paid_from: editingPurchaseSource || DEFAULT_SOURCE,
+          order_number: orderNo || null,
         }).eq('id', exp.id)
       }
     }
@@ -1154,7 +1188,10 @@ export default function EditInvoicePage() {
         purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
         // A origem volta pro MESMO campo: carro doador quando doada, fornecedor quando comprada.
         supplier: camFromDonated ? (exp.stock_donor || null) : (exp.supplier || null),
-        order_number: camFromDonated ? invoiceCode : null,
+        // Doada: o documento que trouxe a peça é a INVOICE do carro (como sempre foi).
+        // COMPRADA (29/ago/2026): o destino carrega o ORDER NUMBER REAL da expense
+        // de origem — o pedido viaja com a peça; o "From US.xxx" segue no notes.
+        order_number: camFromDonated ? invoiceCode : ((exp.order_number || '').trim() || null),
         notes: note,
         receipt_url: receiptUrlsJson,
         source_type: sourceType,
@@ -1168,6 +1205,9 @@ export default function EditInvoicePage() {
         purchase_date: isValidDate(exp.payment_date) ? exp.payment_date : null,
         supplier: exp.supplier || null,
         receipt_url: receiptUrlsJson,
+        // ORDER NUMBER sagrado (29/ago/2026): peça comprada que vira ASSET leva
+        // o pedido REAL da expense de origem junto.
+        order_number: (exp.order_number || '').trim() || null,
       }])
       if (error) { alert(error.message); return }
     }
@@ -2024,7 +2064,7 @@ export default function EditInvoicePage() {
       row.expense_date = row.payment_date // espelho: a única data é a do pagamento
       row.item_discount = normalizeItemDiscount(row.supplier, row.item_discount)
     }
-    setExpenses([...expenses, row]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
+    setExpenses([...expenses, row]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '' })
   }
   function removeExpense(index: number) {
     const exp = expenses[index]
@@ -2054,6 +2094,8 @@ export default function EditInvoicePage() {
         payment_method: editingExpense.payment_method || 'CASH',
         paid_from: editingExpense.paid_from || null,
         paid_to: editingExpense.paid_to || 'GZ28US',
+        // ORDER NUMBER sagrado: a edição da linha persiste o pedido também.
+        order_number: (editingExpense.order_number || '').trim() || null,
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
         // Sem resposta = NULL nos dois (caso Drácula) — fabricar aqui gravava
         // GZ28US como se fosse fato.
@@ -2062,9 +2104,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '' }) }
 
   // Before a quote converts to an invoice, archive its full content exactly as
   // currently stored (invoice row + line items, payments, notes) into
@@ -2327,6 +2369,9 @@ export default function EditInvoicePage() {
         paid_to: ex.paid_to || 'GZ28US',
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
         source: ex.paid_from || ex.source || null,
+        // ORDER NUMBER é SAGRADO (29/ago/2026): toda linha nova persiste o
+        // pedido — venha do scan (grupo inteiro), do form manual ou do stock.
+        order_number: (ex.order_number || '').trim() || null,
         position: expenses.indexOf(ex),
       }))).select('id')
       if (e) { alert(e.message); return }
@@ -2397,6 +2442,8 @@ export default function EditInvoicePage() {
               usdExtra: parseFloat(e.extra) || 0,
               quantity: qty,
               paymentDate: isValidDate(e.payment_date) ? e.payment_date : null,
+              // ORDER NUMBER viaja no espelho US→BR (lei 29/ago/2026).
+              orderNumber: (e.order_number || '').trim() || null,
             }
           })
         const res = await mirrorBrShoppingInvoice({
@@ -2946,6 +2993,11 @@ export default function EditInvoicePage() {
               <datalist id="edit-purchase-suppliers">{suppliers.map(s => <option key={s.name} value={s.name} />)}</datalist>
             </div>
             <div>
+              {/* ORDER NUMBER é da COMPRA: editado aqui, propaga pra todas as linhas do grupo. */}
+              <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
+              <input type="text" value={editingPurchaseOrderNumber} onChange={(e) => setEditingPurchaseOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
+            </div>
+            <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
               <SourceSelect value={editingPurchaseSource} onChange={setEditingPurchaseSource} className={inputClass} />
             </div>
@@ -3188,6 +3240,13 @@ export default function EditInvoicePage() {
                 <label className="block mb-1 text-xs text-gray-400">ITEM</label>
                 <input type="text" placeholder="Item description" value={newExpense.item} onChange={(e) => setNewExpense({ ...newExpense, item: e.target.value })} className={smallInputClass + ' w-full'} />
               </div>
+              {/* ORDER NUMBER na primeira fileira: é dado da COMPRA (identifica o
+                  pedido na loja), não do dinheiro — por isso vive ao lado de
+                  SUPPLIER/ITEM e nunca no bloco de pagamento. */}
+              <div className="flex-1 min-w-[8rem]">
+                <label className="block mb-1 text-xs text-gray-400">ORDER NUMBER</label>
+                <input type="text" placeholder="e.g. 2000149-80525197" value={newExpense.order_number || ''} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} className={smallInputClass + ' w-full'} />
+              </div>
               <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
             </div>
             {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid) / PAID TO (whose bill). */}
@@ -3286,6 +3345,12 @@ export default function EditInvoicePage() {
                       return [...freq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || ''
                     })()
                     const groupColor = groupPaid ? 'text-blue-400' : 'text-red-400'
+                    // Regra do molde (supplies page / commonOf): o chip de ORDER
+                    // NUMBER sobe pro TÍTULO quando todos os itens do grupo
+                    // compartilham o mesmo pedido, e desce pra linha quando
+                    // divergem. O semáforo do STREAM acompanha o chip.
+                    const groupOrders = Array.from(new Set(groupItems.map(({ expense: e }) => (e.order_number || '').trim()).filter(Boolean)))
+                    const groupStream = groupOrders.length === 1 ? streamFor(streams, groupOrders[0]) : undefined
                     return (
                       <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
                         <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
@@ -3295,7 +3360,14 @@ export default function EditInvoicePage() {
                               <p className={`text-base font-bold ${groupColor}`}>{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatUSD(groupTotal)}{!isQuote && <span className={`font-bold ${groupColor}`}>{groupPaid ? ` — Paid: ${formatDate(groupPaidDate)}` : ' — Not paid yet'}</span>}</p>
-
+                            {/* ORDER NUMBER sempre visível no título da compra; o
+                                semáforo do STREAM chega por JOIN, nunca digitado. */}
+                            {groupOrders.length > 0 && (
+                              <div className="flex items-center gap-2 mt-1 ml-6 flex-wrap">
+                                {groupOrders.map(o => <OrderChip key={o} order={o} />)}
+                                {groupStream && <StreamChip st={groupStream} />}
+                              </div>
+                            )}
                           </div>
                           <div className="flex gap-2 shrink-0 items-start" onClick={e => e.stopPropagation()}>
                             <div className="flex flex-col gap-1">
@@ -3355,6 +3427,13 @@ export default function EditInvoicePage() {
                                       {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                       <p className={`text-sm ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && isValidDate(exp.payment_date) !== groupPaid && <p className={`text-xs font-bold ${isValidDate(exp.payment_date) ? 'text-blue-400' : 'text-red-400'}`}>{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
+                                      {/* Molde commonOf: o chip só desce pra linha quando o pedido DIVERGE do título. */}
+                                      {(exp.order_number || '').trim() && groupOrders.length > 1 && (
+                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                          <OrderChip order={(exp.order_number || '').trim()} />
+                                          {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                        </div>
+                                      )}
                                       {exportStatusLine(exp, index)}
                                     </div>
                                     <div className="flex gap-2 shrink-0 items-start">
@@ -3392,6 +3471,11 @@ export default function EditInvoicePage() {
                               <div className="flex-1 min-w-[10rem]">
                                 <label className="block mb-1 text-xs text-gray-400">ITEM</label>
                                 <input type="text" value={editingExpense.item} onChange={(e) => setEditingExpense({ ...editingExpense, item: e.target.value })} className={smallInputClass + ' w-full'} />
+                              </div>
+                              {/* ORDER NUMBER: dado da COMPRA, mora na primeira fileira (nunca no bloco de pagamento). */}
+                              <div className="flex-1 min-w-[8rem]">
+                                <label className="block mb-1 text-xs text-gray-400">ORDER NUMBER</label>
+                                <input type="text" placeholder="e.g. 2000149-80525197" value={editingExpense.order_number || ''} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} className={smallInputClass + ' w-full'} />
                               </div>
                               <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
                             </div>
@@ -3489,6 +3573,14 @@ export default function EditInvoicePage() {
                                 {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
+                                {/* ORDER NUMBER sagrado + semáforo do STREAM (join por
+                                    order_number — tracking nunca se digita aqui). */}
+                                {(exp.order_number || '').trim() && (
+                                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                    <OrderChip order={(exp.order_number || '').trim()} />
+                                    {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                  </div>
+                                )}
                                 {exportStatusLine(exp, index)}
                                 {(parseFloat(exp.item_discount || '0') || 0) > 0 && <p className="text-sm font-bold text-yellow-300">★ Item discount: {parseFloat(exp.item_discount || '0')}%</p>}
                                 {exp.stock_source_type === 'DONATED' && exp.stock_donor && <p className="text-sm text-orange-400">From stock — DONATED by {exp.stock_donor}</p>}

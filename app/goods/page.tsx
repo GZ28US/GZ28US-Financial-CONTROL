@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 
@@ -29,8 +30,10 @@ const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 // ferramenta de trabalho. As despesas de cada carro são as invoice_expenses
 // que já existem — mostradas uma por linha, no visual do GOOD EXPENSES, sem
 // copiar nada: o mesmo dinheiro nunca vive em dois lugares.
-type FleetExpense = { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null }
-const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true }
+// order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — a despesa da frota
+// também carrega o pedido; o tracking chega por JOIN com part_streams.
+type FleetExpense = { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; order_number: string | null }
+const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '' }
 // Duas coisas diferentes se chamam "nota" num carro:
 //   titleNotes  — rides.title_notes, o DOSSIÊ do documento. Bloco único, escrito
 //                 em TITLE & DOCS na tela do ride. Aqui só se lê.
@@ -61,6 +64,9 @@ type Good = {
   category?: string | null
   // Stored as a JSON-stringified array of URLs (scanned purchases set one URL).
   receipt_url?: string | null
+  // ORDER NUMBER é SAGRADO: o pedido da loja mora aqui; o tracking mora SÓ em
+  // part_streams e aparece por JOIN — nunca se digita nem se grava na origem.
+  order_number?: string | null
 }
 
 type GoodWithStats = Good & {
@@ -106,6 +112,8 @@ function parseReceiptUrls(raw: string | null | undefined): string[] {
 
 export default function GoodsPage() {
   const [goods, setGoods] = useState<GoodWithStats[]>([])
+  // Semáforo do STREAM por order_number normalizado (goods E despesas da frota).
+  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [category, setCategory] = useState<string>('ALL')
   const [fleet, setFleet] = useState<FleetCar[]>([])
   const [openCar, setOpenCar] = useState<Set<string>>(new Set())
@@ -134,6 +142,8 @@ export default function GoodsPage() {
     supplier: string
     date: string
     source: string
+    // ORDER NUMBER é SAGRADO (29/ago/2026): o scan lê e a compra grava.
+    orderNumber: string
     tax: string
     shipping: string
     items: { description: string; amount: string; quantity: string }[]
@@ -194,6 +204,8 @@ export default function GoodsPage() {
       price: amount, quantity: 1,
       expense_date: d,
       payment_date: fleetForm.paid ? d : null,
+      // ORDER NUMBER sagrado: o form da frota também registra o pedido.
+      order_number: fleetForm.orderNumber.trim() || null,
     }
     setSavingFleetExp(true)
     try {
@@ -225,7 +237,7 @@ export default function GoodsPage() {
       .in('ride_id', rides.map((r: any) => r.id))
     const invIds = (invs || []).map((i: any) => i.id)
     const { data: exps } = invIds.length
-      ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date').in('invoice_id', invIds)
+      ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, order_number').in('invoice_id', invIds)
       : { data: [] as any[] }
     const { data: notesData } = invIds.length
       ? await supabase.from('invoice_notes').select('id, invoice_id, note').in('invoice_id', invIds).order('created_at', { ascending: true })
@@ -276,6 +288,8 @@ export default function GoodsPage() {
 
     setGoods(goodsWithStats)
     await loadFleet()
+    // Join com o STREAM (leitura pura): tracking mora só em part_streams.
+    setStreams(await loadStreamMap())
     setLoading(false)
     // Groups start collapsed — the user opens the ones they want to inspect.
   }
@@ -356,6 +370,8 @@ export default function GoodsPage() {
       const supplier = String(parsed.supplier || '').trim()
       const date = String(parsed.date || '')
       const source = matchSource(String(parsed.source || '').trim())
+      // Nº do pedido como impresso (zeros à esquerda, hífens, sem '#').
+      const orderNumber = String(parsed.order_number || '').trim()
       const rawItems = (parsed.items || [])
       const items = rawItems.map((i: any) => ({
         description: String(i.description || ''),
@@ -368,7 +384,7 @@ export default function GoodsPage() {
       const shipping = rawItems.reduce((s: number, it: any) => s + (parseFloat(it.extra) || 0), 0) * fx
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0) + tax + shipping
 
-      const openReview = () => setScannedPurchase({ supplier, date, source, tax: tax > 0 ? tax.toFixed(2) : '', shipping: shipping > 0 ? shipping.toFixed(2) : '', items, receiptUrl })
+      const openReview = () => setScannedPurchase({ supplier, date, source, orderNumber, tax: tax > 0 ? tax.toFixed(2) : '', shipping: shipping > 0 ? shipping.toFixed(2) : '', items, receiptUrl })
 
       // Duplicate check: any existing goods row with the same supplier+date+total
       // (summed per purchase_group) is treated as a possible re-scan.
@@ -421,6 +437,8 @@ export default function GoodsPage() {
         payment_date: purchaseDate, // espelho — comprada = paga
         supplier: scannedPurchase.supplier || null,
         source,
+        // ORDER NUMBER sagrado: toda linha do grupo carrega o pedido lido.
+        order_number: scannedPurchase.orderNumber || null,
         receipt_url: JSON.stringify([scannedPurchase.receiptUrl]),
         purchase_group: groupId,
       }))
@@ -443,6 +461,9 @@ export default function GoodsPage() {
           expense_date: purchaseDate,
           supplier: scannedPurchase.supplier || null,
           source,
+          // good_expenses.order_number existe desde a migration de 29/ago:
+          // tax/frete pertencem ao MESMO pedido da compra.
+          order_number: scannedPurchase.orderNumber || null,
         })))
       }
     }
@@ -884,6 +905,8 @@ export default function GoodsPage() {
                     <input value={fleetForm.item} onChange={(ev) => setFleetForm({ ...fleetForm, item: ev.target.value })} placeholder="O que foi — ex.: pneus, seguro, pedágio" className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <input value={fleetForm.supplier} onChange={(ev) => setFleetForm({ ...fleetForm, supplier: ev.target.value })} placeholder="Fornecedor" className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
+                      {/* ORDER NUMBER é SAGRADO: a despesa da frota também nasce com o pedido. */}
+                      <input value={fleetForm.orderNumber} onChange={(ev) => setFleetForm({ ...fleetForm, orderNumber: ev.target.value })} placeholder="Order number" className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                       <input inputMode="decimal" value={fleetForm.amount} onChange={(ev) => { if (ev.target.value === '' || /^\d*\.?\d*$/.test(ev.target.value)) setFleetForm({ ...fleetForm, amount: ev.target.value }) }} placeholder="$ 0.00" className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                       <input type="date" value={fleetForm.date} onChange={(ev) => setFleetForm({ ...fleetForm, date: ev.target.value })} className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                     </div>
@@ -904,6 +927,13 @@ export default function GoodsPage() {
                           <p className="text-sm text-gray-500">
                             {e.supplier || '—'} · {e.payment_date ? `pago ${e.payment_date}` : <span className="text-amber-400 font-bold">não paga</span>}
                           </p>
+                          {/* ORDER NUMBER sagrado + semáforo do STREAM (join, nunca digitado). */}
+                          {(e.order_number || '').trim() && (
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <OrderChip order={(e.order_number || '').trim()} />
+                              {(() => { const st = streamFor(streams, e.order_number); return st ? <StreamChip st={st} /> : null })()}
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
                           <span className="font-bold">{formatUSD(fleetLine(e))}</span>
@@ -914,7 +944,7 @@ export default function GoodsPage() {
                             </>
                           ) : (
                             <>
-                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => setConfirmFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </>
                           )}
@@ -944,6 +974,11 @@ export default function GoodsPage() {
               const groupExpensesTotal = groupGoods.reduce((s, g) => s + g.expensesTotal, 0)
               const groupTotal = groupItemsTotal + groupExpensesTotal
               const isExpanded = expandedGroups.has(groupId)
+              // Molde da supplies page (commonOf): chip do pedido no cabeçalho
+              // quando o grupo compartilha o mesmo order number; desce pra linha
+              // quando diverge. O semáforo do STREAM acompanha.
+              const gOrders = Array.from(new Set(groupGoods.map(g => (g.order_number || '').trim()).filter(Boolean)))
+              const gStream = gOrders.length === 1 ? streamFor(streams, gOrders[0]) : undefined
               return (
                 <div key={groupId} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
                   {/* Group header: text area toggles expand/collapse; buttons live in
@@ -955,6 +990,14 @@ export default function GoodsPage() {
                         <h2 className="text-2xl font-bold">{first.supplier || 'Unknown Supplier'}</h2>
                       </div>
                       <p className="text-lg text-gray-400 ml-7">{groupGoods.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
+                      {/* ORDER NUMBER sempre visível na compra, mesmo colapsada;
+                          o tracking chega por JOIN com part_streams. */}
+                      {gOrders.length > 0 && (
+                        <div className="flex items-center gap-2 mt-2 ml-7 flex-wrap">
+                          {gOrders.map(o => <OrderChip key={o} order={o} />)}
+                          {gStream && <StreamChip st={gStream} />}
+                        </div>
+                      )}
                     </div>
                     <div className="flex gap-3 flex-wrap shrink-0">
                       {(() => {
@@ -979,6 +1022,13 @@ export default function GoodsPage() {
                             <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
                             {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                             <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
+                            {/* Molde commonOf: chip na linha SÓ quando o pedido diverge do cabeçalho. */}
+                            {(good.order_number || '').trim() && gOrders.length > 1 && (
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <OrderChip order={(good.order_number || '').trim()} />
+                                {(() => { const st = streamFor(streams, good.order_number); return st ? <StreamChip st={st} /> : null })()}
+                              </div>
+                            )}
                           </div>
                           <div className="flex gap-3 shrink-0">
                             <Link href={`/goods/${good.id}`} className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-2xl font-bold text-sm">VIEW</Link>
@@ -1002,6 +1052,13 @@ export default function GoodsPage() {
                     <p className="text-lg text-gray-400">Purchased: {formatDate(good.purchase_date)}</p>
                     {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                     <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
+                    {/* ORDER NUMBER sagrado + semáforo do STREAM (join por order_number). */}
+                    {(good.order_number || '').trim() && (
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <OrderChip order={(good.order_number || '').trim()} />
+                        {(() => { const st = streamFor(streams, good.order_number); return st ? <StreamChip st={st} /> : null })()}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-3 flex-wrap shrink-0">
                     <Link href={`/goods/${good.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
