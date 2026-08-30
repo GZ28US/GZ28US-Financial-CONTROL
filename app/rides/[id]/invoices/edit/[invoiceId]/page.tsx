@@ -3345,12 +3345,13 @@ export default function EditInvoicePage() {
                       return [...freq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || ''
                     })()
                     const groupColor = groupPaid ? 'text-blue-400' : 'text-red-400'
-                    // Regra do molde (supplies page / commonOf): o chip de ORDER
-                    // NUMBER sobe pro TÍTULO quando todos os itens do grupo
-                    // compartilham o mesmo pedido, e desce pra linha quando
-                    // divergem. O semáforo do STREAM acompanha o chip.
-                    const groupOrders = Array.from(new Set(groupItems.map(({ expense: e }) => (e.order_number || '').trim()).filter(Boolean)))
-                    const groupStream = groupOrders.length === 1 ? streamFor(streams, groupOrders[0]) : undefined
+                    // LEI (Márcio, 29/ago/2026): "os badges de order number, tracking ou
+                    // BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das
+                    // compras, MESMO QUE SEJA REPETIDO EM TODOS. Este controle e
+                    // gerenciamento e pros itens, nao pra compra, uma vez que podem gerar
+                    // order numbers e tracking diferentes." O molde commonOf (chip sobe
+                    // pro título quando todos compartilham) MORREU aqui: ORDER NUMBER e
+                    // semáforo do STREAM renderizam na linha de CADA item, sempre.
                     return (
                       <div key={groupId} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
                         <div className="px-4 py-3 bg-gray-800 flex items-center justify-between gap-4 cursor-pointer" onClick={() => toggleGroup(groupId)}>
@@ -3360,14 +3361,6 @@ export default function EditInvoicePage() {
                               <p className={`text-base font-bold ${groupColor}`}>{firstItem.kit_name ? `📦 ${firstItem.kit_name}` : firstItem.supplier} — {groupItems.length} items</p>
                             </div>
                             <p className="text-sm text-gray-400 ml-6">{formatUSD(groupTotal)}{!isQuote && <span className={`font-bold ${groupColor}`}>{groupPaid ? ` — Paid: ${formatDate(groupPaidDate)}` : ' — Not paid yet'}</span>}</p>
-                            {/* ORDER NUMBER sempre visível no título da compra; o
-                                semáforo do STREAM chega por JOIN, nunca digitado. */}
-                            {groupOrders.length > 0 && (
-                              <div className="flex items-center gap-2 mt-1 ml-6 flex-wrap">
-                                {groupOrders.map(o => <OrderChip key={o} order={o} />)}
-                                {groupStream && <StreamChip st={groupStream} />}
-                              </div>
-                            )}
                           </div>
                           <div className="flex gap-2 shrink-0 items-start" onClick={e => e.stopPropagation()}>
                             <div className="flex flex-col gap-1">
@@ -3427,8 +3420,9 @@ export default function EditInvoicePage() {
                                       {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                       <p className={`text-sm ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && isValidDate(exp.payment_date) !== groupPaid && <p className={`text-xs font-bold ${isValidDate(exp.payment_date) ? 'text-blue-400' : 'text-red-400'}`}>{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
-                                      {/* Molde commonOf: o chip só desce pra linha quando o pedido DIVERGE do título. */}
-                                      {(exp.order_number || '').trim() && groupOrders.length > 1 && (
+                                      {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
+                                          linha do item — repetir em todos os itens da compra é o certo. */}
+                                      {(exp.order_number || '').trim() && (
                                         <div className="flex items-center gap-2 mt-1 flex-wrap">
                                           <OrderChip order={(exp.order_number || '').trim()} />
                                           {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}

@@ -66,10 +66,10 @@ export default function ViewInputGroupPage() {
   const first = items[0]
   const grandTotal = items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0)
   const receiptUrls = Array.from(new Set(items.flatMap(i => parseReceiptUrls(i.receipt_url))))
-  // Pedidos distintos das linhas COMPRADAS do grupo (DONATED fora — origem, não
-  // pedido); o semáforo do STREAM sobe quando o pedido é um só (molde supplies).
-  const gOrders = Array.from(new Set(items.filter(i => (i.source_type || '') !== 'DONATED').map(i => String(i.order_number || '').trim()).filter(Boolean)))
-  const gStream = gOrders.length === 1 ? streamFor(streams, gOrders[0]) : undefined
+  // LEI (Márcio, 29/ago/2026): "os badges de order number, tracking ou
+  // BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das compras,
+  // MESMO QUE SEJA REPETIDO EM TODOS." O molde commonOf morreu: a seção PURCHASE
+  // não carrega mais ORDER NUMBER/STREAM — os chips vivem na linha de CADA item.
   const catBadge = (c: string) => `px-3 py-1 rounded-full text-sm font-bold ${c === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
@@ -95,15 +95,6 @@ export default function ViewInputGroupPage() {
             <div className={rowClass}><span className={labelClass}>SUPPLIER</span><span className="font-bold">{first.supplier || '—'}</span></div>
             <div className={rowClass}><span className={labelClass}>CATEGORY</span><span className={catBadge(first.category)}>{first.category}</span></div>
             <div className={rowClass}><span className={labelClass}>DATE</span><span className="font-bold">{formatDate(first.purchase_date)}</span></div>
-            {/* ORDER NUMBER da compra + semáforo do STREAM (join, nunca digitado). */}
-            {gOrders.length > 0 && (
-              <div className={rowClass}><span className={labelClass}>ORDER NUMBER</span>
-                <span className="flex items-center gap-2 flex-wrap justify-end">
-                  {gOrders.map(o => <OrderChip key={o} order={o} />)}
-                  {gStream && <StreamChip st={gStream} />}
-                </span>
-              </div>
-            )}
             <div className={rowClass}><span className={labelClass}>ITEMS</span><span className="font-bold">{items.length}</span></div>
             <div className={rowClass}><span className={labelClass}>GRAND TOTAL</span><span className="font-bold text-xl">{formatUSD(grandTotal)}</span></div>
             {receiptUrls.length > 0 && (
@@ -131,8 +122,9 @@ export default function ViewInputGroupPage() {
                   <div className="min-w-0">
                     <p className="font-bold truncate" title={it.description}>{it.description}</p>
                     <p className="text-sm text-gray-400">Qty: {it.quantity} × {formatUSD(it.unit_price)} = {formatUSD((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))}</p>
-                    {/* Molde commonOf: o chip desce pra linha só quando os pedidos divergem. */}
-                    {(it.source_type || '') !== 'DONATED' && String(it.order_number || '').trim() && gOrders.length > 1 && (
+                    {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
+                        linha do item — mesmo repetidos em todos. DONATED fica sem chip. */}
+                    {(it.source_type || '') !== 'DONATED' && String(it.order_number || '').trim() && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <OrderChip order={String(it.order_number || '').trim()} />
                         {(() => { const st = streamFor(streams, it.order_number); return st ? <StreamChip st={st} /> : null })()}

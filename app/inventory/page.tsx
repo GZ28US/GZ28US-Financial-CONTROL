@@ -552,12 +552,11 @@ export default function InventoryPage() {
           {visible.length > 0 && (
             <div className="space-y-5">
               {visible.map((p) => {
-                // Molde da supplies page (commonOf): pedidos distintos das linhas
-                // PURCHASED do grupo — o chip sobe pro cabeçalho; o semáforo do
-                // STREAM sobe junto quando o pedido é um só. DONATED fica fora:
-                // o order_number dela é a invoice doadora, não um pedido.
-                const pOrders = Array.from(new Set(p.items.filter(i => i.source_type !== 'DONATED').map(i => (i.order_number || '').trim()).filter(Boolean)))
-                const pStream = pOrders.length === 1 ? streamFor(streams, pOrders[0]) : undefined
+                // LEI (Márcio, 29/ago/2026): "os badges de order number, tracking ou
+                // BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das
+                // compras, MESMO QUE SEJA REPETIDO EM TODOS." O molde commonOf morreu:
+                // chip do pedido + semáforo do STREAM ficam na linha de CADA item.
+                // DONATED segue fora: o order_number dela é a invoice doadora, não um pedido.
                 return (
                   <div key={p.key} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
                     {/* DOAÇÃO não tem cabeçalho de grupo (ordem 22/ago/2026): o carro e a
@@ -581,14 +580,6 @@ export default function InventoryPage() {
                             </>
                           )}
                         </p>
-                        {/* ORDER NUMBER sempre visível na compra + semáforo do STREAM
-                            (join por order_number — tracking nunca se digita aqui). */}
-                        {pOrders.length > 0 && (
-                          <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            {pOrders.map(o => <OrderChip key={o} order={o} />)}
-                            {pStream && <StreamChip st={pStream} />}
-                          </div>
-                        )}
                       </div>
                       <div className="flex gap-3 flex-wrap shrink-0">
                         {p.groupId && <Link href={`/supplies/group/${p.groupId}?src=inventory`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>}
@@ -615,10 +606,10 @@ export default function InventoryPage() {
                                 : item.notes && item.notes.split('\n').map((note, i) => (
                                     <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
                                   ))}
-                              {/* Molde commonOf: o chip do pedido desce pra linha só
-                                  quando o grupo tem pedidos DIVERGENTES. DONATED nunca
-                                  ganha chip (o campo dela é origem, não pedido). */}
-                              {item.source_type !== 'DONATED' && (item.order_number || '').trim() && pOrders.length > 1 && (
+                              {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
+                                  linha do item — mesmo repetidos em todos os itens. DONATED
+                                  nunca ganha chip (o campo dela é origem, não pedido). */}
+                              {item.source_type !== 'DONATED' && (item.order_number || '').trim() && (
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   <OrderChip order={(item.order_number || '').trim()} />
                                   {(() => { const st = streamFor(streams, item.order_number); return st ? <StreamChip st={st} /> : null })()}

@@ -7,6 +7,14 @@
 // Este arquivo é o MOLDE da página SUPPLIES (app/supplies/page.tsx) extraído
 // para as demais telas — chip índigo do pedido, semáforo verde/azul/cinza do
 // stream e o join normalizado. Nada aqui grava nada: é leitura pura.
+//
+// LEI DO LUGAR (Márcio, 29/ago/2026): "os badges de order number, tracking ou
+// BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das compras,
+// MESMO QUE SEJA REPETIDO EM TODOS. Este controle e gerenciamento e pros
+// itens, nao pra compra, uma vez que podem gerar order numbers e tracking
+// diferentes." Ou seja: estes chips renderizam na LINHA DE CADA ITEM, nunca no
+// header/título do grupo de compra — o padrão commonOf (subir pro header
+// quando todos compartilham) MORREU.
 
 import { supabase } from '@/lib/supabase'
 
@@ -60,7 +68,7 @@ function fmtDate(d: string | null) {
 }
 
 // Chip índigo do pedido — o campo mais importante da compra, sempre visível
-// (molde: supplies page, header do card).
+// na LINHA do item que o carrega (lei 29/ago/2026: nunca no título da compra).
 export function OrderChip({ order }: { order: string }) {
   return (
     <span className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 whitespace-nowrap">#{order}</span>

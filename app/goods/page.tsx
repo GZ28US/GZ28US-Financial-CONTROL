@@ -974,11 +974,10 @@ export default function GoodsPage() {
               const groupExpensesTotal = groupGoods.reduce((s, g) => s + g.expensesTotal, 0)
               const groupTotal = groupItemsTotal + groupExpensesTotal
               const isExpanded = expandedGroups.has(groupId)
-              // Molde da supplies page (commonOf): chip do pedido no cabeçalho
-              // quando o grupo compartilha o mesmo order number; desce pra linha
-              // quando diverge. O semáforo do STREAM acompanha.
-              const gOrders = Array.from(new Set(groupGoods.map(g => (g.order_number || '').trim()).filter(Boolean)))
-              const gStream = gOrders.length === 1 ? streamFor(streams, gOrders[0]) : undefined
+              // LEI (Márcio, 29/ago/2026): "os badges de order number, tracking ou
+              // BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das
+              // compras, MESMO QUE SEJA REPETIDO EM TODOS." O molde commonOf morreu:
+              // chip do pedido + semáforo do STREAM ficam na linha de CADA item.
               return (
                 <div key={groupId} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
                   {/* Group header: text area toggles expand/collapse; buttons live in
@@ -990,14 +989,6 @@ export default function GoodsPage() {
                         <h2 className="text-2xl font-bold">{first.supplier || 'Unknown Supplier'}</h2>
                       </div>
                       <p className="text-lg text-gray-400 ml-7">{groupGoods.length} items — {formatUSD(groupTotal)} — {formatDate(first.purchase_date)}</p>
-                      {/* ORDER NUMBER sempre visível na compra, mesmo colapsada;
-                          o tracking chega por JOIN com part_streams. */}
-                      {gOrders.length > 0 && (
-                        <div className="flex items-center gap-2 mt-2 ml-7 flex-wrap">
-                          {gOrders.map(o => <OrderChip key={o} order={o} />)}
-                          {gStream && <StreamChip st={gStream} />}
-                        </div>
-                      )}
                     </div>
                     <div className="flex gap-3 flex-wrap shrink-0">
                       {(() => {
@@ -1022,8 +1013,9 @@ export default function GoodsPage() {
                             <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
                             {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                             <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
-                            {/* Molde commonOf: chip na linha SÓ quando o pedido diverge do cabeçalho. */}
-                            {(good.order_number || '').trim() && gOrders.length > 1 && (
+                            {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
+                                linha do item — mesmo repetidos em todos os itens da compra. */}
+                            {(good.order_number || '').trim() && (
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 <OrderChip order={(good.order_number || '').trim()} />
                                 {(() => { const st = streamFor(streams, good.order_number); return st ? <StreamChip st={st} /> : null })()}

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { streamDb, t17Register, t17GetInfo, applyTrackInfo, notify, whereLabel, refreshAllTracking } from '@/lib/stream.server'
-import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, fetchRecentGmail, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, carrierFromText, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
+import { getMailAuth, setMailAuth, freshAccessToken, fetchRecentMessages, fetchRecentGmail, extractTrackings, isPurchaseConfirmation, matchRows, guessCarrier, carrierFromText, organizeInbox, sweepSpam, sweepMarketing, matchPedidos, decideBoxes, loadMoneyIndex, ensureStreamItemLinks, trackingsInField, isInternalOrderCode, orderHitInBlob, extractItemHints, RETURN_WORDS, PARTIAL_SHIPMENT, type PedidoMatch, type MoneyLine } from '@/lib/streamMail.server'
 import { runAppsSweep, gmailAccessToken } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
@@ -79,25 +79,135 @@ async function run(force: boolean): Promise<NextResponse> {
   } catch (e) { console.error('[mail-poll gmail]', e) }
 
   // ── tracking capture ──────────────────────────────────────────────────────
+  // 29/ago/2026 — MORREU O PAREAMENTO POSICIONAL (rows[i] ← trackings[i]) e o
+  // `taken` GLOBAL. O casamento agora é em camadas, por PEDIDO:
+  //   a) order number NORMALIZADO escrito no e-mail → inequívoco
+  //   b) sem order: fornecedor no REMETENTE/ASSUNTO + UMA única linha aberta
+  //   c) e-mail que prova o ITEM (título/part number) → liga item a item
+  //   d) resto → NÃO grava item nenhum; 2+ rastreios num pedido sem prova de
+  //      item = tracking na REMESSA + NEEDS_ITEMS + pergunta no WhatsApp
+  // O MESMO tracking PODE servir N itens do MESMO pedido (palavras do Márcio:
+  // "mesmo que seja o mesmo tracking para múltiplos itens"), mas JAMAIS pula
+  // de pedido — a defesa contra thread "Re:" citando rastreio velho é o DONO
+  // do número: tracking já ligado a outro pedido nunca é recapturado.
   let updated = 0
+  let trackAsked = 0
   const details: string[] = []
-  // Open rows = still waiting for a tracking number (pre-delivery statuses only —
-  // cancelled/refunded/arrived rows never capture a tracking).
-  const { data } = await db.from('part_streams').select('*').is('tracking_number', null).in('status', ['BOUGHT', 'SHIPPED'])
-  const open = (data as StreamRow[]) || []
+  // Linhas abertas = pré-entrega (BOUGHT/SHIPPED), COM e SEM rastreio: as com
+  // rastreio existem pra detectar a 2ª caixa do mesmo pedido. CANCELLED /
+  // REFUNDED / entregues continuam intocáveis (HHP 382526: $5.349,65
+  // devolvidos — e-mail velho reprocessado não pode carimbar compra morta).
+  type Row = StreamRow & { placement_status?: string | null; asked_count?: number | null; last_asked_at?: string | null }
+  const { data } = await db.from('part_streams').select('*').in('status', ['BOUGHT', 'SHIPPED'])
+  const open = (data as Row[]) || []
   if (msgs.length && open.length) {
-    // Numbers already assigned to ANY row (delivered included) are spoken for —
-    // "Re:" threads quote old shipments' trackings forever, and without this a
-    // fresh BOUGHT row from the same supplier would re-capture the old number.
-    const { data: assigned } = await db.from('part_streams').select('tracking_number').not('tracking_number', 'is', null)
-    const taken = new Set((assigned || []).map(r => String(r.tracking_number)))
+    // DONO de cada tracking já visto (qualquer status; campos legados com 2-3
+    // números em texto incluídos): chave = pedido normalizado, ou a própria
+    // linha quando não há order. Um número nunca atravessa pra outro pedido.
+    const { data: assigned } = await db.from('part_streams').select('id, order_number, tracking_number').not('tracking_number', 'is', null)
+    const owners = new Map<string, Set<string>>()
+    const ownKey = (r: { id: string; order_number: string | null }) =>
+      r.order_number && !isInternalOrderCode(r.order_number) ? r.order_number.toUpperCase().replace(/[^A-Z0-9]/g, '') : `row:${r.id}`
+    for (const r of (assigned || []) as { id: string; order_number: string | null; tracking_number: string }[]) {
+      for (const t of trackingsInField(r.tracking_number)) owners.set(t, (owners.get(t) || new Set()).add(ownKey(r)))
+    }
+    const ownedByOther = (t: string, key: string) => { const s = owners.get(t); return !!s && (s.size > 1 || !s.has(key)) }
+    const claim = (t: string, key: string) => owners.set(t, (owners.get(t) || new Set()).add(key))
+
+    // Índice pedido→linhas de dinheiro (5 origens US; DONATED, expenses e
+    // fixed_cost_expenses FORA por lei; fatura de imposto do dutyWatch fora).
+    const moneyIndex = await loadMoneyIndex(db)
+
+    // Grava um rastreio numa CAIXA do pedido: preenche a linha aberta SEM
+    // rastreio mais antiga; esgotadas, NASCE uma linha nova de part_streams
+    // (1 pedido → N caixas com o mesmo order_number — o modelo que o banco já
+    // usa, ex.: HHP 382224 = 4 linhas). Tracking bom NUNCA é sobrescrito: o
+    // update só toca linha com tracking_number nulo, e caixa nova é INSERT.
+    // TRILHA DE AUDITORIA — toda gravação automática vira linha em data_fixes
+    // ('stream-track-auto'). Ela NÃO pode falhar em silêncio: o robô carimba
+    // rastreio, registra no 17TRACK e dispara WhatsApp — se a trilha se perder
+    // sem ruído, sobra o efeito e some a explicação. Falha de log não derruba a
+    // gravação (o rastreio bom vale mais que a linha de auditoria), mas sai
+    // gritando no log da Vercel, no padrão do resto do arquivo.
+    const logFix = async (rowId: string, field: string, oldV: string | null, newV: string, label: string) => {
+      const { error } = await db.from('data_fixes').insert({
+        check_key: 'stream-track-auto', table_name: 'part_streams', row_id: rowId,
+        field, old_value: oldV, new_value: newV, label: label.slice(0, 200),
+      })
+      if (error) console.error('[stream-track-auto] trilha data_fixes FALHOU', field, rowId, error.message || error)
+    }
+    const writeBox = async (p: PedidoMatch, tracking: string, said: string | null, why: string): Promise<Row | null> => {
+      // O que o e-mail DIZ vence o palpite por nº de dígitos — foi o palpite
+      // "12 dígitos = FedEx" que rotulou um Item ID do eBay como FedEx. DHL só
+      // chega aqui quando o e-mail nomeou a DHL (guarda do extractTrackings).
+      const carrier = said || guessCarrier(tracking) || (/^\d{10}$/.test(tracking) ? 'DHL' : null)
+      const free = p.rows.find(r => !r.tracking_number)
+      if (free) {
+        // A GUARDA MORA NO PRÓPRIO UPDATE. Duas execuções concorrentes existem
+        // de verdade (o cron força GET a cada 5 min e a página faz POST): as
+        // duas podiam eleger a MESMA linha livre em memória e a segunda
+        // sobrescrevia o rastreio da primeira. Agora o UPDATE só toca linha
+        // com tracking_number AINDA nulo — quem perde a corrida não escreve.
+        const { data: won } = await db.from('part_streams')
+          .update({ tracking_number: tracking, carrier }).eq('id', free.id)
+          .is('tracking_number', null).select('id')
+        if (won && won.length) {
+          await logFix(free.id, 'tracking_number', null, tracking, `${[p.rows[0].supplier, p.rows[0].order_number].filter(Boolean).join(' ')} — ${why}`)
+          free.tracking_number = tracking
+          free.carrier = carrier
+          claim(tracking, p.key)
+          return free
+        }
+        // Perdeu a corrida: alguém preencheu a linha entre a leitura e o write.
+        // Relê o estado real; se o outro gravou ESTE mesmo número, o trabalho
+        // já foi feito (quem ganhou registra no 17TRACK e liga os itens) e aqui
+        // não se faz nada. Se gravou outro, a linha deixa de estar livre em
+        // memória e o rastreio segue para uma CAIXA NOVA, logo abaixo.
+        const { data: cur } = await db.from('part_streams').select('tracking_number, carrier').eq('id', free.id).maybeSingle()
+        console.error('[stream-track-auto] corrida perdida na linha', free.id, '— já tinha', cur?.tracking_number)
+        free.tracking_number = (cur?.tracking_number as string | null) || tracking
+        free.carrier = (cur?.carrier as string | null) ?? free.carrier
+        if (trackingsInField(free.tracking_number).includes(tracking.toUpperCase())) {
+          claim(tracking, p.key)
+          return null
+        }
+      }
+      const base = p.rows[0]
+      const vol = p.rows.length + 1
+      const { data: ins } = await db.from('part_streams').insert({
+        app: base.app, invoice_id: base.invoice_id, purchase_group: base.purchase_group,
+        supplier: base.supplier, order_number: base.order_number,
+        item: `${String(base.item || '').replace(/\s*—\s*vol\.\d+$/i, '').slice(0, 90)} — vol.${vol}`,
+        tracking_number: tracking, carrier, status: 'SHIPPED', shipped_at: new Date().toISOString(),
+        where_label: base.where_label, ship_to: base.ship_to,
+        last_event: `Caixa ${vol} do pedido ${base.order_number || ''} — rastreio novo por e-mail; ${why}`.replace(/\s+/g, ' ').slice(0, 240),
+        last_event_at: new Date().toISOString(),
+      }).select().single()
+      if (!ins) return null
+      await logFix(String(ins.id), 'tracking_number', '(caixa nova)', tracking, `${[base.supplier, base.order_number].filter(Boolean).join(' ')} — vol.${vol} — ${why}`)
+      const row = ins as Row
+      p.rows.push(row)
+      open.push(row)
+      claim(tracking, p.key)
+      return row
+    }
+    const register = async (row: Row, tracking: string) => {
+      await t17Register(tracking, row.carrier)
+      const info = (await t17GetInfo(tracking, row.carrier)) || { latest_status: { status: 'InTransit' } }
+      if (!info.latest_status?.status) info.latest_status = { status: 'InTransit' }
+      await applyTrackInfo(db, row, info)
+    }
+
     for (const msg of msgs) {
       // "Order confirmed" = BOUGHT, never SHIPPED — tracking only comes from
       // the shipping-confirmation email (caso eBay 25-14968-48374, 06/ago).
       if (isPurchaseConfirmation(msg)) continue
       const blob = `${msg.subject} ${msg.text}`
+      // Devolução/replacement: o rastreio da VOLTA chega no MESMO thread com o
+      // MESMO order (caso Amazon 111-9713466-2609021) — nunca capturar.
+      if (RETURN_WORDS.test(blob)) continue
       const said = carrierFromText(blob)
-      const trackings = extractTrackings(blob).filter(t => !taken.has(t))
+      const trackings = extractTrackings(blob)
       // Marketplace que despacha SEM dar o número (eBay manda só "Carrier: USPS"
       // + o link "Track package"): a linha não fica com rastreio falso, mas
       // também não fica cega — grava transportadora e ETA e vai pra SHIPPED.
@@ -113,9 +223,9 @@ async function run(force: boolean): Promise<NextResponse> {
         const arriving = (blob.match(/\bArriving\s+(today|tomorrow)\b/i) || [])[1]
         for (const row of matchRows(open.filter(r => !r.tracking_number), msg)) {
           // Sem transportadora declarada a prova tem de ser dura: só aceita
-          // quando o NÚMERO DO PEDIDO está escrito no e-mail. O casamento por
-          // fornecedor sozinho não basta pra mexer em dinheiro/logística.
-          const byOrder = !!row.order_number && blob.includes(String(row.order_number))
+          // quando o NÚMERO DO PEDIDO está escrito no e-mail (normalizado). O
+          // casamento por fornecedor sozinho não basta pra mexer em logística.
+          const byOrder = !!row.order_number && !isInternalOrderCode(row.order_number) && orderHitInBlob(String(row.order_number), blob, true)
           if (!said && !byOrder) continue
           const quando = eta[1] ? `entrega estimada ${eta[1]}${eta[2] ? ' a ' + eta[2] : ''}` : arriving ? `chega ${arriving.toLowerCase() === 'today' ? 'hoje' : 'amanhã'}` : ''
           await db.from('part_streams').update({
@@ -130,22 +240,95 @@ async function run(force: boolean): Promise<NextResponse> {
         }
         continue
       }
-      const rows = matchRows(open.filter(r => !r.tracking_number), msg)
-      for (let i = 0; i < rows.length && i < trackings.length; i++) {
-        const row = rows[i]
-        const tracking = trackings[i]
-        taken.add(tracking)
-        // O que o e-mail DIZ vence o palpite por nº de dígitos — foi o palpite
-        // "12 dígitos = FedEx" que rotulou um Item ID do eBay como FedEx.
-        await db.from('part_streams').update({ tracking_number: tracking, carrier: said || guessCarrier(tracking) }).eq('id', row.id)
-        row.carrier = said || guessCarrier(tracking)
-        row.tracking_number = tracking
-        await t17Register(tracking, row.carrier)
-        const info = (await t17GetInfo(tracking, row.carrier)) || { latest_status: { status: 'InTransit' } }
-        if (!info.latest_status?.status) info.latest_status = { status: 'InTransit' }
-        await applyTrackInfo(db, row, info)
+
+      // ── e-mail COM rastreio: casar por PEDIDO, decidir por prova ───────────
+      const pedidos = matchPedidos(open, msg)
+      if (!pedidos.length) continue
+      if (pedidos.length > 1) {
+        // E-mail citando 2+ pedidos + rastreio: atribuir número a pedido seria
+        // chute posicional de novo (regra d) — nada é gravado, fica no log.
+        details.push(`⚠️ e-mail cita ${pedidos.length} pedidos + rastreio — nada gravado ("${msg.subject.slice(0, 50)}")`)
+        continue
+      }
+      const p = pedidos[0]
+      const prevTracks = new Set(p.rows.flatMap(r => trackingsInField(r.tracking_number)))
+      const newTr = trackings.filter(t => !prevTracks.has(t) && !ownedByOther(t, p.key))
+      if (!newTr.length) continue
+      // Linhas de dinheiro do pedido — só pra remessa US (as do BR moram no
+      // banco BR; lá o rastreio fica no nível da remessa, como sempre foi).
+      const lines: MoneyLine[] = p.orderNorm && p.rows[0].app === 'US' ? (moneyIndex.get(p.orderNorm) || []) : []
+      const why = `casado por ${p.layer === 'ORDER' ? 'nº do pedido' : 'fornecedor único'} ("${msg.subject.slice(0, 60)}")`
+      const decision = decideBoxes({
+        newTrackings: newTr, prevTrackingCount: prevTracks.size,
+        openNoTrack: p.rows.filter(r => !r.tracking_number).length,
+        lines, hints: extractItemHints(msg), partial: PARTIAL_SHIPMENT.test(blob),
+      })
+
+      if (decision.kind === 'ORDER_FANOUT' || decision.kind === 'EMAIL_ITEM') {
+        const row = await writeBox(p, decision.tracking, said, why)
+        if (!row) continue
+        // Item por item: o rastreio na remessa se materializa em
+        // part_stream_items — TODOS os itens do pedido no fan-out (matched_by
+        // ORDER), só os provados no EMAIL_ITEM. Link existente é intocável.
+        const toLink = decision.kind === 'EMAIL_ITEM' ? lines.filter(l => decision.lineIds.includes(l.id)) : lines
+        const linked = await ensureStreamItemLinks(db, p.rows.map(r => r.id), row.id, toLink, decision.kind === 'EMAIL_ITEM' ? 'EMAIL_ITEM' : 'ORDER')
+        await register(row, decision.tracking)
         updated++
-        details.push(`${row.item} ← ${tracking} (${msg.subject.slice(0, 60)})`)
+        details.push(`${row.item} ← ${decision.tracking} (${decision.kind}${linked ? `, ${linked} item(s) ligados` : ''}) [${msg.subject.slice(0, 50)}]`)
+      } else {
+        // AMBÍGUO (2+ rastreios / parcial multi-item): a remessa é REAL — o
+        // rastreio entra em part_streams —, mas item NENHUM é chutado. As
+        // caixas ficam NEEDS_ITEMS e o dono é perguntado pelo canal que o
+        // watcher já usa (asked_count/last_asked_at controlam a cadência).
+        const written: Row[] = []
+        for (const t of decision.trackings) {
+          const row = await writeBox(p, t, said, `AMBÍGUO — ${decision.reason} ("${msg.subject.slice(0, 50)}")`)
+          if (!row) continue
+          written.push(row)
+          await register(row, t)
+          updated++
+          details.push(`${row.item} ← ${t} (REMESSA sem itens — ${decision.reason})`)
+        }
+        if (written.length) {
+          for (const r of written) {
+            const prevPlacement = r.placement_status ?? null
+            await db.from('part_streams').update({ placement_status: 'NEEDS_ITEMS' }).eq('id', r.id)
+            r.placement_status = 'NEEDS_ITEMS'
+            // A marcação NEEDS_ITEMS é uma decisão do robô sobre a linha tanto
+            // quanto o rastreio é — e sem ela na trilha ninguém consegue
+            // reconstruir DEPOIS por que aquela caixa ficou sem item.
+            await logFix(r.id, 'placement_status', prevPlacement, 'NEEDS_ITEMS',
+              `${[p.rows[0].supplier, p.rows[0].order_number].filter(Boolean).join(' ')} — ${decision.reason}`)
+          }
+          const lastAsk = p.rows.map(r => (r as Row).last_asked_at).filter(Boolean).sort().pop() || null
+          if (!lastAsk || Date.now() - new Date(String(lastAsk)).getTime() > 3600_000) {
+            const boxes = p.rows.filter(r => r.tracking_number)
+              .map(r => `📦 ${trackingsInField(r.tracking_number).join(', ')}${r.carrier ? ` (${r.carrier})` : ''}`)
+            const itens = lines.slice(0, 10).map((l, i) => `${i + 1}. ${l.text.slice(0, 60)}`)
+            await notify(p.rows[0], [
+              `📦 *STREAM — QUAL ITEM FOI EM QUAL CAIXA?*`,
+              `Pedido ${p.rows[0].order_number || '?'} — ${p.rows[0].supplier || '?'}\n(${decision.reason})`,
+              boxes.length ? `Caixas:\n${boxes.join('\n')}` : '',
+              itens.length ? `Itens do pedido:\n${itens.join('\n')}` : 'Itens do pedido: sem linha de dinheiro com esse order number.',
+              `Responda qual item foi em cada caixa — o robô não chuta.`,
+            ].filter(Boolean).join('\n\n'))
+            const now2 = new Date().toISOString()
+            for (const r of written) {
+              const n = (Number(r.asked_count) || 0) + 1
+              await db.from('part_streams').update({ asked_count: n, last_asked_at: now2 }).eq('id', r.id)
+              // O THROTTLE DA PERGUNTA LÊ A MEMÓRIA, NÃO O BANCO: sem carimbar
+              // aqui o objeto em memória, um pedido com N e-mails de caixa na
+              // MESMA batida (o HHP 382224 teve 4) disparava até N-1 perguntas
+              // idênticas de uma vez — o `lastAsk` acima varre p.rows, e as
+              // linhas escritas agora fazem parte de p.rows.
+              r.asked_count = n
+              r.last_asked_at = now2
+              await logFix(r.id, 'asked_count', String(n - 1), String(n),
+                `pergunta "qual item em qual caixa" — ${p.rows[0].order_number || '?'}`)
+            }
+            trackAsked++
+          }
+        }
       }
     }
   }
@@ -292,7 +475,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, trackAsked, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }

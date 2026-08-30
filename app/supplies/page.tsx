@@ -17,6 +17,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
+import { OrderChip } from '@/components/StreamChips'
 
 type InputRow = {
   id: string
@@ -90,16 +91,19 @@ function firstReceipt(raw: string | null): string | null {
   try { const a = JSON.parse(raw); return Array.isArray(a) && a[0] ? String(a[0]) : null } catch { return null }
 }
 
-// ── Smart info placement (Márcio, 19/ago) ────────────────────────────────────
-// Info shared by the WHOLE purchase renders on the header; info that varies
-// between items renders on the item row. This is DISPLAY logic only — the bank
-// keeps one field per info, nothing is ever stored twice.
-function commonOf(p: Purchase, streams: Record<string, StreamInfo>) {
+// ── Smart info placement (Márcio, 19/ago) — reduzido a PAGAMENTO em 29/ago ───
+// LEI (Márcio, 29/ago/2026): "os badges de order number, tracking ou
+// BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das compras,
+// MESMO QUE SEJA REPETIDO EM TODOS. Este controle e gerenciamento e pros itens,
+// nao pra compra, uma vez que podem gerar order numbers e tracking diferentes."
+// O commonOf morreu: ORDER NUMBER e semáforo do STREAM renderizam SEMPRE na
+// linha de cada item, nunca no título — repetir o chip em todos os itens é o
+// comportamento certo. Sobrou aqui só o PAGAMENTO (info da compra, fora da
+// lei): igual em todos os itens sobe pro título; divergente desce pra linha.
+// DISPLAY apenas — o banco segue com um campo por info, nada gravado em dobro.
+function commonPayOf(p: Purchase) {
   const payKeys = new Set(p.items.filter(i => i.payment_method).map(i => `${i.payment_method}|${i.paid_from || ''}|${i.payment_date || ''}`))
-  const pay = payKeys.size === 1 ? (p.items.find(i => i.payment_method) || null) : null
-  const stKeys = Array.from(new Set(p.items.map(i => (i.order_number && streams[i.order_number]) ? i.order_number : null).filter(Boolean))) as string[]
-  const stream = stKeys.length === 1 ? streams[stKeys[0]] : null
-  return { pay, stream }
+  return payKeys.size === 1 ? (p.items.find(i => i.payment_method) || null) : null
 }
 
 function PayChip({ i }: { i: InputRow }) {
@@ -638,7 +642,7 @@ export default function InputsPage() {
           <div className="space-y-5">
             {visible.map((p) => {
               const isExpanded = expanded.has(p.key)
-              const common = commonOf(p, streams)
+              const commonPay = commonPayOf(p)
               const single = p.items.length === 1
               return (
                 <div key={p.key} className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden">
@@ -653,10 +657,8 @@ export default function InputsPage() {
                       </div>
                       <p className="text-lg text-gray-400 ml-7">
                         {fmtDate(p.date)} — <span className="font-bold text-gray-300">{formatUSD(p.total)}</span>
-                        {/* THE order number — the most important field of a purchase — always visible, even collapsed. */}
-                        {Array.from(new Set(p.items.map(i => i.order_number).filter(Boolean))).map(o => (
-                          <span key={o as string} className="ml-3 px-2.5 py-0.5 rounded-lg text-base font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 whitespace-nowrap">#{o}</span>
-                        ))}
+                        {/* LEI 29/ago/2026: o chip de ORDER NUMBER saiu do título da compra —
+                            ele mora na linha de cada item, mesmo repetido em todos. */}
                         {p.receipt && (
                           <>
                             {' · '}
@@ -664,11 +666,11 @@ export default function InputsPage() {
                           </>
                         )}
                       </p>
-                      {/* Purchase-wide facts (same value across every item) live HERE, not on rows. */}
-                      {(common.pay || common.stream) && (
+                      {/* Só o PAGAMENTO comum à compra inteira vive no título; ORDER
+                          NUMBER e STREAM nunca mais sobem pra cá (lei 29/ago/2026). */}
+                      {commonPay && (
                         <div className="flex items-center gap-2 mt-2 ml-7 flex-wrap">
-                          {common.pay && <PayChip i={common.pay} />}
-                          {common.stream && <StreamChip st={common.stream} />}
+                          <PayChip i={commonPay} />
                         </div>
                       )}
                     </div>
@@ -686,10 +688,12 @@ export default function InputsPage() {
                     <div className="border-t border-gray-800">
                       {p.items.map((item, gi) => {
                         const st = item.order_number ? streams[item.order_number] : undefined
-                        // Smart placement: a chip renders here ONLY when its info is NOT
-                        // purchase-wide (otherwise it already lives on the header).
-                        const ownPay = item.payment_method && !common.pay
-                        const ownStream = st && !common.stream
+                        // LEI 29/ago/2026: ORDER NUMBER e semáforo do STREAM SEMPRE na
+                        // linha do item (chip de order só se a linha TEM order_number;
+                        // semáforo só quando há linha de stream casada pelo pedido).
+                        // Pagamento segue o smart placement: na linha só quando diverge.
+                        const ownOrder = (item.order_number || '').trim()
+                        const ownPay = item.payment_method && !commonPay
                         const rcpt = firstReceipt(item.receipt_url)
                         const ownRcpt = rcpt && (p.items.length > 1 || rcpt !== p.receipt)
                         return (
@@ -697,10 +701,11 @@ export default function InputsPage() {
                           <div className="flex-1 min-w-0 pl-5">
                             <h3 className="text-xl font-bold">{item.description}</h3>
                             <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                            {(ownPay || ownStream || ownRcpt) && (
+                            {(ownOrder || ownPay || st || ownRcpt) && (
                               <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                {ownOrder && <OrderChip order={ownOrder} />}
+                                {st && <StreamChip st={st} />}
                                 {ownPay && <PayChip i={item} />}
-                                {ownStream && st && <StreamChip st={st} />}
                                 {ownRcpt && (
                                   <a href={rcpt!} target="_blank" rel="noopener noreferrer" className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-blue-400 border border-gray-700 hover:text-blue-300">📎 receipt</a>
                                 )}

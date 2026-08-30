@@ -163,12 +163,30 @@ export async function fetchRecentGmail(accessToken: string, sinceIso: string): P
 }
 
 // Every tracking-number shape we can trust from an email body/subject.
+// 29/ago/2026: as 5 formas originais ignoravam 39% do que a casa recebe de
+// verdade (medido em part_streams: GOFO 24 casos, SwiftX 8, SpeedX 3, DHL 2,
+// Estes 1 — todos digitados à mão até hoje). Os prefixos GFUS/SWX/SPX são
+// inconfundíveis; DHL (10 dígitos) e Estes (3-7 com hífen) são ambíguos e só
+// entram com prova por perto (ver guardas dentro de extractTrackings).
 const TRACKING_RES: RegExp[] = [
   /\b1Z[0-9A-Z]{16}\b/g,             // UPS
   /\b9[2345]\d{20,24}\b/g,           // USPS 92/93/94/95…
   /\b\d{15}\b/g,                     // FedEx 15
   /\b\d{12}\b/g,                     // FedEx 12
   /\b[A-Z]{2}\d{9}US\b/g,            // USPS intl
+  /\bGFUS\d{12,16}\b/g,              // GOFO (Temu) — GFUS01064131777865
+  /\bSWX\d{16,20}\b/g,               // SwiftX (Temu) — SWX783240000125251628
+  /\bSPX[A-Z]{2,4}\d{14,20}\b/g,     // SpeedX — SPXMCO + 18 dígitos
+  // Estes PRO (frete LTL) — 046-8349621. As BORDAS são o coração da regra: o
+  // order number da AMAZON é 3-7-7 (111-5579813-4088211) e o \b do JS casa no
+  // hífen interno, então o \b\d{3}-\d{7}\b nu recortava "111-5579813" do
+  // PRÓPRIO número do pedido e o transformava em rastreio (guessCarrier ainda
+  // dizia "Estes"). A Amazon é o 2º maior fornecedor da casa (27 pedidos), e o
+  // estrago era completo: gravava rastreio falso, registrava no 17TRACK,
+  // reportava no WhatsApp e ainda PULAVA o ramo "Amazon despacha sem número".
+  // Por isso: nada de dígito nem de hífen colado dos DOIS lados do candidato.
+  /(?<![A-Za-z0-9-])\d{3}-\d{7}(?![A-Za-z0-9-])/g,
+  /\b\d{10}\b/g,                     // DHL Express — 3749834410 (guarda dura)
 ]
 // eBay listing Item IDs are 12-digit numbers — the exact shape of a FedEx
 // tracking. They show up as "Item ID: 236502286470" / "ebay.com/itm/2365…"
@@ -189,6 +207,14 @@ const ITEM_ID_ANYWHERE = /(?:\/itm[/:]?|\bitem\s*(?:id|number|no\.?|#)?\s*[:#]?)
 // "deliver" stays out on purpose — "Estimated delivery" lines sit right next
 // to item listings in marketplace emails.
 const NEAR_TRACK = /track|fedex|usps|ups\b|carrier|shipment|shipped/i
+// Prova exigida perto de um PRO number da Estes (frete LTL). O vocabulário aqui
+// é de FRETE DE VERDADE, não de despacho genérico: "track", "shipment",
+// "shipped" e "carrier" estão em TODO e-mail de embarque do planeta, então
+// aceitá-los era o mesmo que não ter guarda nenhuma — bastava um 3-7 solto no
+// texto (telefone "407-5551234" ao lado de "shipment", pedaço de order number)
+// pra virar rastreio. A casa mediu 1 (UMA) remessa Estes na vida inteira: o
+// custo de apertar é zero, o risco de afrouxar é carimbar pedido errado.
+const NEAR_TRACK_LTL = /estes|freight|\bltl\b|pro\s*(?:no\.?|number|#)|bill of lading|\bbol\b|less[- ]than[- ]truckload/i
 
 // A transportadora dita em texto claro vale mais que palpite por nº de dígitos:
 // o eBay escreve "Carrier: USPS" / "Shipped with USPS" no próprio e-mail.
@@ -217,6 +243,15 @@ export function extractTrackings(s: string): string[] {
       // email (the eBay Item ID 236502286470 passed the old anywhere-check and
       // shipped a BOUGHT row at purchase time, 06/ago/2026).
       if (/^\d{12}$|^\d{15}$/.test(t) && !NEAR_TRACK.test(before) && !NEAR_TRACK.test(after)) continue
+      // DHL Express (10 dígitos) é a forma mais perigosa da lista: telefone,
+      // nº de fatura e trecho de valor têm 10 dígitos. Só vale quando o e-mail
+      // NOMEIA a DHL em algum lugar E há linguagem de rastreio colada ao número
+      // (mesma régua de 90 chars do FedEx). Item ID do eBay já saiu no banned.
+      if (/^\d{10}$/.test(t) && (!/\bDHL\b/i.test(s) || (!NEAR_TRACK.test(before) && !NEAR_TRACK.test(after)))) continue
+      // Estes PRO (3-7 com hífen): exige vocabulário de FRETE colado (não vale
+      // "shipped"/"track", que qualquer e-mail tem) pra não engolir nº de
+      // fatura, telefone 3-7 nem pedaço de order number com a mesma cara.
+      if (/^\d{3}-\d{7}$/.test(t) && !NEAR_TRACK_LTL.test(before) && !NEAR_TRACK_LTL.test(after)) continue
       out.add(t)
     }
   }
@@ -379,17 +414,320 @@ export function supplierMatches(row: StreamRow, msg: MailMsg): boolean {
   return normTok(row.supplier || '').some(tok => hay.includes(tok) || squash.includes(tok))
 }
 
+// ═══ CASADOR TRACKING↔PEDIDO↔ITEM (29/ago/2026 — pedidos 3 e 4 do Márcio) ═══
+// Funções PURAS (testáveis sem banco) + dois helpers de banco no fim. A regra
+// da casa: o robô só age no INEQUÍVOCO; o resto vira pergunta, nunca chute.
+
+// REGRA: order number se compara NORMALIZADO — upper + só A-Z0-9. '#3384094' e
+// '3384094' são o MESMO pedido; o valor gravado/exibido continua o original.
+export const normOrder = (s: string | null | undefined): string =>
+  String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+
+// inventory (estoque doado — e até PURCHASED antigo) guarda CÓDIGO DE INVOICE
+// INTERNA no campo order_number (US.016.1, US.040.3). Isso NUNCA é pedido de
+// fornecedor: não casa e-mail, não entra em índice nenhum do rastreio.
+export const isInternalOrderCode = (s: string | null | undefined): boolean =>
+  /^(US|BR)\.\d+/i.test(String(s || '').trim())
+
+// 6 linhas reais têm 2-3 rastreios enfiados no MESMO campo tracking_number
+// ("1Z…136, 1Z…550 (UPS), 875552855742 (FedEx)"). O campo nunca é reescrito
+// pelo robô (só à mão), mas o casador precisa ENXERGAR cada número lá dentro
+// pra guarda por pedido funcionar. Tokens curtos e nomes de carrier caem fora.
+export const trackingsInField = (v: string | null | undefined): string[] =>
+  String(v || '').toUpperCase().split(/[^A-Z0-9-]+/).filter(t => t.replace(/-/g, '').length >= 8 && /\d/.test(t))
+
+// Devolução/replacement: o rastreio da VOLTA chega no mesmo thread, com o
+// MESMO order number (caso real Amazon 111-9713466-2609021). Nunca capturar.
+export const RETURN_WORDS = /\breturn label\b|\breturn shipping\b|\byour return\b|\bstart(?:ed)? (?:a |your )?return\b|\breturn (?:is|was|has been) (?:started|approved|received)\b|\breturn of (?:the )?original\b|\breplacement (?:order|item|has|is|was|delivered|shipped)\b|etiqueta de devolu[çc][ãa]o|devolu[çc][ãa]o (?:do|de|em)/i
+
+// Embarque PARCIAL declarado pelo vendedor — a Temu escreve literalmente
+// "Part of your Temu order has been transferred to GOFO". Parcial em pedido
+// multi-item = o e-mail NÃO diz quais itens foram: ambíguo por definição.
+export const PARTIAL_SHIPMENT = /part of your .{0,30}order|partial shipment|has been split into|remaining items? will ship|parte do seu pedido/i
+
+// Palavra de pedido exigida perto de um order CURTO (piso de segurança).
+const ORDER_WORD = /\b(order|orders|pedido|po|so|invoice|confirmation|purchase|transaction)\b/i
+
+// Variantes toleradas do número gravado (medidas no banco, não inventadas):
+//   · zero à esquerda — Titan grava 014082582, e-mail escreve "14082582"
+//   · sufixo de 1 letra — Walmart grava 2000149-94340612/D, e-mail escreve sem
+// Ambas só valem quando sobram ≥6 chars (variante curta demais vira isca).
+function orderVariants(raw: string): string[] {
+  const n = normOrder(raw)
+  const v = new Set<string>()
+  if (n.length >= 4) v.add(n)
+  const noZeros = n.replace(/^0+/, '')
+  if (noZeros !== n && noZeros.length >= 6) v.add(noZeros)
+  const noSuffix = n.replace(/[A-Z]$/, '')
+  if (noSuffix !== n && noSuffix.length >= 6) v.add(noSuffix)
+  return [...v]
+}
+
+// O pedido está escrito no e-mail? Compara NORMALIZADO dos dois lados: cada
+// char do order pode vir separado por 1 pontuação no texto ("PO-211-007…"),
+// e as bordas exigem NÃO-alfanumérico — "3724" dentro do tracking UPS
+// 1Z1777V54253724… NÃO casa (o vizinho é dígito). PISO DE SEGURANÇA (medido:
+// 37 das 160 orders têm 4-8 chars só-dígitos): order de dígitos com <6 chars
+// só casa se o FORNECEDOR também bater E houver palavra de pedido a ≤90 chars
+// antes do número. Sem isso "3724" (BSSParts) casaria dentro de CEP/valor/data.
+export function orderHitInBlob(orderRaw: string, blob: string, supplierOk: boolean): boolean {
+  for (const v of orderVariants(orderRaw)) {
+    const body = v.split('').join('[-#./]?')
+    let m: RegExpExecArray | null
+    try { m = new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, 'i').exec(blob) } catch { continue }
+    if (!m) continue
+    if (/^\d+$/.test(v) && v.length < 6) {
+      if (!supplierOk) continue
+      if (!ORDER_WORD.test(blob.slice(Math.max(0, m.index - 90), m.index))) continue
+    }
+    return true
+  }
+  return false
+}
+
+// GUARDA APERTADA do fallback por fornecedor (29/ago): o nome tem de aparecer
+// no REMETENTE ou no ASSUNTO — nunca só no corpo. Foi 1 token de 4 letras no
+// corpo que fez e-mail de marketing ("ready to sell your vehicle?") marcar o
+// pedido HHP 382525 (8 itens) como ENTREGUE, e um e-mail da Montway fechar um
+// pedido do eBay. O caso PayPal/HHP continua vivo: o PSP manda do domínio
+// dele, mas o ASSUNTO nomeia o lojista ("Your High Horse Performance, Inc.
+// order is on its way").
+export function supplierSenderMatches(row: StreamRow, msg: MailMsg): boolean {
+  return supplierTokensHit(row, msg).length > 0
+}
+// Quais tokens do fornecedor da linha bateram no remetente/assunto. Saber
+// QUAIS bateram (e não só QUE bateram) é o que separa "achei o VENDEDOR" de
+// "achei só a LOJA onde ele vende" — ver supplierLayerRow.
+function supplierTokensHit(row: StreamRow, msg: MailMsg): string[] {
+  const hay = `${msg.fromAddr} ${msg.from} ${msg.subject}`.toLowerCase()
+  const squash = hay.replace(/[^a-z0-9]/g, '')
+  return normTok(row.supplier || '').filter(tok => hay.includes(tok) || squash.includes(tok))
+}
+
+// ── PLATAFORMAS QUE FALAM POR MUITOS VENDEDORES ─────────────────────────────
+// eBay, PayPal, Amazon, Temu & cia mandam o e-mail EM NOME de um lojista que
+// costuma aparecer só no corpo (quando aparece). Reconhecer a plataforma no
+// REMETENTE é reconhecer o balcão, nunca o vendedor.
+const MARKETPLACE_PLATFORMS: { platform: string; sender: RegExp }[] = [
+  { platform: 'ebay', sender: /@(?:[a-z0-9-]+\.)*ebay\.[a-z.]+$/i },
+  { platform: 'paypal', sender: /@(?:[a-z0-9-]+\.)*paypal\.[a-z.]+$/i },
+  { platform: 'amazon', sender: /@(?:[a-z0-9-]+\.)*amazon\.[a-z.]+$/i },
+  { platform: 'temu', sender: /@(?:[a-z0-9-]+\.)*temu\.[a-z.]+$/i },
+  { platform: 'aliexpress', sender: /@(?:[a-z0-9-]+\.)*aliexpress\.[a-z.]+$/i },
+  { platform: 'walmart', sender: /@(?:[a-z0-9-]+\.)*walmart\.[a-z.]+$/i },
+  { platform: 'etsy', sender: /@(?:[a-z0-9-]+\.)*etsy\.[a-z.]+$/i },
+  { platform: 'mercadolivre', sender: /@(?:[a-z0-9-]+\.)*mercado(?:livre|libre)\.[a-z.]+$/i },
+]
+export function platformOfSender(msg: MailMsg): string | null {
+  const a = String(msg.fromAddr || '').toLowerCase().trim()
+  return MARKETPLACE_PLATFORMS.find(p => p.sender.test(a))?.platform || null
+}
+
+// Assinatura do FORMATO do order number: dígito→9, letra→A, pontuação fica.
+// eBay grava 06-14956-19683 e 24-15079-97471 — os dois viram 99-99999-99999.
+// Não é dado novo em campo nenhum: é uma leitura do que já está gravado.
+const orderShape = (s: string | null | undefined): string =>
+  String(s || '').trim().toUpperCase().replace(/[0-9]/g, '9').replace(/[A-Z]/g, 'A')
+
+// ── A EXCLUSIVIDADE DE VERDADE (conserto 29/ago) ────────────────────────────
+// A camada de fornecedor só pode agir no INEQUÍVOCO: "existe UMA única linha
+// aberta que este e-mail poderia ser". O erro anterior media a unicidade SÓ
+// entre as linhas cujo token bateu — e token é justamente o que falta nas
+// linhas gravadas com o nome CRU do vendedor de marketplace. Caso real do
+// banco: "mopareparts (eBay)" e "hawksmotorsports" abertas ao mesmo tempo; um
+// e-mail do ebay@ebay.com com o título do item da hawks batia só em
+// "mopareparts (eBay)" (pelo token "ebay"!), essa linha ficava "única" e o
+// rastreio da hawks era carimbado no pedido errado, com os itens errados
+// ligados.
+//   A REGRA: quando o ÚNICO token que casou é o nome da PRÓPRIA PLATAFORMA, o
+//   e-mail identificou o balcão, não o vendedor — então a unicidade tem de ser
+//   medida contra TODAS as linhas abertas que poderiam ser daquela plataforma:
+//   as que a nomeiam no supplier E as que só têm o nome cru do vendedor mas
+//   carregam um order number com o MESMO FORMATO das que a nomeiam. 2+ dessas
+//   ⇒ AMBÍGUO ⇒ não se casa por fornecedor (vira pergunta ou silêncio).
+//   Quando o e-mail nomeia o VENDEDOR (a HHP no assunto do PayPal), o token que
+//   bateu não é o da plataforma e a regra estrita de sempre continua valendo.
+export function supplierLayerRow(open: StreamRow[], msg: MailMsg): StreamRow | null {
+  const bySupplier = open.filter(r => supplierSenderMatches(r, msg))
+  const suppliers = new Set(bySupplier.map(r => (r.supplier || '').toLowerCase().trim()))
+  if (suppliers.size !== 1 || bySupplier.length !== 1) return null
+  const cand = bySupplier[0]
+  const platform = platformOfSender(msg)
+  if (!platform) return cand
+  const platformToks = new Set(normTok(platform))
+  // Bateu algum token que NÃO é o nome da plataforma? Então o e-mail nomeou o
+  // vendedor de verdade — inequívoco, segue.
+  if (supplierTokensHit(cand, msg).some(tok => !platformToks.has(tok))) return cand
+  // Só a plataforma bateu: monta o universo plausível daquela plataforma.
+  const namesPlatform = (r: StreamRow) => normTok(r.supplier || '').some(t => platformToks.has(t))
+  const shapes = new Set(open.filter(namesPlatform).map(r => orderShape(r.order_number)).filter(s => s.length >= 4))
+  const plausible = open.filter(r => namesPlatform(r) || (r.order_number && shapes.has(orderShape(r.order_number))))
+  return plausible.length === 1 ? cand : null
+}
+
 // Match open stream rows against one email. Strongest first:
-//   1. the row's order number appears in the email
-//   2. the sender/subject matches the row's supplier AND that supplier has
+//   1. the row's order number appears in the email (NORMALIZADO, com piso)
+//   2. the SENDER/SUBJECT matches the row's supplier AND that supplier has
 //      exactly ONE open row (no ambiguity)
 export function matchRows(open: StreamRow[], msg: MailMsg): StreamRow[] {
   const inMail = `${msg.subject} ${msg.text}`
-  const byOrder = open.filter(r => r.order_number && r.order_number.length >= 4 && inMail.includes(r.order_number))
+  const byOrder = open.filter(r => r.order_number && !isInternalOrderCode(r.order_number) &&
+    orderHitInBlob(r.order_number, inMail, supplierMatches(r, msg)))
   if (byOrder.length) return byOrder
-  const bySupplier = open.filter(r => supplierMatches(r, msg))
-  const suppliers = new Set(bySupplier.map(r => (r.supplier || '').toLowerCase()))
-  return suppliers.size === 1 && bySupplier.length === 1 ? bySupplier : []
+  const one = supplierLayerRow(open, msg)
+  return one ? [one] : []
+}
+
+// Casa o e-mail com PEDIDOS (grupos de linhas do stream com o mesmo order
+// normalizado) — é o que substitui o pareamento posicional. Camadas:
+//   ORDER    — o número do pedido está escrito no e-mail (inequívoco)
+//   SUPPLIER — sem número: fornecedor no remetente/assunto + UMA única linha
+//              aberta daquele fornecedor (inequívoco por exclusão)
+// Sem camada → lista vazia → NADA é gravado.
+export type PedidoMatch = { key: string; orderNorm: string | null; layer: 'ORDER' | 'SUPPLIER'; rows: StreamRow[] }
+export function matchPedidos(open: StreamRow[], msg: MailMsg): PedidoMatch[] {
+  const blob = `${msg.subject} ${msg.text}`
+  const hit = new Map<string, StreamRow[]>()
+  for (const r of open) {
+    if (!r.order_number || isInternalOrderCode(r.order_number)) continue
+    if (!orderHitInBlob(r.order_number, blob, supplierMatches(r, msg))) continue
+    const k = normOrder(r.order_number)
+    hit.set(k, [...(hit.get(k) || []), r])
+  }
+  if (hit.size) return [...hit.entries()].map(([k, rows]) => ({ key: k, orderNorm: k, layer: 'ORDER' as const, rows }))
+  // Exclusividade medida contra TODAS as linhas plausíveis, não só contra as
+  // que casaram o token — ver supplierLayerRow.
+  const r = supplierLayerRow(open, msg)
+  if (r) {
+    const orderNorm = r.order_number && !isInternalOrderCode(r.order_number) ? normOrder(r.order_number) : null
+    return [{ key: orderNorm || `row:${r.id}`, orderNorm, layer: 'SUPPLIER', rows: [r] }]
+  }
+  return []
+}
+
+// O e-mail DIZ o item? eBay põe o título no assunto ("📦ORDER DELIVERED:
+// 22X10 +30 Forgestar…"); Shopify/CARiD trazem bloco "Items in this shipment".
+// Temu é cega (nunca traz item) e PayPal/HHP não traz nem item nem pedido —
+// medido nos 350 e-mails reais de stream_mail_moves. Devolve pistas de texto;
+// quem decide se a pista prova alguma coisa é matchHintsToLines.
+const SUBJECT_ITEM = /(?:order delivered|out for delivery|order update|shipped|delivered|on its way)\s*[:：]\s*(.{6,90})/i
+const SHIPMENT_BLOCK = /items? in (?:this|your) shipment\s*[:：]?\s*(.{10,400})/i
+export function extractItemHints(msg: MailMsg): string[] {
+  const hints: string[] = []
+  const ms = msg.subject.match(SUBJECT_ITEM)
+  if (ms) hints.push(ms[1].trim())
+  const mb = msg.text.match(SHIPMENT_BLOCK)
+  if (mb) hints.push(mb[1].trim())
+  return hints
+}
+
+// Uma linha de dinheiro de qualquer uma das 5 origens do rastreio.
+export type MoneyLine = { table: string; id: string; text: string; qty: number; supplier: string | null; order_number: string }
+
+// Prova textual item↔linha: part number (token com dígito, ≥5 chars) presente
+// na pista, OU 3+ palavras significativas da linha presentes (todas, quando a
+// linha tem menos que 3 — mas nunca menos que 2: 1 palavra genérica não é
+// prova). Sem prova → lista vazia → o chamador NÃO reparte nada.
+const sigToks = (s: string): string[] =>
+  [...new Set(String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').split(' ').filter(w => w.length >= 4))]
+export function matchHintsToLines(hints: string[], lines: MoneyLine[]): string[] {
+  if (!hints.length || !lines.length) return []
+  const hintSet = new Set(hints.join(' ').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').split(' ').filter(Boolean))
+  const out: string[] = []
+  for (const l of lines) {
+    const toks = sigToks(l.text)
+    if (!toks.length) continue
+    const pnHit = toks.some(t => /\d/.test(t) && t.length >= 5 && hintSet.has(t))
+    const wordHits = toks.filter(t => hintSet.has(t)).length
+    if (pnHit || (wordHits >= Math.min(3, toks.length) && wordHits >= 2)) out.push(l.id)
+  }
+  return out
+}
+
+// A DECISÃO — pura, uma por (e-mail, pedido). É aqui que morre o chute:
+//   EMAIL_ITEM   — 1 rastreio novo + o e-mail prova QUAIS itens → liga só eles
+//   ORDER_FANOUT — rastreio ÚNICO do pedido, sem parcial → carimba em TODOS os
+//                  itens do pedido ("mesmo que seja o mesmo tracking para
+//                  múltiplos itens" — palavras literais do Márcio)
+//   NEEDS_ITEMS  — 2+ rastreios no pedido, ou embarque parcial multi-item, ou
+//                  várias remessas abertas pra um número só: o rastreio entra
+//                  na REMESSA, item NENHUM é chutado, e o dono é perguntado.
+export type BoxDecision =
+  | { kind: 'EMAIL_ITEM'; tracking: string; lineIds: string[] }
+  | { kind: 'ORDER_FANOUT'; tracking: string }
+  | { kind: 'NEEDS_ITEMS'; trackings: string[]; reason: string }
+export function decideBoxes(a: {
+  newTrackings: string[]; prevTrackingCount: number; openNoTrack: number
+  lines: MoneyLine[]; hints: string[]; partial: boolean
+}): BoxDecision {
+  const totalTr = a.prevTrackingCount + a.newTrackings.length
+  if (a.newTrackings.length === 1 && a.hints.length && a.lines.length) {
+    const ids = matchHintsToLines(a.hints, a.lines)
+    if (ids.length) return { kind: 'EMAIL_ITEM', tracking: a.newTrackings[0], lineIds: ids }
+  }
+  if (totalTr === 1 && a.openNoTrack <= 1 && !(a.partial && a.lines.length > 1))
+    return { kind: 'ORDER_FANOUT', tracking: a.newTrackings[0] }
+  const reason = totalTr > 1 ? `${totalTr} rastreios no mesmo pedido`
+    : a.partial ? 'embarque parcial declarado no e-mail'
+    : `${a.openNoTrack} remessas abertas para 1 rastreio`
+  return { kind: 'NEEDS_ITEMS', trackings: a.newTrackings, reason }
+}
+
+// ── Helpers de banco do casador ─────────────────────────────────────────────
+// Índice pedido→linhas de dinheiro das 5 origens do rastreio (só app US — as
+// linhas BR moram no banco BR). POR LEI ficam FORA: expenses (staff),
+// fixed_cost_expenses (jamais rastreadas), inventory DONATED (o order_number
+// dela é código de invoice interna) e QUALQUER order com cara de código
+// interno (US.016.1). BLINDAGEM dutyWatch: o lançamento de imposto grava em
+// invoice_expenses um order_number que é o nº da FATURA do carrier — outro
+// significado; a linha se reconhece pelo carimbo fixo do próprio dutyWatch
+// ("import duty & customs clearance") e nunca entra no casamento.
+export async function loadMoneyIndex(db: SupabaseClient): Promise<Map<string, MoneyLine[]>> {
+  const idx = new Map<string, MoneyLine[]>()
+  const push = (table: string, rows: any[], textOf: (r: any) => string, qtyOf: (r: any) => number) => {
+    for (const r of rows) {
+      const on = String(r.order_number || '').trim()
+      if (!on || isInternalOrderCode(on)) continue
+      const k = normOrder(on)
+      if (k.length < 4) continue
+      idx.set(k, [...(idx.get(k) || []), { table, id: String(r.id), text: textOf(r), qty: qtyOf(r), supplier: r.supplier ?? null, order_number: on }])
+    }
+  }
+  const { data: ie } = await db.from('invoice_expenses').select('id, item, part_number, quantity, supplier, order_number').not('order_number', 'is', null)
+  push('invoice_expenses', (ie || []).filter(r => !/import duty|customs clearance/i.test(String(r.item || ''))),
+    r => [r.item, r.part_number].filter(Boolean).join(' '), r => Number(r.quantity) || 1)
+  const { data: inp } = await db.from('inputs').select('id, description, quantity, supplier, order_number').not('order_number', 'is', null)
+  push('inputs', inp || [], r => String(r.description || ''), r => Number(r.quantity) || 1)
+  const { data: inv } = await db.from('inventory').select('id, description, quantity, supplier, order_number, source_type').not('order_number', 'is', null)
+  push('inventory', (inv || []).filter(r => String(r.source_type || '').toUpperCase() !== 'DONATED'),
+    r => String(r.description || ''), r => Number(r.quantity) || 1)
+  const { data: gd } = await db.from('goods').select('id, description, quantity, supplier, order_number').not('order_number', 'is', null)
+  push('goods', gd || [], r => String(r.description || ''), r => Number(r.quantity) || 1)
+  const { data: ge } = await db.from('good_expenses').select('id, description, supplier, order_number').not('order_number', 'is', null)
+  push('good_expenses', ge || [], r => String(r.description || ''), () => 1)
+  return idx
+}
+
+// Materializa a ponte item↔remessa em part_stream_items. Item que JÁ está
+// ligado a qualquer caixa deste pedido é intocável (o robô nunca troca link
+// existente — divergência é assunto de gente); só o que falta é criado.
+export async function ensureStreamItemLinks(
+  db: SupabaseClient, pedidoStreamIds: string[], targetStreamId: string,
+  lines: MoneyLine[], matchedBy: 'ORDER' | 'EMAIL_ITEM',
+): Promise<number> {
+  if (!lines.length) return 0
+  const { data: existing } = await db.from('part_stream_items').select('source_table, source_id').in('stream_id', pedidoStreamIds)
+  const have = new Set((existing || []).map((x: any) => `${x.source_table}:${x.source_id}`))
+  let n = 0
+  for (const l of lines) {
+    if (have.has(`${l.table}:${l.id}`)) continue
+    const { error } = await db.from('part_stream_items').insert({
+      stream_id: targetStreamId, source_app: 'US', source_table: l.table,
+      source_id: l.id, qty: l.qty, matched_by: matchedBy,
+    })
+    if (!error) n++
+  }
+  return n
 }
 
 // ── Spam auto-clean (regra do Márcio 2026-07-24: "apague logo que chegar") ──
