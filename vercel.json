@@ -33,6 +33,10 @@
       "schedule": "12 * * * *"
     },
     {
+      "path": "/ca/api/items/track",
+      "schedule": "37 * * * *"
+    },
+    {
       "path": "/ca/api/cron/marketing-kill",
       "schedule": "*/5 * * * *"
     },

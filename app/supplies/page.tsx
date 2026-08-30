@@ -17,9 +17,14 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import { OrderChip, StreamChip } from '@/components/StreamChips'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
+import { deliverStatusFromScan } from '@/lib/deliverStatus'
 
-type InputRow = {
+// DeliverRow: deliver_status/tracking_number/carrier/eta/... são colunas DESTA
+// tabela (inputs) desde a virada de chave de 29/ago/2026 — "o tracking, carrier
+// e o que quer que seja necessario pra rastrear agora vive como coluna nova da
+// tabela dos itens comprados, na origem". O select('*') abaixo já as traz.
+type InputRow = DeliverRow & {
   id: string
   description: string
   category: string
@@ -35,17 +40,6 @@ type InputRow = {
   payment_method: string | null
   paid_from: string | null
   payment_date: string | null
-}
-
-// Logistics live in the STREAM, joined by order_number (one field per info:
-// tracking/carrier/ETA are part_streams columns, NEVER text inside notes).
-type StreamInfo = {
-  order_number: string
-  status: string | null
-  carrier: string | null
-  tracking_number: string | null
-  eta: string | null
-  delivered_at: string | null
 }
 
 type Purchase = {
@@ -116,14 +110,14 @@ function PayChip({ i }: { i: InputRow }) {
   )
 }
 
-// O semáforo mora no MOLDE (components/StreamChips.tsx). Esta página era a dona
-// da cópia local, e a CASCATA ditada em 29/ago/2026 — "PAGOU? Bought / TEM
-// RASTREIO? Shipped / ENTREGOU? Delivered" — tem de existir num lugar só, senão
-// uma tela diz uma coisa e a outra diz outra sobre o mesmo item.
+// O semáforo mora no MOLDE (components/DeliverChip.tsx) — esta página era a dona
+// da cópia local, e os 4 status têm de existir num lugar só, senão uma tela diz
+// uma coisa e a outra diz outra sobre o mesmo item. E o join com part_streams
+// que nascia AQUI morreu na virada de chave: "esqueca o stream... NAO USE NADA
+// DO STREAM, nada" (Márcio, 29/ago/2026).
 
 export default function InputsPage() {
   const [rows, setRows] = useState<InputRow[]>([])
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState<Period>('ALL')
@@ -143,9 +137,13 @@ export default function InputsPage() {
   const [scanned, setScanned] = useState<{
     supplier: string
     date: string
-    // ORDER NUMBER é SAGRADO (29/ago/2026): o scan lê e a compra grava — sem
-    // ele o join com o STREAM (que já existe nesta tela) nunca acende.
+    // ORDER NUMBER é SAGRADO (29/ago/2026): o scan lê e a compra grava.
     orderNumber: string
+    // O QUE O DOCUMENTO DIZ SOBRE A ENTREGA: endereço de entrega, rastreio e
+    // transportadora lidos do papel. Não são colunas — decidem o deliver_status.
+    shipTo: string
+    trackingNumber: string
+    carrier: string
     items: { description: string; amount: string; quantity: string }[]
     receiptUrl: string
   } | null>(null)
@@ -166,22 +164,8 @@ export default function InputsPage() {
     setRows(loaded)
     setLoading(false)
     setExpanded(new Set())
-
-    // STREAM join: shipping status for every order number on the page.
-    // A single order can have several stream rows (split shipments) — the one
-    // with a tracking number wins the display slot.
-    const orderNos = Array.from(new Set(loaded.map(r => r.order_number).filter(Boolean))) as string[]
-    if (!orderNos.length) { setStreams({}); return }
-    const { data: st } = await supabase
-      .from('part_streams')
-      .select('order_number, status, carrier, tracking_number, eta, delivered_at')
-      .in('order_number', orderNos)
-    const map: Record<string, StreamInfo> = {}
-    for (const s of (st || []) as StreamInfo[]) {
-      if (!s.order_number) continue
-      if (!map[s.order_number] || (s.tracking_number && !map[s.order_number].tracking_number)) map[s.order_number] = s
-    }
-    setStreams(map)
+    // NÃO HÁ MAIS SEGUNDA CONSULTA. O status de entrega vinha daqui por join com
+    // part_streams; agora ele veio junto no select('*') acima, na própria linha.
   }
 
   // Category chips are data-driven: whatever categories exist in the bank.
@@ -317,7 +301,7 @@ export default function InputsPage() {
         quantity: String(i.quantity || '1'),
       }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
-      const openReview = () => setScanned({ supplier, date, orderNumber, items, receiptUrl })
+      const openReview = () => setScanned({ supplier, date, orderNumber, shipTo: String(parsed.ship_to || '').trim(), trackingNumber: String(parsed.tracking_number || '').trim(), carrier: String(parsed.carrier || '').trim(), items, receiptUrl })
 
       // Same supplier + date + total (per purchase) = probable re-scan.
       if (supplier && date && total > 0) {
@@ -358,9 +342,14 @@ export default function InputsPage() {
         purchase_date: isValidDate(scanned.date) ? scanned.date : null,
         payment_date: isValidDate(scanned.date) ? scanned.date : null,
         supplier: scanned.supplier || null,
-        // ORDER NUMBER sagrado: o scan agora GRAVA o pedido — é ele que liga a
-        // compra ao STREAM (o join desta tela já existia, faltava a captura).
+        // ORDER NUMBER sagrado: o scan grava o pedido lido.
         order_number: scanned.orderNumber || null,
+        // DELIVER STATUS pelo DOCUMENTO (Márcio, 29/ago/2026): a nota do mercado
+        // não tem endereço de entrega ⇒ PICKUP ("Comprei uma coca-cola no Wawa?
+        // PickUp!"). Com endereço ⇒ BOUGHT; com rastreio impresso ⇒ SHIPPED.
+        deliver_status: deliverStatusFromScan({ supplier: scanned.supplier, shipTo: scanned.shipTo, tracking: scanned.trackingNumber }),
+        tracking_number: scanned.trackingNumber || null,
+        carrier: scanned.carrier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
       }))
@@ -681,14 +670,10 @@ export default function InputsPage() {
                   {isExpanded && (
                     <div className="border-t border-gray-800">
                       {p.items.map((item, gi) => {
-                        const st = item.order_number ? streams[item.order_number] : undefined
-                        // LEI 29/ago/2026: ORDER NUMBER e semáforo do STREAM SEMPRE na
-                        // linha do item (chip de order só se a linha TEM order_number).
-                        // CASCATA do mesmo dia — "PAGOU? Bought / TEM RASTREIO? Shipped /
-                        // ENTREGOU? Delivered": o semáforo NÃO depende mais de existir
-                        // linha em part_streams. Aqui a tela sabe que a linha está paga
-                        // pelo payment_date (nesta tela ele é espelho da data da compra —
-                        // "Comprovante = PAGA"); sem ele, nenhum chip.
+                        // LEI 29/ago/2026: ORDER NUMBER e DELIVER STATUS SEMPRE na linha
+                        // do item (chip de order só se a linha TEM order_number). Os dois
+                        // vêm da PRÓPRIA LINHA — quem não foi pago, ou foi doado, está com
+                        // deliver_status NULL no banco e simplesmente não acende chip.
                         // Pagamento segue o smart placement: na linha só quando diverge.
                         const paid = !!item.payment_date
                         const ownOrder = (item.order_number || '').trim()
@@ -700,10 +685,10 @@ export default function InputsPage() {
                           <div className="flex-1 min-w-0 pl-5">
                             <h3 className="text-xl font-bold">{item.description}</h3>
                             <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                            {(ownOrder || ownPay || paid || ownRcpt) && (
+                            {(ownOrder || ownPay || hasDeliverChip(item) || ownRcpt) && (
                               <div className="flex items-center gap-2 mt-2 flex-wrap">
                                 {ownOrder && <OrderChip order={ownOrder} />}
-                                <StreamChip st={st} paid={paid} />
+                                <DeliverChip row={item} />
                                 {ownPay && <PayChip i={item} />}
                                 {ownRcpt && (
                                   <a href={rcpt!} target="_blank" rel="noopener noreferrer" className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-blue-400 border border-gray-700 hover:text-blue-300">📎 receipt</a>

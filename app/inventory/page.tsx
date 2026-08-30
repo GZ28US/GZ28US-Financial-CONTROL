@@ -17,9 +17,14 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
+import { deliverStatusFromScan } from '@/lib/deliverStatus'
 
-type ItemRow = {
+// DeliverRow: o rastreio da peça mora AQUI, na linha do inventory (virada de
+// chave 29/ago/2026 — "o tracking, carrier e o que quer que seja necessario pra
+// rastrear agora vive como coluna nova da tabela dos itens comprados, na
+// origem"). O select(*) desta tela já traz as colunas novas.
+type ItemRow = DeliverRow & {
   id: string
   description: string
   category: string
@@ -89,9 +94,6 @@ function firstReceipt(raw: string | null): string | null {
 
 export default function InventoryPage() {
   const [rows, setRows] = useState<ItemRow[]>([])
-  // Semáforo do STREAM por order_number normalizado — só as linhas PURCHASED
-  // usam (o order_number de uma DONATED é a invoice doadora, não um pedido).
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [soldIds, setSoldIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -111,6 +113,13 @@ export default function InventoryPage() {
     // ORDER NUMBER é SAGRADO (29/ago/2026): só linhas PURCHASED nascem por
     // aqui, e toda compra escaneada grava o pedido.
     orderNumber: string
+    // O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 29/ago/2026): sem endereço
+    // numa loja de balcão a compra é PICKUP; com endereço é entrega. Estes três
+    // vêm do scan e NÃO são colunas — são a leitura do papel que decide o
+    // deliver_status na hora de gravar.
+    shipTo: string
+    trackingNumber: string
+    carrier: string
     items: { description: string; amount: string; quantity: string }[]
     receiptUrl: string
   } | null>(null)
@@ -136,8 +145,6 @@ export default function InventoryPage() {
       const { data: sales } = await supabase.from('inventory_sales').select('inventory_id').eq('kind', 'INCOME').in('inventory_id', ids)
       setSoldIds(new Set((sales || []).map((x: any) => x.inventory_id)))
     } else setSoldIds(new Set())
-    // Join com o STREAM (leitura pura): o tracking mora só em part_streams.
-    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -251,7 +258,7 @@ export default function InventoryPage() {
         quantity: String(i.quantity || '1'),
       }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
-      const openReview = () => setScanned({ supplier, date, orderNumber, items, receiptUrl })
+      const openReview = () => setScanned({ supplier, date, orderNumber, shipTo: String(parsed.ship_to || '').trim(), trackingNumber: String(parsed.tracking_number || '').trim(), carrier: String(parsed.carrier || '').trim(), items, receiptUrl })
 
       if (supplier && date && total > 0) {
         const match = purchases.find(p =>
@@ -293,6 +300,12 @@ export default function InventoryPage() {
         // ORDER NUMBER sagrado: o pedido REAL da compra (linhas PURCHASED).
         // Nunca confundir com o uso do campo nas DONATED (invoice doadora).
         order_number: scanned.orderNumber || null,
+        // DELIVER STATUS pelo DOCUMENTO: "se tiver endereco de entrega... se nao
+        // tiver endereco, e compra de balcao, PickUp" (Márcio, 29/ago/2026). A
+        // linha escaneada entra PAGA, então ela SEMPRE tem status.
+        deliver_status: deliverStatusFromScan({ supplier: scanned.supplier, shipTo: scanned.shipTo, tracking: scanned.trackingNumber }),
+        tracking_number: scanned.trackingNumber || null,
+        carrier: scanned.carrier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
         source_type: 'PURCHASED',
@@ -611,17 +624,17 @@ export default function InventoryPage() {
                                 : item.notes && item.notes.split('\n').map((note, i) => (
                                     <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
                                   ))}
-                              {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
-                                  linha do item — mesmo repetidos em todos os itens. DONATED
-                                  nunca ganha chip (o campo dela é origem, não pedido; e peça
-                                  doada não foi COMPRADA, então não tem status nenhum).
-                                  CASCATA do mesmo dia: "PAGOU? Bought / TEM RASTREIO? Shipped
-                                  / ENTREGOU? Delivered" — peça comprada e PAGA sempre diz o
-                                  status, mesmo sem remessa casada no STREAM. */}
-                              {item.source_type !== 'DONATED' && ((item.order_number || '').trim() || !!item.payment_date) && (
+                              {/* LEI 29/ago/2026: chip do pedido + DELIVER STATUS SEMPRE na
+                                  linha do item — mesmo repetidos em todos os itens. Os dois
+                                  saem da PRÓPRIA LINHA já carregada: acabou o join com o
+                                  STREAM. DONATED nunca ganha chip (o campo dela é origem, não
+                                  pedido; e peça doada não foi COMPRADA — no banco ela está
+                                  com deliver_status NULL, e aqui o corte por source_type
+                                  continua explícito porque uma DOADA tem payment_date). */}
+                              {item.source_type !== 'DONATED' && ((item.order_number || '').trim() || hasDeliverChip(item)) && (
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   {(item.order_number || '').trim() ? <OrderChip order={(item.order_number || '').trim()} /> : null}
-                                  <StreamChip st={streamFor(streams, item.order_number)} paid={!!item.payment_date} />
+                                  <DeliverChip row={item} />
                                 </div>
                               )}
                             </div>

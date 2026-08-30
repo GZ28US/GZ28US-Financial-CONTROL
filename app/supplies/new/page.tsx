@@ -10,6 +10,7 @@ import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import PartPicker from '@/components/PartPicker'
 import { BASE_PATH } from '@/lib/utils'
+import { DeliverFields, applyTrackingRule } from '@/components/DeliverChip'
 
 // Single report queued after a successful SAVE INPUT, drives the WhatsApp modal.
 type ExpenseReportItem = { item: string; amount: string; quantity: string }
@@ -79,6 +80,12 @@ export default function NewInputPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
+  // DELIVER STATUS + TRACKING + CARRIER moram na linha do item (virada de chave,
+  // 29/ago/2026). Uma compra registrada à mão já nasce com o status certo — e
+  // "nao pode haver 1 item de compra sem estes status".
+  const [deliverStatus, setDeliverStatus] = useState('')
+  const [tracking, setTracking] = useState('')
+  const [carrier, setCarrier] = useState('')
   const [notes, setNotes] = useState('')
   const [source, setSource] = useState(DEFAULT_SOURCE)
   // Universal payment block (inputs keep their own `source` field — no write-through).
@@ -149,6 +156,10 @@ export default function NewInputPage() {
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       order_number: orderNumber.trim() || null,
+      // Sem data (= sem pagamento) não há status: a cascata começa no "pagou".
+      deliver_status: isValidDate(purchaseDate) ? (applyTrackingRule(deliverStatus, tracking) || null) : null,
+      tracking_number: tracking.trim() || null,
+      carrier: carrier.trim() || null,
       notes: notes.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
@@ -300,6 +311,14 @@ export default function NewInputPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
+        </div>
+
+        {/* DELIVER STATUS / TRACKING / CARRIER (virada de chave, 29/ago/2026):
+            peguei no balcão = PICKUP (e o app não rastreia); paguei e ainda não
+            tem rastreio = BOUGHT; digitou rastreio = SHIPPED sozinho. */}
+        <div>
+          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
+            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
         <div>

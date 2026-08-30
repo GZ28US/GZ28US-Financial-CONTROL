@@ -30,6 +30,9 @@ export async function POST(req: NextRequest) {
   "supplier": "the SELLER — the business we BOUGHT FROM — see rule 0. If the header is only a generic greeting like 'WELCOME TO OUR STORE' with no business name, use the street address or city printed at the top instead (e.g. '9999 S Hwy 441, Orlando FL'). For a payment/transfer/PIX receipt use the RECIPIENT being paid (the 'recebedor' / 'Para'), never the bank or the payer",
   "currency": "ISO code of the currency the returned amounts are in (USD, BRL, ...) — see rule 15",
   "order_number": "the store's order / confirmation / sales-order number printed on the document (e.g. 'Order #123456', 'SO-98765', 'Confirmation 2AB4C'), copied EXACTLY as printed — see rule 9b — else empty string",
+  "ship_to": "the DELIVERY ADDRESS printed on the document — see rule 17 — else empty string",
+  "tracking_number": "the shipment tracking / waybill number printed on the document — see rule 18 — else empty string",
+  "carrier": "the shipping company that carries it (UPS, FedEx, USPS, DHL, ...) when the document names one — see rule 18 — else empty string",
   "date": "YYYY-MM-DD format, or empty string if not found",
   "paid": true or false boolean — see rule 11,
   "source": "the PAYER who SENT the money (a transfer/PIX 'pagador' / 'De' / 'Dados do pagador'); empty string if not shown — see rule 14",
@@ -67,7 +70,13 @@ Rules:
 15. CURRENCY — this system registers expenses in USD. Read carefully which currency each printed amount is in ("R$" / "BRL" = Brazilian real; "$" / "US$" / "USD" = US dollar; airline documents label amounts like "USD 350.00" or "BRL 1.839,48"). If the document shows amounts in USD anywhere, return ALL monetary fields (grand_total, tax, extras, line_total, list_price) in USD and set "currency" to "USD". When only some components are printed in USD, convert the rest using the exchange rate implied by any amount printed in BOTH currencies. ONLY if the document contains no USD amount at all: return the amounts exactly as printed in the document's own currency and set "currency" to its ISO code (e.g. "BRL") — never guess an exchange rate, and NEVER report a BRL/foreign amount as if it were USD.
 15a. A BRAZILIAN document is BRL even when no "R$" symbol is printed next to the numbers — Brazilian invoices routinely print bare figures in their VL UNIT / VALOR columns. Treat the document as BRL whenever it carries Brazilian markers and shows no USD amount anywhere: a CNPJ or CPF number, "DANFE", "Nota Fiscal", "NF-e", "ICMS", "EMITENTE"/"DESTINATÁRIO", a Brazilian address or CEP, or amounts written in Brazilian format (1.234,56). Do NOT default to USD just because the currency symbol is missing — decide from the document's origin.
 15b. AIRLINE TICKETS / TRAVEL ITINERARIES (Copa, LATAM, GOL, American, ...): these typically print the base FARE as a matching two-currency pair (e.g. "USD 300.00" alongside its local equivalent like "BRL 1,635.00") and then EXTRA charges — airport/boarding taxes, fees, surcharges, fuel, IOF — printed ONLY in the local currency, with the grand total also in local currency. NEVER return just the USD base fare as the total. Instead: (a) derive the exchange rate from the matching fare pair (local fare ÷ USD fare); (b) convert EVERY local-only charge to USD by dividing by that rate; (c) return ONE item per passenger ticket whose line_total is the ENTIRE amount paid in USD = USD base fare + ALL converted charges, rounded to 2 decimals; (d) grand_total = the sum of those USD ticket totals — cross-check: it must equal the printed local-currency grand total divided by the derived rate (within a few cents); (e) set tax to 0 and extras to [] — airline taxes/fees are part of the ticket price, not US sales tax; (f) do NOT create separate items for individual flight segments — put the route/segments in the ticket item's description instead.
-16. Brazilian number format: "1.839,48" means 1839.48 (dot = thousands separator, comma = decimals). Always output plain numbers with a dot as the decimal separator and no thousands separators.`
+16. Brazilian number format: "1.839,48" means 1839.48 (dot = thousands separator, comma = decimals). Always output plain numbers with a dot as the decimal separator and no thousands separators.
+17. ship_to — THE DELIVERY ADDRESS, and only that. Return the address the goods are being SENT TO, copied as printed on one line, when the document has a shipping/delivery block: "Ship to", "Shipping address", "Deliver to", "Delivery address", "Entregar em", "Endereço de entrega", or a "Delivery from store" / "Home delivery" line naming an address. This is the STRONGEST signal the document gives about HOW the buyer got the goods, so read it carefully and never invent it:
+   - Return an EMPTY STRING when the document shows no delivery address at all — a walk-in store receipt (groceries, gas station, hardware counter) has none, and that emptiness is the fact we need.
+   - Do NOT return the STORE's own address (the letterhead, the branch address printed at the top of a POS receipt) — that is where the sale happened, not where anything was delivered.
+   - Do NOT return a billing-only address ("Bill to", "Sold to", "Cobrança") when no shipping address is shown.
+   - A shipping/handling/delivery CHARGE, a driver tip, or a "Delivery from store" line counts as evidence of delivery: if such a line exists and any destination address is printed, return that address.
+18. tracking_number / carrier — the shipment's tracking (waybill) number and the company carrying it, when the DOCUMENT prints them (many order confirmations and packing slips do). Copy the tracking number exactly, digits and letters only as printed, with no spaces and no label. Typical shapes: UPS "1Z" + 16 chars, FedEx 12/15/20 digits, USPS 20-22 digits, DHL 10 digits. For carrier return the shipper's plain name ("UPS", "FedEx", "USPS", "DHL", "Estes", ...) as printed. If the document shows more than one shipment, return the FIRST tracking number only. Empty strings when the document prints none — NEVER guess a tracking number, and never return an order number as a tracking number.`
 
     const paymentPrompt = `You are scanning a PAYMENT PROOF of money RECEIVED by an auto shop (a bank transfer confirmation, a Zelle/ACH receipt, a check image, a card receipt, or a Brazilian "Comprovante de Pix" / PIX / TED). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -294,8 +303,21 @@ Rules:
           date: parsed.date || '',
           paid: parsed.paid !== false,
           source: parsed.source || '',
-          // Store order/confirmation number — seeds the STREAM tracker.
+          // Store order/confirmation number.
           order_number: String(parsed.order_number || '').trim(),
+          // ── O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 29/ago/2026) ──
+          // "Walmart pode ser das 2 formas: a partir do escaneamento da invoice,
+          // se tiver endereco de entrega e nota de compra a ser entregue; se nao
+          // tiver endereco, e compra de balcao, PickUp."
+          // Estes três campos NÃO são colunas de banco — são a LEITURA do papel,
+          // e quem chama o scan é que decide o deliver_status com eles
+          // (lib/deliverStatus.ts). ship_to vazio é informação, não falha: é ele
+          // que prova o balcão.
+          ship_to: String(parsed.ship_to || '').trim(),
+          // Rastreio impresso no próprio documento (foi assim que os dois
+          // recibos de colchão do Walmart entregaram FedEx e UPS na migração).
+          tracking_number: String(parsed.tracking_number || '').replace(/\s+/g, '').trim(),
+          carrier: String(parsed.carrier || '').trim(),
           // Currency the amounts are in. 'USD' normally; a foreign ISO code (e.g.
           // BRL) only when the document had no USD amount at all — consumers must
           // warn instead of silently registering a foreign amount as dollars.

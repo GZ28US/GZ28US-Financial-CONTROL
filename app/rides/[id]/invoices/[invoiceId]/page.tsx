@@ -8,7 +8,7 @@ import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
-import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
 
 type Invoice = {
   id: string
@@ -48,9 +48,10 @@ type Part = { id: string; description: string; unit_price: number; quantity: num
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
-// order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — o pedido mora na linha;
-// o tracking mora SÓ em part_streams e aparece aqui por JOIN (chip do STREAM).
-type Expense = { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; order_number?: string | null }
+// order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — o pedido mora na linha.
+// E o RASTREIO também (virada de chave do mesmo dia): DeliverRow são colunas de
+// invoice_expenses, trazidas pelo select('*') desta tela. Zero join.
+type Expense = DeliverRow & { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; order_number?: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
@@ -114,8 +115,6 @@ export default function ViewInvoicePage() {
   const [payments, setPayments] = useState<Payment[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
-  // Semáforo do STREAM por order_number normalizado (join de leitura pura).
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [sending, setSending] = useState(false)
   // Archived pre-conversion quote (if this invoice was once a quote) + its modal.
@@ -190,8 +189,6 @@ export default function ViewInvoicePage() {
     if (notesData) setNotes(notesData)
     const { data: expensesData } = await supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData)
-    // Join com o STREAM: tracking mora só em part_streams, chega por leitura.
-    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -1077,10 +1074,10 @@ export default function ViewInvoicePage() {
                               não tem status: some o chip. Peça vinda do estoque DOADA
                               (stock_source_type DONATED) não foi comprada — fica sem
                               chip, como manda a lei anterior. */}
-                          {(String(exp.order_number || '').trim() || isPaid) && exp.stock_source_type !== 'DONATED' && (
+                          {(String(exp.order_number || '').trim() || hasDeliverChip(exp)) && exp.stock_source_type !== 'DONATED' && (
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                               {String(exp.order_number || '').trim() ? <OrderChip order={String(exp.order_number || '').trim()} /> : null}
-                              <StreamChip st={streamFor(streams, exp.order_number)} paid={isPaid} />
+                              <DeliverChip row={exp} />
                             </div>
                           )}
                         </div>

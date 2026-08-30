@@ -5,9 +5,12 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
 
-type Input = {
+// DeliverRow: a ficha do item lê o rastreio DA PRÓPRIA LINHA (virada de chave
+// 29/ago/2026 — "a leitura do rastreio agora deve viver na pagina do item,
+// ESQUECA A AREA DE STREAM, e tudo na pagina de origem do item").
+type Input = DeliverRow & {
   id: string
   description: string
   category: string
@@ -44,8 +47,6 @@ export default function ViewInputPage() {
 
   const [loading, setLoading] = useState(true)
   const [input, setInput] = useState<Input | null>(null)
-  // Semáforo do STREAM (join por order_number — tracking nunca mora na origem).
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [openReceipts, setOpenReceipts] = useState(false)
 
   useEffect(() => { loadInput() }, [])
@@ -55,7 +56,6 @@ export default function ViewInputPage() {
     const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
     const { data } = await supabase.from(t).select('*').eq('id', inputId).single()
     if (data) setInput(data)
-    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -105,19 +105,17 @@ export default function ViewInputPage() {
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${input.category === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`}>{input.category}</span>
             </div>
             {input.supplier && <div className={rowClass}><span className={labelClass}>{donated ? 'DONOR' : 'SUPPLIER'}</span><span className="font-bold">{input.supplier}</span></div>}
-            {/* ORDER NUMBER + semáforo do STREAM. DONATED fica de fora: o campo
-                dela guarda a invoice doadora (origem), não um pedido de loja —
-                e peça doada não foi comprada, então não tem status nenhum.
-                CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM RASTREIO?
-                Shipped / ENTREGOU? Delivered". Item PAGO SEMPRE tem status, com
-                ou sem remessa casada — por isso a linha aparece também quando só
-                há pagamento, e aí ela se chama STATUS em vez de ORDER NUMBER.
-                Quem diz que está paga é o payment_date da própria linha. */}
-            {!donated && (ownOrder || paidLine) && (
+            {/* ORDER NUMBER + DELIVER STATUS, os dois lidos DESTA linha. É AQUI
+                que a virada de chave (29/ago/2026) manda a leitura do rastreio
+                viver: "na pagina do item... tudo na pagina de origem do item".
+                DONATED fica de fora: o campo dela guarda a invoice doadora
+                (origem), não um pedido de loja — e peça doada não foi comprada,
+                então nasce com deliver_status NULL. */}
+            {!donated && (ownOrder || hasDeliverChip(input)) && (
               <div className={rowClass}><span className={labelClass}>{ownOrder ? 'ORDER NUMBER' : 'STATUS'}</span>
                 <span className="flex items-center gap-2 flex-wrap justify-end">
                   {ownOrder && <OrderChip order={ownOrder} />}
-                  <StreamChip st={streamFor(streams, input.order_number)} paid={paidLine} />
+                  <DeliverChip row={input} />
                 </span>
               </div>
             )}

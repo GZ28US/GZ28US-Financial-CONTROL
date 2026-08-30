@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
+import { OrderChip, DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip } from '@/components/DeliverChip'
 
 type Ride = {
   id: string
@@ -70,12 +71,17 @@ type FleetExp = {
   price: number; quantity: number; tax: number; extra: number; item_discount: number
   expense_date: string | null; payment_date: string | null
   // ORDER NUMBER é SAGRADO (29/ago/2026): a despesa da frota também nasce com
-  // o pedido; o tracking mora só em part_streams (join nas telas de lista).
+  // o pedido. E o RASTREIO mora na MESMA linha desde a virada de chave do mesmo
+  // dia — "o tracking, carrier e o que quer que seja necessario pra rastrear
+  // agora vive como coluna nova da tabela dos itens comprados, na origem".
   order_number: string | null
+  deliver_status: string | null
+  tracking_number: string | null
+  carrier: string | null
 }
 const expLine = (e: FleetExp) =>
   (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
-const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '' }
+const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', deliverStatus: '', tracking: '', carrier: '' }
 
 type Stats = {
   currentProfit: number
@@ -209,7 +215,7 @@ export default function ViewRidePage() {
   async function loadFleetExps(invoiceIds: string[]) {
     const { data } = await supabase
       .from('invoice_expenses')
-      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number')
+      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number, deliver_status, tracking_number, carrier')
       .in('invoice_id', invoiceIds)
     const list = (data || []) as FleetExp[]
     list.sort((a, b) => String(b.payment_date || b.expense_date || '').localeCompare(String(a.payment_date || a.expense_date || '')))
@@ -232,6 +238,11 @@ export default function ViewRidePage() {
       payment_date: expForm.paid ? d : null,
       // ORDER NUMBER sagrado: o form da frota registra o pedido junto.
       order_number: expForm.orderNumber.trim() || null,
+      // A cascata começa no "pagou": despesa não paga fica sem status (NULL).
+      // Rastreio digitado sobe BOUGHT→SHIPPED sozinho.
+      deliver_status: expForm.paid && d ? (applyTrackingRule(expForm.deliverStatus, expForm.tracking) || null) : null,
+      tracking_number: expForm.tracking.trim() || null,
+      carrier: expForm.carrier.trim() || null,
     }
     setSavingExp(true)
     try {
@@ -529,6 +540,15 @@ export default function ViewRidePage() {
                     <label className="block mb-2 text-sm text-gray-400">ORDER NUMBER</label>
                     <input value={expForm.orderNumber} onChange={(e) => setExpForm({ ...expForm, orderNumber: e.target.value })} placeholder="e.g. 2000149-80525197" className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                   </div>
+                  {/* DELIVER STATUS / TRACKING / CARRIER — os 4 status valem pra TODA
+                      compra ("nao pode haver 1 item de compra sem estes status"),
+                      e é o PICKUP que diz ao app para não rastrear a linha. */}
+                  <div className="sm:col-span-2">
+                    <DeliverFields size="sm" status={expForm.deliverStatus} tracking={expForm.tracking} carrier={expForm.carrier}
+                      onStatus={(v) => setExpForm({ ...expForm, deliverStatus: v })}
+                      onTracking={(v) => setExpForm({ ...expForm, tracking: v })}
+                      onCarrier={(v) => setExpForm({ ...expForm, carrier: v })} />
+                  </div>
                   <div>
                     <label className="block mb-2 text-sm text-gray-400">AMOUNT</label>
                     <div className="relative">
@@ -564,6 +584,14 @@ export default function ViewRidePage() {
                       <p className="text-sm text-gray-500">
                         {e.supplier || '—'} · {e.payment_date ? `pago ${formatDate(e.payment_date)}` : <span className="text-amber-400 font-bold">não paga</span>}
                       </p>
+                      {/* DELIVER STATUS na LINHA da despesa (lei 29/ago/2026: o badge
+                          é do ITEM, nunca do título da compra), lido da própria linha. */}
+                      {(String(e.order_number || '').trim() || hasDeliverChip(e)) && (
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {String(e.order_number || '').trim() ? <OrderChip order={String(e.order_number || '').trim()} /> : null}
+                          <DeliverChip row={e} />
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="font-bold">{formatUSD(expLine(e))}</span>
@@ -574,7 +602,7 @@ export default function ViewRidePage() {
                         </>
                       ) : (
                         <>
-                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', deliverStatus: e.deliver_status || '', tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => setConfirmExpId(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </>
                       )}

@@ -8,7 +8,8 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
-import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { OrderChip, DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip, DELIVER_COLUMNS, type DeliverRow } from '@/components/DeliverChip'
+import { deliverStatusFromScan } from '@/lib/deliverStatus'
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 
@@ -31,9 +32,15 @@ const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 // que já existem — mostradas uma por linha, no visual do GOOD EXPENSES, sem
 // copiar nada: o mesmo dinheiro nunca vive em dois lugares.
 // order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — a despesa da frota
-// também carrega o pedido; o tracking chega por JOIN com part_streams.
-type FleetExpense = { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; order_number: string | null }
-const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '' }
+// também carrega o pedido. E o RASTREIO agora mora na PRÓPRIA LINHA (virada de
+// chave, 29/ago: "o tracking, carrier e o que quer que seja necessario pra
+// rastrear agora vive como coluna nova da tabela dos itens comprados, na
+// origem") — nada de join com part_streams para saber se a peça chegou.
+type FleetExpense = DeliverRow & { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; order_number: string | null }
+// deliverStatus/tracking/carrier: a despesa da frota é item comprado como
+// qualquer outro, e a virada de chave (29/ago/2026) mandou os 4 status para
+// TODA compra — "nao pode haver 1 item de compra sem estes status".
+const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', deliverStatus: '', tracking: '', carrier: '' }
 // Duas coisas diferentes se chamam "nota" num carro:
 //   titleNotes  — rides.title_notes, o DOSSIÊ do documento. Bloco único, escrito
 //                 em TITLE & DOCS na tela do ride. Aqui só se lê.
@@ -53,7 +60,7 @@ type FleetCar = {
 const fleetLine = (e: FleetExpense) =>
   (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
 
-type Good = {
+type Good = DeliverRow & {
   id: string
   description: string
   quantity: number
@@ -64,8 +71,9 @@ type Good = {
   category?: string | null
   // Stored as a JSON-stringified array of URLs (scanned purchases set one URL).
   receipt_url?: string | null
-  // ORDER NUMBER é SAGRADO: o pedido da loja mora aqui; o tracking mora SÓ em
-  // part_streams e aparece por JOIN — nunca se digita nem se grava na origem.
+  // ORDER NUMBER é SAGRADO: o pedido da loja mora aqui. O RASTREIO também mora
+  // aqui agora (virada de chave 29/ago/2026) — deliver_status/tracking_number/
+  // carrier/eta/... são colunas desta mesma tabela, trazidas pelo select('*').
   order_number?: string | null
   // Coluna que a tabela `goods` já tem e o select('*') já traz: é ela que diz se
   // a linha está PAGA — o degrau em que a cascata do status começa (29/ago/2026).
@@ -115,8 +123,6 @@ function parseReceiptUrls(raw: string | null | undefined): string[] {
 
 export default function GoodsPage() {
   const [goods, setGoods] = useState<GoodWithStats[]>([])
-  // Semáforo do STREAM por order_number normalizado (goods E despesas da frota).
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [category, setCategory] = useState<string>('ALL')
   const [fleet, setFleet] = useState<FleetCar[]>([])
   const [openCar, setOpenCar] = useState<Set<string>>(new Set())
@@ -147,6 +153,11 @@ export default function GoodsPage() {
     source: string
     // ORDER NUMBER é SAGRADO (29/ago/2026): o scan lê e a compra grava.
     orderNumber: string
+    // O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (29/ago/2026) — leitura do papel,
+    // não colunas: é com isso que o deliver_status nasce certo.
+    shipTo: string
+    trackingNumber: string
+    carrier: string
     tax: string
     shipping: string
     items: { description: string; amount: string; quantity: string }[]
@@ -209,6 +220,12 @@ export default function GoodsPage() {
       payment_date: fleetForm.paid ? d : null,
       // ORDER NUMBER sagrado: o form da frota também registra o pedido.
       order_number: fleetForm.orderNumber.trim() || null,
+      // A CASCATA COMEÇA NO "PAGOU": despesa sem pagamento não recebe status
+      // nenhum (o banco guarda NULL), e é isso que apaga o chip na lista.
+      // Rastreio digitado sobe BOUGHT→SHIPPED sozinho (applyTrackingRule).
+      deliver_status: fleetForm.paid && d ? (applyTrackingRule(fleetForm.deliverStatus, fleetForm.tracking) || null) : null,
+      tracking_number: fleetForm.tracking.trim() || null,
+      carrier: fleetForm.carrier.trim() || null,
     }
     setSavingFleetExp(true)
     try {
@@ -240,7 +257,7 @@ export default function GoodsPage() {
       .in('ride_id', rides.map((r: any) => r.id))
     const invIds = (invs || []).map((i: any) => i.id)
     const { data: exps } = invIds.length
-      ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, order_number').in('invoice_id', invIds)
+      ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, order_number, ' + DELIVER_COLUMNS).in('invoice_id', invIds)
       : { data: [] as any[] }
     const { data: notesData } = invIds.length
       ? await supabase.from('invoice_notes').select('id, invoice_id, note').in('invoice_id', invIds).order('created_at', { ascending: true })
@@ -291,8 +308,6 @@ export default function GoodsPage() {
 
     setGoods(goodsWithStats)
     await loadFleet()
-    // Join com o STREAM (leitura pura): tracking mora só em part_streams.
-    setStreams(await loadStreamMap())
     setLoading(false)
     // Groups start collapsed — the user opens the ones they want to inspect.
   }
@@ -387,7 +402,7 @@ export default function GoodsPage() {
       const shipping = rawItems.reduce((s: number, it: any) => s + (parseFloat(it.extra) || 0), 0) * fx
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0) + tax + shipping
 
-      const openReview = () => setScannedPurchase({ supplier, date, source, orderNumber, tax: tax > 0 ? tax.toFixed(2) : '', shipping: shipping > 0 ? shipping.toFixed(2) : '', items, receiptUrl })
+      const openReview = () => setScannedPurchase({ supplier, date, source, orderNumber, shipTo: String(parsed.ship_to || '').trim(), trackingNumber: String(parsed.tracking_number || '').trim(), carrier: String(parsed.carrier || '').trim(), tax: tax > 0 ? tax.toFixed(2) : '', shipping: shipping > 0 ? shipping.toFixed(2) : '', items, receiptUrl })
 
       // Duplicate check: any existing goods row with the same supplier+date+total
       // (summed per purchase_group) is treated as a possible re-scan.
@@ -442,6 +457,12 @@ export default function GoodsPage() {
         source,
         // ORDER NUMBER sagrado: toda linha do grupo carrega o pedido lido.
         order_number: scannedPurchase.orderNumber || null,
+        // DELIVER STATUS pelo DOCUMENTO (Márcio, 29/ago/2026): sem endereço de
+        // entrega em loja de balcão = PICKUP; com endereço = BOUGHT; com
+        // rastreio impresso = SHIPPED. Amazon & cia nunca viram PICKUP.
+        deliver_status: deliverStatusFromScan({ supplier: scannedPurchase.supplier, shipTo: scannedPurchase.shipTo, tracking: scannedPurchase.trackingNumber }),
+        tracking_number: scannedPurchase.trackingNumber || null,
+        carrier: scannedPurchase.carrier || null,
         receipt_url: JSON.stringify([scannedPurchase.receiptUrl]),
         purchase_group: groupId,
       }))
@@ -913,6 +934,11 @@ export default function GoodsPage() {
                       <input inputMode="decimal" value={fleetForm.amount} onChange={(ev) => { if (ev.target.value === '' || /^\d*\.?\d*$/.test(ev.target.value)) setFleetForm({ ...fleetForm, amount: ev.target.value }) }} placeholder="$ 0.00" className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                       <input type="date" value={fleetForm.date} onChange={(ev) => setFleetForm({ ...fleetForm, date: ev.target.value })} className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                     </div>
+                    {/* DELIVER STATUS + TRACKING + CARRIER na despesa da frota. */}
+                    <DeliverFields size="sm" status={fleetForm.deliverStatus} tracking={fleetForm.tracking} carrier={fleetForm.carrier}
+                      onStatus={(v) => setFleetForm({ ...fleetForm, deliverStatus: v })}
+                      onTracking={(v) => setFleetForm({ ...fleetForm, tracking: v })}
+                      onCarrier={(v) => setFleetForm({ ...fleetForm, carrier: v })} />
                     <div className="flex gap-3 flex-wrap">
                       <button onClick={() => setFleetForm({ ...fleetForm, paid: !fleetForm.paid })} className={`px-5 py-3 rounded-2xl font-bold ${fleetForm.paid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>{fleetForm.paid ? 'PAID ✓' : 'NOT PAID'}</button>
                       <button onClick={saveFleetExp} disabled={savingFleetExp} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{savingFleetExp ? 'SAVING…' : 'SAVE'}</button>
@@ -930,16 +956,16 @@ export default function GoodsPage() {
                           <p className="text-sm text-gray-500">
                             {e.supplier || '—'} · {e.payment_date ? `pago ${e.payment_date}` : <span className="text-amber-400 font-bold">não paga</span>}
                           </p>
-                          {/* ORDER NUMBER sagrado + semáforo do STREAM (join, nunca digitado).
-                              CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM RASTREIO?
-                              Shipped / ENTREGOU? Delivered" — despesa de carro da frota que
-                              já foi PAGA sempre diz o status, mesmo sem remessa casada. A
-                              linha acima já usa o mesmo campo pra escrever "pago"/"não paga":
-                              payment_date. Não paga = sem chip. */}
-                          {((e.order_number || '').trim() || !!e.payment_date) && (
+                          {/* ORDER NUMBER sagrado + DELIVER STATUS — os dois lidos da PRÓPRIA
+                              LINHA (virada de chave 29/ago/2026: "esqueca o stream... o
+                              tracking agora vive como coluna nova da tabela dos itens
+                              comprados, na origem"). Linha não paga e linha doada nascem com
+                              deliver_status NULL no banco, então elas se calam sozinhas — a
+                              tela não precisa mais perguntar se pagou. */}
+                          {((e.order_number || '').trim() || hasDeliverChip(e)) && (
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                               {(e.order_number || '').trim() ? <OrderChip order={(e.order_number || '').trim()} /> : null}
-                              <StreamChip st={streamFor(streams, e.order_number)} paid={!!e.payment_date} />
+                              <DeliverChip row={e} />
                             </div>
                           )}
                         </div>
@@ -952,7 +978,7 @@ export default function GoodsPage() {
                             </>
                           ) : (
                             <>
-                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', deliverStatus: e.deliver_status || '', tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => setConfirmFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </>
                           )}
@@ -1021,16 +1047,13 @@ export default function GoodsPage() {
                             <p className="text-lg text-gray-400">Qty: {good.quantity} × {formatUSD(good.unit_price)} = {formatUSD(good.quantity * good.unit_price)}</p>
                             {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                             <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
-                            {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
-                                linha do item — mesmo repetidos em todos os itens da compra.
-                                CASCATA do mesmo dia: "PAGOU? Bought / TEM RASTREIO? Shipped /
-                                ENTREGOU? Delivered". Good pago SEMPRE tem status, com ou sem
-                                remessa; quem diz que pagou é payment_date (a tela grava esse
-                                campo como espelho da data da compra — comprada = paga). */}
-                            {((good.order_number || '').trim() || !!good.payment_date) && (
+                            {/* LEI 29/ago/2026: chip do pedido + DELIVER STATUS SEMPRE na linha
+                                do item — mesmo repetidos em todos os itens da compra. Ambos
+                                saem da linha já carregada; não há segunda consulta. */}
+                            {((good.order_number || '').trim() || hasDeliverChip(good)) && (
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 {(good.order_number || '').trim() ? <OrderChip order={(good.order_number || '').trim()} /> : null}
-                                <StreamChip st={streamFor(streams, good.order_number)} paid={!!good.payment_date} />
+                                <DeliverChip row={good} />
                               </div>
                             )}
                           </div>
@@ -1056,13 +1079,11 @@ export default function GoodsPage() {
                     <p className="text-lg text-gray-400">Purchased: {formatDate(good.purchase_date)}</p>
                     {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                     <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
-                    {/* ORDER NUMBER sagrado + semáforo do STREAM (join por order_number).
-                        CASCATA (29/ago/2026): item PAGO sempre tem status — sem remessa
-                        casada ele é BOUGHT, e a tela tem de dizer isso. Não pago, nada. */}
-                    {((good.order_number || '').trim() || !!good.payment_date) && (
+                    {/* ORDER NUMBER sagrado + DELIVER STATUS, ambos da própria linha. */}
+                    {((good.order_number || '').trim() || hasDeliverChip(good)) && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {(good.order_number || '').trim() ? <OrderChip order={(good.order_number || '').trim()} /> : null}
-                        <StreamChip st={streamFor(streams, good.order_number)} paid={!!good.payment_date} />
+                        <DeliverChip row={good} />
                       </div>
                     )}
                   </div>

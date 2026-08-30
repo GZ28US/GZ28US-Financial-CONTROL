@@ -9,6 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
+import { DeliverFields, applyTrackingRule } from '@/components/DeliverChip'
 
 type Expense = {
   description: string
@@ -20,6 +21,11 @@ type Expense = {
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
   // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
   order_number: string
+  // E os 4 status valem pra TODA compra, esta inclusive (virada de chave,
+  // 29/ago/2026: "nao pode haver 1 item de compra sem estes status").
+  deliver_status: string
+  tracking_number: string
+  carrier: string
 }
 
 // One ExpenseReport = one optional WhatsApp message. We queue one for the GOOD
@@ -85,17 +91,21 @@ export default function NewGoodPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   // ORDER NUMBER é SAGRADO (29/ago/2026): todo formulário manual de compra tem
-  // o campo. O tracking NÃO — ele mora só em part_streams e chega por JOIN.
+  // o campo. E o TRACKING também, desde a virada de chave do mesmo dia — ele
+  // deixou de morar em part_streams e virou coluna da linha do item comprado.
   const [orderNumber, setOrderNumber] = useState('')
+  const [deliverStatus, setDeliverStatus] = useState('')
+  const [tracking, setTracking] = useState('')
+  const [carrier, setCarrier] = useState('')
   // Universal payment block — PAID FROM here also feeds the legacy `source` column.
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
   const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
@@ -171,7 +181,7 @@ export default function NewGoodPage() {
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
   }
 
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
@@ -179,9 +189,9 @@ export default function NewGoodPage() {
   function saveEditExpense() {
     if (!editingExpense.description || !editingExpense.amount) { alert('Please enter description and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
@@ -197,6 +207,10 @@ export default function NewGoodPage() {
       supplier: supplier.trim() || null,
       // ORDER NUMBER sagrado: o pedido entra junto com a compra manual.
       order_number: orderNumber.trim() || null,
+      // A cascata começa no "pagou": sem data válida a linha não recebe status.
+      deliver_status: isValidDate(purchaseDate) ? (applyTrackingRule(deliverStatus, tracking) || null) : null,
+      tracking_number: tracking.trim() || null,
+      carrier: carrier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
       ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
@@ -212,8 +226,12 @@ export default function NewGoodPage() {
         payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
-        // A despesa extra carrega o número do SEU pedido (pode divergir do good).
+        // A despesa extra carrega o número do SEU pedido (pode divergir do good)
+        // — e o SEU próprio status de entrega, pela mesma razão.
         order_number: ex.order_number.trim() || null,
+        deliver_status: isValidDate(ex.expense_date) ? (applyTrackingRule(ex.deliver_status, ex.tracking_number) || null) : null,
+        tracking_number: ex.tracking_number.trim() || null,
+        carrier: ex.carrier.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
       if (e) { alert(e.message); return }
@@ -362,11 +380,18 @@ export default function NewGoodPage() {
           <SupplierField suppliers={suppliers} value={supplier} onChange={setSupplier} />
         </div>
 
-        {/* ORDER NUMBER é SAGRADO — molde do app/supplies/new. Tracking aqui NÃO:
-            ele mora só em part_streams e aparece por JOIN nas listas. */}
+        {/* ORDER NUMBER é SAGRADO — molde do app/supplies/new. */}
         <div>
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
+        </div>
+
+        {/* DELIVER STATUS / TRACKING / CARRIER — o rastreio agora VIVE aqui, na
+            origem do item (virada de chave, 29/ago/2026). PICKUP à mão = peguei
+            no balcão, e o app não rastreia essa linha. */}
+        <div>
+          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
+            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
         <div className="flex gap-4">
@@ -443,6 +468,10 @@ export default function NewGoodPage() {
               <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
               <input type="text" value={newExpense.order_number} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
             </div>
+            <DeliverFields size="sm" status={newExpense.deliver_status} tracking={newExpense.tracking_number} carrier={newExpense.carrier}
+              onStatus={(v) => setNewExpense({ ...newExpense, deliver_status: v })}
+              onTracking={(v) => setNewExpense({ ...newExpense, tracking_number: v })}
+              onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
               <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
@@ -475,6 +504,10 @@ export default function NewGoodPage() {
                           <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
                           <input type="text" value={editingExpense.order_number} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
                         </div>
+                        <DeliverFields size="sm" status={editingExpense.deliver_status} tracking={editingExpense.tracking_number} carrier={editingExpense.carrier}
+                          onStatus={(v) => setEditingExpense({ ...editingExpense, deliver_status: v })}
+                          onTracking={(v) => setEditingExpense({ ...editingExpense, tracking_number: v })}
+                          onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
                           <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />

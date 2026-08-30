@@ -5,13 +5,13 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { OrderChip, StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
 
 // Read-only VIEW of a whole input PURCHASE (every row sharing a purchase_group):
 // supplier, category, date, all line items, grand total and receipts. Linked from
 // the VIEW button on the group header in InputsManager. STOCK purchases live in the
 // `inventory` table (?src=inventory); CONSUMPTION in `inputs`.
-type Input = {
+type Input = DeliverRow & {
   id: string
   description: string
   category: string
@@ -21,8 +21,9 @@ type Input = {
   supplier: string | null
   receipt_url: string | null
   notes: string | null
-  // ORDER NUMBER é SAGRADO (29/ago/2026): pedido da compra; o tracking chega
-  // por JOIN com part_streams. Numa linha DONATED do inventory o campo é a
+  // ORDER NUMBER é SAGRADO (29/ago/2026): pedido da compra. O rastreio mora na
+  // MESMA linha (deliver_status/tracking_number/... via DeliverRow), não mais em
+  // part_streams. Numa linha DONATED do inventory o campo order_number é a
   // invoice doadora — origem, não pedido — e fica fora do chip.
   order_number?: string | null
   source_type?: string | null
@@ -47,8 +48,6 @@ export default function ViewInputGroupPage() {
 
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<Input[]>([])
-  // Semáforo do STREAM por order_number normalizado (leitura pura).
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [openReceipts, setOpenReceipts] = useState(false)
 
   const isStock = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('src') === 'inventory'
@@ -59,7 +58,6 @@ export default function ViewInputGroupPage() {
     const t = new URLSearchParams(window.location.search).get('src') === 'inventory' ? 'inventory' : 'inputs'
     const { data } = await supabase.from(t).select('*').eq('purchase_group', groupId).order('created_at', { ascending: true })
     setItems(data || [])
-    setStreams(await loadStreamMap())
     setLoading(false)
   }
 
@@ -125,16 +123,14 @@ export default function ViewInputGroupPage() {
                   <div className="min-w-0">
                     <p className="font-bold truncate" title={it.description}>{it.description}</p>
                     <p className="text-sm text-gray-400">Qty: {it.quantity} × {formatUSD(it.unit_price)} = {formatUSD((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))}</p>
-                    {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
-                        linha do item — mesmo repetidos em todos. DONATED fica sem chip
-                        (não foi comprada). CASCATA do mesmo dia: "PAGOU? Bought / TEM
-                        RASTREIO? Shipped / ENTREGOU? Delivered" — item PAGO SEMPRE tem
-                        status, mesmo sem remessa casada; quem diz que pagou é o
-                        payment_date da linha, que esta tela já traz no select('*'). */}
-                    {(it.source_type || '') !== 'DONATED' && (!!String(it.order_number || '').trim() || !!it.payment_date) && (
+                    {/* LEI 29/ago/2026: chip do pedido + DELIVER STATUS SEMPRE na linha
+                        do item — mesmo repetidos em todos, e nunca no cabeçalho da
+                        compra. Os dois vêm do select('*') desta mesma tela: acabou o
+                        join. DONATED fica sem chip (não foi comprada). */}
+                    {(it.source_type || '') !== 'DONATED' && (!!String(it.order_number || '').trim() || hasDeliverChip(it)) && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {String(it.order_number || '').trim() ? <OrderChip order={String(it.order_number || '').trim()} /> : null}
-                        <StreamChip st={streamFor(streams, it.order_number)} paid={!!it.payment_date} />
+                        <DeliverChip row={it} />
                       </div>
                     )}
                     {it.notes && <p className="text-sm text-gray-500 mt-0.5">{it.notes}</p>}

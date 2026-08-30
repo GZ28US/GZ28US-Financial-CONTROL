@@ -10,7 +10,6 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 type Order = {
   id: string
@@ -44,9 +43,6 @@ export default function SupplierOrdersPage() {
   const supplierId = String(params.id)
   const [supplierName, setSupplierName] = useState('')
   const [orders, setOrders] = useState<Order[]>([])
-  // Semáforo do STREAM: o registro do pedido ganha o estado da remessa por JOIN
-  // (order_number normalizado) — tracking nunca se digita nesta tela.
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
   const [loading, setLoading] = useState(true)
   const [region, setRegion] = useState<'ALL' | 'US' | 'BR'>('ALL')
   const [search, setSearch] = useState('')
@@ -64,7 +60,6 @@ export default function SupplierOrdersPage() {
         .or(`supplier_id.eq.${supplierId}${name ? `,supplier_name.ilike.${name}` : ''}`)
         .order('order_date', { ascending: false, nullsFirst: false })
       setOrders((data || []) as Order[])
-      setStreams(await loadStreamMap())
       setLoading(false)
     })()
   }, [supplierId])
@@ -169,17 +164,18 @@ export default function SupplierOrdersPage() {
             <div key={o.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="font-mono font-bold text-lg">{o.order_number || '—'}</span>
-                {/* Semáforo do STREAM ao lado do pedido (join por order_number).
-                    CASCATA (29/ago/2026): pedido PAGO sempre diz o status — sem
-                    remessa casada ele é BOUGHT. E quando o STREAM TEM fato gravado
-                    sobre o pedido (despachado, entregue, estornado), o chip fica de
-                    pé mesmo com o registro ainda em OPEN: esta página é o RASTRO DE
-                    PAPEL do fornecedor, e esconder uma entrega real por causa de um
-                    paid_total não lançado seria apagar fato, não aplicar a lei. */}
-                {(() => {
-                  const st = streamFor(streams, o.order_number)
-                  return <StreamChip st={st} paid={!!st || paidOf(o)} />
-                })()}
+                {/* AQUI NÃO HÁ MAIS SEMÁFORO — de propósito. Duas leis se cruzam
+                    nesta linha e as duas mandam tirá-lo:
+                    1) "os badges de order number, tracking ou BOUGHT/SHIPPED/
+                       DELIVERED devem ser nos ITENS, nao nos titulos das compras"
+                       — e supplier_orders É a compra, não o item.
+                    2) A virada de chave de 29/ago/2026 tirou o status de
+                       part_streams e o pôs como COLUNA da linha do item; a tabela
+                       supplier_orders não tem (nem deve ter) essas colunas, e
+                       inventar campo é proibido.
+                    O DELIVER STATUS deste pedido aparece nas linhas de item que o
+                    carregam (invoice_expenses / inputs / inventory / goods /
+                    good_expenses), que é onde ele foi comprado. */}
                 <span className="text-gray-400">{o.order_date || 'no date'}</span>
                 {(() => { const ed = effectiveDate(o); return ed && ed !== o.order_date ? <span className="text-green-500 text-sm">→ paid {ed}</span> : null })()}
                 {o.region && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${o.region === 'BR' ? 'bg-emerald-900 text-emerald-200' : 'bg-blue-900 text-blue-200'}`}>{o.region === 'BR' ? '🇧🇷 BR · PowerTrade' : '🇺🇸 US'}</span>}

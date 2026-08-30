@@ -9,7 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { StreamChip, hasStreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip, normDeliverStatus } from '@/components/DeliverChip'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -71,9 +71,15 @@ export default function EditInputPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
-  // Semáforo do STREAM ao lado do campo: o join (por order_number normalizado)
-  // mostra a remessa ao vivo — tracking NUNCA se digita nem se grava aqui.
-  const [streams, setStreams] = useState<Record<string, StreamInfo>>({})
+  // DELIVER STATUS + TRACKING + CARRIER: colunas DESTA linha desde a virada de
+  // chave (29/ago/2026). O tracking, que antes era proibido digitar na origem,
+  // agora É digitado aqui — "o tracking, carrier e o que quer que seja
+  // necessario pra rastrear agora vive como coluna nova da tabela dos itens
+  // comprados, na origem". Trocar o status à mão é permitido: é assim que uma
+  // compra vira PICKUP.
+  const [deliverStatus, setDeliverStatus] = useState('')
+  const [tracking, setTracking] = useState('')
+  const [carrier, setCarrier] = useState('')
   const [notes, setNotes] = useState('')
   const [source, setSource] = useState('')
   // Universal payment block (inputs keep their own `source` field — no write-through).
@@ -91,7 +97,6 @@ export default function EditInputPage() {
     setTable(t)
     loadSuppliers()
     loadInput(t)
-    loadStreamMap().then(setStreams)
   }, [])
 
   async function loadSuppliers() {
@@ -111,6 +116,9 @@ export default function EditInputPage() {
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
     setOrderNumber(data.order_number || '')
+    setDeliverStatus(data.deliver_status || '')
+    setTracking(data.tracking_number || '')
+    setCarrier(data.carrier || '')
     setNotes(data.notes || '')
     setSource(data.source || DEFAULT_SOURCE)
     // Initialize the payment block from the row so an untouched save round-trips.
@@ -163,6 +171,12 @@ export default function EditInputPage() {
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       order_number: orderNumber.trim() || null,
+      // DOADA não é compra e NÃO PAGA não entrou na cascata: nos dois casos o
+      // status é NULL, e é o NULL que apaga o chip nas listas. Rastreio digitado
+      // sobe BOUGHT→SHIPPED sozinho (applyTrackingRule).
+      deliver_status: donated || !isValidDate(purchaseDate) ? null : (applyTrackingRule(deliverStatus, tracking) || null),
+      tracking_number: donated ? null : (tracking.trim() || null),
+      carrier: donated ? null : (carrier.trim() || null),
       notes: notes.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
@@ -215,20 +229,22 @@ export default function EditInputPage() {
         <div>
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
-          {/* Semáforo do STREAM ao lado do campo: informa a remessa deste pedido.
-              É leitura pura do join — o tracking continua morando SÓ no STREAM.
-              CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM RASTREIO? Shipped
-              / ENTREGOU? Delivered". Item pago SEMPRE tem status, então o chip
-              aparece mesmo sem pedido casado no STREAM — e some se a linha não
-              estiver paga. Nesta tela "pago" é a DATA DA COMPRA: ela grava
-              payment_date como espelho da data única (Comprovante = PAGA), e sem
-              data válida os dois campos ficam vazios. DONATED nem chega aqui — o
-              bloco inteiro vive dentro do !donated. */}
-          {(() => {
-            const st = streamFor(streams, orderNumber)
-            const paid = isValidDate(purchaseDate)
-            return hasStreamChip(st, paid) ? <div className="mt-2"><StreamChip st={st} paid={paid} /></div> : null
-          })()}
+        </div>
+        )}
+
+        {/* DELIVER STATUS / TRACKING / CARRIER — a virada de chave de 29/ago/2026
+            trouxe o rastreio PRA CÁ: "a leitura do rastreio agora deve viver na
+            pagina do item, ESQUECA A AREA DE STREAM". Digitar rastreio num item
+            BOUGHT o sobe para SHIPPED; escolher PICKUP à mão é o que diz ao app
+            que este item foi PEGO NO BALCÃO e não deve ser rastreado.
+            DONATED não entra: peça doada não foi comprada. */}
+        {!donated && (
+        <div>
+          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
+            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
+          {hasDeliverChip({ deliver_status: normDeliverStatus(deliverStatus), tracking_number: tracking, carrier }) && (
+            <div className="mt-2"><DeliverChip row={{ deliver_status: applyTrackingRule(deliverStatus, tracking), tracking_number: tracking, carrier }} /></div>
+          )}
         </div>
         )}
 
