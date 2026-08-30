@@ -38,6 +38,11 @@ type ItemRow = {
   source_type: string | null
   // Documento que trouxe a peça: o pedido do fornecedor, ou a INVOICE do carro que doou.
   order_number: string | null
+  // Coluna que a tabela `inventory` já tem e o select('*') já traz: é o degrau
+  // "PAGOU?" da cascata do status (29/ago/2026). ATENÇÃO: linha DOADA também vem
+  // com payment_date preenchido no banco, então payment_date NUNCA é o critério
+  // sozinho — o corte de DONATED continua sendo por source_type.
+  payment_date: string | null
 }
 
 type Purchase = {
@@ -608,11 +613,15 @@ export default function InventoryPage() {
                                   ))}
                               {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
                                   linha do item — mesmo repetidos em todos os itens. DONATED
-                                  nunca ganha chip (o campo dela é origem, não pedido). */}
-                              {item.source_type !== 'DONATED' && (item.order_number || '').trim() && (
+                                  nunca ganha chip (o campo dela é origem, não pedido; e peça
+                                  doada não foi COMPRADA, então não tem status nenhum).
+                                  CASCATA do mesmo dia: "PAGOU? Bought / TEM RASTREIO? Shipped
+                                  / ENTREGOU? Delivered" — peça comprada e PAGA sempre diz o
+                                  status, mesmo sem remessa casada no STREAM. */}
+                              {item.source_type !== 'DONATED' && ((item.order_number || '').trim() || !!item.payment_date) && (
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                  <OrderChip order={(item.order_number || '').trim()} />
-                                  {(() => { const st = streamFor(streams, item.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                  {(item.order_number || '').trim() ? <OrderChip order={(item.order_number || '').trim()} /> : null}
+                                  <StreamChip st={streamFor(streams, item.order_number)} paid={!!item.payment_date} />
                                 </div>
                               )}
                             </div>

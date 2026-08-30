@@ -1067,11 +1067,20 @@ export default function ViewInvoicePage() {
                           {/* Uma data só (lei 18/ago/2026): a da expense é a do PAGAMENTO. */}
                           {!invoice.is_quote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}{exp.payment_method ? ` · ${exp.payment_method}` : ''}{(exp.paid_from || exp.paid_to) ? ` · ${exp.paid_from || 'GZ28US'} → ${exp.paid_to || 'GZ28US'}` : ''}</p>}
                           {/* ORDER NUMBER sagrado + semáforo do STREAM (join por
-                              order_number normalizado — tracking nunca mora aqui). */}
-                          {String(exp.order_number || '').trim() && (
+                              order_number normalizado — tracking nunca mora aqui).
+                              CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM
+                              RASTREIO? Shipped / ENTREGOU? Delivered". Item PAGO
+                              SEMPRE tem status — sem remessa casada ele é BOUGHT e a
+                              tela tem de dizer isso. Quem sabe do pagamento aqui é o
+                              isPaid que a própria linha já calcula (payment_date), o
+                              mesmo que pinta a linha de azul/vermelho. Linha NÃO paga
+                              não tem status: some o chip. Peça vinda do estoque DOADA
+                              (stock_source_type DONATED) não foi comprada — fica sem
+                              chip, como manda a lei anterior. */}
+                          {(String(exp.order_number || '').trim() || isPaid) && exp.stock_source_type !== 'DONATED' && (
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              <OrderChip order={String(exp.order_number || '').trim()} />
-                              {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}
+                              {String(exp.order_number || '').trim() ? <OrderChip order={String(exp.order_number || '').trim()} /> : null}
+                              <StreamChip st={streamFor(streams, exp.order_number)} paid={isPaid} />
                             </div>
                           )}
                         </div>

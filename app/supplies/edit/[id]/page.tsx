@@ -9,7 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { StreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
+import { StreamChip, hasStreamChip, loadStreamMap, streamFor, type StreamInfo } from '@/components/StreamChips'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -216,8 +216,19 @@ export default function EditInputPage() {
           <label className="block mb-2 text-lg font-bold">ORDER NUMBER</label>
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
           {/* Semáforo do STREAM ao lado do campo: informa a remessa deste pedido.
-              É leitura pura do join — o tracking continua morando SÓ no STREAM. */}
-          {(() => { const st = streamFor(streams, orderNumber); return st ? <div className="mt-2"><StreamChip st={st} /></div> : null })()}
+              É leitura pura do join — o tracking continua morando SÓ no STREAM.
+              CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM RASTREIO? Shipped
+              / ENTREGOU? Delivered". Item pago SEMPRE tem status, então o chip
+              aparece mesmo sem pedido casado no STREAM — e some se a linha não
+              estiver paga. Nesta tela "pago" é a DATA DA COMPRA: ela grava
+              payment_date como espelho da data única (Comprovante = PAGA), e sem
+              data válida os dois campos ficam vazios. DONATED nem chega aqui — o
+              bloco inteiro vive dentro do !donated. */}
+          {(() => {
+            const st = streamFor(streams, orderNumber)
+            const paid = isValidDate(purchaseDate)
+            return hasStreamChip(st, paid) ? <div className="mt-2"><StreamChip st={st} paid={paid} /></div> : null
+          })()}
         </div>
         )}
 

@@ -17,7 +17,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import { OrderChip } from '@/components/StreamChips'
+import { OrderChip, StreamChip } from '@/components/StreamChips'
 
 type InputRow = {
   id: string
@@ -116,16 +116,10 @@ function PayChip({ i }: { i: InputRow }) {
   )
 }
 
-function StreamChip({ st }: { st: StreamInfo }) {
-  const delivered = st.status === 'DELIVERED'
-  return (
-    <span className={`px-2.5 py-0.5 rounded-lg text-sm font-bold border ${delivered ? 'bg-green-950 text-green-300 border-green-800' : st.status === 'SHIPPED' ? 'bg-blue-950 text-blue-300 border-blue-800' : 'bg-gray-800 text-gray-300 border-gray-700'}`}>
-      {delivered ? `✓ DELIVERED${st.delivered_at ? ' ' + fmtDate(st.delivered_at.slice(0, 10)) : ''}`
-        : `${st.status || 'BOUGHT'}${st.eta ? ` · ETA ${fmtDate(st.eta)}` : ''}`}
-      {st.carrier ? ` · ${st.carrier}` : ''}{st.tracking_number ? ` ${st.tracking_number}` : ''}
-    </span>
-  )
-}
+// O semáforo mora no MOLDE (components/StreamChips.tsx). Esta página era a dona
+// da cópia local, e a CASCATA ditada em 29/ago/2026 — "PAGOU? Bought / TEM
+// RASTREIO? Shipped / ENTREGOU? Delivered" — tem de existir num lugar só, senão
+// uma tela diz uma coisa e a outra diz outra sobre o mesmo item.
 
 export default function InputsPage() {
   const [rows, setRows] = useState<InputRow[]>([])
@@ -689,9 +683,14 @@ export default function InputsPage() {
                       {p.items.map((item, gi) => {
                         const st = item.order_number ? streams[item.order_number] : undefined
                         // LEI 29/ago/2026: ORDER NUMBER e semáforo do STREAM SEMPRE na
-                        // linha do item (chip de order só se a linha TEM order_number;
-                        // semáforo só quando há linha de stream casada pelo pedido).
+                        // linha do item (chip de order só se a linha TEM order_number).
+                        // CASCATA do mesmo dia — "PAGOU? Bought / TEM RASTREIO? Shipped /
+                        // ENTREGOU? Delivered": o semáforo NÃO depende mais de existir
+                        // linha em part_streams. Aqui a tela sabe que a linha está paga
+                        // pelo payment_date (nesta tela ele é espelho da data da compra —
+                        // "Comprovante = PAGA"); sem ele, nenhum chip.
                         // Pagamento segue o smart placement: na linha só quando diverge.
+                        const paid = !!item.payment_date
                         const ownOrder = (item.order_number || '').trim()
                         const ownPay = item.payment_method && !commonPay
                         const rcpt = firstReceipt(item.receipt_url)
@@ -701,10 +700,10 @@ export default function InputsPage() {
                           <div className="flex-1 min-w-0 pl-5">
                             <h3 className="text-xl font-bold">{item.description}</h3>
                             <p className="text-lg text-gray-400">Qty: {item.quantity} × {formatUSD(item.unit_price)} = {formatUSD(item.quantity * item.unit_price)}</p>
-                            {(ownOrder || ownPay || st || ownRcpt) && (
+                            {(ownOrder || ownPay || paid || ownRcpt) && (
                               <div className="flex items-center gap-2 mt-2 flex-wrap">
                                 {ownOrder && <OrderChip order={ownOrder} />}
-                                {st && <StreamChip st={st} />}
+                                <StreamChip st={st} paid={paid} />
                                 {ownPay && <PayChip i={item} />}
                                 {ownRcpt && (
                                   <a href={rcpt!} target="_blank" rel="noopener noreferrer" className="px-2.5 py-0.5 rounded-lg text-sm font-bold bg-gray-800 text-blue-400 border border-gray-700 hover:text-blue-300">📎 receipt</a>

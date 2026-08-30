@@ -26,6 +26,9 @@ type Input = {
   // invoice doadora — origem, não pedido — e fica fora do chip.
   order_number?: string | null
   source_type?: string | null
+  // Já existe nas duas tabelas e já vem no select('*'): é o degrau "PAGOU?" da
+  // cascata do status (29/ago/2026).
+  payment_date?: string | null
 }
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -123,11 +126,15 @@ export default function ViewInputGroupPage() {
                     <p className="font-bold truncate" title={it.description}>{it.description}</p>
                     <p className="text-sm text-gray-400">Qty: {it.quantity} × {formatUSD(it.unit_price)} = {formatUSD((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))}</p>
                     {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
-                        linha do item — mesmo repetidos em todos. DONATED fica sem chip. */}
-                    {(it.source_type || '') !== 'DONATED' && String(it.order_number || '').trim() && (
+                        linha do item — mesmo repetidos em todos. DONATED fica sem chip
+                        (não foi comprada). CASCATA do mesmo dia: "PAGOU? Bought / TEM
+                        RASTREIO? Shipped / ENTREGOU? Delivered" — item PAGO SEMPRE tem
+                        status, mesmo sem remessa casada; quem diz que pagou é o
+                        payment_date da linha, que esta tela já traz no select('*'). */}
+                    {(it.source_type || '') !== 'DONATED' && (!!String(it.order_number || '').trim() || !!it.payment_date) && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <OrderChip order={String(it.order_number || '').trim()} />
-                        {(() => { const st = streamFor(streams, it.order_number); return st ? <StreamChip st={st} /> : null })()}
+                        {String(it.order_number || '').trim() ? <OrderChip order={String(it.order_number || '').trim()} /> : null}
+                        <StreamChip st={streamFor(streams, it.order_number)} paid={!!it.payment_date} />
                       </div>
                     )}
                     {it.notes && <p className="text-sm text-gray-500 mt-0.5">{it.notes}</p>}

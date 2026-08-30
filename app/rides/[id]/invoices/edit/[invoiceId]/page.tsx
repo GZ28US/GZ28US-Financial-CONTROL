@@ -3421,11 +3421,17 @@ export default function EditInvoicePage() {
                                       <p className={`text-sm ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && isValidDate(exp.payment_date) !== groupPaid && <p className={`text-xs font-bold ${isValidDate(exp.payment_date) ? 'text-blue-400' : 'text-red-400'}`}>{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                       {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
-                                          linha do item — repetir em todos os itens da compra é o certo. */}
-                                      {(exp.order_number || '').trim() && (
+                                          linha do item — repetir em todos os itens da compra é o certo.
+                                          CASCATA do mesmo dia: "PAGOU? Bought / TEM RASTREIO? Shipped /
+                                          ENTREGOU? Delivered". Item PAGO SEMPRE tem status: sem remessa
+                                          casada ele é BOUGHT. O "pagou" desta tela é o mesmo teste que
+                                          pinta a linha e o botão PAID/UNPAID — isValidDate(payment_date).
+                                          Linha não paga não tem status. Peça vinda do estoque DOADA não
+                                          foi comprada: continua sem chip. */}
+                                      {((exp.order_number || '').trim() || isValidDate(exp.payment_date)) && exp.stock_source_type !== 'DONATED' && (
                                         <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                          <OrderChip order={(exp.order_number || '').trim()} />
-                                          {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                          {(exp.order_number || '').trim() ? <OrderChip order={(exp.order_number || '').trim()} /> : null}
+                                          <StreamChip st={streamFor(streams, exp.order_number)} paid={isValidDate(exp.payment_date)} />
                                         </div>
                                       )}
                                       {exportStatusLine(exp, index)}
@@ -3568,11 +3574,15 @@ export default function EditInvoicePage() {
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                 {/* ORDER NUMBER sagrado + semáforo do STREAM (join por
-                                    order_number — tracking nunca se digita aqui). */}
-                                {(exp.order_number || '').trim() && (
+                                    order_number — tracking nunca se digita aqui).
+                                    CASCATA (29/ago/2026): item PAGO sempre tem status; sem
+                                    remessa casada ele é BOUGHT. Não pago, nenhum chip — e
+                                    peça DOADA vinda do estoque também não (a linha logo
+                                    abaixo é quem diz "From stock — DONATED by ..."). */}
+                                {((exp.order_number || '').trim() || isPaid) && exp.stock_source_type !== 'DONATED' && (
                                   <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                    <OrderChip order={(exp.order_number || '').trim()} />
-                                    {(() => { const st = streamFor(streams, exp.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                    {(exp.order_number || '').trim() ? <OrderChip order={(exp.order_number || '').trim()} /> : null}
+                                    <StreamChip st={streamFor(streams, exp.order_number)} paid={isPaid} />
                                   </div>
                                 )}
                                 {exportStatusLine(exp, index)}

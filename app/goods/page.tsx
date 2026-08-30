@@ -67,6 +67,9 @@ type Good = {
   // ORDER NUMBER é SAGRADO: o pedido da loja mora aqui; o tracking mora SÓ em
   // part_streams e aparece por JOIN — nunca se digita nem se grava na origem.
   order_number?: string | null
+  // Coluna que a tabela `goods` já tem e o select('*') já traz: é ela que diz se
+  // a linha está PAGA — o degrau em que a cascata do status começa (29/ago/2026).
+  payment_date?: string | null
 }
 
 type GoodWithStats = Good & {
@@ -927,11 +930,16 @@ export default function GoodsPage() {
                           <p className="text-sm text-gray-500">
                             {e.supplier || '—'} · {e.payment_date ? `pago ${e.payment_date}` : <span className="text-amber-400 font-bold">não paga</span>}
                           </p>
-                          {/* ORDER NUMBER sagrado + semáforo do STREAM (join, nunca digitado). */}
-                          {(e.order_number || '').trim() && (
+                          {/* ORDER NUMBER sagrado + semáforo do STREAM (join, nunca digitado).
+                              CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM RASTREIO?
+                              Shipped / ENTREGOU? Delivered" — despesa de carro da frota que
+                              já foi PAGA sempre diz o status, mesmo sem remessa casada. A
+                              linha acima já usa o mesmo campo pra escrever "pago"/"não paga":
+                              payment_date. Não paga = sem chip. */}
+                          {((e.order_number || '').trim() || !!e.payment_date) && (
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              <OrderChip order={(e.order_number || '').trim()} />
-                              {(() => { const st = streamFor(streams, e.order_number); return st ? <StreamChip st={st} /> : null })()}
+                              {(e.order_number || '').trim() ? <OrderChip order={(e.order_number || '').trim()} /> : null}
+                              <StreamChip st={streamFor(streams, e.order_number)} paid={!!e.payment_date} />
                             </div>
                           )}
                         </div>
@@ -1014,11 +1022,15 @@ export default function GoodsPage() {
                             {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                             <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
                             {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
-                                linha do item — mesmo repetidos em todos os itens da compra. */}
-                            {(good.order_number || '').trim() && (
+                                linha do item — mesmo repetidos em todos os itens da compra.
+                                CASCATA do mesmo dia: "PAGOU? Bought / TEM RASTREIO? Shipped /
+                                ENTREGOU? Delivered". Good pago SEMPRE tem status, com ou sem
+                                remessa; quem diz que pagou é payment_date (a tela grava esse
+                                campo como espelho da data da compra — comprada = paga). */}
+                            {((good.order_number || '').trim() || !!good.payment_date) && (
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                <OrderChip order={(good.order_number || '').trim()} />
-                                {(() => { const st = streamFor(streams, good.order_number); return st ? <StreamChip st={st} /> : null })()}
+                                {(good.order_number || '').trim() ? <OrderChip order={(good.order_number || '').trim()} /> : null}
+                                <StreamChip st={streamFor(streams, good.order_number)} paid={!!good.payment_date} />
                               </div>
                             )}
                           </div>
@@ -1044,11 +1056,13 @@ export default function GoodsPage() {
                     <p className="text-lg text-gray-400">Purchased: {formatDate(good.purchase_date)}</p>
                     {good.expensesTotal > 0 && <p className="text-lg text-gray-400">Expenses: {formatUSD(good.expensesTotal)}</p>}
                     <p className="text-lg font-bold mt-1">Total Cost: {formatUSD(good.quantity * good.unit_price + good.expensesTotal)}</p>
-                    {/* ORDER NUMBER sagrado + semáforo do STREAM (join por order_number). */}
-                    {(good.order_number || '').trim() && (
+                    {/* ORDER NUMBER sagrado + semáforo do STREAM (join por order_number).
+                        CASCATA (29/ago/2026): item PAGO sempre tem status — sem remessa
+                        casada ele é BOUGHT, e a tela tem de dizer isso. Não pago, nada. */}
+                    {((good.order_number || '').trim() || !!good.payment_date) && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <OrderChip order={(good.order_number || '').trim()} />
-                        {(() => { const st = streamFor(streams, good.order_number); return st ? <StreamChip st={st} /> : null })()}
+                        {(good.order_number || '').trim() ? <OrderChip order={(good.order_number || '').trim()} /> : null}
+                        <StreamChip st={streamFor(streams, good.order_number)} paid={!!good.payment_date} />
                       </div>
                     )}
                   </div>

@@ -23,6 +23,9 @@ type Input = {
   // o campo guarda a invoice DOADORA (origem) e por isso não vira chip de pedido.
   // Esta tela serve inputs E inventory (?src=inventory) — vale pros dois.
   order_number?: string | null
+  // Coluna que já existe nas duas tabelas e já vem no select('*'): é ela que diz
+  // se a linha está PAGA — o degrau em que a cascata do status começa.
+  payment_date?: string | null
 }
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
@@ -65,6 +68,9 @@ export default function ViewInputPage() {
 
   const totalCost = input.quantity * input.unit_price
   const donated = (input.source_type || '') === 'DONATED'
+  // O pedido desta linha e o degrau "PAGOU?" da cascata do status (29/ago/2026).
+  const ownOrder = String(input.order_number || '').trim()
+  const paidLine = !!input.payment_date
   const receiptUrls = parseReceiptUrls(input.receipt_url)
 
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
@@ -100,12 +106,18 @@ export default function ViewInputPage() {
             </div>
             {input.supplier && <div className={rowClass}><span className={labelClass}>{donated ? 'DONOR' : 'SUPPLIER'}</span><span className="font-bold">{input.supplier}</span></div>}
             {/* ORDER NUMBER + semáforo do STREAM. DONATED fica de fora: o campo
-                dela guarda a invoice doadora (origem), não um pedido de loja. */}
-            {!donated && String(input.order_number || '').trim() && (
-              <div className={rowClass}><span className={labelClass}>ORDER NUMBER</span>
+                dela guarda a invoice doadora (origem), não um pedido de loja —
+                e peça doada não foi comprada, então não tem status nenhum.
+                CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM RASTREIO?
+                Shipped / ENTREGOU? Delivered". Item PAGO SEMPRE tem status, com
+                ou sem remessa casada — por isso a linha aparece também quando só
+                há pagamento, e aí ela se chama STATUS em vez de ORDER NUMBER.
+                Quem diz que está paga é o payment_date da própria linha. */}
+            {!donated && (ownOrder || paidLine) && (
+              <div className={rowClass}><span className={labelClass}>{ownOrder ? 'ORDER NUMBER' : 'STATUS'}</span>
                 <span className="flex items-center gap-2 flex-wrap justify-end">
-                  <OrderChip order={String(input.order_number || '').trim()} />
-                  {(() => { const st = streamFor(streams, input.order_number); return st ? <StreamChip st={st} /> : null })()}
+                  {ownOrder && <OrderChip order={ownOrder} />}
+                  <StreamChip st={streamFor(streams, input.order_number)} paid={paidLine} />
                 </span>
               </div>
             )}

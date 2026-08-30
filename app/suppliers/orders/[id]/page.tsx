@@ -90,6 +90,19 @@ export default function SupplierOrdersPage() {
     return d || o.order_date || ''
   }
 
+  // ── "PAGOU?" NESTE REGISTRO (cascata de 29/ago/2026) ──────────────────────
+  // A lei do dono começa a cascata no pagamento: "PAGOU? Bought / TEM RASTREIO?
+  // Shipped / ENTREGOU? Delivered". Só que aqui a linha não é um ITEM de compra
+  // com payment_date — é o PEDIDO inteiro, e supplier_orders não tem essa
+  // coluna. O que esta tela já sabe sobre pagamento é o que ela mesma mostra no
+  // topo e no badge: paid_total (TOTAL PAID), payment_status e o registro de
+  // `payments` — onde CREDIT- é o pedido abatido do crédito de loja, que é
+  // pagamento tanto quanto dinheiro. Nada de campo novo: só o que já existe.
+  const paidOf = (o: Order) =>
+    (Number(o.paid_total) || 0) > 0 ||
+    /^(PAID|CREDIT|PARTIAL)/.test(String(o.payment_status || '').toUpperCase()) ||
+    (o.payments || []).some(p => (Number(p.amount) || 0) > 0 || p.method === 'CREDIT-')
+
   // Listing date rule (Márcio): an order enters the list on its order date;
   // once paid (money or credit), its date becomes the payment date.
   const effectiveDate = (o: Order) => {
@@ -156,8 +169,17 @@ export default function SupplierOrdersPage() {
             <div key={o.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="font-mono font-bold text-lg">{o.order_number || '—'}</span>
-                {/* Semáforo do STREAM ao lado do pedido (join por order_number). */}
-                {(() => { const st = streamFor(streams, o.order_number); return st ? <StreamChip st={st} /> : null })()}
+                {/* Semáforo do STREAM ao lado do pedido (join por order_number).
+                    CASCATA (29/ago/2026): pedido PAGO sempre diz o status — sem
+                    remessa casada ele é BOUGHT. E quando o STREAM TEM fato gravado
+                    sobre o pedido (despachado, entregue, estornado), o chip fica de
+                    pé mesmo com o registro ainda em OPEN: esta página é o RASTRO DE
+                    PAPEL do fornecedor, e esconder uma entrega real por causa de um
+                    paid_total não lançado seria apagar fato, não aplicar a lei. */}
+                {(() => {
+                  const st = streamFor(streams, o.order_number)
+                  return <StreamChip st={st} paid={!!st || paidOf(o)} />
+                })()}
                 <span className="text-gray-400">{o.order_date || 'no date'}</span>
                 {(() => { const ed = effectiveDate(o); return ed && ed !== o.order_date ? <span className="text-green-500 text-sm">→ paid {ed}</span> : null })()}
                 {o.region && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${o.region === 'BR' ? 'bg-emerald-900 text-emerald-200' : 'bg-blue-900 text-blue-200'}`}>{o.region === 'BR' ? '🇧🇷 BR · PowerTrade' : '🇺🇸 US'}</span>}
