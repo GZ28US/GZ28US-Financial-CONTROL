@@ -9,7 +9,9 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverFields, applyTrackingRule } from '@/components/DeliverChip'
+import { DeliverFields } from '@/components/DeliverChip'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry } from '@/lib/carRegistry'
 
 type Expense = {
   description: string
@@ -21,9 +23,9 @@ type Expense = {
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
   // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
   order_number: string
-  // E os 4 status valem pra TODA compra, esta inclusive (virada de chave,
-  // 29/ago/2026: "nao pode haver 1 item de compra sem estes status").
-  deliver_status: string
+  // O status não é campo desde 30/ago/2026 — é interpretação. O único fato que
+  // se guarda é este: peguei no balcão?
+  picked_up: boolean
   tracking_number: string
   carrier: string
 }
@@ -94,7 +96,7 @@ export default function NewGoodPage() {
   // o campo. E o TRACKING também, desde a virada de chave do mesmo dia — ele
   // deixou de morar em part_streams e virou coluna da linha do item comprado.
   const [orderNumber, setOrderNumber] = useState('')
-  const [deliverStatus, setDeliverStatus] = useState('')
+  const [pickedUp, setPickedUp] = useState(false)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   // Universal payment block — PAID FROM here also feeds the legacy `source` column.
@@ -103,9 +105,9 @@ export default function NewGoodPage() {
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
@@ -121,6 +123,18 @@ export default function NewGoodPage() {
   }
 
   async function ensureSupplier(name: string) {
+    // GUARDA DO FORNECEDOR (Márcio, 30/ago/2026): "os carros, mesmo aparecendo
+    // como SUPPLIER nas expenses quando doaram algo, JAMAIS podem ser cadastrados
+    // como supplier no banco. Nao permita que isso aconteca, sem poluir o banco."
+    // O nome do carro CONTINUA no campo supplier da linha da expense — lá é o
+    // lugar dele, é o doador. Só o CADASTRO é que não o recebe. Sai calado: não
+    // é erro do usuário, é higiene do banco.
+    // A guarda conhece o carro pelo CÓDIGO sozinha; para reconhecê-lo pelo NOME
+    // COMERCIAL ("Dodge Charger Presidiário", que vazou pro banco BR em
+    // 21/jun/2026) ela precisa da lista de rides. Uma leitura por sessão, em
+    // cache — e se falhar, a guarda do código continua de pé.
+    await primeCarRegistry(supabase)
+    if (!supplierNameForRegistry(name)) return
     if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
     void mirrorEnsureSupplier(name.trim())
@@ -181,7 +195,7 @@ export default function NewGoodPage() {
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   }
 
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
@@ -189,9 +203,9 @@ export default function NewGoodPage() {
   function saveEditExpense() {
     if (!editingExpense.description || !editingExpense.amount) { alert('Please enter description and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
@@ -207,8 +221,10 @@ export default function NewGoodPage() {
       supplier: supplier.trim() || null,
       // ORDER NUMBER sagrado: o pedido entra junto com a compra manual.
       order_number: orderNumber.trim() || null,
-      // A cascata começa no "pagou": sem data válida a linha não recebe status.
-      deliver_status: isValidDate(purchaseDate) ? (applyTrackingRule(deliverStatus, tracking) || null) : null,
+      // O ÚNICO campo da cascata que se grava (30/ago/2026). Sem data válida a
+      // linha continua sem badge — mas quem decide isso é a DERIVAÇÃO lendo
+      // payment_date, não um NULL escrito aqui.
+      picked_up: pickedUp,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
@@ -229,7 +245,7 @@ export default function NewGoodPage() {
         // A despesa extra carrega o número do SEU pedido (pode divergir do good)
         // — e o SEU próprio status de entrega, pela mesma razão.
         order_number: ex.order_number.trim() || null,
-        deliver_status: isValidDate(ex.expense_date) ? (applyTrackingRule(ex.deliver_status, ex.tracking_number) || null) : null,
+        picked_up: ex.picked_up,
         tracking_number: ex.tracking_number.trim() || null,
         carrier: ex.carrier.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
@@ -386,12 +402,13 @@ export default function NewGoodPage() {
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
         </div>
 
-        {/* DELIVER STATUS / TRACKING / CARRIER — o rastreio agora VIVE aqui, na
-            origem do item (virada de chave, 29/ago/2026). PICKUP à mão = peguei
-            no balcão, e o app não rastreia essa linha. */}
+        {/* PICKED UP / TRACKING / CARRIER — o rastreio VIVE aqui, na origem do
+            item. Marcar "peguei na loja" é o único status que se digita; o app
+            não rastreia linha de balcão. Digitar rastreio sobe o badge para
+            SHIPPED sozinho, sem gravar status nenhum (30/ago/2026). */}
         <div>
-          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
-            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
+          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
         <div className="flex gap-4">
@@ -468,8 +485,8 @@ export default function NewGoodPage() {
               <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
               <input type="text" value={newExpense.order_number} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
             </div>
-            <DeliverFields size="sm" status={newExpense.deliver_status} tracking={newExpense.tracking_number} carrier={newExpense.carrier}
-              onStatus={(v) => setNewExpense({ ...newExpense, deliver_status: v })}
+            <DeliverFields size="sm" pickedUp={newExpense.picked_up} tracking={newExpense.tracking_number} carrier={newExpense.carrier}
+              onPickedUp={(v) => setNewExpense({ ...newExpense, picked_up: v })}
               onTracking={(v) => setNewExpense({ ...newExpense, tracking_number: v })}
               onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
             <div>
@@ -504,8 +521,8 @@ export default function NewGoodPage() {
                           <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
                           <input type="text" value={editingExpense.order_number} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
                         </div>
-                        <DeliverFields size="sm" status={editingExpense.deliver_status} tracking={editingExpense.tracking_number} carrier={editingExpense.carrier}
-                          onStatus={(v) => setEditingExpense({ ...editingExpense, deliver_status: v })}
+                        <DeliverFields size="sm" pickedUp={editingExpense.picked_up} tracking={editingExpense.tracking_number} carrier={editingExpense.carrier}
+                          onPickedUp={(v) => setEditingExpense({ ...editingExpense, picked_up: v })}
                           onTracking={(v) => setEditingExpense({ ...editingExpense, tracking_number: v })}
                           onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                         <div>

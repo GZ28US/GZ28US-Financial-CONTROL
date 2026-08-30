@@ -17,14 +17,15 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
-import { deliverStatusFromScan } from '@/lib/deliverStatus'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
+import { pickedUpFromScan } from '@/lib/deliverStatus'
 
-// DeliverRow: deliver_status/tracking_number/carrier/eta/... são colunas DESTA
-// tabela (inputs) desde a virada de chave de 29/ago/2026 — "o tracking, carrier
-// e o que quer que seja necessario pra rastrear agora vive como coluna nova da
-// tabela dos itens comprados, na origem". O select('*') abaixo já as traz.
-type InputRow = DeliverRow & {
+// DeliverChipRow: picked_up/tracking_number/carrier/eta/... são colunas DESTA tabela
+// (inputs). Repare no que NÃO está mais na lista: deliver_status. Desde
+// 30/ago/2026 o status não é campo, é interpretação — a tela lê estas colunas e
+// chama deriveDeliverStatus. O select('*') abaixo traz tudo, payment_date e
+// source_type inclusive, que são o degrau 1 da cascata.
+type InputRow = DeliverChipRow & {
   id: string
   description: string
   category: string
@@ -110,9 +111,10 @@ function PayChip({ i }: { i: InputRow }) {
   )
 }
 
-// O semáforo mora no MOLDE (components/DeliverChip.tsx) — esta página era a dona
-// da cópia local, e os 4 status têm de existir num lugar só, senão uma tela diz
-// uma coisa e a outra diz outra sobre o mesmo item. E o join com part_streams
+// O semáforo mora no MOLDE (components/DeliverChip.tsx), e a REGRA dele em
+// lib/deliverStatus.ts — um lugar só. Esta página já foi dona de uma cópia local
+// da regra; era assim que uma tela dizia uma coisa e a outra dizia outra sobre o
+// mesmo item. Agora ninguém mais calcula status em lugar nenhum. E o join com part_streams
 // que nascia AQUI morreu na virada de chave: "esqueca o stream... NAO USE NADA
 // DO STREAM, nada" (Márcio, 29/ago/2026).
 
@@ -140,7 +142,8 @@ export default function InputsPage() {
     // ORDER NUMBER é SAGRADO (29/ago/2026): o scan lê e a compra grava.
     orderNumber: string
     // O QUE O DOCUMENTO DIZ SOBRE A ENTREGA: endereço de entrega, rastreio e
-    // transportadora lidos do papel. Não são colunas — decidem o deliver_status.
+    // transportadora lidos do papel. shipTo NÃO é coluna — ele decide o picked_up
+    // ("se nao teve endereco, e PickUp"). Rastreio e carrier, esses são colunas.
     shipTo: string
     trackingNumber: string
     carrier: string
@@ -344,10 +347,12 @@ export default function InputsPage() {
         supplier: scanned.supplier || null,
         // ORDER NUMBER sagrado: o scan grava o pedido lido.
         order_number: scanned.orderNumber || null,
-        // DELIVER STATUS pelo DOCUMENTO (Márcio, 29/ago/2026): a nota do mercado
-        // não tem endereço de entrega ⇒ PICKUP ("Comprei uma coca-cola no Wawa?
-        // PickUp!"). Com endereço ⇒ BOUGHT; com rastreio impresso ⇒ SHIPPED.
-        deliver_status: deliverStatusFromScan({ supplier: scanned.supplier, shipTo: scanned.shipTo, tracking: scanned.trackingNumber }),
+        // PICKED UP pelo DOCUMENTO (Márcio, 30/ago/2026): "Se teve endereco de
+        // entrega no escaneamento da compra, e Bought; se nao teve, e PickUp." A
+        // nota do mercado não traz endereço ⇒ picked_up. Loja online nunca é
+        // picked_up, nem sem endereço — não tem balcão. Status nenhum é gravado:
+        // BOUGHT/SHIPPED/DELIVERED saem do rastreio e da entrega, sozinhos.
+        picked_up: pickedUpFromScan({ supplier: scanned.supplier, shipTo: scanned.shipTo }),
         tracking_number: scanned.trackingNumber || null,
         carrier: scanned.carrier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
@@ -670,10 +675,11 @@ export default function InputsPage() {
                   {isExpanded && (
                     <div className="border-t border-gray-800">
                       {p.items.map((item, gi) => {
-                        // LEI 29/ago/2026: ORDER NUMBER e DELIVER STATUS SEMPRE na linha
+                        // LEI 29/ago/2026: ORDER NUMBER e BADGE DE ENTREGA SEMPRE na linha
                         // do item (chip de order só se a linha TEM order_number). Os dois
-                        // vêm da PRÓPRIA LINHA — quem não foi pago, ou foi doado, está com
-                        // deliver_status NULL no banco e simplesmente não acende chip.
+                        // vêm da PRÓPRIA LINHA — e quem não foi pago, ou foi doado, não
+                        // acende badge porque a DERIVAÇÃO corta no degrau 1, não porque
+                        // alguém gravou NULL num campo (30/ago/2026).
                         // Pagamento segue o smart placement: na linha só quando diverge.
                         const paid = !!item.payment_date
                         const ownOrder = (item.order_number || '').trim()

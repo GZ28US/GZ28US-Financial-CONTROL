@@ -14,8 +14,10 @@ import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { mirrorBrShoppingInvoice, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, methodsFor } from '@/components/PaymentFields'
-import { OrderChip, DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip } from '@/components/DeliverChip'
-import { deliverStatusFromScan } from '@/lib/deliverStatus'
+import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
+import { pickedUpFromScan } from '@/lib/deliverStatus'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry } from '@/lib/carRegistry'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
@@ -29,7 +31,7 @@ type Note = { id?: string; note: string }
 // and donor here so that if it gets sent back via SEND TO -> STOCK later, it
 // returns to stock with its original origin intact (never re-labeled by the
 // intermediate car).
-type Expense = {
+type Expense = DeliverChipRow & {
   id?: string
   supplier: string
   item: string
@@ -63,14 +65,33 @@ type Expense = {
   // ORDER NUMBER é SAGRADO (lei 29/ago/2026): o número do pedido na loja é dado
   // da COMPRA (não do dinheiro) e vive aqui na origem.
   order_number?: string
-  // E O RASTREIO TAMBÉM (virada de chave, 29/ago/2026): "o tracking, carrier e o
-  // que quer que seja necessario pra rastrear agora vive como coluna nova da
-  // tabela dos itens comprados, na origem". São colunas de invoice_expenses —
-  // aqui elas viajam como string de formulário e voltam pro banco no SAVE.
-  deliver_status?: string
-  tracking_number?: string
-  carrier?: string
+  // E O RASTREIO TAMBÉM: "o tracking, carrier e o que quer que seja necessario
+  // pra rastrear agora vive como coluna nova da tabela dos itens comprados, na
+  // origem". São colunas de invoice_expenses — aqui viajam como campo de
+  // formulário e voltam pro banco no SAVE.
+  // O STATUS NÃO ESTÁ AQUI, e é de propósito (30/ago/2026): ele é derivado, não
+  // digitado. O único fato que o formulário guarda (e grava) é picked_up.
+  //
+  // O BLOCO DE ENTREGA VEM DO DeliverChipRow acima, e não mais de uma lista à
+  // mão: picked_up, tracking_number, carrier, ETA, DELIVERED_AT e LAST_EVENT.
+  // Os três últimos NÃO se digitam — são do robô do rastreio — mas TÊM de
+  // viajar no objeto do formulário, senão o chip desta tela perde o degrau
+  // DELIVERED e mente SHIPPED numa peça que já chegou (era o que acontecia em
+  // 80 linhas de invoice_expenses aqui no US). Quem escreve não pode esquecer:
+  // o compilador cobra.
 }
+// ── O BLOCO DE ENTREGA DE UMA LINHA QUE ACABOU DE NASCER ────────────────────
+// Linha nova não tem viagem: não foi pega no balcão, não tem rastreio, não tem
+// ETA, não chegou e não tem evento. Isso se escreve UMA vez e se espalha com
+// spread — foi juntar campo a campo, em cada literal, que deixou delivered_at
+// cair fora e o chip mentir SHIPPED numa peça entregue.
+//
+// O Pick<Expense, ...> é de propósito: se amanhã nascer um sexto campo de
+// entrega, ESTE objeto para de compilar e alguém tem de responder por ele.
+const FRESH_DELIVERY: Pick<Expense, 'picked_up' | 'tracking_number' | 'carrier' | 'eta' | 'delivered_at' | 'last_event'> = {
+  picked_up: false, tracking_number: '', carrier: '', eta: null, delivered_at: null, last_event: null,
+}
+
 type StockItem = {
   id: string
   description: string
@@ -303,9 +324,9 @@ export default function EditInvoicePage() {
   useEffect(() => {
     supabase.from('parts_database').select('item, part_number, unit_price, map_price, part_discount, weight_lbs, currency').neq('currency', 'BRL').limit(3000).then(({ data }) => setDbRef(data || []))
   }, [])
-  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY })
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showStockModal, setShowStockModal] = useState(false)
@@ -315,8 +336,8 @@ export default function EditInvoicePage() {
   const [stockTarget, setStockTarget] = useState<'new' | number>('new')
   const [scanningPurchase, setScanningPurchase] = useState(false)
   // ship_to / tracking_number / carrier: o que o DOCUMENTO diz sobre a entrega
-  // (Márcio, 29/ago/2026 — a regra do Walmart). Não são colunas: alimentam o
-  // deliver_status de cada linha na hora do confirm.
+  // (a regra do Walmart). ship_to NÃO é coluna — alimenta o picked_up de cada
+  // linha na hora do confirm (30/ago/2026).
   const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; order_number?: string; ship_to?: string; tracking_number?: string; carrier?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
   // NÃO EXISTE MAIS "FOLLOW ON STREAM?": a pergunta e a inscrição em
   // part_streams morreram na virada de chave de 29/ago/2026 ("esqueca o stream,
@@ -531,10 +552,19 @@ export default function EditInvoicePage() {
         paid_from: e.paid_from || e.source || '',
         paid_to: e.paid_to || 'GZ28US',
         order_number: e.order_number || '',
-        // Rastreio da PRÓPRIA LINHA — não há mais join com part_streams.
-        deliver_status: e.deliver_status || '',
+        // Rastreio da PRÓPRIA LINHA — não há mais join com part_streams. E não
+        // se carrega status nenhum: ele não existe mais como campo.
+        picked_up: !!e.picked_up,
         tracking_number: e.tracking_number || '',
         carrier: e.carrier || '',
+        // O QUE FALTAVA (bug de 30/ago/2026): estes três NÃO se digitam — são do
+        // robô do rastreio — mas SEM eles no objeto do formulário a cascata
+        // perdia o degrau DELIVERED e o chip desta tela dizia SHIPPED em peça
+        // já entregue (80 linhas de invoice_expenses só aqui no US). eta e
+        // last_event alimentam o "ETA ..." e o tooltip do último evento.
+        delivered_at: e.delivered_at || null,
+        eta: e.eta || null,
+        last_event: e.last_event || null,
       })))
       if (!keepUi) setExpandedGroups(new Set())
     }
@@ -707,6 +737,7 @@ export default function EditInvoicePage() {
       amount: String(amount ?? 0), tax: String(tax), extra: String(extra), quantity: String(quantity || 1),
       expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: normalizeItemDiscount(String(supplier || ''), String(it?.part_discount ?? 0)),
       source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US',
+      ...FRESH_DELIVERY,
     }
   }
   // Insert a parts-database item as a fresh, unpaid expense. A KIT expands into a
@@ -808,6 +839,10 @@ export default function EditInvoicePage() {
       // não se perde no caminho. DOADA não: o order_number dela é a invoice
       // doadora (origem), nunca um pedido de loja.
       order_number: item.source_type === 'DONATED' ? '' : (item.order_number || ''),
+      // Peça de estoque não acende badge (supplier 'STOCK' é corte do degrau 1),
+      // mas o bloco de entrega vai completo mesmo assim: objeto pela metade é
+      // exatamente o que produziu o bug.
+      ...FRESH_DELIVERY,
     }
     if (stockTarget === 'new') {
       setExpenses(prev => [...prev, expense])
@@ -1024,14 +1059,17 @@ export default function EditInvoicePage() {
       // clique SKIP no diálogo do STREAM logo adiante. O SKIP é sobre o
       // rastreio (seguir ou não a remessa no quadro), nunca sobre o campo.
       order_number: scannedPurchase.order_number || '',
-      // DELIVER STATUS pelo DOCUMENTO (lei de 29/ago/2026 sobre o Walmart): sem
-      // endereço de entrega numa loja de balcão a compra é PICKUP; com endereço
-      // é BOUGHT; e se a nota já trouxe rastreio, SHIPPED. Amazon & cia nunca
-      // viram PICKUP. Linha escaneada entra sempre PAGA, então ela SEMPRE tem
-      // status — "nao pode haver 1 item de compra sem estes status".
-      deliver_status: deliverStatusFromScan({ supplier: scannedPurchase.supplier, shipTo: scannedPurchase.ship_to, tracking: scannedPurchase.tracking_number }),
+      // PICKED UP pelo DOCUMENTO (Márcio, 30/ago/2026): "Se teve endereco de
+      // entrega no escaneamento da compra, e Bought; se nao teve, e PickUp."
+      // Amazon & cia nunca são picked_up — loja online não tem balcão. Se a nota
+      // trouxe rastreio, o badge vira SHIPPED sozinho, por derivação.
+      picked_up: pickedUpFromScan({ supplier: scannedPurchase.supplier, shipTo: scannedPurchase.ship_to }),
       tracking_number: scannedPurchase.tracking_number || '',
       carrier: scannedPurchase.carrier || '',
+      // A nota que acabou de ser escaneada é uma COMPRA, não uma entrega: quem
+      // marca chegada é o robô do rastreio, nunca o scan. Dizer null aqui é uma
+      // AFIRMAÇÃO ("ainda não chegou"), e é o que mantém o badge honesto.
+      eta: null, delivered_at: null, last_event: null,
     }))
     // Override: an official purchase replaces the matching quote estimate. Match by
     // part number (or item name when a line has no PN); drop those lines before adding
@@ -1184,9 +1222,10 @@ export default function EditInvoicePage() {
         // de origem — o pedido viaja com a peça; o "From US.xxx" segue no notes.
         order_number: camFromDonated ? invoiceCode : ((exp.order_number || '').trim() || null),
         // O RASTREIO VIAJA COM A PEÇA: mandar a peça pro estoque não a faz chegar
-        // de novo — ela leva o status e o rastreio que já tinha. Doada não é
-        // compra e continua sem status nenhum.
-        deliver_status: camFromDonated ? null : (exp.deliver_status || null),
+        // de novo — ela leva o rastreio que já tinha, e o badge se refaz sozinho
+        // (o rastreador reencontra a entrega pelo mesmo número). Doada não é
+        // compra: a derivação a corta pelo source_type.
+        picked_up: camFromDonated ? false : !!exp.picked_up,
         tracking_number: camFromDonated ? null : ((exp.tracking_number || '').trim() || null),
         carrier: camFromDonated ? null : ((exp.carrier || '').trim() || null),
         notes: note,
@@ -1205,7 +1244,7 @@ export default function EditInvoicePage() {
         // ORDER NUMBER sagrado (29/ago/2026): peça comprada que vira ASSET leva
         // o pedido REAL da expense de origem junto — e o RASTREIO junto com ele.
         order_number: (exp.order_number || '').trim() || null,
-        deliver_status: exp.deliver_status || null,
+        picked_up: !!exp.picked_up,
         tracking_number: (exp.tracking_number || '').trim() || null,
         carrier: (exp.carrier || '').trim() || null,
       }])
@@ -2047,6 +2086,17 @@ export default function EditInvoicePage() {
   // optional — an empty value is left as-is. Mirrored into the BR suppliers table.
   async function ensureSupplier(name: string) {
     const n = (name || '').trim()
+    // GUARDA DO FORNECEDOR (Márcio, 30/ago/2026): "os carros, mesmo aparecendo
+    // como SUPPLIER nas expenses quando doaram algo, JAMAIS podem ser cadastrados
+    // como supplier no banco. Nao permita que isso aconteca, sem poluir o banco."
+    // O carro CONTINUA no campo supplier da linha da expense (é o doador); o que
+    // não pode é virar linha na tabela suppliers.
+    // A guarda conhece o carro pelo CÓDIGO sozinha; para reconhecê-lo pelo NOME
+    // COMERCIAL ("Dodge Charger Presidiário", que vazou pro banco BR em
+    // 21/jun/2026) ela precisa da lista de rides. Uma leitura por sessão, em
+    // cache — e se falhar, a guarda do código continua de pé.
+    await primeCarRegistry(supabase)
+    if (!supplierNameForRegistry(n)) return
     if (!n || supplierKnown(n)) return
     await supabase.from('suppliers').upsert([{ name: n }], { onConflict: 'name' })
     void mirrorEnsureSupplier(n)
@@ -2064,7 +2114,7 @@ export default function EditInvoicePage() {
       row.expense_date = row.payment_date // espelho: a única data é a do pagamento
       row.item_discount = normalizeItemDiscount(row.supplier, row.item_discount)
     }
-    setExpenses([...expenses, row]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+    setExpenses([...expenses, row]); setNewExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY })
   }
   function removeExpense(index: number) {
     const exp = expenses[index]
@@ -2096,9 +2146,10 @@ export default function EditInvoicePage() {
         paid_to: editingExpense.paid_to || 'GZ28US',
         // ORDER NUMBER sagrado: a edição da linha persiste o pedido também.
         order_number: (editingExpense.order_number || '').trim() || null,
-        // DELIVER STATUS / TRACKING / CARRIER: colunas desta linha (virada de
-        // chave 29/ago/2026). Linha não paga não entra na cascata → NULL.
-        deliver_status: isValidDate(editingExpense.payment_date) ? (applyTrackingRule(editingExpense.deliver_status, editingExpense.tracking_number) || null) : null,
+        // PICKED UP / TRACKING / CARRIER: colunas desta linha. Linha não paga
+        // continua sem badge — quem corta é a derivação lendo payment_date, não
+        // um NULL escrito aqui (30/ago/2026).
+        picked_up: !!editingExpense.picked_up,
         tracking_number: (editingExpense.tracking_number || '').trim() || null,
         carrier: (editingExpense.carrier || '').trim() || null,
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
@@ -2109,9 +2160,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', deliver_status: '', tracking_number: '', carrier: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY }) }
 
   // Before a quote converts to an invoice, archive its full content exactly as
   // currently stored (invoice row + line items, payments, notes) into
@@ -2377,10 +2428,10 @@ export default function EditInvoicePage() {
         // ORDER NUMBER é SAGRADO (29/ago/2026): toda linha nova persiste o
         // pedido — venha do scan (grupo inteiro), do form manual ou do stock.
         order_number: (ex.order_number || '').trim() || null,
-        // O RASTREIO mora na linha desde a virada de chave. Sem pagamento não há
-        // status (a cascata começa no "pagou"), e peça DOADA vinda do estoque
-        // não é compra — nos dois casos o banco recebe NULL.
-        deliver_status: isValidDate(ex.payment_date) && ex.stock_source_type !== 'DONATED' ? (applyTrackingRule(ex.deliver_status, ex.tracking_number) || null) : null,
+        // O RASTREIO mora na linha. Sem pagamento e peça DOADA vinda do estoque
+        // continuam sem badge — a derivação corta pelos dois (payment_date e
+        // stock_source_type). Aqui só se grava o fato do balcão.
+        picked_up: !!ex.picked_up,
         tracking_number: (ex.tracking_number || '').trim() || null,
         carrier: (ex.carrier || '').trim() || null,
         position: expenses.indexOf(ex),
@@ -3241,11 +3292,11 @@ export default function EditInvoicePage() {
                 <label className="block mb-1 text-xs text-gray-400">ORDER NUMBER</label>
                 <input type="text" placeholder="e.g. 2000149-80525197" value={newExpense.order_number || ''} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} className={smallInputClass + ' w-full'} />
               </div>
-              {/* DELIVER STATUS / TRACKING / CARRIER na mesma fileira da COMPRA:
-                  são dados do item comprado, não do dinheiro. PICKUP escolhido à
-                  mão é o que diz "peguei no balcão, não rastreie". */}
-              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" status={newExpense.deliver_status || ''} tracking={newExpense.tracking_number || ''} carrier={newExpense.carrier || ''}
-                onStatus={(v) => setNewExpense({ ...newExpense, deliver_status: v })}
+              {/* PICKED UP / TRACKING / CARRIER na mesma fileira da COMPRA: são
+                  dados do item comprado, não do dinheiro. Marcar "peguei na loja"
+                  é o que diz "não rastreie esta linha". */}
+              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" pickedUp={!!newExpense.picked_up} tracking={newExpense.tracking_number || ''} carrier={newExpense.carrier || ''}
+                onPickedUp={(v) => setNewExpense({ ...newExpense, picked_up: v })}
                 onTracking={(v) => setNewExpense({ ...newExpense, tracking_number: v })}
                 onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
               <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
@@ -3421,14 +3472,12 @@ export default function EditInvoicePage() {
                                       {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                       <p className={`text-sm ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && isValidDate(exp.payment_date) !== groupPaid && <p className={`text-xs font-bold ${isValidDate(exp.payment_date) ? 'text-blue-400' : 'text-red-400'}`}>{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
-                                      {/* LEI 29/ago/2026: chip do pedido + semáforo do STREAM SEMPRE na
+                                      {/* LEI 29/ago/2026: chip do pedido + badge de entrega SEMPRE na
                                           linha do item — repetir em todos os itens da compra é o certo.
-                                          CASCATA do mesmo dia: "PAGOU? Bought / TEM RASTREIO? Shipped /
-                                          ENTREGOU? Delivered". Item PAGO SEMPRE tem status: sem remessa
-                                          casada ele é BOUGHT. O "pagou" desta tela é o mesmo teste que
-                                          pinta a linha e o botão PAID/UNPAID — isValidDate(payment_date).
-                                          Linha não paga não tem status. Peça vinda do estoque DOADA não
-                                          foi comprada: continua sem chip. */}
+                                          A CASCATA (30/ago/2026) é LIDA, não gravada: peguei no balcão?
+                                          PICKUP / entregou? DELIVERED / tem rastreio? SHIPPED / pagou?
+                                          BOUGHT. Linha não paga e peça DOADA vinda do estoque não
+                                          acendem — a derivação as corta no degrau 1. */}
                                       {((exp.order_number || '').trim() || hasDeliverChip(exp)) && exp.stock_source_type !== 'DONATED' && (
                                         <div className="flex items-center gap-2 mt-1 flex-wrap">
                                           {(exp.order_number || '').trim() ? <OrderChip order={(exp.order_number || '').trim()} /> : null}
@@ -3478,9 +3527,9 @@ export default function EditInvoicePage() {
                                 <label className="block mb-1 text-xs text-gray-400">ORDER NUMBER</label>
                                 <input type="text" placeholder="e.g. 2000149-80525197" value={editingExpense.order_number || ''} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} className={smallInputClass + ' w-full'} />
                               </div>
-                              {/* DELIVER STATUS / TRACKING / CARRIER da linha em edição. */}
-                              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" status={editingExpense.deliver_status || ''} tracking={editingExpense.tracking_number || ''} carrier={editingExpense.carrier || ''}
-                                onStatus={(v) => setEditingExpense({ ...editingExpense, deliver_status: v })}
+                              {/* PICKED UP / TRACKING / CARRIER da linha em edição. */}
+                              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" pickedUp={!!editingExpense.picked_up} tracking={editingExpense.tracking_number || ''} carrier={editingExpense.carrier || ''}
+                                onPickedUp={(v) => setEditingExpense({ ...editingExpense, picked_up: v })}
                                 onTracking={(v) => setEditingExpense({ ...editingExpense, tracking_number: v })}
                                 onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                               <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
@@ -3579,11 +3628,10 @@ export default function EditInvoicePage() {
                                 {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
                                 <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
-                                {/* ORDER NUMBER sagrado + DELIVER STATUS — os dois lidos da
-                                    PRÓPRIA linha (virada de chave, 29/ago/2026). Linha não
-                                    paga está com deliver_status NULL no banco e não acende;
-                                    peça DOADA vinda do estoque também não (a linha logo
-                                    abaixo é quem diz "From stock — DONATED by ..."). */}
+                                {/* ORDER NUMBER sagrado + BADGE DE ENTREGA — os dois lidos da
+                                    PRÓPRIA linha. Linha não paga não acende porque a derivação
+                                    começa no "pagou"; peça DOADA vinda do estoque também não.
+                                    Nenhum status é lido do banco: não existe mais. */}
                                 {((exp.order_number || '').trim() || hasDeliverChip(exp)) && exp.stock_source_type !== 'DONATED' && (
                                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                                     {(exp.order_number || '').trim() ? <OrderChip order={(exp.order_number || '').trim()} /> : null}

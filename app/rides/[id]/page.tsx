@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
-import { OrderChip, DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, DELIVER_COLUMNS, type DeliverChipRow } from '@/components/DeliverChip'
 
 type Ride = {
   id: string
@@ -66,7 +66,13 @@ type Invoice = {
 // DESPESA DO CARRO DA FROTA (Márcio, 27/ago/2026). Vive em invoice_expenses,
 // como sempre viveu — o carro do FLEET não mostra invoice na tela, mas é lá que
 // o gasto dele mora, e é de lá que o card do ASSETS lê. Nenhuma tabela nova.
-type FleetExp = {
+// O RASTREIO NÃO SE REDIGITA AQUI. DeliverChipRow traz o bloco inteiro
+// (picked_up, tracking_number, carrier, eta, delivered_at, last_event,
+// payment_date) e o compilador cobra que o select o traga por inteiro. A lista
+// à mão que existia aqui esquecia eta e last_event: o badge saía sem o
+// "ETA ..." e sem o tooltip do último evento — mesmo defeito de formato que
+// apagava o DELIVERED nas telas de edição.
+type FleetExp = DeliverChipRow & {
   id: string; item: string | null; supplier: string | null
   price: number; quantity: number; tax: number; extra: number; item_discount: number
   expense_date: string | null; payment_date: string | null
@@ -75,13 +81,13 @@ type FleetExp = {
   // dia — "o tracking, carrier e o que quer que seja necessario pra rastrear
   // agora vive como coluna nova da tabela dos itens comprados, na origem".
   order_number: string | null
-  deliver_status: string | null
-  tracking_number: string | null
-  carrier: string | null
+  // Degrau 1 da cascata: peça DOADA vinda do estoque não foi comprada e não
+  // acende badge. Vem no select de propósito — sem ela a derivação não veria.
+  stock_source_type: string | null
 }
 const expLine = (e: FleetExp) =>
   (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
-const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', deliverStatus: '', tracking: '', carrier: '' }
+const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, tracking: '', carrier: '' }
 
 type Stats = {
   currentProfit: number
@@ -215,9 +221,11 @@ export default function ViewRidePage() {
   async function loadFleetExps(invoiceIds: string[]) {
     const { data } = await supabase
       .from('invoice_expenses')
-      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number, deliver_status, tracking_number, carrier')
+      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number, stock_source_type, ' + DELIVER_COLUMNS)
       .in('invoice_id', invoiceIds)
-    const list = (data || []) as FleetExp[]
+    // O select monta a lista de colunas concatenando DELIVER_COLUMNS, e aí o
+    // supabase-js perde a inferência da linha — daí o unknown no meio.
+    const list = (data || []) as unknown as FleetExp[]
     list.sort((a, b) => String(b.payment_date || b.expense_date || '').localeCompare(String(a.payment_date || a.expense_date || '')))
     setFleetExps(list)
   }
@@ -238,9 +246,10 @@ export default function ViewRidePage() {
       payment_date: expForm.paid ? d : null,
       // ORDER NUMBER sagrado: o form da frota registra o pedido junto.
       order_number: expForm.orderNumber.trim() || null,
-      // A cascata começa no "pagou": despesa não paga fica sem status (NULL).
-      // Rastreio digitado sobe BOUGHT→SHIPPED sozinho.
-      deliver_status: expForm.paid && d ? (applyTrackingRule(expForm.deliverStatus, expForm.tracking) || null) : null,
+      // O ÚNICO campo da cascata que se grava. Despesa não paga continua sem
+      // badge — quem corta é a derivação, lendo payment_date. Rastreio digitado
+      // sobe para SHIPPED sozinho, sem status nenhum ser escrito.
+      picked_up: expForm.pickedUp,
       tracking_number: expForm.tracking.trim() || null,
       carrier: expForm.carrier.trim() || null,
     }
@@ -540,12 +549,12 @@ export default function ViewRidePage() {
                     <label className="block mb-2 text-sm text-gray-400">ORDER NUMBER</label>
                     <input value={expForm.orderNumber} onChange={(e) => setExpForm({ ...expForm, orderNumber: e.target.value })} placeholder="e.g. 2000149-80525197" className="w-full bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                   </div>
-                  {/* DELIVER STATUS / TRACKING / CARRIER — os 4 status valem pra TODA
-                      compra ("nao pode haver 1 item de compra sem estes status"),
-                      e é o PICKUP que diz ao app para não rastrear a linha. */}
+                  {/* PICKED UP / TRACKING / CARRIER — marcar "peguei na loja" é o
+                      único status que se digita, e é ele que diz ao app para não
+                      rastrear a linha (30/ago/2026). */}
                   <div className="sm:col-span-2">
-                    <DeliverFields size="sm" status={expForm.deliverStatus} tracking={expForm.tracking} carrier={expForm.carrier}
-                      onStatus={(v) => setExpForm({ ...expForm, deliverStatus: v })}
+                    <DeliverFields size="sm" pickedUp={expForm.pickedUp} tracking={expForm.tracking} carrier={expForm.carrier}
+                      onPickedUp={(v) => setExpForm({ ...expForm, pickedUp: v })}
                       onTracking={(v) => setExpForm({ ...expForm, tracking: v })}
                       onCarrier={(v) => setExpForm({ ...expForm, carrier: v })} />
                   </div>
@@ -584,8 +593,9 @@ export default function ViewRidePage() {
                       <p className="text-sm text-gray-500">
                         {e.supplier || '—'} · {e.payment_date ? `pago ${formatDate(e.payment_date)}` : <span className="text-amber-400 font-bold">não paga</span>}
                       </p>
-                      {/* DELIVER STATUS na LINHA da despesa (lei 29/ago/2026: o badge
-                          é do ITEM, nunca do título da compra), lido da própria linha. */}
+                      {/* BADGE DE ENTREGA na LINHA da despesa (lei 29/ago/2026: o badge
+                          é do ITEM, nunca do título da compra), DERIVADO da própria
+                          linha — nenhum status é lido do banco (30/ago/2026). */}
                       {(String(e.order_number || '').trim() || hasDeliverChip(e)) && (
                         <div className="flex items-center gap-2 mt-1 flex-wrap">
                           {String(e.order_number || '').trim() ? <OrderChip order={String(e.order_number || '').trim()} /> : null}
@@ -602,7 +612,7 @@ export default function ViewRidePage() {
                         </>
                       ) : (
                         <>
-                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', deliverStatus: e.deliver_status || '', tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => setConfirmExpId(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </>
                       )}

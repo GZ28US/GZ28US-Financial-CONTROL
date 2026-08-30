@@ -305,14 +305,15 @@ Rules:
           source: parsed.source || '',
           // Store order/confirmation number.
           order_number: String(parsed.order_number || '').trim(),
-          // ── O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 29/ago/2026) ──
-          // "Walmart pode ser das 2 formas: a partir do escaneamento da invoice,
-          // se tiver endereco de entrega e nota de compra a ser entregue; se nao
-          // tiver endereco, e compra de balcao, PickUp."
-          // Estes três campos NÃO são colunas de banco — são a LEITURA do papel,
-          // e quem chama o scan é que decide o deliver_status com eles
-          // (lib/deliverStatus.ts). ship_to vazio é informação, não falha: é ele
-          // que prova o balcão.
+          // ── O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 30/ago/2026) ──
+          // "Se teve endereco de entrega no escaneamento da compra, e Bought; se
+          //  nao teve, e PickUp."
+          // ship_to NÃO é coluna de banco — é a LEITURA do papel, e quem chama o
+          // scan grava picked_up = (não veio endereço), passando por
+          // pickedUpFromScan (lib/deliverStatus.ts), que ainda blinda a loja
+          // online: Amazon, Temu, eBay & cia nunca são balcão, com ou sem
+          // endereço. ship_to vazio é INFORMAÇÃO, não falha — é ele que prova o
+          // balcão, e é por isso que este campo tem de sair sempre.
           ship_to: String(parsed.ship_to || '').trim(),
           // Rastreio impresso no próprio documento (foi assim que os dois
           // recibos de colchão do Walmart entregaram FedEx e UPS na migração).

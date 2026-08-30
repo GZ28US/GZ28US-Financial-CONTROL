@@ -86,22 +86,29 @@ function carrierCode(tracking: string, carrier?: string | null): number | undefi
   return undefined
 }
 
-// ── A ESCADA, E A REGRA DE NUNCA REBAIXAR ───────────────────────────────────
-// Só três degraus andam por rastreio. PICKUP fica FORA de propósito: ele quer
-// dizer "peguei na loja, não viaja" — é justamente o badge que manda o app NÃO
-// ler esta linha, e por isso a consulta nem traz PICKUP.
-const RANK: Record<string, number> = { BOUGHT: 0, SHIPPED: 1, DELIVERED: 2 }
+// ── O RASTREADOR NÃO ESCREVE STATUS. ESCREVE FATOS. ─────────────────────────
+// Lei do dono, 30/ago/2026: "Assim a chance do app mostrar o status errado e
+// zero." Antes esta função gravava DOIS campos por entrega — deliver_status E
+// delivered_at — e podia MENTIR se falhasse no segundo. Agora grava UM
+// (delivered_at) e o badge acompanha sozinho, porque o badge é derivado.
+//
+// A REGRA DE NUNCA DESFAZER UMA ENTREGA continua, e ficou mais forte: a consulta
+// nem traz linha com delivered_at preenchido, então não há caminho de código que
+// apague uma entrega já registrada.
+//
+// PICKUP fica FORA de propósito: picked_up quer dizer "peguei na loja, não
+// viaja". A consulta filtra picked_up = false — o rastreador nunca lê essa linha.
 
-// Tradução do status do 17TRACK para os nossos.
+// Tradução do status do 17TRACK para o que ele significa AQUI.
 // ATENÇÃO ao falso amigo: "AvailableForPickup" do 17TRACK é "a transportadora
-// deixou na agência para você buscar" — NÃO é o nosso PICKUP (que significa
-// "comprei no balcão da loja"). Ele é SHIPPED: a caixa viajou e ainda não foi
-// entregue. Confundir os dois apagaria o rastreio de uma remessa viva.
-function statusFrom17Track(s: string | undefined | null): 'SHIPPED' | 'DELIVERED' | null {
+// deixou na agência para você buscar" — NÃO é o nosso picked_up (que significa
+// "comprei no balcão da loja"). É caixa em movimento, ainda não entregue.
+// Confundir os dois marcaria como balcão uma remessa viva.
+function eventFrom17Track(s: string | undefined | null): 'MOVING' | 'ARRIVED' | null {
   const k = String(s || '').trim()
   if (!k) return null
-  if (/^Delivered$/i.test(k)) return 'DELIVERED'
-  if (/InfoReceived|InTransit|OutForDelivery|AvailableForPickup|Exception|Undelivered|Expired/i.test(k)) return 'SHIPPED'
+  if (/^Delivered$/i.test(k)) return 'ARRIVED'
+  if (/InfoReceived|InTransit|OutForDelivery|AvailableForPickup|Exception|Undelivered|Expired/i.test(k)) return 'MOVING'
   return null
 }
 
@@ -120,13 +127,16 @@ async function logFix(db: SupabaseClient, table: string, rowId: string, field: s
     field,
     old_value: oldValue == null ? null : String(oldValue),
     new_value: newValue == null ? null : String(newValue),
-    label: 'ITEM TRACKING — 17TRACK atualizou a própria linha do item',
+    label: 'ITEM TRACKING — 17TRACK atualizou a própria linha do item (só fatos: nunca status, que é derivado desde 30/ago/2026)',
   }).then((r: { error?: unknown } | void) => { if (r && (r as any).error) logOk = false }, () => { logOk = false })
 }
 
 type ItemRow = {
   id: string
-  deliver_status: string | null
+  // picked_up e payment_date entram só para o FILTRO (balcão não viaja; a
+  // cascata começa no "pagou"). Nenhum status é lido: não existe mais.
+  picked_up: boolean | null
+  payment_date: string | null
   tracking_number: string | null
   carrier: string | null
   eta: string | null
@@ -136,7 +146,7 @@ type ItemRow = {
   last_event_at: string | null
 }
 
-const COLS = 'id, deliver_status, tracking_number, carrier, eta, shipped_at, delivered_at, last_event, last_event_at'
+const COLS = 'id, picked_up, payment_date, tracking_number, carrier, eta, shipped_at, delivered_at, last_event, last_event_at'
 
 export type TrackResult = {
   checked: number
@@ -157,14 +167,22 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
   const out: TrackResult = { checked: 0, updated: [], reRegistered: 0, byTable: {}, dataFixesLogged: true }
   if (!t17Key()) return { ...out, error: 'TRACK17_API_KEY missing' }
 
-  // Uma consulta por tabela. O filtro é a lei em SQL: só linha COM rastreio e
-  // ainda EM ABERTO. DELIVERED não volta a ser consultada (nunca rebaixa), e
-  // PICKUP nunca entra (não viaja).
+  // Uma consulta por tabela. O filtro É A CASCATA EM SQL, e agora ela pergunta
+  // aos FATOS, não a um campo de status:
+  //   tracking_number preenchido  → só se rastreia o que tem número
+  //   delivered_at NULL           → o que já chegou não se pergunta de novo, e é
+  //                                 assim que uma entrega nunca se desfaz
+  //   picked_up = false           → balcão não viaja
+  //   payment_date preenchido     → a cascata começa no "pagou" (é o mesmo
+  //                                 universo de antes, quando o status NULL das
+  //                                 não-pagas as mantinha fora)
   const rows: { table: ItemTable; row: ItemRow }[] = []
   for (const table of ITEM_TABLES) {
     const { data, error } = await db.from(table).select(COLS)
-      .in('deliver_status', ['BOUGHT', 'SHIPPED'])
       .not('tracking_number', 'is', null)
+      .is('delivered_at', null)
+      .eq('picked_up', false)
+      .not('payment_date', 'is', null)
     if (error) return { ...out, error: `${table}: ${error.message}` }
     for (const r of (data || []) as ItemRow[]) {
       if (String(r.tracking_number || '').trim()) rows.push({ table, row: r })
@@ -217,7 +235,7 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
       for (const t of targets) {
         const changed = await applyToItem(db, t.table, t.row, acc.track_info)
         if (changed) {
-          out.updated.push(`${t.table}/${t.row.id}: ${t.row.deliver_status}→${changed}`)
+          out.updated.push(`${t.table}/${t.row.id}: ${changed}`)
           out.byTable[t.table] = (out.byTable[t.table] || 0) + 1
         }
       }
@@ -227,14 +245,14 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
   return out
 }
 
-// Escreve a resposta da transportadora NA LINHA DO ITEM. Devolve o status novo
-// quando ele mudou, ou null quando só metadados mudaram (ou nada).
+// Escreve a resposta da transportadora NA LINHA DO ITEM — SÓ OS FATOS:
+// carrier, eta, last_event, last_event_at, shipped_at, delivered_at. NENHUM
+// status é escrito aqui, nem existe campo para escrever. O badge é derivado e
+// acompanha sozinho (lib/deliverStatus.ts).
+// Devolve 'DELIVERED' quando a entrega foi registrada agora, ou null quando só
+// metadados mudaram (ou nada).
 async function applyToItem(db: SupabaseClient, table: ItemTable, row: ItemRow, info: any): Promise<string | null> {
-  const mapped = statusFrom17Track(info?.latest_status?.status)
-  const current = String(row.deliver_status || 'BOUGHT')
-  // NUNCA REBAIXAR (ordem explícita): DELIVERED não volta para SHIPPED. O
-  // status novo só vale se estiver ACIMA do atual na escada.
-  const next = mapped && (RANK[mapped] ?? -1) > (RANK[current] ?? -1) ? mapped : current
+  const ev17 = eventFrom17Track(info?.latest_status?.status)
 
   const ev = info?.latest_event
   const evDesc = [ev?.description, ev?.location].filter(Boolean).join(' — ') || null
@@ -243,15 +261,20 @@ async function applyToItem(db: SupabaseClient, table: ItemTable, row: ItemRow, i
   const eta = etaRaw ? String(etaRaw).slice(0, 10) : row.eta
 
   const patch: Record<string, unknown> = {}
-  if (next !== current) patch.deliver_status = next
   // CARRIER só se preenche VAZIO: o que a pessoa digitou na tela do item manda
   // sobre o palpite do 17TRACK (mesma regra da migração — não sobrescrever).
   if (!String(row.carrier || '').trim() && provider) patch.carrier = provider
   if (eta && eta !== row.eta) patch.eta = eta
   if (evDesc && evDesc !== row.last_event) patch.last_event = evDesc
   if (ev?.time_iso && ev.time_iso !== row.last_event_at) patch.last_event_at = ev.time_iso
-  if (next === 'SHIPPED' && !row.shipped_at) patch.shipped_at = new Date().toISOString()
-  if (next === 'DELIVERED' && !row.delivered_at) patch.delivered_at = ev?.time_iso || new Date().toISOString()
+  // OS DOIS FATOS QUE MOVEM O BADGE — e não são status, são datas.
+  // shipped_at: a caixa começou a andar. O badge já era SHIPPED pelo rastreio.
+  if (ev17 && !row.shipped_at) patch.shipped_at = new Date().toISOString()
+  // delivered_at: chegou. É ESTE campo, sozinho, que acende o DELIVERED. Só se
+  // escreve VAZIO — uma entrega registrada jamais se apaga (e a consulta já
+  // nem traz linha entregue).
+  const arrived = ev17 === 'ARRIVED' && !row.delivered_at
+  if (arrived) patch.delivered_at = ev?.time_iso || new Date().toISOString()
 
   if (!Object.keys(patch).length) return null
   const { error } = await db.from(table).update(patch).eq('id', row.id)
@@ -259,5 +282,5 @@ async function applyToItem(db: SupabaseClient, table: ItemTable, row: ItemRow, i
   for (const [field, value] of Object.entries(patch)) {
     await logFix(db, table, row.id, field, (row as any)[field], value)
   }
-  return next !== current ? next : null
+  return arrived ? 'DELIVERED' : null
 }

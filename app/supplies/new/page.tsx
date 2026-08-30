@@ -10,7 +10,9 @@ import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import PartPicker from '@/components/PartPicker'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverFields, applyTrackingRule } from '@/components/DeliverChip'
+import { DeliverFields } from '@/components/DeliverChip'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry } from '@/lib/carRegistry'
 
 // Single report queued after a successful SAVE INPUT, drives the WhatsApp modal.
 type ExpenseReportItem = { item: string; amount: string; quantity: string }
@@ -80,10 +82,12 @@ export default function NewInputPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
-  // DELIVER STATUS + TRACKING + CARRIER moram na linha do item (virada de chave,
-  // 29/ago/2026). Uma compra registrada à mão já nasce com o status certo — e
-  // "nao pode haver 1 item de compra sem estes status".
-  const [deliverStatus, setDeliverStatus] = useState('')
+  // PICKED UP + TRACKING + CARRIER moram na linha do item. Desde 30/ago/2026 o
+  // SELETOR DE STATUS ACABOU: "sem campo pra isso, e uma INTERPRETACAO, nao um
+  // campo". Sobrou o único fato que nenhuma conta produz — peguei no balcão —
+  // e ele é boolean, não status. BOUGHT/SHIPPED/DELIVERED se derivam sozinhos
+  // (lib/deliverStatus.ts) de pagou / tracking_number / delivered_at.
+  const [pickedUp, setPickedUp] = useState(false)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   const [notes, setNotes] = useState('')
@@ -117,6 +121,18 @@ export default function NewInputPage() {
   }
 
   async function ensureSupplier(name: string) {
+    // GUARDA DO FORNECEDOR (Márcio, 30/ago/2026): "os carros, mesmo aparecendo
+    // como SUPPLIER nas expenses quando doaram algo, JAMAIS podem ser cadastrados
+    // como supplier no banco. Nao permita que isso aconteca, sem poluir o banco."
+    // O nome do carro CONTINUA no campo supplier da linha da expense — lá é o
+    // lugar dele, é o doador. Só o CADASTRO é que não o recebe. Sai calado: não
+    // é erro do usuário, é higiene do banco.
+    // A guarda conhece o carro pelo CÓDIGO sozinha; para reconhecê-lo pelo NOME
+    // COMERCIAL ("Dodge Charger Presidiário", que vazou pro banco BR em
+    // 21/jun/2026) ela precisa da lista de rides. Uma leitura por sessão, em
+    // cache — e se falhar, a guarda do código continua de pé.
+    await primeCarRegistry(supabase)
+    if (!supplierNameForRegistry(name)) return
     if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
     void mirrorEnsureSupplier(name.trim())
@@ -156,8 +172,10 @@ export default function NewInputPage() {
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       order_number: orderNumber.trim() || null,
-      // Sem data (= sem pagamento) não há status: a cascata começa no "pagou".
-      deliver_status: isValidDate(purchaseDate) ? (applyTrackingRule(deliverStatus, tracking) || null) : null,
+      // O ÚNICO campo da cascata que se grava. NOT NULL no banco: item não é de
+      // balcão até que alguém (ou o documento) diga que é. Nada de status aqui —
+      // ele é lido, não escrito.
+      picked_up: pickedUp,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       notes: notes.trim() || null,
@@ -313,12 +331,12 @@ export default function NewInputPage() {
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
         </div>
 
-        {/* DELIVER STATUS / TRACKING / CARRIER (virada de chave, 29/ago/2026):
-            peguei no balcão = PICKUP (e o app não rastreia); paguei e ainda não
-            tem rastreio = BOUGHT; digitou rastreio = SHIPPED sozinho. */}
+        {/* PICKED UP / TRACKING / CARRIER (30/ago/2026): marcar "peguei na loja"
+            é o ÚNICO status que se digita — o resto é interpretação. Digitou
+            rastreio, o badge sobe para SHIPPED sozinho, sem gravar status. */}
         <div>
-          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
-            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
+          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
         <div>

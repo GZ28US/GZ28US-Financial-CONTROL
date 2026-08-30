@@ -17,14 +17,14 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
-import { deliverStatusFromScan } from '@/lib/deliverStatus'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
+import { pickedUpFromScan } from '@/lib/deliverStatus'
 
-// DeliverRow: o rastreio da peça mora AQUI, na linha do inventory (virada de
-// chave 29/ago/2026 — "o tracking, carrier e o que quer que seja necessario pra
-// rastrear agora vive como coluna nova da tabela dos itens comprados, na
-// origem"). O select(*) desta tela já traz as colunas novas.
-type ItemRow = DeliverRow & {
+// DeliverChipRow: o rastreio da peça mora AQUI, na linha do inventory. E o STATUS
+// não mora em lugar nenhum desde 30/ago/2026 — ele é derivado de picked_up /
+// delivered_at / tracking_number / payment_date (lib/deliverStatus.ts). O
+// select('*') desta tela já traz tudo que a cascata precisa.
+type ItemRow = DeliverChipRow & {
   id: string
   description: string
   category: string
@@ -113,10 +113,10 @@ export default function InventoryPage() {
     // ORDER NUMBER é SAGRADO (29/ago/2026): só linhas PURCHASED nascem por
     // aqui, e toda compra escaneada grava o pedido.
     orderNumber: string
-    // O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 29/ago/2026): sem endereço
-    // numa loja de balcão a compra é PICKUP; com endereço é entrega. Estes três
-    // vêm do scan e NÃO são colunas — são a leitura do papel que decide o
-    // deliver_status na hora de gravar.
+    // O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 30/ago/2026): "Se teve
+    // endereco de entrega no escaneamento da compra, e Bought; se nao teve, e
+    // PickUp." shipTo NÃO é coluna — é a leitura do papel que decide o picked_up
+    // na hora de gravar. trackingNumber e carrier, esses viram coluna.
     shipTo: string
     trackingNumber: string
     carrier: string
@@ -300,10 +300,11 @@ export default function InventoryPage() {
         // ORDER NUMBER sagrado: o pedido REAL da compra (linhas PURCHASED).
         // Nunca confundir com o uso do campo nas DONATED (invoice doadora).
         order_number: scanned.orderNumber || null,
-        // DELIVER STATUS pelo DOCUMENTO: "se tiver endereco de entrega... se nao
-        // tiver endereco, e compra de balcao, PickUp" (Márcio, 29/ago/2026). A
-        // linha escaneada entra PAGA, então ela SEMPRE tem status.
-        deliver_status: deliverStatusFromScan({ supplier: scanned.supplier, shipTo: scanned.shipTo, tracking: scanned.trackingNumber }),
+        // PICKED UP pelo DOCUMENTO: "Se teve endereco de entrega no escaneamento
+        // da compra, e Bought; se nao teve, e PickUp" (Márcio, 30/ago/2026). Loja
+        // online nunca é picked_up — não tem balcão. Nenhum status é gravado: a
+        // linha entra PAGA e o badge sai da derivação, sozinho.
+        picked_up: pickedUpFromScan({ supplier: scanned.supplier, shipTo: scanned.shipTo }),
         tracking_number: scanned.trackingNumber || null,
         carrier: scanned.carrier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
@@ -624,13 +625,14 @@ export default function InventoryPage() {
                                 : item.notes && item.notes.split('\n').map((note, i) => (
                                     <p key={i} className="text-sm text-yellow-400 mt-1">📦 {note}</p>
                                   ))}
-                              {/* LEI 29/ago/2026: chip do pedido + DELIVER STATUS SEMPRE na
+                              {/* LEI 29/ago/2026: chip do pedido + BADGE DE ENTREGA SEMPRE na
                                   linha do item — mesmo repetidos em todos os itens. Os dois
                                   saem da PRÓPRIA LINHA já carregada: acabou o join com o
-                                  STREAM. DONATED nunca ganha chip (o campo dela é origem, não
-                                  pedido; e peça doada não foi COMPRADA — no banco ela está
-                                  com deliver_status NULL, e aqui o corte por source_type
-                                  continua explícito porque uma DOADA tem payment_date). */}
+                                  STREAM. DONATED nunca ganha badge: peça doada não foi
+                                  COMPRADA. A derivação já a corta pelo source_type, e o teste
+                                  explícito aqui fica de cinto e suspensório — é ele que
+                                  também esconde o chip do pedido (numa DOADA o order_number é
+                                  a invoice doadora, origem, não pedido). */}
                               {item.source_type !== 'DONATED' && ((item.order_number || '').trim() || hasDeliverChip(item)) && (
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   {(item.order_number || '').trim() ? <OrderChip order={(item.order_number || '').trim()} /> : null}

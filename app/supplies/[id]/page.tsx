@@ -5,12 +5,12 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 
-// DeliverRow: a ficha do item lê o rastreio DA PRÓPRIA LINHA (virada de chave
+// DeliverChipRow: a ficha do item lê o rastreio DA PRÓPRIA LINHA (virada de chave
 // 29/ago/2026 — "a leitura do rastreio agora deve viver na pagina do item,
 // ESQUECA A AREA DE STREAM, e tudo na pagina de origem do item").
-type Input = DeliverRow & {
+type Input = DeliverChipRow & {
   id: string
   description: string
   category: string
@@ -105,12 +105,12 @@ export default function ViewInputPage() {
               <span className={`px-3 py-1 rounded-full text-sm font-bold ${input.category === 'CONSUMPTION' ? 'bg-blue-900 text-blue-300' : 'bg-green-900 text-green-300'}`}>{input.category}</span>
             </div>
             {input.supplier && <div className={rowClass}><span className={labelClass}>{donated ? 'DONOR' : 'SUPPLIER'}</span><span className="font-bold">{input.supplier}</span></div>}
-            {/* ORDER NUMBER + DELIVER STATUS, os dois lidos DESTA linha. É AQUI
-                que a virada de chave (29/ago/2026) manda a leitura do rastreio
-                viver: "na pagina do item... tudo na pagina de origem do item".
-                DONATED fica de fora: o campo dela guarda a invoice doadora
-                (origem), não um pedido de loja — e peça doada não foi comprada,
-                então nasce com deliver_status NULL. */}
+            {/* ORDER NUMBER + BADGE DE ENTREGA, os dois lidos DESTA linha. É AQUI
+                que a leitura do rastreio vive: "na pagina do item... tudo na
+                pagina de origem do item". O badge não é campo — sai da derivação
+                (30/ago/2026). DONATED fica de fora: o campo dela guarda a invoice
+                doadora (origem), não um pedido de loja, e peça doada não foi
+                comprada — a cascata a corta no degrau 1. */}
             {!donated && (ownOrder || hasDeliverChip(input)) && (
               <div className={rowClass}><span className={labelClass}>{ownOrder ? 'ORDER NUMBER' : 'STATUS'}</span>
                 <span className="flex items-center gap-2 flex-wrap justify-end">

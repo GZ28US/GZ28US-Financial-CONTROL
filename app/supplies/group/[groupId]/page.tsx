@@ -5,13 +5,13 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 
 // Read-only VIEW of a whole input PURCHASE (every row sharing a purchase_group):
 // supplier, category, date, all line items, grand total and receipts. Linked from
 // the VIEW button on the group header in InputsManager. STOCK purchases live in the
 // `inventory` table (?src=inventory); CONSUMPTION in `inputs`.
-type Input = DeliverRow & {
+type Input = DeliverChipRow & {
   id: string
   description: string
   category: string
@@ -22,8 +22,9 @@ type Input = DeliverRow & {
   receipt_url: string | null
   notes: string | null
   // ORDER NUMBER é SAGRADO (29/ago/2026): pedido da compra. O rastreio mora na
-  // MESMA linha (deliver_status/tracking_number/... via DeliverRow), não mais em
-  // part_streams. Numa linha DONATED do inventory o campo order_number é a
+  // MESMA linha (picked_up/tracking_number/delivered_at... via DeliverChipRow), não
+  // mais em part_streams — e o STATUS não mora em lugar nenhum: é derivado
+  // (30/ago/2026). Numa linha DONATED do inventory o campo order_number é a
   // invoice doadora — origem, não pedido — e fica fora do chip.
   order_number?: string | null
   source_type?: string | null
@@ -123,10 +124,11 @@ export default function ViewInputGroupPage() {
                   <div className="min-w-0">
                     <p className="font-bold truncate" title={it.description}>{it.description}</p>
                     <p className="text-sm text-gray-400">Qty: {it.quantity} × {formatUSD(it.unit_price)} = {formatUSD((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))}</p>
-                    {/* LEI 29/ago/2026: chip do pedido + DELIVER STATUS SEMPRE na linha
-                        do item — mesmo repetidos em todos, e nunca no cabeçalho da
-                        compra. Os dois vêm do select('*') desta mesma tela: acabou o
-                        join. DONATED fica sem chip (não foi comprada). */}
+                    {/* LEI 29/ago/2026: chip do pedido + BADGE DE ENTREGA SEMPRE na
+                        linha do item — mesmo repetidos em todos, e nunca no cabeçalho
+                        da compra. Os dois vêm do select('*') desta mesma tela: acabou o
+                        join. DONATED fica sem badge (não foi comprada) — quem corta é
+                        a derivação, esta condição é só cinto e suspensório. */}
                     {(it.source_type || '') !== 'DONATED' && (!!String(it.order_number || '').trim() || hasDeliverChip(it)) && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {String(it.order_number || '').trim() ? <OrderChip order={String(it.order_number || '').trim()} /> : null}

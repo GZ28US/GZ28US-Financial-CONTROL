@@ -1,87 +1,45 @@
 'use client'
 
-// ── DELIVER STATUS — o badge agora É DA LINHA (Márcio, 29/ago/2026) ──────────
+// ── O SEMÁFORO DO ITEM — AGORA ELE SÓ LÊ, NUNCA DECIDE ──────────────────────
 //
-// A VIRADA DE CHAVE, nas palavras dele:
+// A VIRADA DE 30/ago/2026, nas palavras do dono:
 //
-//   "todos os itens comprados tem que ter uma coluna chamada deliver_status:
-//      PickUp    - PAGO e pego no balcao
-//      Bought    - PAGO e sem tracking ainda
-//      Shipped   - quando o item bought ganha tracking
-//      Delivered - quando o Shipped foi entregue
-//    SAGRADO, nao pode haver 1 item de compra sem estes status. Comprei uma
-//    coca-cola no Wawa? PickUp!"
+//   "acho que deve ser mais simples, com menos campos. Tem que ter o campo do
+//    tracking number e do carrier, e assim:
+//      1. Esta pago e sem tracking? O badge mostra Pickup ou Bought, sem campo
+//         pra isso, e uma INTERPRETACAO, nao um campo.
+//      2. Pago com tracking? Shipped ou Delivered, por interpretacao, nao campo.
+//    Assim a chance do app mostrar o status errado e zero."
 //
-//   "a leitura do rastreio agora deve viver na pagina do item, ESQUECA A AREA DE
-//    STREAM, e tudo na pagina de origem do item."
-//
-//   "esqueca o stream, refaremos ele do zero depois. NAO USE NADA DO STREAM,
-//    nada. O tracking, carrier e o que quer que seja necessario pra rastrear
-//    agora vive como coluna nova da tabela dos itens comprados, na origem."
-//
-// O QUE MORREU AQUI: o antecessor deste arquivo (components/StreamChips.tsx)
-// carregava part_streams inteiro e casava por order_number para descobrir o
-// status. Isso ACABOU. Não há join, não há loadStreamMap, não há segunda
-// consulta: a tela já carregou a linha do item, e a linha do item já traz
-// deliver_status / tracking_number / carrier / eta / delivered_at. Menos
-// consulta, mais verdade — o chip lê o mesmo dado que o formulário grava.
+// Por isso ESTE ARQUIVO NÃO CALCULA NADA. A cascata inteira mora em
+// lib/deliverStatus.ts (deriveDeliverStatus) e este componente só a chama e
+// pinta. Sumiram daqui: DELIVER_STATUSES como seletor, normDeliverStatus,
+// applyTrackingRule — não há mais status a normalizar nem a "aplicar", porque
+// não há mais status guardado. Sobrou UM campo, e ele nem é status: picked_up.
 //
 // LEI DO LUGAR (mantida, 29/ago/2026): "os badges de order number, tracking ou
 // BOUGHT/SHIPPED/DELIVERED devem ser nos ITENS, nao nos titulos das compras,
-// MESMO QUE SEJA REPETIDO EM TODOS. Este controle e gerenciamento e pros itens,
-// nao pra compra, uma vez que podem gerar order numbers e tracking diferentes."
-// Portanto: renderize na LINHA DE CADA ITEM, nunca no header do grupo de compra.
+// MESMO QUE SEJA REPETIDO EM TODOS." Renderize na LINHA DE CADA ITEM, nunca no
+// header do grupo de compra.
 //
-// QUEM FICA SEM CHIP: linha não paga (a cascata começa no "pagou") e linha
-// DOADA (source_type DONATED — não foi comprada). As duas ficam com
-// deliver_status NULL no banco, então o corte é automático: sem status, sem
-// chip. Nenhum call site precisa mais passar `paid` — o banco já decidiu.
+// QUEM FICA SEM CHIP: linha não paga, linha DOADA e linha de ESTOQUE. O corte é
+// o degrau 1 da cascata, dentro de deriveDeliverStatus — a tela não precisa
+// repetir a regra (e quando repete, é só cinto e suspensório).
 
-// Os QUATRO status, na ordem da cascata que ele ditou. Nada além disto entra na
-// coluna (o CHECK do banco recusa) — não há "status especial" nem lista negra.
-export const DELIVER_STATUSES = ['PICKUP', 'BOUGHT', 'SHIPPED', 'DELIVERED'] as const
-export type DeliverStatus = (typeof DELIVER_STATUSES)[number]
+import {
+  deriveDeliverStatus,
+  hasDeliverChip,
+  DELIVER_COLUMNS,
+  DELIVER_STATUSES,
+  type DeliverRow,
+  type DeliverChipRow,
+  type DeliverStatus,
+} from '@/lib/deliverStatus'
 
-// A parte de logística de QUALQUER linha de item comprado — as 5 tabelas
-// (invoice_expenses, inputs, inventory, goods, good_expenses) têm exatamente
-// estas colunas, com estes nomes, nos dois bancos. Um campo por informação
-// (lei do usuário): tracking/carrier/ETA são COLUNAS, nunca texto em notes.
-export type DeliverRow = {
-  deliver_status?: string | null
-  tracking_number?: string | null
-  carrier?: string | null
-  eta?: string | null
-  shipped_at?: string | null
-  delivered_at?: string | null
-  last_event?: string | null
-  last_event_at?: string | null
-}
-
-// A lista de colunas para os `select(...)` explícitos das telas. Quem usa
-// `select('*')` já as recebe de graça.
-export const DELIVER_COLUMNS = 'deliver_status, tracking_number, carrier, eta, shipped_at, delivered_at, last_event, last_event_at'
-
-export function normDeliverStatus(v: string | null | undefined): DeliverStatus | '' {
-  const k = String(v || '').trim().toUpperCase()
-  return (DELIVER_STATUSES as readonly string[]).includes(k) ? (k as DeliverStatus) : ''
-}
-
-// Mesmo critério do chip, exposto para a tela decidir se abre a linha (ou a
-// margem) onde ele mora — sem isso sobra div vazia empurrando o layout.
-export function hasDeliverChip(row: DeliverRow | null | undefined): boolean {
-  return !!normDeliverStatus(row?.deliver_status)
-}
-
-// A REGRA DE TELA (lei dele): "Digitar rastreio num item BOUGHT sobe ele para
-// SHIPPED sozinho." Só sobe de BOUGHT (ou de vazio) — PICKUP não vira SHIPPED
-// por digitação, porque PICKUP quer dizer "não viaja", e DELIVERED jamais
-// regride. Trocar o status À MÃO continua permitido: é assim que uma compra
-// vira PICKUP.
-export function applyTrackingRule(status: string | null | undefined, tracking: string | null | undefined): DeliverStatus | '' {
-  const s = normDeliverStatus(status)
-  if (!String(tracking || '').trim()) return s
-  return s === '' || s === 'BOUGHT' ? 'SHIPPED' : s
-}
+// Reexportado para as telas continuarem importando de um lugar só. A VERDADE
+// vive em lib/deliverStatus.ts; aqui é apenas a porta.
+export { deriveDeliverStatus, hasDeliverChip, DELIVER_COLUMNS, DELIVER_STATUSES }
+export type { DeliverRow, DeliverChipRow, DeliverStatus }
 
 function fmtDate(d: string | null | undefined) {
   if (!d) return ''
@@ -97,25 +55,30 @@ export function OrderChip({ order }: { order: string }) {
   )
 }
 
-// AS QUATRO CORES (ditadas na virada de chave):
-//   PICKUP    cinza-esverdeado — peguei na loja, NÃO VIAJA. É este badge que diz
-//             ao app que a linha não deve ser rastreada.
+// AS QUATRO CORES:
+//   PICKUP    verde-escuro — peguei na loja, NÃO VIAJA.
 //   BOUGHT    cinza  — pago, ainda sem rastreio.
 //   SHIPPED   azul   — em movimento.
 //   DELIVERED verde  — chegou.
 const TONE: Record<DeliverStatus, string> = {
-  // PICKUP ganha fundo PROPRIO, nao so cor de letra: numa lista densa, 'peguei no
-  // balcao' e 'pago sem rastreio' tem de se distinguir de relance — sao coisas
-  // diferentes (o de balcao nunca vai viajar).
+  // PICKUP ganha fundo PRÓPRIO, não só cor de letra: numa lista densa, "peguei
+  // no balcão" e "pago sem rastreio" têm de se distinguir de relance — são
+  // coisas diferentes (o de balcão nunca vai viajar).
   PICKUP: 'bg-emerald-950 text-emerald-300 border-emerald-800',
   BOUGHT: 'bg-gray-800 text-gray-300 border-gray-700',
   SHIPPED: 'bg-blue-950 text-blue-300 border-blue-800',
   DELIVERED: 'bg-green-950 text-green-300 border-green-800',
 }
 
-// O semáforo. Recebe A PRÓPRIA LINHA do item — nada de mapa, nada de join.
-export function DeliverChip({ row }: { row?: DeliverRow | null }) {
-  const status = normDeliverStatus(row?.deliver_status)
+// O semáforo. Recebe A PRÓPRIA LINHA do item — nada de mapa, nada de join, e
+// nenhuma decisão: uma chamada a deriveDeliverStatus e pronto.
+// O ROW TEM DE VIR INTEIRO (30/ago/2026). O tipo é DeliverChipRow, não
+// DeliverRow: quem monta um objeto à mão para este chip — as telas de EDIÇÃO —
+// é OBRIGADO pelo compilador a responder os sete campos que a cascata e o
+// desenho leem. Foi assim que 162 badges pararam de mentir DELIVERED→SHIPPED, e
+// é assim que a classe não volta: esquecer um campo agora não compila.
+export function DeliverChip({ row }: { row?: DeliverChipRow | null }) {
+  const status = deriveDeliverStatus(row)
   if (!status) return null
   const tracking = String(row?.tracking_number || '').trim()
   const carrier = String(row?.carrier || '').trim()
@@ -132,20 +95,25 @@ export function DeliverChip({ row }: { row?: DeliverRow | null }) {
 }
 
 // ── OS CAMPOS DO FORMULÁRIO ─────────────────────────────────────────────────
-// Onde se cadastra e edita item comprado entram os três: DELIVER STATUS (os 4
-// valores), TRACKING e CARRIER. Trocar o status à mão é PERMITIDO — é assim que
-// uma compra vira PICKUP. Digitar rastreio num BOUGHT sobe para SHIPPED sozinho
-// (applyTrackingRule), que é a cascata do dono em forma de formulário.
+// O SELETOR DE 4 STATUS ACABOU. No lugar dele entra UM controle, e ele não é de
+// status: "PICKED UP AT STORE" — marcar/desmarcar "peguei na loja". É o único
+// fato da cascata que nenhuma conta produz, então é o único que se digita.
+//
+// TRACKING e CARRIER continuam digitáveis, como ele pediu ("Tem que ter o campo
+// do tracking number e do carrier"). Digitar rastreio sobe o badge para SHIPPED
+// SOZINHO — e repare que não há nenhuma linha de código aqui para isso: a
+// derivação lê tracking_number e o badge acompanha. Antes existia
+// applyTrackingRule justamente porque havia um status guardado para consertar.
 //
 // `size` só escolhe a métrica visual: 'lg' nas fichas de página inteira,
 // 'sm' nas fileiras densas de despesa dentro da invoice.
 export function DeliverFields({
-  status, tracking, carrier, onStatus, onTracking, onCarrier, size = 'lg', className = '',
+  pickedUp, tracking, carrier, onPickedUp, onTracking, onCarrier, size = 'lg', className = '',
 }: {
-  status: string
+  pickedUp: boolean
   tracking: string
   carrier: string
-  onStatus: (v: string) => void
+  onPickedUp: (v: boolean) => void
   onTracking: (v: string) => void
   onCarrier: (v: string) => void
   size?: 'lg' | 'sm'
@@ -155,20 +123,21 @@ export function DeliverFields({
     ? 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-5 py-3 text-lg'
     : 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-3 py-2 text-sm'
   const label = size === 'lg' ? 'block mb-2 text-lg font-bold' : 'block mb-1 text-xs text-gray-400'
-  // Rastreio digitado sobe o status sozinho — a regra vive num lugar só.
-  const typeTracking = (v: string) => { onTracking(v); const next = applyTrackingRule(status, v); if (next && next !== normDeliverStatus(status)) onStatus(next) }
+  const pickBox = size === 'lg'
+    ? 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-5 py-3 text-lg flex items-center gap-3 cursor-pointer'
+    : 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-3 py-2 text-sm flex items-center gap-2 cursor-pointer'
   return (
     <div className={`flex gap-2 flex-wrap items-end ${className}`}>
-      <div className="flex-1 min-w-[8rem]">
-        <label className={label}>DELIVER STATUS</label>
-        <select value={normDeliverStatus(status)} onChange={(e) => onStatus(e.target.value)} className={box}>
-          <option value="">—</option>
-          {DELIVER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+      <div className="flex-1 min-w-[10rem]">
+        <label className={label}>PICKED UP</label>
+        <label className={`${pickBox} ${pickedUp ? 'text-emerald-300 border-emerald-800' : 'text-gray-400'}`}>
+          <input type="checkbox" checked={pickedUp} onChange={(e) => onPickedUp(e.target.checked)} className="w-5 h-5 accent-emerald-500" />
+          <span className="font-bold">AT STORE</span>
+        </label>
       </div>
       <div className="flex-1 min-w-[9rem]">
         <label className={label}>TRACKING</label>
-        <input type="text" value={tracking} onChange={(e) => typeTracking(e.target.value)} placeholder="e.g. 1ZHE56910323676001" className={box} />
+        <input type="text" value={tracking} onChange={(e) => onTracking(e.target.value)} placeholder="e.g. 1ZHE56910323676001" className={box} />
       </div>
       <div className="flex-1 min-w-[7rem]">
         <label className={label}>CARRIER</label>

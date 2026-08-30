@@ -8,7 +8,7 @@ import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
-import { OrderChip, DeliverChip, hasDeliverChip, type DeliverRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 
 type Invoice = {
   id: string
@@ -49,9 +49,10 @@ type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
 // order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — o pedido mora na linha.
-// E o RASTREIO também (virada de chave do mesmo dia): DeliverRow são colunas de
+// E o RASTREIO também: DeliverChipRow são as colunas de rastreio da linha — e o
+// STATUS não está entre elas desde 30/ago/2026, porque virou derivação. Colunas de
 // invoice_expenses, trazidas pelo select('*') desta tela. Zero join.
-type Expense = DeliverRow & { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; order_number?: string | null }
+type Expense = DeliverChipRow & { id: string; expense_date: string | null; supplier: string | null; item: string; price: number; tax: number; extra: number; quantity: number; payment_date: string | null; receipt_url: string | null; purchase_group?: string | null; kit_name?: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; order_number?: string | null }
 
 function isTodayOrPast(dateStr: string | null) {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false

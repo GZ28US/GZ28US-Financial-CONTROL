@@ -9,7 +9,9 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip, normDeliverStatus } from '@/components/DeliverChip'
+import { DeliverChip, DeliverFields } from '@/components/DeliverChip'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry } from '@/lib/carRegistry'
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
 function isValidDate(d: string) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -71,15 +73,22 @@ export default function EditInputPage() {
   const [purchaseDate, setPurchaseDate] = useState('')
   const [supplier, setSupplier] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
-  // DELIVER STATUS + TRACKING + CARRIER: colunas DESTA linha desde a virada de
-  // chave (29/ago/2026). O tracking, que antes era proibido digitar na origem,
-  // agora É digitado aqui — "o tracking, carrier e o que quer que seja
-  // necessario pra rastrear agora vive como coluna nova da tabela dos itens
-  // comprados, na origem". Trocar o status à mão é permitido: é assim que uma
-  // compra vira PICKUP.
-  const [deliverStatus, setDeliverStatus] = useState('')
+  // PICKED UP + TRACKING + CARRIER: colunas DESTA linha. Em 30/ago/2026 o
+  // seletor de 4 status morreu — "sem campo pra isso, e uma INTERPRETACAO, nao
+  // um campo". Sobrou picked_up (boolean), o único fato da cascata que nenhuma
+  // conta produz: só o balcão o cria. O resto (BOUGHT/SHIPPED/DELIVERED) se lê
+  // de pagou / tracking_number / delivered_at.
+  const [pickedUp, setPickedUp] = useState(false)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
+  // FATOS DO ROBÔ, NÃO DO FORMULÁRIO (30/ago/2026). Estes três não têm campo na
+  // tela — quem os escreve é o rastreador do STREAM, nunca o usuário — mas o
+  // badge de prévia PRECISA deles: sem delivered_at a cascata cai um degrau e
+  // uma peça JÁ ENTREGUE aparecia como SHIPPED. Viajam intactos do banco até o
+  // chip, e não voltam pro banco em save nenhum.
+  const [deliveredAt, setDeliveredAt] = useState<string | null>(null)
+  const [eta, setEta] = useState<string | null>(null)
+  const [lastEvent, setLastEvent] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const [source, setSource] = useState('')
   // Universal payment block (inputs keep their own `source` field — no write-through).
@@ -116,9 +125,12 @@ export default function EditInputPage() {
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
     setOrderNumber(data.order_number || '')
-    setDeliverStatus(data.deliver_status || '')
+    setPickedUp(!!data.picked_up)
     setTracking(data.tracking_number || '')
     setCarrier(data.carrier || '')
+    setDeliveredAt(data.delivered_at || null)
+    setEta(data.eta || null)
+    setLastEvent(data.last_event || null)
     setNotes(data.notes || '')
     setSource(data.source || DEFAULT_SOURCE)
     // Initialize the payment block from the row so an untouched save round-trips.
@@ -128,6 +140,18 @@ export default function EditInputPage() {
   }
 
   async function ensureSupplier(name: string) {
+    // GUARDA DO FORNECEDOR (Márcio, 30/ago/2026): "os carros, mesmo aparecendo
+    // como SUPPLIER nas expenses quando doaram algo, JAMAIS podem ser cadastrados
+    // como supplier no banco. Nao permita que isso aconteca, sem poluir o banco."
+    // O nome do carro CONTINUA no campo supplier da linha da expense — lá é o
+    // lugar dele, é o doador. Só o CADASTRO é que não o recebe. Sai calado: não
+    // é erro do usuário, é higiene do banco.
+    // A guarda conhece o carro pelo CÓDIGO sozinha; para reconhecê-lo pelo NOME
+    // COMERCIAL ("Dodge Charger Presidiário", que vazou pro banco BR em
+    // 21/jun/2026) ela precisa da lista de rides. Uma leitura por sessão, em
+    // cache — e se falhar, a guarda do código continua de pé.
+    await primeCarRegistry(supabase)
+    if (!supplierNameForRegistry(name)) return
     if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
     void mirrorEnsureSupplier(name.trim())
@@ -171,10 +195,11 @@ export default function EditInputPage() {
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       order_number: orderNumber.trim() || null,
-      // DOADA não é compra e NÃO PAGA não entrou na cascata: nos dois casos o
-      // status é NULL, e é o NULL que apaga o chip nas listas. Rastreio digitado
-      // sobe BOUGHT→SHIPPED sozinho (applyTrackingRule).
-      deliver_status: donated || !isValidDate(purchaseDate) ? null : (applyTrackingRule(deliverStatus, tracking) || null),
+      // O ÚNICO campo da cascata que se grava. DOADA e NÃO PAGA continuam sem
+      // badge, mas não é aqui que isso se resolve: quem corta é o degrau 1 da
+      // derivação (lib/deliverStatus.ts), lendo source_type e payment_date. Aqui
+      // se registra só o fato: peguei no balcão, sim ou não.
+      picked_up: pickedUp,
       tracking_number: donated ? null : (tracking.trim() || null),
       carrier: donated ? null : (carrier.trim() || null),
       notes: notes.trim() || null,
@@ -232,19 +257,17 @@ export default function EditInputPage() {
         </div>
         )}
 
-        {/* DELIVER STATUS / TRACKING / CARRIER — a virada de chave de 29/ago/2026
-            trouxe o rastreio PRA CÁ: "a leitura do rastreio agora deve viver na
-            pagina do item, ESQUECA A AREA DE STREAM". Digitar rastreio num item
-            BOUGHT o sobe para SHIPPED; escolher PICKUP à mão é o que diz ao app
-            que este item foi PEGO NO BALCÃO e não deve ser rastreado.
+        {/* PICKED UP / TRACKING / CARRIER — o rastreio vive na página do item.
+            Marcar "peguei na loja" é a ÚNICA coisa de status que se digita;
+            digitar rastreio sobe o badge para SHIPPED sozinho, sem gravar nada.
             DONATED não entra: peça doada não foi comprada. */}
         {!donated && (
         <div>
-          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
-            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
-          {hasDeliverChip({ deliver_status: normDeliverStatus(deliverStatus), tracking_number: tracking, carrier }) && (
-            <div className="mt-2"><DeliverChip row={{ deliver_status: applyTrackingRule(deliverStatus, tracking), tracking_number: tracking, carrier }} /></div>
-          )}
+          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
+          {/* Prévia do badge com a MESMA função que a lista usa — passando o que
+              a linha teria depois de salva (a data prova o "pagou"). */}
+          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
         </div>
         )}
 

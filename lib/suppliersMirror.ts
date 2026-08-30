@@ -1,4 +1,7 @@
 import { supabaseBR } from '@/lib/supabaseBR'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry, primeMirrorCarRegistry } from '@/lib/carRegistry'
+import { supabase } from '@/lib/supabase'
 
 // One-way mirror of supplier activity from the US app into the GZ28BR project's
 // SEPARATE suppliers table. The two suppliers tables stay independent; this just
@@ -30,7 +33,14 @@ function pick(row: Record<string, unknown>, keys: readonly string[]) {
 // just the core fields so the mirror still works before the migration is run.
 export async function mirrorUpsertSupplier(row: Record<string, unknown>, prevName?: string) {
   try {
-    const name = String(row?.name || '').trim()
+    // GUARDA DO FORNECEDOR (30/ago/2026): o espelho é um caminho de CADASTRO
+    // como qualquer outro — um carro barrado no US não pode entrar no BR pela
+    // porta dos fundos. E aqui a guarda tem de conhecer os carros DOS DOIS
+    // bancos: o destino é a tabela suppliers do BR, e foi exatamente lá que
+    // "Dodge Charger Presidiário" (ride que existe nos dois) foi parar.
+    await primeCarRegistry(supabase)
+    await primeMirrorCarRegistry(supabaseBR)
+    const name = supplierNameForRegistry(row?.name as string)
     if (!name) return
     if (prevName && prevName.trim() && prevName.trim() !== name) {
       await supabaseBR.from('suppliers').delete().eq('name', prevName.trim())
@@ -51,7 +61,11 @@ export async function mirrorUpsertSupplier(row: Record<string, unknown>, prevNam
 // goods/inputs do). Never overwrites an existing BR row's other fields.
 export async function mirrorEnsureSupplier(name: string) {
   try {
-    const n = String(name || '').trim()
+    // GUARDA DO FORNECEDOR (30/ago/2026): carro não vira linha em suppliers,
+    // nem no banco US nem no espelho BR — pelo código OU pelo nome comercial.
+    await primeCarRegistry(supabase)
+    await primeMirrorCarRegistry(supabaseBR)
+    const n = supplierNameForRegistry(name)
     if (!n) return
     const { data } = await supabaseBR.from('suppliers').select('id').eq('name', n).maybeSingle()
     if (!data) await supabaseBR.from('suppliers').insert([{ name: n }])

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
 import { PART_CATEGORIES, suggestCategory } from '@/lib/partsMeta'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry } from '@/lib/carRegistry'
 
 // LINKER — identidade de peças (pré-P1 do Crew Chief, 24/ago/2026).
 // GET: pra cada linha de inventory e part_streams SEM part_id, os candidatos do
@@ -190,7 +192,14 @@ export async function POST(req: NextRequest) {
   if (String(b.action) === 'create_supplier') {
     const name = String(b.name || '').trim().slice(0, 80)
     if (!name) return NextResponse.json({ error: 'nome vazio' }, { status: 400 })
+    // GUARDA DO FORNECEDOR (Márcio, 30/ago/2026): "os carros ... JAMAIS podem ser
+    // cadastrados como supplier no banco". Este é o caminho de criação da tela de
+    // peças — a mesma lei vale aqui, senão o cadastro suja por outra porta.
+    // A guarda reconhece o CÓDIGO sozinha; o NOME COMERCIAL do carro ela só
+    // reconhece depois de receber os rides (uma leitura, em cache no processo).
     const db = bankDb()
+    await primeCarRegistry(db)
+    if (!supplierNameForRegistry(name)) return NextResponse.json({ error: 'carro não é fornecedor — o carro fica no campo supplier da linha, nunca na tabela suppliers' }, { status: 400 })
     const all = await fetchAll(db, 'suppliers', 'id, name, aliases, ordering_method')
     let sup = all.find((s: any) => supHard(s.name) === supHard(name)) || null
     const reused = !!sup

@@ -9,7 +9,9 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverChip, DeliverFields, applyTrackingRule, hasDeliverChip } from '@/components/DeliverChip'
+import { DeliverChip, DeliverFields } from '@/components/DeliverChip'
+import { supplierNameForRegistry } from '@/lib/supplierGuard'
+import { primeCarRegistry } from '@/lib/carRegistry'
 
 type Expense = {
   id?: string
@@ -22,9 +24,9 @@ type Expense = {
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
   // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
   order_number: string
-  // E os 4 status valem pra TODA compra, esta inclusive (virada de chave,
-  // 29/ago/2026: "nao pode haver 1 item de compra sem estes status").
-  deliver_status: string
+  // O status não é campo desde 30/ago/2026 — é interpretação. O único fato que
+  // se guarda é este: peguei no balcão?
+  picked_up: boolean
   tracking_number: string
   carrier: string
 }
@@ -94,18 +96,26 @@ export default function EditGoodPage() {
   // compra. E o TRACKING também, desde a virada de chave do mesmo dia — corrigir
   // rastreio errado é AQUI, na página de origem do item.
   const [orderNumber, setOrderNumber] = useState('')
-  const [deliverStatus, setDeliverStatus] = useState('')
+  const [pickedUp, setPickedUp] = useState(false)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
+  // FATOS DO ROBÔ, NÃO DO FORMULÁRIO (30/ago/2026). Estes três não têm campo na
+  // tela — quem os escreve é o rastreador do STREAM, nunca o usuário — mas o
+  // badge de prévia PRECISA deles: sem delivered_at a cascata cai um degrau e
+  // uma peça JÁ ENTREGUE aparecia como SHIPPED. Viajam intactos do banco até o
+  // chip, e não voltam pro banco em save nenhum.
+  const [deliveredAt, setDeliveredAt] = useState<string | null>(null)
+  const [eta, setEta] = useState<string | null>(null)
+  const [lastEvent, setLastEvent] = useState<string | null>(null)
   // Universal payment block — PAID FROM here also feeds the legacy `source` column.
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
@@ -127,9 +137,12 @@ export default function EditGoodPage() {
     setPurchaseDate(data.purchase_date || '')
     setSupplier(data.supplier || '')
     setOrderNumber(data.order_number || '')
-    setDeliverStatus(data.deliver_status || '')
+    setPickedUp(!!data.picked_up)
     setTracking(data.tracking_number || '')
     setCarrier(data.carrier || '')
+    setDeliveredAt(data.delivered_at || null)
+    setEta(data.eta || null)
+    setLastEvent(data.last_event || null)
     // Initialize the payment block from the row; legacy rows fall back to `source`
     // for PAID FROM so an untouched save round-trips the same value.
     setPayment(paymentFromRow({ ...data, paid_from: data.paid_from || data.source }))
@@ -141,7 +154,7 @@ export default function EditGoodPage() {
       expense_date: e.expense_date || '', supplier: e.supplier || '',
       source: e.source || DEFAULT_SOURCE,
       order_number: e.order_number || '',
-      deliver_status: e.deliver_status || '',
+      picked_up: !!e.picked_up,
       tracking_number: e.tracking_number || '',
       carrier: e.carrier || '',
       receipt_urls: parseReceiptUrls(e.receipt_url),
@@ -151,6 +164,18 @@ export default function EditGoodPage() {
   }
 
   async function ensureSupplier(name: string) {
+    // GUARDA DO FORNECEDOR (Márcio, 30/ago/2026): "os carros, mesmo aparecendo
+    // como SUPPLIER nas expenses quando doaram algo, JAMAIS podem ser cadastrados
+    // como supplier no banco. Nao permita que isso aconteca, sem poluir o banco."
+    // O nome do carro CONTINUA no campo supplier da linha da expense — lá é o
+    // lugar dele, é o doador. Só o CADASTRO é que não o recebe. Sai calado: não
+    // é erro do usuário, é higiene do banco.
+    // A guarda conhece o carro pelo CÓDIGO sozinha; para reconhecê-lo pelo NOME
+    // COMERCIAL ("Dodge Charger Presidiário", que vazou pro banco BR em
+    // 21/jun/2026) ela precisa da lista de rides. Uma leitura por sessão, em
+    // cache — e se falhar, a guarda do código continua de pé.
+    await primeCarRegistry(supabase)
+    if (!supplierNameForRegistry(name)) return
     if (!name.trim() || suppliers.includes(name.trim())) return
     await supabase.from('suppliers').upsert([{ name: name.trim() }], { onConflict: 'name' })
     void mirrorEnsureSupplier(name.trim())
@@ -218,7 +243,7 @@ export default function EditGoodPage() {
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   }
 
   async function removeExpense(index: number) {
@@ -243,7 +268,7 @@ export default function EditGoodPage() {
         // A despesa extra carrega o número do SEU pedido (pode divergir do good)
         // — e o SEU próprio status de entrega, pela mesma razão.
         order_number: editingExpense.order_number.trim() || null,
-        deliver_status: isValidDate(editingExpense.expense_date) ? (applyTrackingRule(editingExpense.deliver_status, editingExpense.tracking_number) || null) : null,
+        picked_up: editingExpense.picked_up,
         tracking_number: editingExpense.tracking_number.trim() || null,
         carrier: editingExpense.carrier.trim() || null,
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
@@ -251,10 +276,10 @@ export default function EditGoodPage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   }
 
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', deliver_status: '', tracking_number: '', carrier: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
@@ -266,9 +291,10 @@ export default function EditGoodPage() {
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
       // ORDER NUMBER sagrado: a edição persiste o pedido junto — e o rastreio
-      // com ele. A cascata começa no "pagou": sem data válida, status NULL.
+      // com ele. Status não se persiste mais: a cascata o lê de payment_date,
+      // picked_up, tracking_number e delivered_at (30/ago/2026).
       order_number: orderNumber.trim() || null,
-      deliver_status: isValidDate(purchaseDate) ? (applyTrackingRule(deliverStatus, tracking) || null) : null,
+      picked_up: pickedUp,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
@@ -324,14 +350,13 @@ export default function EditGoodPage() {
           <input type="text" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
         </div>
 
-        {/* DELIVER STATUS / TRACKING / CARRIER — a leitura E a correção do
-            rastreio vivem na página do item (virada de chave, 29/ago/2026). */}
+        {/* PICKED UP / TRACKING / CARRIER — a leitura E a correção do rastreio
+            vivem na página do item. O badge abaixo é a MESMA função da lista,
+            alimentada pelo que a linha terá depois de salva. */}
         <div>
-          <DeliverFields status={deliverStatus} tracking={tracking} carrier={carrier}
-            onStatus={setDeliverStatus} onTracking={setTracking} onCarrier={setCarrier} />
-          {hasDeliverChip({ deliver_status: applyTrackingRule(deliverStatus, tracking), tracking_number: tracking, carrier }) && (
-            <div className="mt-2"><DeliverChip row={{ deliver_status: applyTrackingRule(deliverStatus, tracking), tracking_number: tracking, carrier }} /></div>
-          )}
+          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
+          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
         </div>
 
         <div className="flex gap-4">
