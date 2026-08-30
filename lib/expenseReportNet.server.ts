@@ -77,7 +77,14 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
     // DO NOT MAKE ANY PAYMENTS FROM THIS PAPERWORK!". Sem esta trava a compra
     // nascia paga sozinha e sumia das contas a pagar. O marcador [A PAGAR] sai
     // do item na hora em que o pagamento for lançado.
-    if (/^\[(ESTORNAD|CANCELAD|A PAGAR|AGUARDANDO PAGAMENTO|N[ÃA]O PAGO)/i.test(String(e.item || ''))) continue
+    // A EXCECAO VIROU CAMPO (30/ago/2026). Antes ela morava no NOME do item
+    // ("[A PAGAR] ..."), e status como texto e proibido pela lei do dono — e,
+    // pior, e fragil: eu mesmo limpei os marcadores achando que eram enfeite, e
+    // este robo carimbou 6 compras da TAG como pagas na rodada seguinte —
+    // US$ 5.050,00 de compra NAO paga aparecendo como paga.
+    // Agora quem blinda e o campo receipt_proves_payment=false, que ninguem
+    // apaga limpando texto. O marcador no nome nao protege mais nada.
+    if (e.receipt_proves_payment === false) continue
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('invoice_expenses').update(patch(e, d)).eq('id', e.id)
     if (!error) fixed++
