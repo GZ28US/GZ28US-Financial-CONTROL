@@ -11,6 +11,7 @@ import { runMailWatch } from '@/lib/mailWatch.server'
 // runStreamAnswers foi SUBSTITUÍDO pela fila de destino (cron purchase-queue,
 // 19/ago) — dois leitores no mesmo grupo aplicariam a mesma resposta duas vezes.
 import { runStaffPayroll } from '@/lib/staffPayroll.server'
+import { runMailToItem } from '@/lib/mailToItem.server'
 import type { StreamRow } from '@/lib/stream'
 
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
@@ -97,6 +98,15 @@ async function run(force: boolean): Promise<NextResponse> {
   // deploy. Antes do inbox-zero, como os outros watchers.
   let mailWatch: { alerts: string[] } = { alerts: [] }
   try { mailWatch = await runMailWatch(db) } catch (e) { console.error('[mail-watch]', e) }
+  // ── E-MAIL → ITEM (31/ago) — a ponte que faltou quando o STREAM legado
+  // morreu: /api/items/track só pergunta à transportadora por números JÁ
+  // gravados na linha, e quem traz número novo é o e-mail. Sem isto o robô
+  // do rastreio nunca começa. Casa pelo NÚMERO DO PEDIDO contra as linhas que
+  // já existem (dicionário do banco, nunca regex) e escreve só FATOS na
+  // própria linha — tracking, carrier, delivered_at. Status continua sendo
+  // derivação. Antes do inbox-zero, como todos os watchers.
+  let mailToItem: Awaited<ReturnType<typeof runMailToItem>> = { varridas: 0, rastreios: [], entregas: [], duvidas: [], caixas: [] }
+  try { mailToItem = await runMailToItem(db) } catch (e) { console.error('[mail-to-item]', e) }
   // ── DUTY WATCH (LEI 20/ago, caso BONOSS #207546) — com o de minimis morto,
   // toda importação gera uma 2ª cobrança (imposto + desembaraço) que chega
   // sozinha semanas DEPOIS da caixa. A fatura do carrier bate pelo waybill com
@@ -128,7 +138,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, trackAsked, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, trackAsked, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, mailToItem, streamAnswers, financeiro, payroll })
 }
 
 export async function POST() { return run(false) }
