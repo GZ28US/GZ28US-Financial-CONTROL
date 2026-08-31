@@ -26,8 +26,8 @@ type Line = { id: string; date: string; amount: number; name: string; raw_name: 
 type AutoLine = { id: string; date: string; amount: number; name: string; raw_name?: string; engine: string; batch: string; note: string; source: string; backfilled: boolean; href?: string | null }
 type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; from: string; to: string }
 type Auto = { pending: AutoLine[]; reviewed: number; batches: Batch[] }
-type Plan = { fee_create: number; fee_match: number; exact: number; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[] } }
-type Applied = { fee_create: number; fee_match: number; exact: number; errors: string[] }
+type Plan = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[]; name: string[]; rule: string[] } }
+type Applied = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; errors: string[] }
 
 export async function sessionHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession()
@@ -74,6 +74,35 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT'>('ALL')
   const [familyFilter, setFamilyFilter] = useState<string | null>(null)   // triagem por família
   const [triageNote, setTriageNote] = useState('')
+  // TO BOOK (João, 31/ago): ver SÓ a fila da triagem, com nota e destriagem.
+  const [tobook, setTobook] = useState<{ id: string; date: string; amount: number; name: string; note: string }[] | null>(null)
+  const [tobookOpen, setTobookOpen] = useState(false)
+  // REGRAS & APELIDOS (BL 0.7.0): semeadura humana das tabelas do motor.
+  const [rules, setRules] = useState<any[]>([])
+  const [aliases, setAliases] = useState<any[]>([])
+  const [sups, setSups] = useState<{ id: string; label: string }[]>([])
+  const [mgrLoaded, setMgrLoaded] = useState(false)
+  const [nr, setNr] = useState({ pattern: '', target: 'FIXED_EXPENSE', supplier_id: '', category: 'SHOP', label: '' })
+  const [na, setNa] = useState({ pattern: '', words: '' })
+
+  async function loadTobook() {
+    try {
+      const r = await fetch(`${BASE_PATH}/api/bank/reconcile?queued=1`, { headers: await sessionHeaders() })
+      const d = await r.json().catch(() => ({}))
+      if (r.ok) setTobook(d.queued || [])
+    } catch { setTobook([]) }
+  }
+  async function loadMgr() {
+    if (mgrLoaded) return
+    setMgrLoaded(true)
+    const [r1, r2, r3] = await Promise.all([
+      supabase.from('bank_merchant_rules').select('*').order('created_at'),
+      supabase.from('bank_aliases').select('*').order('created_at'),
+      supabase.from('fixed_cost_suppliers').select('id, company, description, cost_type').order('company'),
+    ])
+    setRules(r1.data || []); setAliases(r2.data || [])
+    setSups((r3.data || []).map((s: any) => ({ id: s.id, label: `${s.company || s.description || '—'} · ${s.cost_type || 'FIXED'}` })))
+  }
 
   const lock = (k: string) => setBusy(s => new Set(s).add(k))
   const unlock = (k: string) => setBusy(s => { const n = new Set(s); n.delete(k); return n })
@@ -153,16 +182,16 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   }
   async function applyRun() {
     if (anyBusy || !plan) return
-    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} casamentos exatos. Tudo fica em A CONFERIR e pode ser desfeito.`)) return
+    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA. Tudo fica em A CONFERIR e pode ser desfeito.`)) return
     lock('apply')
-    const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, errors: [] }
+    const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, errors: [] }
     try {
       // Primeira fatia valida o hash do plano mostrado; as seguintes continuam o mesmo lote.
       let d = await post({ action: 'auto', hash: plan.hash })
       let batch: string = d.applied.batch
       for (let guard = 0; ; guard++) {
-        acc.fee_create += d.applied.fee_create; acc.fee_match += d.applied.fee_match; acc.exact += d.applied.exact; acc.errors.push(...d.applied.errors)
-        setProgress(`${acc.fee_create + acc.fee_match + acc.exact} de ${plan.total} aplicadas…`)
+        acc.fee_create += d.applied.fee_create; acc.fee_match += d.applied.fee_match; acc.exact += d.applied.exact; acc.name += d.applied.name || 0; acc.rule_create += d.applied.rule_create || 0; acc.errors.push(...d.applied.errors)
+        setProgress(`${acc.fee_create + acc.fee_match + acc.exact + acc.name + acc.rule_create} de ${plan.total} aplicadas…`)
         if (!d.applied.remaining || d.applied.errors.length || guard > 20) break
         d = await post({ action: 'auto', batch })
         batch = d.applied.batch
@@ -249,7 +278,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
             </div>
             {plan && (
               <div className="mt-3 text-sm">
-                <p><b>{plan.total}</b> linhas casariam agora: <span className="text-teal-300">FEE {plan.fee_create + plan.fee_match}</span> ({plan.fee_create} tarifas a criar, {plan.fee_match} já lançadas) · <span className="text-emerald-300">EXACT {plan.exact}</span>{plan.total === 0 ? ' — nada certo o bastante; siga pelas sugestões.' : ''}</p>
+                <p><b>{plan.total}</b> linhas casariam agora: <span className="text-teal-300">FEE {plan.fee_create + plan.fee_match}</span> ({plan.fee_create} tarifas a criar, {plan.fee_match} já lançadas) · <span className="text-emerald-300">EXACT {plan.exact}</span> · <span className="text-sky-300">NAME {plan.name || 0}</span> · <span className="text-purple-300">RULE {plan.rule_create || 0} a criar</span>{plan.total === 0 ? ' — nada certo o bastante; siga pelas sugestões.' : ''}</p>
                 <button onClick={() => setPlanOpen(o => !o)} className="text-xs text-gray-400 underline mt-1">{planOpen ? 'esconder' : 'ver'} amostra e motivos de recusa</button>
                 {planOpen && (
                   <div className="mt-2 grid md:grid-cols-2 gap-3 text-xs text-gray-400">
@@ -258,6 +287,8 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                       {plan.samples.exact.length ? plan.samples.exact.map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>) : <p>—</p>}
                       <p className="font-bold text-gray-300 mt-2 mb-1">Amostra FEE</p>
                       {plan.samples.fee.length ? plan.samples.fee.map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>) : <p>—</p>}
+                      {(plan.samples.name || []).length > 0 && (<><p className="font-bold text-gray-300 mt-2 mb-1">Amostra NAME (desempate por apelido)</p>{plan.samples.name.map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>)}</>)}
+                      {(plan.samples.rule || []).length > 0 && (<><p className="font-bold text-gray-300 mt-2 mb-1">Amostra RULE (criação por regra)</p>{plan.samples.rule.map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>)}</>)}
                     </div>
                     <div>
                       <p className="font-bold text-gray-300 mb-1">Por que o resto NÃO casa sozinho</p>
@@ -267,8 +298,93 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                 )}
               </div>
             )}
-            {applied && <p className="mt-3 text-sm text-emerald-300">Aplicado: {applied.fee_create} tarifas criadas · {applied.fee_match} tarifas casadas · {applied.exact} exatos.{applied.errors.length ? <span className="text-red-400"> Erros ({applied.errors.length}): {applied.errors.slice(0, 5).join(' | ')}{applied.errors.length > 5 ? ' …' : ''}</span> : ''} Confira abaixo.</p>}
+            {applied && <p className="mt-3 text-sm text-emerald-300">Aplicado: {applied.fee_create} tarifas criadas · {applied.fee_match} tarifas casadas · {applied.exact} exatos · {applied.name} por nome · {applied.rule_create} criados por regra.{applied.errors.length ? <span className="text-red-400"> Erros ({applied.errors.length}): {applied.errors.slice(0, 5).join(' | ')}{applied.errors.length > 5 ? ' …' : ''}</span> : ''} Confira abaixo.</p>}
           </div>
+
+          {/* ── TO BOOK (João, 31/ago): só a fila da triagem, com nota ── */}
+          <div className="border border-gray-800 rounded-2xl p-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={async () => { const v = !tobookOpen; setTobookOpen(v); if (v && tobook == null) await loadTobook() }} className="bg-amber-900 hover:bg-amber-800 border border-amber-700 px-4 py-2 rounded-xl font-bold text-sm">
+                TO BOOK{tobook != null ? ` (${tobook.length})` : ''} {tobookOpen ? '▴' : '▾'}
+              </button>
+              <span className="text-xs text-gray-500">linhas marcadas na TRIAGEM como &quot;a lançar&quot; — lance no app e o motor casa na próxima rodada</span>
+            </div>
+            {tobookOpen && tobook != null && (
+              <div className="mt-3 space-y-1 max-h-96 overflow-y-auto text-sm">
+                {tobook.length === 0 && <p className="text-gray-500">fila vazia — nada marcado como TO BOOK.</p>}
+                {tobook.map(t => (
+                  <div key={t.id} className="flex items-center gap-3 border-b border-gray-900 py-1">
+                    <span className="text-gray-500 shrink-0">{formatShortDate(t.date)}</span>
+                    <span className="flex-1 truncate" title={t.name}>{t.name}</span>
+                    <span className="text-xs text-amber-300 truncate max-w-[16rem]" title={t.note}>{t.note}</span>
+                    <span className="font-bold tabular-nums shrink-0">{t.amount > 0 ? '−' : '+'}${Math.abs(t.amount).toFixed(2)}</span>
+                    <button disabled={anyBusy} onClick={async () => { lock(t.id); try { await post({ action: 'unqueue', bank_id: t.id }); setTobook(p => (p || []).filter(x => x.id !== t.id)); await load() } catch (e) { fail(e) } finally { unlock(t.id) } }} className="text-red-300 hover:text-red-200 text-xs font-bold disabled:opacity-40">DESTRIAR</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── REGRAS & APELIDOS DO MOTOR (BL 0.7.0) — semeadura humana ── */}
+          <details className="border border-gray-800 rounded-2xl p-4" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) loadMgr() }}>
+            <summary className="cursor-pointer font-bold text-sm">⚙ REGRAS & APELIDOS DO MOTOR <span className="text-gray-500 font-normal">— combustível→FLEET, mercado→TEAM, DELAWAR→High Horse…</span></summary>
+            <div className="mt-3 grid md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="font-bold text-purple-300 mb-2">REGRAS DE CRIAÇÃO <span className="text-gray-500 font-normal">(linha sem lançamento → o motor CRIA e casa, sempre via PLANEJAR)</span></p>
+                {rules.map(r => (
+                  <div key={r.id} className="flex items-center gap-2 border-b border-gray-900 py-1">
+                    <code className="text-xs bg-gray-900 rounded px-1.5 py-0.5">{r.pattern}</code>
+                    <span className="flex-1 text-xs text-gray-400 truncate">→ {r.target === 'INPUT' ? 'SUPPLY ' + (r.category || 'SHOP') : 'despesa · ' + (sups.find(s => s.id === r.supplier_id)?.label || 'fornecedor?')}{r.label ? ' · ' + r.label : ''}</span>
+                    <button onClick={async () => { await supabase.from('bank_merchant_rules').update({ active: !r.active }).eq('id', r.id); setRules(p => p.map(x => x.id === r.id ? { ...x, active: !r.active } : x)) }} className={`text-xs font-bold ${r.active ? 'text-emerald-300' : 'text-gray-500'}`}>{r.active ? 'ATIVA' : 'PAUSADA'}</button>
+                    <button onClick={async () => { if (!confirm('Apagar a regra?')) return; await supabase.from('bank_merchant_rules').delete().eq('id', r.id); setRules(p => p.filter(x => x.id !== r.id)) }} className="text-red-400 text-xs font-bold">✕</button>
+                  </div>
+                ))}
+                <div className="flex gap-2 flex-wrap mt-2 items-center">
+                  <input value={nr.pattern} onChange={e => setNr({ ...nr, pattern: e.target.value })} placeholder="padrão (regex) — ex. RACETRAC|WAWA" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs flex-1 min-w-[160px]" />
+                  <select value={nr.target} onChange={e => setNr({ ...nr, target: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1.5 text-xs">
+                    <option value="FIXED_EXPENSE">despesa de fornecedor</option>
+                    <option value="INPUT">supply (categoria)</option>
+                  </select>
+                  {nr.target === 'FIXED_EXPENSE' ? (
+                    <select value={nr.supplier_id} onChange={e => setNr({ ...nr, supplier_id: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1.5 text-xs max-w-[14rem]">
+                      <option value="">— fornecedor —</option>
+                      {sups.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                    </select>
+                  ) : (
+                    <select value={nr.category} onChange={e => setNr({ ...nr, category: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1.5 text-xs">
+                      {['SHOP', 'TEAM', 'APARTMENT', 'CATS'].map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  )}
+                  <input value={nr.label} onChange={e => setNr({ ...nr, label: e.target.value })} placeholder="rótulo (ex. combustível frota)" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs w-44" />
+                  <button onClick={async () => {
+                    if (!nr.pattern.trim() || (nr.target === 'FIXED_EXPENSE' && !nr.supplier_id)) { alert('padrão e destino obrigatórios'); return }
+                    const row = { pattern: nr.pattern.trim(), target: nr.target, supplier_id: nr.target === 'FIXED_EXPENSE' ? nr.supplier_id : null, category: nr.target === 'INPUT' ? nr.category : null, label: nr.label.trim() || null, active: true }
+                    const { data, error } = await supabase.from('bank_merchant_rules').insert(row).select('*').single()
+                    if (error) alert(error.message); else { setRules(p => [...p, data]); setNr({ pattern: '', target: nr.target, supplier_id: '', category: 'SHOP', label: '' }) }
+                  }} className="bg-purple-800 hover:bg-purple-700 px-3 py-1.5 rounded-xl text-xs font-bold">+ REGRA</button>
+                </div>
+              </div>
+              <div>
+                <p className="font-bold text-sky-300 mb-2">APELIDOS <span className="text-gray-500 font-normal">(como o banco escreve ⇄ como o app chama — desempata os ambíguos)</span></p>
+                {aliases.map(a => (
+                  <div key={a.id} className="flex items-center gap-2 border-b border-gray-900 py-1">
+                    <code className="text-xs bg-gray-900 rounded px-1.5 py-0.5">{a.pattern}</code>
+                    <span className="flex-1 text-xs text-gray-400 truncate">⇄ {a.words}</span>
+                    <button onClick={async () => { if (!confirm('Apagar o apelido?')) return; await supabase.from('bank_aliases').delete().eq('id', a.id); setAliases(p => p.filter(x => x.id !== a.id)) }} className="text-red-400 text-xs font-bold">✕</button>
+                  </div>
+                ))}
+                <div className="flex gap-2 flex-wrap mt-2">
+                  <input value={na.pattern} onChange={e => setNa({ ...na, pattern: e.target.value })} placeholder="banco escreve (regex) — ex. DELAWAR" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs flex-1 min-w-[140px]" />
+                  <input value={na.words} onChange={e => setNa({ ...na, words: e.target.value })} placeholder="app chama (vírgulas) — ex. high horse, hhp" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs flex-1 min-w-[160px]" />
+                  <button onClick={async () => {
+                    if (!na.pattern.trim() || !na.words.trim()) { alert('padrão e palavras obrigatórios'); return }
+                    const { data, error } = await supabase.from('bank_aliases').insert({ pattern: na.pattern.trim(), words: na.words.trim() }).select('*').single()
+                    if (error) alert(error.message); else { setAliases(p => [...p, data]); setNa({ pattern: '', words: '' }) }
+                  }} className="bg-sky-800 hover:bg-sky-700 px-3 py-1.5 rounded-xl text-xs font-bold">+ APELIDO</button>
+                </div>
+              </div>
+            </div>
+          </details>
 
           {/* ── A CONFERIR ── */}
           {auto && (auto.pending.length > 0 || auto.batches.length > 0) && (

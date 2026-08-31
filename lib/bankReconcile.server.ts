@@ -203,6 +203,20 @@ const ALIASES: Alias[] = [
   { re: /AUTOZONE/i, words: ['autozone'] }, { re: /HARBOR/i, words: ['harbor'] }, { re: /SUMMIT/i, words: ['summit'] }, { re: /JEGS/i, words: ['jegs'] }, { re: /EBAY/i, words: ['ebay'] }, { re: /AMAZON|AMZN/i, words: ['amazon'] }, { re: /WALMART|WAL-MART/i, words: ['walmart'] },
   { re: /RACETRAC|WAWA|SHELL|\bBP\b|7-ELEVEN|CHEVRON|EXXON|SUNOCO|MARATHON/i, words: ['gasolina', 'combustível', 'combustivel', 'gasoline', 'unld', 'super gas', 'fuel'], not: /injector|pump|rail|regulator|filter|module|hose|sensor|line|cell|tank/i },
 ]
+// Apelidos vindos do BANCO DE DADOS (bank_aliases, semeados no card — BL 0.7.0):
+// somam-se aos hard-coded acima sem precisar de deploy. Cache por lambda.
+let DB_ALIASES: Alias[] = []
+export async function loadDbAliases(db: any): Promise<void> {
+  try {
+    const { data } = await db.from('bank_aliases').select('pattern, words, not_pattern')
+    DB_ALIASES = (data || []).map((r: any) => {
+      try {
+        return { re: new RegExp(r.pattern, 'i'), words: String(r.words || '').split(',').map((w: string) => w.trim().toLowerCase()).filter(Boolean), not: r.not_pattern ? new RegExp(r.not_pattern, 'i') : undefined }
+      } catch { return null }
+    }).filter(Boolean) as Alias[]
+  } catch { DB_ALIASES = [] /* tabela ainda não existe — segue só com os hard-coded */ }
+}
+
 // Nome bate? Em Zelle/wire o BENEFICIÁRIO tem que aparecer no rótulo (revisão #3);
 // nas demais, palavra útil em comum (prefixo de 5 vale) ou alias inteiro.
 export function nameHit(line: any, c: Cand): boolean {
@@ -212,7 +226,7 @@ export function nameHit(line: any, c: Cand): boolean {
   const payee = bank.match(/zelle (?:debit to|credit from) ([a-z0-9&' .-]+?)(?: ref#?|$)/i) || bank.match(/wire transfer (?:incoming |outgoing |domestic |intl |international )?(?!fee)([a-z0-9&' .-]+)/i)
   if (payee) { const pw = words(payee[1]); return pw.length > 0 && wordHit(pw, lw) }
   if (wordHit(words(bank), lw)) return true
-  for (const a of ALIASES) if (a.re.test(bank) && !(a.not && a.not.test(lab)) && a.words.some(w => new RegExp('\\b' + esc(w) + '\\b', 'i').test(lab))) return true
+  for (const a of [...ALIASES, ...DB_ALIASES]) if (a.re.test(bank) && !(a.not && a.not.test(lab)) && a.words.some(w => new RegExp('\\b' + esc(w) + '\\b', 'i').test(lab))) return true
   return false
 }
 
@@ -247,11 +261,16 @@ export const isFee = (l: any) => num(l.amount) > 0 && num(l.amount) <= 300 && !l
 const FEE_LABEL = /\b(regions( bank)?|wire (transfer )?fee|analysis charge|service assessment|tarifa banc\w*|taxa banc\w*|bank fee)\b/i
 const isFeeCand = (c: Cand) => { const segs = c.label.split(' · '); const sup = segs[segs.length - 1] || ''; return FEE_LABEL.test(c.label) && (/regions/i.test(sup) || (c.table === 'fixed_cost_expenses' && /^FIXO · regions/i.test(c.label))) }
 
-export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT'; create: boolean }
+// BL 0.7.0: NAME = ambíguo desempatado por nome/apelido (289 medidos em 31/ago);
+// RULE = linha sem candidato de família conhecida que a regra humana manda CRIAR.
+export type MerchantRule = { id: string; pattern: string; target: 'FIXED_EXPENSE' | 'INPUT'; supplier_id: string | null; category: string | null; label: string | null; active: boolean }
+export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE'; create: boolean; rule?: MerchantRule }
 export type Plan = { items: PlanItem[]; skipped: Record<string, number> }
 
 // Decide o que é CERTO. Não escreve nada — quem escreve é applyPlan.
-export function buildPlan(lines: any[], pool: Pool): Plan {
+export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = []): Plan {
+  // Regras compiladas uma vez; pattern inválido é ignorado em silêncio.
+  const compiled = rules.filter(r => r.active).map(r => { try { return { r, re: new RegExp(r.pattern, 'i') } } catch { return null } }).filter(Boolean) as { r: MerchantRule; re: RegExp }[]
   const plan: Plan = { items: [], skipped: {} }
   const skip = (k: string) => { plan.skipped[k] = (plan.skipped[k] || 0) + 1 }
   const used = new Set<string>()
@@ -276,10 +295,29 @@ export function buildPlan(lines: any[], pool: Pool): Plan {
     if (l.pending) { skip('pendente'); continue }
     const arr = num(l.amount) > 0 ? pool.out : pool.inn
     const same = arr.filter(x => free(x) && Math.abs(x.amount - amt) < 0.011)
-    if (!same.length) { skip('sem candidato'); continue }
+    if (!same.length) {
+      // BL 0.7.0: sem candidato + família conhecida = a REGRA humana manda CRIAR
+      // o lançamento (só saídas; padrão do motor FEE, sempre via PLANEJAR).
+      if (num(l.amount) > 0) {
+        const hay = (l.merchant || '') + ' ' + (l.name || '')
+        const rule = compiled.find(x => x.re.test(hay))
+        if (rule) { plan.items.push({ line: l, cand: null, engine: 'RULE', create: true, rule: rule.r }); continue }
+      }
+      skip('sem candidato'); continue
+    }
     const near = same.filter(x => !x.date || daysBetween(x.date, l.date) <= 30)
-    if (near.length !== 1) { skip(near.length ? 'candidato ambíguo' : 'candidato longe'); continue }
-    const c = near[0]
+    if (!near.length) { skip('candidato longe'); continue }
+    // BL 0.7.0: ambíguo NÃO morre mais sem tentar o nome — se exatamente UM
+    // candidato bate por nome/apelido, ele vence (engine NAME). Antes, o skip
+    // vinha antes do nameHit e o desempate nunca rodava (289 linhas medidas).
+    let c: Cand
+    let engineTag: 'EXACT' | 'NAME' = 'EXACT'
+    if (near.length === 1) c = near[0]
+    else {
+      const byName = near.filter(x => nameHit(l, x))
+      if (byName.length !== 1) { skip('candidato ambíguo'); continue }
+      c = byName[0]; engineTag = 'NAME'
+    }
     if (!c.date) { skip('candidato sem data'); continue }
     const dd = daysBetween(c.date, l.date)
     if (dd > (c.undated ? 7 : 3)) { skip('mais de 3 dias'); continue }
@@ -291,7 +329,7 @@ export function buildPlan(lines: any[], pool: Pool): Plan {
     if (!nameHit(l, c)) { skip('nome não bate'); continue }
     if (amt % 50 === 0 && amt < 1000) { skip('valor redondo < $1k'); continue }
     consume(c)
-    plan.items.push({ line: l, cand: c, engine: 'EXACT', create: false })
+    plan.items.push({ line: l, cand: c, engine: engineTag, create: false })
   }
   return plan
 }
@@ -305,12 +343,16 @@ export function planHash(plan: Plan): string {
 
 export const planSummary = (plan: Plan) => {
   const fee = plan.items.filter(i => i.engine === 'FEE'), exact = plan.items.filter(i => i.engine === 'EXACT')
+  const name = plan.items.filter(i => i.engine === 'NAME'), rule = plan.items.filter(i => i.engine === 'RULE')
   return {
     fee_create: fee.filter(i => i.create).length, fee_match: fee.filter(i => !i.create).length, exact: exact.length,
+    name: name.length, rule_create: rule.length,
     total: plan.items.length, skipped: plan.skipped, hash: planHash(plan),
     samples: {
       fee: fee.filter(i => i.create).slice(0, 5).map(({ line: l }) => `${l.date} · ${l.name} · $${Math.abs(num(l.amount)).toFixed(2)}`),
       exact: exact.slice(0, 12).map(({ line: l, cand: c }) => `${l.date} · ${l.merchant || l.name} · ${num(l.amount) > 0 ? '−' : '+'}$${Math.abs(num(l.amount)).toFixed(2)} ⇄ ${c!.label}`),
+      name: name.slice(0, 8).map(({ line: l, cand: c }) => `${l.date} · ${l.merchant || l.name} · $${Math.abs(num(l.amount)).toFixed(2)} ⇄ ${c!.label} (desempate por nome)`),
+      rule: rule.slice(0, 8).map(({ line: l, rule: r }) => `${l.date} · ${l.merchant || l.name} · $${Math.abs(num(l.amount)).toFixed(2)} → CRIA ${r!.target === 'INPUT' ? 'SUPPLY ' + (r!.category || 'SHOP') : 'despesa do fornecedor'}${r!.label ? ' · ' + r!.label : ''}`),
     },
   }
 }
@@ -471,7 +513,7 @@ async function pmap<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const it = items[i++]; await fn(it) } }))
 }
 
-export type ApplyResult = { batch: string; fee_match: number; fee_create: number; exact: number; remaining: number; errors: string[] }
+export type ApplyResult = { batch: string; fee_match: number; fee_create: number; exact: number; name: number; rule_create: number; remaining: number; errors: string[] }
 
 // Aplica até `max` itens do plano (o cliente repete enquanto remaining > 0 —
 // revisão #12: 317 linhas × 2–3 idas ao banco não cabem num request).
@@ -480,7 +522,7 @@ export type ApplyResult = { batch: string; fee_match: number; fee_create: number
 export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch?: string } = {}): Promise<ApplyResult> {
   const max = opts.max || 150
   const batch = opts.batch || randomUUID()
-  const res: ApplyResult = { batch, fee_match: 0, fee_create: 0, exact: 0, remaining: Math.max(0, plan.items.length - max), errors: [] }
+  const res: ApplyResult = { batch, fee_match: 0, fee_create: 0, exact: 0, name: 0, rule_create: 0, remaining: Math.max(0, plan.items.length - max), errors: [] }
   const lineLabel = (l: any) => `${l.date} · ${l.merchant || l.name || ''} · ${num(l.amount)}`
   const fix = (row_id: string, label: string) => ({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id, field: 'match_status', old_value: 'NEW', new_value: 'MATCHED', label: label.slice(0, 200) })
   let supplierId: string | null = null
@@ -517,10 +559,52 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         }
         res.fee_create++
         fixes.push(fix(l.id, 'FEE criou tarifa' + (attr ? ' (wire da ' + attr.code + ')' : '') + ' · ' + lineLabel(l)))
+      } else if (it.engine === 'RULE' && it.create && it.rule) {
+        // BL 0.7.0: a REGRA humana cria o lançamento que nunca foi feito e casa
+        // na hora — mesmo padrão do motor FEE (idempotente no retry).
+        const r = it.rule
+        const amtAbs = Math.abs(num(l.amount))
+        const bankName = String(l.merchant || l.name || 'Compra').trim()
+        if (r.target === 'FIXED_EXPENSE') {
+          if (!r.supplier_id) throw new Error('regra sem fornecedor')
+          const { data: prev } = await db.from('fixed_cost_expenses').select('id').eq('bank_transaction_id', l.id).maybeSingle()
+          let rowId: string = prev?.id || ''
+          if (!rowId) {
+            const { data: row, error } = await db.from('fixed_cost_expenses').insert({
+              supplier_id: r.supplier_id, type: 'SINGLE', description: (bankName + ' (regra · Bank Link)').slice(0, 200), amount: amtAbs, source: 'GZ28US',
+              expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id,
+            }).select('id').single()
+            if (error || !row) throw new Error(error?.message || 'insert falhou')
+            rowId = row.id
+          }
+          try {
+            await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: ('AUTO · RULE · ' + (r.label || bankName)).slice(0, 150), match_engine: 'RULE', match_batch: batch, reviewed_at: null })
+          } catch (e) { if (!prev) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id); throw e }
+        } else {
+          // INPUT/SUPPLY — inputs não tem bank_transaction_id: o elo idempotente
+          // vai em order_number ('bank:<id>'), que também documenta a origem.
+          const linkRef = ('bank:' + l.id).slice(0, 120)
+          const { data: prev } = await db.from('inputs').select('id').eq('order_number', linkRef).maybeSingle()
+          let rowId: string = prev?.id || ''
+          if (!rowId) {
+            const { data: row, error } = await db.from('inputs').insert({
+              description: (bankName + ' (regra · Bank Link)').slice(0, 200), category: r.category || 'SHOP',
+              quantity: 1, unit_price: amtAbs, supplier: bankName.slice(0, 120),
+              purchase_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', order_number: linkRef,
+            }).select('id').single()
+            if (error || !row) throw new Error(error?.message || 'insert falhou')
+            rowId = row.id
+          }
+          try {
+            await writeMatch(db, l, { table: 'inputs', id: rowId }, { matched_note: ('AUTO · RULE · ' + (r.label || bankName)).slice(0, 150), match_engine: 'RULE', match_batch: batch, reviewed_at: null })
+          } catch (e) { if (!prev) await db.from('inputs').delete().eq('id', rowId).eq('order_number', linkRef); throw e }
+        }
+        res.rule_create++
+        fixes.push(fix(l.id, `RULE criou ${r.target === 'INPUT' ? 'SUPPLY ' + (r.category || 'SHOP') : 'despesa'} · ${lineLabel(l)}`))
       } else {
         const c = it.cand!
         const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: null })
-        if (it.engine === 'FEE') res.fee_match++; else res.exact++
+        if (it.engine === 'FEE') res.fee_match++; else if (it.engine === 'NAME') res.name++; else res.exact++
         fixes.push(fix(l.id, `${it.engine} · ${lineLabel(l)} ⇄ ${c.label}${backfill.length ? ' → ' + backfill.map(b => `${b.t}.${b.f}=${b.v.slice(0, 10)}`).join(', ') : ''}`))
       }
     } catch (e) { res.errors.push(`${it.engine} ${lineLabel(l)}: ${String((e as Error).message || e)}`) }

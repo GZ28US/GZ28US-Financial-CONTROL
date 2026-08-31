@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, logMatchEvent, fetchAll } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, logMatchEvent, fetchAll, loadDbAliases, MerchantRule } from '@/lib/bankReconcile.server'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -40,7 +40,14 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json({ ok: true, matched: acc, outflows: outs, account_opened: '2025-11-10' })
     }
+    // TO BOOK (João, 31/ago): a fila da TRIAGEM inteira, com nota — pra ver só
+    // o que está marcado "a lançar" e destriar linha a linha.
+    if (req.nextUrl.searchParams.get('queued') === '1') {
+      const rows = await fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, matched_note', (q: any) => q.eq('match_status', 'QUEUED').order('date', { ascending: false }))
+      return NextResponse.json({ ok: true, queued: rows.map((r: any) => ({ id: r.id, date: r.date, amount: num(r.amount), name: r.merchant || r.name || '', note: r.matched_note || '' })) })
+    }
     const limit = Math.min(5000, Math.max(1, parseInt(req.nextUrl.searchParams.get('limit') || '3000', 10) || 3000))
+    await loadDbAliases(db)
     const [lines, pool] = await Promise.all([newLines(db, limit), candidatePool(db)])
     const { count: totalNew } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_status', 'NEW')
     const enriched = lines.map((l: any) => ({
@@ -117,8 +124,12 @@ export async function POST(req: NextRequest) {
       // Sem a migration o motor não roda (revisão #17): sonda barata antes de qualquer escrita.
       const { error: probe } = await db.from('bank_transactions').select('match_engine, backfill').limit(1)
       if (probe) return NextResponse.json({ error: 'rode MIGRATION_bank_reconcile_v030.sql antes: ' + probe.message, needs_migration: true }, { status: 409 })
+      // BL 0.7.0: apelidos do banco (desempate NAME) + regras de criação humanas.
+      await loadDbAliases(db)
+      let rules: MerchantRule[] = []
+      try { rules = await fetchAll(db, 'bank_merchant_rules', '*', (q: any) => q.eq('active', true)) } catch { /* sem migration ainda */ }
       const [lines, pool] = await Promise.all([newLines(db, 5000), candidatePool(db)])
-      const plan = buildPlan(lines, pool)
+      const plan = buildPlan(lines, pool, rules)
       const summary = planSummary(plan)
       if (body.plan) return NextResponse.json({ ok: true, plan: summary })
       // APLICAR roda o plano que foi MOSTRADO (hash); continuação de fatia passa batch.
