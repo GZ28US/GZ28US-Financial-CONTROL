@@ -1,401 +1,293 @@
 'use client'
 
+// ── STREAM — A VISTA DERIVADA DAS COMPRAS ───────────────────────────────────
+//
+// Ordem do dono (Márcio, 30/ago/2026), palavra por palavra:
+//
+//   "crie uma pagina nova de STREAM DO ZERO, ignore TOTALMENTE o que la esta.
+//    Mostre absolutamente todos os itens, com todos os filtros, nesta ordem:
+//      DELIVERED / SHIPPED / BOUGHT / AGUARDANDO ESTORNO / ESTORNADO / PICKUP
+//    IMPORTANTE: O STREAM agora NAO TEM BANCO PROPRIO, ele e somente uma pagina
+//    de leitura dos itens em suas origens!!!!"
+//
+// Portanto esta página é uma VISTA, nada mais: ela LÊ as 5 tabelas de item
+// comprado (invoice_expenses, inputs, inventory, goods, good_expenses), deriva
+// o badge com a MESMA cascata de todas as outras telas (lib/deliverStatus.ts →
+// deriveDeliverStatus) e lista. Nenhum insert, nenhum update, nenhum delete,
+// nenhuma leitura de part_streams — se um dia alguém quiser GRAVAR algo aqui,
+// está no lugar errado: o fato mora na linha de origem do item, e é lá que se
+// edita (a página só aponta o caminho com o link de origem de cada linha).
+//
+// Item SEM badge (não pago, doado, de estoque) NÃO aparece: a lista de filtros
+// do dono define o universo — stream é compra viva ou morta, não rascunho.
+// Invoice de quote também fica fora: quote não é compra.
+
 import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
-import PartPicker from '@/components/PartPicker'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
-import { STREAM_STATUS_META, guessCarrier, carrierTrackUrl, type StreamRow, type StreamStatus } from '@/lib/stream'
+import { BASE_PATH, formatUSD, formatShortDate } from '@/lib/utils'
+import { DeliverChip, OrderChip, deriveDeliverStatus, type DeliverChipRow, type DeliverStatus } from '@/components/DeliverChip'
 
-// STREAM — the purchase follow-up board. One row per order: scanned purchases
-// enroll themselves (the invoice editor asks after every scan), the row walks
-// BOUGHT → SHIPPED → DELIVERED, and 17TRACK pushes the walk automatically once
-// a tracking number is on the row.
-
-type Chip = 'ALL' | StreamStatus
-const CHIPS: Chip[] = ['ALL', 'BOUGHT', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']
-
-type WhereInfo = { invoice_code: string; ride_name: string; ride_id: string | null }
-
-function fmtD(d: string | null | undefined): string {
-  if (!d) return '—'
-  const dt = new Date(String(d).slice(0, 10) + 'T00:00:00')
-  return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+// A ordem das seções e dos chips é A ORDEM DO DONO — não mexer.
+const SECTION_ORDER: DeliverStatus[] = ['DELIVERED', 'SHIPPED', 'BOUGHT', 'CANCELLED', 'REFUNDED', 'PICKUP']
+// Rótulos na língua DESTA tela (app US = inglês; no BR são os do dono em PT).
+const SECTION_LABEL: Record<DeliverStatus, string> = {
+  DELIVERED: 'DELIVERED',
+  SHIPPED: 'SHIPPED',
+  BOUGHT: 'BOUGHT',
+  CANCELLED: 'AWAITING REFUND',
+  REFUNDED: 'REFUNDED',
+  PICKUP: 'PICKUP',
 }
-function todayYmd(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+type Chip = 'ALL' | DeliverStatus
+
+// Os campos comuns às 5 tabelas de que a derivação e a linha precisam. O tipo
+// estende DeliverChipRow de propósito: o compilador cobra os campos que a
+// cascata e o chip leem — esquecer um no select não compila.
+type BaseRow = DeliverChipRow & {
+  id: string
+  supplier: string | null
+  order_number: string | null
+  shipped_at: string | null
+  last_event_at: string | null
+}
+type InvoiceExpenseRow = BaseRow & { invoice_id: string | null; item: string | null; price: number | null; quantity: number | null; stock_source_type: string | null }
+type InputRow = BaseRow & { description: string | null; unit_price: number | null; quantity: number | null; source_type: string | null }
+type GoodRow = BaseRow & { description: string | null; unit_price: number | null; quantity: number | null }
+type GoodExpenseRow = BaseRow & { description: string | null; amount: number | null }
+type InvoiceRef = { id: string; invoice_code: string; ride_id: string | null; is_quote: boolean | null }
+
+// Uma linha do stream, já derivada e pronta para desenhar.
+type StreamItem = {
+  key: string
+  status: DeliverStatus
+  row: DeliverChipRow
+  name: string
+  supplier: string
+  order: string
+  amount: number | null
+  paymentDate: string
+  sourceLabel: string
+  href: string | null
+}
+
+const DELIVER_SELECT = 'picked_up, cancel_status, payment_date, tracking_number, carrier, eta, shipped_at, delivered_at, last_event, last_event_at, supplier, order_number'
+
+// LEITURA PAGINADA. supabase-js corta em 1000 linhas EM SILÊNCIO e
+// invoice_expenses já passa disso — sem o .range() em loop a tela mentiria por
+// omissão. Erro NUNCA vira lista vazia: estoura para o estado de erro da tela.
+async function fetchAll<T>(table: string, select: string): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from(table).select(select).range(from, from + PAGE - 1)
+    if (error) throw new Error(`${table}: ${error.message}`)
+    const chunk = (data || []) as unknown as T[]
+    out.push(...chunk)
+    if (chunk.length < PAGE) break
+  }
+  return out
 }
 
 export default function StreamPage() {
-  const [rows, setRows] = useState<StreamRow[]>([])
-  const [where, setWhere] = useState<Record<string, WhereInfo>>({})
+  const [items, setItems] = useState<StreamItem[]>([])
   const [loading, setLoading] = useState(true)
+  // Leitura que falha NÃO é lista vazia (mesmo padrão da /performance).
+  const [err, setErr] = useState<string | null>(null)
   const [chip, setChip] = useState<Chip>('ALL')
   const [search, setSearch] = useState('')
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
-  const [confirmCancel, setConfirmCancel] = useState<StreamRow | null>(null)
-  const [editTracking, setEditTracking] = useState<{ id: string; value: string } | null>(null)
-  const [showAdd, setShowAdd] = useState(false)
-  const [addForm, setAddForm] = useState({ supplier: '', item: '', order_number: '', tracking_number: '', part_id: '' })
-  const [toast, setToast] = useState<string | null>(null)
 
-  useEffect(() => {
-    void load()
-    // Kick the mailbox watcher (throttled server-side): shipping emails from
-    // gz28us@hotmail.com auto-fill tracking numbers on open rows.
-    void fetch(`${BASE_PATH}/api/stream/mail-poll`, { method: 'POST' })
-      .then(r => r.json())
-      .then(d => { if (d?.updated > 0) { flash(`📬 ${d.updated} tracking${d.updated === 1 ? '' : 's'} captured from email`); void load() } })
-      .catch(() => {})
-  }, [])
-
-  function flash(msg: string) { setToast(msg); setTimeout(() => setToast(null), 3000) }
+  useEffect(() => { void load() }, [])
 
   async function load() {
-    // Only US purchases here — BR rows (app='BR', the PowerTrade pipeline) show
-    // exclusively on the BR app's own /stream board.
-    const { data } = await supabase.from('part_streams').select('*').eq('app', 'US').order('created_at', { ascending: false })
-    const list = (data as StreamRow[]) || []
-    setRows(list)
-    const invIds = Array.from(new Set(list.map(r => r.invoice_id).filter((v): v is string => !!v)))
-    if (invIds.length) {
-      const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id').in('id', invIds)
-      const rideIds = Array.from(new Set((invs || []).map(i => i.ride_id).filter(Boolean)))
-      const { data: rides } = rideIds.length
-        ? await supabase.from('rides').select('id, project_name').in('id', rideIds)
-        : { data: [] as { id: string; project_name: string }[] }
-      const rideName = new Map((rides || []).map(r => [r.id, r.project_name]))
-      const map: Record<string, WhereInfo> = {}
-      for (const i of invs || []) map[i.id] = { invoice_code: i.invoice_code, ride_name: rideName.get(i.ride_id) || '', ride_id: i.ride_id }
-      setWhere(map)
+    try {
+      setErr(null)
+      const [ie, inputs, inventory, goods, goodExpenses, invoices] = await Promise.all([
+        fetchAll<InvoiceExpenseRow>('invoice_expenses', `id, invoice_id, item, price, quantity, stock_source_type, ${DELIVER_SELECT}`),
+        fetchAll<InputRow>('inputs', `id, description, unit_price, quantity, source_type, ${DELIVER_SELECT}`),
+        fetchAll<InputRow>('inventory', `id, description, unit_price, quantity, source_type, ${DELIVER_SELECT}`),
+        fetchAll<GoodRow>('goods', `id, description, unit_price, quantity, ${DELIVER_SELECT}`),
+        fetchAll<GoodExpenseRow>('good_expenses', `id, description, amount, ${DELIVER_SELECT}`),
+        fetchAll<InvoiceRef>('invoices', 'id, invoice_code, ride_id, is_quote'),
+      ])
+      const invMap = new Map(invoices.map(i => [i.id, i]))
+      const list: StreamItem[] = []
+
+      // invoice_expenses → a página da invoice no ride. Quote não é compra.
+      for (const r of ie) {
+        const inv = r.invoice_id ? invMap.get(r.invoice_id) : undefined
+        if (inv?.is_quote) continue
+        const status = deriveDeliverStatus(r)
+        if (!status) continue
+        list.push({
+          key: `ie-${r.id}`, status, row: r,
+          name: r.item || '—', supplier: r.supplier || '', order: r.order_number || '',
+          amount: r.price != null ? r.price * (r.quantity || 1) : null,
+          paymentDate: r.payment_date || '',
+          sourceLabel: inv ? `INVOICE ${inv.invoice_code}` : 'INVOICE',
+          href: inv?.ride_id && r.invoice_id ? `${BASE_PATH}/rides/${inv.ride_id}/invoices/${r.invoice_id}` : null,
+        })
+      }
+      // inputs → SUPPLIES; inventory → a mesma ficha com ?src=inventory
+      // (é assim que /supplies/[id] distingue as duas tabelas hoje).
+      for (const r of inputs) {
+        const status = deriveDeliverStatus(r)
+        if (!status) continue
+        list.push({
+          key: `in-${r.id}`, status, row: r,
+          name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
+          amount: r.unit_price != null ? r.unit_price * (r.quantity || 1) : null,
+          paymentDate: r.payment_date || '',
+          sourceLabel: 'SUPPLIES', href: `${BASE_PATH}/supplies/${r.id}`,
+        })
+      }
+      for (const r of inventory) {
+        const status = deriveDeliverStatus(r)
+        if (!status) continue
+        list.push({
+          key: `iv-${r.id}`, status, row: r,
+          name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
+          amount: r.unit_price != null ? r.unit_price * (r.quantity || 1) : null,
+          paymentDate: r.payment_date || '',
+          sourceLabel: 'INVENTORY', href: `${BASE_PATH}/supplies/${r.id}?src=inventory`,
+        })
+      }
+      // goods e good_expenses → o quadro /goods (não há ficha por linha lá).
+      for (const r of goods) {
+        const status = deriveDeliverStatus(r)
+        if (!status) continue
+        list.push({
+          key: `gd-${r.id}`, status, row: r,
+          name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
+          amount: r.unit_price != null ? r.unit_price * (r.quantity || 1) : null,
+          paymentDate: r.payment_date || '',
+          sourceLabel: 'GOODS', href: `${BASE_PATH}/goods`,
+        })
+      }
+      for (const r of goodExpenses) {
+        const status = deriveDeliverStatus(r)
+        if (!status) continue
+        list.push({
+          key: `ge-${r.id}`, status, row: r,
+          name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
+          amount: r.amount,
+          paymentDate: r.payment_date || '',
+          sourceLabel: 'GOODS', href: `${BASE_PATH}/goods`,
+        })
+      }
+      setItems(list)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
+  // Contagem por status sobre o universo INTEIRO — os chips não mudam com a busca.
   const counts = useMemo(() => {
-    // O quadro US só recebe linhas app='US' (3 status); os status BR existem no
-    // tipo compartilhado, então o mapa cobre todos.
-    const c: Record<Chip, number> = { ALL: rows.length, BOUGHT: 0, SHIPPED: 0, DELIVERED: 0, REPORTED_PT: 0, DELIVERED_BR: 0, CANCELLED: 0, REFUNDED: 0 } as Record<Chip, number>
-    for (const r of rows) c[r.status] = (c[r.status] || 0) + 1
+    const c: Record<Chip, number> = { ALL: items.length, DELIVERED: 0, SHIPPED: 0, BOUGHT: 0, CANCELLED: 0, REFUNDED: 0, PICKUP: 0 }
+    for (const it of items) c[it.status] += 1
     return c
-  }, [rows])
+  }, [items])
 
-  const visible = useMemo(() => {
+  // Seções na ordem do dono, cada uma do mais recente pro mais antigo
+  // (payment_date desc; linha sem data — estorno limpou — vai pro fim).
+  const sections = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const today = todayYmd()
-    // Most critical first: LATE (ETA passed, still moving) → BOUGHT (waiting
-    // shipment) → SHIPPED (moving) → CANCELLED (money owed back) → DELIVERED →
-    // REFUNDED (fully closed); newest first inside each.
-    const rank = (r: StreamRow) => {
-      if ((r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today) return 0
-      return { BOUGHT: 1, SHIPPED: 2, CANCELLED: 3, DELIVERED: 4, REPORTED_PT: 5, DELIVERED_BR: 6, REFUNDED: 7 }[r.status] ?? 8
-    }
-    // Dentro de cada grupo, o que MEXEU por ultimo vem primeiro — e o marco mais
-    // recente da propria linha, nao a data da compra. Assim o quadro DELIVERED
-    // sai em ordem de ENTREGA (a ultima entregue no topo), que e como se olha
-    // pra ele; o que ainda esta em transito ordena pelo embarque, e o que nem
-    // embarcou, pela compra.
-    const lastMove = (r: StreamRow) => r.delivered_at || r.shipped_at || r.created_at || ''
-    return rows.filter(r => {
-      if (chip !== 'ALL' && r.status !== chip) return false
-      if (!q) return true
-      const w = r.invoice_id ? where[r.invoice_id] : undefined
-      return [r.item, r.supplier, r.order_number, r.tracking_number, r.carrier, w?.invoice_code, w?.ride_name]
-        .some(v => (v || '').toLowerCase().includes(q))
-    }).sort((a, b) => rank(a) - rank(b) || lastMove(b).localeCompare(lastMove(a)))
-  }, [rows, chip, search, where])
+    const match = (it: StreamItem) =>
+      !q || [it.name, it.supplier, it.order, it.row.tracking_number || ''].some(v => v.toLowerCase().includes(q))
+    return SECTION_ORDER
+      .filter(s => chip === 'ALL' || chip === s)
+      .map(s => ({
+        status: s,
+        rows: items
+          .filter(it => it.status === s && match(it))
+          .sort((a, b) => b.paymentDate.localeCompare(a.paymentDate)),
+      }))
+      .filter(s => s.rows.length > 0)
+  }, [items, chip, search])
 
-  // Save a tracking number, then hand the row to the automation: 17TRACK
-  // registration + SHIPPED flip + WhatsApp all happen server-side.
-  async function saveTracking(id: string, raw: string) {
-    const tracking = raw.trim()
-    if (!tracking) { setEditTracking(null); return }
-    setBusyId(id)
-    const { error } = await supabase.from('part_streams')
-      .update({ tracking_number: tracking, carrier: guessCarrier(tracking) })
-      .eq('id', id)
-    if (error) { alert(error.message); setBusyId(null); return }
-    const r = await fetch(`${BASE_PATH}/api/stream/track`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, action: 'register' }),
-    }).then(x => x.json()).catch(() => null)
-    setEditTracking(null); setBusyId(null)
-    flash(r?.ok ? '🚚 Tracking registered — follow-up is automatic now' : '🚚 Tracking saved')
-    void load()
-  }
-
-  async function refreshRow(id: string) {
-    setBusyId(id)
-    const r = await fetch(`${BASE_PATH}/api/stream/track`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, action: 'refresh' }),
-    }).then(x => x.json()).catch(() => null)
-    setBusyId(null)
-    if (r?.ok === false) flash(`⚠ ${r.reason || 'No update available'}`)
-    void load()
-  }
-
-  // Manual DELIVERED — for pickups / carrier misses. Reports like the automatic path.
-  async function markDelivered(row: StreamRow) {
-    setBusyId(row.id)
-    const { error } = await supabase.from('part_streams')
-      .update({ status: 'DELIVERED', delivered_at: new Date().toISOString() })
-      .eq('id', row.id)
-    if (error) { alert(error.message); setBusyId(null); return }
-    const w = row.invoice_id ? where[row.invoice_id] : undefined
-    void fetch(`${BASE_PATH}/api/whatsapp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: `✅ *STREAM — DELIVERED*\n${row.item}\n${[row.supplier, w?.invoice_code, w?.ride_name].filter(Boolean).join(' · ')}` }),
-    }).catch(() => {})
-    setBusyId(null)
-    void load()
-  }
-
-  async function removeRow(id: string) {
-    await supabase.from('part_streams').delete().eq('id', id)
-    setConfirmRemove(null)
-    void load()
-  }
-
-  // Order cancelled at the supplier: the row leaves the delivery ladder and the
-  // mail watcher starts hunting the refund email (manual 💸 stays as fallback).
-  async function cancelRow(row: StreamRow) {
-    setBusyId(row.id)
-    const { error } = await supabase.from('part_streams').update({
-      status: 'CANCELLED',
-      last_event: 'Order cancelled — watching the inbox for the refund',
-      last_event_at: new Date().toISOString(),
-    }).eq('id', row.id)
-    setConfirmCancel(null)
-    if (error) { alert(error.message); setBusyId(null); return }
-    const w = row.invoice_id ? where[row.invoice_id] : undefined
-    void fetch(`${BASE_PATH}/api/whatsapp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: `🚫 *STREAM — ORDER CANCELLED*\n${row.item}\n${[row.supplier, w?.invoice_code, w?.ride_name].filter(Boolean).join(' · ')}\nWatching for the refund.` }),
-    }).catch(() => {})
-    setBusyId(null)
-    void load()
-  }
-
-  // Manual REFUNDED — for refunds that arrive without an email the watcher can see.
-  async function markRefunded(row: StreamRow) {
-    setBusyId(row.id)
-    const { error } = await supabase.from('part_streams').update({
-      status: 'REFUNDED',
-      last_event: 'Refund confirmed (manual)',
-      last_event_at: new Date().toISOString(),
-    }).eq('id', row.id)
-    if (error) { alert(error.message); setBusyId(null); return }
-    const w = row.invoice_id ? where[row.invoice_id] : undefined
-    void fetch(`${BASE_PATH}/api/whatsapp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: `💸 *STREAM — REFUNDED*\n${row.item}\n${[row.supplier, w?.invoice_code, w?.ride_name].filter(Boolean).join(' · ')}` }),
-    }).catch(() => {})
-    setBusyId(null)
-    void load()
-  }
-
-  async function addManual() {
-    if (!addForm.item.trim()) { alert('Enter at least the item'); return }
-    const tracking = addForm.tracking_number.trim()
-    const { data, error } = await supabase.from('part_streams').insert([{
-      supplier: addForm.supplier.trim() || null,
-      item: addForm.item.trim(),
-      order_number: addForm.order_number.trim() || null,
-      tracking_number: tracking || null,
-      carrier: tracking ? guessCarrier(tracking) : null,
-      status: 'BOUGHT',
-      part_id: addForm.part_id || null,
-    }]).select('id').single()
-    if (error) { alert(error.message); return }
-    setShowAdd(false); setAddForm({ supplier: '', item: '', order_number: '', tracking_number: '', part_id: '' })
-    if (tracking && data) {
-      await fetch(`${BASE_PATH}/api/stream/track`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: data.id, action: 'register' }),
-      }).catch(() => {})
-    }
-    void load()
-  }
-
-  const today = todayYmd()
-  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-lg'
+  const shown = sections.reduce((n, s) => n + s.rows.length, 0)
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
 
-      {toast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 border border-gray-700 rounded-2xl px-6 py-3 text-lg font-bold">{toast}</div>
-      )}
-
-      {confirmRemove && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
-            <h2 className="text-2xl font-bold mb-2">Remove from STREAM</h2>
-            <p className="text-gray-400 text-lg mb-8">Stop following this purchase? The invoice expense is not touched.</p>
-            <div className="flex gap-4">
-              <button onClick={() => setConfirmRemove(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
-              <button onClick={() => removeRow(confirmRemove)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {confirmCancel && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-md w-full mx-4">
-            <h2 className="text-2xl font-bold mb-2">🚫 Order cancelled?</h2>
-            <p className="text-gray-400 text-lg mb-2 break-words">{confirmCancel.item}</p>
-            <p className="text-gray-400 text-lg mb-8">The row goes to CANCELLED and the system watches the inbox for the refund — it flips to REFUNDED automatically when the refund email lands. The invoice expense is not touched.</p>
-            <div className="flex gap-4">
-              <button onClick={() => setConfirmCancel(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">BACK</button>
-              <button onClick={() => cancelRow(confirmCancel)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCELLED</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAdd && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-lg w-full mx-4">
-            <h2 className="text-2xl font-bold mb-6">📦 TRACK A PURCHASE</h2>
-            <div className="space-y-4 mb-8">
-              {/* Entrada nasce linkada ao catálogo (pré-P1 Crew Chief) — escolher preenche item/fornecedor. */}
-              <PartPicker onPick={(p) => setAddForm(f => ({ ...f, part_id: p.id, item: f.item || p.alias || p.item, supplier: f.supplier || p.supplier || '' }))} />
-              <div><label className="text-sm text-gray-400 font-bold">ITEM *</label><input value={addForm.item} onChange={e => setAddForm({ ...addForm, item: e.target.value })} className={inputClass} /></div>
-              <div><label className="text-sm text-gray-400 font-bold">SUPPLIER</label><input value={addForm.supplier} onChange={e => setAddForm({ ...addForm, supplier: e.target.value })} className={inputClass} /></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-sm text-gray-400 font-bold">ORDER #</label><input value={addForm.order_number} onChange={e => setAddForm({ ...addForm, order_number: e.target.value })} className={inputClass} /></div>
-                <div><label className="text-sm text-gray-400 font-bold">TRACKING #</label><input value={addForm.tracking_number} onChange={e => setAddForm({ ...addForm, tracking_number: e.target.value })} className={inputClass} /></div>
-              </div>
-            </div>
-            <div className="flex gap-4">
-              <button onClick={() => setShowAdd(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
-              <button onClick={addManual} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-xl">ADD</button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Lei da casa (list-page-search-layout): título + SEARCH em cima, chips
+          embaixo. SEM botão ADD — nada se cria numa vista. */}
       <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">STREAM ({rows.length})</h1>
-        <div className="flex gap-3 flex-wrap items-center">
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="SEARCH item, supplier, order, tracking…"
-            className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-80"
-          />
-          <button onClick={() => setShowAdd(true)} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">+ ADD</button>
-        </div>
+        <h1 className="text-4xl font-bold">STREAM ({items.length})</h1>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="SEARCH item, supplier, order, tracking…"
+          className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-lg w-80"
+        />
       </div>
 
       <div className="flex gap-2 mb-8 flex-wrap">
-        {CHIPS.map(c => (
+        {(['ALL', ...SECTION_ORDER] as Chip[]).map(c => (
           <button
             key={c}
             onClick={() => setChip(c)}
             className={`px-5 py-2 rounded-2xl font-bold text-sm border ${chip === c ? 'bg-white text-black border-white' : 'bg-gray-900 text-gray-300 border-gray-700 hover:border-gray-500'}`}
           >
-            {c === 'ALL' ? 'ALL' : `${STREAM_STATUS_META[c].icon} ${c}`} ({counts[c]})
+            {c === 'ALL' ? 'ALL' : SECTION_LABEL[c]} ({counts[c]})
           </button>
         ))}
       </div>
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
-      ) : visible.length === 0 ? (
+      ) : err ? (
+        // Falha de leitura NÃO é lista vazia — mesmo padrão da /performance.
+        <div className="bg-red-900/20 border border-red-700 rounded-3xl p-6">
+          <p className="text-2xl font-bold text-red-300">Couldn&apos;t read the purchase tables.</p>
+          <p className="text-lg text-gray-300 mt-2">This is NOT an empty list — the stream is unknown right now.</p>
+          <p className="text-sm text-gray-500 mt-2 break-all">{err}</p>
+          <button onClick={() => { setLoading(true); void load() }} className="mt-4 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-2xl font-bold">TRY AGAIN</button>
+        </div>
+      ) : shown === 0 ? (
         <div className="border border-gray-800 rounded-3xl bg-gray-900/40 px-8 py-16 text-center">
           <p className="text-5xl mb-4">📦</p>
-          <p className="text-2xl font-bold mb-2">Nothing here yet</p>
-          <p className="text-lg text-gray-400">Scan a purchase into an invoice — the system will ask to follow it here.</p>
+          <p className="text-2xl font-bold mb-2">Nothing here</p>
+          <p className="text-lg text-gray-400">
+            {items.length === 0
+              ? 'No paid purchase carries a badge yet — the stream reads the items at their source tables.'
+              : 'No item matches this filter.'}
+          </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {visible.map(r => {
-            // Unknown status (bad manual insert) must degrade to a visible chip,
-            // never white-screen the whole board.
-            const meta = STREAM_STATUS_META[r.status] ?? { label: String(r.status), icon: '❓', cls: 'bg-gray-800 text-gray-300' }
-            const w = r.invoice_id ? where[r.invoice_id] : undefined
-            const late = (r.status === 'BOUGHT' || r.status === 'SHIPPED') && r.eta && r.eta < today
-            const editing = editTracking?.id === r.id
-            return (
-              <div key={r.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className={`px-3 py-1 rounded-xl text-sm font-bold ${meta.cls}`}>{meta.icon} {meta.label}</span>
-                      {late && <span className="px-3 py-1 rounded-xl text-sm font-bold bg-red-900 text-red-300">⚠ LATE — ETA was {fmtD(r.eta)}</span>}
+        <div className="space-y-10">
+          {sections.map(sec => (
+            <section key={sec.status}>
+              <h2 className="text-2xl font-bold mb-4 text-gray-300">{SECTION_LABEL[sec.status]} <span className="text-gray-500">({sec.rows.length})</span></h2>
+              <div className="space-y-3">
+                {sec.rows.map(it => (
+                  <div key={it.key} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 flex items-start justify-between gap-4 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <DeliverChip row={it.row} />
+                        {it.order && <OrderChip order={it.order} />}
+                      </div>
+                      <p className="text-xl font-bold mt-2 break-words">{it.name}</p>
+                      <p className="text-gray-400 mt-0.5">{it.supplier || '—'}</p>
                     </div>
-                    <p className="text-xl font-bold mt-2 break-words">{r.item}</p>
-                    <p className="text-gray-400 mt-0.5">
-                      {[r.supplier, r.order_number ? `Order ${r.order_number}` : null].filter(Boolean).join(' · ') || '—'}
-                      {w && (
-                        <> · <a href={`${BASE_PATH}/rides/${w.ride_id}/invoices/edit/${r.invoice_id}`} className="text-blue-400 hover:underline">{w.invoice_code}{w.ride_name ? ` · ${w.ride_name}` : ''}</a></>
+                    <div className="text-right shrink-0">
+                      <p className="text-xl font-bold">{it.amount != null ? formatUSD(it.amount) : '—'}</p>
+                      <p className="text-gray-400">{formatShortDate(it.paymentDate) || '—'}</p>
+                      {it.href ? (
+                        <a href={it.href} className="text-blue-400 hover:underline text-sm font-bold">{it.sourceLabel}</a>
+                      ) : (
+                        <span className="text-gray-500 text-sm font-bold">{it.sourceLabel}</span>
                       )}
-                    </p>
-                    <p className="text-gray-400 mt-1 text-sm">
-                      {r.tracking_number ? (
-                        <a href={carrierTrackUrl(r.carrier, r.tracking_number)} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">
-                          {[r.carrier, r.tracking_number].filter(Boolean).join(' ')}
-                        </a>
-                      ) : 'No tracking yet'}
-                      {r.eta && !late && <> · ETA <span className="text-gray-200 font-bold">{fmtD(r.eta)}</span></>}
-                      {r.last_event && <> · {r.last_event}</>}
-                    </p>
-                    {r.ship_to && (
-                      <p className={`mt-1 text-sm ${/11320|space\s*blvd/i.test(r.ship_to) ? 'text-gray-500' : 'text-red-400 font-bold'}`}>
-                        📍 {r.ship_to}{/11320|space\s*blvd/i.test(r.ship_to) ? '' : ' — NOT the shop!'}
-                      </p>
-                    )}
-                    <p className="text-gray-600 text-xs mt-1">
-                      Bought {fmtD(r.created_at)}{r.shipped_at ? ` · Shipped ${fmtD(r.shipped_at)}` : ''}{r.delivered_at ? ` · Delivered ${fmtD(r.delivered_at)}` : ''}
-                    </p>
+                    </div>
                   </div>
-                  <div className="flex gap-2 flex-wrap items-center">
-                    {editing ? (
-                      <>
-                        <input
-                          autoFocus
-                          value={editTracking.value}
-                          onChange={e => setEditTracking({ id: r.id, value: e.target.value })}
-                          onKeyDown={e => { if (e.key === 'Enter') void saveTracking(r.id, editTracking.value); if (e.key === 'Escape') setEditTracking(null) }}
-                          placeholder="Paste tracking number"
-                          className="bg-gray-800 border border-gray-600 rounded-xl px-4 py-2 text-lg w-64"
-                        />
-                        <button onClick={() => saveTracking(r.id, editTracking.value)} disabled={busyId === r.id} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">SAVE</button>
-                        <button onClick={() => setEditTracking(null)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-xl font-bold">✕</button>
-                      </>
-                    ) : (
-                      <>
-                        {(r.status === 'BOUGHT' || r.status === 'SHIPPED') && (
-                          <button onClick={() => setEditTracking({ id: r.id, value: r.tracking_number || '' })} className="bg-blue-800 hover:bg-blue-700 px-4 py-2 rounded-xl font-bold">
-                            {r.tracking_number ? 'EDIT TRACKING' : '+ TRACKING'}
-                          </button>
-                        )}
-                        {r.tracking_number && (r.status === 'BOUGHT' || r.status === 'SHIPPED') && (
-                          <button onClick={() => refreshRow(r.id)} disabled={busyId === r.id} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">{busyId === r.id ? '…' : '⟳ REFRESH'}</button>
-                        )}
-                        {r.status === 'SHIPPED' && (
-                          <button onClick={() => markDelivered(r)} disabled={busyId === r.id} className="bg-green-800 hover:bg-green-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">✓ DELIVERED</button>
-                        )}
-                        {(r.status === 'BOUGHT' || r.status === 'SHIPPED') && (
-                          <button onClick={() => setConfirmCancel(r)} disabled={busyId === r.id} className="bg-red-900 hover:bg-red-800 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">🚫 CANCELLED</button>
-                        )}
-                        {r.status === 'CANCELLED' && (
-                          <button onClick={() => markRefunded(r)} disabled={busyId === r.id} className="bg-green-800 hover:bg-green-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold">💸 REFUNDED</button>
-                        )}
-                        <button onClick={() => setConfirmRemove(r.id)} className="bg-gray-800 hover:bg-red-900 px-4 py-2 rounded-xl font-bold text-gray-400">REMOVE</button>
-                      </>
-                    )}
-                  </div>
-                </div>
+                ))}
               </div>
-            )
-          })}
+            </section>
+          ))}
         </div>
       )}
     </main>
