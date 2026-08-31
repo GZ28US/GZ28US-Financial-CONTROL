@@ -355,6 +355,10 @@ export default function NewInvoicePage() {
         expense_date: null,
         supplier: e.supplier || null,
         item: e.item,
+        // O PART NUMBER NUNCA SE PERDE (Márcio, 31/ago/2026): ele vem do pack,
+        // atravessa a quote e chega na invoice. Sem ele o custo fica órfão da
+        // peça — quebra o ORDER NOW, o STREAM e o rastro do fornecedor.
+        part_number: e.part_number || null,
         price: (e.amount_usd != null ? Number(e.amount_usd) : Number(e.amount)) || 0,
         tax: (Number(e.tax) || 0) * ratio,
         extra: (Number(e.extra) || 0) * ratio,
