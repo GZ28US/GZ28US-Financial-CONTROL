@@ -78,7 +78,10 @@ type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; y
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal): Check[] {
+// WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
+type WaSignal = { state: 'loading' | 'ok' | 'missing' | 'error'; fails: { id: string; at: string; destination: string | null; group_name: string | null; kind: string | null; body_head: string | null; error: string | null; http_status: number | null }[] }
+
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -687,6 +690,26 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // STAFF · AVISOS DE WHATSAPP QUE NÃO SAÍRAM (caso Gui, 31/ago: o RESUMED das
+  // 12:28 morreu calado — só um toast de 3s no celular dele). Toda tentativa de
+  // envio agora fica em wa_send_log; aqui aparecem as FALHAS dos últimos 14 dias.
+  {
+    const items: Item[] = []
+    if (wa.state === 'missing') items.push({ href: '/whatsapp', code: 'MIGRATION', label: 'Rodar MIGRATION_wa_send_log.sql no SQL Editor', extra: 'sem a tabela, falha de envio morre sem registro — foi assim no caso do Gui' })
+    if (wa.state === 'error') items.push({ href: '/whatsapp', code: 'SINAL', label: 'sinal do WA SEND LOG indisponível — verificação NÃO rodou', extra: 'recarregue a página' })
+    for (const f of wa.fails) items.push({
+      href: '/whatsapp', code: f.http_status ? 'HTTP ' + f.http_status : 'FALHA', when: String(f.at).slice(0, 10),
+      label: `${String(f.at).slice(0, 16).replace('T', ' ')} · ${f.group_name || f.destination || 'destino?'} · "${String(f.body_head || '').slice(0, 60)}"`,
+      extra: String(f.error || 'erro desconhecido').slice(0, 140),
+    })
+    if (items.length) checks.push({
+      group: 'STAFF', key: 'wa-send-failures', title: 'Aviso de WhatsApp que NÃO saiu',
+      blocks: 'o grupo não fica sabendo do que aconteceu (duty, relatório, alerta)',
+      why: 'Márcio (01/ago): "o sistema deve saber de tudo sozinho" — mas o aviso de envio falho era um toast de 3 segundos no celular do funcionário. Agora TODA tentativa do /api/whatsapp fica em wa_send_log (sucesso e falha) e as falhas de 14 dias aparecem aqui. Causas típicas: telefone-host da instância UltraMsg desconectado (mensagem fica em fila — reconectar o aparelho no painel do UltraMsg), grupo renomeado no WhatsApp (a rota resolve por NOME), ou instância sem crédito.',
+      items,
+    })
+  }
+
   // INVENTORY · LINKER — identidade de peças (pré-P1 do Crew Chief): estoque e
   // stream apontando pro catálogo. PN da peça no texto = CERTO (bulk); nome/
   // apelido = sugestão um a um. Também a higiene do catálogo (sem PN, PN dup).
@@ -808,10 +831,22 @@ export default function DataCheckPage() {
   const [guided, setGuided] = useState<{ key: string; idx: number; start: number } | null>(null)   // MODO GUIADO
   const [gval, setGval] = useState('')                                     // valor escolhido no item guiado
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
+  const [wa, setWa] = useState<WaSignal>({ state: 'loading', fails: [] })  // falhas de envio do WhatsApp (wa_send_log)
 
   useEffect(() => {
     setD(null); setError('')
     loadFinancials().then(setD).catch(e => setError(String(e?.message || e)))
+    // WA SEND LOG (caso Gui, 31/ago): falhas de envio dos últimos 14 dias.
+    ;(async () => {
+      try {
+        const since = new Date(Date.now() - 14 * 864e5).toISOString()
+        const { data: wf, error: we } = await supabase.from('wa_send_log')
+          .select('id, at, destination, group_name, kind, body_head, error, http_status')
+          .eq('ok', false).gte('at', since).order('at', { ascending: false }).limit(200)
+        if (we) setWa({ state: /does not exist|schema cache/i.test(we.message) ? 'missing' : 'error', fails: [] })
+        else setWa({ state: 'ok', fails: (wf || []) as WaSignal['fails'] })
+      } catch { setWa({ state: 'error', fails: [] }) }
+    })()
     // Pares casados com a Regions — melhor esforço (sem sessão/servidor o card só perde o "certo").
     ;(async () => {
       try {
@@ -851,7 +886,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty, linker) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker])
+  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty, linker, wa) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
   const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
 

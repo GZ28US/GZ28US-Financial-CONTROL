@@ -1,4 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+
+// WA SEND LOG (31/ago/2026, caso Gui): o aviso de duty morreu calado e ninguém
+// soube. TODA tentativa de envio — sucesso e falha — fica em wa_send_log; o
+// Data Checker fiscaliza as falhas. Log NUNCA derruba o envio: erro é engolido.
+async function logSend(row: { destination: string | null; group_name: string | null; kind: string; body_head: string; ok: boolean; error: string | null; http_status: number | null; ultra_id: string | null }) {
+  try {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) return
+    const db = createClient(url, key, { auth: { persistSession: false } })
+    await db.from('wa_send_log').insert(row)
+  } catch { /* nunca derruba o envio */ }
+}
 
 // Every message — internal report or message to a client — ends with this
 // registered signature line. Centralized here so it's guaranteed on EVERY message
@@ -79,6 +93,8 @@ async function resolveGroupByName(base: string, token: string, name: string): Pr
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now()
+  // Hoisted pro catch conseguir logar a exceção com contexto.
+  let logCtx = { destination: null as string | null, group_name: null as string | null, kind: 'chat', body_head: '' }
   try {
     const instance = process.env.ULTRAMSG_INSTANCE
     const token = process.env.ULTRAMSG_TOKEN
@@ -105,6 +121,7 @@ export async function POST(req: NextRequest) {
     if (toGroupName) {
       const gid = await resolveGroupByName(`https://api.ultramsg.com/${instance}`, token, toGroupName)
       if (!gid) {
+        await logSend({ destination: null, group_name: toGroupName, kind: 'chat', body_head: String(payload.body || '').slice(0, 160), ok: false, error: `group "${toGroupName}" not found on instance`, http_status: 404, ultra_id: null })
         return NextResponse.json({ error: `WhatsApp group "${toGroupName}" not found on this instance.` }, { status: 404 })
       }
       to = normalizeTo(gid)
@@ -124,8 +141,10 @@ export async function POST(req: NextRequest) {
       filename: documentUrl ? filename : undefined,
     })
 
+    logCtx = { destination: to || null, group_name: toGroupName || null, kind: imageUrl ? 'image' : documentUrl ? 'document' : 'chat', body_head: body.slice(0, 160) }
     if (!to) {
       console.error('[whatsapp] no destination')
+      await logSend({ ...logCtx, ok: false, error: 'no destination configured', http_status: 400, ultra_id: null })
       return NextResponse.json({ error: 'No destination group configured.' }, { status: 400 })
     }
 
@@ -181,13 +200,16 @@ export async function POST(req: NextRequest) {
     const ok = res.ok && (sentOk || (!!data.id && !data.error))
     if (!ok) {
       console.error('[whatsapp] send failed', { status: res.status, rawPreview: rawText.slice(0, 500) })
+      await logSend({ ...logCtx, ok: false, error: ('ultramsg: ' + rawText).slice(0, 400), http_status: res.status, ultra_id: null })
       return NextResponse.json({ error: 'UltraMsg send failed', status: res.status, detail: data, raw: rawText }, { status: 502 })
     }
 
     console.log('[whatsapp] success', { messageId: data?.id, elapsedMs: Date.now() - t0 })
+    await logSend({ ...logCtx, ok: true, error: null, http_status: res.status, ultra_id: data?.id != null ? String(data.id) : null })
     return NextResponse.json({ ok: true, result: data })
   } catch (err) {
     console.error('[whatsapp] route exception', err)
+    await logSend({ ...logCtx, ok: false, error: ('exception: ' + String(err)).slice(0, 400), http_status: null, ultra_id: null })
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
