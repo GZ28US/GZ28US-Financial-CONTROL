@@ -25,14 +25,6 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/ca/api/cron/purchase-queue",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/ca/api/cron/track-refresh",
-      "schedule": "12 * * * *"
-    },
-    {
       "path": "/ca/api/items/track",
       "schedule": "37 * * * *"
     },

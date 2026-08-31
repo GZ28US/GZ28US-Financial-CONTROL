@@ -98,9 +98,9 @@ export async function GET(req: NextRequest) {
     let needsMigration = false
     let inv: any[] = [], ps: any[] = []
     try { inv = await fetchAll(db, 'inventory', 'id, description, supplier, source_type, part_id') } catch (e) { if (/part_id/.test(String(e))) needsMigration = true; else throw e }
-    try { ps = await fetchAll(db, 'part_streams', 'id, item, supplier, status, part_id') } catch (e) { if (/part_id/.test(String(e))) needsMigration = true; else throw e }
+    // STREAM LEGADO MORTO, NÃO APAGADO (Márcio, 30/ago/2026): o LINKER não lê nem grava mais part_streams — só inventory.
     const invItems = inv.filter(r => !r.part_id).map(r => ({ table: 'inventory', id: r.id, text: r.description || '', supplier: r.supplier || '', extra: r.source_type || '', candidates: candidatesFor(r.description, r.supplier) }))
-    const psItems = ps.filter(r => !r.part_id).map(r => ({ table: 'part_streams', id: r.id, text: r.item || '', supplier: r.supplier || '', extra: r.status || '', candidates: candidatesFor(r.item, r.supplier) }))
+    const psItems: { table: string; id: string; text: string; supplier: string; extra: string; candidates: unknown[] }[] = [] // stream morto — nada a linkar lá
     // higiene do catálogo
     const noPN = parts.filter((p: any) => !normPN(p.part_number)).map((p: any) => ({ id: p.id, item: String(p.item || '').slice(0, 80) }))
     const byPN = new Map<string, any[]>()
@@ -231,7 +231,7 @@ export async function POST(req: NextRequest) {
   if (String(b.action) === 'create_part') {
     const item = String(b.item || '').trim().slice(0, 120)
     const linkTable = String(b.link_table || ''), linkId = String(b.link_id || '')
-    if (!item || !['inventory', 'part_streams'].includes(linkTable) || !linkId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+    if (!item || linkTable !== 'inventory' || !linkId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
     const db = bankDb()
     const { data: created, error: cErr } = await db.from('parts_database').insert({ item, supplier: String(b.supplier || '').trim().slice(0, 60) || null, source_type: 'MANUAL' }).select('id')
     if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
@@ -275,7 +275,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
   const table = String(b.table || ''), id = String(b.id || ''), partId = String(b.part_id || '')
-  if (String(b.action) !== 'link' || !['inventory', 'part_streams'].includes(table) || !id || !partId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+  if (String(b.action) !== 'link' || table !== 'inventory' || !id || !partId) return NextResponse.json({ error: 'bad request' }, { status: 400 })
   try {
     const db = bankDb()
     const { data: part } = await db.from('parts_database').select('id, item, part_number').eq('id', partId).maybeSingle()

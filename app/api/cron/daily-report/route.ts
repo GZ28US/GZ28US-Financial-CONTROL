@@ -88,15 +88,8 @@ export async function GET(_req: NextRequest) {
     lines.push('')
   }
 
-  // ── STREAM movement.
-  const { data: st } = await db.from('part_streams')
-    .select('item, status')
-    .or(`last_event_at.gte.${since},created_at.gte.${since}`)
-  if (st?.length) {
-    lines.push(`📦 *STREAM*: ${st.length} orders moved`)
-    for (const s of (st as any[]).slice(0, 4)) lines.push(`  • ${(s.item || '').slice(0, 48)} → ${s.status}`)
-    lines.push('')
-  }
+  // ── STREAM movement: MORTO (STREAM LEGADO MORTO, NÃO APAGADO (Márcio, 30/ago/2026): "quero ele) — o
+  // quadro velho não recebe mais movimento; o status dos itens vive na origem.
 
   // ── New invoices / rides.
   const { data: inv } = await db.from('invoices').select('invoice_code').gte('created_at', since)

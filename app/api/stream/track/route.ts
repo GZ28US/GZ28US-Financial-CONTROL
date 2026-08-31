@@ -1,48 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { streamDb, t17Register, t17GetInfo, applyTrackInfo, t17Last } from '@/lib/stream.server'
-import type { StreamRow } from '@/lib/stream'
+import { NextResponse } from 'next/server'
 
-// STREAM tracking actions, called by the /stream page:
-//   { id, action: 'register' } — a tracking number was just saved on the row.
-//     Registers it with 17TRACK (webhook takes over from there) and flips the
-//     row to SHIPPED: a tracking number in hand means the order shipped.
-//   { id, action: 'refresh' }  — pull the latest 17TRACK info on demand.
-// Both fall back gracefully when TRACK17_API_KEY isn't set — the SHIPPED flip
-// and WhatsApp report still run; only the automatic follow-up needs the key.
+// ═══ STREAM LEGADO MORTO, NÃO APAGADO (Márcio, 30/ago/2026): "quero ele totalmente morto, sem mais nenhuma ação... como se tivesse sido apagado." ═══
+// Esta rota existia SÓ para o quadro velho (ações register/refresh da página antiga do /stream). Ela responde 410 Gone em
+// vez de sumir: URL órfã não quebra nada, e quem chamar entende o porquê.
+// A página nova do /stream é leitura pura das origens e não chama nada.
+// O código legado segue no repo (lib/stream*.server.ts), inerte.
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: NextRequest) {
-  const { id, action } = await req.json().catch(() => ({} as { id?: string; action?: string }))
-  if (!id || !action) return NextResponse.json({ error: 'id and action required' }, { status: 400 })
+const dead = () => NextResponse.json({
+  ok: false, gone: true,
+  reason: 'STREAM legado morto em 30/ago/2026 por ordem do dono — sem nenhuma ação. O status dos itens vive na origem (deliver badge) e o rastreio novo é /api/items/track.',
+}, { status: 410 })
 
-  const db = streamDb()
-  const { data: row } = await db.from('part_streams').select('*').eq('id', id).maybeSingle()
-  if (!row) return NextResponse.json({ error: 'stream row not found' }, { status: 404 })
-  const stream = row as StreamRow
-
-  if (!stream.tracking_number) return NextResponse.json({ error: 'row has no tracking number' }, { status: 400 })
-
-  if (action === 'register') {
-    const registered = await t17Register(stream.tracking_number, stream.carrier)
-    const regDiag = t17Last // snapshot BEFORE gettrackinfo overwrites it
-    // Fresh numbers often have no events yet — the synthetic InTransit flips the
-    // row to SHIPPED (never downgrades) and fires the WhatsApp report; real
-    // 17TRACK info refines carrier/ETA when available.
-    const info = (await t17GetInfo(stream.tracking_number, stream.carrier)) || { latest_status: { status: 'InTransit' } }
-    if (!info.latest_status?.status) info.latest_status = { status: 'InTransit' }
-    const updated = await applyTrackInfo(db, stream, info)
-    return NextResponse.json({ ok: true, registered, t17: registered ? undefined : regDiag, row: updated })
-  }
-
-  if (action === 'refresh') {
-    const info = await t17GetInfo(stream.tracking_number, stream.carrier)
-    if (!info) return NextResponse.json({ ok: false, reason: 'no tracking info', t17: t17Last, row: stream })
-    const updated = await applyTrackInfo(db, stream, info)
-    // misc_info rides along so callers can read carrier extras 17TRACK exposes
-    // (package weight, pieces, dimensions) that applyTrackInfo doesn't persist.
-    return NextResponse.json({ ok: true, row: updated, misc: info?.misc_info ?? null, shipping: info?.shipping_info ?? null })
-  }
-
-  return NextResponse.json({ error: `unknown action ${action}` }, { status: 400 })
-}
+export async function GET() { return dead() }
+export async function POST() { return dead() }

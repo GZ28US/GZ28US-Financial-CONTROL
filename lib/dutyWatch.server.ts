@@ -9,7 +9,7 @@
 // Este watcher varre a caixa INTEIRA (Hotmail, todas as pastas) + o Gmail atrás
 // de fatura de imposto/desembaraço de DHL/FedEx/UPS e:
 //
-//   waybill BATE com part_streams.tracking_number  → lança invoice_expenses na(s)
+//   waybill BATE com o tracking da LINHA DO ITEM (invoice_expenses)  → lança na(s)
 //                                                    MESMA(S) invoice(s) da remessa,
 //                                                    rateado igual entre elas
 //   waybill não bate (ou sem valor legível)        → NÃO lança; alerta o Márcio
@@ -72,7 +72,7 @@ async function wa(body: string): Promise<void> {
 
 // Candidatos a waybill: DHL 10 dígitos, FedEx 12, UPS 1Z+16. Não filtramos aqui
 // por carrier — quem decide é o banco: só vira destino o número que EXISTE em
-// part_streams. Número que não bate nunca lança nada.
+// linha do item. Número que não bate nunca lança nada. (part_streams morto 30/ago.)
 export function waybillCandidates(text: string): string[] {
   const hits = [...text.matchAll(/\b(1Z[0-9A-Z]{16}|\d{12}|\d{10})\b/gi)].map(m => m[1].toUpperCase())
   return [...new Set(hits)].slice(0, 20)
@@ -169,9 +169,12 @@ export async function runDutyWatch(db: SupabaseClient): Promise<{ booked: string
     const invNo = carrierInvoiceNo(msg.text)
     const waybills = waybillCandidates(`${msg.subject} ${msg.text}`)
 
-    // Só remessas que o STREAM conhece viram destino.
+    // O destino vem da ORIGEM, não mais do stream (STREAM LEGADO MORTO, NÃO APAGADO (Márcio, 30/ago/2026)).
+    // O rastreio agora mora na linha do item (invoice_expenses.tracking_number),
+    // então o waybill da fatura do carrier casa direto com a linha de dinheiro —
+    // mesmo formato de retorno de antes, fonte nova.
     const { data: rows } = waybills.length
-      ? await db.from('part_streams').select('invoice_id, item, tracking_number, supplier').in('tracking_number', waybills)
+      ? await db.from('invoice_expenses').select('invoice_id, item, tracking_number, supplier').in('tracking_number', waybills)
       : { data: [] as any[] }
     const matched = (rows || []).filter(r => r.invoice_id)
     const fingerprint = invNo ? `${carrier} inv ${invNo}` : `${carrier} waybill ${waybills[0] || msg.key}`
