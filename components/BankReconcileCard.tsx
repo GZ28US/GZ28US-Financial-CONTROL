@@ -233,6 +233,16 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                 <div className="flex gap-2 items-center">
                   {progress && <span className="text-xs text-emerald-300">{progress}</span>}
                   <button disabled={anyBusy} onClick={planRun} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">{busy.has('plan') ? 'CALCULANDO…' : 'PLANEJAR'}</button>
+                  {/* RESTAURAR DIÁRIO (31/ago): reencena o bank_match_log depois de um
+                      reset — idempotente, só age em linha NEW com registro no diário. */}
+                  <button disabled={anyBusy} title="Reencena o diário de casamentos (bank_match_log) nas linhas NEW — use depois de um reset" onClick={async () => {
+                    if (!confirm('Reencenar o diário de casamentos nas linhas NEW? (idempotente — nada é sobrescrito)')) return
+                    try {
+                      const d = await post({ action: 'restore_log' })
+                      alert(`DIÁRIO RESTAURADO ✅\ncasadas: ${d.matched} · status: ${d.statused} · alvos sumidos: ${d.gone} · erros: ${d.errors}`)
+                      await load()
+                    } catch (e) { alert('RESTAURAR falhou — ' + String((e as Error).message || e)) }
+                  }} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">RESTAURAR DIÁRIO</button>
                   {plan && plan.total > 0 && <button disabled={anyBusy} onClick={applyRun} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">{busy.has('apply') ? 'APLICANDO…' : `APLICAR ${plan.total}`}</button>}
                 </div>
               )}

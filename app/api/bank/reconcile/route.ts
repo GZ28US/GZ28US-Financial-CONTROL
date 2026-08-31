@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, logMatchEvent, fetchAll } from '@/lib/bankReconcile.server'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -133,8 +133,9 @@ export async function POST(req: NextRequest) {
       const ids = (Array.isArray(body.ids) ? body.ids : []).map((x: any) => String(x)).filter(Boolean).slice(0, 800)
       const note = String(body.note || '').trim().slice(0, 120)
       if (!ids.length || !note) return NextResponse.json({ error: 'ids e note obrigatórios' }, { status: 400 })
-      const { data, error } = await db.from('bank_transactions').update({ match_status: 'QUEUED', matched_note: 'TRIAGEM · ' + note, matched_table: null, matched_id: null }).in('id', ids).eq('match_status', 'NEW').eq('pending', false).select('id')
+      const { data, error } = await db.from('bank_transactions').update({ match_status: 'QUEUED', matched_note: 'TRIAGEM · ' + note, matched_table: null, matched_id: null }).in('id', ids).eq('match_status', 'NEW').eq('pending', false).select('id, date, name, merchant, amount')
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      for (const r of data || []) await logMatchEvent(db, r, 'QUEUE', { note: 'TRIAGEM · ' + note })
       await db.from('data_fixes').insert({
         check_key: 'bank-reconcile', table_name: 'bank_transactions', row_id: ids[0], field: 'match_status',
         old_value: 'NEW', new_value: 'QUEUED', label: ('TRIAGEM · ' + note + ' · ' + (data || []).length + ' linhas').slice(0, 200),
@@ -144,10 +145,47 @@ export async function POST(req: NextRequest) {
     if (action === 'unqueue') {
       const bankId2 = String(body.bank_id || '')
       if (!bankId2) return NextResponse.json({ error: 'bank_id required' }, { status: 400 })
-      const { data, error } = await db.from('bank_transactions').update({ match_status: 'NEW', matched_note: null }).eq('id', bankId2).eq('match_status', 'QUEUED').select('id')
+      const { data, error } = await db.from('bank_transactions').update({ match_status: 'NEW', matched_note: null }).eq('id', bankId2).eq('match_status', 'QUEUED').select('id, date, name, merchant, amount')
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       if (!data || !data.length) return NextResponse.json({ error: 'linha não está em TO BOOK — recarregue' }, { status: 409 })
+      await logMatchEvent(db, data[0], 'UNQUEUE', {})
       return NextResponse.json({ ok: true })
+    }
+    // RESTAURAR DIÁRIO (31/ago, pós-reset do Márcio): reencena o ESTADO FINAL
+    // de cada linha NEW a partir do bank_match_log — MATCH refaz o casamento
+    // (com backfill) se o alvo ainda existe; TRANSFER/IGNORE/QUEUE reescrevem o
+    // status. UNMATCH/UNQUEUE como último registro = linha fica NEW mesmo.
+    // Idempotente: rodar duas vezes não muda nada.
+    if (action === 'restore_log') {
+      const { error: probeL } = await db.from('bank_match_log').select('id').limit(1)
+      if (probeL) return NextResponse.json({ error: 'rode MIGRATION_bank_match_log.sql antes: ' + probeL.message, needs_migration: true }, { status: 409 })
+      const logs = await fetchAll(db, 'bank_match_log', '*', (q: any) => q.order('at', { ascending: false }))
+      const latest = new Map<string, any>()
+      for (const r of logs) if (!latest.has(r.bank_id)) latest.set(r.bank_id, r)
+      const lines2 = await fetchAll(db, 'bank_transactions', '*', (q: any) => q.eq('match_status', 'NEW'))
+      let matched = 0, statused = 0, gone = 0, errors2 = 0
+      for (const l of lines2) {
+        const r = latest.get(String(l.id)); if (!r) continue
+        try {
+          if (r.action === 'MATCH' && r.matched_table && r.matched_id) {
+            if (!['purchase_group', 'kit_group'].includes(r.matched_table)) {
+              const { data: tgt } = await db.from(r.matched_table).select('id').eq('id', r.matched_id).maybeSingle()
+              if (!tgt) { gone++; continue }
+            }
+            await writeMatch(db, l, { table: r.matched_table, id: r.matched_id, members: Array.isArray(r.members) ? r.members : [] }, { matched_note: r.note || null, match_engine: r.engine || null, match_batch: r.batch || null, reviewed_at: null })
+            matched++
+          } else if (['TRANSFER', 'IGNORE', 'QUEUE'].includes(r.action)) {
+            const st = r.action === 'QUEUE' ? 'QUEUED' : r.action === 'IGNORE' ? 'IGNORED' : 'TRANSFER'
+            await db.from('bank_transactions').update({ match_status: st, matched_note: r.note || null }).eq('id', l.id).eq('match_status', 'NEW')
+            statused++
+          }
+        } catch { errors2++ }
+      }
+      await db.from('data_fixes').insert({
+        check_key: 'bank-reconcile', table_name: 'bank_transactions', row_id: 'restore_log', field: 'match_status',
+        old_value: 'NEW', new_value: 'RESTORED', label: `RESTAURAR DIÁRIO · ${matched} casadas · ${statused} status · ${gone} alvos sumidos · ${errors2} erros`.slice(0, 200),
+      }).then(() => undefined, () => undefined)
+      return NextResponse.json({ ok: true, matched, statused, gone, errors: errors2 })
     }
     if (action === 'undo_batch') {
       const batch = String(body.batch || '')
@@ -158,6 +196,7 @@ export async function POST(req: NextRequest) {
       for (const r of rows || []) {
         try {
           const changed: string[] = []; await writeUnmatch(db, r, changed); n++
+          await logMatchEvent(db, r, 'UNMATCH', { batch })
           fixes.push({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id: r.id, field: 'match_status', old_value: 'MATCHED', new_value: 'NEW', label: (`DESFAZER LOTE · ${r.date} · ${r.merchant || r.name || ''} · ${num(r.amount)}` + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) })
         } catch (e) { errors.push(`${r.date} ${r.merchant || r.name}: ` + String((e as Error).message || e)) }
       }
@@ -190,6 +229,7 @@ export async function POST(req: NextRequest) {
     }
     if (action === 'unmatch') {
       await writeUnmatch(db, line, changed); status = 'NEW'
+      await logMatchEvent(db, line, 'UNMATCH', {})
     } else {
       // Toda decisão humana parte de NEW (revisão #9/#20): linha já casada precisa de DESFAZER antes.
       if (line.match_status !== 'NEW') return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
@@ -215,6 +255,7 @@ export async function POST(req: NextRequest) {
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         if (!data || !data.length) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
         status = update.match_status
+        await logMatchEvent(db, line, status === 'TRANSFER' ? 'TRANSFER' : status === 'IGNORED' ? 'IGNORE' : 'QUEUE', { note: update.matched_note })
       }
     }
     await db.from('data_fixes').insert({

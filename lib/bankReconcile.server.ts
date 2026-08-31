@@ -33,7 +33,7 @@ const daysBetween = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.
 const paidAtFor = (date: string) => date + 'T12:00:00-04:00'
 const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
-async function fetchAll(db: any, table: string, select: string, filter?: (q: any) => any): Promise<any[]> {
+export async function fetchAll(db: any, table: string, select: string, filter?: (q: any) => any): Promise<any[]> {
   const out: any[] = []
   for (let from = 0; ; from += 1000) {
     let q = db.from(table).select(select).order('id').range(from, from + 999)
@@ -320,12 +320,30 @@ export const planSummary = (plan: Plan) => {
 // 1) TRANCA a linha do banco (NEW → MATCHED). 0 linhas = outra aba/sync já
 //    decidiu ⇒ erro, nada no app foi tocado. 2) Backfill no app, guardando
 //    EXATAMENTE o que escreveu. 3) Grava `backfill` na linha. (revisões #6 #7 #11)
+// DIÁRIO DA CONCILIAÇÃO (31/ago — reset do Márcio apagou todo o casamento):
+// toda decisão vira linha em bank_match_log, estruturada e re-aplicável
+// (action=restore_log no route). Log nunca derruba a operação: erro engolido.
+export async function logMatchEvent(db: any, line: any, action: string, fields: { matched_table?: string | null; matched_id?: string | null; note?: unknown; engine?: unknown; batch?: unknown; members?: unknown }) {
+  try {
+    await db.from('bank_match_log').insert({
+      bank_id: String(line.id), bank_date: line.date || null, bank_name: (line.name || line.merchant || '').slice(0, 200) || null,
+      bank_amount: num(line.amount) || null, action,
+      matched_table: fields.matched_table || null, matched_id: fields.matched_id || null,
+      note: fields.note != null ? String(fields.note).slice(0, 300) : null,
+      engine: fields.engine != null ? String(fields.engine) : null,
+      batch: fields.batch != null ? String(fields.batch) : null,
+      members: fields.members || null,
+    })
+  } catch { /* diário nunca derruba a conciliação */ }
+}
+
 export async function writeMatch(db: any, line: any, cand: Cand | { table: string; id: string; members?: Member[] }, extra: Record<string, unknown>): Promise<{ backfill: Backfill[] }> {
   const { data: claimed, error: claimErr } = await db.from('bank_transactions')
     .update({ match_status: 'MATCHED', matched_table: cand.table, matched_id: cand.id, backfill: null, ...extra })
     .eq('id', line.id).eq('match_status', 'NEW').select('id')
   if (claimErr) throw new Error(claimErr.message)
   if (!claimed || !claimed.length) throw new Error('linha do banco já decidida (outra aba ou sync) — recarregue')
+  await logMatchEvent(db, line, 'MATCH', { matched_table: cand.table, matched_id: cand.id, note: (extra as any).matched_note, engine: (extra as any).match_engine, batch: (extra as any).match_batch, members: (cand as any).members || null })
   const backfill: Backfill[] = []
   const fill = async (table: string, ids: string[], field: 'payment_date' | 'paid_at', value: string) => {
     if (!ids.length) return
