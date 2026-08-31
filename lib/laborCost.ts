@@ -1,58 +1,43 @@
 // ── CUSTO DE MÃO DE OBRA DA CASA ────────────────────────────────────────────
 //
-// LEI (Márcio, 26/ago/2026): "o Jeff é o único membro fixo daqui, nos templates
-// do Packs DB e depois nas quotes, são os valores dele que valem. Consulte o
-// valor da hora dele na season corrente dele, use este valor pra multiplicar
-// pelo número de horas somadas no template... sem campo duplicado."
+// LEI ATUAL (Márcio, 31/ago/2026): "deixe nativo nas páginas que o custo da
+// nossa hora é USD 15". A hora da casa é uma CONSTANTE, não sai mais de
+// cadastro nenhum.
 //
-// E: "MARKUP (grand total − expenses − staff cost)". Mão de obra é CUSTO —
-// deixar de fora fazia o markup contar salário como lucro.
+// E continua valendo: "MARKUP (grand total − expenses − staff cost)". Mão de
+// obra é CUSTO — deixar de fora faz o markup contar salário como lucro.
 //
-// A taxa NÃO é copiada para pack nenhum nem para invoice nenhuma: é lida da
-// season corrente a cada abertura de tela. Mexer no salário corrige o markup de
-// todos os packs e de todas as quotes sozinho.
+// POR QUE MUDOU. Até 30/ago a taxa era lida da season aberta do membro fixo
+// (o Jeff, US.006 Jeferson Ferreira), pela lei de 26/ago: "o Jeff é o único
+// membro fixo daqui... consulte o valor da hora dele na season corrente".
+// A season US.003 dele (BRL 15.000/mês, 9h/dia × 6d/semana) foi ENCERRADA em
+// 29/ago/2026, e não sobrou nenhuma season MONTHLY aberta na casa. Resultado:
+// loadFixedMember() passou a devolver null e TODO pack e TODA quote começaram
+// a calcular custo de staff = ZERO, inflando o markup em silêncio.
+// A hora fixa da casa mata esse buraco: não depende de quem está contratado.
+//
+// A taxa NÃO é copiada para pack nenhum nem para invoice nenhuma — é lida daqui
+// a cada abertura de tela. Mudar a constante corrige o markup de todos os packs
+// e de todas as quotes de uma vez.
 
-import { supabase } from '@/lib/supabase'
-import { seasonHourlyRate } from '@/lib/utils'
-import { usdBrlSpot } from '@/lib/fx'
+/** A hora da casa, em USD. Márcio, 31/ago/2026. */
+export const HOUSE_HOURLY_USD = 15
 
 export type FixedMember = { name: string; hourly: number }
 
 /**
- * O MEMBRO FIXO da casa: season ABERTA com mensalidade **e** jornada gravadas.
- * Hoje é só o Jeff. Sem taxa ou sem jornada ninguém entra — custo de hora não
- * se estima.
+ * A MÃO DE OBRA DA CASA — hoje uma taxa fixa em dólar, igual para todo pack e
+ * toda quote.
  *
- * Devolve a taxa SEMPRE EM USD ("sempre mostrando tudo em USD"): uma taxa em
- * reais é a âncora, e o dólar sai do comercial de hoje. Sem cotação, devolve
- * null em vez de um número torto.
+ * Continua `async` e com a mesma forma de retorno de quando lia a season, para
+ * que as telas que já a consomem (editor de packs, editor de invoice e a view
+ * da invoice) não precisem mudar nada.
  */
 export async function loadFixedMember(): Promise<FixedMember | null> {
-  const { data } = await supabase
-    .from('seasons')
-    .select('pay_type, pay_rate, pay_currency, hours_per_day, days_per_week, staff(name)')
-    .is('date_conclusion', null)
-
-  const candidatos = (data || []).filter((r: any) =>
-    r.pay_type === 'MONTHLY' &&
-    Number(r.pay_rate) > 0 &&
-    Number(r.hours_per_day) > 0 &&
-    Number(r.days_per_week) > 0)
-  if (candidatos.length === 0) return null
-
-  const r: any = candidatos[0]
-  const taxa = seasonHourlyRate(r) || 0
-  if (taxa <= 0) return null
-
-  if ((r.pay_currency || 'USD') === 'BRL') {
-    const spot = await usdBrlSpot()
-    if (!spot || spot <= 0) return null
-    return { name: r.staff?.name || '—', hourly: taxa / spot }
-  }
-  return { name: r.staff?.name || '—', hourly: taxa }
+  return { name: 'House Rate', hourly: HOUSE_HOURLY_USD }
 }
 
-/** O que um punhado de horas previstas custa, à taxa do membro fixo. */
+/** O que um punhado de horas previstas custa, à hora da casa. */
 export function staffCostOf(estimatedSeconds: number, member: FixedMember | null): number {
   if (!member || !(estimatedSeconds > 0)) return 0
   return (estimatedSeconds / 3600) * member.hourly

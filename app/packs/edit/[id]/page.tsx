@@ -426,8 +426,8 @@ export default function EditPackPage() {
   // do membro fixo, ENTRAM NO CUSTO. Mão de obra é custo — deixar de fora inflava
   // o markup, que passava a incluir o salário como se fosse lucro.
   //
-  // A taxa vem da season corrente (labor), não daqui: se o salário mudar, o
-  // markup de todos os packs se corrige sozinho.
+  // A taxa é a hora da casa (HOUSE_HOURLY_USD em lib/laborCost), não daqui:
+  // mexer nela corrige o markup de todos os packs de uma vez.
   const staffCost = staffCostOf(sumEstimatedSeconds(duties), labor)
   const totalCost = expensesTotal + staffCost
   const finalProfit = grandTotal - totalCost
