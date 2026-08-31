@@ -105,7 +105,7 @@ async function run(force: boolean): Promise<NextResponse> {
   // já existem (dicionário do banco, nunca regex) e escreve só FATOS na
   // própria linha — tracking, carrier, delivered_at. Status continua sendo
   // derivação. Antes do inbox-zero, como todos os watchers.
-  let mailToItem: Awaited<ReturnType<typeof runMailToItem>> = { varridas: 0, rastreios: [], entregas: [], duvidas: [], caixas: [] }
+  let mailToItem: Awaited<ReturnType<typeof runMailToItem>> = { varridas: 0, rastreios: [], entregas: [], estornos: [], semLinha: [], duvidas: [], caixas: [] }
   try { mailToItem = await runMailToItem(db) } catch (e) { console.error('[mail-to-item]', e) }
   // ── DUTY WATCH (LEI 20/ago, caso BONOSS #207546) — com o de minimis morto,
   // toda importação gera uma 2ª cobrança (imposto + desembaraço) que chega
