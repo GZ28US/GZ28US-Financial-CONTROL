@@ -176,7 +176,16 @@ export default function PacksPage() {
               {(sections.length > 1 || label !== 'PACKS') && <h2 className="text-xl font-bold text-gray-500 mb-3">{label}</h2>}
               <div className="space-y-4">
           {[...rows.reduce((m: Map<string, any[]>, p: any) => { const k = familyOf(p.name) + '§' + (platOf(p) || 'SEM PLATFORM'); const a = m.get(k) || []; a.push(p); m.set(k, a); return m }, new Map<string, any[]>())]
-            .sort((a, b) => a[0].localeCompare(b[0]))
+            // ORDEM ALFANUMÉRICA, DO MAIS ALTO PRO MAIS BAIXO (Márcio, 30/ago/2026).
+            // O que ordena é o NÚMERO do Z-code (Z2500 > Z1300 > Z950) — comparação
+            // de string pura poria Z950 acima de Z1300, porque '9' > '1'. Família
+            // sem Z-code vai pro fim, em ordem alfabética entre si.
+            .sort((a, b) => {
+              const zOf = (packs: any[]) => Math.max(-1, ...packs.map((p: any) => { const m = String(p.name || '').match(/^Z(\d+)/i); return m ? parseInt(m[1], 10) : -1 }))
+              const za = zOf(a[1]), zb = zOf(b[1])
+              if (za !== zb) return zb - za
+              return a[0].localeCompare(b[0])
+            })
             .map(([key, packs]) => {
               const [fam, plat] = key.split('§')
               // Título com o NOME INTEIRO (João, 26/ago: "you've hidden the Z1000"):
@@ -195,7 +204,13 @@ export default function PacksPage() {
                   {packs.length > 1 && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">{packs.length} VARIANTS</span>}
                 </div>
                 <div className="space-y-3">
-                  {packs.map((p) => {
+                  {[...packs].sort((x: any, y: any) => {
+                    // Variantes do mesmo cartão: Z maior primeiro; empate = nome.
+                    const zx = parseInt((String(x.name || '').match(/^Z(\d+)/i) || [])[1] || '-1', 10)
+                    const zy = parseInt((String(y.name || '').match(/^Z(\d+)/i) || [])[1] || '-1', 10)
+                    if (zx !== zy) return zy - zx
+                    return String(x.name || '').localeCompare(String(y.name || ''))
+                  }).map((p) => {
                     const closed = (p.status || 'DRAFT') === 'CLOSED'
                     const cars = Array.isArray(p.cars) ? p.cars : []
                     return (
