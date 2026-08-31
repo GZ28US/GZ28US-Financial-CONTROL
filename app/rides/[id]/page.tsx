@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
-import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, DELIVER_COLUMNS, type DeliverChipRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 
 type Ride = {
   id: string
@@ -87,7 +87,7 @@ type FleetExp = DeliverChipRow & {
 }
 const expLine = (e: FleetExp) =>
   (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
-const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, tracking: '', carrier: '' }
+const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '' }
 
 type Stats = {
   currentProfit: number
@@ -250,6 +250,9 @@ export default function ViewRidePage() {
       // badge — quem corta é a derivação, lendo payment_date. Rastreio digitado
       // sobe para SHIPPED sozinho, sem status nenhum ser escrito.
       picked_up: expForm.pickedUp,
+      // CANCELAMENTO (30/ago/2026): grava SÓ este campo — payment_date é do
+      // botão PAID/NOT PAID, decisão humana à parte.
+      cancel_status: expForm.cancelStatus,
       tracking_number: expForm.tracking.trim() || null,
       carrier: expForm.carrier.trim() || null,
     }
@@ -553,8 +556,9 @@ export default function ViewRidePage() {
                       único status que se digita, e é ele que diz ao app para não
                       rastrear a linha (30/ago/2026). */}
                   <div className="sm:col-span-2">
-                    <DeliverFields size="sm" pickedUp={expForm.pickedUp} tracking={expForm.tracking} carrier={expForm.carrier}
+                    <DeliverFields size="sm" pickedUp={expForm.pickedUp} cancelStatus={expForm.cancelStatus} tracking={expForm.tracking} carrier={expForm.carrier}
                       onPickedUp={(v) => setExpForm({ ...expForm, pickedUp: v })}
+                      onCancelStatus={(v) => setExpForm({ ...expForm, cancelStatus: v })}
                       onTracking={(v) => setExpForm({ ...expForm, tracking: v })}
                       onCarrier={(v) => setExpForm({ ...expForm, carrier: v })} />
                   </div>
@@ -612,7 +616,7 @@ export default function ViewRidePage() {
                         </>
                       ) : (
                         <>
-                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => setConfirmExpId(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </>
                       )}

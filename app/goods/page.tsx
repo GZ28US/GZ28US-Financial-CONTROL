@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
-import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, DELIVER_COLUMNS, type DeliverChipRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
@@ -40,7 +40,7 @@ type FleetExpense = DeliverChipRow & { id: string; item: string | null; supplier
 // pickedUp/tracking/carrier: a despesa da frota é item comprado como qualquer
 // outro. Desde 30/ago/2026 não há SELETOR de status — "sem campo pra isso, e
 // uma INTERPRETACAO". Guarda-se só o fato que nenhuma conta produz: balcão.
-const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, tracking: '', carrier: '' }
+const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '' }
 // Duas coisas diferentes se chamam "nota" num carro:
 //   titleNotes  — rides.title_notes, o DOSSIÊ do documento. Bloco único, escrito
 //                 em TITLE & DOCS na tela do ride. Aqui só se lê.
@@ -224,6 +224,9 @@ export default function GoodsPage() {
       // sem badge — mas isso quem decide é a derivação lendo payment_date, não
       // um NULL escrito aqui. Rastreio digitado sobe para SHIPPED sozinho.
       picked_up: fleetForm.pickedUp,
+      // CANCELAMENTO (30/ago/2026): grava SÓ este campo — payment_date é do
+      // botão PAID/NOT PAID, decisão humana à parte.
+      cancel_status: fleetForm.cancelStatus,
       tracking_number: fleetForm.tracking.trim() || null,
       carrier: fleetForm.carrier.trim() || null,
     }
@@ -936,8 +939,9 @@ export default function GoodsPage() {
                       <input type="date" value={fleetForm.date} onChange={(ev) => setFleetForm({ ...fleetForm, date: ev.target.value })} className="bg-gray-800 border border-gray-600 rounded-2xl px-4 py-3 text-lg" />
                     </div>
                     {/* PICKED UP + TRACKING + CARRIER na despesa da frota. */}
-                    <DeliverFields size="sm" pickedUp={fleetForm.pickedUp} tracking={fleetForm.tracking} carrier={fleetForm.carrier}
+                    <DeliverFields size="sm" pickedUp={fleetForm.pickedUp} cancelStatus={fleetForm.cancelStatus} tracking={fleetForm.tracking} carrier={fleetForm.carrier}
                       onPickedUp={(v) => setFleetForm({ ...fleetForm, pickedUp: v })}
+                      onCancelStatus={(v) => setFleetForm({ ...fleetForm, cancelStatus: v })}
                       onTracking={(v) => setFleetForm({ ...fleetForm, tracking: v })}
                       onCarrier={(v) => setFleetForm({ ...fleetForm, carrier: v })} />
                     <div className="flex gap-3 flex-wrap">
@@ -977,7 +981,7 @@ export default function GoodsPage() {
                             </>
                           ) : (
                             <>
-                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => setConfirmFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </>
                           )}

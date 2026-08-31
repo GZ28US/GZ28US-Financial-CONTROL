@@ -9,7 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverChip, DeliverFields } from '@/components/DeliverChip'
+import { DeliverChip, DeliverFields, normCancelStatus, type CancelStatus } from '@/components/DeliverChip'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 
@@ -79,6 +79,9 @@ export default function EditInputPage() {
   // conta produz: só o balcão o cria. O resto (BOUGHT/SHIPPED/DELIVERED) se lê
   // de pagou / tracking_number / delivered_at.
   const [pickedUp, setPickedUp] = useState(false)
+  // CANCELAMENTO (30/ago/2026): null = compra viva, CANCELLED = aguardando
+  // estorno, REFUNDED = estornado. Marcar aqui grava SÓ cancel_status.
+  const [cancelStatus, setCancelStatus] = useState<CancelStatus | null>(null)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   // FATOS DO ROBÔ, NÃO DO FORMULÁRIO (30/ago/2026). Estes três não têm campo na
@@ -126,6 +129,7 @@ export default function EditInputPage() {
     setSupplier(data.supplier || '')
     setOrderNumber(data.order_number || '')
     setPickedUp(!!data.picked_up)
+    setCancelStatus(normCancelStatus(data.cancel_status))
     setTracking(data.tracking_number || '')
     setCarrier(data.carrier || '')
     setDeliveredAt(data.delivered_at || null)
@@ -200,6 +204,9 @@ export default function EditInputPage() {
       // derivação (lib/deliverStatus.ts), lendo source_type e payment_date. Aqui
       // se registra só o fato: peguei no balcão, sim ou não.
       picked_up: pickedUp,
+      // CANCELAMENTO: só o fato, e nunca em linha DOADA (doado não é compra —
+      // não pode ter sido cancelado). Não mexe em payment_date nem em nada.
+      cancel_status: donated ? null : cancelStatus,
       tracking_number: donated ? null : (tracking.trim() || null),
       carrier: donated ? null : (carrier.trim() || null),
       notes: notes.trim() || null,
@@ -263,11 +270,11 @@ export default function EditInputPage() {
             DONATED não entra: peça doada não foi comprada. */}
         {!donated && (
         <div>
-          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
-            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
+          <DeliverFields pickedUp={pickedUp} cancelStatus={cancelStatus} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
           {/* Prévia do badge com a MESMA função que a lista usa — passando o que
               a linha teria depois de salva (a data prova o "pagou"). */}
-          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
+          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, cancel_status: cancelStatus, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
         </div>
         )}
 

@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import PartPicker from '@/components/PartPicker'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverFields } from '@/components/DeliverChip'
+import { DeliverFields, type CancelStatus } from '@/components/DeliverChip'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 
@@ -88,6 +88,9 @@ export default function NewInputPage() {
   // e ele é boolean, não status. BOUGHT/SHIPPED/DELIVERED se derivam sozinhos
   // (lib/deliverStatus.ts) de pagou / tracking_number / delivered_at.
   const [pickedUp, setPickedUp] = useState(false)
+  // CANCELAMENTO (30/ago/2026): null = compra viva, CANCELLED = aguardando
+  // estorno, REFUNDED = estornado. Marcar aqui grava SÓ cancel_status.
+  const [cancelStatus, setCancelStatus] = useState<CancelStatus | null>(null)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   const [notes, setNotes] = useState('')
@@ -176,6 +179,8 @@ export default function NewInputPage() {
       // balcão até que alguém (ou o documento) diga que é. Nada de status aqui —
       // ele é lido, não escrito.
       picked_up: pickedUp,
+      // CANCELAMENTO (30/ago/2026): grava SÓ este campo.
+      cancel_status: cancelStatus,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       notes: notes.trim() || null,
@@ -335,8 +340,8 @@ export default function NewInputPage() {
             é o ÚNICO status que se digita — o resto é interpretação. Digitou
             rastreio, o badge sobe para SHIPPED sozinho, sem gravar status. */}
         <div>
-          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
-            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
+          <DeliverFields pickedUp={pickedUp} cancelStatus={cancelStatus} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
         <div>

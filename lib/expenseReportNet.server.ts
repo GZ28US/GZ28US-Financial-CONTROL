@@ -62,7 +62,10 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
   }
 
   const { data: ie } = await db.from('invoice_expenses')
-    .select('id, item, expense_date, created_at, receipt_url, invoices!inner(is_quote)')
+    // receipt_proves_payment TEM de vir no select (conferido em 30/ago/2026):
+    // sem ele a guarda logo abaixo comparava undefined === false e NUNCA
+    // disparava — a blindagem existia no banco e estava morta no código.
+    .select('id, item, expense_date, created_at, receipt_url, receipt_proves_payment, invoices!inner(is_quote)')
     .not('receipt_url', 'is', null).is('payment_date', null).eq('invoices.is_quote', false)
   for (const e of (ie || []) as any[]) {
     if (!e.receipt_url || e.receipt_url === '[]') continue

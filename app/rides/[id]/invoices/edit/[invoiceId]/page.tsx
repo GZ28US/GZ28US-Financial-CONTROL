@@ -14,7 +14,7 @@ import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { mirrorBrShoppingInvoice, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, methodsFor } from '@/components/PaymentFields'
-import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, type DeliverChipRow } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
@@ -88,8 +88,8 @@ type Expense = DeliverChipRow & {
 //
 // O Pick<Expense, ...> é de propósito: se amanhã nascer um sexto campo de
 // entrega, ESTE objeto para de compilar e alguém tem de responder por ele.
-const FRESH_DELIVERY: Pick<Expense, 'picked_up' | 'tracking_number' | 'carrier' | 'eta' | 'delivered_at' | 'last_event'> = {
-  picked_up: false, tracking_number: '', carrier: '', eta: null, delivered_at: null, last_event: null,
+const FRESH_DELIVERY: Pick<Expense, 'picked_up' | 'cancel_status' | 'tracking_number' | 'carrier' | 'eta' | 'delivered_at' | 'last_event'> = {
+  picked_up: false, cancel_status: null, tracking_number: '', carrier: '', eta: null, delivered_at: null, last_event: null,
 }
 
 type StockItem = {
@@ -555,6 +555,9 @@ export default function EditInvoicePage() {
         // Rastreio da PRÓPRIA LINHA — não há mais join com part_streams. E não
         // se carrega status nenhum: ele não existe mais como campo.
         picked_up: !!e.picked_up,
+        // cancel_status é FATO, não status derivado: null = compra viva,
+        // CANCELLED = aguardando estorno, REFUNDED = estornada (30/ago/2026).
+        cancel_status: e.cancel_status || null,
         tracking_number: e.tracking_number || '',
         carrier: e.carrier || '',
         // O QUE FALTAVA (bug de 30/ago/2026): estes três NÃO se digitam — são do
@@ -1064,6 +1067,9 @@ export default function EditInvoicePage() {
       // Amazon & cia nunca são picked_up — loja online não tem balcão. Se a nota
       // trouxe rastreio, o badge vira SHIPPED sozinho, por derivação.
       picked_up: pickedUpFromScan({ supplier: scannedPurchase.supplier, shipTo: scannedPurchase.ship_to }),
+      // O scan NÃO aprende cancelamento (30/ago/2026): estorno chega por e-mail
+      // depois, nunca no documento de compra. Nota escaneada é compra VIVA.
+      cancel_status: null,
       tracking_number: scannedPurchase.tracking_number || '',
       carrier: scannedPurchase.carrier || '',
       // A nota que acabou de ser escaneada é uma COMPRA, não uma entrega: quem
@@ -2150,6 +2156,10 @@ export default function EditInvoicePage() {
         // continua sem badge — quem corta é a derivação lendo payment_date, não
         // um NULL escrito aqui (30/ago/2026).
         picked_up: !!editingExpense.picked_up,
+        // CANCELAMENTO: grava SÓ o cancel_status — marcar CANCELLED/REFUNDED
+        // não mexe em payment_date nem em nada (limpar o pagamento é o botão
+        // PAID/UNPAID, decisão humana à parte).
+        cancel_status: normCancelStatus(editingExpense.cancel_status),
         tracking_number: (editingExpense.tracking_number || '').trim() || null,
         carrier: (editingExpense.carrier || '').trim() || null,
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
@@ -2432,6 +2442,9 @@ export default function EditInvoicePage() {
         // continuam sem badge — a derivação corta pelos dois (payment_date e
         // stock_source_type). Aqui só se grava o fato do balcão.
         picked_up: !!ex.picked_up,
+        // CANCELAMENTO (30/ago/2026): fato próprio da linha — viaja no insert
+        // como qualquer coluna, sem tocar em mais nada.
+        cancel_status: normCancelStatus(ex.cancel_status),
         tracking_number: (ex.tracking_number || '').trim() || null,
         carrier: (ex.carrier || '').trim() || null,
         position: expenses.indexOf(ex),
@@ -3295,8 +3308,9 @@ export default function EditInvoicePage() {
               {/* PICKED UP / TRACKING / CARRIER na mesma fileira da COMPRA: são
                   dados do item comprado, não do dinheiro. Marcar "peguei na loja"
                   é o que diz "não rastreie esta linha". */}
-              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" pickedUp={!!newExpense.picked_up} tracking={newExpense.tracking_number || ''} carrier={newExpense.carrier || ''}
+              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" pickedUp={!!newExpense.picked_up} cancelStatus={normCancelStatus(newExpense.cancel_status)} tracking={newExpense.tracking_number || ''} carrier={newExpense.carrier || ''}
                 onPickedUp={(v) => setNewExpense({ ...newExpense, picked_up: v })}
+                onCancelStatus={(v) => setNewExpense({ ...newExpense, cancel_status: v })}
                 onTracking={(v) => setNewExpense({ ...newExpense, tracking_number: v })}
                 onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
               <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
@@ -3528,8 +3542,9 @@ export default function EditInvoicePage() {
                                 <input type="text" placeholder="e.g. 2000149-80525197" value={editingExpense.order_number || ''} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} className={smallInputClass + ' w-full'} />
                               </div>
                               {/* PICKED UP / TRACKING / CARRIER da linha em edição. */}
-                              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" pickedUp={!!editingExpense.picked_up} tracking={editingExpense.tracking_number || ''} carrier={editingExpense.carrier || ''}
+                              <DeliverFields size="sm" className="flex-[2] min-w-[18rem]" pickedUp={!!editingExpense.picked_up} cancelStatus={normCancelStatus(editingExpense.cancel_status)} tracking={editingExpense.tracking_number || ''} carrier={editingExpense.carrier || ''}
                                 onPickedUp={(v) => setEditingExpense({ ...editingExpense, picked_up: v })}
+                                onCancelStatus={(v) => setEditingExpense({ ...editingExpense, cancel_status: v })}
                                 onTracking={(v) => setEditingExpense({ ...editingExpense, tracking_number: v })}
                                 onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                               <button onClick={() => openStockModal(index)} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>

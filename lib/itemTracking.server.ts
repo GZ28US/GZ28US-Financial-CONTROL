@@ -176,6 +176,9 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
   //   payment_date preenchido     → a cascata começa no "pagou" (é o mesmo
   //                                 universo de antes, quando o status NULL das
   //                                 não-pagas as mantinha fora)
+  //   cancel_status NULL          → compra cancelada/estornada SAI da fila
+  //                                 (30/ago/2026): não se consulta transportadora
+  //                                 de compra que morreu.
   const rows: { table: ItemTable; row: ItemRow }[] = []
   for (const table of ITEM_TABLES) {
     const { data, error } = await db.from(table).select(COLS)
@@ -183,6 +186,7 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
       .is('delivered_at', null)
       .eq('picked_up', false)
       .not('payment_date', 'is', null)
+      .is('cancel_status', null)
     if (error) return { ...out, error: `${table}: ${error.message}` }
     for (const r of (data || []) as ItemRow[]) {
       if (String(r.tracking_number || '').trim()) rows.push({ table, row: r })

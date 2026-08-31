@@ -9,7 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverFields } from '@/components/DeliverChip'
+import { DeliverFields, type CancelStatus } from '@/components/DeliverChip'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 
@@ -23,9 +23,10 @@ type Expense = {
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
   // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
   order_number: string
-  // O status não é campo desde 30/ago/2026 — é interpretação. O único fato que
-  // se guarda é este: peguei no balcão?
+  // O status não é campo desde 30/ago/2026 — é interpretação. Os únicos fatos
+  // que se guardam: peguei no balcão? e a compra foi cancelada/estornada?
   picked_up: boolean
+  cancel_status: CancelStatus | null
   tracking_number: string
   carrier: string
 }
@@ -97,6 +98,9 @@ export default function NewGoodPage() {
   // deixou de morar em part_streams e virou coluna da linha do item comprado.
   const [orderNumber, setOrderNumber] = useState('')
   const [pickedUp, setPickedUp] = useState(false)
+  // CANCELAMENTO (30/ago/2026): null = compra viva, CANCELLED = aguardando
+  // estorno, REFUNDED = estornado. Marcar aqui grava SÓ cancel_status.
+  const [cancelStatus, setCancelStatus] = useState<CancelStatus | null>(null)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   // Universal payment block — PAID FROM here also feeds the legacy `source` column.
@@ -105,9 +109,9 @@ export default function NewGoodPage() {
   const [uploadingGood, setUploadingGood] = useState(false)
   const [openGoodReceipts, setOpenGoodReceipts] = useState(false)
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
+  const [newExpense, setNewExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, cancel_status: null, tracking_number: '', carrier: '' })
   const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null)
-  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
+  const [editingExpense, setEditingExpense] = useState<Expense>({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, cancel_status: null, tracking_number: '', carrier: '' })
   const [uploadingExpenseIndex, setUploadingExpenseIndex] = useState<number | null>(null)
   const [openReceiptsIndex, setOpenReceiptsIndex] = useState<number | null>(null)
 
@@ -195,7 +199,7 @@ export default function NewGoodPage() {
   function addExpense() {
     if (!newExpense.description || !newExpense.amount) { alert('Please enter description and amount'); return }
     setExpenses([...expenses, newExpense])
-    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
+    setNewExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, cancel_status: null, tracking_number: '', carrier: '' })
   }
 
   function removeExpense(index: number) { setExpenses(expenses.filter((_, i) => i !== index)) }
@@ -203,9 +207,9 @@ export default function NewGoodPage() {
   function saveEditExpense() {
     if (!editingExpense.description || !editingExpense.amount) { alert('Please enter description and amount'); return }
     const updated = [...expenses]; updated[editingExpenseIndex!] = editingExpense; setExpenses(updated)
-    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
+    setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, cancel_status: null, tracking_number: '', carrier: '' })
   }
-  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' }) }
+  function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, cancel_status: null, tracking_number: '', carrier: '' }) }
 
   async function saveGood() {
     if (!description) { alert('Please enter a description'); return }
@@ -225,6 +229,9 @@ export default function NewGoodPage() {
       // linha continua sem badge — mas quem decide isso é a DERIVAÇÃO lendo
       // payment_date, não um NULL escrito aqui.
       picked_up: pickedUp,
+      // Só o cancel_status: cancelar/estornar NÃO mexe em campo nenhum além
+      // deste (30/ago/2026).
+      cancel_status: cancelStatus,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
@@ -246,6 +253,7 @@ export default function NewGoodPage() {
         // — e o SEU próprio status de entrega, pela mesma razão.
         order_number: ex.order_number.trim() || null,
         picked_up: ex.picked_up,
+        cancel_status: ex.cancel_status,
         tracking_number: ex.tracking_number.trim() || null,
         carrier: ex.carrier.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
@@ -407,8 +415,8 @@ export default function NewGoodPage() {
             não rastreia linha de balcão. Digitar rastreio sobe o badge para
             SHIPPED sozinho, sem gravar status nenhum (30/ago/2026). */}
         <div>
-          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
-            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
+          <DeliverFields pickedUp={pickedUp} cancelStatus={cancelStatus} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
         <div className="flex gap-4">
@@ -485,8 +493,9 @@ export default function NewGoodPage() {
               <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
               <input type="text" value={newExpense.order_number} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
             </div>
-            <DeliverFields size="sm" pickedUp={newExpense.picked_up} tracking={newExpense.tracking_number} carrier={newExpense.carrier}
+            <DeliverFields size="sm" pickedUp={newExpense.picked_up} cancelStatus={newExpense.cancel_status} tracking={newExpense.tracking_number} carrier={newExpense.carrier}
               onPickedUp={(v) => setNewExpense({ ...newExpense, picked_up: v })}
+              onCancelStatus={(v) => setNewExpense({ ...newExpense, cancel_status: v })}
               onTracking={(v) => setNewExpense({ ...newExpense, tracking_number: v })}
               onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
             <div>
@@ -521,8 +530,9 @@ export default function NewGoodPage() {
                           <label className="block mb-1 text-sm text-gray-400">ORDER NUMBER</label>
                           <input type="text" value={editingExpense.order_number} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
                         </div>
-                        <DeliverFields size="sm" pickedUp={editingExpense.picked_up} tracking={editingExpense.tracking_number} carrier={editingExpense.carrier}
+                        <DeliverFields size="sm" pickedUp={editingExpense.picked_up} cancelStatus={editingExpense.cancel_status} tracking={editingExpense.tracking_number} carrier={editingExpense.carrier}
                           onPickedUp={(v) => setEditingExpense({ ...editingExpense, picked_up: v })}
+                          onCancelStatus={(v) => setEditingExpense({ ...editingExpense, cancel_status: v })}
                           onTracking={(v) => setEditingExpense({ ...editingExpense, tracking_number: v })}
                           onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                         <div>

@@ -9,7 +9,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymen
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
-import { DeliverChip, DeliverFields } from '@/components/DeliverChip'
+import { DeliverChip, DeliverFields, normCancelStatus, type CancelStatus } from '@/components/DeliverChip'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 
@@ -97,6 +97,9 @@ export default function EditGoodPage() {
   // rastreio errado é AQUI, na página de origem do item.
   const [orderNumber, setOrderNumber] = useState('')
   const [pickedUp, setPickedUp] = useState(false)
+  // CANCELAMENTO (30/ago/2026): null = compra viva, CANCELLED = aguardando
+  // estorno, REFUNDED = estornado. Marcar aqui grava SÓ cancel_status.
+  const [cancelStatus, setCancelStatus] = useState<CancelStatus | null>(null)
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   // FATOS DO ROBÔ, NÃO DO FORMULÁRIO (30/ago/2026). Estes três não têm campo na
@@ -138,6 +141,7 @@ export default function EditGoodPage() {
     setSupplier(data.supplier || '')
     setOrderNumber(data.order_number || '')
     setPickedUp(!!data.picked_up)
+    setCancelStatus(normCancelStatus(data.cancel_status))
     setTracking(data.tracking_number || '')
     setCarrier(data.carrier || '')
     setDeliveredAt(data.delivered_at || null)
@@ -295,6 +299,9 @@ export default function EditGoodPage() {
       // picked_up, tracking_number e delivered_at (30/ago/2026).
       order_number: orderNumber.trim() || null,
       picked_up: pickedUp,
+      // Só o cancel_status: cancelar/estornar NÃO limpa payment_date nem nada —
+      // isso é decisão humana à parte (30/ago/2026).
+      cancel_status: cancelStatus,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
@@ -354,9 +361,9 @@ export default function EditGoodPage() {
             vivem na página do item. O badge abaixo é a MESMA função da lista,
             alimentada pelo que a linha terá depois de salva. */}
         <div>
-          <DeliverFields pickedUp={pickedUp} tracking={tracking} carrier={carrier}
-            onPickedUp={setPickedUp} onTracking={setTracking} onCarrier={setCarrier} />
-          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
+          <DeliverFields pickedUp={pickedUp} cancelStatus={cancelStatus} tracking={tracking} carrier={carrier}
+            onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
+          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, cancel_status: cancelStatus, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
         </div>
 
         <div className="flex gap-4">

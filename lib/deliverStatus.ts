@@ -23,11 +23,21 @@
 // delivered_at, tracking_number, payment_date. Nada para divergir.
 //
 // A CASCATA, na ordem exata (é ela e mais nada que decide badge no app inteiro):
-//   1. não pago / doado / de estoque  → SEM BADGE  (corta antes de tudo)
-//   2. picked_up                      → PICKUP
-//   3. delivered_at                   → DELIVERED
-//   4. tracking_number                → SHIPPED
-//   5. resto (pago)                   → BOUGHT
+//   0. doado / de estoque             → SEM BADGE  (não é compra: nem cancelada
+//                                       pode ter sido — cancel_status ali é lixo
+//                                       de dado, não estado, e se ignora)
+//   1. cancel_status                  → CANCELLED / REFUNDED  (ordem do dono,
+//                                       30/ago/2026 — passa por cima de TUDO,
+//                                       até do "pagou": o estorno LIMPA o
+//                                       payment_date, e o badge tem de continuar
+//                                       contando a história. As 4 linhas reais
+//                                       do pedido HHP 382526 estão sem
+//                                       payment_date exatamente por isso.)
+//   2. não pago                       → SEM BADGE
+//   3. picked_up                      → PICKUP
+//   4. delivered_at                   → DELIVERED
+//   5. tracking_number                → SHIPPED
+//   6. resto (pago)                   → BOUGHT
 //
 // Este módulo é PURO de propósito (sem banco, sem rede, sem React): as telas, o
 // robô do rastreio e o scan têm de responder exatamente a mesma coisa, e a única
@@ -37,9 +47,21 @@
 // invoice_expenses, inputs, inventory, goods, good_expenses. Todas têm
 // picked_up, tracking_number, carrier, eta, shipped_at, delivered_at,
 // last_event, last_event_at — e todas têm payment_date, que é o degrau "pagou?".
+// E, desde 30/ago/2026, todas têm cancel_status (null | CANCELLED | REFUNDED).
 
-export const DELIVER_STATUSES = ['PICKUP', 'BOUGHT', 'SHIPPED', 'DELIVERED'] as const
+export const DELIVER_STATUSES = ['PICKUP', 'BOUGHT', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'] as const
 export type DeliverStatus = (typeof DELIVER_STATUSES)[number]
+
+// O ÚNICO campo de cancelamento — e ele é FATO, não interpretação: só um humano
+// (ou um estorno confirmado) o escreve. CANCELLED = "cancelei, o dinheiro ainda
+// está na mão do vendedor"; REFUNDED = "o estorno chegou, caso encerrado".
+export const CANCEL_STATUSES = ['CANCELLED', 'REFUNDED'] as const
+export type CancelStatus = (typeof CANCEL_STATUSES)[number]
+
+export function normCancelStatus(v: string | null | undefined): CancelStatus | null {
+  const s = String(v || '').trim().toUpperCase()
+  return s === 'CANCELLED' || s === 'REFUNDED' ? s : null
+}
 
 // A parte de logística de QUALQUER linha de item comprado. Um campo por
 // informação (lei da casa): tracking/carrier/ETA são COLUNAS, nunca texto em
@@ -48,6 +70,10 @@ export type DeliverRow = {
   // O ÚNICO campo guardado da cascata. NOT NULL default false no banco: item não
   // é de balcão até que um documento diga que é. Ninguém nasce PICKUP por omissão.
   picked_up?: boolean | null
+  // O DEGRAU MAIS ALTO da cascata (depois do corte doado/estoque): null =
+  // compra viva, CANCELLED = aguardando estorno, REFUNDED = estornada. No banco
+  // é text com CHECK — aqui viaja como string e a derivação normaliza.
+  cancel_status?: string | null
   tracking_number?: string | null
   carrier?: string | null
   eta?: string | null
@@ -71,7 +97,7 @@ export type DeliverRow = {
 // `select('*')` já as recebe de graça. ATENÇÃO: quem monta select explícito e
 // desenha badge TEM de trazer payment_date junto — sem ele a cascata corta no
 // degrau 1 e o badge some.
-export const DELIVER_COLUMNS = 'picked_up, tracking_number, carrier, eta, shipped_at, delivered_at, last_event, last_event_at'
+export const DELIVER_COLUMNS = 'picked_up, cancel_status, tracking_number, carrier, eta, shipped_at, delivered_at, last_event, last_event_at'
 
 // ── O TIPO QUE O COMPILADOR COBRA ───────────────────────────────────────────
 // A regressão de 30/ago/2026: as telas de EDIÇÃO montavam um objeto de
@@ -96,6 +122,11 @@ export const DELIVER_COLUMNS = 'picked_up, tracking_number, carrier, eta, shippe
 // tabela — invoice_expenses tem stock_source_type e não tem source_type.
 export type DeliverChipRow = DeliverRow & {
   picked_up: boolean | null
+  // cancel_status entrou aqui EXIGIDO (30/ago/2026) pelo mesmo motivo do
+  // delivered_at: é degrau da cascata, e omiti-lo num objeto montado à mão
+  // faria o chip mentir BOUGHT numa compra cancelada. `cancel_status: null` é
+  // afirmação ("compra viva"); omitir não compila.
+  cancel_status: string | null
   payment_date: string | null
   tracking_number: string | null
   carrier: string | null
@@ -126,7 +157,16 @@ const isFromStock = (row: DeliverRow) => /^(stock|stock inventory)$/i.test(Strin
 // "status desconhecido".
 export function deriveDeliverStatus(row: DeliverRow | null | undefined): DeliverStatus | null {
   if (!row) return null
-  if (!isPaid(row) || isDonated(row) || isFromStock(row)) return null
+  // EXCEÇÃO DA EXCEÇÃO: doado / de estoque não é compra — não pode ter sido
+  // cancelado. Se por absurdo carregar cancel_status, é lixo de dado, não
+  // estado: continua SEM badge.
+  if (isDonated(row) || isFromStock(row)) return null
+  // O DEGRAU MAIS ALTO: cancelamento passa por cima de TUDO, até do "pagou" —
+  // o estorno limpa o payment_date e o badge tem de continuar contando a
+  // história (as 4 linhas do pedido HHP 382526 são exatamente esse caso).
+  const cancelled = normCancelStatus(row.cancel_status)
+  if (cancelled) return cancelled
+  if (!isPaid(row)) return null
   if (row.picked_up) return 'PICKUP'
   if (String(row.delivered_at || '').trim()) return 'DELIVERED'
   if (String(row.tracking_number || '').trim()) return 'SHIPPED'

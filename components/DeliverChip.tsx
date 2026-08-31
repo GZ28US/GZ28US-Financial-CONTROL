@@ -29,17 +29,20 @@
 import {
   deriveDeliverStatus,
   hasDeliverChip,
+  normCancelStatus,
   DELIVER_COLUMNS,
   DELIVER_STATUSES,
+  CANCEL_STATUSES,
   type DeliverRow,
   type DeliverChipRow,
   type DeliverStatus,
+  type CancelStatus,
 } from '@/lib/deliverStatus'
 
 // Reexportado para as telas continuarem importando de um lugar só. A VERDADE
 // vive em lib/deliverStatus.ts; aqui é apenas a porta.
-export { deriveDeliverStatus, hasDeliverChip, DELIVER_COLUMNS, DELIVER_STATUSES }
-export type { DeliverRow, DeliverChipRow, DeliverStatus }
+export { deriveDeliverStatus, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, DELIVER_STATUSES, CANCEL_STATUSES }
+export type { DeliverRow, DeliverChipRow, DeliverStatus, CancelStatus }
 
 function fmtDate(d: string | null | undefined) {
   if (!d) return ''
@@ -55,11 +58,14 @@ export function OrderChip({ order }: { order: string }) {
   )
 }
 
-// AS QUATRO CORES:
+// AS SEIS CORES:
 //   PICKUP    verde-escuro — peguei na loja, NÃO VIAJA.
 //   BOUGHT    cinza  — pago, ainda sem rastreio.
 //   SHIPPED   azul   — em movimento.
 //   DELIVERED verde  — chegou.
+//   CANCELLED âmbar  — ALERTA: cancelado e há dinheiro NOSSO preso na mão do
+//                      vendedor até o estorno cair.
+//   REFUNDED  cinza-escuro riscado — encerrado: não há mais nada a fazer.
 const TONE: Record<DeliverStatus, string> = {
   // PICKUP ganha fundo PRÓPRIO, não só cor de letra: numa lista densa, "peguei
   // no balcão" e "pago sem rastreio" têm de se distinguir de relance — são
@@ -68,6 +74,15 @@ const TONE: Record<DeliverStatus, string> = {
   BOUGHT: 'bg-gray-800 text-gray-300 border-gray-700',
   SHIPPED: 'bg-blue-950 text-blue-300 border-blue-800',
   DELIVERED: 'bg-green-950 text-green-300 border-green-800',
+  CANCELLED: 'bg-amber-950 text-amber-300 border-amber-700',
+  REFUNDED: 'bg-gray-900 text-gray-500 border-gray-700 line-through opacity-80',
+}
+
+// Os rótulos ditados pelo dono (30/ago/2026) — aqui na língua DESTA tela (o app
+// US é em inglês; no BR são os rótulos dele ao pé da letra, em português).
+const CANCEL_LABEL: Record<CancelStatus, string> = {
+  CANCELLED: 'CANCELLED — AWAITING REFUND',
+  REFUNDED: 'CANCELLED — REFUNDED',
 }
 
 // O semáforo. Recebe A PRÓPRIA LINHA do item — nada de mapa, nada de join, e
@@ -83,8 +98,12 @@ export function DeliverChip({ row }: { row?: DeliverChipRow | null }) {
   const tracking = String(row?.tracking_number || '').trim()
   const carrier = String(row?.carrier || '').trim()
   // PICKUP não mostra transportadora nem ETA: não há viagem para descrever.
-  const tail = status === 'PICKUP' ? '' : `${carrier ? ` · ${carrier}` : ''}${tracking ? ` ${tracking}` : ''}`
-  const head = status === 'DELIVERED'
+  // CANCELLED/REFUNDED idem: a compra morreu — o rótulo é a história inteira.
+  const noTail = status === 'PICKUP' || status === 'CANCELLED' || status === 'REFUNDED'
+  const tail = noTail ? '' : `${carrier ? ` · ${carrier}` : ''}${tracking ? ` ${tracking}` : ''}`
+  const head = status === 'CANCELLED' || status === 'REFUNDED'
+    ? CANCEL_LABEL[status]
+    : status === 'DELIVERED'
     ? `✓ DELIVERED${fmtDate(row?.delivered_at) ? ' ' + fmtDate(row?.delivered_at) : ''}`
     : `${status}${status === 'SHIPPED' && fmtDate(row?.eta) ? ` · ETA ${fmtDate(row?.eta)}` : ''}`
   return (
@@ -107,13 +126,19 @@ export function DeliverChip({ row }: { row?: DeliverChipRow | null }) {
 //
 // `size` só escolhe a métrica visual: 'lg' nas fichas de página inteira,
 // 'sm' nas fileiras densas de despesa dentro da invoice.
+// CANCELAMENTO (30/ago/2026): o ÚNICO outro fato digitável — 3 estados
+// (— viva / CANCELLED / REFUNDED). Marcar qualquer um NÃO mexe em campo nenhum
+// além do cancel_status: quem limpa payment_date é decisão humana que já existe
+// (o botão PAID/UNPAID), nunca este seletor.
 export function DeliverFields({
-  pickedUp, tracking, carrier, onPickedUp, onTracking, onCarrier, size = 'lg', className = '',
+  pickedUp, cancelStatus, tracking, carrier, onPickedUp, onCancelStatus, onTracking, onCarrier, size = 'lg', className = '',
 }: {
   pickedUp: boolean
+  cancelStatus: CancelStatus | null
   tracking: string
   carrier: string
   onPickedUp: (v: boolean) => void
+  onCancelStatus: (v: CancelStatus | null) => void
   onTracking: (v: string) => void
   onCarrier: (v: string) => void
   size?: 'lg' | 'sm'
@@ -142,6 +167,18 @@ export function DeliverFields({
       <div className="flex-1 min-w-[7rem]">
         <label className={label}>CARRIER</label>
         <input type="text" value={carrier} onChange={(e) => onCarrier(e.target.value)} placeholder="UPS / FedEx / USPS" className={box} />
+      </div>
+      <div className="flex-1 min-w-[10rem]">
+        <label className={label}>CANCELLED?</label>
+        <select
+          value={cancelStatus || ''}
+          onChange={(e) => onCancelStatus(normCancelStatus(e.target.value))}
+          className={`${box} ${cancelStatus === 'CANCELLED' ? 'text-amber-300 border-amber-700' : cancelStatus === 'REFUNDED' ? 'text-gray-500' : ''}`}
+        >
+          <option value="">—</option>
+          <option value="CANCELLED">{CANCEL_LABEL.CANCELLED}</option>
+          <option value="REFUNDED">{CANCEL_LABEL.REFUNDED}</option>
+        </select>
       </div>
     </div>
   )
