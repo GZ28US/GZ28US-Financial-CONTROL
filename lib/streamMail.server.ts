@@ -282,10 +282,28 @@ export type InboxMsg = { id: string; isRead: boolean; subject: string; from: str
 
 const graphH = (token: string) => ({ Authorization: `Bearer ${token}`, Prefer: 'IdType="ImmutableId"' })
 
+// LÊ INBOX **E** LIXO ELETRÔNICO (01/set/2026). O organizador só olhava a
+// inbox, e por isso e-mail de compra que o Outlook classificou como spam nunca
+// chegava à pasta do carro. Caso-origem: as 4 mensagens da AGE Styling do
+// airbag da BR.538 (RussianRoulette) — confirmação do pedido #3440 e o embarque
+// com o rastreio FedEx — caíram TODAS em Lixo Eletrônico e tiveram de ser
+// arquivadas à mão. Loja nova que o filtro ainda não conhece cai em spam por
+// padrão, então isto não é exceção, é o caminho normal de todo fornecedor novo.
+//
+// O que NÃO muda: quem decide arquivar continua sendo a mesma regra de sempre
+// (casa por order_number/fornecedor, dúvida fica parada). Ler o spam só amplia
+// de onde as mensagens vêm — o organizador move a mensagem para a pasta do
+// carro, o que já a tira do spam de quebra.
+const INBOX_FOLDERS = ['inbox', 'junkemail']
+
 export async function fetchInbox(accessToken: string): Promise<InboxMsg[]> {
   const q = new URLSearchParams({ $top: '50', $select: 'id,isRead,subject,from,receivedDateTime,body', $orderby: 'receivedDateTime desc' })
-  const r = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?${q}`, { headers: graphH(accessToken) })
-  const data = await r.json().catch(() => null)
+  const lists = await Promise.all(INBOX_FOLDERS.map(async (folder) => {
+    const r = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${folder}/messages?${q}`, { headers: graphH(accessToken) })
+    const d = await r.json().catch(() => null)
+    return Array.isArray(d?.value) ? d.value : []
+  }))
+  const data = { value: lists.flat().sort((a: any, b: any) => String(b.receivedDateTime || '').localeCompare(String(a.receivedDateTime || ''))) }
   if (!Array.isArray(data?.value)) return []
   return data.value.map((m: any) => ({
     id: String(m.id),
