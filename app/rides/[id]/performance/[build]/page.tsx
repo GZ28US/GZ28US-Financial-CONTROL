@@ -1292,12 +1292,15 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
 // Other reveals a text input. Enum fields carry their own options. Fields
 // show/hide by Power Source (Roots: Snout instead of Intake Manifold; blower
 // fields only on SuperCharged sources). Saved one row per ride (upsert).
-const POWER_SOURCES = ['Naturally Aspirated', 'Roots SuperCharged', 'Centrifugal SuperCharger', 'Turbo']
+// TURBO BORN x TURBO FITTED (Márcio, 31/ago/2026): o carro que já nasceu turbo
+// e o que foi turbinado depois são fichas diferentes de montagem — no FITTED o
+// coletor de admissão original some do carro, então a ficha não pergunta por ele.
+const POWER_SOURCES = ['Naturally Aspirated', 'Roots SuperCharged', 'Centrifugal SuperCharger', 'Turbo Born', 'Turbo Fitted']
 const BS_FUEL_OPTIONS = ['93', 'E85', '91']
 
 type BSField = { key: string; label: string; kind: 'so' | 'enum'; options?: string[]; show?: (ps: string) => boolean }
 const BS_FIELDS: BSField[] = [
-  { key: 'intake', label: 'Intake', kind: 'so' },
+  { key: 'intake', label: 'Intake', kind: 'so', show: (ps) => ps !== 'Turbo Fitted' },
   { key: 'throttle_body', label: 'Throttle-Body', kind: 'so' },
   { key: 'intake_manifold', label: 'Intake Manifold', kind: 'so', show: (ps) => ps !== 'Roots SuperCharged' },
   { key: 'snout', label: 'Snout', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' },
