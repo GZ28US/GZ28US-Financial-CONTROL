@@ -297,6 +297,12 @@ export default function PartsPage() {
     const row: any = {
       item: name, is_kit: true, source_type: 'MANUAL',
       kit_items: kitMembers.map(m => ({ part_number: m.part_number || null, item: m.item, quantity: Number(m.quantity) || 1 })),
+      // KIT NÃO TEM FORNECEDOR (Márcio, 30/ago/2026): "supplier é no item,
+      // justamente por isso, um kit pode ter mais de um supplier, o item, nunca".
+      // O Mopar CAT Crank Pinning Kit é o caso: pino da HHP, fluidos da AutoZone.
+      // Gravado como null de propósito — assim editar um kit antigo que tenha
+      // fornecedor também o limpa, em vez de só não mexer.
+      supplier: null, dealer_supplier: null,
       updated_at: new Date().toISOString(),
     }
     const res = kitId
