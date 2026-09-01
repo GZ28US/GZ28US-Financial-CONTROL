@@ -1308,7 +1308,9 @@ const BS_FIELDS: BSField[] = [
   { key: 'pulley_size', label: 'Upper Pulley Size', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' || ps === 'Centrifugal SuperCharger' },
   { key: 'lower_pulley_size', label: 'Lower Pulley Size', kind: 'so', show: (ps) => ps === 'Roots SuperCharged' || ps === 'Centrifugal SuperCharger' },
   { key: 'fuel_rails', label: 'FuelRails', kind: 'so' },
-  { key: 'injectors', label: 'Injectors', kind: 'so' },
+  // Os Injector Dynamics que a casa usa viram opção; o resto (FIC, OEM D170,
+  // XDI…) continua entrando por Other, no texto livre.
+  { key: 'injectors', label: 'Injectors', kind: 'so', options: ['ID1050XDS', 'ID1300XDS', 'ID1750XDS', 'ID2600XDS'] },
   { key: 'spark_plugs', label: 'SparkPlugs + Gaps', kind: 'so' },
   { key: 'map_sensor', label: 'MAP Sensor', kind: 'so' },
   { key: 'heads', label: 'Heads', kind: 'so' },
@@ -1448,7 +1450,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // shown here as their US equivalents (Podium → 93 premium, Comum → 91 regular).
       if (f.key === 'fuel') v = ({ 'Podium': '93', 'Comum': '91' } as Record<string, string>)[v] || v
       s[f.key] = v || (f.kind === 'so' ? 'Stock' : (f.options as string[])[0])
-      if (f.kind === 'so' && s[f.key] !== 'Stock' && v) om[f.key] = true
+      // 'so' COM LISTA: o valor que bate com um conhecido seleciona a OPÇÃO —
+      // só cai no Other (texto livre) o que não está na lista.
+      if (f.kind === 'so' && s[f.key] !== 'Stock' && v && !(f.options || []).includes(v)) om[f.key] = true
     }
     setSheet(s)
     setOtherMode(om)
@@ -1782,15 +1786,19 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
             ) : (
               <div className="flex gap-2">
                 <select
-                  value={otherMode[f.key] ? 'Other' : 'Stock'}
+                  value={otherMode[f.key] ? 'Other' : ((f.options || []).includes(sheet[f.key]) ? sheet[f.key] : 'Stock')}
                   onChange={(e) => {
-                    if (e.target.value === 'Stock') { setOtherMode({ ...otherMode, [f.key]: false }); setSheet({ ...sheet, [f.key]: 'Stock' }) }
-                    else { setOtherMode({ ...otherMode, [f.key]: true }); setSheet({ ...sheet, [f.key]: sheet[f.key] === 'Stock' ? '' : sheet[f.key] }) }
+                    const v = e.target.value
+                    if (v === 'Other') { setOtherMode({ ...otherMode, [f.key]: true }); setSheet({ ...sheet, [f.key]: (f.options || []).includes(sheet[f.key]) || sheet[f.key] === 'Stock' ? '' : sheet[f.key] }) }
+                    // Stock ou um dos conhecidos: o próprio valor vai pra ficha e o
+                    // texto livre se fecha.
+                    else { setOtherMode({ ...otherMode, [f.key]: false }); setSheet({ ...sheet, [f.key]: v }) }
                   }}
                   className={`${sel} ${otherMode[f.key] ? 'w-28 shrink-0' : ''}`}
                   style={otherMode[f.key] ? { width: '7rem' } : undefined}
                 >
                   <option value="Stock">Stock</option>
+                  {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
                   <option value="Other">Other</option>
                 </select>
                 {otherMode[f.key] && (
