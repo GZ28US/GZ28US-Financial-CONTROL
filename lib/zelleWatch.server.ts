@@ -22,7 +22,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const SIGNATURE = 'Sent by GZ28US Control App®'
-const MARCIO_US = '13213150973@c.us'
+// 31/ago/2026: NÃO pode ser o número da própria instância (13213150973). A
+// UltraMsg recusa mensagem pro próprio número e o envio morre calado — 26
+// avisos (FILA DE COMPRAS, COMPRA TEMU, VIP MAIL, ZELLE, MAIL WATCH) sumiram
+// assim sem ninguém perceber. Todo aviso pessoal vai pro grupo REPORTS.
+const MARCIO_US = '120363425950692194@g.us'
 const ACCOUNT = 'gz28us@hotmail.com' // Regions escreve só nesta caixa
 const FIRST_RUN_MIN = 60
 

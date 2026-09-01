@@ -167,7 +167,9 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
   if (inserted.length && isTemu) {
     const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
     if (instance && tk) {
-      const pvt = '13213150973@c.us' // cel US do Márcio (mesmo canal dos PDFs)
+      // 31/ago/2026: grupo REPORTS, nunca o número da própria instância — a
+      // UltraMsg recusa e o envio morre calado. Ver zelleWatch.
+      const pvt = '120363425950692194@g.us'
       const body = [
         '🛒 *COMPRA TEMU DETECTADA*', '',
         `Pedido(s): ${orders.join(', ')}`,

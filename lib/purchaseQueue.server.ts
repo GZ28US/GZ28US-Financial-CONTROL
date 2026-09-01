@@ -24,7 +24,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
-const PVT = '13213150973@c.us' // cel US do Márcio (canal dos PDFs / PESCA TEMU)
+// 31/ago/2026: era o cel US do Márcio — que é o número da PRÓPRIA instância. A
+// UltraMsg recusa isso e o envio morre calado; 20 FILA DE COMPRAS e 4 COMPRA
+// TEMU se perderam assim. Vai pro grupo REPORTS. Ver zelleWatch.
+const PVT = '120363425950692194@g.us'
 const usd = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 type StreamRow = {

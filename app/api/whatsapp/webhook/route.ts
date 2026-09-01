@@ -35,6 +35,16 @@ export async function POST(req: NextRequest) {
   const payload = await req.json().catch(() => null)
   const d = payload?.data || payload
 
+  // ACK (31/ago/2026): ligamos `webhook_message_ack` na instância pra que a API
+  // pare de devolver "pending" eterno e passe a dizer o que REALMENTE foi
+  // entregue — sem isso "enviado" era promessa vazia (a mensagem da Chris que
+  // sumiu). O payload de ack traz o MESMO id da mensagem original e body vazio:
+  // no espelho ele não acrescenta nada e ainda bagunçaria a ordem dos chats via
+  // waTouchChat. Então entra por aqui e para aqui.
+  if (String(payload?.event_type || '') === 'message_ack') {
+    return NextResponse.json({ ok: true, ignored: 'message_ack' })
+  }
+
   // WHATSAPP HUB (24/ago/2026): além do FINANCEIRO, TODA mensagem do número US
   // (recebida ou nossa) vira linha no espelho whatsapp_messages — o histórico
   // permanente que a UltraMsg não guarda. Best-effort: erro aqui nunca derruba

@@ -28,7 +28,9 @@ const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
 const usd = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const SIGNATURE = 'Sent by GZ28US Control App®'
-const MARCIO_US = '13213150973@c.us'
+// 31/ago/2026: grupo REPORTS, nunca o número da própria instância — a UltraMsg
+// recusa mensagem pro próprio número e o envio morre calado. Ver zelleWatch.
+const MARCIO_US = '120363425950692194@g.us'
 const FIRST_RUN_MIN = 180
 
 // Faturas anteriores a isto já foram tratadas à mão — não ressuscitar.
