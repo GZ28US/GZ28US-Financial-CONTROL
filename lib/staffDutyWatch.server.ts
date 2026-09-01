@@ -13,6 +13,7 @@
 // (time_started_at ≠ null e done = false ⇒ rodando agora).
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { waSafeTarget } from '@/lib/waSelfGuard.server'
 
 export const MAX_HOURS = 10          // Márcio, 23/ago
 export const ESCALATE_MIN = 60
@@ -72,9 +73,12 @@ export async function evaluateDuties(db: SupabaseClient): Promise<DutyIncident[]
 async function sendWhats(to: string, body: string): Promise<string | null> {
   const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
   if (!instance || !token) return 'no ultramsg env'
+  // O staff US.008 é o próprio Márcio: cobrança dirigida a ele iria pro número
+  // da instância e morreria calada. Vai pro REPORTS. Ver waSelfGuard.
+  const dest = waSafeTarget(to)
   const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, to, body }).toString(),
+    body: new URLSearchParams({ token, to: dest, body }).toString(),
   })
   return r.ok ? null : `ultramsg ${r.status}`
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { waSelfBlockReason } from '@/lib/waSelfGuard.server'
 
 // WA SEND LOG (31/ago/2026, caso Gui): o aviso de duty morreu calado e ninguém
 // soube. TODA tentativa de envio — sucesso e falha — fica em wa_send_log; o
@@ -146,6 +147,17 @@ export async function POST(req: NextRequest) {
       console.error('[whatsapp] no destination')
       await logSend({ ...logCtx, ok: false, error: 'no destination configured', http_status: 400, ultra_id: null })
       return NextResponse.json({ error: 'No destination group configured.' }, { status: 400 })
+    }
+
+    // TRAVA DO "NUNCA PRA MIM MESMO" (31/ago/2026): a UltraMsg descarta em
+    // silêncio o que é endereçado ao número da própria instância. Aqui a
+    // tentativa é RECUSADA na cara, com log — melhor um 400 barulhento do que
+    // outro aviso morrendo calado. Ver lib/waSelfGuard.server.ts.
+    const selfBlock = waSelfBlockReason(to)
+    if (selfBlock) {
+      console.error('[whatsapp] BLOQUEADO —', selfBlock)
+      await logSend({ ...logCtx, ok: false, error: `self-send bloqueado: ${selfBlock}`, http_status: 400, ultra_id: null })
+      return NextResponse.json({ error: selfBlock, blocked: 'self-send' }, { status: 400 })
     }
 
     const base = `https://api.ultramsg.com/${instance}`

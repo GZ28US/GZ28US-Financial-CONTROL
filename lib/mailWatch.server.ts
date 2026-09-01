@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { waSafeTarget } from '@/lib/waSelfGuard.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const SIGNATURE = 'Sent by GZ28US Control App®'
@@ -30,13 +31,16 @@ export type MailWatch = {
   hits: number
 }
 
+// `notify_to` vem do banco (mail_watches) — é o caminho mais fácil de alguém
+// reapontar pro cel do Márcio sem querer e o alerta sumir de novo. Guarda aqui.
 async function wa(to: string, body: string): Promise<void> {
   const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
   if (!instance || !token) return
+  const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
   try {
     await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to, body: `${body}\n\n${SIGNATURE}` }),
+      body: new URLSearchParams({ token, to: dest, body: `${body}\n\n${SIGNATURE}` }),
     })
   } catch { /* best-effort */ }
 }

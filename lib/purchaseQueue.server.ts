@@ -22,6 +22,7 @@
 // DEPOIS de saber o que é cada item (ordem dele, 19/ago).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { waSafeTarget } from '@/lib/waSelfGuard.server'
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
 // 31/ago/2026: era o cel US do Márcio — que é o número da PRÓPRIA instância. A
@@ -58,9 +59,10 @@ const methodOf = (r: StreamRow): string => /temu/i.test(r.supplier || '') ? 'PAY
 async function wa(to: string, body: string): Promise<boolean> {
   const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
   if (!instance || !tk || !to) return false
+  const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
   const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token: tk, to, body: `${body}\n\n${SIGNATURE}` }),
+    body: new URLSearchParams({ token: tk, to: dest, body: `${body}\n\n${SIGNATURE}` }),
   }).catch(() => null)
   return !!r?.ok
 }
