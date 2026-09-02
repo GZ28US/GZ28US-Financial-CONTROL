@@ -35,6 +35,10 @@
     {
       "path": "/ca/api/cron/whatsapp-sync",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/ca/api/cron/whatsapp-transcribe",
+      "schedule": "*/10 * * * *"
     }
   ],
   "rewrites": [
