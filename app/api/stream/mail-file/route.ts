@@ -9,13 +9,18 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 // mensagem do Gmail tratada numa rodada ficava encalhada na inbox, e a lei do
 // INBOX ZERO nas 4 caixas não fechava nunca (25/ago/2026).
 //
-// POST { key, slot, ids[]|id, read?: boolean, folder?: string, archive?: true }
+// POST { key, slot, ids[]|id, read?: boolean, folder?: string, archive?: true, copy?: true }
 //   read    — marca lida (true) ou não-lida (false)
 //   folder  — pasta/label de destino; CRIA se não existir. Aceita caminho com
 //             barra ("Rides/US.043 - GZ28US Trailer"): no Graph vira pasta
 //             aninhada, no Gmail vira label aninhada (que é o mesmo desenho).
 //   archive — tira da caixa de entrada sem escolher pasta (Gmail: remove o
 //             label INBOX; Graph: manda pro Arquivo Morto).
+//   copy    — DEIXA o original onde está e coloca uma cópia na pasta. Existe
+//             porque um e-mail pode ser de DOIS carros ao mesmo tempo (compra
+//             casada: "Demon 170 stock CL37674 & CL37676") e a lei manda que
+//             ele esteja na pasta de cada um. Fluxo: copy nos carros extras,
+//             move no último — aí ninguém fica com a pasta vazia.
 //
 // `folder` e `archive` juntos: vale a pasta, que é mais específica.
 // Devolve { ok, moved, read, folder } — e erra alto, nunca em silêncio.
@@ -72,7 +77,8 @@ async function gmailApply(auth: any, ids: string[], b: any): Promise<NextRespons
     folderId = await gmailLabelId(token, String(b.folder))
     if (!folderId) return NextResponse.json({ error: `não consegui criar/achar o label "${b.folder}"` }, { status: 502 })
     add.push(folderId)
-    remove.push('INBOX')            // filed = out of the inbox, same as Graph
+    // copy = só rotula; o original continua na inbox pro move seguinte levá-lo.
+    if (b.copy !== true) remove.push('INBOX')   // filed = out of the inbox, same as Graph
   } else if (b.archive === true) {
     remove.push('INBOX')
   }
@@ -140,12 +146,14 @@ export async function POST(req: NextRequest) {
   for (const id0 of ids) {
     let id = id0
     if (destId) {
-      const mv = await fetch(`${G}/me/messages/${encodeURIComponent(id)}/move`, { method: 'POST', headers: gh(token), body: JSON.stringify({ destinationId: destId }) })
+      const verb = b.copy === true ? 'copy' : 'move'
+      const mv = await fetch(`${G}/me/messages/${encodeURIComponent(id)}/${verb}`, { method: 'POST', headers: gh(token), body: JSON.stringify({ destinationId: destId }) })
       const j = await mv.json().catch(() => null)
       // O move devolve uma mensagem NOVA: o id antigo morre, e marcar lida no id
-      // velho depois do move dá 404 — por isso o id é trocado aqui.
-      if (!j?.id) { failed.push({ id, error: (j?.error?.message || 'move falhou').slice(0, 200) }); continue }
-      id = j.id
+      // velho depois do move dá 404 — por isso o id é trocado aqui. No copy o
+      // original sobrevive, e é NELE que o read tem de cair.
+      if (!j?.id) { failed.push({ id, error: (j?.error?.message || `${verb} falhou`).slice(0, 200) }); continue }
+      if (b.copy !== true) id = j.id
     }
     if (b.read !== undefined) {
       const pt = await fetch(`${G}/me/messages/${encodeURIComponent(id)}`, { method: 'PATCH', headers: gh(token), body: JSON.stringify({ isRead: b.read === true }) })
@@ -153,5 +161,5 @@ export async function POST(req: NextRequest) {
     }
     done.push(id)
   }
-  return NextResponse.json({ ok: !failed.length, provider: 'graph', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), read: b.read ?? null, done: done.length, failed })
+  return NextResponse.json({ ok: !failed.length, provider: 'graph', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), copied: b.copy === true, read: b.read ?? null, done: done.length, failed })
 }
