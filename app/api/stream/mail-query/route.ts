@@ -261,5 +261,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ account: auth.account, moved: m.id })
   }
 
+  // rmdir — apaga pasta VAZIA (2/set/2026: o Luma tinha duas pastas, "Businesses/
+  // LUMA Headwaters" e "Apartment - Luma 01-306"; consolidamos na segunda e a
+  // casca vazia precisava sumir). Só existia mkdir; sem isto a arrumação parava
+  // no meio e dependia da mão dele no Outlook ([[claudinha-is-an-interface]]).
+  //
+  // SÓ apaga se estiver VAZIA. No Graph, DELETE numa pasta leva junto tudo que
+  // há dentro, sem confirmação — e-mail não pode evaporar por descuido de quem
+  // chamou. Esvazie antes com op=move; aqui a recusa é 409 com a contagem.
+  if (op === 'rmdir') {
+    const id = p.get('id')
+    if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+    const info = await fetch(`${G}/me/mailFolders/${encodeURIComponent(id)}?$select=id,displayName,totalItemCount,childFolderCount`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    if (!info?.id) return NextResponse.json({ error: info?.error?.message || 'folder not found' }, { status: 404 })
+    if (info.totalItemCount > 0 || info.childFolderCount > 0) {
+      return NextResponse.json({ error: `"${info.displayName}" não está vazia: ${info.totalItemCount} mensagem(ns), ${info.childFolderCount} subpasta(s). Esvazie com op=move antes.` }, { status: 409 })
+    }
+    const r = await fetch(`${G}/me/mailFolders/${encodeURIComponent(id)}`, { method: 'DELETE', headers: gh(token) })
+    if (!r.ok) return NextResponse.json({ error: `rmdir falhou (HTTP ${r.status})` }, { status: 502 })
+    return NextResponse.json({ account: auth.account, deleted: info.displayName })
+  }
+
   return NextResponse.json({ error: `unknown op ${op}` }, { status: 400 })
 }
