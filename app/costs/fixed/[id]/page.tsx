@@ -354,6 +354,14 @@ export default function FixedCostSupplierViewPage() {
   // paid ABOVE the scheduled slot value is a late fine.
   const scheduledAmountFor = (r: FixedExpense): number | null => {
     if (!s) return null
+    // MÊS DE ENTRADA NÃO TEM MENSALIDADE (3/set/2026, caso Luma 01-306): o
+    // primeiro pagamento de um contrato é rateado e vem somado a depósito e
+    // taxas de entrada — no Luma, $4.015,96 contra a mensalidade de $2.255,50.
+    // A heurística "pagou acima do slot ⇒ multa" acusava $1.760,46 de multa
+    // num pagamento feito EM DIA. Sem slot de referência, não há multa a
+    // calcular: o mês de entrada é prorata por definição.
+    if (isValidDate(s.date_entry) && isValidDate(r.expense_date)
+        && (r.expense_date as string).slice(0, 7) === (s.date_entry as string).slice(0, 7)) return null
     const slots: { day: number; amount: number }[] = []
     if (s.payment_day_1 != null && s.amount_1 != null) slots.push({ day: Number(s.payment_day_1), amount: Number(s.amount_1) })
     if (s.payment_day_2 != null && s.amount_2 != null) slots.push({ day: Number(s.payment_day_2), amount: Number(s.amount_2) })
@@ -394,11 +402,23 @@ export default function FixedCostSupplierViewPage() {
     const start = new Date((s.date_entry as string) + 'T00:00:00')
     const end = new Date((s.date_conclusion as string) + 'T00:00:00')
     const paidDates = new Set(rows.filter(r => isValidDate(r.payment_date)).map(r => r.expense_date))
+    // A LINHA REAL MANDA (3/set/2026, caso Luma 01-306): quando já existe linha
+    // gerada pra data, o DUE usa o valor DELA, não o slot fixo. A última parcela
+    // de um lease é rateada — no Luma, $451,10 de 6 dias contra os $2.255,50 do
+    // slot — e projetar o slot inflava o Total DUE em $1.804,40. O slot só vale
+    // pros meses que ainda não têm linha.
+    const openByDate = new Map<string, number>()
+    for (const r of rows) {
+      if (isValidDate(r.payment_date) || !isValidDate(r.expense_date)) continue
+      openByDate.set(r.expense_date as string, (openByDate.get(r.expense_date as string) || 0) + (Number(r.amount) || 0))
+    }
     let cursor = new Date(start.getFullYear(), start.getMonth() + 1, 1)
     while (cursor <= end) {
       for (const slot of slots) {
         const pd = clampD(cursor.getFullYear(), cursor.getMonth(), slot.day)
-        if (pd <= end && !paidDates.has(toYmd(pd))) dueTotal += slot.amount
+        const key = toYmd(pd)
+        if (pd > end || paidDates.has(key)) continue
+        dueTotal += openByDate.has(key) ? (openByDate.get(key) as number) : slot.amount
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
     }
