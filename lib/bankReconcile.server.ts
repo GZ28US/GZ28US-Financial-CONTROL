@@ -87,7 +87,9 @@ export async function candidatePool(db: any): Promise<Pool> {
     fetchAll(db, 'capital_events', 'id, event_date, kind, member, amount, description').catch(() => []),
     fetchAll(db, 'financing_events', 'id, financing_id, event_date, kind, amount, description').catch(() => []),
     fetchAll(db, 'financing', 'id, lender').catch(() => []),
-    fetchAll(db, 'bank_transactions', 'matched_table, matched_id', (q: any) => q.not('matched_id', 'is', null)),
+    // Linha REMOVED pelo Plaid (pending que virou posted com outro id) solta o
+    // alvo: a linha nova casa com a MESMA linha do app em vez de criar gêmea.
+    fetchAll(db, 'bank_transactions', 'matched_table, matched_id', (q: any) => q.not('matched_id', 'is', null).neq('match_status', 'REMOVED')),
   ])
   const today = todayNY()
   const taken = new Set(matched.filter((m: any) => m.matched_id).map((m: any) => m.matched_table + ':' + m.matched_id))
@@ -359,7 +361,12 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
       if (opts.minCreateAge && daysBetween(l.date, today) < opts.minCreateAge) { skip(`aguardando maturidade (${opts.minCreateAge}d)`); continue }
       const engine: 'RULE' | 'LEARN' = rule.r.origin === 'LEARNED' ? 'LEARN' : 'RULE'
       if (rule.r.target === 'FIXED_EXPENSE') {
-        const cands = pool.sched.filter(s => s.supplier_id === rule.r.supplier_id && !used.has('sched:' + s.id) && !used.has('fixed_cost_expenses:' + s.id) && daysBetween(s.expense_date, l.date) <= ADOPT_WINDOW_DAYS)
+        const near = pool.sched.filter(s => s.supplier_id === rule.r.supplier_id && !used.has('sched:' + s.id) && !used.has('fixed_cost_expenses:' + s.id) && daysBetween(s.expense_date, l.date) <= ADOPT_WINDOW_DAYS)
+        // Tolerância de valor (revisão do diff): agendada só é adotada se o valor
+        // real ficar a ±50% (ou ≤ $100) do previsto — fora disso é OUTRA conta e
+        // a linha fica pro humano (nunca sobrescreve o previsto às cegas).
+        const cands = near.filter(s => Math.abs(s.amount - amt) <= Math.max(100, 0.5 * s.amount))
+        if (near.length && !cands.length) { skip('agendada do mês com valor muito diferente (±50%)'); continue }
         cands.sort((a, b) => (daysBetween(a.expense_date, l.date) - daysBetween(b.expense_date, l.date)) || (Math.abs(a.amount - amt) - Math.abs(b.amount - amt)))
         const adopt = cands[0]
         if (adopt) { used.add('sched:' + adopt.id); used.add('fixed_cost_expenses:' + adopt.id) }
@@ -638,6 +645,13 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
   const fixes: any[] = []
   await pmap(slice, 6, async (it) => {
     const l = it.line
+    // Só desfaz o que ainda é NOSSO (revisão do diff, 3/set): se a linha já
+    // aponta pro rowId, OUTRO aplicador trancou a linha usando a linha que a
+    // gente criou/adotou — deixar quieto, nunca apagar/desadotar.
+    const stillOurs = async (table: string, rowId: string) => {
+      const { data } = await db.from('bank_transactions').select('matched_table, matched_id').eq('id', l.id).maybeSingle()
+      return !(data && data.matched_table === table && String(data.matched_id) === String(rowId))
+    }
     try {
       if (it.transfer && it.rule) {
         const r = it.rule
@@ -667,7 +681,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         try {
           await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: 'AUTO · FEE · TARIFA · ' + desc.slice(0, 150), match_engine: 'FEE', match_batch: batch, reviewed_at: null })
         } catch (e) {
-          if (!prev) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
+          if (!prev && await stillOurs('fixed_cost_expenses', rowId)) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
           throw e
         }
         res.fee_create++
@@ -685,6 +699,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           const { data: prev } = await db.from('fixed_cost_expenses').select('id').eq('bank_transaction_id', l.id).maybeSingle()
           let rowId: string = prev?.id || ''
           let adopted = false
+          let inserted = false   // só apaga no rollback o que ESTA chamada inseriu
           const pre: Backfill[] = []
           const a = it.adopt
           if (!rowId && a) {
@@ -703,8 +718,11 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
                 { t: 'fixed_cost_expenses', id: a.id, f: 'description', v: newDesc, o: a.description ?? null },
               )
             } else {
+              // Perdeu a corrida: alguém (humano ou outra rodada) já ligou uma
+              // linha a esta cobrança — NUNCA reaproveitar linha alheia (o
+              // rollback apagaria o que não é nosso). Pula com erro; replaneja.
               const { data: again } = await db.from('fixed_cost_expenses').select('id').eq('bank_transaction_id', l.id).maybeSingle()
-              if (again?.id) rowId = again.id
+              if (again?.id) throw new Error('linha já ligada por outra rodada — replaneje')
             }
           }
           if (!rowId) {
@@ -713,13 +731,13 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
               expense_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id,
             }).select('id').single()
             if (error || !row) throw new Error(error?.message || 'insert falhou')
-            rowId = row.id
+            rowId = row.id; inserted = true
           }
           try {
             await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: ('AUTO · ' + tag + ' · ' + (r.label || bankName) + (adopted && a ? ' · ADOTOU agendada de ' + a.expense_date : '')).slice(0, 150), match_engine: tag, match_batch: batch, match_rule: r.id, reviewed_at: null }, pre)
           } catch (e) {
-            if (adopted && a) await db.from('fixed_cost_expenses').update({ amount: a.amount, paid_from: a.paid_from ?? null, payment_method: null, bank_transaction_id: null, description: a.description }).eq('id', a.id).eq('bank_transaction_id', l.id)
-            else if (!prev) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
+            if (adopted && a) { if (await stillOurs('fixed_cost_expenses', a.id)) await db.from('fixed_cost_expenses').update({ amount: a.amount, paid_from: a.paid_from ?? null, payment_method: null, bank_transaction_id: null, description: a.description }).eq('id', a.id).eq('bank_transaction_id', l.id) }
+            else if (inserted && await stillOurs('fixed_cost_expenses', rowId)) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
             throw e
           }
           if (adopted) res.rule_adopt++; else res.rule_create++
@@ -731,6 +749,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           const linkRef = ('bank:' + l.id).slice(0, 120)
           const { data: prev } = await db.from('inputs').select('id').eq('order_number', linkRef).maybeSingle()
           let rowId: string = prev?.id || ''
+          let inserted = false
           if (!rowId) {
             const { data: row, error } = await db.from('inputs').insert({
               description: (bankName + ' ' + MARKER_CREATED).slice(0, 200), category: r.category || 'SHOP',
@@ -738,11 +757,11 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
               purchase_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', order_number: linkRef,
             }).select('id').single()
             if (error || !row) throw new Error(error?.message || 'insert falhou')
-            rowId = row.id
+            rowId = row.id; inserted = true
           }
           try {
             await writeMatch(db, l, { table: 'inputs', id: rowId }, { matched_note: ('AUTO · ' + tag + ' · ' + (r.label || bankName)).slice(0, 150), match_engine: tag, match_batch: batch, match_rule: r.id, reviewed_at: null })
-          } catch (e) { if (!prev) await db.from('inputs').delete().eq('id', rowId).eq('order_number', linkRef); throw e }
+          } catch (e) { if (inserted && await stillOurs('inputs', rowId)) await db.from('inputs').delete().eq('id', rowId).eq('order_number', linkRef); throw e }
           res.rule_create++
           if (tag === 'LEARN') res.learn++
           fixes.push(fix(l.id, `${tag} criou SUPPLY ${r.category || 'SHOP'} · ${lineLabel(l)}`))
@@ -814,7 +833,9 @@ export async function finishRun(db: any, id: string, patch: { status: string; co
     const counts: Record<string, number> = { ...(prev?.counts || {}) }
     for (const [k, v] of Object.entries(patch.counts || {})) counts[k] = (counts[k] || 0) + (v || 0)
     const errors = [...(Array.isArray(prev?.errors) ? prev.errors : []), ...(patch.errors || [])].slice(0, 50)
-    await db.from('bank_auto_runs').update({ status: patch.status, finished_at: new Date().toISOString(), counts, errors, remaining: patch.remaining ?? null, note: patch.note ?? null }).eq('id', id)
+    // RUNNING entre fatias do APLICAR humano mantém a TRAVA (índice parcial) —
+    // finished_at só quando a rodada de fato termina.
+    await db.from('bank_auto_runs').update({ status: patch.status, finished_at: patch.status === 'RUNNING' ? null : new Date().toISOString(), counts, errors, remaining: patch.remaining ?? null, note: patch.note ?? null }).eq('id', id)
   } catch { /* nunca derruba a rodada */ }
 }
 

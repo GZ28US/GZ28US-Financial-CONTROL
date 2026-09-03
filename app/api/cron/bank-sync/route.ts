@@ -14,8 +14,11 @@ export async function GET(req: NextRequest) {
   // e devolvia saldo e contas (revisão #6). Resposta enxuta: contagens, sem saldo.
   const auth = req.headers.get('authorization') || ''
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const t0 = Date.now()
   const results = await syncAllBankItems()
-  const auto = await autoBook(bankDb(), { trigger: 'cron', deadlineMs: 240_000 })
+  // Orçamento do motor conta a partir do INÍCIO do request (o sync já gastou):
+  // 300 s de lambda − 25 s de folga − o que o sync levou, nunca menos de 30 s.
+  const auto = await autoBook(bankDb(), { trigger: 'cron', deadlineMs: Math.max(30_000, 275_000 - (Date.now() - t0)) })
   /* eslint-disable @typescript-eslint/no-explicit-any */
   return NextResponse.json({
     ok: true, at: new Date().toISOString(),

@@ -268,6 +268,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                   const bad = stale || r.status === 'ERROR' || r.status === 'PARTIAL' || r.status === 'ABORTED'
                   return <p className={`text-xs mt-1 ${bad ? 'text-amber-300' : 'text-gray-400'}`}>AUTO-BOOK · última rodada {runLabel(r.trigger, r.started_at)} · {r.status} · {n} registradas (FEE {(c.fee_create || 0) + (c.fee_match || 0)} · EXACT {c.exact || 0} · NAME {c.name || 0} · RULE {(c.rule_create || 0) + (c.rule_adopt || 0)} · LEARN {c.learn || 0} · TRANSFER {c.transfer || 0}) · {(r.errors || []).length} erros · {r.remaining ?? 0} restantes{stale ? ' · ⚠ mais de 12 h sem rodada' : ''}{(r.errors || []).length ? ' · ' + String(r.errors![0]).slice(0, 80) : ''}</p>
                 })()}
+                {learnMsg && <p className="text-xs mt-1 text-fuchsia-300 font-bold">memória de comerciante: {learnMsg}</p>}
               </div>
               {needsMigration ? (
                 <p className="text-sm text-amber-300">Rode <b>MIGRATION_bank_reconcile_v030.sql</b> (raiz do projeto) no SQL Editor — os motores precisam das colunas match_engine / match_batch / reviewed_at / backfill.</p>

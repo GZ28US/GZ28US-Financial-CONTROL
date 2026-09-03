@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, MARKER_CREATED } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR } from '@/lib/bankReconcile.server'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -54,25 +54,39 @@ export async function GET(req: NextRequest) {
       const { count: remaining } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_status', 'NEW').eq('pending', false).gte('date', AUTO_BOOK_FLOOR)
       const errors = [...new Set(runs.filter((r: any) => r.started_at >= since7).flatMap((r: any) => Array.isArray(r.errors) ? r.errors : []))].slice(0, 10)
       // órfãos: linha criada pelo motor (marcador + elo) sem linha MATCHED apontando pra ela
-      const { data: fxAuto } = await db.from('fixed_cost_expenses').select('id, description, amount, bank_transaction_id, payment_date').not('bank_transaction_id', 'is', null).ilike('description', '%Bank Link)%')
-      const { data: inAuto } = await db.from('inputs').select('id, description, unit_price, quantity, order_number, payment_date').like('order_number', 'bank:%')
-      const bankIds = [...new Set([...(fxAuto || []).map((r: any) => String(r.bank_transaction_id)), ...(inAuto || []).map((r: any) => String(r.order_number).slice(5))])]
+      const fxAuto = await fetchAll(db, 'fixed_cost_expenses', 'id, description, amount, bank_transaction_id, payment_date, supplier_id', (q: any) => q.not('bank_transaction_id', 'is', null).ilike('description', '%Bank Link)%'))
+      const inAuto = await fetchAll(db, 'inputs', 'id, description, unit_price, quantity, order_number, payment_date, category', (q: any) => q.like('order_number', 'bank:%'))
+      const bankIds = [...new Set([...fxAuto.map((r: any) => String(r.bank_transaction_id)), ...inAuto.map((r: any) => String(r.order_number).slice(5))])]
       const lineById = new Map<string, any>()
-      for (let i = 0; i < bankIds.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').in('id', bankIds.slice(i, i + 200)); for (const l of data || []) lineById.set(String(l.id), l) }
+      for (let i = 0; i < bankIds.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, name, merchant, amount, match_status, matched_table, matched_id').in('id', bankIds.slice(i, i + 200)); for (const l of data || []) lineById.set(String(l.id), l) }
       const pointsAt = (bankId: string, table: string, id: string) => { const l = lineById.get(bankId); return !!l && l.match_status === 'MATCHED' && l.matched_table === table && String(l.matched_id) === String(id) }
+      // Linha REMOVED pelo Plaid (pending → posted com outro id): a linha do app
+      // não é órfã de verdade — a substituta vai casá-la (o pool a solta). Sai
+      // como SUBSTITUÍDA, sem PURGAR.
+      const codeFor = (bankId: string) => (lineById.get(bankId)?.match_status === 'REMOVED' ? 'SUBSTITUÍDA' : 'ÓRFÃO')
       const orphans = [
-        ...(fxAuto || []).filter((r: any) => !pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, label: r.description, amount: num(r.amount), bank_id: r.bank_transaction_id })),
-        ...(inAuto || []).filter((r: any) => !pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, label: r.description, amount: num(r.unit_price) * (num(r.quantity) || 1), bank_id: String(r.order_number).slice(5) })),
+        ...fxAuto.filter((r: any) => !pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, label: r.description, amount: num(r.amount), bank_id: r.bank_transaction_id, code: codeFor(String(r.bank_transaction_id)) })),
+        ...inAuto.filter((r: any) => !pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, label: r.description, amount: num(r.unit_price) * (num(r.quantity) || 1), bank_id: String(r.order_number).slice(5), code: codeFor(String(r.order_number).slice(5)) })),
       ]
-      // duplas: lançamento do motor cujo gêmeo humano (mesmo valor, ±14d, sem elo com o banco) ainda está no pool
+      // DUPLAS (revisão do diff: prova no nível dos motores, não menos): só
+      // lançamentos criados por REGRA (tarifas fora), gêmeo na MESMA tabela e
+      // com afinidade (mesmo fornecedor / mesma categoria), mesmo valor, ±14d,
+      // e o NOME do banco batendo no rótulo — igual ao EXACT exige.
       const pool = await candidatePool(db)
       const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(String(a).slice(0, 10)) - Date.parse(String(b).slice(0, 10))) / 864e5))
+      const isRule = (desc: any) => /\(regra · Bank Link/.test(String(desc || ''))
       const autoRows = [
-        ...(fxAuto || []).filter((r: any) => pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, amount: num(r.amount), date: r.payment_date, bank_id: String(r.bank_transaction_id), label: r.description })),
-        ...(inAuto || []).filter((r: any) => pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, amount: num(r.unit_price) * (num(r.quantity) || 1), date: r.payment_date, bank_id: String(r.order_number).slice(5), label: r.description })),
+        ...fxAuto.filter((r: any) => isRule(r.description) && pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, amount: num(r.amount), date: r.payment_date, bank_id: String(r.bank_transaction_id), label: r.description, supplier_id: r.supplier_id || null, category: null as string | null })),
+        ...inAuto.filter((r: any) => isRule(r.description) && pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, amount: num(r.unit_price) * (num(r.quantity) || 1), date: r.payment_date, bank_id: String(r.order_number).slice(5), label: r.description, supplier_id: null as string | null, category: r.category || null })),
       ]
-      const dups = autoRows.flatMap(a => pool.out.filter(c => !(c.table === a.table && c.id === a.id) && Math.abs(c.amount - a.amount) < 0.011 && c.date && a.date && dayDiff(c.date, a.date) <= 14 && !['purchase_group', 'kit_group'].includes(c.table))
-        .slice(0, 1).map(c => ({ auto_table: a.table, auto_id: a.id, auto_label: a.label, bank_id: a.bank_id, twin_table: c.table, twin_id: c.id, twin_label: c.label, amount: a.amount, days: dayDiff(c.date!, a.date) })))
+      const dups = autoRows.flatMap(a => {
+        const line = lineById.get(a.bank_id); if (!line) return []
+        return pool.out.filter(c => c.table === a.table && c.id !== a.id && Math.abs(c.amount - a.amount) < 0.011 && c.date && a.date && dayDiff(c.date, a.date) <= 14
+            && (a.table !== 'fixed_cost_expenses' || (c.supplier_id || null) === a.supplier_id)
+            && (a.table !== 'inputs' || !a.category || new RegExp('SUPPLY · ' + a.category + ' ·', 'i').test(c.label))
+            && nameHit(line, c))
+          .slice(0, 1).map(c => ({ auto_table: a.table, auto_id: a.id, auto_label: a.label, bank_id: a.bank_id, twin_table: c.table, twin_id: c.id, twin_label: c.label, amount: a.amount, days: dayDiff(c.date!, a.date) }))
+      })
       return NextResponse.json({ ok: true, floor: AUTO_BOOK_FLOOR, runs: runs.slice(0, 10), booked_24h: by(since1), booked_7d: by(since7), remaining: remaining || 0, errors, orphans, dups })
     }
     // TO BOOK (João, 31/ago): a fila da TRIAGEM inteira, com nota — pra ver só
@@ -170,7 +184,7 @@ export async function POST(req: NextRequest) {
     /* ── ações de lote (motores) ── */
     if (action === 'auto') {
       // Sem a migration o motor não roda (revisão #17): sonda barata antes de qualquer escrita.
-      const { error: probe } = await db.from('bank_transactions').select('match_engine, backfill').limit(1)
+      const { error: probe } = await db.from('bank_transactions').select('match_engine, backfill, match_rule').limit(1)
       if (probe) return NextResponse.json({ error: 'rode MIGRATION_bank_reconcile_v030.sql antes: ' + probe.message, needs_migration: true }, { status: 409 })
       // BL 0.7.0/0.8.0: apelidos do banco (desempate NAME) + regras (humanas e
       // aprendidas) + assinatura do feed duplicado — o MESMO plano do autoBook,
@@ -188,13 +202,23 @@ export async function POST(req: NextRequest) {
       let batch = body.batch ? String(body.batch) : ''
       if (!batch) {
         let run: string | null = null
-        try { run = await acquireRun(db, 'human') } catch { run = null }
+        try { run = await acquireRun(db, 'human') } catch (e) { return NextResponse.json({ error: 'trava de rodada falhou: ' + String((e as Error).message || e).slice(0, 200), needs_migration: MIGRATION_RE.test(String((e as Error).message || e)) }, { status: 500 }) }
         if (!run) return NextResponse.json({ error: 'motor automático rodando — tente em 1 min', plan: summary }, { status: 409 })
         batch = run
+      } else {
+        // Continuação de fatia: a rodada tem que estar VIVA (RUNNING) — a trava
+        // segue nossa entre fatias; encerrada pelo tempo (15 min) ou por outro
+        // motor ⇒ replaneje. Também rejeita batch forjado/velho.
+        const { data: r } = await db.from('bank_auto_runs').select('status').eq('id', batch).maybeSingle()
+        if (!r || r.status !== 'RUNNING') return NextResponse.json({ error: 'rodada encerrada (tempo ou outro motor) — planeje de novo', plan: summary }, { status: 409 })
       }
-      const res = await applyPlan(db, plan, { max: 150, batch })
+      let res
+      try { res = await applyPlan(db, plan, { max: 150, batch }) }
+      catch (e) { await finishRun(db, batch, { status: 'ERROR', errors: [String((e as Error).message || e).slice(0, 300)], note: 'APLICAR humano · exceção' }); throw e }
       const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer
-      await finishRun(db, batch, { status: res.remaining ? 'PARTIAL' : 'DONE', counts: { fee_create: res.fee_create, fee_match: res.fee_match, exact: res.exact, name: res.name, rule_create: res.rule_create, rule_adopt: res.rule_adopt, learn: res.learn, transfer: res.transfer }, errors: res.errors, remaining: res.remaining, note: `APLICAR humano · ${done} nesta fatia` })
+      // Mesma condição do loop do card: enquanto ele vai mandar outra fatia, a rodada fica RUNNING (trava mantida).
+      const cont = res.remaining > 0 && !res.errors.length
+      await finishRun(db, batch, { status: cont ? 'RUNNING' : (res.remaining ? 'PARTIAL' : 'DONE'), counts: { fee_create: res.fee_create, fee_match: res.fee_match, exact: res.exact, name: res.name, rule_create: res.rule_create, rule_adopt: res.rule_adopt, learn: res.learn, transfer: res.transfer }, errors: res.errors, remaining: res.remaining, note: `APLICAR humano · ${done} nesta fatia` })
       return NextResponse.json({ ok: true, applied: res, plan: summary })
     }
     // TRIAGEM POR FAMÍLIA (João, 25/ago): EXPLAIN em massa — NEW → QUEUED (TO
@@ -261,18 +285,22 @@ export async function POST(req: NextRequest) {
     if (action === 'undo_batch') {
       const batch = String(body.batch || '')
       if (!batch) return NextResponse.json({ error: 'batch required' }, { status: 400 })
+      // Rodada ainda VIVA não se desfaz (a próxima fatia recasaria em silêncio).
+      const { data: runRow } = await db.from('bank_auto_runs').select('status').eq('id', batch).maybeSingle().then((x: any) => x, () => ({ data: null }))
+      if (runRow && runRow.status === 'RUNNING') return NextResponse.json({ error: 'rodada em andamento — espere terminar (ou 15 min) antes de desfazer' }, { status: 409 })
       const { data: rows, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status, matched_table, matched_id, match_engine, match_rule, backfill').eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER'])
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      let n = 0; const errors: string[] = []; const fixes: any[] = []
+      let n = 0; const errors: string[] = []; const fixes: any[] = []; const undone: string[] = []
       for (const r of rows || []) {
         try {
-          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false }); n++
+          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false }); n++; undone.push(String(r.id))
           await logMatchEvent(db, r, 'UNMATCH', { batch })
           fixes.push({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id: r.id, field: 'match_status', old_value: r.match_status, new_value: 'NEW', label: (`DESFAZER LOTE · ${r.date} · ${r.merchant || r.name || ''} · ${num(r.amount)}` + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) })
         } catch (e) { errors.push(`${r.date} ${r.merchant || r.name}: ` + String((e as Error).message || e)) }
       }
-      // AFIRMA que nada criado pelo motor sobrou pendurado no lote (revisão #2).
-      const ids = (rows || []).map((r: any) => String(r.id))
+      // AFIRMA que nada criado pelo motor sobrou pendurado no lote (revisão #2) —
+      // só nas linhas de fato desfeitas (as que falharam continuam casadas, de propósito).
+      const ids = undone
       if (ids.length) {
         const { data: leftFx } = await db.from('fixed_cost_expenses').select('id').in('bank_transaction_id', ids).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%')
         const { data: leftIn } = await db.from('inputs').select('id').in('order_number', ids.map((i: string) => ('bank:' + i).slice(0, 120)))
@@ -347,6 +375,15 @@ export async function POST(req: NextRequest) {
       // TROCAR (Data Checker · DUPLA): desfaz o lançamento do motor e casa a linha
       // com o registro humano — um clique, com trilha dos dois passos.
       if (line.match_status !== 'MATCHED' || !['RULE', 'LEARN', 'FEE'].includes(String(line.match_engine))) return NextResponse.json({ error: 'só linha casada pelo motor pode ser trocada' }, { status: 409 })
+      // Valida o registro humano ANTES de desfazer o do motor (revisão do diff):
+      // se o gêmeo não vale mais, nada é tocado.
+      {
+        const table = String(body.table || ''), rowId = String(body.row_id || '')
+        const pool0 = await candidatePool(db)
+        const arr0 = num(line.amount) > 0 ? pool0.out : pool0.inn
+        const c0 = arr0.find(c => c.table === table && c.id === rowId)
+        if (!c0 || Math.abs(c0.amount - Math.abs(num(line.amount))) >= 0.011) return NextResponse.json({ error: 'registro humano não vale mais (já casado, valor mudou ou direção errada) — recarregue' }, { status: 409 })
+      }
       await writeUnmatch(db, line, changed, { unlearn: false })
       await logMatchEvent(db, line, 'UNMATCH', { note: 'REMATCH · troca por registro humano' })
       const { data: fresh } = await db.from('bank_transactions').select(LINE_SEL).eq('id', bankId).maybeSingle()
