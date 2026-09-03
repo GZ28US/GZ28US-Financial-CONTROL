@@ -22,14 +22,63 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 //             ele esteja na pasta de cada um. Fluxo: copy nos carros extras,
 //             move no último — aí ninguém fica com a pasta vazia.
 //
+//   note      — o que foi feito, em uma linha ("lançado na US.030.4")
+//   ref_table / ref_id — no que o e-mail VIROU no app (ex.: invoice_expenses + id)
+//
 // `folder` e `archive` juntos: vale a pasta, que é mais específica.
-// Devolve { ok, moved, read, folder } — e erra alto, nunca em silêncio.
+// Devolve { ok, moved, read, done, marcados } — e erra alto, nunca em silêncio.
+//
+// TODO ARQUIVAMENTO GRAVA MARCA D'ÁGUA em `mail_processed` (02/set/2026): conta,
+// id antes e depois do move, assunto, remetente, data, pasta, ação e — quando o
+// chamador informa — a linha do app que aquele e-mail virou. É o que responde
+// "cadê esse e-mail e o que foi feito com ele" depois, mesmo que a mensagem
+// tenha sido movida de novo por outra sessão.
 
 export const dynamic = 'force-dynamic'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
+
+// ── MARCA D'ÁGUA (Márcio, 02/set/2026) ──────────────────────────────────────
+// "todos os emails processados devem ir pra sua pasta e marcados como
+// processados". O WhatsApp já tinha marca d'água por conversa; o e-mail não
+// tinha nada — "processado" era só "sumiu da inbox", que não diz o que foi
+// feito, nem por quem, e evapora se alguém mover a mensagem outra vez.
+//
+// Grava AQUI, na rota, e não no script de quem chama: assim QUALQUER sessão que
+// arquive um e-mail deixa rastro, sem depender de quem está no teclado.
+// Falhar a gravação NUNCA desfaz o arquivamento — o e-mail já se moveu, e um
+// registro perdido é menos grave que uma exceção que esconde o move.
+type Marca = {
+  account: string; slot: number
+  origin_message_id: string; message_id?: string | null
+  subject?: string | null; from_addr?: string | null; received_at?: string | null
+  folder?: string | null; action: string
+  ref_table?: string | null; ref_id?: string | null; note?: string | null
+}
+async function registrar(db: ReturnType<typeof streamDb>, linhas: Marca[]) {
+  if (!linhas.length) return
+  try {
+    await db.from('mail_processed').upsert(linhas, { onConflict: 'account,origin_message_id' })
+  } catch (e) {
+    console.error('[mail-file] marca d\'água falhou (o e-mail JÁ foi arquivado):', e)
+  }
+}
+
+// O Graph tem nomes BEM-CONHECIDOS (inbox, archive, sentitems, drafts...) que
+// resolvem em qualquer idioma. `graphFolderId` procura por displayName e CRIA se
+// não achar — numa caixa em português a inbox se chama "Caixa de Entrada", então
+// pedir "inbox" criava uma pasta FANTASMA e o e-mail sumia de vista. Já prendeu
+// 65 e-mails uma vez e repetiu com 2 da HP Tuners em 02/set/2026.
+const BEM_CONHECIDAS: Record<string, string> = {
+  inbox: 'inbox', 'caixa de entrada': 'inbox',
+  archive: 'archive', 'arquivo morto': 'archive',
+  sent: 'sentitems', sentitems: 'sentitems', 'itens enviados': 'sentitems',
+  drafts: 'drafts', rascunhos: 'drafts',
+  deleteditems: 'deleteditems', 'itens excluídos': 'deleteditems',
+  junkemail: 'junkemail', 'lixo eletrônico': 'junkemail',
+}
 
 // ── Gmail ───────────────────────────────────────────────────────────────────
 async function gmailToken(auth: any): Promise<string | null> {
@@ -64,7 +113,7 @@ async function gmailLabelId(token: string, path: string): Promise<string | null>
   return id
 }
 
-async function gmailApply(auth: any, ids: string[], b: any): Promise<NextResponse> {
+async function gmailApply(db: ReturnType<typeof streamDb>, slot: number, auth: any, ids: string[], b: any): Promise<NextResponse> {
   const token = await gmailToken(auth)
   if (!token) return NextResponse.json({ error: 'gmail não conectado (GOOGLE_CLIENT_ID/SECRET ou refresh_token)' }, { status: 503 })
   const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
@@ -85,21 +134,50 @@ async function gmailApply(auth: any, ids: string[], b: any): Promise<NextRespons
   if (!add.length && !remove.length) return NextResponse.json({ error: 'nada a fazer: informe read, folder ou archive' }, { status: 400 })
 
   const done: string[] = [], failed: { id: string; error: string }[] = []
+  const marcas: Marca[] = []
   for (const id of ids) {
     const r = await fetch(`${GM}/messages/${encodeURIComponent(id)}/modify`, {
       method: 'POST', headers: H,
       body: JSON.stringify({ addLabelIds: add, removeLabelIds: remove }),
     })
-    if (r.ok) done.push(id)
-    else failed.push({ id, error: (await r.text()).slice(0, 200) })
+    if (!r.ok) { failed.push({ id, error: (await r.text()).slice(0, 200) }); continue }
+    done.push(id)
+    // No Gmail o id SOBREVIVE ao label (não há move de verdade), então o
+    // metadado pode ser lido depois, sem correr contra o relógio.
+    let hdr: Record<string, string> = {}, recebido: string | null = null
+    try {
+      const m = await (await fetch(`${GM}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: H })).json()
+      for (const h of (m?.payload?.headers || [])) hdr[String(h.name).toLowerCase()] = String(h.value)
+      if (m?.internalDate) recebido = new Date(Number(m.internalDate)).toISOString()
+    } catch { /* metadado é bônus */ }
+    marcas.push({
+      account: String(auth.account), slot,
+      origin_message_id: id, message_id: id,
+      subject: hdr.subject ?? null,
+      from_addr: (hdr.from || '').match(/<([^>]+)>/)?.[1] || hdr.from || null,
+      received_at: recebido,
+      folder: b.folder ? String(b.folder) : (b.archive === true ? 'ARCHIVE' : null),
+      action: b.copy === true ? 'COPIED' : b.folder ? 'FILED' : b.archive === true ? 'ARCHIVED' : 'READ',
+      ref_table: b.ref_table ? String(b.ref_table) : null,
+      ref_id: b.ref_id ? String(b.ref_id) : null,
+      note: b.note ? String(b.note).slice(0, 400) : null,
+    })
   }
-  return NextResponse.json({ ok: !failed.length, provider: 'gmail', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), read: b.read ?? null, done: done.length, failed })
+  await registrar(db, marcas)
+  return NextResponse.json({ ok: !failed.length, provider: 'gmail', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), read: b.read ?? null, done: done.length, marcados: marcas.length, failed })
 }
 
 // ── Graph ───────────────────────────────────────────────────────────────────
 // Pasta por caminho, criando o que faltar. "Rides/US.043 - X" → filha de Rides.
 async function graphFolderId(token: string, path: string): Promise<string | null> {
   const parts = path.split('/').map(s => s.trim()).filter(Boolean)
+  // Nome bem-conhecido sozinho NÃO vira pasta nova: devolve o id reservado do
+  // Graph, que é o que o usuário quis dizer. Só um caminho com barra
+  // ("Rides/US.048 - X") segue para a criação por displayName.
+  if (parts.length === 1) {
+    const bem = BEM_CONHECIDAS[parts[0].toLowerCase()]
+    if (bem) return bem
+  }
   let parent: string | null = null
   for (const p of parts) {
     const url: string = parent ? `${G}/me/mailFolders/${parent}/childFolders` : `${G}/me/mailFolders`
@@ -129,7 +207,7 @@ export async function POST(req: NextRequest) {
   const auth = await getMailAuth(db, slot)
   if (!auth) return NextResponse.json({ error: `slot ${slot} sem autenticação` }, { status: 404 })
 
-  if (slot === 4) return gmailApply(auth, ids, b)
+  if (slot === 4) return gmailApply(db, slot, auth, ids, b)
 
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ error: 'token expirado' }, { status: 502 })
@@ -143,8 +221,17 @@ export async function POST(req: NextRequest) {
   }
 
   const done: string[] = [], failed: { id: string; error: string }[] = []
+  const marcas: Marca[] = []
   for (const id0 of ids) {
     let id = id0
+    // Metadados ANTES do move: depois dele o id velho morre e a mensagem não
+    // responde mais. Sem isso a marca d'água nasceria sem assunto nem remetente,
+    // que é justamente o que se precisa quando a mensagem some.
+    let meta: any = null
+    try {
+      const mr = await fetch(`${G}/me/messages/${encodeURIComponent(id)}?$select=subject,from,receivedDateTime`, { headers: gh(token) })
+      if (mr.ok) meta = await mr.json()
+    } catch { /* metadado é bônus, não bloqueia o arquivamento */ }
     if (destId) {
       const verb = b.copy === true ? 'copy' : 'move'
       const mv = await fetch(`${G}/me/messages/${encodeURIComponent(id)}/${verb}`, { method: 'POST', headers: gh(token), body: JSON.stringify({ destinationId: destId }) })
@@ -160,6 +247,19 @@ export async function POST(req: NextRequest) {
       if (!pt.ok) { failed.push({ id, error: (await pt.text()).slice(0, 200) }); continue }
     }
     done.push(id)
+    marcas.push({
+      account: String(auth.account), slot,
+      origin_message_id: id0, message_id: id,
+      subject: meta?.subject ?? null,
+      from_addr: meta?.from?.emailAddress?.address ?? null,
+      received_at: meta?.receivedDateTime ?? null,
+      folder: b.folder ? String(b.folder) : (b.archive === true ? 'ARCHIVE' : null),
+      action: b.copy === true ? 'COPIED' : b.folder ? 'FILED' : b.archive === true ? 'ARCHIVED' : 'READ',
+      ref_table: b.ref_table ? String(b.ref_table) : null,
+      ref_id: b.ref_id ? String(b.ref_id) : null,
+      note: b.note ? String(b.note).slice(0, 400) : null,
+    })
   }
-  return NextResponse.json({ ok: !failed.length, provider: 'graph', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), copied: b.copy === true, read: b.read ?? null, done: done.length, failed })
+  await registrar(db, marcas)
+  return NextResponse.json({ ok: !failed.length, provider: 'graph', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), copied: b.copy === true, read: b.read ?? null, done: done.length, marcados: marcas.length, failed })
 }
