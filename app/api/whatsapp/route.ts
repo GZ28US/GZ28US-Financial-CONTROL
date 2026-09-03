@@ -78,6 +78,26 @@ async function resolveGroupByName(base: string, token: string, name: string): Pr
   const key = name.trim().toLowerCase()
   if (!key) return ''
   if (groupIdCache[key]) return groupIdCache[key]
+
+  // ── 1º O ESPELHO DA CASA (03/set/2026) ──────────────────────────────────
+  // whatsapp_chats guarda chat_id + nome de TODO grupo, sincronizado pelo
+  // whatsapp-sync. Antes, cada envio dependia do GET /groups da UltraMsg — e no
+  // dia 03/set essa lista deixou de trazer o "GZ28US - Tcal": o report do dyno
+  // morreu com 404 mesmo com o grupo vivo, o nome idêntico e um PDF entregue
+  // ali 40 minutos antes. O id de um grupo não muda; o espelho é nosso e
+  // responde sempre. A lista da UltraMsg vira o PLANO B, para o grupo novo que
+  // o espelho ainda não viu.
+  try {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const skey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (url && skey) {
+      const db = createClient(url, skey, { auth: { persistSession: false } })
+      const { data } = await db.from('whatsapp_chats').select('chat_id').eq('is_group', true).ilike('name', name.trim()).limit(1)
+      const id = data?.[0]?.chat_id
+      if (id) { groupIdCache[key] = String(id); return groupIdCache[key] }
+    }
+  } catch { /* espelho indisponível: cai no plano B abaixo */ }
+
   try {
     const res = await fetch(`${base}/groups?token=${encodeURIComponent(token)}`)
     const raw = await res.text()
@@ -85,7 +105,7 @@ async function resolveGroupByName(base: string, token: string, name: string): Pr
     try { const j = JSON.parse(raw); list = Array.isArray(j) ? j : (Array.isArray(j?.groups) ? j.groups : []) } catch { /* not JSON */ }
     const hit = list.find((g: any) => String(g.name || '').trim().toLowerCase() === key)
     if (hit?.id) { groupIdCache[key] = String(hit.id); return groupIdCache[key] }
-    console.error('[whatsapp] group not found by name', { name, groupsSeen: list.length })
+    console.error('[whatsapp] grupo não achado NEM no espelho NEM na UltraMsg', { name, groupsSeen: list.length })
   } catch (e) {
     console.error('[whatsapp] groups lookup failed', e)
   }
