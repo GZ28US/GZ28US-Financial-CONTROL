@@ -428,6 +428,13 @@ export default function FixedCostSupplierViewPage() {
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
     }
+    // A linha SEM VENCIMENTO também é devida — só não tem data. Ficava fora do
+    // DUE porque a projeção anda de mês em mês e ela não mora em mês nenhum. O
+    // Future Flow já a conta no DUE by GZ28; aqui passa a contar também.
+    for (const r of rows) {
+      if (isValidDate(r.payment_date) || isValidDate(r.expense_date)) continue
+      dueTotal += Number(r.amount) || 0
+    }
   }
   const finalTotal = paidTotal + dueTotal
 
@@ -567,7 +574,7 @@ export default function FixedCostSupplierViewPage() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-lg font-bold">{formatUSD(Number(p.amount) || 0)}</span>
-                            <span className="text-gray-400 text-sm">day {dayOf(p.expense_date)}</span>
+                            {isValidDate(p.expense_date) && <span className="text-gray-400 text-sm">day {dayOf(p.expense_date)}</span>}
                             {paid ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
                               : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({daysDelayed} {daysDelayed === 1 ? 'day' : 'days'})</span> : null}
                             {fine > 0.005 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300" title={`Scheduled ${formatUSD(sched || 0)} — paid ${formatUSD(Number(p.amount) || 0)}`}>FINES for Late: {formatUSD(fine)}</span>}
