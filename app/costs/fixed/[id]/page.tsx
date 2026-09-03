@@ -603,7 +603,7 @@ export default function FixedCostSupplierViewPage() {
                             {paid ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
                               : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({daysDelayed} {daysDelayed === 1 ? 'day' : 'days'})</span> : null}
                             {fine > 0.005 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300" title={`Scheduled ${formatUSD(sched || 0)} — paid ${formatUSD(Number(p.amount) || 0)}`}>FINES for Late: {formatUSD(fine)}</span>}
-                            {lf && lf.fine > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-950 border border-red-700 text-red-300" title={lf.ruleLabel}>LATE FEE RUNNING: {formatUSD(lf.fine)}{lf.perDay > 0 ? ` · +${formatUSD(lf.perDay)}/day` : ' · capped'}</span>}
+                            {lf && lf.fine > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-950 border border-red-700 text-red-300" title={lf.ruleLabel}>LATE FEE RUNNING: {formatUSD(lf.fine)}{lf.perDay > 0 ? ` · +${formatUSD(lf.perDay)}/day` : lf.dailyCapped ? ' · daily capped' : ''}</span>}
                             {lf && lf.fine === 0 && lf.daysToGrace <= 7 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-950 border border-amber-700 text-amber-300" title={lf.ruleLabel}>PAY BY {fmtDate(lf.graceUntil)}{lf.daysToGrace > 0 ? ` · ${lf.daysToGrace} ${lf.daysToGrace === 1 ? 'day' : 'days'} left` : ' · TODAY'}</span>}
                           </div>
                           {paid && (

@@ -209,7 +209,7 @@ export default function FixedCostSuppliersPage() {
                   return (
                     <>
                       <p className={`text-base font-bold ${late ? 'text-red-400' : 'text-gray-300'}`}>{fmtDate(n.date)} - {formatUSD(n.amount)}{late ? ' · DELAYED' : ''}</p>
-                      {lf && lf.fine > 0 && <p className="text-sm font-bold text-red-400" title={lf.ruleLabel}>Late fee running: {formatUSD(lf.fine)}{lf.perDay > 0 ? ` · +${formatUSD(lf.perDay)}/day` : ' · capped'}</p>}
+                      {lf && lf.fine > 0 && <p className="text-sm font-bold text-red-400" title={lf.ruleLabel}>Late fee running: {formatUSD(lf.fine)}{lf.perDay > 0 ? ` · +${formatUSD(lf.perDay)}/day` : lf.dailyCapped ? ' · daily capped' : ''}</p>}
                       {lf && lf.fine === 0 && lf.daysToGrace <= 7 && <p className="text-sm font-bold text-amber-300" title={lf.ruleLabel}>Pay by {fmtDate(lf.graceUntil)}{lf.daysToGrace > 0 ? ` — ${lf.daysToGrace} ${lf.daysToGrace === 1 ? 'day' : 'days'} left` : ' — TODAY'}</p>}
                     </>
                   )

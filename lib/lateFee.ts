@@ -77,6 +77,10 @@ export type LateFeeResult = {
   fine: number
   /** Quanto a diária ainda soma por dia daqui pra frente (0 se bateu o teto). */
   perDay: number
+  /** Havia diária E ela bateu o teto de dias. Só isto merece a palavra "capped":
+   *  fornecedor sem diária nenhuma não tem nada a limitar (caso do galpão, que
+   *  cobra só o maior entre $500 e 5% — dizer "capped" ali era mentira). */
+  dailyCapped: boolean
   /** Dias que faltam pra multa começar a correr (0 = já correndo). */
   daysToGrace: number
   /** Frase curta da regra, pra selo e tooltip. */
@@ -122,6 +126,7 @@ export function lateFeeFor(
     billableDays: capped,
     fine,
     perDay: daysLate > 0 && capDays != null && capped >= capDays ? 0 : daily,
+    dailyCapped: daily > 0 && capDays != null && daysLate > 0 && capped >= capDays,
     daysToGrace: Math.max(0, daysBetween(asOfYmd, graceUntil)),
     ruleLabel: `${ruleBits.join(' + ')}${grace > 0 ? ` after ${grace} day${grace === 1 ? '' : 's'} of grace` : ' from the day after the due date'}`,
   }
