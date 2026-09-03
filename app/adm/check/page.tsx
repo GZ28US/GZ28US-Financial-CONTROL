@@ -36,6 +36,10 @@ type Fix =
   | { kind: 'number'; table: string; rowId: string; field: string; suffix?: string }
   | { kind: 'flag'; table: string; rowId: string; field: string; value: boolean; confirmText: string }
   | { kind: 'trash'; table: string; rowId: string; field: string; confirmText: string }
+  // AUTO-BOOK (BL 0.8.0): PURGAR órfão do motor (pela rota, com re-checagem) e
+  // TROCAR dupla (desfaz o lançamento do motor e casa a linha com o registro humano).
+  | { kind: 'purge'; table: string; rowId: string; field: string; confirmText: string }
+  | { kind: 'rematch'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -75,7 +79,8 @@ type SupRow = { id: string; text: string; part: string; candidates: { id: string
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
-type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok' }
+type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[] }
+type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 // WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
@@ -301,7 +306,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const late = (e: any) => Math.floor((Date.parse(TODAY) - Date.parse(due(e))) / 864e5)
     const tag = (e: any) => due(e) ? `prevista ${due(e)} · ATRASADA há ${late(e)} dia(s)` : 'SEM DATA NENHUMA — nem o mês dá pra saber'
     const supEnd = (e: any) => { const sup = d.fixedSuppliers.get(e.supplier_id); return sup?.date_conclusion ? String(sup.date_conclusion).slice(0, 10) : null }
-    const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY) && !(supEnd(e) && due(e) && due(e) > supEnd(e)!))
+    // AUTO-BOOK (BL 0.8.0): conta em aberto cujo mês JÁ tem a linha ligada ao
+    // banco não recebe o fix de data (endureceria a dupla) — vai pro card 5b.
+    const linkedMonth = new Set(d.fixedExpenses.filter((e: any) => e.bank_transaction_id).map((e: any) => e.supplier_id + '|' + String(e.expense_date || e.payment_date || '').slice(0, 7)))
+    const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY) && !(supEnd(e) && due(e) && due(e) > supEnd(e)!) && !(due(e) && linkedMonth.has(e.supplier_id + '|' + due(e).slice(0, 7))))
     const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL' && (!due(e) || due(e) <= TODAY))
     const items: Item[] = [
       ...fx.map((e: any) => {
@@ -320,6 +328,40 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     checks.push({
       group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha vencido (ou sem data nenhuma)', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
       why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer.',
+      items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+  }
+
+  // 5b · Fornecedor MONTHLY com 2+ contas no mesmo mês (AUTO-BOOK, BL 0.8.0): a
+  // criada/adotada pelo banco (ou lançada à mão) + a agendada do gerador = dupla.
+  // APP fica fora: recibos do Gmail cobram várias vezes no mês por natureza.
+  {
+    const items: Item[] = []
+    const byKey = new Map<string, any[]>()
+    for (const e of d.fixedExpenses) {
+      const sup = d.fixedSuppliers.get(e.supplier_id)
+      if (!sup || sup.periodicity !== 'MONTHLY' || ['BANK', 'ASSET', 'MARKETING', 'MERCHANDISE', 'APP'].includes(String(sup.cost_type))) continue
+      const m = String(e.expense_date || '').slice(0, 7); if (!m) continue
+      const k = e.supplier_id + '|' + m; byKey.set(k, [...(byKey.get(k) || []), e])
+    }
+    byKey.forEach((rows, k) => {
+      const [supId, month] = k.split('|')
+      const sup = d.fixedSuppliers.get(supId)
+      const slots = ((sup?.payment_day_1 != null ? 1 : 0) + (sup?.payment_day_2 != null ? 1 : 0)) || 1
+      if (rows.length <= slots) return
+      const linked = rows.filter((r: any) => r.bank_transaction_id || r.payment_date)
+      const open = rows.filter((r: any) => !r.bank_transaction_id && !r.payment_date)
+      for (const o of open) items.push({
+        href: '/costs/fixed/' + supId, code: 'DUPLA MÊS', when: String(o.expense_date || '').slice(0, 10),
+        label: `${sup?.company || sup?.description || ''} · ${month} · ${rows.length} contas (${slots} slot)`,
+        extra: linked.length ? `já existe a paga/ligada ao banco: ${linked.map((r: any) => (r.description || '') + ' ' + usd(parseFloat(r.amount) || 0)).join(' · ').slice(0, 120)}` : 'nenhuma delas paga ainda — decida qual vive',
+        amount: parseFloat(o.amount) || 0,
+        fix: { kind: 'trash' as const, table: 'fixed_cost_expenses', rowId: o.id, field: 'DELETED', confirmText: `Apagar a conta em aberto de ${String(o.expense_date || '').slice(0, 10)} (${usd(parseFloat(o.amount) || 0)})? O mês ${month} de ${sup?.company || ''} já tem ${linked.length ? 'a linha paga/ligada ao banco' : rows.length + ' contas'}. Fica na trilha.` },
+      })
+    })
+    if (items.length) checks.push({
+      group: 'FINANCIAL', key: 'fixed-dup-month', title: 'Fornecedor MONTHLY com 2+ contas no mesmo mês', blocks: 'a mesma conta pesa duas vezes: no DRE e em "a pagar"',
+      why: 'O gerador agenda uma conta por slot e mês; quando o banco cria ou adota a conta do mês (AUTO-BOOK) ou alguém lança a mesma conta à mão, sobra uma agendada em aberto ao lado da paga. APP fica fora (assinaturas com recibo do Gmail cobram várias vezes no mês por natureza). Apague a sobra em aberto — a paga/ligada ao banco é a verdadeira.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -804,6 +846,35 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // BANK · AUTO-BOOK (BL 0.8.0): o motor registrou sozinho? Rodada parada ou
+  // errada, erros de 7 dias, ÓRFÃO (lançamento do motor sem linha casada →
+  // PURGAR) e DUPLA (o humano lançou depois do banco → TROCAR).
+  {
+    const ab = bank.autobook
+    if (ab && !ab.needs_migration) {
+      const items: Item[] = []
+      const last = ab.runs[0]
+      const stale = !last || (Date.now() - Date.parse(last.started_at)) > 12 * 3600e3
+      const when = (iso: string) => String(iso).slice(0, 16).replace('T', ' ')
+      if (stale) items.push({ href: '/adm/check', code: 'MOTOR', label: last ? `última rodada ${when(last.started_at)} (${last.trigger}) — mais de 12 h sem rodar` : 'nenhuma rodada registrada ainda', extra: 'o cron 6/6h ou o webhook do Plaid não chamaram o autoBook — confira a Vercel' })
+      else if (['ERROR', 'PARTIAL', 'ABORTED'].includes(last.status)) items.push({ href: '/adm/check', code: 'MOTOR', label: `última rodada ${last.status} (${last.trigger}, ${when(last.started_at)})`, extra: (last.errors || [])[0] ? String(last.errors![0]).slice(0, 140) : `${last.remaining ?? 0} linhas ficaram pra próxima` })
+      for (const e of ab.errors) items.push({ href: '/adm/check', code: 'ERRO', label: String(e).slice(0, 160), extra: 'erro do motor nos últimos 7 dias' })
+      for (const o of ab.orphans) items.push({
+        href: o.table === 'inputs' ? '/supplies' : '/costs/fixed', code: 'ÓRFÃO', label: o.label || '', extra: `lançamento criado pelo motor sem linha do banco casada apontando pra ele — ${usd(o.amount)}`, amount: o.amount,
+        fix: { kind: 'purge' as const, table: o.table, rowId: o.id, field: 'DELETED', confirmText: `Apagar o lançamento ÓRFÃO do motor "${o.label}" (${usd(o.amount)})? Nenhuma linha do banco aponta pra ele — é sobra de um DESFAZER ou de uma rodada que falhou. Fica na trilha.` },
+      })
+      for (const x of ab.dups) items.push({
+        href: x.auto_table === 'inputs' ? '/supplies' : '/costs/fixed', code: 'DUPLA', label: `${x.auto_label || ''} ⇄ ${x.twin_label || ''}`, extra: `o motor criou e um humano lançou o mesmo (${usd(x.amount)}, ${x.days} dia(s) de diferença) — TROCAR desfaz o do motor e casa a linha com o registro humano`, amount: x.amount,
+        fix: { kind: 'rematch' as const, table: x.twin_table, rowId: x.twin_id, field: 'match', bankId: x.bank_id, confirmText: `DESFAZ o lançamento do motor "${x.auto_label}" e casa a linha do banco com o registro humano "${x.twin_label}" (${usd(x.amount)})?` },
+      })
+      const b24 = Object.values(ab.booked_24h || {}).reduce((s, v) => s + v, 0), b7 = Object.values(ab.booked_7d || {}).reduce((s, v) => s + v, 0)
+      checks.push({
+        group: 'BANK', key: 'auto-book', title: 'AUTO-BOOK — o motor registrou sozinho?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
+        why: `Desde ${ab.floor} cada linha nova do banco é REGISTRADA pelo motor depois do sync (cron 6/6h + webhook), uma rodada por vez. Registradas: ${b24} nas últimas 24 h · ${b7} em 7 dias · ${ab.remaining} NEW restantes desde o piso. RULE/LEARN esperam 7 dias de maturidade (o humano ainda lança atrasado) — daí a DUPLA: quando o humano lança depois do banco, TROCAR desfaz o do motor e casa o humano. ÓRFÃO = lançamento do motor sem linha casada (sobra de DESFAZER ou falha): PURGAR. Tudo desfazível no Bank Link (A CONFERIR · DESFAZER LOTE).`,
+        items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+      })
+    }
+  }
   return checks
 }
 
@@ -861,6 +932,12 @@ export default function DataCheckPage() {
           for (const m of j.matched as { table: string; id: string; amount: number }[]) if (m.table === 'purchase_group') groups.set(m.id, Number(m.amount) || 0)
           setBank(prev => ({ ...prev, matched: new Set((j.matched as { table: string; id: string }[]).map(m => m.table + ':' + m.id)), groups, outflows, opened: j.account_opened || REGIONS_OPENED }))
         }
+        // AUTO-BOOK (BL 0.8.0): rodadas, erros, órfãos e duplas do motor automático.
+        try {
+          const ra = await fetch(`${BASE_PATH}/api/bank/reconcile?autobook=1`, { headers: await sessionHeaders() })
+          const ja = await ra.json().catch(() => ({}))
+          if (ra.ok && ja.ok) setBank(prev => ({ ...prev, autobook: ja as AutoBookSignal }))
+        } catch { /* sinal ausente = card não aparece */ }
         // Saldo REAL do banco × linhas do feed — o "caixa não bate" (João, 22/ago).
         // Estado explícito: sem resposta = verificação NÃO rodou (revisão #16).
         const rb = await fetch(`${BASE_PATH}/api/plaid/balance`, { headers: await sessionHeaders() })
@@ -915,6 +992,8 @@ export default function DataCheckPage() {
     const out: { title: string; sub: string; group: string | null; open: string | null }[] = []
     const cash = checks.find(c => c.key === 'cash-match')
     if (cash && cash.items.length > 0) out.push({ title: 'O caixa não bate — conserte a régua primeiro', sub: 'enquanto ela estiver vermelha, nenhum outro número vale', group: 'BANK', open: 'cash-match' })
+    const ab = checks.find(c => c.key === 'auto-book')
+    if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'AUTO-BOOK parou ou errou — veja o card', sub: 'o motor deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
     if (bankAConferir > 0) out.push({ title: `Conferir os ${bankAConferir} casamentos do motor`, sub: 'o banco propôs, você bate o martelo — OK ou DESFAZER, com ABRIR ↗ pra ver a prova', group: 'BANK', open: null })
     const certoChecks = checks.filter(c => c.items.some(i => i.certain))
     const certos = certoChecks.reduce((s, c) => s + c.items.filter(i => i.certain).length, 0)
@@ -1016,6 +1095,20 @@ export default function DataCheckPage() {
     }
     // APAGAR (trash): remove a linha de verdade — o painel com o confirmText é a
     // confirmação; a trilha guarda o que era (old_value = rótulo).
+    // AUTO-BOOK (BL 0.8.0): PURGAR e TROCAR passam pela rota do Bank Link — ela
+    // re-checa o marcador/elo antes de apagar e casa o registro humano com trilha.
+    if (fix.kind === 'purge' || fix.kind === 'rematch') {
+      setSaving(true)
+      try {
+        const body = fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
+        const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
     if (fix.kind === 'trash') {
       setSaving(true)
       try {
@@ -1280,8 +1373,8 @@ export default function DataCheckPage() {
                         ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
                         : (
                           <div>
-                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
-                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : 'CONFIRMAR'}</button>
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : 'CONFIRMAR'}</button>
                           </div>
                         )}
                       {c.key === 'parts-identity' && gval === '__search__' && it.fix && (
@@ -1351,7 +1444,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -1391,14 +1484,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
-                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && !fixValue)}
+                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>

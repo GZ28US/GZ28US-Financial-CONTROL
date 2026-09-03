@@ -105,6 +105,9 @@ export default function FixedCostSupplierViewPage() {
 
     const { data: existing } = await supabase.from('fixed_cost_expenses').select('expense_date').eq('supplier_id', id)
     const existingDates = new Set((existing || []).map((e: any) => e.expense_date).filter(Boolean))
+    // AUTO-BOOK (BL 0.8.0): mês que já tem tantas linhas quanto slots não ganha outra.
+    const monthCount = new Map<string, number>()
+    for (const e of existing || []) { const m = String(e.expense_date || '').slice(0, 7); if (m) monthCount.set(m, (monthCount.get(m) || 0) + 1) }
     const supName = (sup.description || sup.company || 'Payment') as string
 
     const toInsert: any[] = []
@@ -112,8 +115,10 @@ export default function FixedCostSupplierViewPage() {
     while (cursor <= targetEnd) {
       for (const slot of slots) {
         const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), slot.day)
-        if (!(end && pd > end) && pd <= targetEnd && !existingDates.has(ymd(pd))) {
+        const m = ymd(pd).slice(0, 7)
+        if (!(end && pd > end) && pd <= targetEnd && !existingDates.has(ymd(pd)) && (monthCount.get(m) || 0) < slots.length) {
           toInsert.push({ supplier_id: id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: ymd(pd) })
+          monthCount.set(m, (monthCount.get(m) || 0) + 1)
         }
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)

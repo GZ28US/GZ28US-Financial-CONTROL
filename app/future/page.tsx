@@ -30,7 +30,9 @@ async function ensureFixedCostPayments() {
   if (!sups || sups.length === 0) return
   const { data: existing } = await supabase.from('fixed_cost_expenses').select('supplier_id, expense_date')
   const existsBySup = new Map<string, Set<string>>()
-  for (const e of existing || []) { if (!e.expense_date) continue; if (!existsBySup.has(e.supplier_id)) existsBySup.set(e.supplier_id, new Set()); existsBySup.get(e.supplier_id)!.add(e.expense_date) }
+  // AUTO-BOOK (BL 0.8.0): mês que já tem tantas linhas quanto slots não ganha outra.
+  const countBySupMonth = new Map<string, number>()
+  for (const e of existing || []) { if (!e.expense_date) continue; if (!existsBySup.has(e.supplier_id)) existsBySup.set(e.supplier_id, new Set()); existsBySup.get(e.supplier_id)!.add(e.expense_date); const mk = e.supplier_id + '|' + String(e.expense_date).slice(0, 7); countBySupMonth.set(mk, (countBySupMonth.get(mk) || 0) + 1) }
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const clampDay = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -51,9 +53,11 @@ async function ensureFixedCostPayments() {
       for (const slot of slots) {
         const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), slot.day)
         const key = ymd(pd)
-        if (!(end && pd > end) && pd <= targetEnd && !has.has(key)) {
+        const mk = sup.id + '|' + key.slice(0, 7)
+        if (!(end && pd > end) && pd <= targetEnd && !has.has(key) && (countBySupMonth.get(mk) || 0) < slots.length) {
           toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key })
           has.add(key)
+          countBySupMonth.set(mk, (countBySupMonth.get(mk) || 0) + 1)
         }
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)

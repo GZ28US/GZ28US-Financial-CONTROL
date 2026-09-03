@@ -76,8 +76,8 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
     fetchAll('expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
-    fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
-    fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion'),
+    fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, bank_transaction_id'),
+    fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion, periodicity, payment_day_1, payment_day_2'),
     fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
     fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     // order_number entra no select (29/ago/2026): o MOVE pra estoque do Data

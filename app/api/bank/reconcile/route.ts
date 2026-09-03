@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, logMatchEvent, fetchAll, loadDbAliases, MerchantRule } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, MARKER_CREATED } from '@/lib/bankReconcile.server'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -9,7 +9,7 @@ import { num, candidatePool, rank, isFee, buildPlan, applyPlan, planSummary, new
 export const maxDuration = 300
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id/
+const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_/
 
 export async function GET(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -40,6 +40,41 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json({ ok: true, matched: acc, outflows: outs, account_opened: '2025-11-10' })
     }
+    // AUTO-BOOK (BL 0.8.0) — sinal pro Data Checker: rodadas, registradas por
+    // motor (24h/7d), NEW restantes desde o piso, erros, ÓRFÃOS (lançamento do
+    // motor sem linha casada apontando) e DUPLAS (lançamento do motor com gêmeo
+    // humano de mesmo valor até 14 dias — o humano lançou depois do banco).
+    if (req.nextUrl.searchParams.get('autobook') === '1') {
+      const runsQ = await db.from('bank_auto_runs').select('*').order('started_at', { ascending: false }).limit(20)
+      if (runsQ.error) return NextResponse.json({ ok: true, needs_migration: true, floor: AUTO_BOOK_FLOOR, runs: [], booked_24h: {}, booked_7d: {}, remaining: 0, errors: [], orphans: [], dups: [] })
+      const runs = runsQ.data || []
+      const since7 = new Date(Date.now() - 7 * 864e5).toISOString(), since1 = new Date(Date.now() - 864e5).toISOString()
+      const logs = await fetchAll(db, 'bank_match_log', 'at, action, engine', (q: any) => q.gte('at', since7).not('engine', 'is', null).in('action', ['MATCH', 'TRANSFER']))
+      const by = (since: string) => logs.filter((r: any) => r.at >= since).reduce((m: Record<string, number>, r: any) => { m[r.engine] = (m[r.engine] || 0) + 1; return m }, {})
+      const { count: remaining } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_status', 'NEW').eq('pending', false).gte('date', AUTO_BOOK_FLOOR)
+      const errors = [...new Set(runs.filter((r: any) => r.started_at >= since7).flatMap((r: any) => Array.isArray(r.errors) ? r.errors : []))].slice(0, 10)
+      // órfãos: linha criada pelo motor (marcador + elo) sem linha MATCHED apontando pra ela
+      const { data: fxAuto } = await db.from('fixed_cost_expenses').select('id, description, amount, bank_transaction_id, payment_date').not('bank_transaction_id', 'is', null).ilike('description', '%Bank Link)%')
+      const { data: inAuto } = await db.from('inputs').select('id, description, unit_price, quantity, order_number, payment_date').like('order_number', 'bank:%')
+      const bankIds = [...new Set([...(fxAuto || []).map((r: any) => String(r.bank_transaction_id)), ...(inAuto || []).map((r: any) => String(r.order_number).slice(5))])]
+      const lineById = new Map<string, any>()
+      for (let i = 0; i < bankIds.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').in('id', bankIds.slice(i, i + 200)); for (const l of data || []) lineById.set(String(l.id), l) }
+      const pointsAt = (bankId: string, table: string, id: string) => { const l = lineById.get(bankId); return !!l && l.match_status === 'MATCHED' && l.matched_table === table && String(l.matched_id) === String(id) }
+      const orphans = [
+        ...(fxAuto || []).filter((r: any) => !pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, label: r.description, amount: num(r.amount), bank_id: r.bank_transaction_id })),
+        ...(inAuto || []).filter((r: any) => !pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, label: r.description, amount: num(r.unit_price) * (num(r.quantity) || 1), bank_id: String(r.order_number).slice(5) })),
+      ]
+      // duplas: lançamento do motor cujo gêmeo humano (mesmo valor, ±14d, sem elo com o banco) ainda está no pool
+      const pool = await candidatePool(db)
+      const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(String(a).slice(0, 10)) - Date.parse(String(b).slice(0, 10))) / 864e5))
+      const autoRows = [
+        ...(fxAuto || []).filter((r: any) => pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, amount: num(r.amount), date: r.payment_date, bank_id: String(r.bank_transaction_id), label: r.description })),
+        ...(inAuto || []).filter((r: any) => pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, amount: num(r.unit_price) * (num(r.quantity) || 1), date: r.payment_date, bank_id: String(r.order_number).slice(5), label: r.description })),
+      ]
+      const dups = autoRows.flatMap(a => pool.out.filter(c => !(c.table === a.table && c.id === a.id) && Math.abs(c.amount - a.amount) < 0.011 && c.date && a.date && dayDiff(c.date, a.date) <= 14 && !['purchase_group', 'kit_group'].includes(c.table))
+        .slice(0, 1).map(c => ({ auto_table: a.table, auto_id: a.id, auto_label: a.label, bank_id: a.bank_id, twin_table: c.table, twin_id: c.id, twin_label: c.label, amount: a.amount, days: dayDiff(c.date!, a.date) })))
+      return NextResponse.json({ ok: true, floor: AUTO_BOOK_FLOOR, runs: runs.slice(0, 10), booked_24h: by(since1), booked_7d: by(since7), remaining: remaining || 0, errors, orphans, dups })
+    }
     // TO BOOK (João, 31/ago): a fila da TRIAGEM inteira, com nota — pra ver só
     // o que está marcado "a lançar" e destriar linha a linha.
     if (req.nextUrl.searchParams.get('queued') === '1') {
@@ -58,8 +93,8 @@ export async function GET(req: NextRequest) {
     // (colunas match_engine/match_batch/reviewed_at/backfill) o card avisa e segue vivo.
     let auto: any = null, needsMigration = false
     const { data: autoRows, error: autoErr } = await db.from('bank_transactions')
-      .select('id, date, amount, name, merchant, matched_table, matched_id, matched_note, match_engine, match_batch, reviewed_at, plaid_id, backfill')
-      .not('match_engine', 'is', null).eq('match_status', 'MATCHED').order('date', { ascending: false }).range(0, 1999)
+      .select('id, date, amount, name, merchant, match_status, matched_table, matched_id, matched_note, match_engine, match_batch, match_rule, reviewed_at, plaid_id, backfill')
+      .not('match_engine', 'is', null).in('match_status', ['MATCHED', 'TRANSFER']).order('date', { ascending: false }).range(0, 1999)
     if (autoErr) needsMigration = MIGRATION_RE.test(autoErr.message)
     else {
       // CONFERIR também no A CONFERIR (UX #1, João 25/ago): cada casamento do motor
@@ -88,25 +123,38 @@ export async function GET(req: NextRequest) {
       for (const r of hFx as any[]) hrefOf.set('fixed_cost_expenses:' + r.id, r.supplier_id ? (bankSups.has(r.supplier_id) ? '/costs/bank' : '/costs/fixed/' + r.supplier_id) : '/costs/fixed')
       const staticHref: Record<string, string> = { goods: '/goods', good_expenses: '/goods', inputs: '/supplies', inventory: '/inventory', expenses: '/staff', capital_events: '/adm/financials', financing_events: '/adm/financials' }
       for (const r of pend) { const k = r.matched_table + ':' + r.matched_id; if (!hrefOf.has(k) && staticHref[r.matched_table]) hrefOf.set(k, staticHref[r.matched_table]) }
-      const batches = new Map<string, { batch: string; n: number; pending: number; fee: number; exact: number; from: string; to: string }>()
+      const batches = new Map<string, { batch: string; n: number; pending: number; fee: number; exact: number; name: number; rule: number; learn: number; transfer: number; from: string; to: string; trigger?: string | null; started_at?: string | null }>()
       for (const r of autoRows || []) {
-        const b = batches.get(r.match_batch) || { batch: r.match_batch, n: 0, pending: 0, fee: 0, exact: 0, from: r.date, to: r.date }
-        b.n++; if (!r.reviewed_at) b.pending++; if (r.match_engine === 'FEE') b.fee++; else b.exact++
+        const b = batches.get(r.match_batch) || { batch: r.match_batch, n: 0, pending: 0, fee: 0, exact: 0, name: 0, rule: 0, learn: 0, transfer: 0, from: r.date, to: r.date }
+        b.n++; if (!r.reviewed_at) b.pending++
+        if (r.match_status === 'TRANSFER') b.transfer++
+        else if (r.match_engine === 'FEE') b.fee++; else if (r.match_engine === 'NAME') b.name++; else if (r.match_engine === 'RULE') b.rule++; else if (r.match_engine === 'LEARN') b.learn++; else b.exact++
         if (r.date < b.from) b.from = r.date; if (r.date > b.to) b.to = r.date
         batches.set(r.match_batch, b)
       }
+      // Rodadas do AUTO-BOOK: o lote da rodada automática vira "AUTO · cron 03/09" no card.
+      let runs: any[] = []
+      try {
+        const ids = [...batches.keys()].filter(Boolean)
+        const { data: rr } = ids.length ? await db.from('bank_auto_runs').select('id, trigger, status, started_at, finished_at, counts, errors, remaining').in('id', ids) : { data: [] }
+        for (const r of rr || []) { const b = batches.get(r.id); if (b) { b.trigger = r.trigger; b.started_at = r.started_at } }
+        const { data: last } = await db.from('bank_auto_runs').select('id, trigger, status, started_at, finished_at, counts, errors, remaining').order('started_at', { ascending: false }).limit(10)
+        runs = last || []
+      } catch { /* sem migration do AUTO-BOOK ainda */ }
       auto = {
         pending: pend.map((r: any) => ({
           id: r.id, date: r.date, amount: num(r.amount), name: r.merchant || r.name || '', raw_name: r.name || '', engine: r.match_engine, batch: r.match_batch,
-          note: String(r.matched_note || '').replace(/^AUTO · (FEE|EXACT) · /, ''), source: String(r.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID',
-          backfilled: Array.isArray(r.backfill) && r.backfill.length > 0, href: hrefOf.get(r.matched_table + ':' + r.matched_id) || null,
+          status: r.match_status, rule: r.match_rule || null,
+          note: String(r.matched_note || '').replace(/^AUTO · (FEE|EXACT|NAME|RULE|LEARN) · /, ''), source: String(r.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID',
+          backfilled: Array.isArray(r.backfill) && r.backfill.length > 0, href: r.matched_table ? (hrefOf.get(r.matched_table + ':' + r.matched_id) || null) : null,
         })),
         reviewed: (autoRows || []).filter((r: any) => r.reviewed_at).length,
         batches: [...batches.values()],
+        runs,
       }
     }
     // Plano a seco (GET ?plan=1): quantas linhas os motores casariam agora.
-    const plan = req.nextUrl.searchParams.get('plan') === '1' ? planSummary(buildPlan(lines, pool)) : null
+    const plan = req.nextUrl.searchParams.get('plan') === '1' ? planSummary(buildPlan(lines, pool, await loadRules(db), { itemTwins: await itemTwinKeys(db) })) : null
     return NextResponse.json({ ok: true, total_new: totalNew || 0, lines: enriched, auto, needs_migration: needsMigration, plan })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
@@ -124,17 +172,29 @@ export async function POST(req: NextRequest) {
       // Sem a migration o motor não roda (revisão #17): sonda barata antes de qualquer escrita.
       const { error: probe } = await db.from('bank_transactions').select('match_engine, backfill').limit(1)
       if (probe) return NextResponse.json({ error: 'rode MIGRATION_bank_reconcile_v030.sql antes: ' + probe.message, needs_migration: true }, { status: 409 })
-      // BL 0.7.0: apelidos do banco (desempate NAME) + regras de criação humanas.
+      // BL 0.7.0/0.8.0: apelidos do banco (desempate NAME) + regras (humanas e
+      // aprendidas) + assinatura do feed duplicado — o MESMO plano do autoBook,
+      // só que sem maturidade: o humano vê o plano antes de aplicar.
       await loadDbAliases(db)
-      let rules: MerchantRule[] = []
-      try { rules = await fetchAll(db, 'bank_merchant_rules', '*', (q: any) => q.eq('active', true)) } catch { /* sem migration ainda */ }
+      const [rules, itemTwins] = await Promise.all([loadRules(db), itemTwinKeys(db)])
       const [lines, pool] = await Promise.all([newLines(db, 5000), candidatePool(db)])
-      const plan = buildPlan(lines, pool, rules)
+      const plan = buildPlan(lines, pool, rules, { itemTwins })
       const summary = planSummary(plan)
       if (body.plan) return NextResponse.json({ ok: true, plan: summary })
       // APLICAR roda o plano que foi MOSTRADO (hash); continuação de fatia passa batch.
       if (!body.batch && body.hash !== summary.hash) return NextResponse.json({ error: 'o plano mudou desde o PLANEJAR — planeje de novo', plan: summary }, { status: 409 })
-      const res = await applyPlan(db, plan, { max: 150, batch: body.batch ? String(body.batch) : undefined })
+      // Trava de rodada única (bank_auto_runs): APLICAR humano não corre junto com
+      // o motor automático. Continuação de fatia reaproveita a rodada (batch = id).
+      let batch = body.batch ? String(body.batch) : ''
+      if (!batch) {
+        let run: string | null = null
+        try { run = await acquireRun(db, 'human') } catch { run = null }
+        if (!run) return NextResponse.json({ error: 'motor automático rodando — tente em 1 min', plan: summary }, { status: 409 })
+        batch = run
+      }
+      const res = await applyPlan(db, plan, { max: 150, batch })
+      const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer
+      await finishRun(db, batch, { status: res.remaining ? 'PARTIAL' : 'DONE', counts: { fee_create: res.fee_create, fee_match: res.fee_match, exact: res.exact, name: res.name, rule_create: res.rule_create, rule_adopt: res.rule_adopt, learn: res.learn, transfer: res.transfer }, errors: res.errors, remaining: res.remaining, note: `APLICAR humano · ${done} nesta fatia` })
       return NextResponse.json({ ok: true, applied: res, plan: summary })
     }
     // TRIAGEM POR FAMÍLIA (João, 25/ago): EXPLAIN em massa — NEW → QUEUED (TO
@@ -187,7 +247,7 @@ export async function POST(req: NextRequest) {
             matched++
           } else if (['TRANSFER', 'IGNORE', 'QUEUE'].includes(r.action)) {
             const st = r.action === 'QUEUE' ? 'QUEUED' : r.action === 'IGNORE' ? 'IGNORED' : 'TRANSFER'
-            await db.from('bank_transactions').update({ match_status: st, matched_note: r.note || null }).eq('id', l.id).eq('match_status', 'NEW')
+            await writeStatus(db, l, st, { note: r.note || null, engine: r.engine || null, batch: r.batch || null })
             statused++
           }
         } catch { errors2++ }
@@ -201,15 +261,23 @@ export async function POST(req: NextRequest) {
     if (action === 'undo_batch') {
       const batch = String(body.batch || '')
       if (!batch) return NextResponse.json({ error: 'batch required' }, { status: 400 })
-      const { data: rows, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status, matched_table, matched_id, match_engine, backfill').eq('match_batch', batch).eq('match_status', 'MATCHED')
+      const { data: rows, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status, matched_table, matched_id, match_engine, match_rule, backfill').eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER'])
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       let n = 0; const errors: string[] = []; const fixes: any[] = []
       for (const r of rows || []) {
         try {
-          const changed: string[] = []; await writeUnmatch(db, r, changed); n++
+          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false }); n++
           await logMatchEvent(db, r, 'UNMATCH', { batch })
-          fixes.push({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id: r.id, field: 'match_status', old_value: 'MATCHED', new_value: 'NEW', label: (`DESFAZER LOTE · ${r.date} · ${r.merchant || r.name || ''} · ${num(r.amount)}` + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) })
+          fixes.push({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id: r.id, field: 'match_status', old_value: r.match_status, new_value: 'NEW', label: (`DESFAZER LOTE · ${r.date} · ${r.merchant || r.name || ''} · ${num(r.amount)}` + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) })
         } catch (e) { errors.push(`${r.date} ${r.merchant || r.name}: ` + String((e as Error).message || e)) }
+      }
+      // AFIRMA que nada criado pelo motor sobrou pendurado no lote (revisão #2).
+      const ids = (rows || []).map((r: any) => String(r.id))
+      if (ids.length) {
+        const { data: leftFx } = await db.from('fixed_cost_expenses').select('id').in('bank_transaction_id', ids).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%')
+        const { data: leftIn } = await db.from('inputs').select('id').in('order_number', ids.map((i: string) => ('bank:' + i).slice(0, 120)))
+        const left = (leftFx?.length || 0) + (leftIn?.length || 0)
+        if (left) errors.push(`sobrou lançamento criado pelo motor: ${left} linha(s) — veja o card AUTO-BOOK no Data Checker`)
       }
       for (let i = 0; i < fixes.length; i += 100) await db.from('data_fixes').insert(fixes.slice(i, i + 100)).then(() => undefined, () => undefined)
       return NextResponse.json({ ok: true, undone: n, errors })
@@ -224,56 +292,84 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, reviewed: (data || []).length })
     }
 
+    // PURGE ÓRFÃO (Data Checker · card AUTO-BOOK): apaga lançamento criado pelo
+    // motor (marcador obrigatório) que ficou sem linha casada apontando pra ele.
+    if (action === 'purge_orphan') {
+      const table = String(body.table || ''), rowId = String(body.row_id || '')
+      if (!['fixed_cost_expenses', 'inputs'].includes(table) || !rowId) return NextResponse.json({ error: 'table/row_id inválidos' }, { status: 400 })
+      const { data: row } = await db.from(table).select('*').eq('id', rowId).maybeSingle()
+      if (!row) return NextResponse.json({ error: 'linha não existe mais' }, { status: 404 })
+      const bankRef = table === 'fixed_cost_expenses' ? String(row.bank_transaction_id || '') : String(row.order_number || '').slice(5)
+      if (!bankRef || !/Bank Link\)/.test(String(row.description || ''))) return NextResponse.json({ error: 'não é lançamento do motor — nunca apago linha de gente' }, { status: 409 })
+      const { data: l } = await db.from('bank_transactions').select('match_status, matched_table, matched_id').eq('id', bankRef).maybeSingle()
+      if (l && l.match_status === 'MATCHED' && l.matched_table === table && String(l.matched_id) === rowId) return NextResponse.json({ error: 'a linha do banco ainda aponta pra este lançamento — não é órfão' }, { status: 409 })
+      const { error } = await db.from(table).delete().eq('id', rowId)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await db.from('data_fixes').insert({ check_key: 'auto-book', table_name: table, row_id: rowId, field: 'DELETED', old_value: String(row.description || '').slice(0, 180), new_value: null, label: ('ÓRFÃO do motor apagado · ' + String(row.description || '')).slice(0, 200) }).then(() => undefined, () => undefined)
+      return NextResponse.json({ ok: true })
+    }
+
     /* ── ações por linha ── */
     const bankId = String(body.bank_id || '')
-    if (!bankId || !['match', 'transfer', 'ignore', 'explain', 'unmatch', 'review'].includes(action)) return NextResponse.json({ error: 'bad request' }, { status: 400 })
-    const { data: line, error: lineErr } = await db.from('bank_transactions').select('id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, match_engine, backfill').eq('id', bankId).maybeSingle()
+    if (!bankId || !['match', 'transfer', 'ignore', 'explain', 'unmatch', 'review', 'rematch'].includes(action)) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+    const LINE_SEL = 'id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, match_engine, match_rule, backfill, category, entity:raw->>merchant_entity_id, pfc_detailed:raw->personal_finance_category->>detailed, processor:raw->payment_meta->>payment_processor'
+    const { data: line, error: lineErr } = await db.from('bank_transactions').select(LINE_SEL).eq('id', bankId).maybeSingle()
     if (lineErr) return NextResponse.json({ error: lineErr.message, needs_migration: MIGRATION_RE.test(lineErr.message) }, { status: 500 })
     if (!line) return NextResponse.json({ error: 'bank line not found' }, { status: 404 })
     const label = `${line.date} · ${line.merchant || line.name || ''} · ${num(line.amount)}`
     let status = ''
+    let learned: string | null = null
     const changed: string[] = []
     if (action === 'review') {
-      const { error } = await db.from('bank_transactions').update({ reviewed_at: new Date().toISOString() }).eq('id', bankId).eq('match_status', 'MATCHED')
+      const { error } = await db.from('bank_transactions').update({ reviewed_at: new Date().toISOString() }).eq('id', bankId).in('match_status', ['MATCHED', 'TRANSFER'])
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true })
     }
+    // Casa a linha com o candidato (table,row_id) re-derivado no servidor: cobre
+    // linha do app já casada por outra linha do banco, valor alterado, sinal
+    // trocado, item de grupo já casado. Decisão HUMANA ⇒ o motor APRENDE.
+    const humanMatch = async (cur: any) => {
+      if (cur.pending) throw new Error('linha ainda PENDING no banco — espere postar (o Plaid troca o id ao postar)')
+      const table = String(body.table || ''), rowId = String(body.row_id || '')
+      if (!table || !rowId) throw new Error('table/row_id required')
+      const pool = await candidatePool(db)
+      const arr = num(cur.amount) > 0 ? pool.out : pool.inn
+      const cand = arr.find(c => c.table === table && c.id === rowId)
+      if (!cand || Math.abs(cand.amount - Math.abs(num(cur.amount))) >= 0.011) throw new Error('candidato não vale mais (já casado, valor mudou ou direção errada) — recarregue')
+      const { backfill } = await writeMatch(db, cur, cand, { matched_note: String(body.note || '') || null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null })
+      for (const b of backfill) changed.push(`${b.t}.${b.f}=${b.v.slice(0, 10)}`)
+      learned = await learnFromMatch(db, cur, cand)
+    }
     if (action === 'unmatch') {
-      await writeUnmatch(db, line, changed); status = 'NEW'
+      await writeUnmatch(db, line, changed, { unlearn: true }); status = 'NEW'
       await logMatchEvent(db, line, 'UNMATCH', {})
+    } else if (action === 'rematch') {
+      // TROCAR (Data Checker · DUPLA): desfaz o lançamento do motor e casa a linha
+      // com o registro humano — um clique, com trilha dos dois passos.
+      if (line.match_status !== 'MATCHED' || !['RULE', 'LEARN', 'FEE'].includes(String(line.match_engine))) return NextResponse.json({ error: 'só linha casada pelo motor pode ser trocada' }, { status: 409 })
+      await writeUnmatch(db, line, changed, { unlearn: false })
+      await logMatchEvent(db, line, 'UNMATCH', { note: 'REMATCH · troca por registro humano' })
+      const { data: fresh } = await db.from('bank_transactions').select(LINE_SEL).eq('id', bankId).maybeSingle()
+      await humanMatch(fresh || { ...line, match_status: 'NEW' })
+      status = 'MATCHED'
     } else {
       // Toda decisão humana parte de NEW (revisão #9/#20): linha já casada precisa de DESFAZER antes.
       if (line.match_status !== 'NEW') return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
       if (action === 'match') {
-        if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar (o Plaid troca o id ao postar)' }, { status: 409 })
-        const table = String(body.table || ''), rowId = String(body.row_id || '')
-        if (!table || !rowId) return NextResponse.json({ error: 'table/row_id required' }, { status: 400 })
-        // Re-deriva o candidato no servidor: cobre linha do app já casada por outra
-        // linha do banco, valor alterado, sinal trocado, item de grupo já casado.
-        const pool = await candidatePool(db)
-        const arr = num(line.amount) > 0 ? pool.out : pool.inn
-        const cand = arr.find(c => c.table === table && c.id === rowId)
-        if (!cand || Math.abs(cand.amount - Math.abs(num(line.amount))) >= 0.011)
-          return NextResponse.json({ error: 'candidato não vale mais (já casado, valor mudou ou direção errada) — recarregue' }, { status: 409 })
-        const { backfill } = await writeMatch(db, line, cand, { matched_note: String(body.note || '') || null, match_engine: null, match_batch: null, reviewed_at: null })
-        for (const b of backfill) changed.push(`${b.t}.${b.f}=${b.v.slice(0, 10)}`)
+        await humanMatch(line)
         status = 'MATCHED'
       } else {
-        const update = action === 'transfer' ? { match_status: 'TRANSFER', matched_note: String(body.note || 'transferência') }
-          : action === 'ignore' ? { match_status: 'IGNORED', matched_note: String(body.note || '') || null }
-          : { match_status: 'QUEUED', matched_note: String(body.note || '').trim() || 'a lançar' }
-        const { data, error } = await db.from('bank_transactions').update({ ...update, matched_table: null, matched_id: null }).eq('id', bankId).eq('match_status', 'NEW').select('id')
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-        if (!data || !data.length) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
-        status = update.match_status
-        await logMatchEvent(db, line, status === 'TRANSFER' ? 'TRANSFER' : status === 'IGNORED' ? 'IGNORE' : 'QUEUE', { note: update.matched_note })
+        const st = action === 'transfer' ? 'TRANSFER' : action === 'ignore' ? 'IGNORED' : 'QUEUED'
+        const note = action === 'transfer' ? String(body.note || 'transferência') : action === 'ignore' ? (String(body.note || '') || null) : (String(body.note || '').trim() || 'a lançar')
+        await writeStatus(db, line, st, { note })
+        status = st
       }
     }
     await db.from('data_fixes').insert({
       check_key: 'bank-reconcile', table_name: 'bank_transactions', row_id: bankId, field: 'match_status',
-      old_value: line.match_status, new_value: status, label: (label + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200),
+      old_value: line.match_status, new_value: status, label: (label + (changed.length ? ' → ' + changed.join(', ') : '') + (action === 'rematch' ? ' · REMATCH' : '')).slice(0, 200),
     }).then(() => undefined, () => undefined)
-    return NextResponse.json({ ok: true, status, changed })
+    return NextResponse.json({ ok: true, status, changed, learned })
   } catch (e) {
     const msg = String((e as Error).message || e)
     return NextResponse.json({ error: msg.slice(0, 300), needs_migration: MIGRATION_RE.test(msg) }, { status: /já decidida|mudou|recarregue/.test(msg) ? 409 : 500 })

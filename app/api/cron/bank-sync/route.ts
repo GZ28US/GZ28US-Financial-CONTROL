@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncAllBankItems } from '@/lib/plaid.server'
+import { syncAllBankItems, bankDb } from '@/lib/plaid.server'
+import { autoBook } from '@/lib/bankReconcile.server'
 
 // REDE DE SEGURANÇA (cron 6/6h): mesmo que um webhook do Plaid se perca, o sync
 // por cursor pega tudo que ficou pra trás. Idempotente — rodar em cima do webhook
 // não duplica nada (dedupe físico pelo UNIQUE em plaid_id).
-export const maxDuration = 120
+// AUTO-BOOK (BL 0.8.0): depois do sync, o motor automático REGISTRA as linhas
+// novas sozinho — casa de verdade em bank_auto_runs (uma rodada por vez, 240 s).
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   // Só o cron da Vercel (Authorization: Bearer CRON_SECRET) — a rota estava aberta
@@ -12,6 +15,11 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const results = await syncAllBankItems()
+  const auto = await autoBook(bankDb(), { trigger: 'cron', deadlineMs: 240_000 })
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  return NextResponse.json({ ok: true, at: new Date().toISOString(), results: (results as any[]).map((r) => ({ account: r.account, added: r.added, modified: r.modified, removed: r.removed, balances: r.balances, error: r.error || r.balance_error || null })) })
+  return NextResponse.json({
+    ok: true, at: new Date().toISOString(),
+    results: (results as any[]).map((r) => ({ account: r.account, added: r.added, modified: r.modified, removed: r.removed, balances: r.balances, error: r.error || r.balance_error || null })),
+    auto: { run: auto.run || null, status: auto.status, skipped: auto.skipped || null, counts: auto.counts, errors: auto.errors.length, remaining: auto.remaining, lines: auto.lines },
+  })
 }
