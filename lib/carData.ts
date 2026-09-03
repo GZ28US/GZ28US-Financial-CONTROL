@@ -412,6 +412,10 @@ const durangoColors = ['Billet Silver', 'DB Black', 'Destroyer Gray', 'F8 Green'
 const durangoColors2026 = ['Destroyer Gray', 'Diamond Black', 'Octane Red', 'Vapor Gray', 'White Knuckle']
 const durangoColors2026JailBreak = ['Destroyer Gray', 'Diamond Black', 'Green Machine', 'Octane Red', 'Vapor Gray', 'White Knuckle']
 const raptorRColors = ['Agate Black', 'Oxford White', 'Rapid Red', 'Atlas Blue', 'Carbonized Gray', 'Iconic Silver']
+// Bronco Raptor: o Braptor caía na fordColors, que Mustang e F150 também usam — e
+// Shelter Green Metallic é pintura de Bronco, não de Mustang. Lista própria, herdando
+// a Ford genérica para não sumir com nenhuma cor que já dava pra escolher.
+const broncoRaptorColors = [...fordColors, 'Shelter Green Metallic']
 // Land Rover Defender colours (classic era — a representative selection).
 const landRoverDefenderColors = ['Fuji White', 'Alaska White', 'Santorini Black', 'Corris Grey', 'Bonatti Grey', 'Stornoway Grey', 'Indus Silver', 'Keswick Green', 'Coniston Green', 'Epsom Green', 'Galway Green', 'Tamar Blue', 'Firenze Red', 'Yulong White']
 
@@ -1664,6 +1668,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === '1500' && year >= 2019) return ramDtColors
   if (brand === 'RAM') return ramColors
   if (model === 'F150' && year <= 2004) return svtLightningColors
+  if (model === 'BRONCO') return broncoRaptorColors
   if (brand === 'FORD') return fordColors
   return moparColors
 }
