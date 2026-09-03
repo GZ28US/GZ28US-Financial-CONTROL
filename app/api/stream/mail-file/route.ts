@@ -57,12 +57,25 @@ type Marca = {
   folder?: string | null; action: string
   ref_table?: string | null; ref_id?: string | null; note?: string | null
 }
-async function registrar(db: ReturnType<typeof streamDb>, linhas: Marca[]) {
-  if (!linhas.length) return
+// Devolve QUANTAS linhas realmente entraram — não quantas eu tentei gravar.
+// 03/set/2026: um arquivamento respondeu `marcados: 1` sem gravar nada, e eu
+// relatei como feito. A causa é que `upsert` do supabase-js NÃO lança: devolve
+// `{ error }`, que este try/catch nunca via, e o contador vinha do array de
+// entrada. Erro de gravação tem que aparecer na resposta, não sumir no log.
+async function registrar(db: ReturnType<typeof streamDb>, linhas: Marca[]): Promise<{ gravadas: number; erro: string | null }> {
+  if (!linhas.length) return { gravadas: 0, erro: null }
   try {
-    await db.from('mail_processed').upsert(linhas, { onConflict: 'account,origin_message_id' })
-  } catch (e) {
+    const { data, error } = await db.from('mail_processed')
+      .upsert(linhas, { onConflict: 'account,origin_message_id' })
+      .select('id')
+    if (error) {
+      console.error('[mail-file] marca d\'água falhou (o e-mail JÁ foi arquivado):', error.message)
+      return { gravadas: 0, erro: String(error.message).slice(0, 200) }
+    }
+    return { gravadas: (data || []).length, erro: null }
+  } catch (e: any) {
     console.error('[mail-file] marca d\'água falhou (o e-mail JÁ foi arquivado):', e)
+    return { gravadas: 0, erro: String(e?.message || e).slice(0, 200) }
   }
 }
 
@@ -163,8 +176,8 @@ async function gmailApply(db: ReturnType<typeof streamDb>, slot: number, auth: a
       note: b.note ? String(b.note).slice(0, 400) : null,
     })
   }
-  await registrar(db, marcas)
-  return NextResponse.json({ ok: !failed.length, provider: 'gmail', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), read: b.read ?? null, done: done.length, marcados: marcas.length, failed })
+  const marca = await registrar(db, marcas)
+  return NextResponse.json({ ok: !failed.length && !marca.erro, provider: 'gmail', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), read: b.read ?? null, done: done.length, marcados: marca.gravadas, marca_erro: marca.erro, failed })
 }
 
 // ── Graph ───────────────────────────────────────────────────────────────────
@@ -260,6 +273,6 @@ export async function POST(req: NextRequest) {
       note: b.note ? String(b.note).slice(0, 400) : null,
     })
   }
-  await registrar(db, marcas)
-  return NextResponse.json({ ok: !failed.length, provider: 'graph', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), copied: b.copy === true, read: b.read ?? null, done: done.length, marcados: marcas.length, failed })
+  const marca = await registrar(db, marcas)
+  return NextResponse.json({ ok: !failed.length && !marca.erro, provider: 'graph', account: auth.account, moved: b.folder || (b.archive ? 'ARCHIVE' : null), copied: b.copy === true, read: b.read ?? null, done: done.length, marcados: marca.gravadas, marca_erro: marca.erro, failed })
 }
