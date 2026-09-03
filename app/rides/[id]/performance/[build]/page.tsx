@@ -1461,19 +1461,26 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
 
   async function saveSheet() {
     setBsSaving(true)
-    const payload: Record<string, unknown> = { ride_code: rideCode, build_no: buildNo, power_source: sheet.power_source, updated_at: new Date().toISOString() }
-    for (const f of BS_FIELDS) {
-      // Fields hidden by the current Power Source save as null (keeps rows clean).
-      payload[f.key] = f.show && !f.show(sheet.power_source) ? null : (sheet[f.key] || null)
+    // try/finally: o SAVE toca Dropbox e FileReader depois de gravar. Sem o finally,
+    // uma rejeição em qualquer um deles pulava o setBsSaving(false) e o botão ficava
+    // preso em "SAVING…" até recarregar a página — a ficha até gravava, mas a tela
+    // dizia que não. O estado da tela tem que voltar mesmo quando o resto falha.
+    try {
+      const payload: Record<string, unknown> = { ride_code: rideCode, build_no: buildNo, power_source: sheet.power_source, updated_at: new Date().toISOString() }
+      for (const f of BS_FIELDS) {
+        // Fields hidden by the current Power Source save as null (keeps rows clean).
+        payload[f.key] = f.show && !f.show(sheet.power_source) ? null : (sheet[f.key] || null)
+      }
+      const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_code,build_no' })
+      if (error) { alert(error.message); return }
+      // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
+      await syncSheetPdf()
+      // A picked BoneStock tune rides along on the same SAVE.
+      if (tuneFile && await uploadTuneFile(tuneFile)) { setTuneFile(null); await loadTuneStatus() }
+      // success is silent — errors alert above / inside the sync
+    } finally {
+      setBsSaving(false)
     }
-    const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_code,build_no' })
-    if (error) { setBsSaving(false); alert(error.message); return }
-    // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
-    await syncSheetPdf()
-    // A picked BoneStock tune rides along on the same SAVE.
-    if (tuneFile && await uploadTuneFile(tuneFile)) { setTuneFile(null); await loadTuneStatus() }
-    setBsSaving(false)
-    // success is silent — errors alert above / inside the sync
   }
 
   // Render the build sheet as a portrait A4 PDF (modded specs in bold).
