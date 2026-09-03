@@ -322,18 +322,26 @@ export default function HomePage() {
     // upcoming one flows into the monthly box below (same treatment as invoice bills).
     // Both unpaid payments of the same month + supplier show as ONE combined row (summed,
     // dated on the later day). Once one is paid it leaves this list, so the other shows alone.
-    const fcByGroup = new Map<string, { amount: number; date: string; label: string; supplierId: string }>()
+    // SEM VENCIMENTO TAMBÉM É CONTA (3/set/2026): conta fixa sem `expense_date`
+    // era DESCARTADA aqui — sumia do fluxo e nem entrava no DUE. Mas o resto da
+    // página já sabe lidar com isso: despesa de invoice, imposto e perda entram
+    // com `dated: false` e aparecem juntos no grupo dos sem-data. A regra é dele:
+    // expense_date vazio = UNDATED, "paga quando quer" — e o que se paga quando
+    // quer continua sendo dinheiro devido. Agora o custo fixo entra pelo mesmo
+    // trilho: o datado agrupa por fornecedor+mês, o sem-data por fornecedor.
+    const fcByGroup = new Map<string, { amount: number; date: string | null; label: string; supplierId: string }>()
     for (const e of fixedCostExp || []) {
       const fcAmount = parseFloat(e.amount) || 0
-      if (!fcAmount || !isValidDate(e.expense_date)) continue
+      if (!fcAmount) continue
       dueGz -= fcAmount
-      const key = `${e.supplier_id}|${(e.expense_date as string).slice(0, 7)}`
+      const dated = isValidDate(e.expense_date)
+      const key = dated ? `${e.supplier_id}|${(e.expense_date as string).slice(0, 7)}` : `${e.supplier_id}|UNDATED`
       const g = fcByGroup.get(key)
-      if (g) { g.amount += fcAmount; if ((e.expense_date as string) > g.date) g.date = e.expense_date }
-      else fcByGroup.set(key, { amount: fcAmount, date: e.expense_date, label: e.description || 'Fixed cost', supplierId: e.supplier_id })
+      if (g) { g.amount += fcAmount; if (dated && (!g.date || (e.expense_date as string) > g.date)) g.date = e.expense_date }
+      else fcByGroup.set(key, { amount: fcAmount, date: dated ? e.expense_date : null, label: e.description || 'Fixed cost', supplierId: e.supplier_id })
     }
     for (const g of fcByGroup.values()) {
-      expense.push({ code: 'FIXED', label: g.label, amount: g.amount, dated: true, date: g.date, href: `${BASE_PATH}/costs/fixed/${g.supplierId}`, tip: g.label, labelTip: 'Fixed cost' })
+      expense.push({ code: 'FIXED', label: g.label, amount: g.amount, dated: !!g.date, date: g.date, href: `${BASE_PATH}/costs/fixed/${g.supplierId}`, tip: g.label, labelTip: 'Fixed cost' })
     }
 
     // FOLHA DE STAFF — pagamento recorrente ainda EM ABERTO é conta que a GZ28

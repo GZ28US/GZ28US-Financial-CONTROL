@@ -35,7 +35,9 @@ type FixedExpense = { id: string; description: string | null; amount: number; so
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
-function fmtMonthYear(mk: string) { const dt = new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1); return `${dt.toLocaleDateString('en-US', { month: 'short' })}, ${dt.getFullYear()}` }
+// UNDATED é grupo de verdade, não mês: despesa sem vencimento ("paga quando quer").
+const UNDATED = 'UNDATED'
+function fmtMonthYear(mk: string) { if (mk === UNDATED) return 'No due date'; const dt = new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1); return `${dt.toLocaleDateString('en-US', { month: 'short' })}, ${dt.getFullYear()}` }
 function dayOf(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').getDate() : '' }
 function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 function daysLate(fromYmd: string, toYmd: string) { return Math.max(0, Math.floor((new Date(toYmd + 'T00:00:00').getTime() - new Date(fromYmd + 'T00:00:00').getTime()) / 86400000)) }
@@ -377,14 +379,18 @@ export default function FixedCostSupplierViewPage() {
     return best.amount
   }
 
+  // Linha SEM VENCIMENTO não é linha perdida (3/set/2026): antes, `if (!k) continue`
+  // fazia ela sumir da página do próprio fornecedor. Vai pro grupo UNDATED, que
+  // aparece sempre — não é mês, então não entra no recorte "passados + o próximo".
   const byMonth = new Map<string, FixedExpense[]>()
-  for (const r of rows) { const k = (r.expense_date || '').slice(0, 7); if (!k) continue; if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k)!.push(r) }
-  const allMonths = [...byMonth.keys()].sort((a, b) => b.localeCompare(a))
+  for (const r of rows) { const k = isValidDate(r.expense_date) ? (r.expense_date as string).slice(0, 7) : UNDATED; if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k)!.push(r) }
+  const allMonths = [...byMonth.keys()].filter(k => k !== UNDATED).sort((a, b) => b.localeCompare(a))
   // This page lists only the PAST months + the NEXT upcoming one. Further-out months stay
   // generated (for the HOME/reports) but aren't shown here.
   let nextMonthKey: string | null = null
   for (const r of rows) { if (isValidDate(r.expense_date) && (r.expense_date as string) > td) { const mk = (r.expense_date as string).slice(0, 7); if (!nextMonthKey || mk < nextMonthKey) nextMonthKey = mk } }
-  const months = nextMonthKey ? allMonths.filter(mk => mk <= (nextMonthKey as string)) : allMonths
+  const datedMonths = nextMonthKey ? allMonths.filter(mk => mk <= (nextMonthKey as string)) : allMonths
+  const months = byMonth.has(UNDATED) ? [UNDATED, ...datedMonths] : datedMonths
   const visibleCount = months.reduce((n, mk) => n + (byMonth.get(mk) || []).length, 0)
 
   // With a CONCLUSION date the agreement is finite: the heading splits into
