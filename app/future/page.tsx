@@ -360,9 +360,18 @@ export default function HomePage() {
       const staffId = seasonStaff.get(e.season_id) || ''
       const nome = staffById.get(staffId) || 'Staff'
       const periodo = e.type === 'WEEKLY' ? `semana ${String(e.expense_date).slice(8, 10)}/${String(e.expense_date).slice(5, 7)}` : String(e.type).toLowerCase()
+      // "semana 04/09" já se explica sozinho, mas "monthly" e "single" não dizem
+      // NADA: as parcelas do K&G entraram como "Márcio De Maria — single", que se
+      // lê como se ele estivesse se pagando $1.000 por mês. Quando a linha tem
+      // descrição, ela manda — é o mesmo que a linha FIXED já faz logo acima.
+      // Só a primeira frase vai pro rótulo; o resto fica no rollover.
+      const frase = String(e.description || '').split(/\.\s/)[0].trim()
+      const rotulo = e.type !== 'WEEKLY' && frase
+        ? (frase.length > 64 ? frase.slice(0, 63) + '…' : frase)
+        : periodo
       expense.push({
-        code: 'STAFF', label: `${nome} — ${periodo}`, amount, dated: true, date: e.expense_date,
-        href: `${BASE_PATH}/staff/${staffId}/seasons`, tip: e.description || nome, labelTip: 'Staff payment',
+        code: 'STAFF', label: `${nome} — ${rotulo}`, amount, dated: true, date: e.expense_date,
+        href: `${BASE_PATH}/staff/${staffId}/seasons`, tip: e.description || nome, labelTip: e.description || 'Staff payment',
       })
     }
     expense.sort(byDateThenAmount)
