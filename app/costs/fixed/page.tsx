@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
+import { lateFeeFor } from '@/lib/lateFee'
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string) { return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) }
@@ -23,6 +24,12 @@ type FixedCostSupplier = {
   amount_2: number | null
   date_entry: string | null
   date_conclusion: string | null
+  // MULTA POR ATRASO — cláusula do contrato deste fornecedor (lib/lateFee.ts).
+  late_grace_days: number | null
+  late_fee_fixed: number | null
+  late_fee_percent: number | null
+  late_fee_daily: number | null
+  late_fee_daily_cap_days: number | null
 }
 
 // True monthly cost of one supplier: the full period charge (both payment slots)
@@ -195,7 +202,17 @@ export default function FixedCostSuppliersPage() {
                   const n = nextDue.get(r.id)
                   if (!n) return <p className="text-base text-gray-500">All paid — nothing due</p>
                   const late = n.date < td
-                  return <p className={`text-base font-bold ${late ? 'text-red-400' : 'text-gray-300'}`}>{fmtDate(n.date)} - {formatUSD(n.amount)}{late ? ' · DELAYED' : ''}</p>
+                  // A multa aparece JÁ NA LISTA (3/set/2026): "DELAYED" sozinho não
+                  // diz o que o atraso custa, e é o custo que faz alguém pagar hoje.
+                  // Aviso, não lançamento — ver lib/lateFee.ts.
+                  const lf = lateFeeFor(r, n.amount, n.date, td)
+                  return (
+                    <>
+                      <p className={`text-base font-bold ${late ? 'text-red-400' : 'text-gray-300'}`}>{fmtDate(n.date)} - {formatUSD(n.amount)}{late ? ' · DELAYED' : ''}</p>
+                      {lf && lf.fine > 0 && <p className="text-sm font-bold text-red-400" title={lf.ruleLabel}>Late fee running: {formatUSD(lf.fine)}{lf.perDay > 0 ? ` · +${formatUSD(lf.perDay)}/day` : ' · capped'}</p>}
+                      {lf && lf.fine === 0 && lf.daysToGrace <= 7 && <p className="text-sm font-bold text-amber-300" title={lf.ruleLabel}>Pay by {fmtDate(lf.graceUntil)}{lf.daysToGrace > 0 ? ` — ${lf.daysToGrace} ${lf.daysToGrace === 1 ? 'day' : 'days'} left` : ' — TODAY'}</p>}
+                    </>
+                  )
                 })()}
               </Link>
               <div className="flex gap-3 flex-wrap shrink-0">

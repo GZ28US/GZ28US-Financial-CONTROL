@@ -11,6 +11,7 @@ import SendToDialog, { type SendTarget } from '@/components/SendToDialog'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
+import { hasLateFee, lateFeeFor } from '@/lib/lateFee'
 
 const LANG: 'en' | 'pt' = 'en'
 
@@ -30,6 +31,12 @@ type FixedCostSupplier = {
   amount_1: number | null
   payment_day_2: number | null
   amount_2: number | null
+  // MULTA POR ATRASO — cláusula do contrato deste fornecedor (lib/lateFee.ts).
+  late_grace_days: number | null
+  late_fee_fixed: number | null
+  late_fee_percent: number | null
+  late_fee_daily: number | null
+  late_fee_daily_cap_days: number | null
 }
 type FixedExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
 
@@ -451,6 +458,12 @@ export default function FixedCostSupplierViewPage() {
     s.payment_day_1 != null ? `Day ${s.payment_day_1}: ${formatUSD(Number(s.amount_1) || 0)}` : '',
     s.payment_day_2 != null ? `Day ${s.payment_day_2}: ${formatUSD(Number(s.amount_2) || 0)}` : '',
   ].filter(Boolean).join('  +  ')
+  // A cláusula de multa em uma frase — sai da régua, não de texto escrito à mão.
+  const lateRuleLine = (() => {
+    if (!hasLateFee(s)) return ''
+    const probe = lateFeeFor(s, Number(s.amount_1) || 0, '2026-01-01', '2026-01-02')
+    return probe ? `Late fee: ${probe.ruleLabel}` : ''
+  })()
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -532,6 +545,7 @@ export default function FixedCostSupplierViewPage() {
         <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-3 max-w-3xl mb-8">
           {scheduleLine && <p className="text-sm font-bold text-gray-300">{scheduleLine}</p>}
           {paymentsLine && <p className="text-sm text-gray-400 mt-0.5">{paymentsLine}</p>}
+          {lateRuleLine && <p className="text-sm text-amber-300/90 mt-0.5">{lateRuleLine}</p>}
           {isValidDate(s.date_entry) && <p className="text-xs text-gray-500 mt-1">{fmtDate(s.date_entry)} → {isValidDate(s.date_conclusion) ? fmtDate(s.date_conclusion) : 'Active'}</p>}
         </div>
       )}
@@ -574,6 +588,12 @@ export default function FixedCostSupplierViewPage() {
                     const daysDelayed = delayed ? daysLate(p.expense_date as string, td) : 0
                     const sched = scheduledAmountFor(p)
                     const fine = paid && sched != null ? (Number(p.amount) || 0) - sched : 0
+                    // MULTA PELA RÉGUA DO CONTRATO (3/set/2026): enquanto a conta
+                    // está aberta, o app diz o que a cláusula cobra HOJE e quanto
+                    // custa cada dia a mais. É AVISO — não entra no Total DUE nem
+                    // no Future Flow; multa só é despesa quando o fornecedor cobra
+                    // (e aí vem no valor pago, que o selo FINES for Late mede).
+                    const lf = paid ? null : lateFeeFor(s, Number(p.amount) || 0, p.expense_date, td)
                     return (
                       <div key={p.id} className="flex items-center justify-between gap-3 flex-wrap border-b border-gray-700/60 pb-3 last:border-0 last:pb-0">
                         <div className="min-w-0">
@@ -583,6 +603,8 @@ export default function FixedCostSupplierViewPage() {
                             {paid ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
                               : delayed ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300">DELAYED ({daysDelayed} {daysDelayed === 1 ? 'day' : 'days'})</span> : null}
                             {fine > 0.005 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-900 text-red-300" title={`Scheduled ${formatUSD(sched || 0)} — paid ${formatUSD(Number(p.amount) || 0)}`}>FINES for Late: {formatUSD(fine)}</span>}
+                            {lf && lf.fine > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-950 border border-red-700 text-red-300" title={lf.ruleLabel}>LATE FEE RUNNING: {formatUSD(lf.fine)}{lf.perDay > 0 ? ` · +${formatUSD(lf.perDay)}/day` : ' · capped'}</span>}
+                            {lf && lf.fine === 0 && lf.daysToGrace <= 7 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-950 border border-amber-700 text-amber-300" title={lf.ruleLabel}>PAY BY {fmtDate(lf.graceUntil)}{lf.daysToGrace > 0 ? ` · ${lf.daysToGrace} ${lf.daysToGrace === 1 ? 'day' : 'days'} left` : ' · TODAY'}</span>}
                           </div>
                           {paid && (
                             <p className="text-xs text-gray-500">

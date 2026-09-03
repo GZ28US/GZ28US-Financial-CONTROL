@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import LateFeeFields, { emptyLateFee, lateFeeFromRow, lateFeeToRow, type LateFeeForm } from '@/components/LateFeeFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
@@ -38,6 +39,7 @@ export default function EditFixedCostSupplierPage() {
   const [show2nd, setShow2nd] = useState(false)
   const [day2, setDay2] = useState('')
   const [amount2, setAmount2] = useState('')
+  const [lateFee, setLateFee] = useState<LateFeeForm>(emptyLateFee)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -62,6 +64,7 @@ export default function EditFixedCostSupplierPage() {
         setDay2(data.payment_day_2 != null ? String(data.payment_day_2) : '')
         setAmount2(data.amount_2 != null ? String(data.amount_2) : '')
         if (data.payment_day_2 != null || data.amount_2 != null) setShow2nd(true)
+        setLateFee(lateFeeFromRow(data))
       }
       setLoading(false)
     })()
@@ -85,6 +88,9 @@ export default function EditFixedCostSupplierPage() {
       amount_1: (!isActivation && amount1 !== '') ? (parseFloat(amount1) || 0) : null,
       payment_day_2: (!isActivation && show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
       amount_2: (!isActivation && show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
+      // MULTA POR ATRASO — cláusula do contrato, não do boleto (ver lib/lateFee.ts).
+      // Ativação não tem vencimento, logo não tem multa: zera os cinco.
+      ...(isActivation ? { late_grace_days: null, late_fee_fixed: null, late_fee_percent: null, late_fee_daily: null, late_fee_daily_cap_days: null } : lateFeeToRow(lateFee)),
       updated_at: new Date().toISOString(),
     }).eq('id', id)
     if (error) { alert(error.message); setSaving(false); return }
@@ -171,6 +177,7 @@ export default function EditFixedCostSupplierPage() {
               )}
             </div>
             )}
+            {!isActivation && <LateFeeFields value={lateFee} onChange={setLateFee} sampleAmount={parseFloat(amount1) || 0} dueDay={parseInt(day1, 10) || 1} />}
             <DatePicker label={isActivation ? 'ACTIVATION END' : 'END DATE'} value={endDate} onChange={setEndDate} />
           </div>
         </div>

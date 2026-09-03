@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import LateFeeFields, { emptyLateFee, lateFeeToRow, type LateFeeForm } from '@/components/LateFeeFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
@@ -40,6 +41,7 @@ export default function NewFixedCostSupplierPage() {
   const [show2nd, setShow2nd] = useState(false)
   const [day2, setDay2] = useState('')
   const [amount2, setAmount2] = useState('')
+  const [lateFee, setLateFee] = useState<LateFeeForm>(emptyLateFee)
   const [saving, setSaving] = useState(false)
 
   const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
@@ -62,6 +64,8 @@ export default function NewFixedCostSupplierPage() {
       amount_1: (!isActivation && amount1 !== '') ? (parseFloat(amount1) || 0) : null,
       payment_day_2: (!isActivation && show2nd && day2 !== '') ? (parseInt(day2, 10) || null) : null,
       amount_2: (!isActivation && show2nd && amount2 !== '') ? (parseFloat(amount2) || 0) : null,
+      // MULTA POR ATRASO — cláusula do contrato (ver lib/lateFee.ts). Ativação não vence.
+      ...(isActivation ? {} : lateFeeToRow(lateFee)),
       updated_at: new Date().toISOString(),
     })
     if (error) { alert(error.message); setSaving(false); return }
@@ -146,6 +150,7 @@ export default function NewFixedCostSupplierPage() {
               )}
             </div>
             )}
+            {!isActivation && <LateFeeFields value={lateFee} onChange={setLateFee} sampleAmount={parseFloat(amount1) || 0} dueDay={parseInt(day1, 10) || 1} />}
             <DatePicker label={isActivation ? 'ACTIVATION END' : 'END DATE'} value={endDate} onChange={setEndDate} />
           </div>
         </div>
