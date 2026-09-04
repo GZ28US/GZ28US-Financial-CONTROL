@@ -30,7 +30,17 @@ export type MailAuth = {
   pkce_verifier: string | null
   oauth_state: string | null
   last_poll: string | null
+  // LER TODA CAIXA, APAGAR SÓ ONDE FOI COMBINADO (04/set/2026). Conectar a
+  // gz28shopping (12.431 e-mails, arquivo de compras do BR) ligou nela, no mesmo
+  // minuto, o sweep de marketing — que move pro lixo qualquer mensagem com
+  // List-Unsubscribe fora das listas SAFE. "Uber: Seu recibo" e "Sua compra
+  // chegou" da Mercado Livre não estão em SAFE nenhum: o robô ia limpar o
+  // arquivo dele. Caixa nova NÃO nasce varrida — quem apaga é decisão por caixa.
+  auto_sweep?: boolean | null
 }
+// Só as caixas onde a faxina automática está liberada (sweepSpam, sweepMarketing,
+// marketing kill). Leitura, rastreio, APPS e watchers seguem em TODAS as caixas.
+export const maySweep = (auth: Pick<MailAuth, 'auto_sweep'>): boolean => auth.auto_sweep !== false
 
 // Multi-account (2026-07-24): one row per mailbox — id 1 = gz28us@hotmail.com
 // (the STREAM watcher's box, untouched default), id 2+ = the other accounts
@@ -834,8 +844,9 @@ const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
 export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[] }> {
   const deleted: string[] = []
   // Só caixas Microsoft: as chamadas abaixo são Graph. Vem da tabela, não de
-  // lista fixa (04/set/2026).
+  // lista fixa (04/set/2026). E só as liberadas para faxina — ver maySweep.
   for (const auth of await listMailAuths(db, 'graph')) {
+    if (!maySweep(auth)) continue
     const slot = auth.id
     try {
       const token = await freshAccessToken(db, auth)
@@ -870,6 +881,7 @@ const SAFE_SUBJECT = /order|track|invoice|receipt|payment|paid|ship|deliver|cart
 export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: string[] }> {
   const deleted: string[] = []
   for (const auth of await listMailAuths(db, 'graph')) {
+    if (!maySweep(auth)) continue
     const slot = auth.id
     try {
       const token = await freshAccessToken(db, auth)
