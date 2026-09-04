@@ -215,15 +215,45 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
 // is always computed per item as OUR PRICE vs open-market MAP (MAP rule: eBay
 // first, else the official supplier's open-market price — recorded at HUNT time
 // or re-validated by a printed List price on a real invoice).
-async function supplierDirectory(): Promise<Array<{ name: string; keys: string[] }>> {
-  const normSup = (s: string) => (s || '').toLowerCase().replace(/&/g, 'and').replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
+// UM fornecedor, UM nome — a chave de comparação (Márcio, 04/set/2026).
+// "&" vira "and", sufixo societário cai, pontuação some. Sem isso
+// "Texas Speed & Performance" e "Texas Speed and Performance" viravam dois
+// fornecedores, e 28 peças ficaram sem o vínculo de official supplier.
+export const normSup = (s: string) => (s || '').toLowerCase()
+  .replace(/&/g, 'and')
+  .replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '')
+  .replace(/[^a-z0-9]/g, '')
+
+export type SupplierEntry = { name: string; keys: string[]; official: boolean }
+
+async function supplierDirectory(): Promise<SupplierEntry[]> {
   try {
-    const { data } = await supabase.from('suppliers').select('name, aliases')
+    const { data } = await supabase.from('suppliers').select('name, aliases, is_dealership')
     return (data || []).map((s: any) => ({
       name: s.name,
+      official: s.is_dealership === true,
       keys: [s.name, ...String(s.aliases || '').split(/[\n,]/)].map(normSup).filter(Boolean),
     }))
   } catch { return [] }
+}
+
+// Resolve QUALQUER grafia para o fornecedor cadastrado. Primeiro a chave exata
+// (nome ou alias); depois PREFIXO — uma grafia com endereço colado
+// ("Titan Motorsports, 11370 Boggy Creek Rd...") ou com parêntese
+// ("High Horse Performance (HHP Racing)") COMEÇA pela chave.
+//
+// Prefixo, e não contenção em qualquer posição: um alias do AutoZone trazia o
+// endereço da loja, o split por vírgula gerou a chave "orlando", e ela casava
+// no MEIO do endereço da Titan — dois candidatos, fornecedor errado no chute.
+// Nome de empresa vem na frente; endereço vem depois. Exige 6+ caracteres e
+// resposta ÚNICA: com duas candidatas devolve null em vez de adivinhar.
+export function matchSupplier(nome: string | null | undefined, dir: SupplierEntry[]): SupplierEntry | null {
+  const n = normSup(String(nome || ''))
+  if (!n) return null
+  const exato = dir.find(d => d.keys.includes(n))
+  if (exato) return exato
+  const prefixo = dir.filter(d => d.keys.some(k => k.length >= 6 && (n.startsWith(k) || k.startsWith(n))))
+  return prefixo.length === 1 ? prefixo[0] : null
 }
 
 // Enroll scanned items into parts_database (product code = PART NUMBER when
@@ -231,7 +261,6 @@ async function supplierDirectory(): Promise<Array<{ name: string; keys: string[]
 // a SCAN (real-life invoice) overrides older data; see enrollOne. Returns rows changed.
 export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCAN'): Promise<number> {
   const directory = await supplierDirectory()
-  const normSup = (s: string) => (s || '').toLowerCase().replace(/&/g, 'and').replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
   let changed = 0
   for (const raw of items) {
     const name = (raw.item || '').trim()
@@ -261,10 +290,19 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
     if (listP > 0) row.map_price = listP
     const weight = Number(raw.weight_lbs) || 0
     if (weight > 0) row.weight_lbs = weight
-    // Official supplier: register the dealer identity. The discount is NOT typed —
-    // it computes from OUR PRICE vs the stored open-market MAP (see enrollOne).
-    const sup = raw.supplier && !row.is_extra ? directory.find(d => d.keys.includes(normSup(String(raw.supplier)))) : null
-    if (sup) row.dealer_supplier = sup.name
+    // O NOME DO FORNECEDOR É O DO CADASTRO, nunca o texto cru da nota
+    // (Márcio, 04/set/2026: "ensine o app a escrever estes fornecedores sempre
+    // assim, pra nunca mais entrar com outro nome"). A HHP tinha entrado com
+    // SETE grafias — "High Horse Performance", "HHP Racing", "High Horse
+    // Performance, Inc. (HHP Racing)" — e o cadastro dela aparecia com ZERO
+    // peças, zerando o desconto médio na tela de Suppliers.
+    const sup = raw.supplier ? matchSupplier(raw.supplier, directory) : null
+    if (sup) row.supplier = sup.name
+    // dealer_supplier é o OFFICIAL supplier — só quem tem contrato de
+    // dealership entra aqui. Antes qualquer cadastrado entrava, e o eBay virava
+    // "fornecedor oficial" em 9 peças, diluindo o desconto real dos oficiais.
+    // Ver a lei SUPPLIER x OFFICIAL SUPPLIER.
+    if (sup && sup.official && !row.is_extra) row.dealer_supplier = sup.name
     const { status, error } = await enrollOne(row)
     if (!error && status !== 'kept') changed++
   }
