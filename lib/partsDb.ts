@@ -1,10 +1,19 @@
 import { supabase } from '@/lib/supabase'
 import { normSup, matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
+import { normNature } from './itemNature'
 
 
 // Items whose name matches these are "extras" (shipping/handling/etc). For the
 // parts data bank we keep the CHEAPEST extra ever seen; regular parts keep the
 // LAST purchase (most recent by date). Same list the parts importer skips.
+//
+// ── DESDE 04/set/2026 ESTES DOIS REGEX SÃO SÓ O FALLBACK ────────────────────
+// Quem manda é `nature` (lib/itemNature.ts), lida na origem — no scan, no
+// e-mail, no banco. O regex só decide a linha que NINGUÉM classificou.
+// Por que isso importa: adivinhar por palavra deixou o catálogo contaminado —
+// "Dodge PCM Services" e "ECU UnLocks" estão cadastrados como PEÇA porque
+// nenhuma das palavras abaixo aparece no nome deles. Serviço e digital não são
+// peça, e nenhuma lista de palavras vai cobrir todas as grafias do mundo.
 export const EXTRA_WORDS = /tax|shipping|handling|freight|delivery|s&h|surcharge|insurance/i
 
 // Money movements are NOT parts: a scanned line matching these never enrolls in
@@ -30,6 +39,10 @@ export type EnrollItem = {
   alias?: string | null
   // MARKET the amounts above are printed in ('USD' | 'BRL'). One row per PN per market.
   currency?: string | null
+  // O QUE É ESTA LINHA (lib/itemNature.ts): PART | SERVICE | DIGITAL | CHARGE |
+  // MONEY, ou null/ausente quando ninguém disse. Só PEÇA entra no catálogo como
+  // peça; ENCARGO entra como is_extra; serviço, digital e dinheiro NÃO entram.
+  nature?: string | null
 }
 
 // Part-number normalization for dedupe: uppercase, strip every non-alphanumeric
@@ -243,7 +256,14 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
     const name = (raw.item || '').trim()
     const pn = (raw.part_number || '').trim()
     if (!name && !pn) continue
-    if (PAYMENT_WORDS.test(name)) continue
+    // ── A NATUREZA MANDA; O REGEX É FALLBACK (04/set/2026) ──────────────────
+    // SERVIÇO, DIGITAL e DINHEIRO não são peça e não entram no catálogo. O que
+    // motivou: "Dodge PCM Services" e "ECU UnLocks" (tune por e-mail, US$ 1.000)
+    // estão cadastrados como PEÇA — passaram porque PAYMENT_WORDS não casa com
+    // "service" nem com "unlock". Linha sem nature segue exatamente como antes.
+    const nature = normNature(raw.nature)
+    if (nature === 'SERVICE' || nature === 'DIGITAL' || nature === 'MONEY') continue
+    if (!nature && PAYMENT_WORDS.test(name)) continue
     const price = Number(raw.unit_price) || 0
     const row: any = {
       item: name || pn,
@@ -254,7 +274,10 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
       extra: Number(raw.extra) || 0,
       quantity: Number(raw.quantity) || 1,
       purchase_date: raw.purchase_date || null,
-      is_extra: EXTRA_WORDS.test(name),
+      // ENCARGO é is_extra por definição (imposto/frete/handling: preço da
+      // compra, não uma segunda compra); PEÇA declarada nunca é extra, nem
+      // quando o nome carrega uma das palavras do regex ("Freight Kit").
+      is_extra: nature ? nature === 'CHARGE' : EXTRA_WORDS.test(name),
       receipt_url: raw.receipt_url || null,
       source_type: sourceType,
       // The document's own currency, stored with its numbers untouched.

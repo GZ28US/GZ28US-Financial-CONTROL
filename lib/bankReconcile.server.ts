@@ -441,6 +441,54 @@ export function classify(l: any): Classified {
   return out
 }
 
+/* ─────────── A CLASSE JÁ SABE "O QUE É ESTA LINHA" (04/set/2026) ───────────
+ * O motor JÁ classifica cada linha do banco (`classify`) — Plaid, MCC do extrato
+ * ou marca no nome. Faltava só TRADUZIR essa classe para o vocabulário fechado de
+ * lib/itemNature.ts, e a linha do balde passa a NASCER classificada em vez de cair
+ * no card «a classificar». Zero consulta nova, zero campo novo: é a mesma classe.
+ *
+ * O QUE ISTO CURA, medido: dos 501 BOUGHT, 197 nunca chegam de caminhão e são 80%
+ * do dinheiro da aba. Wire, tarifa de banco, imposto do estado, licença de
+ * software e aluguel entram por aqui todos os dias, pelo Bank Link.
+ *
+ * A ASSIMETRIA MANDA (ver `travels` em lib/itemNature.ts): pôr badge custa um
+ * clique, tirar badge custa um carro parado. Por isso só se traduz o que a classe
+ * afirma com segurança; TODA classe duvidosa devolve NULL — e NULL continua
+ * aparecendo, marcado A CLASSIFICAR. Ficam NULL de propósito:
+ *   UNKNOWN ................. o motor não soube; ninguém mais sabe daqui
+ *   PAYPAL / SQUARE ......... as duas classes querem dizer "não identifiquei o
+ *                             comerciante" — o processador não é a natureza.
+ *                             (TEMU é o oposto e por isso NÃO fica nula: é loja de
+ *                             coisa física, sempre com uma caixa a caminho.)
+ *   FUEL / TOLLS / CONVENIENCE / ENTERTAINMENT — consumo na hora, não é peça e
+ *                             não é serviço contratado. O backfill que carimbava
+ *                             abastecimento como PEÇA foi derrubado na revisão da
+ *                             migration (8 abastecimentos, cigarro do Wawa,
+ *                             jantar de buffet); não se repete o erro aqui.
+ */
+export function natureFromKlass(k: Klass): string | null {
+  switch (k) {
+    // Dinheiro andando, nunca mercadoria.
+    case 'TRANSFER': case 'INCOME': case 'BANK_FEE': return 'MONEY'
+    // Preço/obrigação da compra, não uma segunda compra: imposto, taxa, seguro.
+    case 'GOVERNMENT': case 'INSURANCE': return 'CHARGE'
+    // Chega sem pacote: assinatura, licença, crédito.
+    case 'SAAS': return 'DIGITAL'
+    // Trabalho contratado / uso pago — nada disso chega de caminhão.
+    case 'AUTO_SERVICE': case 'POSTAGE': case 'TRAVEL': case 'LODGING': case 'RESTAURANT':
+    case 'RENT': case 'UTILITY': case 'TELECOM': case 'ADVERTISING': case 'ACCOUNTING':
+    case 'SERVICES': return 'SERVICE'
+    // Loja de coisa física: o que se compra ali é objeto, e objeto viaja ou é
+    // carregado pra fora. DEPT_STORE/SUPERSTORE/WHOLESALE_CLUB/DISCOUNT_VARIETY/
+    // CLOTHING/DRUGSTORE são o mesmo formato do GROCERY — separá-los seria
+    // arbitrário.
+    case 'AUTO_PARTS': case 'HARDWARE': case 'HOME_SUPPLY': case 'MARKETPLACE': case 'TEMU':
+    case 'GROCERY': case 'DEPT_STORE': case 'SUPERSTORE': case 'WHOLESALE_CLUB':
+    case 'DISCOUNT_VARIETY': case 'CLOTHING': case 'DRUGSTORE': case 'MISC_RETAIL': return 'PART'
+    default: return null
+  }
+}
+
 // UM FORNECEDOR, UM NOME: o nome escrito é o do cadastro de suppliers (nome ou
 // alias), nunca o texto cru do banco. Sem cadastro: merchant do Plaid, senão o
 // comerciante limpo do extrato em Title Case, senão «Compra».
@@ -971,7 +1019,8 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         const tag = it.engine
         const amtAbs = Math.abs(num(l.amount))
         const bankName = String(l.merchant || l.name || 'Compra').trim()
-        const canon = supplierNameFor(l, it.cls || classify(l), dir)   // UM FORNECEDOR, UM NOME também na descrição (revisão)
+        const clsRule = it.cls || classify(l)
+        const canon = supplierNameFor(l, clsRule, dir)   // UM FORNECEDOR, UM NOME também na descrição (revisão)
         // UMA DATA (lei do Márcio): expense_date = purchase_date = payment_date = data
         // do banco em tudo que o motor cria (fase B; antes usava authorized_date).
         const bookDate = String(l.date).slice(0, 10)
@@ -1036,6 +1085,8 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
               description: (canon + ' — ' + bankName.slice(0, 80) + ' ' + MARKER_CREATED).slice(0, 200), category: INPUT_CATEGORIES.includes(String(r.category)) ? r.category : 'CONSUMPTION',
               quantity: 1, unit_price: amtAbs, supplier: canon,
               purchase_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', order_number: linkRef,
+              // Mesma tradução do balde: a regra cria o insumo JÁ classificado.
+              nature: natureFromKlass(clsRule.klass),
             }).select('id').single()
             if (error || !row) throw new Error(error?.message || 'insert falhou')
             rowId = row.id; inserted = true
@@ -1060,7 +1111,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         let rowId: string = prev?.id || ''
         let inserted = false
         if (!rowId) {
-          const { data: row, error } = await db.from('invoice_expenses').insert(bucketRowShape(l, bucketId, supplier)).select('id').single()
+          const { data: row, error } = await db.from('invoice_expenses').insert(bucketRowShape(l, bucketId, supplier, cls)).select('id').single()
           if (error || !row) throw new Error(error?.message || 'insert falhou')
           rowId = row.id; inserted = true
         }
@@ -1120,7 +1171,7 @@ export async function bucketInvoiceId(db: any): Promise<string> {
 
 // A linha do balde — o formato exato (§1.2 da spec da fase B). UMA DATA: a data
 // do banco nas duas colunas. paid_from/paid_to GZ28US: o banco pagou.
-export function bucketRowShape(l: any, bucketId: string, supplier: string) {
+export function bucketRowShape(l: any, bucketId: string, supplier: string, cls?: Classified) {
   return {
     invoice_id: bucketId,
     item: (supplier + ' ' + MARKER_BUCKET).slice(0, 200),
@@ -1129,14 +1180,19 @@ export function bucketRowShape(l: any, bucketId: string, supplier: string) {
     expense_date: String(l.date).slice(0, 10), payment_date: String(l.date).slice(0, 10),
     paid_from: 'GZ28US', paid_to: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US',
     purchase_group: l.id,
+    // O QUE É ESTA LINHA — traduzido da classe que o motor já calculou. A linha do
+    // balde nasce classificada; classe duvidosa devolve NULL, que é resposta
+    // honesta e continua visível (ver natureFromKlass).
+    nature: natureFromKlass((cls || classify(l)).klass),
     export_status: 'FRESH', picked_up: false, receipt_proves_payment: false, cancel_status: null,
     order_number: null, part_id: null, kit_group: null, kit_name: null, stock_source_type: null, stock_donor: null, position: null,
   }
 }
 export async function createBucketRow(db: any, line: any, dir: SupplierEntry[], cls?: Classified): Promise<{ id: string; supplier: string }> {
   const bucketId = await bucketInvoiceId(db)
-  const supplier = supplierNameFor(line, cls || classify(line), dir)
-  const { data: row, error } = await db.from('invoice_expenses').insert(bucketRowShape(line, bucketId, supplier)).select('id').single()
+  const c = cls || classify(line)
+  const supplier = supplierNameFor(line, c, dir)
+  const { data: row, error } = await db.from('invoice_expenses').insert(bucketRowShape(line, bucketId, supplier, c)).select('id').single()
   if (error || !row) throw new Error('invoice_expenses: ' + (error?.message || 'insert falhou'))
   return { id: row.id, supplier }
 }

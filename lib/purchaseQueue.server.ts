@@ -25,6 +25,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
 import { bucketInvoiceId, logMatchEvent, MARKER_BUCKET, MARKER_ASSIGNED, ENGINE_BUCKET } from '@/lib/bankReconcile.server'
 import { normSup } from '@/lib/supplierMatch'
+import { normNature } from '@/lib/itemNature'
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
 // 31/ago/2026: era o cel US do Márcio — que é o número da PRÓPRIA instância. A
@@ -90,27 +91,45 @@ const hourSince = (iso: string | null) => !iso || (Date.now() - new Date(iso).ge
 // oficina, ferramenta ou peça — e qualquer dúvida — NÃO coloca nada, deixa na
 // fila pra PESCA conferir o endereço. Errar pro lado de perguntar custa tempo;
 // errar pro outro lado joga custo de oficina no apartamento.
-async function looksLikeHome(item: string): Promise<boolean> {
+//
+// ── E A MESMA CHAMADA RESPONDE "O QUE É ESTA LINHA?" (04/set/2026) ──────────
+// A triagem já lê os itens com o Haiku uma vez por linha. Perguntar a natureza
+// no MESMO JSON custa zero chamada nova — e é a única forma de a compra por
+// e-mail nascer classificada, porque `part_streams` NÃO PODE ganhar coluna
+// (proibição explícita do Márcio, 26/ago/2026: "não crie um campo novo DE
+// JEITO NENHUM!!!!"), e portanto a natureza não tem onde esperar entre a
+// captura (lib/purchaseCapture.server.ts) e o lançamento aqui. Ela é lida no
+// mesmo processo em que a linha de dinheiro é criada, e vai direto pro INSERT.
+// NULL continua sendo resposta legítima: "ninguém disse ainda".
+async function triagePurchase(item: string): Promise<{ home: boolean; nature: string | null }> {
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return false
+  if (!key) return { home: false, nature: null }
   const prompt = `Uma oficina de preparação de carros (GZ28) comprou os itens abaixo. O dono também mobilia um APARTAMENTO com compras da mesma conta.
 
 ITENS: ${String(item).slice(0, 600)}
 
-Responda SOMENTE com JSON: {"home": true|false, "why": "3-8 palavras"}
+Responda SOMENTE com JSON: {"home": true|false, "why": "3-8 palavras", "nature": "PART|SERVICE|DIGITAL|CHARGE|MONEY|"}
 
 "home": true SOMENTE se TODOS os itens forem claramente de casa/apartamento (móvel, cama, banheiro, cozinha, decoração, organização doméstica, eletrodoméstico pequeno, roupa de cama/banho).
 "home": false se QUALQUER item puder ser de oficina, carro, ferramenta, peça automotiva, produto de lavagem/detailing, eletrônica de bancada, EPI — ou se você tiver qualquer dúvida.
-Na dúvida, SEMPRE false.`
+Na dúvida, SEMPRE false.
+
+"nature": O QUE É ESTA COMPRA — se ela vai CHEGAR de caminhão ou não:
+  PART    coisa física que vem pra cá (peça, ferramenta, fluido, móvel, roupa, mercado). É a ÚNICA que significa "tem caixa a caminho".
+  SERVICE trabalho feito ou uso pago: mão de obra, dyno, tune de bancada, porting, retífica, guincho, lavagem, aluguel de equipamento, passagem, hotel, refeição.
+  DIGITAL licença, créditos, assinatura, desbloqueio de ECU/PCM, tune que chega por e-mail.
+  CHARGE  imposto, frete, handling, seguro, taxa — preço da compra, não uma segunda compra.
+  MONEY   dinheiro andando: wire, depósito, entrada, parcela, repasse entre empresas, tarifa de banco. CARRO também é MONEY — carro não é peça e não chega em caixa.
+  ""      (string vazia) quando você não souber. Vazio é resposta CERTA e útil: um humano classifica depois. NUNCA chute PART só para preencher — peça rotulada errado SOME da tela do que a oficina está esperando, e ausência ninguém percebe.`
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 120, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 160, messages: [{ role: 'user', content: prompt }] }),
   }).then(x => x.json()).catch(() => null)
   try {
     const j = JSON.parse(String(r?.content?.[0]?.text || '').replace(/```json|```/g, '').trim())
-    return j.home === true
-  } catch { return false }
+    return { home: j.home === true, nature: normNature(j.nature) }
+  } catch { return { home: false, nature: null } }
 }
 
 // ── Destinos ────────────────────────────────────────────────────────────────
@@ -146,7 +165,10 @@ async function resolveInvoice(db: SupabaseClient, term: string): Promise<{ id: s
 // Registra a compra no destino. Devolve o placed_ref (com #id quando a fila
 // inseriu dinheiro), 'NEEDS_VALUE' quando falta valor, ou null quando o
 // destino não resolve (ex.: carro não encontrado).
-async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string[]): Promise<string | null> {
+// `nature` é o que a triagem leu na MESMA chamada do Haiku (ver triagePurchase);
+// null quando ninguém disse, e null é gravado como null de propósito — a linha
+// aparece marcada A CLASSIFICAR em vez de mentir uma natureza.
+async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string[], nature: string | null = null): Promise<string | null> {
   const amt = amountOf(r.item)
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) // relogio do app = Orlando (ordem 20/08): UTC virava "amanha" depois das 20h
   if (dest === 'IGNORE') {
@@ -164,6 +186,7 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
         description: titleOf(r), category, quantity: 1, unit_price: amt,
         purchase_date: today, payment_date: today, supplier: r.supplier,
         order_number: r.order_number, payment_method: methodOf(r), paid_from: 'GZ28US',
+        nature,   // O QUE É ESTA LINHA — lido na triagem, gravado na origem
       }).select('id').single()
       if (ins?.id) {
         ref = `${dest}#${ins.id}`
@@ -192,7 +215,7 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
     // família), a fila ATRIBUI a linha do balde ao carro em vez de criar uma segunda
     // — o dinheiro nunca duplica, e a data continua a do banco (UMA DATA).
     const { data: dup0 } = r.order_number ? await db.from('invoice_expenses').select('id').eq('order_number', r.order_number).limit(1) : { data: null }
-    const adopted = dup0?.length ? null : await adoptFromBucket(db, r, inv, amt)
+    const adopted = dup0?.length ? null : await adoptFromBucket(db, r, inv, amt, nature)
     if (adopted) {
       ref = `${inv.code}#${adopted}`
       await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, invoice_id: inv.id, where_label: inv.code }).eq('id', r.id)
@@ -207,6 +230,7 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
         invoice_id: inv.id, supplier: r.supplier, item: titleOf(r), price: amt, quantity: 1,
         source: 'GZ28US', payment_method: methodOf(r), paid_from: 'GZ28US', paid_to: 'GZ28US',
         payment_date: today, expense_date: today, order_number: r.order_number,
+        nature,   // O QUE É ESTA LINHA — lido na triagem, gravado na origem
       }).select('id').single()
       if (ins?.id) {
         ref = `${inv.code}#${ins.id}`
@@ -231,12 +255,12 @@ const refLabel = (ref: string) => ref.split('#')[0]
 // A linha do balde que é ESTA compra: mesmo valor (±$0,01), paga nos últimos 10
 // dias, fornecedor da mesma família (prefixo normalizado). Uma só — duas = dúvida
 // = a fila insere como sempre. Best-effort: qualquer erro devolve null.
-async function adoptFromBucket(db: SupabaseClient, r: StreamRow, inv: { id: string; code: string }, amt: number): Promise<string | null> {
+async function adoptFromBucket(db: SupabaseClient, r: StreamRow, inv: { id: string; code: string }, amt: number, nature: string | null = null): Promise<string | null> {
   try {
     const bucketId = await bucketInvoiceId(db)
     const since = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10)
     const q0: any = db.from('invoice_expenses')
-    const { data: rows } = await q0.select('id, item, supplier, price, payment_date, purchase_group').eq('invoice_id', bucketId).ilike('item', '%' + MARKER_BUCKET + '%').gte('payment_date', since)
+    const { data: rows } = await q0.select('id, item, supplier, price, payment_date, purchase_group, nature').eq('invoice_id', bucketId).ilike('item', '%' + MARKER_BUCKET + '%').gte('payment_date', since)
     const sup = normSup(String(r.supplier || ''))
     if (!sup) return null   // sem loja no e-mail não se adota nada (revisão 15)
     const fam = (a: string, b: string) => { const x = normSup(a), y = normSup(b); if (!x || !y) return false; const k = Math.min(5, x.length, y.length); return x.slice(0, k) === y.slice(0, k) }
@@ -245,7 +269,11 @@ async function adoptFromBucket(db: SupabaseClient, r: StreamRow, inv: { id: stri
     const row = cands[0]
     const item = titleOf(r).slice(0, 200 - MARKER_ASSIGNED.length - 1).trim() + ' ' + MARKER_ASSIGNED
     const q1: any = db.from('invoice_expenses')
-    const { data: moved } = await q1.update({ invoice_id: inv.id, item, order_number: r.order_number || null, updated_at: new Date().toISOString() }).eq('id', row.id).eq('invoice_id', bucketId).select('id')
+    // A linha do balde JÁ nasceu classificada pela classe do banco (bucketRowShape).
+    // A leitura do e-mail só PREENCHE o que estava vazio — nunca troca o que já foi
+    // dito: regra automática pode PÔR badge, nunca TIRAR (lib/itemNature.ts).
+    const fillNature = row.nature == null && nature ? { nature } : {}
+    const { data: moved } = await q1.update({ invoice_id: inv.id, item, order_number: r.order_number || null, updated_at: new Date().toISOString(), ...fillNature }).eq('id', row.id).eq('invoice_id', bucketId).select('id')
     if (!moved || !moved.length) return null
     const q2: any = db.from('bank_transactions')
     const { data: line } = await q2.select('id, date, amount, name, merchant').eq('matched_table', 'invoice_expenses').eq('matched_id', row.id).eq('match_engine', ENGINE_BUCKET).maybeSingle()
@@ -321,6 +349,33 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
     return (data || []) as StreamRow[]
   }
 
+  // ── 0b. A LEITURA DO CONTEÚDO ACONTECE ANTES DE QUALQUER LANÇAMENTO ───────
+  // (04/set/2026) A triagem já lia os itens com o Haiku, uma vez por linha, e a
+  // MESMA chamada agora responde também "o que é esta linha?" (triagePurchase).
+  // Ela subiu para ANTES das regras por um motivo só: assim a linha que a regra
+  // registra já nasce classificada. A DECISÃO de colocar no apartamento continua
+  // DEPOIS das regras — regra humana sempre ganha da leitura do robô; inverter
+  // isso deixaria a IA atropelar o que o Márcio ensinou.
+  // Custo igual ao de antes: no máximo 6 chamadas por rodada, uma por linha, e
+  // só em linha nunca triada (asked_count 0).
+  // O que a leitura respondeu vive só ESTA rodada, em memória: `part_streams` NÃO
+  // PODE ganhar coluna (proibição de 26/ago/2026, ver stream-purchase-date), e a
+  // resposta é usada no mesmo processo que cria a linha de dinheiro. Linha placed
+  // numa rodada seguinte entra com nature NULL — que é honesto, não é chute.
+  const natureOf = new Map<string, string | null>()
+  const homeOf = new Map<string, boolean>()
+  if (!quiet) {
+    let triaged = 0
+    for (const r of await pending('NEEDS_PLACEMENT')) {
+      if (r.asked_count > 0 || triaged >= 6) continue
+      triaged++
+      if (amountOf(r.item) == null) continue           // sem valor não vira dinheiro
+      const t = await triagePurchase(r.item)
+      natureOf.set(r.id, t.nature)
+      homeOf.set(r.id, t.home)
+    }
+  }
+
   // ── 1. Regras decidem sem perguntar ───────────────────────────────────────
   // Fora do horário quieto (o report da regra faz parte do registro — de
   // madrugada a linha espera a manhã em vez de registrar mudo, achado F7).
@@ -334,7 +389,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         (!x.ship_to_match || (r.ship_to || '').toLowerCase().includes(x.ship_to_match.toLowerCase())) &&
         (x.store || x.keyword || x.ship_to_match))
       if (!rule) continue
-      const ref = await place(db, r, rule.destination, placed)
+      const ref = await place(db, r, rule.destination, placed, natureOf.get(r.id) ?? null)
       if (ref && ref !== 'NEEDS_VALUE') {
         await db.from('placement_rules').update({ hits: (rule.hits || 0) + 1 }).eq('id', rule.id)
         const amt = amountOf(r.item)
@@ -343,19 +398,16 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
     }
 
     // ── 1b. Triagem pelo conteúdo: casa segue o fluxo, resto espera a PESCA ──
-    // Só linhas ainda não triadas (asked_count 0). A que não passa recebe
-    // asked_count 1 — não se re-classifica a cada 5 min e o relógio do sino
-    // começa a correr. Teto de 6 por rodada pra não pesar o cron.
-    let triaged = 0
+    // A LEITURA já aconteceu no passo 0b (uma chamada por linha, nunca duas); aqui
+    // só se DECIDE. Continua valendo: a que não passa recebe asked_count 1 — não
+    // se re-classifica a cada 5 min e o relógio do sino começa a correr.
     for (const r of await pending('NEEDS_PLACEMENT')) {
-      if (r.asked_count > 0 || triaged >= 6) continue
-      triaged++
-      if (amountOf(r.item) == null) continue           // sem valor não vira dinheiro
-      if (!(await looksLikeHome(r.item))) {
+      if (!homeOf.has(r.id)) continue                  // não foi lida nesta rodada
+      if (!homeOf.get(r.id)) {
         await db.from('part_streams').update({ asked_count: 1 }).eq('id', r.id)
         continue
       }
-      const ref = await place(db, r, 'INPUTS/APARTMENT', placed)
+      const ref = await place(db, r, 'INPUTS/APARTMENT', placed, natureOf.get(r.id) ?? null)
       if (!ref || ref === 'NEEDS_VALUE') { await db.from('part_streams').update({ asked_count: 1 }).eq('id', r.id); continue }
       const amt = amountOf(r.item)
       await wa(PVT, `🏠 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Só item de casa — registrada em *${refLabel(ref)}*\nSe estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
@@ -407,7 +459,9 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
           if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
           else await db.from('invoice_expenses').delete().eq('id', refId)
         }
-        const ref = await place(db, row, dest, placed)
+        // A natureza sobrevive à realocação quando a leitura foi desta rodada;
+        // senão entra NULL (honesto) — realocar destino não muda o que a coisa É.
+        const ref = await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
         await wa(chat, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} realocada: *${refLabel(ref)}*` : `⚠️ ${keyOf(row)}: desfeita, mas o novo destino falhou — segue na fila.`)
         if (!ref || ref === 'NEEDS_VALUE') await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT', placed_ref: null }).eq('id', row.id)
         await markSeen(mid, body, 'ERRADO-APPLIED'); answered++; continue
@@ -422,7 +476,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         const row = matches[0]
         const dest = parseDestination(kv[2], true)
         if (!dest) continue
-        const ref = await place(db, row, dest, placed)
+        const ref = await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
         if (ref === 'NEEDS_VALUE') { await wa(chat, `⚠️ ${keyOf(row)} ainda não tem valor (PESCA TEMU pendente) — repete a resposta depois da pesca.`); await markSeen(mid, body, 'NEEDS-VALUE'); answered++; continue }
         if (!ref) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${kv[2].trim()}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
         open.splice(open.indexOf(row), 1)
@@ -439,7 +493,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         const dest = parseDestination(body, false) // sem chave: só vocabulário exato — conversa não vira lançamento
         if (!dest) continue
         const row = open[0]
-        const ref = await place(db, row, dest, placed)
+        const ref = await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
         if (ref && ref !== 'NEEDS_VALUE') { open.pop(); answered++; await wa(chat, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`); await markSeen(mid, body, 'APPLIED') }
       }
     }

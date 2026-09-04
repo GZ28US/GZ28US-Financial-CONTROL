@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { normNature } from '@/lib/itemNature'
 
 // Receipt OCR runs on Opus for maximum accuracy, which is slower than Sonnet —
 // allow up to 60s so a tough/crumpled receipt never times out mid-scan.
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
     { "description": "the receipt's own label for the charge, e.g. Shipping, Handling, Insurance, Freight, Surcharge", "amount": "number string like 12.50" }
   ],
   "items": [
-    { "description": "item name", "part_number": "manufacturer part number / SKU / MPN / item or catalog number printed for this line, else empty string", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0", "weight_lbs": "per-UNIT weight in pounds if the document prints a weight for this line, else 0" }
+    { "description": "item name", "part_number": "manufacturer part number / SKU / MPN / item or catalog number printed for this line, else empty string", "quantity": "quantity as integer string like 2", "line_total": "line total AFTER subtracting any discount applied to this item, as number string like 4462.92", "list_price": "per-UNIT list/retail/MSRP price if the receipt shows one HIGHER than what was actually paid, else 0", "weight_lbs": "per-UNIT weight in pounds if the document prints a weight for this line, else 0", "nature": "WHAT THIS LINE IS — one of PART, SERVICE, DIGITAL, CHARGE, MONEY, or an empty string when you cannot tell — see rule 19" }
   ]
 }
 Rules:
@@ -65,18 +66,25 @@ Rules:
 10. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.
 11. paid: a boolean. true when the document shows the purchase is already paid, charged, or CONFIRMED — a receipt, a paid invoice, a "PAID" mark, an order/payment confirmation, a "Confirmed" / "Order Confirmed" status, or a balance due of 0. false ONLY when it is clearly an unpaid quote/estimate or shows an outstanding balance still due. When unsure, use true (a scanned purchase receipt is normally already paid).
 12. date: the TRANSACTION / SALE / PURCHASE date — on a store/POS receipt this is the timestamp usually printed at the BOTTOM next to the time (e.g. "6/26/26 7:32 PM"). IGNORE every unrelated date on the receipt: a date of birth or an "ID VERIFIED" age-check date, a "best by"/expiration date, store hours, or a loyalty/coupon date are NOT the purchase date. Return it as YYYY-MM-DD. If the document shows a date without a year (e.g. "Confirmed Jun 17"), infer the year so the date is the most recent one that is NOT in the future${todayISO ? ` relative to today, ${todayISO}` : ''}. Never return a date after today.
-13. PAYMENT / TRANSFER / PIX receipts (e.g. a "Comprovante do Pix", a bank transfer / TED / DOC / Zelle / wire confirmation) have NO itemized products. For these, IGNORE rule 1: set "supplier" to the RECIPIENT/payee (the "recebedor" / "Para" / "Dados do recebedor" — the party RECEIVING the money, never the bank, never the payer), set "paid" to true, set "grand_total" to the amount paid ("Valor pago" / "Valor"), set "tax" to 0 and "extras" to [], and return a SINGLE item whose description is a short label (the payee name, or "Pagamento") and whose line_total is that same amount. Never return an empty items array for a payment receipt.
+13. PAYMENT / TRANSFER / PIX receipts (e.g. a "Comprovante do Pix", a bank transfer / TED / DOC / Zelle / wire confirmation) have NO itemized products. For these, IGNORE rule 1: set "supplier" to the RECIPIENT/payee (the "recebedor" / "Para" / "Dados do recebedor" — the party RECEIVING the money, never the bank, never the payer), set "paid" to true, set "grand_total" to the amount paid ("Valor pago" / "Valor"), set "tax" to 0 and "extras" to [], and return a SINGLE item whose description is a short label (the payee name, or "Pagamento"), whose line_total is that same amount and whose "nature" is "MONEY" (rule 19 — a transfer is money moving, never a box that arrives). Never return an empty items array for a payment receipt.
 14. source: the PAYER — who SENT the money (the "pagador" / "De" / "Dados do pagador" / "from"). This is the person/company that paid, NOT the supplier/payee. Empty string if not shown.
 15. CURRENCY — this system registers expenses in USD. Read carefully which currency each printed amount is in ("R$" / "BRL" = Brazilian real; "$" / "US$" / "USD" = US dollar; airline documents label amounts like "USD 350.00" or "BRL 1.839,48"). If the document shows amounts in USD anywhere, return ALL monetary fields (grand_total, tax, extras, line_total, list_price) in USD and set "currency" to "USD". When only some components are printed in USD, convert the rest using the exchange rate implied by any amount printed in BOTH currencies. ONLY if the document contains no USD amount at all: return the amounts exactly as printed in the document's own currency and set "currency" to its ISO code (e.g. "BRL") — never guess an exchange rate, and NEVER report a BRL/foreign amount as if it were USD.
 15a. A BRAZILIAN document is BRL even when no "R$" symbol is printed next to the numbers — Brazilian invoices routinely print bare figures in their VL UNIT / VALOR columns. Treat the document as BRL whenever it carries Brazilian markers and shows no USD amount anywhere: a CNPJ or CPF number, "DANFE", "Nota Fiscal", "NF-e", "ICMS", "EMITENTE"/"DESTINATÁRIO", a Brazilian address or CEP, or amounts written in Brazilian format (1.234,56). Do NOT default to USD just because the currency symbol is missing — decide from the document's origin.
-15b. AIRLINE TICKETS / TRAVEL ITINERARIES (Copa, LATAM, GOL, American, ...): these typically print the base FARE as a matching two-currency pair (e.g. "USD 300.00" alongside its local equivalent like "BRL 1,635.00") and then EXTRA charges — airport/boarding taxes, fees, surcharges, fuel, IOF — printed ONLY in the local currency, with the grand total also in local currency. NEVER return just the USD base fare as the total. Instead: (a) derive the exchange rate from the matching fare pair (local fare ÷ USD fare); (b) convert EVERY local-only charge to USD by dividing by that rate; (c) return ONE item per passenger ticket whose line_total is the ENTIRE amount paid in USD = USD base fare + ALL converted charges, rounded to 2 decimals; (d) grand_total = the sum of those USD ticket totals — cross-check: it must equal the printed local-currency grand total divided by the derived rate (within a few cents); (e) set tax to 0 and extras to [] — airline taxes/fees are part of the ticket price, not US sales tax; (f) do NOT create separate items for individual flight segments — put the route/segments in the ticket item's description instead.
+15b. AIRLINE TICKETS / TRAVEL ITINERARIES (Copa, LATAM, GOL, American, ...): these typically print the base FARE as a matching two-currency pair (e.g. "USD 300.00" alongside its local equivalent like "BRL 1,635.00") and then EXTRA charges — airport/boarding taxes, fees, surcharges, fuel, IOF — printed ONLY in the local currency, with the grand total also in local currency. NEVER return just the USD base fare as the total. Instead: (a) derive the exchange rate from the matching fare pair (local fare ÷ USD fare); (b) convert EVERY local-only charge to USD by dividing by that rate; (c) return ONE item per passenger ticket whose line_total is the ENTIRE amount paid in USD = USD base fare + ALL converted charges, rounded to 2 decimals; (d) grand_total = the sum of those USD ticket totals — cross-check: it must equal the printed local-currency grand total divided by the derived rate (within a few cents); (e) set tax to 0 and extras to [] — airline taxes/fees are part of the ticket price, not US sales tax; (f) do NOT create separate items for individual flight segments — put the route/segments in the ticket item's description instead; (g) each ticket item's "nature" is "SERVICE" (rule 19 — a ticket is transport bought, not a box that arrives).
 16. Brazilian number format: "1.839,48" means 1839.48 (dot = thousands separator, comma = decimals). Always output plain numbers with a dot as the decimal separator and no thousands separators.
 17. ship_to — THE DELIVERY ADDRESS, and only that. Return the address the goods are being SENT TO, copied as printed on one line, when the document has a shipping/delivery block: "Ship to", "Shipping address", "Deliver to", "Delivery address", "Entregar em", "Endereço de entrega", or a "Delivery from store" / "Home delivery" line naming an address. This is the STRONGEST signal the document gives about HOW the buyer got the goods, so read it carefully and never invent it:
    - Return an EMPTY STRING when the document shows no delivery address at all — a walk-in store receipt (groceries, gas station, hardware counter) has none, and that emptiness is the fact we need.
    - Do NOT return the STORE's own address (the letterhead, the branch address printed at the top of a POS receipt) — that is where the sale happened, not where anything was delivered.
    - Do NOT return a billing-only address ("Bill to", "Sold to", "Cobrança") when no shipping address is shown.
    - A shipping/handling/delivery CHARGE, a driver tip, or a "Delivery from store" line counts as evidence of delivery: if such a line exists and any destination address is printed, return that address.
-18. tracking_number / carrier — the shipment's tracking (waybill) number and the company carrying it, when the DOCUMENT prints them (many order confirmations and packing slips do). Copy the tracking number exactly, digits and letters only as printed, with no spaces and no label. Typical shapes: UPS "1Z" + 16 chars, FedEx 12/15/20 digits, USPS 20-22 digits, DHL 10 digits. For carrier return the shipper's plain name ("UPS", "FedEx", "USPS", "DHL", "Estes", ...) as printed. If the document shows more than one shipment, return the FIRST tracking number only. Empty strings when the document prints none — NEVER guess a tracking number, and never return an order number as a tracking number.`
+18. tracking_number / carrier — the shipment's tracking (waybill) number and the company carrying it, when the DOCUMENT prints them (many order confirmations and packing slips do). Copy the tracking number exactly, digits and letters only as printed, with no spaces and no label. Typical shapes: UPS "1Z" + 16 chars, FedEx 12/15/20 digits, USPS 20-22 digits, DHL 10 digits. For carrier return the shipper's plain name ("UPS", "FedEx", "USPS", "DHL", "Estes", ...) as printed. If the document shows more than one shipment, return the FIRST tracking number only. Empty strings when the document prints none — NEVER guess a tracking number, and never return an order number as a tracking number.
+19. nature — WHAT EACH LINE IS, so the app knows whether the line is a box that still has to ARRIVE. Rule 1 still holds (tax/shipping/handling stay OUT of "items" and come back in "tax"/"extras"), but a document prints plenty of lines that are NOT a physical product and that you DO have to return as items — labor, a bench tune, an ECU unlock, a payment. For those, LABEL them here instead of leaving the reader to guess. Use exactly one of:
+   • "PART" — a physical thing that ships or is carried out of the store: a part, a tool, a fluid, a tyre, a shirt, groceries, a mattress. This is the ONLY value that means "a box is coming".
+   • "SERVICE" — work performed: labor, installation, dyno pull, bench tune, porting, machine/engine shop work, alignment, wrapping, detailing, towing, contracted freight billed as a service, equipment rental, a plane ticket, a hotel night, a meal.
+   • "DIGITAL" — a licence, credits, a software subscription, an ECU/PCM unlock, a tune delivered by e-mail — something that arrives without a package.
+   • "CHARGE" — a charge that is part of the PRICE of this purchase: sales tax, shipping, handling, insurance, a fee, a surcharge. You normally must NOT emit these as items at all (rule 1) — this value exists for the case where the charge only makes sense as its own printed line.
+   • "MONEY" — money moving, not goods: the single line of a payment/transfer/PIX/wire/Zelle receipt (rule 13), a deposit, a down payment, an installment, an inter-company transfer, a bank fee. A VEHICLE purchase — the car itself, a dealer deposit, a car payment or wire for a car — is MONEY too: a car is not a part and never arrives in a box.
+   • "" (empty string) — when you genuinely cannot tell. An empty string is a correct, useful answer: a human classifies it later. NEVER guess between PART and anything else just to fill the field — a wrongly labelled part disappears from the "what are we waiting for" screen, and nobody notices something that is missing.`
 
     const paymentPrompt = `You are scanning a PAYMENT PROOF of money RECEIVED by an auto shop (a bank transfer confirmation, a Zelle/ACH receipt, a check image, a card receipt, or a Brazilian "Comprovante de Pix" / PIX / TED). A document may show ONE payment or SEVERAL. Extract every payment and return ONLY valid JSON, no other text:
 {
@@ -221,7 +229,13 @@ Rules:
     }
     const scaledSubtotal = itemsSubtotal * itemScale
 
-    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[] = []
+    // ── "O QUE É ESTA LINHA?" (04/set/2026) ────────────────────────────────
+    // O degrau que faltava ANTES de "chegou?": só PEÇA vira caixa esperada.
+    // normNature devolve NULL para o que o modelo não soube dizer — e NULL é
+    // resposta legítima ("ninguém disse ainda"), nunca chute. Quem grava carimba
+    // o que vier; regra automática pode PÔR badge, nunca TIRAR (lib/itemNature.ts).
+    const natureOf = (i: any): string | null => normNature(i?.nature)
+    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string; nature: string | null }[] = []
 
     if (separateExtras) {
       // Tax AND extra costs (shipping, handling, insurance, ...) are each split
@@ -268,6 +282,7 @@ Rules:
           item_discount: String(itemDiscount),
           list_price: listPrice > 0 ? String(listPrice) : '0',
           weight_lbs: String(num(item.weight_lbs) || 0),
+          nature: natureOf(item),
         })
       })
     } else {
@@ -291,6 +306,7 @@ Rules:
           item_discount: '0',
           list_price: listPrice > 0 ? String(listPrice) : '0',
           weight_lbs: String(num(item.weight_lbs) || 0),
+          nature: natureOf(item),
         })
       })
     }

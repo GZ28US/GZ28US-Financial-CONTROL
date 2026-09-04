@@ -110,6 +110,15 @@ export default function EditGoodPage() {
   const [deliveredAt, setDeliveredAt] = useState<string | null>(null)
   const [eta, setEta] = useState<string | null>(null)
   const [lastEvent, setLastEvent] = useState<string | null>(null)
+  // NATUREZA DA LINHA (04/set/2026 — lib/itemNature.ts): PEÇA / SERVIÇO /
+  // DIGITAL / ENCARGO / DINHEIRO. É o degrau ZERO da cascata ("isso é coisa
+  // que chega?"), e por isso o chip desta tela precisa dela: sem ela no objeto
+  // do formulário a linha volta a VIAJAR sempre e o degrau nunca dispara aqui.
+  // Não há campo na tela: ela faz ida e volta — vem do banco, alimenta o chip e
+  // volta pro banco INTACTA. Um `nature: null` fixo apagaria a classificação de
+  // quem só veio corrigir um preço: a mesma classe de erro do delivered_at
+  // esquecido (30/ago/2026, 151 linhas erradas no US).
+  const [nature, setNature] = useState<string | null>(null)
   // Universal payment block — PAID FROM here also feeds the legacy `source` column.
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [goodReceiptUrls, setGoodReceiptUrls] = useState<string[]>([])
@@ -147,6 +156,9 @@ export default function EditGoodPage() {
     setDeliveredAt(data.delivered_at || null)
     setEta(data.eta || null)
     setLastEvent(data.last_event || null)
+    // `select('*')` já traz a coluna. Enquanto a MIGRATION_item_nature.sql não
+    // rodar ela vem undefined e vira null — que é a verdade: "ninguém disse ainda".
+    setNature(data.nature ?? null)
     // Initialize the payment block from the row; legacy rows fall back to `source`
     // for PAID FROM so an untouched save round-trips the same value.
     setPayment(paymentFromRow({ ...data, paid_from: data.paid_from || data.source }))
@@ -304,6 +316,12 @@ export default function EditGoodPage() {
       cancel_status: cancelStatus,
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
+      // A NATUREZA VOLTA COMO VEIO. Nunca um null fixo: salvar o preço de uma
+      // linha já classificada apagaria a classificação. E só entra no payload
+      // QUANDO EXISTE — a coluna nasce na MIGRATION_item_nature.sql, e mandar um
+      // null explícito antes disso derruba o save inteiro (PostgREST responde 400
+      // para coluna inexistente, não lista vazia).
+      ...(nature ? { nature } : {}),
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
       ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
@@ -363,7 +381,7 @@ export default function EditGoodPage() {
         <div>
           <DeliverFields pickedUp={pickedUp} cancelStatus={cancelStatus} tracking={tracking} carrier={carrier}
             onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
-          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, cancel_status: cancelStatus, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
+          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, cancel_status: cancelStatus, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent, nature }} /></div>
         </div>
 
         <div className="flex gap-4">

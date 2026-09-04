@@ -219,10 +219,17 @@ export default function ViewRidePage() {
 
   // Todas as despesas do carro, de todas as invoices dele, mais recente primeiro.
   async function loadFleetExps(invoiceIds: string[]) {
-    const { data } = await supabase
-      .from('invoice_expenses')
-      .select('id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number, stock_source_type, ' + DELIVER_COLUMNS)
-      .in('invoice_id', invoiceIds)
+    // A COLUNA `nature` NASCE NUMA MIGRATION QUE RODA À MÃO — e enquanto ela não
+    // roda, o PostgREST devolve 400/42703, não lista vazia. Sem este desvio, esta
+    // tela jurava "EXPENSES (0) · $0.00" em cima de US$ 202.087 de frota, e ainda
+    // recarregava depois de salvar, fazendo a despesa recém-lançada sumir.
+    const COLS = 'id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number, stock_source_type, ' + DELIVER_COLUMNS
+    let { data, error } = await supabase.from('invoice_expenses').select(COLS).in('invoice_id', invoiceIds)
+    if (error?.code === '42703' && /\bnature\b/.test(String(error.message || ''))) {
+      ({ data, error } = await supabase.from('invoice_expenses').select(COLS.replace(/,\s*nature\b/, '')).in('invoice_id', invoiceIds))
+    }
+    // ERRO NUNCA VIRA LISTA VAZIA: some com a lista é mentira silenciosa.
+    if (error) { console.error('[frota] despesas não carregaram:', error); return }
     // O select monta a lista de colunas concatenando DELIVER_COLUMNS, e aí o
     // supabase-js perde a inferência da linha — daí o unknown no meio.
     const list = (data || []) as unknown as FleetExp[]

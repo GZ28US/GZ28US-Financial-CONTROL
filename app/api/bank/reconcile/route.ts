@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS } from '@/lib/bankReconcile.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
@@ -424,7 +424,13 @@ export async function POST(req: NextRequest) {
         if (Math.abs(expLine(row) - amt) >= 0.011) throw new Error('valor da linha mudou (Plaid) — DESFAZER e deixe o motor recriar')
         const clean = String(row.item || '').replace(MARKER_BUCKET, '').trim()
         const label = String(b.item || '').trim() || clean
-        const supplier = String(b.supplier || '').trim() || row.supplier || supplierNameFor(line, classify(line), dir)
+        const cls = classify(line)
+        const supplier = String(b.supplier || '').trim() || row.supplier || supplierNameFor(line, cls, dir)
+        // O QUE É ESTA LINHA (04/set/2026): a MESMA classe que já nomeia o
+        // fornecedor também diz a natureza. Vale para as linhas que a atribuição
+        // CRIA (insumo, estoque, partes da divisão); o destino CARRO reaproveita a
+        // linha do balde, que já nasceu classificada em bucketRowShape.
+        const nature = natureFromKlass(cls.klass)
         const dest = String(b.dest || '')
         const lineLabel = line.date + ' · ' + (line.merchant || line.name || '') + ' · ' + amt
         // Re-aponta a linha do banco (guardado pelo ponteiro atual e por reviewed_at nulo).
@@ -464,7 +470,7 @@ export async function POST(req: NextRequest) {
         } else if (dest === 'STOCK' || dest === 'SUPPLIES') {
           const table = dest === 'STOCK' ? 'inventory' : 'inputs'
           const category = dest === 'STOCK' ? 'STOCK' : (INPUT_CATEGORIES.includes(String(b.category)) ? String(b.category) : 'CONSUMPTION')
-          const ins: any = { description: mark(label, MARKER_ASSIGNED), category, quantity: 1, unit_price: amt, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: null, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, order_number: b.order_number ? String(b.order_number).slice(0, 120) : null, picked_up: false }
+          const ins: any = { description: mark(label, MARKER_ASSIGNED), category, quantity: 1, unit_price: amt, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: null, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, order_number: b.order_number ? String(b.order_number).slice(0, 120) : null, picked_up: false, nature }
           if (dest === 'STOCK') { ins.source_type = 'PURCHASED'; ins.part_id = null }
           const { data: created, error } = await (db.from(table) as any).insert(ins).select('id').single()
           if (error || !created) throw new Error(table + ': ' + (error?.message || 'insert falhou'))
@@ -529,12 +535,12 @@ export async function POST(req: NextRequest) {
               const pl = String(x.item || '').trim() || label
               const pa = Math.round(num(x.amount) * 100) / 100
               if (x.dest === 'CAR') {
-                const { data: c, error } = await db.from('invoice_expenses').insert({ invoice_id: String(x.invoice_id), item: mark(pl, MARKER_ASSIGNED), supplier: supplier.slice(0, 120), price: pa, quantity: 1, tax: 0, extra: 0, item_discount: 0, expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, export_status: 'FRESH', picked_up: false, receipt_proves_payment: false }).select('id').single()
+                const { data: c, error } = await db.from('invoice_expenses').insert({ invoice_id: String(x.invoice_id), item: mark(pl, MARKER_ASSIGNED), supplier: supplier.slice(0, 120), price: pa, quantity: 1, tax: 0, extra: 0, item_discount: 0, expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, export_status: 'FRESH', picked_up: false, receipt_proves_payment: false, nature }).select('id').single()
                 if (error || !c) throw new Error('invoice_expenses: ' + (error?.message || 'insert falhou')); members.push({ table: 'invoice_expenses', id: c.id })
               } else if (x.dest === 'STOCK' || x.dest === 'SUPPLIES') {
                 const table = x.dest === 'STOCK' ? 'inventory' : 'inputs'
                 const category = x.dest === 'STOCK' ? 'STOCK' : (INPUT_CATEGORIES.includes(String(x.category)) ? String(x.category) : 'CONSUMPTION')
-                const ins: any = { description: mark(pl, MARKER_ASSIGNED), category, quantity: 1, unit_price: pa, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: null, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, picked_up: false }
+                const ins: any = { description: mark(pl, MARKER_ASSIGNED), category, quantity: 1, unit_price: pa, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: null, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, picked_up: false, nature }
                 if (x.dest === 'STOCK') { ins.source_type = 'PURCHASED'; ins.part_id = null }
                 const { data: c, error } = await (db.from(table) as any).insert(ins).select('id').single()
                 if (error || !c) throw new Error(table + ': ' + (error?.message || 'insert falhou')); members.push({ table, id: c.id })

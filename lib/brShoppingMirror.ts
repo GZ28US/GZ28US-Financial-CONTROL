@@ -34,6 +34,13 @@ export type BrMirrorItem = {
   // ORDER NUMBER é SAGRADO (29/ago/2026): o pedido da loja viaja com o espelho
   // — é ele que liga a linha espelhada no BR ao STREAM da remessa.
   orderNumber?: string | null
+  // O ELO DA LINHA (04/set/2026). A invoice já tinha o dela (br_invoice_id /
+  // us_invoice_id); a LINHA não tinha — e sem ele o espelho apagava todas as
+  // linhas do outro lado e recriava, matando rastreio, recibo, part_number,
+  // picked_up e o escudo receipt_proves_payment. Casar por texto do item seria
+  // adivinhação; por posição seria pior (item reordenado grudaria o rastreio de
+  // uma peça em outra).
+  srcId?: string | null
 }
 
 export type BrMirrorInput = {
@@ -145,7 +152,9 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
       await supabaseBR.from('invoice_payments').delete().eq('invoice_id', brInvoiceId).is('paid_at', null)
       await supabaseBR.from('invoice_parts').delete().eq('invoice_id', brInvoiceId)
       await supabaseBR.from('invoice_services').delete().eq('invoice_id', brInvoiceId)
-      await supabaseBR.from('invoice_expenses').delete().eq('invoice_id', brInvoiceId)
+      // invoice_expenses NÃO é mais apagada aqui: ela é reconciliada lá embaixo,
+      // linha a linha, pelo elo us_expense_id. parts e services continuam sendo
+      // refeitos porque são a fatura do cliente — ninguém digita fato neles.
       await supabaseBR.from('invoices').update(invMeta).eq('id', brInvoiceId)
     }
   }
@@ -191,6 +200,7 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
       source: 'GZ28BR', paid_from: 'GZ28BR', item_discount: 0, position: i,
       // O pedido acompanha o espelho: sem ele a linha do BR ficaria órfã do STREAM.
       order_number: (it.orderNumber || '').trim() || null,
+      us_expense_id: it.srcId || null,
     })
     // O ITEM cobra exatamente o que a linha custou: preço unitário = total ÷ qtd, e o
     // último item absorve o centavo do arredondamento para o total fechar no ponto.
@@ -211,9 +221,49 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
   }
   partRows.forEach((p) => { delete p._lineBrl })
 
+  // ── RECONCILIAÇÃO: ATUALIZA A LINHA QUE JÁ EXISTE, NÃO APAGA E RECRIA ─────
+  // A linha do espelho é a MESMA compra da linha de origem. Recriá-la zerava
+  // tudo que o outro lado escreveu — e o id mudava junto, deixando data_fixes e
+  // part_stream_items apontando para linha que não existe mais.
+  // GUARDA: enquanto a coluna do elo não existir (a migration roda à mão), cai
+  // no comportamento antigo — apaga e recria. É o que já acontecia hoje; sem a
+  // guarda, o reconciliador não acharia elo nenhum e DUPLICARIA cada linha.
+  const eloSel = await supabaseBR.from('invoice_expenses').select('id, us_expense_id').eq('invoice_id', brInvoiceId)
+  const semElo = eloSel.error?.code === '42703'
+  if (semElo) {
+    console.warn('[espelho] us_expense_id ainda não existe — rode MIGRATION_mirror_line_link.sql. Enquanto isso o fato digitado do lado espelho continua sendo perdido a cada save.')
+    await supabaseBR.from('invoice_expenses').delete().eq('invoice_id', brInvoiceId)
+    for (const r of expRows) delete r.us_expense_id
+  } else if (eloSel.error) {
+    throw new Error('Falha ao ler as despesas do BR: ' + eloSel.error.message)
+  }
+  const antes = semElo ? [] : (eloSel.data || [])
+  const porOrigem = new Map<string, string>()
+  for (const p of antes) if ((p as any).us_expense_id) porOrigem.set(String((p as any).us_expense_id), String((p as any).id))
+  const mantidas = new Set<string>()
+
   if (expRows.length) {
-    const e1 = (await supabaseBR.from('invoice_expenses').insert(expRows)).error
-    if (e1) throw new Error('Falha ao gravar as despesas no BR: ' + e1.message)
+    for (const row of expRows) {
+      const vindaDe = row.us_expense_id ? porOrigem.get(String(row.us_expense_id)) : null
+      if (vindaDe) {
+        mantidas.add(vindaDe)
+        // UPDATE: só os campos que o espelho POSSUI. Rastreio, recibo,
+        // part_number, picked_up, cancel_status, nature e o escudo
+        // receipt_proves_payment ficam onde estão.
+        const eU = (await supabaseBR.from('invoice_expenses').update(row).eq('id', vindaDe)).error
+        if (eU) throw new Error('Falha ao atualizar a despesa no BR: ' + eU.message)
+      } else {
+        const r1 = await supabaseBR.from('invoice_expenses').insert([row]).select('id').single()
+        if (r1.error || !r1.data) throw new Error('Falha ao gravar a despesa no BR: ' + (r1.error?.message || 'sem linha'))
+        mantidas.add(String(r1.data.id))
+      }
+    }
+    // Some só o que a origem não manda mais — nunca o que alguém escreveu aqui.
+    const sobrando = antes.map((p: any) => String(p.id)).filter((id: string) => !mantidas.has(id))
+    if (sobrando.length) {
+      const eD = (await supabaseBR.from('invoice_expenses').delete().in('id', sobrando)).error
+      if (eD) throw new Error('Falha ao remover despesa antiga no BR: ' + eD.message)
+    }
     const e2 = (await supabaseBR.from('invoice_parts').insert(partRows)).error
     if (e2) throw new Error('Falha ao gravar os itens no BR: ' + e2.message)
   }

@@ -10,6 +10,7 @@ import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
+import { normNature } from '@/lib/itemNature'
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 
@@ -160,7 +161,10 @@ export default function GoodsPage() {
     carrier: string
     tax: string
     shipping: string
-    items: { description: string; amount: string; quantity: string }[]
+    // nature = "O QUE É ESTA LINHA?" lida pelo scan (PART/SERVICE/DIGITAL/CHARGE/
+    // MONEY, ou null quando o modelo não soube dizer). Viaja do scan até o INSERT
+    // para a linha NASCER classificada — ver lib/itemNature.ts.
+    items: { description: string; amount: string; quantity: string; nature: string | null }[]
     receiptUrl: string
   } | null>(null)
 
@@ -259,9 +263,17 @@ export default function GoodsPage() {
     const { data: invs } = await supabase.from('invoices').select('id, ride_id')
       .in('ride_id', rides.map((r: any) => r.id))
     const invIds = (invs || []).map((i: any) => i.id)
-    const { data: exps } = invIds.length
-      ? await supabase.from('invoice_expenses').select('id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, stock_source_type, order_number, ' + DELIVER_COLUMNS).in('invoice_id', invIds)
-      : { data: [] as any[] }
+    // Mesma janela da migration à mão (ver /rides/[id]): sem o desvio, os 8 carros
+    // da frota apareciam com $0 — e ainda eram ORDENADOS por esse zero.
+    const GCOLS = 'id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, stock_source_type, order_number, ' + DELIVER_COLUMNS
+    let expsRes: any = invIds.length
+      ? await supabase.from('invoice_expenses').select(GCOLS).in('invoice_id', invIds)
+      : { data: [] as any[], error: null }
+    if (expsRes.error?.code === '42703' && /\bnature\b/.test(String(expsRes.error.message || ''))) {
+      expsRes = await supabase.from('invoice_expenses').select(GCOLS.replace(/,\s*nature\b/, '')).in('invoice_id', invIds)
+    }
+    if (expsRes.error) { console.error('[frota] despesas não carregaram:', expsRes.error); return }
+    const exps = expsRes.data as any[]
     const { data: notesData } = invIds.length
       ? await supabase.from('invoice_notes').select('id, invoice_id, note').in('invoice_id', invIds).order('created_at', { ascending: true })
       : { data: [] as any[] }
@@ -398,6 +410,8 @@ export default function GoodsPage() {
         description: String(i.description || ''),
         amount: (((parseFloat(i.amount) || 0) * fx)).toFixed(2),
         quantity: String(i.quantity || '1'),
+        // A rota já normalizou (normNature): vem 'PART'|'SERVICE'|… ou null.
+        nature: normNature(i.nature),
       }))
       // Sales tax + shipping/extra are summed across the items into the order-level
       // TAX and SHIPPING (each becomes one extra cost line on the good).
@@ -465,6 +479,10 @@ export default function GoodsPage() {
         // Amazon & cia nunca são picked_up — loja online não tem balcão. O
         // rastreio impresso vira badge SHIPPED sozinho, sem gravar status.
         picked_up: pickedUpFromScan({ supplier: scannedPurchase.supplier, shipTo: scannedPurchase.shipTo }),
+        // O QUE É ESTA LINHA (04/set/2026): carimba o que o scan leu. NULL fica
+        // NULL — "ninguém disse ainda" é resposta legítima e continua aparecendo
+        // no STREAM marcada A CLASSIFICAR (lib/itemNature.ts).
+        nature: item.nature ?? null,
         tracking_number: scannedPurchase.trackingNumber || null,
         carrier: scannedPurchase.carrier || null,
         receipt_url: JSON.stringify([scannedPurchase.receiptUrl]),
@@ -489,6 +507,12 @@ export default function GoodsPage() {
           expense_date: purchaseDate,
           supplier: scannedPurchase.supplier || null,
           source,
+          // ENCARGO na origem (04/set/2026): estas duas linhas são o imposto e o
+          // frete do MESMO pedido, materializados aqui pelo próprio app — não são
+          // uma segunda compra e nunca chegam de caminhão. É a única linha do
+          // sistema cuja natureza é conhecida por CONSTRUÇÃO, e é exatamente por
+          // isso que o backfill da migration só pôde carimbar estas descrições.
+          nature: 'CHARGE',
           // good_expenses.order_number existe desde a migration de 29/ago:
           // tax/frete pertencem ao MESMO pedido da compra.
           order_number: scannedPurchase.orderNumber || null,
@@ -695,7 +719,7 @@ export default function GoodsPage() {
                   <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: scannedPurchase.items.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-300 font-bold text-lg px-2">✕</button>
                 </div>
               ))}
-              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1' }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
+              <button onClick={() => setScannedPurchase({ ...scannedPurchase, items: [...scannedPurchase.items, { description: '', amount: '', quantity: '1', nature: null }] })} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD ITEM</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">

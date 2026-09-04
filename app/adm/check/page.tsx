@@ -13,7 +13,7 @@
 //     contradição (carro nosso faturando cliente, carro "do cliente" que a
 //     LLC comprou, EXPORT com dono americano…) — pega inclusive mudanças
 //     feitas FORA desta tela, que histórico nenhum pegaria.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import Header from '@/components/Header'
 import DcBadge from '@/components/DcBadge'
 import DatePicker from '@/components/DatePicker'
@@ -24,6 +24,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
 import { DC_CHANGELOG } from '@/lib/dcVersion'
+import { NATURES, NATURE_LABEL, NATURE_HINT, type Nature } from '@/lib/itemNature'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 // Relógio do app = Orlando (regra de 20/08): depois das 20h o UTC já é amanhã.
@@ -87,8 +88,30 @@ const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 // WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
 type WaSignal = { state: 'loading' | 'ok' | 'missing' | 'error'; fails: { id: string; at: string; destination: string | null; group_name: string | null; kind: string | null; body_head: string | null; error: string | null; http_status: number | null }[] }
+// O QUE É ESTA LINHA? (04/set/2026) — o sinal de /api/item-nature: as linhas sem
+// natureza, AGRUPADAS POR FORNECEDOR canonizado. O card tem corpo próprio (o
+// grupo é a unidade de trabalho, não a linha) — ver <NatureWorkbench> lá embaixo.
+type NatureRow = { table: string; id: string; label: string; ctx: string; supplier: string; amount: number; date: string | null; hint: Nature | null; href: string }
+type NatureGroup = { key: string; name: string; supplier_id: string | null; default_nature: Nature | null; count: number; amount: number; rows: NatureRow[] }
+type NatureTotals = { rows: number; money: number; done_rows: number; done_money: number; groups: number; groups_80: number; groups_90: number }
+type NatureSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; totals: NatureTotals | null; groups: NatureGroup[] }
 
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal): Check[] {
+// As cores das 5 naturezas. lib/itemNature.ts guarda o TOM (sky/amber/violet/
+// zinc/rose); a classe inteira é escrita aqui à mão de propósito: o Tailwind
+// varre o código por strings LITERAIS, então `bg-${tone}-900` nunca chega ao CSS
+// e o botão sairia sem cor nenhuma — bug silencioso, dos piores.
+const NATURE_BTN: Record<Nature, string> = {
+  PART: 'bg-sky-900/60 border-sky-700 text-sky-100 hover:bg-sky-800',
+  SERVICE: 'bg-amber-900/60 border-amber-700 text-amber-100 hover:bg-amber-800',
+  DIGITAL: 'bg-violet-900/60 border-violet-700 text-violet-100 hover:bg-violet-800',
+  CHARGE: 'bg-zinc-800 border-zinc-600 text-zinc-100 hover:bg-zinc-700',
+  MONEY: 'bg-rose-900/60 border-rose-700 text-rose-100 hover:bg-rose-800',
+}
+const NATURE_TAG: Record<Nature, string> = {
+  PART: 'text-sky-300', SERVICE: 'text-amber-300', DIGITAL: 'text-violet-300', CHARGE: 'text-zinc-300', MONEY: 'text-rose-300',
+}
+
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -848,6 +871,34 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // INVENTORY · O QUE É ESTA LINHA? (04/set/2026) — "ensine as regras pro robô".
+  // A pergunta que faltava ANTES de "chegou?": PEÇA, SERVIÇO, DIGITAL, ENCARGO ou
+  // DINHEIRO. Sem ela, todo custo pago vira BOUGHT por construção e o STREAM
+  // mostra uma wire de Demon 170 na mesma fila de um jogo de velas.
+  // O ITEM aqui é o GRUPO DE FORNECEDOR, não a linha: é o agrupamento que torna
+  // o trabalho finito (medido: um punhado de grupos cobre a maior parte das
+  // linhas e quase todo o dinheiro — a rota recalcula e o card mostra). O corpo
+  // do card é próprio (<NatureWorkbench>): 5 botões por grupo, exceção por linha.
+  {
+    const items: Item[] = []
+    if (nature.needsMigration) items.push({ href: '/stream', code: 'MIGRATION', label: 'Rodar MIGRATION_item_nature.sql no SQL Editor', extra: 'a coluna nature (6 tabelas de item) e suppliers.default_nature ainda não existem' })
+    else if (nature.state === 'error') items.push({ href: '/stream', code: 'SINAL', label: 'sinal de /api/item-nature indisponível — verificação NÃO rodou', extra: 'recarregue; enquanto isso o card não sabe o que falta' })
+    else for (const g of nature.groups) items.push({
+      href: '/stream', code: String(g.count), label: g.name, amount: g.amount,
+      extra: g.default_nature ? `palpite gravado: ${NATURE_LABEL[g.default_nature]}` : g.supplier_id ? 'sem palpite — decida' : 'fornecedor só em texto (sem cadastro)',
+    })
+    checks.push({
+      group: 'INVENTORY', key: 'item-nature', title: 'O que é esta linha? (fornecedor com linha sem natureza)',
+      // O dinheiro vai no texto, NÃO em `impact`: impact alimenta o ranking
+      // "maior valor parado" do COMECE AQUI, e US$ 2 milhões de linhas ainda não
+      // classificadas afogariam pra sempre o balde e o caixa — que são dinheiro
+      // REALMENTE parado. Aqui o valor é contexto, não urgência de caixa.
+      blocks: `wire, imposto e tune ficam no BOUGHT como se fossem peça a caminho${nature.totals ? ` · ${usd(nature.totals.money)} sem resposta` : ''}`,
+      why: 'Ordem do Márcio (04/set): "matemos o problema na raiz, não fazer remendo". PEÇA é a única que tem STREAM; NULL quer dizer "ninguém disse ainda" e CONTINUA APARECENDO, marcado A CLASSIFICAR — poluir custa um clique, sumir custa um carro parado. O fornecedor dá o PALPITE (suppliers.default_nature, que só pré-seleciona), a LINHA dá a resposta: Kramer tem 5 carros e 1 imposto, Texas Speed vende peça e cobra frete, HHP vende tune e vende vela. Por isso: classifique a EXCEÇÃO primeiro, o botão do grupo leva o resto.',
+      items,
+    })
+  }
+
   // BANK · AUTO-BOOK (BL 0.8.0): o motor registrou sozinho? Rodada parada ou
   // errada, erros de 7 dias, ÓRFÃO (lançamento do motor sem linha casada →
   // PURGAR) e DUPLA (o humano lançou depois do banco → TROCAR).
@@ -931,6 +982,164 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   return checks
 }
 
+// ── A BANCADA DA NATUREZA — "ensine as regras pro robô" (Márcio, 04/set/2026) ─
+// O corpo próprio deste card existe por um motivo só: aqui a unidade de trabalho
+// é o GRUPO DE FORNECEDOR, não a linha. Linha a linha são mais de mil decisões e
+// ninguém começa; por fornecedor são algumas dezenas e o fim aparece na tela.
+//
+// As três leis que este componente não pode quebrar:
+//   1. O botão do grupo só pega as linhas QUE SOBRARAM — a exceção sai antes,
+//      classificada uma a uma ("ver as N linhas"). É o caso Kramer: 5 linhas de
+//      carro (DINHEIRO) e uma de "Taxes & Fees" (ENCARGO) no mesmo fornecedor.
+//   2. O palpite (suppliers.default_nature) PRÉ-SELECIONA e nada mais. Ele nunca
+//      escreve em linha nenhuma sozinho — o anel branco no botão é sugestão.
+//   3. Toda escrita vai pela rota /api/item-nature: é lá que mora a trava
+//      .is('nature', null) (regra pode PÔR, nunca TIRAR) e a trilha data_fixes.
+function NatureWorkbench({ sig, setSig }: { sig: NatureSignal; setSig: Dispatch<SetStateAction<NatureSignal>> }) {
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const [remember, setRemember] = useState<Record<string, boolean>>({})
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const [q, setQ] = useState('')
+
+  async function write(g: NatureGroup, rows: NatureRow[], nat: Nature, alsoRemember: boolean) {
+    if (!rows.length || busy) return
+    setBusy(g.key); setMsg('')
+    try {
+      const r = await fetch(`${BASE_PATH}/api/item-nature`, {
+        method: 'POST', headers: await sessionHeaders(),
+        body: JSON.stringify({ action: 'apply', nature: nat, label: g.name.slice(0, 40), rows: rows.map(x => ({ table: x.table, id: x.id })) }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+      // O palpite é uma SEGUNDA escrita, e ela pode falhar sozinha (a coluna pode
+      // não existir). Falhar aqui não desfaz a classificação — e o aviso diz isso.
+      if (alsoRemember && g.supplier_id) {
+        const rr = await fetch(`${BASE_PATH}/api/item-nature`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'remember', supplier_id: g.supplier_id, nature: nat }) })
+        if (!rr.ok) setMsg('classificado — mas o palpite do fornecedor NÃO gravou (falta a coluna default_nature?)')
+      }
+      const gone = new Set(rows.map(x => x.table + ':' + x.id))
+      const money = rows.reduce((s, x) => s + x.amount, 0)
+      setSig(prev => {
+        const groups = prev.groups
+          .map(x => x.key !== g.key ? x : { ...x, default_nature: alsoRemember && x.supplier_id ? nat : x.default_nature, rows: x.rows.filter(y => !gone.has(y.table + ':' + y.id)) })
+          .map(x => ({ ...x, count: x.rows.length, amount: x.rows.reduce((s, y) => s + y.amount, 0) }))
+          .filter(x => x.count > 0)
+        const t = prev.totals
+        return { ...prev, groups, totals: t ? { ...t, rows: t.rows - rows.length, money: t.money - money, done_rows: t.done_rows + rows.length, done_money: t.done_money + money, groups: groups.length } : t }
+      })
+      setMsg(prev => prev || `${j.applied ?? rows.length} linha(s) marcadas ${NATURE_LABEL[nat]}${j.skipped ? ` · ${j.skipped} já tinham resposta e NÃO foram sobrescritas` : ''}`)
+    } finally { setBusy('') }
+  }
+
+  if (sig.needsMigration) return (
+    <div className="bg-amber-950/60 border border-amber-800 rounded-2xl p-5 text-amber-200">
+      <p className="font-bold mb-1">MIGRATION PENDENTE</p>
+      <p className="text-sm">Rode <b>MIGRATION_item_nature.sql</b> (raiz do projeto) no SQL Editor: ele cria <code className="bg-black/40 px-1.5 rounded">nature</code> nas 6 tabelas de item e <code className="bg-black/40 px-1.5 rounded">default_nature</code> em suppliers. Até lá ninguém consegue responder &quot;o que é esta linha?&quot; — e o STREAM segue mostrando wire de carro na mesma fila de um jogo de velas.</p>
+    </div>
+  )
+  if (sig.state === 'loading') return <p className="text-gray-500 text-sm">Lendo as 6 tabelas de item…</p>
+  if (sig.state === 'error' || !sig.totals) return <p className="text-red-400 text-sm">Sinal de /api/item-nature indisponível — a verificação NÃO rodou. Recarregue.</p>
+
+  const t = sig.totals
+  const needle = q.trim().toLowerCase()
+  const groups = needle ? sig.groups.filter(g => g.name.toLowerCase().includes(needle)) : sig.groups
+
+  return (
+    <div>
+      {/* O PLACAR HONESTO: o que falta, quanto vale, o que já foi feito — e
+          quantos grupos bastam pra maior parte (é o que prova que isto acaba). */}
+      <div className="grid sm:grid-cols-3 gap-3 mb-4">
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3">
+          <p className="text-2xl font-bold text-amber-300 tabular-nums">{t.rows.toLocaleString('en-US')}</p>
+          <p className="text-xs text-gray-500">linhas sem natureza · {usd(t.money)} esperando resposta</p>
+        </div>
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3">
+          <p className={`text-2xl font-bold tabular-nums ${t.done_rows ? 'text-emerald-400' : 'text-gray-500'}`}>{t.done_rows.toLocaleString('en-US')}</p>
+          <p className="text-xs text-gray-500">já classificadas · {usd(t.done_money)}</p>
+        </div>
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3">
+          <p className="text-2xl font-bold text-sky-300 tabular-nums">{t.groups.toLocaleString('en-US')}</p>
+          <p className="text-xs text-gray-500">grupos de fornecedor · <b>{t.groups_80}</b> cobrem 80% das linhas · <b>{t.groups_90}</b> cobrem 90% do dinheiro</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="achar o fornecedor: HHP, Kramer, Texas Speed…" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-80" />
+        <span className="text-xs text-gray-500">{groups.length} de {sig.groups.length} grupos · maior primeiro</span>
+        {msg && <span className="text-xs text-emerald-300">{msg}</span>}
+      </div>
+
+      {groups.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
+        <div className="space-y-3 max-h-[40rem] overflow-y-auto pr-1">
+          {groups.map(g => {
+            const open = openKey === g.key
+            const rem = !!remember[g.key]
+            return (
+              <div key={g.key} className="border border-gray-800 rounded-2xl overflow-hidden">
+                <div className="px-4 py-3 bg-gray-900/70 flex items-baseline gap-3 flex-wrap">
+                  <span className="text-lg font-bold tabular-nums text-amber-300 w-10 shrink-0">{g.count}</span>
+                  <span className="font-bold flex-1 min-w-0 truncate" title={g.name}>{g.name}</span>
+                  {g.default_nature && <span className={`text-xs font-bold ${NATURE_TAG[g.default_nature]}`}>palpite do fornecedor: {NATURE_LABEL[g.default_nature]}</span>}
+                  {!g.supplier_id && <span className="text-xs text-gray-600">só em texto — sem cadastro</span>}
+                  <span className="tabular-nums font-bold text-sm shrink-0">{usd(g.amount)}</span>
+                  <button onClick={() => setOpenKey(open ? null : g.key)} className="text-xs text-gray-400 hover:text-white underline shrink-0">{open ? 'esconder as linhas ▴' : `ver as ${g.count} linhas ▾`}</button>
+                </div>
+                <div className="px-4 py-3">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {NATURES.map(n => (
+                      <button key={n} disabled={!!busy} title={NATURE_HINT[n]}
+                        onClick={() => {
+                          if (g.rows.length > 1 && !confirm(`Marcar as ${g.rows.length} linhas de "${g.name}" (${usd(g.amount)}) como ${NATURE_LABEL[n]}?\n\n${NATURE_HINT[n]}\n\nSó linha ainda em branco é escrita — quem já tem resposta não é sobrescrito. Se houver exceção neste fornecedor (imposto no meio dos carros, frete no meio das peças), cancele e classifique a exceção primeiro em "ver as ${g.count} linhas". Tudo vai pra trilha.`)) return
+                          write(g, g.rows, n, rem)
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border disabled:opacity-40 ${NATURE_BTN[n]} ${g.default_nature === n ? 'ring-2 ring-white/70' : ''}`}>{NATURE_LABEL[n]}</button>
+                    ))}
+                    {busy === g.key && <span className="text-xs text-gray-400">gravando…</span>}
+                  </div>
+                  <label className={`flex items-center gap-2 mt-2 text-xs ${g.supplier_id ? 'text-gray-400' : 'text-gray-600'}`}>
+                    <input type="checkbox" checked={rem} disabled={!g.supplier_id} onChange={e => setRemember({ ...remember, [g.key]: e.target.checked })} />
+                    {g.supplier_id
+                      ? 'lembrar para este fornecedor — grava só o PALPITE (pré-seleciona na próxima vez; nunca classifica sozinho)'
+                      : 'fornecedor só existe como texto: não há cadastro onde lembrar o palpite (crie em SUPPLIERS)'}
+                  </label>
+                  {open && (
+                    <div className="mt-3 border-t border-gray-800">
+                      <p className="text-xs text-gray-500 py-2">A EXCEÇÃO VEM PRIMEIRO: classifique aqui a linha que foge do grupo — depois o botão de cima leva o resto. O <span className="text-gray-400">palpite</span> ao lado da linha é só uma etiqueta por palavra-chave; ele nunca aplica nada.</p>
+                      <div className="max-h-96 overflow-y-auto divide-y divide-gray-800">
+                        {g.rows.map(r => (
+                          <div key={r.table + ':' + r.id} className="py-2 flex items-baseline gap-2 flex-wrap">
+                            <span className="text-[10px] text-gray-600 w-28 shrink-0">{r.table}</span>
+                            {r.ctx && <span className="text-[10px] font-bold text-gray-400 shrink-0">{r.ctx}</span>}
+                            {/* O título carrega a GRAFIA CRUA do fornecedor: o grupo
+                                junta "HHP", "High Horse Performance" e "HHP Racing",
+                                e às vezes é ela que explica a linha estranha. */}
+                            <a href={`${BASE_PATH}${r.href}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[12rem] truncate text-sm hover:underline" title={`${r.supplier ? r.supplier + ' · ' : ''}${r.label}`}>{r.label}</a>
+                            {r.date && <span className="text-xs text-gray-600 shrink-0">{String(r.date).slice(0, 10)}</span>}
+                            <span className="tabular-nums text-sm font-bold shrink-0">{usd(r.amount)}</span>
+                            {r.hint && <span className={`text-[10px] font-bold shrink-0 ${NATURE_TAG[r.hint]}`}>palpite {NATURE_LABEL[r.hint]}</span>}
+                            <span className="flex gap-1 shrink-0">
+                              {NATURES.map(n => (
+                                <button key={n} disabled={!!busy} title={`só esta linha → ${NATURE_LABEL[n]}: ${NATURE_HINT[n]}`}
+                                  onClick={() => write(g, [r], n, false)}
+                                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border disabled:opacity-40 ${NATURE_BTN[n]}`}>{NATURE_LABEL[n]}</button>
+                              ))}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function DataCheckPage() {
   const [d, setD] = useState<FinData | null>(null)
   const [error, setError] = useState('')
@@ -956,6 +1165,7 @@ export default function DataCheckPage() {
   const [gval, setGval] = useState('')                                     // valor escolhido no item guiado
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
   const [wa, setWa] = useState<WaSignal>({ state: 'loading', fails: [] })  // falhas de envio do WhatsApp (wa_send_log)
+  const [nature, setNature] = useState<NatureSignal>({ state: 'loading', needsMigration: false, totals: null, groups: [] })   // "o que é esta linha?" agrupado por fornecedor
 
   useEffect(() => {
     setD(null); setError('')
@@ -970,6 +1180,20 @@ export default function DataCheckPage() {
         if (we) setWa({ state: /does not exist|schema cache/i.test(we.message) ? 'missing' : 'error', fails: [] })
         else setWa({ state: 'ok', fails: (wf || []) as WaSignal['fails'] })
       } catch { setWa({ state: 'error', fails: [] }) }
+    })()
+    // NATUREZA DA LINHA (04/set): o que ainda ninguém disse, agrupado por
+    // fornecedor. Vem em bloco PRÓPRIO, e não pendurado na corrente do banco: um
+    // tropeço no Plaid lá em cima deixaria este card "carregando" para sempre —
+    // e verificação que não roda tem de DIZER que não rodou, não ficar muda.
+    // A migration pode não ter rodado ainda: a rota devolve needs_migration em
+    // vez de erro, e o card vira um aviso com o nome do arquivo .sql.
+    ;(async () => {
+      try {
+        const r = await fetch(`${BASE_PATH}/api/item-nature`, { headers: await sessionHeaders() })
+        const j = await r.json().catch(() => ({}))
+        if (r.ok && j.ok) setNature({ state: 'ok', needsMigration: !!j.needs_migration, totals: j.totals || null, groups: j.groups || [] })
+        else setNature({ state: 'error', needsMigration: !!j.needs_migration, totals: null, groups: [] })
+      } catch { setNature({ state: 'error', needsMigration: false, totals: null, groups: [] }) }
     })()
     // Pares casados com a Regions — melhor esforço (sem sessão/servidor o card só perde o "certo").
     ;(async () => {
@@ -1016,7 +1240,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty, linker, wa) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa])
+  const checks = useMemo(() => (d ? buildChecks(d, bank, tax, duty, linker, wa, nature) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature])
   const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
   const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
 
@@ -1465,7 +1689,10 @@ export default function DataCheckPage() {
                 {/* UX it.2: uma linha, não um parágrafo — o porquê completo só pra quem pedir. */}
                 <div className="mb-3 flex items-center gap-4 flex-wrap">
                   <button onClick={() => setWhyOpen(whyOpen === c.key ? null : c.key)} className="text-xs text-gray-500 hover:text-gray-300 underline">{whyOpen === c.key ? 'entender esta checagem ▴' : 'entender esta checagem ▾'}</button>
-                  {filtered(c).length > 1 && (
+                  {/* item-nature não tem MODO GUIADO: o guiado é "um de cada vez",
+                      e ali a unidade é o GRUPO — passar de fornecedor em fornecedor
+                      com 5 botões já é o modo guiado dele. */}
+                  {c.key !== 'item-nature' && filtered(c).length > 1 && (
                     <button onClick={() => { const l = filtered(c); setGuided({ key: c.key, idx: 0, start: l.length }); setGval(gPrefill(l[0])) }} className="bg-indigo-800 hover:bg-indigo-700 px-3 py-1.5 rounded-xl font-bold text-xs">▶ MODO GUIADO — um de cada vez</button>
                   )}
                 </div>
@@ -1500,7 +1727,11 @@ export default function DataCheckPage() {
                     <span className="text-xs text-gray-500">{filtered(c).length} de {c.items.length} · {c.items.filter(i => i.signal === 'pre-open').length} antes da conta · {c.items.filter(i => i.signal === 'absent').length} fora · {c.items.filter(i => i.signal === 'present').length} encontradas · {c.items.filter(i => i.signal === 'conflict').length} em conflito</span>
                   </div>
                 )}
-                {c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
+                {/* O card "o que é esta linha?" tem corpo próprio: a unidade de
+                    trabalho é o GRUPO DE FORNECEDOR (com exceção por linha), e a
+                    lista padrão de itens não sabe fazer isso. */}
+                {c.key === 'item-nature' ? <NatureWorkbench sig={nature} setSig={setNature} />
+                : c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
                   <div className="max-h-[32rem] overflow-y-auto divide-y divide-gray-800">
                     {filtered(c).map((it, i) => {
                       const fixKey = it.fix ? c.key + '|' + it.fix.rowId : ''

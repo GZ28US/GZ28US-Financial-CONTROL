@@ -88,8 +88,14 @@ type Expense = DeliverChipRow & {
 //
 // O Pick<Expense, ...> é de propósito: se amanhã nascer um sexto campo de
 // entrega, ESTE objeto para de compilar e alguém tem de responder por ele.
-const FRESH_DELIVERY: Pick<Expense, 'picked_up' | 'cancel_status' | 'tracking_number' | 'carrier' | 'eta' | 'delivered_at' | 'last_event'> = {
+const FRESH_DELIVERY: Pick<Expense, 'picked_up' | 'cancel_status' | 'tracking_number' | 'carrier' | 'eta' | 'delivered_at' | 'last_event' | 'nature'> = {
   picked_up: false, cancel_status: null, tracking_number: '', carrier: '', eta: null, delivered_at: null, last_event: null,
+  // nature NÃO é fato de entrega — é o degrau ZERO ("isso é coisa que chega?",
+  // lib/itemNature.ts). Mora aqui pelo mesmo motivo dos outros sete: linha que
+  // acabou de nascer tem de RESPONDER cada pergunta, e a resposta honesta dela é
+  // null — "ninguém disse ainda". null VIAJA, então nada some da tela por isto:
+  // regra automática pode PÔR badge, nunca TIRAR.
+  nature: null,
 }
 
 type StockItem = {
@@ -574,6 +580,11 @@ export default function EditInvoicePage() {
         delivered_at: e.delivered_at || null,
         eta: e.eta || null,
         last_event: e.last_event || null,
+        // A NATUREZA vem do banco no MESMO select da linha e fica no objeto do
+        // formulário: é ela que o chip lê no degrau zero, e é ela que o save
+        // devolve intacta. Esquecê-la aqui faria toda linha desta tela voltar a
+        // viajar (undefined viaja) e o save regravaria o esquecimento.
+        nature: e.nature || null,
       })))
       if (!keepUi) setExpandedGroups(new Set())
     }
@@ -1082,6 +1093,11 @@ export default function EditInvoicePage() {
       // marca chegada é o robô do rastreio, nunca o scan. Dizer null aqui é uma
       // AFIRMAÇÃO ("ainda não chegou"), e é o que mantém o badge honesto.
       eta: null, delivered_at: null, last_event: null,
+      // NATUREZA: o scan NÃO classifica, e o fornecedor também não decide — o mesmo
+      // vendedor cobra peça, frete e imposto na MESMA nota (Texas Speed, Kramer).
+      // Nasce null, aparece marcada A CLASSIFICAR e continua VIAJANDO até alguém
+      // dizer o que é. Dizer null aqui é AFIRMAÇÃO, não esquecimento.
+      nature: null,
     }))
     // Override: an official purchase replaces the matching quote estimate. Match by
     // part number (or item name when a line has no PN); drop those lines before adding
@@ -2168,6 +2184,13 @@ export default function EditInvoicePage() {
         cancel_status: normCancelStatus(editingExpense.cancel_status),
         tracking_number: (editingExpense.tracking_number || '').trim() || null,
         carrier: (editingExpense.carrier || '').trim() || null,
+        // A NATUREZA VOLTA COMO VEIO (ida e volta). Nunca um null fixo: editar o
+        // preço de uma linha já classificada apagaria a classificação — é a mesma
+        // classe de erro do delivered_at (30/ago/2026, 151 linhas erradas no US).
+        // Só entra no payload QUANDO EXISTE: a coluna nasce na
+        // MIGRATION_item_nature.sql, e um null explícito antes dela derrubaria o
+        // save inteiro (PostgREST responde 400 para coluna inexistente).
+        ...(editingExpense.nature ? { nature: editingExpense.nature } : {}),
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
         // Sem resposta = NULL nos dois (caso Drácula) — fabricar aqui gravava
         // GZ28US como se fosse fato.
@@ -2453,6 +2476,13 @@ export default function EditInvoicePage() {
         cancel_status: normCancelStatus(ex.cancel_status),
         tracking_number: (ex.tracking_number || '').trim() || null,
         carrier: (ex.carrier || '').trim() || null,
+        // A NATUREZA VOLTA COMO VEIO (ida e volta). Nunca um null fixo: editar o
+        // preço de uma linha já classificada apagaria a classificação — é a mesma
+        // classe de erro do delivered_at (30/ago/2026, 151 linhas erradas no US).
+        // Só entra no payload QUANDO EXISTE: a coluna nasce na
+        // MIGRATION_item_nature.sql, e um null explícito antes dela derrubaria o
+        // save inteiro (PostgREST responde 400 para coluna inexistente).
+        ...(ex.nature ? { nature: ex.nature } : {}),
         position: expenses.indexOf(ex),
       }))).select('id')
       if (e) { alert(e.message); return }

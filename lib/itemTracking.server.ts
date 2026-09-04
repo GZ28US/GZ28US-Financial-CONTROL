@@ -194,6 +194,16 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
   //   expenses: + EXPENSE_ITEM_GATE  → folha nunca sai do banco (lei de
   //                                 03/set/2026; aqui o tracking_number já
   //                                 garante, mas o gate é o mesmo dos 3 lugares)
+  //   nature NULL ou PART         → SÓ PEÇA VIAJA (04/set/2026). É o mesmo
+  //                                 predicado de `travels()` em lib/itemNature.ts,
+  //                                 escrito em SQL: BRANCO VIAJA (ninguém disse
+  //                                 ainda ⇒ pergunta-se), PEÇA viaja, e serviço /
+  //                                 digital / encargo / dinheiro não. Deixa de
+  //                                 gastar consulta de transportadora com wire,
+  //                                 imposto e licença — e um número de rastreio
+  //                                 colado numa linha de SERVIÇO (a HP Tuners
+  //                                 manda tracking até de 'Universal Credits')
+  //                                 não move mais badge nenhum.
   const rows: { table: ItemTable; row: ItemRow }[] = []
   for (const table of ITEM_TABLES) {
     let q = db.from(table).select(COLS)
@@ -202,6 +212,7 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
       .eq('picked_up', false)
       .not('payment_date', 'is', null)
       .is('cancel_status', null)
+      .or('nature.is.null,nature.eq.PART')
     if (table === 'expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
     const { data, error } = await q
     if (error) return { ...out, error: `${table}: ${error.message}` }

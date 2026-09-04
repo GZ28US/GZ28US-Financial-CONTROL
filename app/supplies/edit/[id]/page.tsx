@@ -92,6 +92,15 @@ export default function EditInputPage() {
   const [deliveredAt, setDeliveredAt] = useState<string | null>(null)
   const [eta, setEta] = useState<string | null>(null)
   const [lastEvent, setLastEvent] = useState<string | null>(null)
+  // NATUREZA DA LINHA (04/set/2026 — lib/itemNature.ts): PEÇA / SERVIÇO /
+  // DIGITAL / ENCARGO / DINHEIRO. É o degrau ZERO da cascata ("isso é coisa
+  // que chega?"), e por isso o chip desta tela precisa dela: sem ela no objeto
+  // do formulário a linha volta a VIAJAR sempre e o degrau nunca dispara aqui.
+  // Não há campo na tela: ela faz ida e volta — vem do banco, alimenta o chip e
+  // volta pro banco INTACTA. Um `nature: null` fixo apagaria a classificação de
+  // quem só veio corrigir um preço: a mesma classe de erro do delivered_at
+  // esquecido (30/ago/2026, 151 linhas erradas no US).
+  const [nature, setNature] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const [source, setSource] = useState('')
   // Universal payment block (inputs keep their own `source` field — no write-through).
@@ -135,6 +144,9 @@ export default function EditInputPage() {
     setDeliveredAt(data.delivered_at || null)
     setEta(data.eta || null)
     setLastEvent(data.last_event || null)
+    // `select('*')` já traz a coluna. Enquanto a MIGRATION_item_nature.sql não
+    // rodar ela vem undefined e vira null — que é a verdade: "ninguém disse ainda".
+    setNature(data.nature ?? null)
     setNotes(data.notes || '')
     setSource(data.source || DEFAULT_SOURCE)
     // Initialize the payment block from the row so an untouched save round-trips.
@@ -209,6 +221,12 @@ export default function EditInputPage() {
       cancel_status: donated ? null : cancelStatus,
       tracking_number: donated ? null : (tracking.trim() || null),
       carrier: donated ? null : (carrier.trim() || null),
+      // A NATUREZA VOLTA COMO VEIO. Nunca um null fixo: salvar o preço de uma
+      // linha já classificada apagaria a classificação. E só entra no payload
+      // QUANDO EXISTE — a coluna nasce na MIGRATION_item_nature.sql, e mandar um
+      // null explícito antes disso derruba o save inteiro (PostgREST responde 400
+      // para coluna inexistente, não lista vazia).
+      ...(nature ? { nature } : {}),
       notes: notes.trim() || null,
       source,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
@@ -274,7 +292,7 @@ export default function EditInputPage() {
             onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
           {/* Prévia do badge com a MESMA função que a lista usa — passando o que
               a linha teria depois de salva (a data prova o "pagou"). */}
-          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, cancel_status: cancelStatus, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent }} /></div>
+          <div className="mt-2"><DeliverChip row={{ picked_up: pickedUp, cancel_status: cancelStatus, tracking_number: tracking, carrier, payment_date: isValidDate(purchaseDate) ? purchaseDate : null, supplier, delivered_at: deliveredAt, eta, last_event: lastEvent, nature }} /></div>
         </div>
         )}
 
