@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, freshAccessToken, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
+import { getMailAuth, setMailAuth, freshAccessToken, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
 import { runExpenseReportNet, enforceReceiptPaid } from '@/lib/expenseReportNet.server'
@@ -21,7 +21,12 @@ import type { StreamRow } from '@/lib/stream'
 // by the Vercel cron; a 10-minute server-side throttle keeps it cheap.
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// 300s, não 60 (04/set/2026). Esta rota carrega 15 trabalhos em série e batia no
+// teto TODA vez: "Vercel Runtime Timeout Error: Task timed out after 60 seconds",
+// 504. Quem estava no fim da fila — mailToItem (rastreio de e-mail na linha do
+// item), duty watch, VIP mail, folha e o ping do financeiro BR — simplesmente
+// não rodava. O app já usa 300 no apps-sweep, no bank-sync e no whatsapp-sync.
+export const maxDuration = 300
 
 const THROTTLE_MIN = 10
 const FIRST_RUN_DAYS = 3
@@ -38,6 +43,15 @@ async function run(force: boolean): Promise<NextResponse> {
 
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ ok: false, reason: 'token refresh failed — reconnect at /api/stream/mail-auth' })
+
+  // O ACELERADOR VOLTOU A ENGATAR (04/set/2026). Quem gravava `last_poll` eram as
+  // linhas da varredura legada, e elas saíram junto no commit que matou o STREAM
+  // antigo (28ce52e, 30/ago). Desde então o campo ficou congelado em 31/ago: a
+  // condição acima nunca dava verdadeira, o cron de 5 em 5 minutos rodava a
+  // batida INTEIRA toda vez e morria no teto de tempo. Marca-se ANTES do trabalho,
+  // não depois: se a passada estourar, a próxima ainda respeita a janela em vez
+  // de reprocessar tudo de novo.
+  await setMailAuth(db, { last_poll: new Date(now).toISOString() }, auth.id || 1)
 
   // ═══ STREAM LEGADO MORTO, NÃO APAGADO (Márcio, 30/ago/2026): "quero ele
   // totalmente morto, sem mais nenhuma ação... como se tivesse sido apagado." ═══
