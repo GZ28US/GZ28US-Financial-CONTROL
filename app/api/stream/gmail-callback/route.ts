@@ -48,6 +48,29 @@ export async function GET(req: NextRequest) {
     account = prof?.emailAddress || null
   } catch { /* best-effort */ }
 
-  await setMailAuth(db, { refresh_token: res.refresh_token, account, oauth_state: null, pkce_verifier: null }, slot)
-  return page('Gmail conectado', `${account || 'A conta'} está conectada (slot ${slot}). Pode fechar esta aba.`, true)
+  // ONDE gravar: na linha que o state nomeia — A NÃO SER que ela já seja OUTRA
+  // caixa Google viva. Caso real de 04/set/2026 01:02 (Orlando): o link foi
+  // aberto sem ?slot (default 4 = gz28us@gmail.com) para conectar o
+  // gz28speedshop@gmail.com; se o consentimento tivesse ido até o fim, o token
+  // novo sobrescreveria o do gz28us@gmail e aquela caixa morreria muda. Regra:
+  // conta que já tem linha volta para a própria linha; conta nova em slot
+  // ocupado por outra vai para o primeiro slot livre. Reconectar a MESMA conta
+  // no mesmo slot continua funcionando como sempre.
+  const target = await routeToSlot(db, slot, auth, account)
+  if (target !== slot) await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
+  await setMailAuth(db, { client_id: clientId, refresh_token: res.refresh_token, account, oauth_state: null, pkce_verifier: null }, target)
+  const moved = target !== slot ? ` — slot ${slot} já era ${auth?.account}, então foi para o slot ${target}` : ''
+  return page('Gmail conectado', `${account || 'A conta'} está conectada (slot ${target})${moved}. Pode fechar esta aba.`, true)
+}
+
+async function routeToSlot(db: ReturnType<typeof streamDb>, slot: number, current: { refresh_token?: string | null; account?: string | null } | null, account: string | null): Promise<number> {
+  if (!account) return slot
+  const same = (a: string | null | undefined) => String(a || '').toLowerCase() === account.toLowerCase()
+  const occupiedByOther = !!current?.refresh_token && !!current?.account && !same(current.account)
+  if (!occupiedByOther) return slot
+  const { data } = await db.from('stream_mail_auth').select('id, account').order('id')
+  const rows = (data || []) as { id: number; account: string | null }[]
+  const mine = rows.find(r => same(r.account))
+  if (mine) return mine.id
+  return rows.reduce((m, r) => Math.max(m, r.id), 0) + 1
 }
