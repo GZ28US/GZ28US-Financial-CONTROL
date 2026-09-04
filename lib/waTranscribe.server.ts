@@ -29,6 +29,7 @@ export type WaTranscribeResult = {
   done: number
   failed: number
   skipped?: string
+  rateLimited?: boolean
   errors?: string[]
 }
 
@@ -105,6 +106,14 @@ export async function waTranscribePending(opts: { limit?: number } = {}): Promis
       out.done++
     } catch (e) {
       const msg = String((e as Error).message || e).slice(0, 300)
+      // 429 do provider NÃO é defeito da linha — é a nossa vez que não chegou.
+      // Marcar 'error' aqui tirava o áudio da fila PARA SEMPRE (foi o que
+      // aconteceu com 420 áudios no 1º backfill). Deixa o status NULL e para o
+      // lote: quem volta é o cron, daqui a 10 minutos, com a cota renovada.
+      if (/\b429\b|rate.?limit|too many requests/i.test(msg)) {
+        out.rateLimited = true
+        break
+      }
       await db
         .from('whatsapp_messages')
         .update({ transcript_status: 'error', transcript_error: msg, transcript_at: new Date().toISOString() })
@@ -113,6 +122,9 @@ export async function waTranscribePending(opts: { limit?: number } = {}): Promis
       out.failed++
       out.errors!.push(`${row.message_id}: ${msg}`)
     }
+    // Respiro entre chamadas: o teto do provider é por minuto, e estourá-lo
+    // devolve 429 pra todo o resto do lote.
+    await new Promise(r => setTimeout(r, 1200))
   }
 
   if (!out.errors!.length) delete out.errors
