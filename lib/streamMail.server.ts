@@ -44,6 +44,30 @@ export async function setMailAuth(db: SupabaseClient, patch: Partial<MailAuth>, 
   await db.from('stream_mail_auth').upsert([{ id, ...patch, updated_at: new Date().toISOString() }])
 }
 
+// ── PROVEDOR: derivado do dado, nunca coluna (04/set/2026) ──────────────────
+// Márcio pediu a 5ª caixa (gz28speedshop@gmail.com) e o código decidia Graph x
+// Gmail por NÚMERO DE SLOT ("slot === 4", listas [1, 2, 3]) em nove lugares —
+// a caixa nova nasceria surda em todos. Não há coluna `provider` e não vai
+// haver ([[no-duplicate-fields]]): o client_id já diz quem é — a app da Azure
+// é um GUID compartilhado pelas caixas Microsoft, e a app do Google termina em
+// ".apps.googleusercontent.com". Fallback pelo domínio da conta SÓ quando a
+// linha não tem client_id nenhum: conta Microsoft pessoal pode ter login
+// @gmail.com, e com client_id da Azure presente ela é Graph, ponto.
+export type MailProvider = 'graph' | 'gmail'
+export function mailProvider(auth: Pick<MailAuth, 'client_id' | 'account'>): MailProvider {
+  const cid = String(auth.client_id || '')
+  if (/\.apps\.googleusercontent\.com$/i.test(cid)) return 'gmail'
+  if (!cid && /@(gmail|googlemail)\.com$/i.test(String(auth.account || ''))) return 'gmail'
+  return 'graph'
+}
+// Todas as caixas CONECTADAS (com refresh_token), em ordem de slot. Quem varre
+// "todas as caixas" itera isto — nunca mais uma lista de números no código.
+export async function listMailAuths(db: SupabaseClient, provider?: MailProvider): Promise<MailAuth[]> {
+  const { data } = await db.from('stream_mail_auth').select('*').not('refresh_token', 'is', null).order('id')
+  const rows = (data || []) as MailAuth[]
+  return provider ? rows.filter(a => mailProvider(a) === provider) : rows
+}
+
 // ── OAuth (public client + PKCE, all server-side) ───────────────────────────
 export function pkcePair(): { verifier: string; challenge: string } {
   const { randomBytes, createHash } = require('crypto') as typeof import('crypto')
@@ -81,14 +105,34 @@ export async function exchangeCode(clientId: string, code: string, verifier: str
 
 // Refresh → access token; Microsoft rotates the refresh token, so persist the
 // new one every time or the chain eventually dies.
+// 04/set/2026: fala os DOIS provedores. Caixa Google vai pelo endpoint do
+// Google (segredo do ambiente, refresh token não rotaciona). Antes, chamar
+// isto num slot Gmail devolvia null e a caixa sumia da varredura sem erro.
 export async function freshAccessToken(db: SupabaseClient, auth: MailAuth): Promise<string | null> {
-  if (!auth.client_id || !auth.refresh_token) return null
+  if (!auth.refresh_token) return null
+  // Google não precisa do client_id da linha (par id+segredo vem do ambiente);
+  // a exigência de client_id é só do ramo Microsoft.
+  if (mailProvider(auth) === 'gmail') return googleAccessToken(auth)
+  if (!auth.client_id) return null
   const res = await tokenRequest({ client_id: auth.client_id, grant_type: 'refresh_token', refresh_token: auth.refresh_token, scope: MAIL_SCOPE })
   if (!res?.access_token) return null
   if (res.refresh_token && res.refresh_token !== auth.refresh_token) {
     await setMailAuth(db, { refresh_token: res.refresh_token }, auth.id || 1)
   }
   return res.access_token
+}
+
+// Google exige client_secret mesmo em app "web"; ele mora no ambiente
+// (GOOGLE_CLIENT_SECRET), nunca na tabela. O client_id da linha é o mesmo
+// GOOGLE_CLIENT_ID — o par id+segredo tem de vir da mesma fonte.
+async function googleAccessToken(auth: MailAuth): Promise<string | null> {
+  const clientId = process.env.GOOGLE_CLIENT_ID, clientSecret = process.env.GOOGLE_CLIENT_SECRET
+  if (!clientId || !clientSecret || !auth.refresh_token) return null
+  const tk = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: auth.refresh_token, grant_type: 'refresh_token' }),
+  }).then(r => r.json()).catch(() => null)
+  return tk?.access_token || null
 }
 
 // ── message scanning ────────────────────────────────────────────────────────
@@ -789,10 +833,11 @@ const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
 
 export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[] }> {
   const deleted: string[] = []
-  for (const slot of [1, 2, 3]) {
+  // Só caixas Microsoft: as chamadas abaixo são Graph. Vem da tabela, não de
+  // lista fixa (04/set/2026).
+  for (const auth of await listMailAuths(db, 'graph')) {
+    const slot = auth.id
     try {
-      const auth = await getMailAuth(db, slot)
-      if (!auth?.refresh_token) continue
       const token = await freshAccessToken(db, auth)
       if (!token) continue
       for (const folder of ['inbox', 'junkemail']) {
@@ -824,10 +869,9 @@ const SAFE_SUBJECT = /order|track|invoice|receipt|payment|paid|ship|deliver|cart
 
 export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: string[] }> {
   const deleted: string[] = []
-  for (const slot of [1, 2, 3]) {
+  for (const auth of await listMailAuths(db, 'graph')) {
+    const slot = auth.id
     try {
-      const auth = await getMailAuth(db, slot)
-      if (!auth?.refresh_token) continue
       const token = await freshAccessToken(db, auth)
       if (!token) continue
       const r = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from`, { headers: graphH(token) })

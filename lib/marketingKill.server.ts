@@ -26,6 +26,7 @@
 //               Remetente que bloqueia demais é sinal de que não devia estar na lista.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { mailProvider } from '@/lib/streamMail.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 
@@ -89,8 +90,10 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
 
   const { data: auths } = await db.from('stream_mail_auth').select('*')
   for (const a of (auths || []) as Auth[]) {
-    // ── Outlook (slots 1-3): caixa de entrada + lixo eletrônico ──────────────
-    if (/hotmail\.com$/i.test(a.account)) {
+    if (!a.refresh_token) continue
+    // ── Outlook (caixas Microsoft): caixa de entrada + lixo eletrônico ───────
+    // Provedor pela LINHA (mailProvider), não pelo domínio da conta (04/set/2026).
+    if (mailProvider(a) === 'graph') {
       const token = await msToken(db, a)
       if (!token) continue
       const H = { Authorization: `Bearer ${token}` }
@@ -112,8 +115,8 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
       }
       continue
     }
-    // ── Gmail (slot 4) ──────────────────────────────────────────────────────
-    if (/gmail\.com$/i.test(a.account)) {
+    // ── Gmail (qualquer caixa Google) ───────────────────────────────────────
+    {
       const token = await gmailToken(a)
       if (!token) continue
       const H = { Authorization: `Bearer ${token}` }

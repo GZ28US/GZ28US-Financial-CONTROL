@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { getMailAuth, freshAccessToken, mailProvider } from '@/lib/streamMail.server'
 
 // Read-only mailbox queries for the assistant's daily sweeps — the service key
 // and Graph tokens stay server-side; callers authenticate with the same read
@@ -153,8 +153,9 @@ export async function GET(req: NextRequest) {
 
   const op = p.get('op') || 'folders'
 
-  // ── Slot 4 = Gmail (Google API em vez do Graph) ───────────────────────────
-  if (slot === 4) return gmail(db, auth, op, p)
+  // ── Caixa Google (Gmail API em vez do Graph) — provedor pela LINHA, não
+  // pelo número do slot (04/set/2026: 5ª caixa gz28speedshop@gmail.com) ────
+  if (mailProvider(auth) === 'gmail') return gmail(db, auth, op, p)
 
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ error: 'token refresh failed' }, { status: 502 })

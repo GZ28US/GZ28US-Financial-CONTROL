@@ -20,8 +20,7 @@
 // Roda a cada 5 min dentro do mail-poll: funciona com o PC desligado.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getMailAuth, freshAccessToken } from './streamMail.server'
-import { gmailAccessToken } from './appsMail.server'
+import { getMailAuth, freshAccessToken, listMailAuths } from './streamMail.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -122,11 +121,20 @@ async function hotmailMessages(db: SupabaseClient, cursor: string): Promise<Mail
   }))
 }
 
-// ── Coleta: Gmail (slot 4) — o recibo do BONOSS caiu lá, a fatura do DHL pode
-// cair também. in:anywhere já inclui spam e lixeira.
+// ── Coleta: Gmail (TODAS as caixas Google — o recibo do BONOSS caiu no
+// gz28us@gmail, a fatura do DHL pode cair em qualquer uma). Desde 04/set/2026
+// a lista vem de stream_mail_auth (5ª caixa gz28speedshop@gmail.com), não do
+// slot 4 fixo. in:anywhere já inclui spam e lixeira.
 async function gmailMessages(db: SupabaseClient): Promise<MailMsg[]> {
-  const token = await gmailAccessToken(db)
-  if (!token) return []
+  const out: MailMsg[] = []
+  for (const auth of await listMailAuths(db, 'gmail')) {
+    const token = await freshAccessToken(db, auth)
+    if (!token) continue
+    out.push(...await gmailBox(token))
+  }
+  return out
+}
+async function gmailBox(token: string): Promise<MailMsg[]> {
   const q = 'in:anywhere newer_than:7d (dhl OR fedex OR ups OR duty OR customs OR brokerage)'
   const list = await fetch(`${GM}/messages?${new URLSearchParams({ maxResults: '50', q })}`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
   const out: MailMsg[] = []

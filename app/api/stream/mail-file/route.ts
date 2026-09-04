@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { getMailAuth, freshAccessToken, mailProvider } from '@/lib/streamMail.server'
 
 // ARQUIVAR / MARCAR LIDO — as 4 caixas, um contrato só.
 //
@@ -220,7 +220,8 @@ export async function POST(req: NextRequest) {
   const auth = await getMailAuth(db, slot)
   if (!auth) return NextResponse.json({ error: `slot ${slot} sem autenticação` }, { status: 404 })
 
-  if (slot === 4) return gmailApply(db, slot, auth, ids, b)
+  // Caixa Google: provedor pela LINHA, não pelo número do slot (04/set/2026).
+  if (mailProvider(auth) === 'gmail') return gmailApply(db, slot, auth, ids, b)
 
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ error: 'token expirado' }, { status: 502 })

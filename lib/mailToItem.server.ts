@@ -53,10 +53,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  getMailAuth, freshAccessToken, fetchRecentMessages, fetchRecentGmail,
-  extractTrackings, carrierFromText, isPurchaseConfirmation, type MailMsg,
+  listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail,
+  extractTrackings, carrierFromText, isPurchaseConfirmation, type MailMsg, type MailAuth,
 } from './streamMail.server'
-import { gmailAccessToken } from './appsMail.server'
 import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from './itemTracking.server'
 
 // A lista de tabelas NÃO mora aqui: vem de ITEM_TABLES. Desde 03/set/2026 ela
@@ -155,23 +154,18 @@ function pedidosNoTexto(texto: string, dicionario: Map<string, Linha[]>): string
   return achados
 }
 
-// Slot 4 fala Google, os outros três falam Graph. Usar a função errada devolve
-// token nulo e a caixa inteira some da varredura sem erro nenhum — foi o que
-// aconteceu na primeira versão deste arquivo (31/ago), e a caixa que sumiu é
-// justamente onde a Amazon manda nota de embarque.
-async function lerCaixa(db: SupabaseClient, slot: number, desde: string): Promise<{ nome: string; msgs: MailMsg[] }> {
-  if (slot === 4) {
-    const token = await gmailAccessToken(db)
-    if (!token) return { nome: 'gz28us@gmail.com:sem-token', msgs: [] }
-    const msgs = await fetchRecentGmail(token, desde)
-    return { nome: 'gz28us@gmail.com:' + msgs.length, msgs }
-  }
-  const auth = await getMailAuth(db, slot)
-  if (!auth?.refresh_token) return { nome: 'slot' + slot + ':sem-conta', msgs: [] }
+// Caixa Google fala Gmail API, caixa Microsoft fala Graph. Usar a função errada
+// devolve token nulo e a caixa inteira some da varredura sem erro nenhum — foi
+// o que aconteceu na primeira versão deste arquivo (31/ago), e a caixa que
+// sumiu é justamente onde a Amazon manda nota de embarque. Desde 04/set/2026 o
+// provedor vem da LINHA (mailProvider), não do número do slot: a 5ª caixa
+// (gz28speedshop@gmail.com) entrou sem tocar aqui.
+async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Promise<{ nome: string; msgs: MailMsg[] }> {
+  const nome = auth.account || 'slot' + auth.id
   const token = await freshAccessToken(db, auth)
-  if (!token) return { nome: (auth.account || 'slot' + slot) + ':sem-token', msgs: [] }
-  const msgs = await fetchRecentMessages(token, desde)
-  return { nome: (auth.account || 'slot' + slot) + ':' + msgs.length, msgs }
+  if (!token) return { nome: nome + ':sem-token', msgs: [] }
+  const msgs = mailProvider(auth) === 'gmail' ? await fetchRecentGmail(token, desde) : await fetchRecentMessages(token, desde)
+  return { nome: nome + ':' + msgs.length, msgs }
 }
 
 export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailToItemResult> {
@@ -182,9 +176,9 @@ export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailT
   const desde = new Date(Date.now() - dias * 86400e3).toISOString()
   const jaAvisado = new Set<string>()
 
-  for (const slot of [1, 2, 3, 4]) {
+  for (const auth of await listMailAuths(db)) {
     let caixa: { nome: string; msgs: MailMsg[] }
-    try { caixa = await lerCaixa(db, slot, desde) } catch { out.caixas.push('slot' + slot + ':erro'); continue }
+    try { caixa = await lerCaixa(db, auth, desde) } catch { out.caixas.push((auth.account || 'slot' + auth.id) + ':erro'); continue }
     out.caixas.push(caixa.nome)
 
     for (const msg of caixa.msgs) {

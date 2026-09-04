@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { getMailAuth, freshAccessToken, mailProvider } from '@/lib/streamMail.server'
 
 // Envio de e-mail pelas caixas do Márcio, com anexo. Mesma chave de leitura das
 // outras rotas de correio; o token do Graph nunca sai do servidor.
@@ -11,7 +11,7 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 // o rascunho de resposta, a gente troca o corpo, pendura os anexos e envia.
 // Sem ele, é uma mensagem nova.
 //
-// Slot 4 = Gmail: refresh próprio do Google (mesmo fluxo do mail-query) e envio
+// Caixa Google: refresh próprio do Google (mesmo fluxo do mail-query) e envio
 // via users.messages.send com MIME cru em base64url; replyTo vira threadId +
 // In-Reply-To/References pra resposta cair na mesma thread.
 //
@@ -95,8 +95,9 @@ export async function POST(req: NextRequest) {
   const auth = await getMailAuth(db, slot)
   if (!auth) return NextResponse.json({ error: 'slot sem autenticação' }, { status: 404 })
 
-  // ── Slot 4 = Gmail (Google API em vez do Graph) ───────────────────────────
-  if (slot === 4) return gmailSend(auth, b, to, Array.isArray(b.cc) ? b.cc : b.cc ? [b.cc] : [])
+  // ── Caixa Google (Gmail API em vez do Graph) — provedor pela LINHA, não
+  // pelo número do slot (04/set/2026) ──────────────────────────────────────
+  if (mailProvider(auth) === 'gmail') return gmailSend(auth, b, to, Array.isArray(b.cc) ? b.cc : b.cc ? [b.cc] : [])
 
   const token = await freshAccessToken(db, auth)
   if (!token) return NextResponse.json({ error: 'token expirado' }, { status: 502 })

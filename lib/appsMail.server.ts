@@ -1,8 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { getMailAuth, freshAccessToken, listMailAuths, mailProvider } from '@/lib/streamMail.server'
 import { sendStreamWhatsApp } from '@/lib/stream.server'
 
-// APPS watcher — TODAS as 4 caixas do Márcio são fonte das assinaturas de apps
+// APPS watcher — TODAS as caixas do Márcio são fonte das assinaturas de apps
 // (regra 2026-07-25: "caça em todos os emails, todas as pastas, inclusive junk,
 // deleted e sent"). Cada recibo vira um pagamento no módulo APPS
 // (fixed_cost_suppliers cost_type='APP' + fixed_cost_expenses), o e-mail é
@@ -13,8 +13,8 @@ import { sendStreamWhatsApp } from '@/lib/stream.server'
 // description; id da mensagem no receipt_url; e (app, valor, data) como último
 // recurso — o mesmo recibo nunca registra duas vezes, nem entre caixas.
 
-const GMAIL_SLOT = 4
-const OUTLOOK_SLOTS = [1, 2, 3]
+// 04/set/2026: as caixas vêm de stream_mail_auth (listMailAuths) e o provedor
+// de cada uma é derivado da própria linha (mailProvider) — nada de slot fixo.
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const G = 'https://graph.microsoft.com/v1.0'
 
@@ -363,29 +363,27 @@ async function handleCancel(db: SupabaseClient, row: AppRow | null, appName: str
   }
 }
 
-// ═══ GMAIL (slot 4) ═════════════════════════════════════════════════════════
-async function gmailToken(db: SupabaseClient): Promise<string | null> {
-  const clientId = process.env.GOOGLE_CLIENT_ID, clientSecret = process.env.GOOGLE_CLIENT_SECRET
-  if (!clientId || !clientSecret) return null
-  const auth = await getMailAuth(db, GMAIL_SLOT)
-  if (!auth?.refresh_token) return null
-  const tk = await (await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: auth.refresh_token, grant_type: 'refresh_token' }),
-  })).json()
-  return tk?.access_token || null
+// ═══ GMAIL (qualquer slot Google — ver mailProvider) ════════════════════════
+// O token sai do freshAccessToken, que desde 04/set/2026 fala Google também;
+// aqui só se garante que o slot pedido É uma caixa Google.
+async function gmailToken(db: SupabaseClient, slot: number): Promise<string | null> {
+  const auth = await getMailAuth(db, slot)
+  if (!auth?.refresh_token || mailProvider(auth) !== 'gmail') return null
+  return freshAccessToken(db, auth)
 }
 
 // Reuso externo (purchase capture varre o Gmail também — auditoria 30/jul).
-export async function gmailAccessToken(db: SupabaseClient): Promise<string | null> {
-  return gmailToken(db)
+// Sem slot = 4, o gz28us@gmail.com original (dutyWatch e purchaseCapture
+// dependem desse padrão).
+export async function gmailAccessToken(db: SupabaseClient, slot = 4): Promise<string | null> {
+  return gmailToken(db, slot)
 }
 
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
 
-async function gmailSweep(db: SupabaseClient, apps: AppRow[], out: AppsSweepResult, opts: { full?: boolean }): Promise<void> {
-  const token = await gmailToken(db)
-  if (!token) { out.errors.push('gmail token unavailable'); return }
+async function gmailSweep(db: SupabaseClient, slot: number, box: string, apps: AppRow[], out: AppsSweepResult, opts: { full?: boolean }): Promise<void> {
+  const token = await gmailToken(db, slot)
+  if (!token) { out.errors.push(`${box}: gmail token unavailable`); return }
 
   const labelMap = async () => {
     const data = await (await fetch(`${API}/labels`, { headers: gh(token) })).json()
@@ -482,18 +480,23 @@ async function gmailSweep(db: SupabaseClient, apps: AppRow[], out: AppsSweepResu
       const { row, registered } = await registerReceipt(db, apps, {
         vendor: cls.vendor, receiptNo: cls.receiptNo, from,
         amount: parseAmount(text.replace(/\s+/g, ' ')), payDate: date,
-        link: `https://mail.google.com/mail/u/0/#all/${m.id}`, msgKey: m.id, box: 'gmail',
+        // authuser= abre a CONTA certa no navegador: /u/0 é sempre a primeira
+        // conta logada, e com duas caixas Google o recibo da segunda abriria
+        // na primeira (04/set/2026). O id segue no URL — o dedup por
+        // like('%id%') continua valendo.
+        link: box.includes('@') ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(box)}#all/${m.id}` : `https://mail.google.com/mail/u/0/#all/${m.id}`,
+        msgKey: m.id, box,
       }, out, !opts.full)
       const name = row?.description || appName
       await fileUnder(m.id, await ensureLabel(`Apps/${name}`))
       if (registered) out.filed++
     } catch (e) {
-      out.errors.push(`gmail ${id}: ${e instanceof Error ? e.message : String(e)}`)
+      out.errors.push(`${box} ${id}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 }
 
-// ═══ OUTLOOK (slots 1-3, Graph) ═════════════════════════════════════════════
+// ═══ OUTLOOK (caixas Microsoft, Graph) ══════════════════════════════════════
 // IDs imutáveis pra tudo: um /move não muda o id nem quebra o webLink salvo.
 const oh = (t: string) => ({ Authorization: `Bearer ${t}`, Prefer: 'IdType="ImmutableId"' })
 
@@ -601,15 +604,20 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
   }
 }
 
-// ═══ Entrada única — as 4 caixas ════════════════════════════════════════════
+// ═══ Entrada única — todas as caixas conectadas ═════════════════════════════
 // full=true varre tudo (backfill/resync) e manda UM resumo; full=false (cron)
 // varre os últimos dias e reporta cada movimento na hora.
+// A lista vem do banco: caixa nova conectada pelo gmail-auth/mail-auth entra
+// aqui sozinha, sem deploy (04/set/2026, 5ª caixa gz28speedshop@gmail.com).
 export async function runAppsSweep(db: SupabaseClient, opts: { full?: boolean } = {}): Promise<AppsSweepResult> {
   const out: AppsSweepResult = { payments: [], newApps: [], cancelled: [], billsFiled: 0, failures: [], filed: 0, errors: [] }
   const apps = await loadApps(db)
-  try { await gmailSweep(db, apps, out, opts) } catch (e) { out.errors.push('gmail: ' + (e instanceof Error ? e.message : String(e))) }
-  for (const slot of OUTLOOK_SLOTS) {
-    try { await outlookSweep(db, slot, apps, out, opts) } catch (e) { out.errors.push(`slot${slot}: ` + (e instanceof Error ? e.message : String(e))) }
+  for (const auth of await listMailAuths(db)) {
+    const slot = auth.id, box = auth.account || `slot${slot}`
+    try {
+      if (mailProvider(auth) === 'gmail') await gmailSweep(db, slot, box, apps, out, opts)
+      else await outlookSweep(db, slot, apps, out, opts)
+    } catch (e) { out.errors.push(`${box}: ` + (e instanceof Error ? e.message : String(e))) }
   }
 
   if (opts.full && (out.payments.length || out.newApps.length)) {

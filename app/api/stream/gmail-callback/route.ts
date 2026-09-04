@@ -4,12 +4,11 @@ import { getMailAuth, setMailAuth } from '@/lib/streamMail.server'
 
 // Gmail hookup, step 2 — Google redirects here after consent. The code is
 // exchanged (client_id + client_secret, server-side only) and the refresh token
-// is stored straight into stream_mail_auth slot 4: it never travels through a
-// chat, a file or a screenshot. Mirrors mail-callback (Microsoft).
+// is stored straight into the stream_mail_auth row named by the state's "N."
+// prefix (04/set/2026 — before that, always slot 4): it never travels through
+// a chat, a file or a screenshot. Mirrors mail-callback (Microsoft).
 
 export const dynamic = 'force-dynamic'
-
-const SLOT = 4
 
 const page = (title: string, body: string, ok: boolean) => new NextResponse(
   `<!doctype html><meta charset="utf-8"><title>${title}</title>
@@ -29,8 +28,9 @@ export async function GET(req: NextRequest) {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
   if (!clientId || !clientSecret) return page('Gmail hookup failed', 'GOOGLE_CLIENT_ID/SECRET not configured', false)
 
+  const slot = Math.max(1, parseInt((state || '').split('.')[0] || '4') || 4)
   const db = streamDb()
-  const auth = await getMailAuth(db, SLOT)
+  const auth = await getMailAuth(db, slot)
   if (!state || state !== auth?.oauth_state) return page('Gmail hookup failed', 'State mismatch — start again at /api/stream/gmail-auth', false)
 
   const redirect = `${req.nextUrl.origin}/ca/api/stream/gmail-callback`
@@ -48,6 +48,6 @@ export async function GET(req: NextRequest) {
     account = prof?.emailAddress || null
   } catch { /* best-effort */ }
 
-  await setMailAuth(db, { refresh_token: res.refresh_token, account, oauth_state: null, pkce_verifier: null }, SLOT)
-  return page('Gmail conectado', `${account || 'A conta'} está conectada (slot ${SLOT}). Pode fechar esta aba.`, true)
+  await setMailAuth(db, { refresh_token: res.refresh_token, account, oauth_state: null, pkce_verifier: null }, slot)
+  return page('Gmail conectado', `${account || 'A conta'} está conectada (slot ${slot}). Pode fechar esta aba.`, true)
 }

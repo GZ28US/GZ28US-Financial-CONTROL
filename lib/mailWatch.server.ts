@@ -12,13 +12,15 @@
 // conta — senão o watcher se alarma com o e-mail que nós mesmos mandamos.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { listMailAuths, freshAccessToken } from '@/lib/streamMail.server'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const SIGNATURE = 'Sent by GZ28US Control App®'
 const FIRST_RUN_MIN = 60
-const GRAPH_SLOTS = [1, 2, 3] // slot 4 = Gmail, refresh próprio — fora deste watcher por enquanto
+// Só caixas Microsoft: a listagem abaixo é Graph. Caixa Google fica fora deste
+// watcher por enquanto (um mail_watches.slot apontando pra Gmail é ignorado).
+// A lista vem do banco desde 04/set/2026, não de [1, 2, 3].
 
 export type MailWatch = {
   id: string
@@ -60,12 +62,11 @@ export async function runMailWatch(db: SupabaseClient): Promise<{ alerts: string
   const watches = (rows || []) as MailWatch[]
   if (!watches.length) return { alerts }
 
-  for (const slot of GRAPH_SLOTS) {
+  for (const auth of await listMailAuths(db, 'graph')) {
+    const slot = auth.id
     const slotWatches = watches.filter(w => Number(w.slot) === slot)
     if (!slotWatches.length) continue
 
-    const auth = await getMailAuth(db, slot)
-    if (!auth) continue
     const token = await freshAccessToken(db, auth)
     if (!token) continue
     const self = String(auth.account || '').toLowerCase()
