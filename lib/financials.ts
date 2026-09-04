@@ -18,6 +18,13 @@ export const expLine = (e: { price?: unknown; quantity?: unknown; tax?: unknown;
 export const qtyLine = (r: { unit_price?: unknown; quantity?: unknown }) =>
   num(r.unit_price) * (num(r.quantity) || 1)
 
+// COMPRAS A ATRIBUIR (AUTO-BOOK fase B, 4/set/2026): conta de suspensão. O banco
+// pagou, o dono ainda não foi dito. Mora numa pseudo-invoice origin BUCKET; aqui
+// ela sai de `invoices` e as linhas dela vão pra `bucket`: fora de TODA margem por
+// job, WIP, A/R e cliente por construção; linha própria no DRE (CPV) e no DFC.
+export const isBucketInvoice = (inv: { origin?: string | null } | null | undefined) => inv?.origin === 'BUCKET'
+export const bucketTotal = (d: FinData) => d.bucket.reduce((s, e) => s + expLine(e), 0)
+
 // Piso de capitalização (D8, provisório até o Márcio bater o martelo):
 // GOODS >= piso é imobilizado; abaixo é ferramental/consumo do ano.
 export const CAP_FLOOR = 2500
@@ -27,6 +34,8 @@ export type FinData = {
   invoices: any[]           // só reais (is_quote = false)
   payments: any[]
   invExpenses: any[]
+  bucket: any[]             // linhas da pseudo-invoice A ATRIBUIR (origin BUCKET) — fora de invExpenses
+  bucketInvoice: any | null // a pseudo-invoice crua (pro card de invariantes do Data Checker)
   invParts: any[]
   invServices: any[]
   expenses: any[]           // staff / variáveis (payroll)
@@ -95,7 +104,11 @@ export async function loadFinancials(): Promise<FinData> {
     fetchOpt('financing_events', '*'), fetchOpt('cash_balances', '*'),
     fetchOpt('data_fixes', '*'),
   ])
-  const real = invoices.filter((i: any) => !i.is_quote)
+  // A pseudo-invoice A ATRIBUIR (origin BUCKET) sai do dataset: as linhas dela
+  // viram `bucket` e nunca entram em invExpenses (realIds não a contém).
+  const bucketInvs = invoices.filter(isBucketInvoice)
+  const bucketIds = new Set(bucketInvs.map((i: any) => i.id))
+  const real = invoices.filter((i: any) => !i.is_quote && !isBucketInvoice(i))
   // Filhas de QUOTE ficam fora de TUDO: linha de despesa de orçamento (herdada
   // dos packs) não é caixa, não é contas a pagar, não é custo — era $206k de
   // fornecedores-fantasma no Balanço antes deste filtro.
@@ -104,6 +117,7 @@ export async function loadFinancials(): Promise<FinData> {
   return {
     invoices: real,
     payments: payments.filter(byReal), invExpenses: invExpenses.filter(byReal),
+    bucket: invExpenses.filter((r: any) => bucketIds.has(r.invoice_id)), bucketInvoice: bucketInvs[0] || null,
     invParts: invParts.filter(byReal), invServices: invServices.filter(byReal),
     expenses, fixedExpenses,
     fixedSuppliers: new Map(fixedSuppliers.map((s: any) => [s.id, s])),
@@ -260,6 +274,12 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     // Recebeu na GZ28BR = o dinheiro ficou LÁ: espelho negativo na conta corrente.
     if (p.paid_to === 'GZ28BR') push(cd, 'FIN', 'FUND_BR', -num(p.amount), 'FUNDED',
       'GZ28BR (conta corrente) · recebeu por nós — ' + (m.car || p.description || ''), '/adm/check')
+  }
+  // Compras a atribuir: saída operacional sem dono — linha BUCKET dentro da
+  // contribuição dos projetos; esvazia conforme a fila atribui. Nunca CAR_BUY.
+  for (const e of d.bucket) {
+    push(e.payment_date, 'OPER', 'BUCKET', -expLine(e), 'A ATRIBUIR', [e.supplier, e.item].filter(Boolean).join(' · '), '/adm/bank#a-atribuir')
+    fund(e, e.payment_date, expLine(e), ['A ATRIBUIR', e.item].filter(Boolean).join(' · '))
   }
   // Fornecedores de projeto (inclui compra de carro — separação é papo do DRE/D3).
   for (const e of d.invExpenses) {

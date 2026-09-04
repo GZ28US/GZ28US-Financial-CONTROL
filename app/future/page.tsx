@@ -148,6 +148,29 @@ function canonMilestone(v: string | null | undefined): string | undefined {
 // already arrived/passed (those are DELAYED).
 function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
+// FILHAS DA INVOICE, LIDAS POR INVOICE (AUTO-BOOK fase B, 4/set/2026) — o
+// mesmo trilho da HOME (app/page.tsx). Antes as três tabelas vinham inteiras,
+// sem filtro e sem página, e o corte silencioso de 1.000 linhas do supabase-js
+// deixava despesa de fora da previsão. Agora a lista de invoices (REALTIME/
+// CLOSED) manda: filhas só dessas invoices, em lotes de 100 ids, cada lote
+// paginado em .range() até página curta. A invoice A ATRIBUIR (origin BUCKET,
+// INCOMPLETE) nunca entra na lista-mãe — logo nenhuma filha dela chega aqui.
+// Erro de leitura vira página vazia (o mesmo que o `data ?? []` de antes).
+async function childRows(table: string, select: string, invoiceIds: string[]): Promise<any[]> {
+  const CHUNK = 100, PAGE = 1000
+  const out: any[] = []
+  for (let i = 0; i < invoiceIds.length; i += CHUNK) {
+    const ids = invoiceIds.slice(i, i + CHUNK)
+    for (let from = 0; ; from += PAGE) {
+      const { data } = await supabase.from(table).select(select).in('invoice_id', ids).order('id').range(from, from + PAGE - 1)
+      const page = data || []
+      out.push(...page)
+      if (page.length < PAGE) break
+    }
+  }
+  return out
+}
+
 type GlobalStats = { cashFlow: number; cashFlowPct: number; dueClients: number; markup: number; markupPct: number; dueGz: number }
 type Row = { code: string; label: string; amount: number; dated: boolean; date: string | null; href: string; tip: string; labelTip?: string; milestone?: string; delayed?: boolean }
 // A dated cash-flow entry for the monthly-flow box: income is +, expense is −.
@@ -165,11 +188,13 @@ export default function HomePage() {
     await ensureFixedCostPayments()
     await ensureStaffPayments()
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
-    const [{ data: invs }, { data: pays }, { data: exps }, { data: parts }] = await Promise.all([
-      supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED']),
-      supabase.from('invoice_payments').select('invoice_id, amount, paid_at, payment_date, source, description, date_label'),
-      supabase.from('invoice_expenses').select('invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier'),
-      supabase.from('invoice_parts').select('invoice_id, unit_price, quantity'),
+    // As invoices vêm primeiro; as filhas só das invoices que passaram (ver childRows).
+    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
+    const invIds = (invs || []).map((i: any) => String(i.id))
+    const [pays, exps, parts] = await Promise.all([
+      childRows('invoice_payments', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
+      childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier', invIds),
+      childRows('invoice_parts', 'id, invoice_id, unit_price, quantity', invIds),
     ])
 
 

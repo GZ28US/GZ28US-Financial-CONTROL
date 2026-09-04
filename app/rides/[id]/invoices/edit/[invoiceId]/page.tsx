@@ -457,6 +457,12 @@ export default function EditInvoicePage() {
 
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
     if (error || !data) { alert('Invoice not found'); router.push(basePath); return }
+    // Balde do Bank Link (AUTO-BOOK fase B, 4/set/2026): a pseudo-invoice
+    // A ATRIBUIR (origin BUCKET) NÃO se edita aqui — SAVE reescreve live_status,
+    // SEND manda PDF de um balde, REMOVE e SEND TO STOCK quebram o elo com a
+    // linha do banco. Dono se decide na fila A ATRIBUIR do Bank Link.
+    // (next/router já inclui o basePath /ca — nunca prefixar BASE_PATH aqui.)
+    if (data.origin === 'BUCKET') { router.replace('/adm/bank#a-atribuir'); return }
     setInvoiceCode(data.invoice_code || '')
     setBrInvoiceId((data as any).br_invoice_id || null)
     setIsQuote(!!data.is_quote)

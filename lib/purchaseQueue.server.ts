@@ -23,6 +23,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { bucketInvoiceId, logMatchEvent, MARKER_BUCKET, MARKER_ASSIGNED, ENGINE_BUCKET } from '@/lib/bankReconcile.server'
+import { normSup } from '@/lib/supplierMatch'
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
 // 31/ago/2026: era o cel US do Márcio — que é o número da PRÓPRIA instância. A
@@ -185,6 +187,18 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
     if (!inv) return null
     if (amt == null) return 'NEEDS_VALUE'
     let ref = inv.code
+    // PESCA ⇄ BALDE (AUTO-BOOK fase B, 4/set/2026): se o motor já lançou ESTA compra
+    // no balde «Compras a atribuir» (mesmo valor, até 10 dias, fornecedor da mesma
+    // família), a fila ATRIBUI a linha do balde ao carro em vez de criar uma segunda
+    // — o dinheiro nunca duplica, e a data continua a do banco (UMA DATA).
+    const { data: dup0 } = r.order_number ? await db.from('invoice_expenses').select('id').eq('order_number', r.order_number).limit(1) : { data: null }
+    const adopted = dup0?.length ? null : await adoptFromBucket(db, r, inv, amt)
+    if (adopted) {
+      ref = `${inv.code}#${adopted}`
+      await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, invoice_id: inv.id, where_label: inv.code }).eq('id', r.id)
+      out.push(`${keyOf(r)} → ${inv.code} (linha do balde atribuída)`)
+      return ref
+    }
     // dedup pelo order_number quando houver; sem order_number insere direto
     // (achado F6: exigir order_number sumia com o dinheiro em silêncio)
     const { data: dup } = r.order_number ? await db.from('invoice_expenses').select('id').eq('order_number', r.order_number).limit(1) : { data: null }
@@ -213,6 +227,69 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
 }
 
 const refLabel = (ref: string) => ref.split('#')[0]
+
+// A linha do balde que é ESTA compra: mesmo valor (±$0,01), paga nos últimos 10
+// dias, fornecedor da mesma família (prefixo normalizado). Uma só — duas = dúvida
+// = a fila insere como sempre. Best-effort: qualquer erro devolve null.
+async function adoptFromBucket(db: SupabaseClient, r: StreamRow, inv: { id: string; code: string }, amt: number): Promise<string | null> {
+  try {
+    const bucketId = await bucketInvoiceId(db)
+    const since = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10)
+    const q0: any = db.from('invoice_expenses')
+    const { data: rows } = await q0.select('id, item, supplier, price, payment_date, purchase_group').eq('invoice_id', bucketId).ilike('item', '%' + MARKER_BUCKET + '%').gte('payment_date', since)
+    const sup = normSup(String(r.supplier || ''))
+    if (!sup) return null   // sem loja no e-mail não se adota nada (revisão 15)
+    const fam = (a: string, b: string) => { const x = normSup(a), y = normSup(b); if (!x || !y) return false; const k = Math.min(5, x.length, y.length); return x.slice(0, k) === y.slice(0, k) }
+    const cands = (rows || []).filter((x: any) => Math.abs(Number(x.price) - amt) < 0.011 && fam(sup, String(x.supplier || '')))
+    if (cands.length !== 1) return null
+    const row = cands[0]
+    const item = titleOf(r).slice(0, 200 - MARKER_ASSIGNED.length - 1).trim() + ' ' + MARKER_ASSIGNED
+    const q1: any = db.from('invoice_expenses')
+    const { data: moved } = await q1.update({ invoice_id: inv.id, item, order_number: r.order_number || null, updated_at: new Date().toISOString() }).eq('id', row.id).eq('invoice_id', bucketId).select('id')
+    if (!moved || !moved.length) return null
+    const q2: any = db.from('bank_transactions')
+    const { data: line } = await q2.select('id, date, amount, name, merchant').eq('matched_table', 'invoice_expenses').eq('matched_id', row.id).eq('match_engine', ENGINE_BUCKET).maybeSingle()
+    if (line) {
+      const note = ('ATRIBUÍDA · PESCA · ' + inv.code + ' · ' + titleOf(r)).slice(0, 150)
+      const q3: any = db.from('bank_transactions')
+      await q3.update({ matched_note: note, reviewed_at: new Date().toISOString(), match_batch: null, backfill: [{ t: 'invoice_expenses', id: row.id, f: 'invoice_id', v: inv.id, o: bucketId }] }).eq('id', line.id)
+      await logMatchEvent(db, line, 'MATCH', { matched_table: 'invoice_expenses', matched_id: row.id, note, engine: ENGINE_BUCKET })
+    }
+    await db.from('part_stream_items').insert({ stream_id: r.id, source_app: 'US', source_table: 'invoice_expenses', source_id: row.id, qty: 1, matched_by: 'ORDER' }).then(() => undefined, () => undefined)
+    // Balão «EXPENSE PAID» como na fila do Bank Link: recente (14 d) avisa, velho só marca.
+    try {
+      const mod: any = await import('@/lib/expenseReportNet.server')
+      const ageDays = line?.date ? Math.round((Date.now() - Date.parse(String(line.date))) / 864e5) : 999
+      if (ageDays <= 14 && typeof mod.reportAttributedExpense === 'function') {
+        const { data: invFull } = await db.from('invoices').select('invoice_code, rides(project_name, project_code), clients(name)').eq('id', inv.id).maybeSingle()
+        await mod.reportAttributedExpense(db, { invoice: invFull || { invoice_code: inv.code }, row: { id: row.id, item, supplier: row.supplier, order_number: r.order_number || null, price: row.price, quantity: 1, payment_date: row.payment_date }, line })
+      } else if (typeof mod.markAttributedExpenseSilently === 'function') await mod.markAttributedExpenseSilently(db, row.id)
+    } catch { /* best-effort */ }
+    return row.id
+  } catch { return null }
+}
+
+// ERRADO de uma linha adotada do balde: devolve a linha pro balde (mesmo id), solta o
+// pedido e o STREAM, e a linha do banco volta a «a atribuir». Devolve true quando a
+// linha era ligada ao banco (e por isso NÃO pode ser apagada).
+async function returnToBucket(db: SupabaseClient, rowId: string): Promise<boolean> {
+  try {
+    const q0: any = db.from('bank_transactions')
+    const { data: line } = await q0.select('id, date, amount, name, merchant, matched_table, matched_id').eq('matched_table', 'invoice_expenses').eq('matched_id', rowId).eq('match_status', 'MATCHED').maybeSingle()
+    if (!line) return false
+    const bucketId = await bucketInvoiceId(db)
+    const q1: any = db.from('invoice_expenses')
+    const { data: row } = await q1.select('id, item, supplier, invoice_id').eq('id', rowId).maybeSingle()
+    if (!row) return true
+    const clean = String(row.item || '').replace(MARKER_ASSIGNED, '').replace(MARKER_BUCKET, '').trim()
+    const q2: any = db.from('invoice_expenses')
+    await q2.update({ invoice_id: bucketId, item: clean.slice(0, 200 - MARKER_BUCKET.length - 1).trim() + ' ' + MARKER_BUCKET, order_number: null, updated_at: new Date().toISOString() }).eq('id', rowId)
+    const q3: any = db.from('bank_transactions')
+    await q3.update({ reviewed_at: null, match_batch: null, backfill: null, matched_note: ('A ATRIBUIR (devolvida · ERRADO) · ' + String(row.supplier || '')).slice(0, 150) }).eq('id', line.id)
+    await logMatchEvent(db, line, 'MATCH', { matched_table: 'invoice_expenses', matched_id: rowId, note: 'DESATRIBUÍDA · ERRADO da fila · ' + String(row.supplier || ''), engine: ENGINE_BUCKET })
+    return true
+  } catch { return true }   // na dúvida, NÃO apaga
+}
 
 export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: string[]; asked: number; answered: number }> {
   const placed: string[] = []
@@ -322,8 +399,14 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         // A ponte item↔remessa morre junto com a linha de dinheiro desfeita —
         // sem isso part_stream_items apontaria para um id que não existe mais.
         await db.from('part_stream_items').delete().eq('source_id', refId).then(() => undefined, () => undefined)
-        if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
-        else await db.from('invoice_expenses').delete().eq('id', refId)
+        // Linha LIGADA AO BANCO (adotada do balde — fase B): dinheiro real da Regions,
+        // nunca se apaga. Volta pro balde (DESATRIBUIR) e o place() abaixo a adota de novo
+        // no destino certo, se for carro.
+        const bankLinked = refDest.startsWith('INPUTS/') ? false : await returnToBucket(db, refId)
+        if (!bankLinked) {
+          if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
+          else await db.from('invoice_expenses').delete().eq('id', refId)
+        }
         const ref = await place(db, row, dest, placed)
         await wa(chat, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} realocada: *${refLabel(ref)}*` : `⚠️ ${keyOf(row)}: desfeita, mas o novo destino falhou — segue na fila.`)
         if (!ref || ref === 'NEEDS_VALUE') await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT', placed_ref: null }).eq('id', row.id)

@@ -127,6 +127,11 @@ export default function InvoicesPage() {
       .from('invoices')
       .select('*')
       .eq(column, ownerId)
+      // Cinto e suspensório (AUTO-BOOK fase B, 4/set/2026): a pseudo-invoice
+      // A ATRIBUIR (origin BUCKET) nasce sem ride_id/client_id e nunca deveria
+      // casar aqui — mas se um dia casasse, o REMOVE desta lista apagaria o
+      // balde inteiro em cascata. Nunca listar.
+      .neq('origin', 'BUCKET')
       .order('created_at', { ascending: false })
     // Client mode: shopping invoices only — ride invoices also carry a
     // client_id stamp (frozen owner) and must not leak into this list.

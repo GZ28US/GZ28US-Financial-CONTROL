@@ -19,16 +19,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import { BL_STAGE, BL_VERSION } from '@/lib/blVersion'
+import BucketQueue from '@/components/BucketQueue'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; href?: string; detail?: string; score: number; dd: number | null }
 type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; candidates: Cand[] }
 type AutoLine = { id: string; date: string; amount: number; name: string; raw_name?: string; engine: string; batch: string; note: string; source: string; backfilled: boolean; href?: string | null; status?: string; rule?: string | null }
-type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; name?: number; rule?: number; learn?: number; transfer?: number; from: string; to: string; trigger?: string | null; started_at?: string | null }
+type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; name?: number; rule?: number; learn?: number; transfer?: number; bucket?: number; from: string; to: string; trigger?: string | null; started_at?: string | null }
 type AutoRun = { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }
 type Auto = { pending: AutoLine[]; reviewed: number; batches: Batch[]; runs?: AutoRun[] }
-type Plan = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; rule_adopt?: number; learn?: number; transfer?: number; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[]; name: string[]; rule: string[]; transfer?: string[] } }
-type Applied = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; rule_adopt: number; learn: number; transfer: number; errors: string[] }
+type Plan = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; rule_adopt?: number; learn?: number; transfer?: number; bucket?: number; by_klass?: Record<string, number>; seed?: string | null; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[]; name: string[]; rule: string[]; transfer?: string[]; bucket?: string[] } }
+type Applied = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; rule_adopt: number; learn: number; transfer: number; bucket: number; errors: string[] }
 
 export async function sessionHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession()
@@ -50,13 +51,16 @@ const FAMILIES: [RegExp, string][] = [
 ]
 const famOf = (l: { name: string; raw_name: string }) => { const s = (l.name + ' ' + l.raw_name).toUpperCase(); for (const [re, f] of FAMILIES) if (re.test(s)) return f; return null }
 
-const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800', NAME: 'bg-sky-950 text-sky-300 border-sky-800', RULE: 'bg-purple-950 text-purple-300 border-purple-800', LEARN: 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800', TRANSFER: 'bg-blue-950 text-blue-300 border-blue-800' }
+const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800', NAME: 'bg-sky-950 text-sky-300 border-sky-800', RULE: 'bg-purple-950 text-purple-300 border-purple-800', LEARN: 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800', TRANSFER: 'bg-blue-950 text-blue-300 border-blue-800', BUCKET: 'bg-amber-950 text-amber-300 border-amber-800' }
+// Vocabulário das telas de supplies (fase B): SHOP nunca existiu ali.
+const INPUT_CATS = ['CONSUMPTION', 'APARTMENT', 'CATS', 'TEAM']
+const ORIGIN_BADGE: Record<string, [string, string]> = { LEARNED: ['APRENDIDA', 'bg-fuchsia-950 text-fuchsia-300'], DEFAULT: ['PADRÃO', 'bg-amber-950 text-amber-300'], HUMAN: ['HUMANA', 'bg-purple-950 text-purple-300'] }
 // AUTO-BOOK (BL 0.8.0): rótulo humano da rodada — cron/webhook (automática) vs APLICAR.
 const fmtNY = (iso?: string | null) => iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') : ''
 const runLabel = (trigger?: string | null, at?: string | null) => (trigger && trigger !== 'human' ? 'AUTO · ' + trigger : 'APLICAR') + (at ? ' ' + fmtNY(at) : '')
 const BATCH_KEYS = new Set(['plan', 'apply', 'review_all'])
 
-export default function BankReconcileCard({ onCount }: { onCount?: (n: number, aConferir?: number) => void }) {
+export default function BankReconcileCard({ onCount }: { onCount?: (n: number, aConferir?: number, bucket?: number) => void }) {
   const [lines, setLines] = useState<Line[] | null>(null)
   const [totalNew, setTotalNew] = useState(0)
   const [auto, setAuto] = useState<Auto | null>(null)
@@ -75,7 +79,9 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   const [planOpen, setPlanOpen] = useState(false)
   const [applied, setApplied] = useState<Applied | null>(null)
   const [progress, setProgress] = useState('')
-  const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN'>('ALL')
+  const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET'>('ALL')
+  const [originFilter, setOriginFilter] = useState<'ALL' | 'HUMAN' | 'DEFAULT' | 'LEARNED'>('ALL')   // ⚙ (fase B)
+  const [bucketN, setBucketN] = useState(0)
   const [learnMsg, setLearnMsg] = useState<string | null>(null)   // "regra aprendida…" depois de um MATCH humano
   const [familyFilter, setFamilyFilter] = useState<string | null>(null)   // triagem por família
   const [triageNote, setTriageNote] = useState('')
@@ -87,7 +93,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   const [aliases, setAliases] = useState<any[]>([])
   const [sups, setSups] = useState<{ id: string; label: string }[]>([])
   const [mgrLoaded, setMgrLoaded] = useState(false)
-  const [nr, setNr] = useState({ pattern: '', target: 'FIXED_EXPENSE', supplier_id: '', category: 'SHOP', label: '', pfc_primary: '', pfc_detailed: '', direction: 'OUT' })
+  const [nr, setNr] = useState({ pattern: '', target: 'FIXED_EXPENSE', supplier_id: '', category: 'CONSUMPTION', label: '', pfc_primary: '', pfc_detailed: '', direction: 'OUT' })
   const [na, setNa] = useState({ pattern: '', words: '' })
 
   async function loadTobook() {
@@ -97,8 +103,8 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
       if (r.ok) setTobook(d.queued || [])
     } catch { setTobook([]) }
   }
-  async function loadMgr() {
-    if (mgrLoaded) return
+  async function loadMgr(force = false) {
+    if (mgrLoaded && !force) return
     setMgrLoaded(true)
     const [r1, r2, r3] = await Promise.all([
       supabase.from('bank_merchant_rules').select('*').order('created_at'),
@@ -115,7 +121,8 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   const anyBusy = busy.size > 0
 
   // Contagem do pai sai do estado, nunca do closure do clique (revisão #25).
-  useEffect(() => { if (lines) onCount?.(totalNew, auto?.pending.length || 0) }, [totalNew, lines, auto, onCount])
+  // A CONFERIR do pai exclui as linhas do balde (a atribuição é o OK delas — fase B).
+  useEffect(() => { if (lines) onCount?.(totalNew, (auto?.pending || []).filter(a => a.engine !== 'BUCKET').length, bucketN) }, [totalNew, lines, auto, onCount, bucketN])
 
   async function load() {
     setError(''); setPlan(null)   // plano é de um instante — dados novos, plano novo (revisão #22)
@@ -188,16 +195,16 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   }
   async function applyRun() {
     if (anyBusy || !plan) return
-    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA, ${plan.rule_adopt || 0} agendadas ADOTADAS (valor ajustado, não duplicadas), ${plan.learn || 0} por regra aprendida, ${plan.transfer || 0} transferências. Tudo fica em A CONFERIR e pode ser desfeito.`)) return
+    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA, ${plan.rule_adopt || 0} agendadas ADOTADAS (valor ajustado, não duplicadas), ${plan.learn || 0} por regra aprendida, ${plan.transfer || 0} transferências, ${plan.bucket || 0} caem no balde A ATRIBUIR (despesa real, sem dono ainda). Tudo fica em A CONFERIR e pode ser desfeito.`)) return
     lock('apply')
-    const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, errors: [] }
+    const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0, errors: [] }
     try {
       // Primeira fatia valida o hash do plano mostrado; as seguintes continuam o mesmo lote.
       let d = await post({ action: 'auto', hash: plan.hash })
       let batch: string = d.applied.batch
       for (let guard = 0; ; guard++) {
-        acc.fee_create += d.applied.fee_create; acc.fee_match += d.applied.fee_match; acc.exact += d.applied.exact; acc.name += d.applied.name || 0; acc.rule_create += d.applied.rule_create || 0; acc.rule_adopt += d.applied.rule_adopt || 0; acc.learn += d.applied.learn || 0; acc.transfer += d.applied.transfer || 0; acc.errors.push(...d.applied.errors)
-        setProgress(`${acc.fee_create + acc.fee_match + acc.exact + acc.name + acc.rule_create + acc.rule_adopt + acc.transfer} de ${plan.total} aplicadas…`)
+        acc.fee_create += d.applied.fee_create; acc.fee_match += d.applied.fee_match; acc.exact += d.applied.exact; acc.name += d.applied.name || 0; acc.rule_create += d.applied.rule_create || 0; acc.rule_adopt += d.applied.rule_adopt || 0; acc.learn += d.applied.learn || 0; acc.transfer += d.applied.transfer || 0; acc.bucket += d.applied.bucket || 0; acc.errors.push(...d.applied.errors)
+        setProgress(`${acc.fee_create + acc.fee_match + acc.exact + acc.name + acc.rule_create + acc.rule_adopt + acc.transfer + acc.bucket} de ${plan.total} aplicadas…`)
         if (!d.applied.remaining || d.applied.errors.length || guard > 20) break
         d = await post({ action: 'auto', batch })
         batch = d.applied.batch
@@ -225,10 +232,15 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
     catch (e) { fail(e) } finally { unlock('review_all') }
   }
   async function undoBatch(b: Batch) {
-    if (anyBusy || !confirm(`Desfazer a rodada inteira (${b.n} linhas voltam pra sem casamento; tarifas e lançamentos criados por regra são apagados; agendadas adotadas voltam ao valor original)?`)) return
+    if (anyBusy || !confirm(`Desfazer a rodada inteira (${b.n} linhas voltam pra sem casamento; tarifas, lançamentos criados por regra e compras do balde A ATRIBUIR são APAGADOS — o dinheiro fica sem lançamento até a próxima rodada; agendadas adotadas voltam ao valor original)?`)) return
     lock('undo_' + b.batch)
-    try { const d = await post({ action: 'undo_batch', batch: b.batch }); if (d.errors?.length) alert('Desfeitas ' + d.undone + ', com erro: ' + d.errors.join(' | ')) }
-    catch (e) { fail(e) } finally { unlock('undo_' + b.batch); await load() }
+    try {
+      // Em fatias de 200 (rodadas da fase B têm centenas de linhas): repete enquanto sobrar.
+      let undone = 0; const errs: string[] = []
+      for (let guard = 0; guard < 30; guard++) { const d = await post({ action: 'undo_batch', batch: b.batch }); undone += d.undone || 0; errs.push(...(d.errors || [])); setProgress(`${undone} desfeitas…`); if (!d.remaining || !d.undone) break }
+      if (errs.length) alert('Desfeitas ' + undone + ', com erro: ' + errs.slice(0, 8).join(' | '))
+    }
+    catch (e) { fail(e) } finally { setProgress(''); unlock('undo_' + b.batch); await load() }
   }
 
   const visible = useMemo(() => {
@@ -266,7 +278,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                   const r = auto.runs![0]; const c = r.counts || {}; const n = Object.values(c).reduce((s, v) => s + (v || 0), 0)
                   const stale = Date.now() - Date.parse(r.started_at) > 12 * 3600e3
                   const bad = stale || r.status === 'ERROR' || r.status === 'PARTIAL' || r.status === 'ABORTED'
-                  return <p className={`text-xs mt-1 ${bad ? 'text-amber-300' : 'text-gray-400'}`}>AUTO-BOOK · última rodada {runLabel(r.trigger, r.started_at)} · {r.status} · {n} registradas (FEE {(c.fee_create || 0) + (c.fee_match || 0)} · EXACT {c.exact || 0} · NAME {c.name || 0} · RULE {(c.rule_create || 0) + (c.rule_adopt || 0)} · LEARN {c.learn || 0} · TRANSFER {c.transfer || 0}) · {(r.errors || []).length} erros · {r.remaining ?? 0} restantes{stale ? ' · ⚠ mais de 12 h sem rodada' : ''}{(r.errors || []).length ? ' · ' + String(r.errors![0]).slice(0, 80) : ''}</p>
+                  return <p className={`text-xs mt-1 ${bad ? 'text-amber-300' : 'text-gray-400'}`}>AUTO-BOOK · última rodada {runLabel(r.trigger, r.started_at)} · {r.status} · {n} registradas (FEE {(c.fee_create || 0) + (c.fee_match || 0)} · EXACT {c.exact || 0} · NAME {c.name || 0} · RULE {(c.rule_create || 0) + (c.rule_adopt || 0)} · LEARN {c.learn || 0} · TRANSFER {c.transfer || 0} · BUCKET {c.bucket || 0}) · {(r.errors || []).length} erros · {r.remaining ?? 0} restantes{stale ? ' · ⚠ mais de 12 h sem rodada' : ''}{(r.errors || []).length ? ' · ' + String(r.errors![0]).slice(0, 80) : ''}</p>
                 })()}
                 {learnMsg && <p className="text-xs mt-1 text-fuchsia-300 font-bold">memória de comerciante: {learnMsg}</p>}
               </div>
@@ -292,7 +304,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
             </div>
             {plan && (
               <div className="mt-3 text-sm">
-                <p><b>{plan.total}</b> linhas casariam agora: <span className="text-teal-300">FEE {plan.fee_create + plan.fee_match}</span> ({plan.fee_create} tarifas a criar, {plan.fee_match} já lançadas) · <span className="text-emerald-300">EXACT {plan.exact}</span> · <span className="text-sky-300">NAME {plan.name || 0}</span> · <span className="text-purple-300">RULE {plan.rule_create || 0} a criar · {plan.rule_adopt || 0} agendadas a adotar</span> · <span className="text-fuchsia-300">LEARN {plan.learn || 0}</span> · <span className="text-blue-300">TRANSFER {plan.transfer || 0}</span>{plan.total === 0 ? ' — nada certo o bastante; siga pelas sugestões.' : ''}</p>
+                <p><b>{plan.total}</b> linhas casariam agora: <span className="text-teal-300">FEE {plan.fee_create + plan.fee_match}</span> ({plan.fee_create} tarifas a criar, {plan.fee_match} já lançadas) · <span className="text-emerald-300">EXACT {plan.exact}</span> · <span className="text-sky-300">NAME {plan.name || 0}</span> · <span className="text-purple-300">RULE {plan.rule_create || 0} a criar · {plan.rule_adopt || 0} agendadas a adotar</span> · <span className="text-fuchsia-300">LEARN {plan.learn || 0}</span> · <span className="text-blue-300">TRANSFER {plan.transfer || 0}</span> · <span className="text-amber-300">A ATRIBUIR {plan.bucket || 0}</span>{plan.total === 0 ? ' — nada certo o bastante; siga pelas sugestões.' : ''}{plan.by_klass && Object.keys(plan.by_klass).length ? <span className="block text-xs text-gray-500 mt-1">balde por classe: {Object.entries(plan.by_klass).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')}</span> : null}{plan.seed ? <span className="block text-xs text-amber-300 mt-1">PADRÃO: {plan.seed}</span> : null}</p>
                 <button onClick={() => setPlanOpen(o => !o)} className="text-xs text-gray-400 underline mt-1">{planOpen ? 'esconder' : 'ver'} amostra e motivos de recusa</button>
                 {planOpen && (
                   <div className="mt-2 grid md:grid-cols-2 gap-3 text-xs text-gray-400">
@@ -304,6 +316,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                       {(plan.samples.name || []).length > 0 && (<><p className="font-bold text-gray-300 mt-2 mb-1">Amostra NAME (desempate por apelido)</p>{plan.samples.name.map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>)}</>)}
                       {(plan.samples.rule || []).length > 0 && (<><p className="font-bold text-gray-300 mt-2 mb-1">Amostra RULE / LEARN (criação ou adoção por regra)</p>{plan.samples.rule.map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>)}</>)}
                       {(plan.samples.transfer || []).length > 0 && (<><p className="font-bold text-gray-300 mt-2 mb-1">Amostra TRANSFER (status por regra, sem lançamento)</p>{(plan.samples.transfer || []).map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>)}</>)}
+                      {(plan.samples.bucket || []).length > 0 && (<><p className="font-bold text-amber-300 mt-2 mb-1">Amostra A ATRIBUIR (balde: despesa real, dono depois)</p>{(plan.samples.bucket || []).map((s, i) => <p key={i} className="truncate" title={s}>{s}</p>)}</>)}
                     </div>
                     <div>
                       <p className="font-bold text-gray-300 mb-1">Por que o resto NÃO casa sozinho</p>
@@ -313,8 +326,11 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                 )}
               </div>
             )}
-            {applied && <p className="mt-3 text-sm text-emerald-300">Aplicado: {applied.fee_create} tarifas criadas · {applied.fee_match} tarifas casadas · {applied.exact} exatos · {applied.name} por nome · {applied.rule_create} criados por regra · {applied.rule_adopt} agendadas adotadas · {applied.learn} por regra aprendida · {applied.transfer} transferências.{applied.errors.length ? <span className="text-red-400"> Erros ({applied.errors.length}): {applied.errors.slice(0, 5).join(' | ')}{applied.errors.length > 5 ? ' …' : ''}</span> : ''} Confira abaixo.</p>}
+            {applied && <p className="mt-3 text-sm text-emerald-300">Aplicado: {applied.fee_create} tarifas criadas · {applied.fee_match} tarifas casadas · {applied.exact} exatos · {applied.name} por nome · {applied.rule_create} criados por regra · {applied.rule_adopt} agendadas adotadas · {applied.learn} por regra aprendida · {applied.transfer} transferências · {applied.bucket} no balde A ATRIBUIR.{applied.errors.length ? <span className="text-red-400"> Erros ({applied.errors.length}): {applied.errors.slice(0, 5).join(' | ')}{applied.errors.length > 5 ? ' …' : ''}</span> : ''} Confira abaixo.</p>}
           </div>
+
+          {/* ── A ATRIBUIR (fase B): a fila do balde ── */}
+          {!needsMigration && <BucketQueue embedded onCount={(n) => setBucketN(n)} />}
 
           {/* ── TO BOOK (João, 31/ago): só a fila da triagem, com nota ── */}
           <div className="border border-gray-800 rounded-2xl p-4">
@@ -342,17 +358,22 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
 
           {/* ── REGRAS & APELIDOS DO MOTOR (BL 0.7.0) — semeadura humana ── */}
           <details className="border border-gray-800 rounded-2xl p-4" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) loadMgr() }}>
-            <summary className="cursor-pointer font-bold text-sm">⚙ REGRAS & APELIDOS DO MOTOR <span className="text-gray-500 font-normal">— combustível→FLEET, mercado→TEAM, DELAWAR→High Horse…</span></summary>
+            <summary className="cursor-pointer font-bold text-sm">⚙ REGRAS & APELIDOS DO MOTOR <span className="text-gray-500 font-normal">— PADRÃO semeado pelo app (desligou, nunca volta) · humana manda · aprendida do MATCH</span></summary>
             <div className="mt-3 grid md:grid-cols-2 gap-4 text-sm">
               <div>
-                <p className="font-bold text-purple-300 mb-2">REGRAS <span className="text-gray-500 font-normal">(linha sem lançamento → o motor CRIA/ADOTA e casa, ou marca TRANSFER · precedência: regex humana &gt; categoria (pfc) humana &gt; aprendida)</span></p>
-                {rules.map(r => (
+                <p className="font-bold text-purple-300 mb-2">REGRAS <span className="text-gray-500 font-normal">(linha sem lançamento → o motor CRIA/ADOTA e casa, marca TRANSFER ou manda pro balde · precedência: regex humana &gt; pfc/classe humana &gt; aprendida &gt; PADRÃO)</span></p>
+                <div className="flex gap-1 flex-wrap mb-2 items-center">
+                  {(['ALL', 'HUMAN', 'DEFAULT', 'LEARNED'] as const).map(k => <button key={k} onClick={() => setOriginFilter(k)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${originFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : ORIGIN_BADGE[k][0]} {k === 'ALL' ? rules.length : rules.filter(r => (r.origin || 'HUMAN') === k).length}</button>)}
+                  <button disabled={anyBusy} title="semeia as regras PADRÃO que faltam (chave estável; desligada nunca renasce)" onClick={async () => { lock('seed'); try { const d = await post({ action: 'seed_defaults' }); alert(`PADRÃO: ${(d.inserted || []).length} novas · ${(d.skipped || []).length} puladas/desligadas${(d.skipped || []).length ? '\n' + d.skipped.join('\n') : ''}`); await loadMgr(true) } catch (e) { fail(e) } finally { unlock('seed') } }} className="ml-auto bg-amber-900 hover:bg-amber-800 border border-amber-700 disabled:opacity-40 px-3 py-1 rounded-xl text-[10px] font-bold">{busy.has('seed') ? '…' : '↻ SEMEAR PADRÕES'}</button>
+                </div>
+                {[...rules].filter(r => originFilter === 'ALL' || (r.origin || 'HUMAN') === originFilter).sort((a, b) => { const o = (x: any) => x.origin === 'LEARNED' ? 1 : x.origin === 'DEFAULT' ? 2 : 0; return o(a) - o(b) || ((a.priority ?? 100) - (b.priority ?? 100)) || String(a.created_at || '').localeCompare(String(b.created_at || '')) }).map(r => (
                   <div key={r.id} className="flex items-center gap-2 border-b border-gray-900 py-1">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${r.origin === 'LEARNED' ? 'bg-fuchsia-950 text-fuchsia-300' : 'bg-purple-950 text-purple-300'}`}>{r.origin === 'LEARNED' ? 'APRENDIDA' : 'HUMANA'}</span>
-                    <code className="text-xs bg-gray-900 rounded px-1.5 py-0.5 truncate max-w-[16rem]" title={[r.pattern && 'regex ' + r.pattern, r.merchant_key && 'comerciante ' + r.merchant_key, r.pfc_primary && 'pfc ' + r.pfc_primary, r.pfc_detailed && r.pfc_detailed].filter(Boolean).join(' · ')}>{r.pattern || r.pfc_detailed || r.pfc_primary || r.merchant_key || '?'}</code>
-                    <span className="flex-1 text-xs text-gray-400 truncate">→ {r.target === 'TRANSFER' ? 'TRANSFER (status)' : r.target === 'INPUT' ? 'SUPPLY ' + (r.category || 'SHOP') : 'despesa · ' + (sups.find(s => s.id === r.supplier_id)?.label || 'fornecedor?')}{r.label ? ' · ' + r.label : ''}{r.hits ? ` · ${r.hits}×` : ''}{r.amount_max ? ` · teto ${usd(Number(r.amount_max))}` : ''}{r.paused_reason ? ` · ${r.paused_reason}` : ''}</span>
-                    <button onClick={async () => { await supabase.from('bank_merchant_rules').update({ active: !r.active, ...(r.active ? {} : { paused_reason: null }) }).eq('id', r.id); setRules(p => p.map(x => x.id === r.id ? { ...x, active: !r.active, paused_reason: r.active ? x.paused_reason : null } : x)) }} className={`text-xs font-bold ${r.active ? 'text-emerald-300' : r.origin === 'LEARNED' ? 'text-fuchsia-300' : 'text-gray-500'}`}>{r.active ? 'ATIVA' : r.origin === 'LEARNED' ? 'PROMOVER' : 'PAUSADA'}</button>
-                    <button onClick={async () => { if (!confirm('Apagar a regra?')) return; await supabase.from('bank_merchant_rules').delete().eq('id', r.id); setRules(p => p.filter(x => x.id !== r.id)) }} className="text-red-400 text-xs font-bold">✕</button>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${(ORIGIN_BADGE[r.origin || 'HUMAN'] || ORIGIN_BADGE.HUMAN)[1]}`}>{(ORIGIN_BADGE[r.origin || 'HUMAN'] || ORIGIN_BADGE.HUMAN)[0]}</span>
+                    <code className="text-xs bg-gray-900 rounded px-1.5 py-0.5 truncate max-w-[16rem]" title={[r.klass && 'classe ' + r.klass, r.pattern && 'regex ' + r.pattern, r.merchant_key && 'comerciante ' + r.merchant_key, r.pfc_primary && 'pfc ' + r.pfc_primary, r.pfc_detailed && r.pfc_detailed, r.key && r.key].filter(Boolean).join(' · ')}>{r.klass ? r.klass + (r.pattern ? ' + ' + r.pattern : '') : (r.pattern || r.pfc_detailed || r.pfc_primary || r.merchant_key || '?')}</code>
+                    <span className="flex-1 text-xs text-gray-400 truncate">→ {r.target === 'TRANSFER' ? 'TRANSFER (status)' : r.target === 'BUCKET' ? 'BALDE (compras a atribuir)' : r.target === 'INPUT' ? 'SUPPLY ' + (r.category || 'CONSUMPTION') : 'despesa · ' + (sups.find(s => s.id === r.supplier_id)?.label || 'fornecedor?')}{r.label ? ' · ' + r.label : ''}{r.hits ? ` · ${r.hits}×` : ''}{r.amount_max ? ` · teto ${usd(Number(r.amount_max))}` : ''}{r.paused_reason ? ` · ${r.paused_reason}` : ''}</span>
+                    <button onClick={async () => { const { error } = await supabase.from('bank_merchant_rules').update({ active: !r.active, paused_reason: r.active ? (r.origin === 'DEFAULT' ? 'desligada pelo dono' : r.paused_reason) : null }).eq('id', r.id); if (error) { alert(error.message); return } setRules(p => p.map(x => x.id === r.id ? { ...x, active: !r.active, paused_reason: r.active ? (r.origin === 'DEFAULT' ? 'desligada pelo dono' : x.paused_reason) : null } : x)) }} className={`text-xs font-bold ${r.active ? 'text-emerald-300' : r.origin === 'LEARNED' ? 'text-fuchsia-300' : 'text-gray-500'}`}>{r.origin === 'DEFAULT' ? (r.active ? 'LIGADA' : 'DESLIGADA') : r.active ? 'ATIVA' : r.origin === 'LEARNED' ? 'PROMOVER' : 'PAUSADA'}</button>
+                    {/* PADRÃO não se apaga: a linha desligada é a lápide que impede o app de semear de novo. */}
+                    {r.origin !== 'DEFAULT' && <button onClick={async () => { if (!confirm('Apagar a regra?')) return; await supabase.from('bank_merchant_rules').delete().eq('id', r.id); setRules(p => p.filter(x => x.id !== r.id)) }} className="text-red-400 text-xs font-bold">✕</button>}
                   </div>
                 ))}
                 <div className="flex gap-2 flex-wrap mt-2 items-center">
@@ -361,6 +382,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                     <option value="FIXED_EXPENSE">despesa de fornecedor</option>
                     <option value="INPUT">supply (categoria)</option>
                     <option value="TRANSFER">transferência (sem lançamento)</option>
+                    <option value="BUCKET">balde — compras a atribuir</option>
                   </select>
                   {nr.target === 'FIXED_EXPENSE' && (
                     <select value={nr.supplier_id} onChange={e => setNr({ ...nr, supplier_id: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1.5 text-xs max-w-[14rem]">
@@ -370,7 +392,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                   )}
                   {nr.target === 'INPUT' && (
                     <select value={nr.category} onChange={e => setNr({ ...nr, category: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1.5 text-xs">
-                      {['SHOP', 'TEAM', 'APARTMENT', 'CATS'].map(c => <option key={c} value={c}>{c}</option>)}
+                      {INPUT_CATS.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   )}
                   {nr.target === 'TRANSFER' ? (
@@ -389,7 +411,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                     if (!hasMatcher || (nr.target === 'FIXED_EXPENSE' && !nr.supplier_id)) { alert('padrão (regex ou pfc) e destino obrigatórios'); return }
                     const row = { pattern: nr.pattern.trim() || null, target: nr.target, supplier_id: nr.target === 'FIXED_EXPENSE' ? nr.supplier_id : null, category: nr.target === 'INPUT' ? nr.category : null, label: nr.label.trim() || null, active: true, origin: 'HUMAN', pfc_primary: nr.target === 'TRANSFER' ? null : (nr.pfc_primary.trim() || null), pfc_detailed: nr.target === 'TRANSFER' ? null : (nr.pfc_detailed.trim() || null), direction: nr.target === 'TRANSFER' ? nr.direction : 'OUT' }
                     const { data, error } = await supabase.from('bank_merchant_rules').insert(row).select('*').single()
-                    if (error) alert(error.message + (/origin|pfc_|direction/.test(error.message) ? ' — rode MIGRATION_auto_book.sql' : '')); else { setRules(p => [...p, data]); setNr({ pattern: '', target: nr.target, supplier_id: '', category: 'SHOP', label: '', pfc_primary: '', pfc_detailed: '', direction: 'OUT' }) }
+                    if (error) alert(error.message + (/origin|pfc_|direction/.test(error.message) ? ' — rode MIGRATION_auto_book.sql' : '')); else { setRules(p => [...p, data]); setNr({ pattern: '', target: nr.target, supplier_id: '', category: 'CONSUMPTION', label: '', pfc_primary: '', pfc_detailed: '', direction: 'OUT' }) }
                   }} className="bg-purple-800 hover:bg-purple-700 px-3 py-1.5 rounded-xl text-xs font-bold">+ REGRA</button>
                 </div>
                 {learnMsg && <p className="mt-2 text-xs text-fuchsia-300">memória de comerciante: {learnMsg}</p>}
@@ -422,7 +444,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
               <div className="flex items-center gap-3 flex-wrap mb-3">
                 <p className="font-bold flex-1">A CONFERIR <span className="text-amber-300">{auto.pending.length}</span> <span className="text-xs text-gray-500 font-normal">· {auto.reviewed} já conferidas</span></p>
                 <div className="flex gap-1">
-                  {(['ALL', 'FEE', 'EXACT', 'NAME', 'RULE', 'LEARN'] as const).map(k => <button key={k} onClick={() => setEngineFilter(k)} className={`px-3 py-1 rounded-xl text-xs font-bold border ${engineFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : k}</button>)}
+                  {(['ALL', 'FEE', 'EXACT', 'NAME', 'RULE', 'LEARN', 'BUCKET'] as const).map(k => <button key={k} onClick={() => setEngineFilter(k)} className={`px-3 py-1 rounded-xl text-xs font-bold border ${engineFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : k}</button>)}
                 </div>
                 {auto.pending.some(a => a.engine === 'FEE') && <button disabled={anyBusy} onClick={reviewAllFees} className="bg-teal-800 hover:bg-teal-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">{busy.has('review_all') ? '…' : 'OK TODAS AS TARIFAS'}</button>}
               </div>
@@ -430,7 +452,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                 <div className="flex gap-2 flex-wrap mb-3 text-xs text-gray-400">
                   {auto.batches.map(b => (
                     <span key={b.batch} className="inline-flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-3 py-1">
-                      {runLabel(b.trigger, b.started_at)} · linhas {formatShortDate(b.from)}–{formatShortDate(b.to)} · {b.n} ({b.fee} FEE · {b.exact} EXACT{b.name ? ` · ${b.name} NAME` : ''}{b.rule ? ` · ${b.rule} RULE` : ''}{b.learn ? ` · ${b.learn} LEARN` : ''}{b.transfer ? ` · ${b.transfer} TRANSFER` : ''}){b.pending ? ` · ${b.pending} a conferir` : ' · conferida'}
+                      {runLabel(b.trigger, b.started_at)} · linhas {formatShortDate(b.from)}–{formatShortDate(b.to)} · {b.n} ({b.fee} FEE · {b.exact} EXACT{b.name ? ` · ${b.name} NAME` : ''}{b.rule ? ` · ${b.rule} RULE` : ''}{b.learn ? ` · ${b.learn} LEARN` : ''}{b.transfer ? ` · ${b.transfer} TRANSFER` : ''}{b.bucket ? ` · ${b.bucket} A ATRIBUIR` : ''}){b.pending ? ` · ${b.pending} a conferir` : ' · conferida'}
                       <button disabled={anyBusy} onClick={() => undoBatch(b)} className="text-red-300 hover:text-red-200 font-bold disabled:opacity-40">{busy.has('undo_' + b.batch) ? '…' : 'DESFAZER LOTE'}</button>
                     </span>
                   ))}
@@ -446,7 +468,9 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                       <span className={`tabular-nums font-bold text-sm shrink-0 ${a.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{a.amount > 0 ? '−' : '+'}{usd(a.amount)}</span>
                       <span className="text-xs text-gray-400 flex-1 truncate min-w-[12rem]" title={a.note}>⇄ {a.note}{a.backfilled ? <span className="ml-2 text-[10px] text-sky-300" title="a data de pagamento do app foi preenchida com a do banco">data preenchida</span> : null}</span>
                       {a.href && <a href={`${BASE_PATH}${a.href}`} target="_blank" rel="noreferrer" title="abre o registro que o motor escolheu, em aba nova" className="bg-gray-800 hover:bg-gray-700 border border-gray-600 px-3 py-1 rounded-xl font-bold text-xs">ABRIR ↗</a>}
-                      <button disabled={batchBusy || busy.has(a.id)} onClick={() => review(a)} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">OK</button>
+                      {a.engine === 'BUCKET'
+                        ? <a href="#a-atribuir" onClick={() => document.getElementById('a-atribuir')?.scrollIntoView({ behavior: 'smooth' })} className="bg-amber-900 hover:bg-amber-800 border border-amber-700 px-3 py-1 rounded-xl font-bold text-xs" title="linha do balde: o OK é dizer o dono na fila A ATRIBUIR">ATRIBUIR ↓</a>
+                        : <button disabled={batchBusy || busy.has(a.id)} onClick={() => review(a)} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">OK</button>}
                       <button disabled={batchBusy || busy.has(a.id)} onClick={() => undoLine(a)} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">DESFAZER</button>
                     </div>
                   ))}

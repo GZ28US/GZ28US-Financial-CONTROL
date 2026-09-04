@@ -62,6 +62,10 @@ export default function InvoicesPage() {
       .select('id, invoice_code, ride_id, is_quote, hiring_date, entry_date, conclusion_date, delivery_date, mileage, service, florida_taxes, global_discount, fl_tax_expense_date, feed_status, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', false)
       .eq('origin', mode === 'shop' ? 'SHOP' : 'PROJECT')
+      // Cinto e suspensório (AUTO-BOOK fase B, 4/set/2026): o .eq acima já
+      // exclui o balde A ATRIBUIR (origin BUCKET); a guarda fica explícita
+      // porque o REMOVE desta lista apagaria o balde inteiro em cascata.
+      .neq('origin', 'BUCKET')
       .not('ride_id', 'is', null)
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })

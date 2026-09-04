@@ -9,6 +9,31 @@ function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: '
 
 type PayRow = { id: string; date: string; amount: number; code: string; label2: string; href: string; tip?: string }
 
+// LEITURA PAGINADA (AUTO-BOOK fase B, 4/set/2026). O supabase-js corta em 1.000
+// linhas EM SILÊNCIO e, com o balde A ATRIBUIR lançando cada compra do cartão
+// como despesa paga, a janela de 12 meses de invoice_expenses passa disso — o
+// PAST mentiria por omissão. Loop de .range() até vir página curta; a ordem
+// por id é só para a paginação ser estável (a tela reordena por data depois).
+// O builder do Supabase tem generics profundos demais para tipar (TS2589);
+// `any` aqui é deliberado e local — o mesmo compromisso do STREAM.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function pageAll(build: () => any): Promise<any[]> {
+  const PAGE = 1000
+  const out: any[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await build().order('id').range(from, from + PAGE - 1)
+    const page = data || []
+    out.push(...page)
+    if (page.length < PAGE) break
+  }
+  return out
+}
+
+// Balde do Bank Link (fase B): a pseudo-invoice A ATRIBUIR (invoices.origin =
+// 'BUCKET') carrega compra REAL, paga no dia do banco, ainda sem dono. O PAST é
+// vista de CAIXA — ela ENTRA na conta, só que rotulada e apontando pra fila.
+const BUCKET_HREF = `${BASE_PATH}/adm/bank#a-atribuir`
+
 export default function PaymentsPage() {
   const [clientRows, setClientRows] = useState<PayRow[]>([])
   const [gzRows, setGzRows] = useState<PayRow[]>([])
@@ -22,11 +47,11 @@ export default function PaymentsPage() {
     const cutoffDate = cutoff.toISOString().slice(0, 10)
     const cutoffISO = cutoff.toISOString()
 
-    const [{ data: pays }, { data: exps }, { data: staffExps }, { data: inputsD }, { data: goodsD }] = await Promise.all([
+    const [{ data: pays }, exps, { data: staffExps }, { data: inputsD }, { data: goodsD }] = await Promise.all([
       // PAID by CLIENTS — income received (paid_at in window).
       supabase.from('invoice_payments').select('id, invoice_id, amount, paid_at, source').not('paid_at', 'is', null).gte('paid_at', cutoffISO),
-      // PAID by GZ28US — invoice expenses paid (payment_date in window).
-      supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
+      // PAID by GZ28US — invoice expenses paid (payment_date in window). Paginado (ver pageAll).
+      pageAll(() => supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group').not('payment_date', 'is', null).gte('payment_date', cutoffDate)),
       // PAGO pela GZ28 — pagamento de staff. Desde 28/jul/2026 cada linha é um
       // pagamento com data própria e `payment_date` só existe quando o dinheiro
       // saiu — então o PAST lista pelo PAGAMENTO, nunca pela previsão (antes
@@ -69,10 +94,11 @@ export default function PaymentsPage() {
       }
     })
 
-    const invoiceIds = [...new Set([...(pays || []).map((p: any) => p.invoice_id), ...(exps || []).map((e: any) => e.invoice_id)])]
+    // .filter(Boolean): um invoice_id nulo viraria `in.(null)` na URL e o PostgREST devolve 400.
+    const invoiceIds = [...new Set([...(pays || []).map((p: any) => p.invoice_id), ...(exps || []).map((e: any) => e.invoice_id)])].filter(Boolean)
     let invs: any[] = []
     if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, service, ride_id, client_id, is_quote').in('id', invoiceIds)
+      const { data } = await supabase.from('invoices').select('id, invoice_code, service, ride_id, client_id, is_quote, origin').in('id', invoiceIds)
       invs = data || []
     }
     const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
@@ -109,9 +135,13 @@ export default function PaymentsPage() {
     // Consolidate every expense sharing the same INVOICE + SUPPLIER + PAYMENT DATE into a
     // single row — covers scanned-receipt groups AND separately-added lines alike. Expenses
     // with no supplier stay solo so unrelated unlabeled lines never merge.
+    // Linha do balde fica SOLO: cada uma É uma cobrança do banco (uma linha por
+    // purchase_group = id da linha do banco) — juntar duas do mesmo dia e mesmo
+    // fornecedor esconderia uma compra. Tudo que não é balde agrupa como antes.
+    const isBucket = (invId: string) => invById.get(invId)?.origin === 'BUCKET'
     const expByKey = new Map<string, any[]>()
     for (const e of expsReal) {
-      const key = e.supplier ? `${e.invoice_id}|${e.supplier}|${e.payment_date || ''}` : `solo-${e.id}`
+      const key = e.supplier && !isBucket(e.invoice_id) ? `${e.invoice_id}|${e.supplier}|${e.payment_date || ''}` : `solo-${e.id}`
       if (!expByKey.has(key)) expByKey.set(key, [])
       expByKey.get(key)!.push(e)
     }
@@ -120,6 +150,11 @@ export default function PaymentsPage() {
       const m = invMeta(e0.invoice_id)
       const amount = items.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
       const supplier = e0.supplier || ''
+      // Balde: código A ATRIBUIR, rótulo «fornecedor · item», link pra fila do Bank Link.
+      if (isBucket(e0.invoice_id)) {
+        const label = [supplier, e0.item].filter(Boolean).join(' · ')
+        return { id: `inv-${k}`, date: e0.payment_date, amount, code: 'A ATRIBUIR', label2: label, tip: label, href: BUCKET_HREF }
+      }
       return { id: `inv-${k}`, date: e0.payment_date, amount, code: m.code, label2: items.length > 1 ? `${supplier || 'Purchase'} · ${items.length} items` : (supplier || e0.item || ''), tip: [m.clientName, m.carName, m.invoiceName, supplier].filter(Boolean).join(' — '), href: m.inv ? `${BASE_PATH}/${m.ownerSeg}/invoices/edit/${m.inv.id}` : '#' }
     })
 

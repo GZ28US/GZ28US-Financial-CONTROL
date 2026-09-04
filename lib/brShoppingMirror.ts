@@ -165,6 +165,9 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
   // Filhos: a saída (expenses), o que o US deve (items a custo puro) e o pendente.
   let totalBrl = 0, totalUsd = 0
   let latestPaid: string | null = null
+  // AUTO-BOOK fase B: o marcador «(atribuída · Bank Link)» é trilha do app US —
+  // nunca viaja pro Brasil (o item do BR é o nome limpo).
+  const clean = (t: string | null | undefined) => String(t || '').replace(/\s*\((atribuída|a atribuir) · Bank Link\)/g, '').trim()
   const expRows: any[] = [], partRows: any[] = []
   items.forEach((it, i) => {
     const day = it.paymentDate || todayUTC()
@@ -180,7 +183,7 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
     totalUsd = r2(totalUsd + lineUsd)
     if (it.paymentDate && (!latestPaid || it.paymentDate > latestPaid)) latestPaid = it.paymentDate
     expRows.push({
-      invoice_id: brInvoiceId, item: it.item, supplier: it.supplier || null,
+      invoice_id: brInvoiceId, item: clean(it.item), supplier: it.supplier || null,
       price: priceBrl, amount_usd: r2(it.usdPrice),
       quantity: qty, tax: taxBrl, extra: extraBrl,
       payment_date: it.paymentDate || null, expense_date: it.paymentDate || null,
@@ -192,7 +195,7 @@ export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrM
     // O ITEM cobra exatamente o que a linha custou: preço unitário = total ÷ qtd, e o
     // último item absorve o centavo do arredondamento para o total fechar no ponto.
     partRows.push({
-      invoice_id: brInvoiceId, description: it.item,
+      invoice_id: brInvoiceId, description: clean(it.item),
       unit_price: r2(lineBrl / qty), base_cost: r2(lineBrl / qty), unit_price_usd: r2(lineUsd / qty),
       quantity: qty, payment_date: it.paymentDate || null, position: i,
       _lineBrl: lineBrl,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { useParams, usePathname } from 'next/navigation'
+import { useParams, usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
@@ -97,6 +97,7 @@ function pad3(n: number) { return String(n).padStart(3, '0') }
 
 export default function ViewInvoicePage() {
   const params = useParams()
+  const router = useRouter()
   const pathname = usePathname()
   const ownerId = String(params.id)
   const invoiceId = String(params.invoiceId)
@@ -176,6 +177,10 @@ export default function ViewInvoicePage() {
       }
     }
     const { data: inv } = await supabase.from('invoices').select('*').eq('id', invoiceId).single()
+    // Balde do Bank Link (AUTO-BOOK fase B, 4/set/2026): a pseudo-invoice
+    // A ATRIBUIR (origin BUCKET) não tem página de VIEW — SEND mandaria o PDF
+    // de um balde. Vai direto pra fila. (next/router já inclui o basePath /ca.)
+    if (inv?.origin === 'BUCKET') { router.replace('/adm/bank#a-atribuir'); return }
     if (inv) setInvoice(inv)
     // If this invoice was converted from a quote, surface the archived original.
     const { data: backup } = await supabase.from('quote_backups').select('*').eq('invoice_id', invoiceId).order('archived_at', { ascending: false }).limit(1).maybeSingle()

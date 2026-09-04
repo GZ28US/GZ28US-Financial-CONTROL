@@ -40,6 +40,8 @@ type Fix =
   // TROCAR dupla (desfaz o lançamento do motor e casa a linha com o registro humano).
   | { kind: 'purge'; table: string; rowId: string; field: string; confirmText: string }
   | { kind: 'rematch'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
+  // BALDE (fase B): DESFAZER um ponteiro morto — a linha do banco volta a NEW e o motor recria.
+  | { kind: 'unmatch'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -79,7 +81,7 @@ type SupRow = { id: string; text: string; part: string; candidates: { id: string
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
-type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[] }
+type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] } }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
@@ -860,16 +862,25 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       else if (['ERROR', 'ABORTED'].includes(last.status)) items.push({ href: '/adm/check', code: 'MOTOR', label: `última rodada ${last.status} (${last.trigger}, ${when(last.started_at)})`, extra: (last.errors || [])[0] ? String(last.errors![0]).slice(0, 140) : `${last.remaining ?? 0} linhas ficaram pra próxima` })
       for (const e of ab.errors) items.push({ href: '/adm/check', code: 'ERRO', label: String(e).slice(0, 160), extra: 'erro do motor nos últimos 7 dias' })
       for (const o of ab.orphans) {
-        if (o.code === 'SUBSTITUÍDA') { items.push({ href: o.table === 'inputs' ? '/supplies' : '/costs/fixed', code: 'SUBSTITUÍDA', label: o.label || '', extra: `a linha do banco foi trocada pelo Plaid (pending → posted); a linha nova vai casar este lançamento na próxima rodada — não apague · ${usd(o.amount)}`, amount: o.amount }); continue }
+        const oHref = o.table === 'inputs' ? '/supplies' : o.table === 'inventory' ? '/inventory' : o.table === 'invoice_expenses' ? '/adm/bank' : '/costs/fixed'
+        if (o.code === 'SUBSTITUÍDA') { items.push({ href: oHref, code: 'SUBSTITUÍDA', label: o.label || '', extra: `a linha do banco foi trocada pelo Plaid (pending → posted); a linha nova vai casar este lançamento na próxima rodada — não apague · ${usd(o.amount)}`, amount: o.amount }); continue }
         items.push({
-          href: o.table === 'inputs' ? '/supplies' : '/costs/fixed', code: 'ÓRFÃO', label: o.label || '', extra: `lançamento criado pelo motor sem linha do banco casada apontando pra ele — ${usd(o.amount)}`, amount: o.amount,
+          href: oHref, code: 'ÓRFÃO', label: o.label || '', extra: `lançamento criado pelo motor sem linha do banco casada apontando pra ele — ${usd(o.amount)}`, amount: o.amount,
           fix: { kind: 'purge' as const, table: o.table, rowId: o.id, field: 'DELETED', confirmText: `Apagar o lançamento ÓRFÃO do motor "${o.label}" (${usd(o.amount)})? Nenhuma linha do banco aponta pra ele — é sobra de um DESFAZER ou de uma rodada que falhou. Fica na trilha.` },
         })
       }
       for (const x of ab.dups) items.push({
-        href: x.auto_table === 'inputs' ? '/supplies' : '/costs/fixed', code: 'DUPLA', label: `${x.auto_label || ''} ⇄ ${x.twin_label || ''}`, extra: `o motor criou e um humano lançou o mesmo (${usd(x.amount)}, ${x.days} dia(s) de diferença) — TROCAR desfaz o do motor e casa a linha com o registro humano`, amount: x.amount,
+        href: x.auto_table === 'inputs' ? '/supplies' : x.auto_table === 'invoice_expenses' ? '/adm/bank' : '/costs/fixed', code: 'DUPLA', label: `${x.auto_label || ''} ⇄ ${x.twin_label || ''}`, extra: `o motor criou e um humano lançou o mesmo (${usd(x.amount)}, ${x.days} dia(s) de diferença) — TROCAR desfaz o do motor e casa a linha com o registro humano`, amount: x.amount,
         fix: { kind: 'rematch' as const, table: x.twin_table, rowId: x.twin_id, field: 'match', bankId: x.bank_id, confirmText: `DESFAZ o lançamento do motor "${x.auto_label}" e casa a linha do banco com o registro humano "${x.twin_label}" (${usd(x.amount)})?` },
       })
+      // BALDE (fase B): ponteiro morto (linha do banco apontando pra registro apagado),
+      // valor mudado pelo Plaid depois do lançamento, e PADRÃO que não pôde ser semeado.
+      for (const x of ab.dead_pointers || []) items.push({
+        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco e o motor recria · ${usd(x.amount)}`, amount: x.amount,
+        fix: { kind: 'unmatch' as const, table: x.table, rowId: x.id, field: 'match_status', bankId: x.bank_id, confirmText: `Devolver a linha do banco «${x.label}» (${usd(x.amount)}) a SEM CASAMENTO? O registro apontado já não existe; o motor recria na próxima rodada.` },
+      })
+      for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila e deixe o motor recriar`, amount: Math.abs(x.bank_amount - x.row_amount) })
+      for (const k of (ab.seed && ab.seed.skipped) || []) items.push({ href: '/adm/bank', code: 'PADRÃO', label: k, extra: 'regra padrão não semeada — fornecedor ambíguo ou ausente; nomeie o fornecedor certo no ⚙ do Bank Link (regra humana)' })
       const b24 = Object.values(ab.booked_24h || {}).reduce((s, v) => s + v, 0), b7 = Object.values(ab.booked_7d || {}).reduce((s, v) => s + v, 0)
       checks.push({
         group: 'BANK', key: 'auto-book', title: 'AUTO-BOOK — o motor registrou sozinho?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
@@ -877,6 +888,45 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
       })
     }
+  }
+  // BANK · A ATRIBUIR (fase B): compra sem dono há mais de 7 dias. O balde é conta
+  // de suspensão — caixa e DRE certos no dia, mas a margem do carro mente até o
+  // dono ser dito. Cada item atribui na hora pela rota do Bank Link (o servidor
+  // acha a linha do banco pelo row_id).
+  if (Array.isArray(d.bucket)) {
+    const rows = d.bucket as any[]
+    const total = rows.reduce((s, e) => s + expLine(e), 0)
+    const ages = rows.map(e => e.payment_date ? dayDiff(TODAY, String(e.payment_date)) : 0)
+    const maxAge = ages.length ? Math.max(...ages) : 0
+    const open = d.invoices.filter((i: any) => !i.is_quote && i.ride_id && ['REALTIME', 'INCOMPLETE'].includes(String(i.live_status))).map((i: any) => { const r = d.rides.get(i.ride_id); return { value: i.id, label: `${r?.project_code || ''} — ${r?.project_name || ''} · ${i.invoice_code}` } }).sort((a: any, b: any) => a.label.localeCompare(b.label))
+    const options = [...open, { value: '__stock__', label: '📦 ESTOQUE (vira inventário)' }, { value: '__supplies__', label: '🧴 SUPPLIES (insumo CONSUMPTION)' }]
+    const items: Item[] = rows.filter(e => e.payment_date && dayDiff(TODAY, String(e.payment_date)) > 7).sort((a, b) => String(a.payment_date).localeCompare(String(b.payment_date))).map(e => ({
+      href: '/adm/bank', code: 'SEM DONO', label: [e.supplier, String(e.item || '').replace('(a atribuir · Bank Link)', '').trim()].filter(Boolean).join(' · '), when: e.payment_date, extra: `${dayDiff(TODAY, String(e.payment_date))} dias no balde`, amount: expLine(e),
+      link: { href: `${BASE_PATH}/adm/bank#a-atribuir`, label: 'FILA ↗' },
+      fix: { kind: 'select' as const, table: 'invoice_expenses', rowId: e.id, field: 'invoice_id', current: null, options },
+    }))
+    checks.push({
+      group: 'BANK', key: 'bucket-aging', title: 'Compra sem dono há mais de 7 dias (A ATRIBUIR)', blocks: 'a margem do carro mente e o CPV carrega custo sem dono',
+      why: `O motor registra toda compra do banco no mesmo dia — quando nenhuma regra sabe o dono, ela cai no balde «Compras a atribuir» (caixa e DRE certos na hora). Balde hoje: ${rows.length} compras · ${usd(total)} · mais antiga ${maxAge} d. Aqui só entra o que passou de 7 dias; a fila A ATRIBUIR do Bank Link tem CARRO (sugestões por fornecedor), ESTOQUE, SUPPLIES, FIXO e DIVIDIR — SUPPLIES e FIXO ensinam regra. O balde tem que zerar toda semana.`,
+      items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+    // Balde fora do padrão: a pseudo-invoice A ATRIBUIR tem que ser UMA, sem carro,
+    // sem cliente, nunca quote, nunca REALTIME/CLOSED (senão HOME/FUTURE/clientes contam).
+    const inv = d.bucketInvoice
+    const bad: Item[] = []
+    if (!inv) bad.push({ href: '/adm/bank', code: 'SEM BALDE', label: 'invoice A ATRIBUIR não existe', extra: 'rode MIGRATION_auto_book_phase_b.sql no SQL Editor (US)' })
+    else {
+      if (inv.client_id) bad.push({ href: '/adm/bank', code: 'CLIENTE', label: 'a invoice do balde tem cliente', extra: 'apareceria na lista de compras de um cliente — rode MIGRATION_auto_book_phase_b.sql de novo (auto-cura) ou zere client_id no SQL Editor' })
+      if (inv.ride_id) bad.push({ href: '/adm/bank', code: 'CARRO', label: 'a invoice do balde tem carro', extra: 'o balde nunca pertence a um ride — rode MIGRATION_auto_book_phase_b.sql de novo (auto-cura) ou zere ride_id no SQL Editor' })
+      if (inv.is_quote) bad.push({ href: '/adm/bank', code: 'QUOTE', label: 'a invoice do balde virou quote', extra: 'quote sai de todos os números — o balde sumiria do DRE', fix: { kind: 'flag' as const, table: 'invoices', rowId: inv.id, field: 'is_quote', value: false, confirmText: 'Voltar a invoice A ATRIBUIR a NÃO-quote?' } })
+      if (['REALTIME', 'CLOSED'].includes(String(inv.live_status))) bad.push({ href: '/adm/bank', code: 'STATUS', label: `live_status ${inv.live_status}`, extra: 'REALTIME/CLOSED entram na HOME, no FUTURE e nos relatórios — o balde tem que ficar INCOMPLETE', fix: { kind: 'select' as const, table: 'invoices', rowId: inv.id, field: 'live_status', current: inv.live_status, options: [{ value: 'INCOMPLETE', label: 'INCOMPLETE' }] } })
+      if (inv.invoice_code !== 'A ATRIBUIR') bad.push({ href: '/adm/bank', code: 'CÓDIGO', label: `invoice_code ${inv.invoice_code}`, extra: 'o nome do balde é A ATRIBUIR' })
+    }
+    for (const e of rows) {
+      const why = !e.payment_date ? 'sem payment_date' : String(e.paid_from || '') !== 'GZ28US' ? 'paid_from ≠ GZ28US' : !e.purchase_group ? 'sem elo com o banco (purchase_group)' : expLine(e) === 0 ? 'valor zero' : null
+      if (why) bad.push({ href: '/adm/bank', code: 'LINHA', label: [e.supplier, e.item].filter(Boolean).join(' · '), extra: why + ' — o motor não escreve assim; alguém editou', amount: expLine(e), link: { href: `${BASE_PATH}/adm/bank#a-atribuir`, label: 'FILA ↗' } })
+    }
+    checks.push({ group: 'BANK', key: 'bucket-invariants', title: 'Balde fora do padrão (invoice A ATRIBUIR)', blocks: 'o balde vazaria pra HOME, clientes ou relatórios', why: 'A pseudo-invoice A ATRIBUIR é UMA só, sem cliente, sem carro, nunca quote, sempre INCOMPLETE; cada linha do balde tem a data do banco, paid_from GZ28US e o elo purchase_group. Fora disso, o balde contamina outros números.', items: bad, impact: bad.reduce((s, i) => s + (i.amount || 0), 0) })
   }
   return checks
 }
@@ -997,6 +1047,8 @@ export default function DataCheckPage() {
     if (cash && cash.items.length > 0) out.push({ title: 'O caixa não bate — conserte a régua primeiro', sub: 'enquanto ela estiver vermelha, nenhum outro número vale', group: 'BANK', open: 'cash-match' })
     const ab = checks.find(c => c.key === 'auto-book')
     if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'AUTO-BOOK parou ou errou — veja o card', sub: 'o motor deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
+    const bk = checks.find(c => c.key === 'bucket-aging')
+    if (bk && bk.items.length) out.push({ title: `${bk.items.length} compra(s) sem dono há 7+ dias — diga o carro`, sub: `${usd(bk.impact || 0)} parados no balde · CARRO / ESTOQUE / SUPPLIES / FIXO na fila A ATRIBUIR`, group: 'BANK', open: 'bucket-aging' })
     if (bankAConferir > 0) out.push({ title: `Conferir os ${bankAConferir} casamentos do motor`, sub: 'o banco propôs, você bate o martelo — OK ou DESFAZER, com ABRIR ↗ pra ver a prova', group: 'BANK', open: null })
     const certoChecks = checks.filter(c => c.items.some(i => i.certain))
     const certos = certoChecks.reduce((s, c) => s + c.items.filter(i => i.certain).length, 0)
@@ -1100,10 +1152,26 @@ export default function DataCheckPage() {
     // confirmação; a trilha guarda o que era (old_value = rótulo).
     // AUTO-BOOK (BL 0.8.0): PURGAR e TROCAR passam pela rota do Bank Link — ela
     // re-checa o marcador/elo antes de apagar e casa o registro humano com trilha.
-    if (fix.kind === 'purge' || fix.kind === 'rematch') {
+    // BALDE (fase B): o select do card «Compra sem dono» ATRIBUI pela rota do Bank
+    // Link (o servidor acha a linha do banco pelo row_id): carro, estoque ou insumo.
+    if (check.key === 'bucket-aging' && fix.kind === 'select') {
+      if (!value) { alert('escolha o carro, ESTOQUE ou SUPPLIES'); return }
       setSaving(true)
       try {
-        const body = fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
+        const dest = value === '__stock__' ? 'STOCK' : value === '__supplies__' ? 'SUPPLIES' : 'CAR'
+        const body = { action: 'assign', row_id: fix.rowId, dest, invoice_id: dest === 'CAR' ? value : undefined, category: 'CONSUMPTION' }
+        const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
+    if (fix.kind === 'purge' || fix.kind === 'rematch' || fix.kind === 'unmatch') {
+      setSaving(true)
+      try {
+        const body = fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : fix.kind === 'unmatch' ? { action: 'unmatch', bank_id: fix.bankId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
         const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
@@ -1306,7 +1374,7 @@ export default function DataCheckPage() {
             </div>
             <div className="space-y-4">
               {/* Conciliação bancária mora na categoria BANK — lê/escreve por /api/bank/reconcile. */}
-              {g === 'BANK' && <BankReconcileCard onCount={(n, ac) => { setBankCount(n); setBankAConferir(ac || 0) }} />}
+              {g === 'BANK' && <BankReconcileCard onCount={(n, ac) => { setBankCount(n); setBankAConferir(ac || 0) }} />}   {/* fase B: o balde tem card próprio (bucket-aging); o 3º argumento fica por conta da fila */}
               {checks.filter(c => c.group === g).map(c => (
           <div key={c.key} className={`border rounded-2xl overflow-hidden ${c.items.length === 0 ? 'border-emerald-900/60' : 'border-gray-700'}`}>
             <button onClick={() => setOpen(open === c.key ? null : c.key)} className="w-full text-left px-5 py-4 bg-gray-900 hover:bg-gray-800 flex items-center gap-4">
@@ -1376,8 +1444,8 @@ export default function DataCheckPage() {
                         ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
                         : (
                           <div>
-                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
-                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : 'CONFIRMAR'}</button>
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : 'CONFIRMAR'}</button>
                           </div>
                         )}
                       {c.key === 'parts-identity' && gval === '__search__' && it.fix && (
@@ -1447,7 +1515,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -1487,14 +1555,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
-                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && !fixValue)}
+                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>

@@ -186,7 +186,18 @@ export async function runDutyWatch(db: SupabaseClient): Promise<{ booked: string
     const { data: rows } = waybills.length
       ? await db.from('invoice_expenses').select('invoice_id, item, tracking_number, supplier').in('tracking_number', waybills)
       : { data: [] as any[] }
-    const matched = (rows || []).filter(r => r.invoice_id)
+    const matchedAll = (rows || []).filter(r => r.invoice_id)
+    // Balde do Bank Link (AUTO-BOOK fase B, 4/set/2026): linha da pseudo-invoice
+    // A ATRIBUIR (invoices.origin = 'BUCKET') nunca é destino de imposto — o
+    // balde não tem dono, e o rateio cairia numa "invoice" que não é carro. Sai
+    // ANTES do rateio igual; se só sobrar balde, vira alerta de SEM DESTINO.
+    // A leitura das invoices sobe pra cá (uma só, com origin) e serve o codeOf.
+    const invIdsAll = [...new Set(matchedAll.map(r => String(r.invoice_id)))]
+    const { data: invs } = invIdsAll.length
+      ? await db.from('invoices').select('id, invoice_code, origin').in('id', invIdsAll)
+      : { data: [] as any[] }
+    const bucketIds = new Set(((invs || []) as any[]).filter(i => i.origin === 'BUCKET').map(i => String(i.id)))
+    const matched = matchedAll.filter(r => !bucketIds.has(String(r.invoice_id)))
     const fingerprint = invNo ? `${carrier} inv ${invNo}` : `${carrier} waybill ${waybills[0] || msg.key}`
     if (await alreadyBooked(db, fingerprint)) continue
 
@@ -215,8 +226,8 @@ export async function runDutyWatch(db: SupabaseClient): Promise<{ booked: string
     const wb = matched[0]?.tracking_number || waybills[0] || '?'
     const supplier = matched[0]?.supplier || carrier
 
-    const { data: invs } = await db.from('invoices').select('id, invoice_code').in('id', invoiceIds)
-    const codeOf = (id: string) => invs?.find((i: any) => i.id === id)?.invoice_code || '?'
+    // invs já veio lá em cima (leitura única, com origin — o balde já saiu de matched).
+    const codeOf = (id: string) => ((invs || []) as any[]).find((i: any) => i.id === id)?.invoice_code || '?'
 
     for (let i = 0; i < invoiceIds.length; i++) {
       await db.from('invoice_expenses').insert({

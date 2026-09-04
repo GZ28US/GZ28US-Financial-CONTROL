@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import { BASE_PATH } from '@/lib/utils'
 import BlBadge from '@/components/BlBadge'
 import { sessionHeaders } from '@/components/BankReconcileCard'
+import BucketQueue from '@/components/BucketQueue'
 
 // ADM ▸ BANK — o UNIVERSO bancário (ordem do Márcio, 18/ago/2026): a Regions entra
 // aqui via Plaid e toda transação vira uma linha de bank_transactions. Esta tela é
@@ -201,6 +202,9 @@ export default function BankPage() {
         <p className="text-sm font-bold text-fuchsia-300 mb-4">⚠️ SANDBOX mode — test data only, no real bank.</p>
       )}
 
+
+      {/* A ATRIBUIR (AUTO-BOOK fase B): a fila do balde — o motor lançou, o humano diz o dono. */}
+      <BucketQueue />
 
       {/* Conexões */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">

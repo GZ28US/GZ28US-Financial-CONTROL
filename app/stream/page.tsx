@@ -74,7 +74,7 @@ type GoodExpenseRow = BaseRow & { description: string | null; amount: number | n
 type ExpenseRow = BaseRow & { description: string | null; amount: number | null; expense_date: string | null; origin: string | null; season_id: string | null }
 type SeasonRef = { id: string; staff_id: string | null }
 type StaffRef = { id: string; name: string | null }
-type InvoiceRef = { id: string; invoice_code: string; ride_id: string | null; is_quote: boolean | null }
+type InvoiceRef = { id: string; invoice_code: string; ride_id: string | null; is_quote: boolean | null; origin: string | null }
 
 // Uma linha do stream, já derivada e pronta para desenhar.
 type StreamItem = {
@@ -136,7 +136,7 @@ export default function StreamPage() {
         fetchAll<GoodExpenseRow>('good_expenses', `id, description, amount, ${DELIVER_SELECT}`),
         // expenses: o gate "é ITEM?" vai NA QUERY — folha nunca chega aqui.
         fetchAll<ExpenseRow>('expenses', `id, description, amount, expense_date, origin, season_id, ${DELIVER_SELECT}`, q => q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)),
-        fetchAll<InvoiceRef>('invoices', 'id, invoice_code, ride_id, is_quote'),
+        fetchAll<InvoiceRef>('invoices', 'id, invoice_code, ride_id, is_quote, origin'),
       ])
       const invMap = new Map(invoices.map(i => [i.id, i]))
       const list: StreamItem[] = []
@@ -159,18 +159,24 @@ export default function StreamPage() {
       }
 
       // invoice_expenses → a página da invoice no ride. Quote não é compra.
+      // Balde do Bank Link (AUTO-BOOK fase B, 4/set/2026): linha da pseudo-invoice
+      // A ATRIBUIR (invoices.origin = 'BUCKET') é compra paga e sem dono — por lei
+      // compra paga é item vivo, então ela aparece (BOUGHT, sem rastreio), mas
+      // rotulada A ATRIBUIR e apontando pra fila, não pra uma invoice de carro.
       for (const r of ie) {
         const inv = r.invoice_id ? invMap.get(r.invoice_id) : undefined
         if (inv?.is_quote) continue
         const status = deriveDeliverStatus(r)
         if (!status) continue
+        const bucket = inv?.origin === 'BUCKET'
         list.push({
           key: `ie-${r.id}`, status, row: r,
           name: r.item || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.price != null ? r.price * (r.quantity || 1) : null,
           paymentDate: r.payment_date || '',
-          sourceLabel: inv ? `INVOICE ${inv.invoice_code}` : 'INVOICE',
-          href: inv?.ride_id && r.invoice_id ? `${BASE_PATH}/rides/${inv.ride_id}/invoices/${r.invoice_id}` : null,
+          sourceLabel: bucket ? 'A ATRIBUIR' : inv ? `INVOICE ${inv.invoice_code}` : 'INVOICE',
+          href: bucket ? `${BASE_PATH}/adm/bank#a-atribuir`
+            : inv?.ride_id && r.invoice_id ? `${BASE_PATH}/rides/${inv.ride_id}/invoices/${r.invoice_id}` : null,
         })
       }
       // inputs → SUPPLIES; inventory → a mesma ficha com ?src=inventory

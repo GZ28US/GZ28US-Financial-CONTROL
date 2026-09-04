@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { normSup, matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
 
 
 // Items whose name matches these are "extras" (shipping/handling/etc). For the
@@ -219,41 +220,17 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
 // "&" vira "and", sufixo societário cai, pontuação some. Sem isso
 // "Texas Speed & Performance" e "Texas Speed and Performance" viravam dois
 // fornecedores, e 28 peças ficaram sem o vínculo de official supplier.
-export const normSup = (s: string) => (s || '').toLowerCase()
-  .replace(/&/g, 'and')
-  .replace(/\b(inc|llc|ltd|corp|incorporated|company)\b\.?/g, '')
-  .replace(/[^a-z0-9]/g, '')
-
-export type SupplierEntry = { name: string; keys: string[]; official: boolean }
+// normSup / SupplierEntry / matchSupplier moram em lib/supplierMatch.ts desde o
+// AUTO-BOOK fase B (BL 0.9.0): módulo puro que o motor do Bank Link também usa.
+// Re-exportados aqui — quem importava de partsDb continua funcionando.
+export { normSup, matchSupplier, supplierDirectoryFrom }
+export type { SupplierEntry }
 
 async function supplierDirectory(): Promise<SupplierEntry[]> {
   try {
     const { data } = await supabase.from('suppliers').select('name, aliases, is_dealership')
-    return (data || []).map((s: any) => ({
-      name: s.name,
-      official: s.is_dealership === true,
-      keys: [s.name, ...String(s.aliases || '').split(/[\n,]/)].map(normSup).filter(Boolean),
-    }))
+    return supplierDirectoryFrom(data || [])
   } catch { return [] }
-}
-
-// Resolve QUALQUER grafia para o fornecedor cadastrado. Primeiro a chave exata
-// (nome ou alias); depois PREFIXO — uma grafia com endereço colado
-// ("Titan Motorsports, 11370 Boggy Creek Rd...") ou com parêntese
-// ("High Horse Performance (HHP Racing)") COMEÇA pela chave.
-//
-// Prefixo, e não contenção em qualquer posição: um alias do AutoZone trazia o
-// endereço da loja, o split por vírgula gerou a chave "orlando", e ela casava
-// no MEIO do endereço da Titan — dois candidatos, fornecedor errado no chute.
-// Nome de empresa vem na frente; endereço vem depois. Exige 6+ caracteres e
-// resposta ÚNICA: com duas candidatas devolve null em vez de adivinhar.
-export function matchSupplier(nome: string | null | undefined, dir: SupplierEntry[]): SupplierEntry | null {
-  const n = normSup(String(nome || ''))
-  if (!n) return null
-  const exato = dir.find(d => d.keys.includes(n))
-  if (exato) return exato
-  const prefixo = dir.filter(d => d.keys.some(k => k.length >= 6 && (n.startsWith(k) || k.startsWith(n))))
-  return prefixo.length === 1 ? prefixo[0] : null
 }
 
 // Enroll scanned items into parts_database (product code = PART NUMBER when

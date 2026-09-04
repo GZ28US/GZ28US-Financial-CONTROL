@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, invoiceMeta, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, invoiceMeta, rideScope, recognitionDate, ledgerTotals, qtyLine, expLine, isCarLine, fleetDepreciation, CAP_FLOOR, bucketTotal, FinData } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
@@ -105,6 +105,9 @@ export default function DrePage() {
     // Juros pagos vêm do livro de empréstimos (null até a migration rodar).
     const lt = ledgerTotals(d)
     const juros = lt ? lt.interestPaid : null
+    // COMPRAS A ATRIBUIR (AUTO-BOOK fase B): o banco pagou, o dono ainda não foi
+    // dito — desconta do lucro bruto (a visão `v` aplica), fora de toda margem por job.
+    const bucket = bucketTotal(d)
     return {
       juros, resultado: (lucroBruto - opex) - (juros || 0),
       parts, services, flTax, discount, brutaTotal, liquida, cost, lucroBruto,
@@ -112,6 +115,7 @@ export default function DrePage() {
       payroll, fixedBy, consum, teamIn, aptCats, smallTools, opex, ebitda: lucroBruto - opex,
       margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—',
       wipOpen, fleetCost, missingConclusion, nInvoices: d.invoices.length,
+      bucket,
     }
   }, [d])
 
@@ -132,7 +136,7 @@ export default function DrePage() {
     const cost = m.cost - m.fleetCost - (off ? m.carCost : 0)
     const brutaTotal = parts + flTax + m.services
     const liquida = brutaTotal - discount - flTax
-    const lucroBruto = liquida - cost
+    const lucroBruto = liquida - cost - m.bucket   // compras a atribuir descontam aqui (ebitda/resultado seguem)
     const ebitda = lucroBruto - m.opex
     const resultado = ebitda - (m.juros || 0) - (dep?.accum || 0)
     return { parts, flTax, discount, cost, brutaTotal, liquida, lucroBruto, ebitda, resultado, margemPct: liquida ? (lucroBruto / liquida * 100).toFixed(1) + '%' : '—' }
@@ -183,6 +187,7 @@ export default function DrePage() {
     for (const x of d.inputs) { if (x.category === 'APARTMENT' || x.category === 'CATS' || x.category === 'TEAM') continue; const k2 = x.category || 'SEM CATEGORIA'; consumAcc.set(k2, (consumAcc.get(k2) || 0) + qtyLine(x)) }
     return {
       parts: cap(partsL), services: cap(svcL), fltax: cap(taxL), discount: cap(discL), cost: cap(costL),
+      bucket: cap(d.bucket.map((e: any) => ({ label: [String(e.payment_date || '').slice(0, 10), e.supplier, e.item].filter(Boolean).join(' · '), amount: expLine(e), href: '/adm/bank#a-atribuir' }))),
       payroll: cap([
         ...d.expenses.map((e: any) => ({ label: (e.origin === 'PERSONAL' ? 'PESSOAL · ' : '') + (e.description || e.type || '—'), amount: parseFloat(e.amount) || 0, href: '/staff' })),
         ...d.inputs.filter((x: any) => x.category === 'APARTMENT' || x.category === 'CATS').map((x: any) => ({ label: (x.category === 'CATS' ? 'MASCOTES · ' : 'APARTAMENTO · ') + (x.description || ''), amount: qtyLine(x), href: '/supplies' })),
@@ -247,6 +252,8 @@ export default function DrePage() {
       const line = (x.category === 'TEAM' || x.category === 'APARTMENT' || x.category === 'CATS') ? 'EQUIPE' : 'CONSUM'
       add(line, x.purchase_date || x.payment_date, qtyLine(x))
     }
+    // Compras a atribuir: datadas pelo BANCO (payment_date) — sem dono, sem conclusão.
+    for (const e of d.bucket) add('BUCKET', e.payment_date, expLine(e))
     for (const g of d.goods) if (qtyLine(g) < CAP_FLOOR) add('TOOLS', g.purchase_date || g.payment_date, qtyLine(g))
     for (const g of d.goodExpenses) if ((parseFloat(g.amount) || 0) < CAP_FLOOR) add('TOOLS', g.expense_date || g.payment_date, parseFloat(g.amount) || 0)
     for (const e of (d.financingEvents || [])) if (e.kind === 'INTEREST') add('JUROS', e.event_date, parseFloat(e.amount) || 0)
@@ -268,6 +275,7 @@ export default function DrePage() {
       { cells: ['(−) FL tax repassado ao estado', usd(-v.flTax)] },
       { cells: ['RECEITA LÍQUIDA', usd(v.liquida)], bold: true },
       { cells: ['(−) Custo dos produtos e serviços', usd(-v.cost)] },
+      { cells: ['(−) Compras a atribuir', usd(-m.bucket)] },
       { cells: ['LUCRO BRUTO', usd(v.lucroBruto)], bold: true },
       { cells: ['(−) Equipe — salários & bem-estar', usd(-(m.payroll + m.aptCats + m.teamIn + (m.fixedBy.STAFF || 0)))] },
       { cells: ['(−) Consumíveis de oficina', usd(-m.consum)] },
@@ -301,6 +309,7 @@ export default function DrePage() {
         `O CPV inclui ${usd(m.fleetCost)} da frota própria (rides OWN/TOOL) — sai do custo quando D2/D3 fecharem.`,
         `G1 destravado: o mês do resultado de invoice FECHADO deriva do último recebimento quando falta conclusion_date (explícita vale mais). Fechadas sem data derivável: ${m.missingConclusion}. Colunas por período entram com D1/D2.`,
         'Margem deprimida porque o valor bruto dos carros de clientes passa pela receita e pelo custo (tratamento agência pendente — D2/D3).',
+        `Compras a atribuir ${usd(m.bucket)}: pago pelo banco, dono ainda não dito — some conforme a fila A ATRIBUIR atribui. Compras no cartão sem nota entram 7 dias depois da data do banco (maturidade do motor).`,
       ],
     })
   }
@@ -371,10 +380,12 @@ export default function DrePage() {
       {mode !== 'ACUMULADA' && pd && (() => {
         const val = (line: string, per: string) => pd.acc[line]?.[per] || 0
         const OPEXK = ['EQUIPE', 'CONSUM', 'FIXED', 'FLEET', 'MKT', 'APP', 'BANK', 'ASSET', 'TOOLS', 'UNCLASS']
+        const CPVK = ['CPV', 'BUCKET']   // custo dos projetos + compras a atribuir (AUTO-BOOK fase B)
         const rows2: { label: string; get: (per: string) => number; bold?: boolean; neg?: boolean }[] = [
           { label: 'Receita líquida', get: p2 => val('REV', p2), bold: true },
           { label: '(−) CPV (projetos concluídos)', get: p2 => -val('CPV', p2), neg: true },
-          { label: 'LUCRO BRUTO', get: p2 => val('REV', p2) - val('CPV', p2), bold: true },
+          { label: '(−) Compras a atribuir', get: p2 => -val('BUCKET', p2), neg: true },
+          { label: 'LUCRO BRUTO', get: p2 => val('REV', p2) - CPVK.reduce((s3, k2) => s3 + val(k2, p2), 0), bold: true },
           { label: '(−) Equipe — salários & bem-estar', get: p2 => -val('EQUIPE', p2), neg: true },
           { label: '(−) Consumíveis de oficina', get: p2 => -val('CONSUM', p2), neg: true },
           { label: '(−) Ocupação, energia & contador', get: p2 => -val('FIXED', p2), neg: true },
@@ -385,9 +396,9 @@ export default function DrePage() {
           { label: '(−) Ativos & instalações', get: p2 => -val('ASSET', p2), neg: true },
           { label: '(−) Ferramental de baixo valor', get: p2 => -val('TOOLS', p2), neg: true },
           { label: '(−) Não classificado', get: p2 => -val('UNCLASS', p2), neg: true },
-          { label: 'EBITDA', get: p2 => val('REV', p2) - val('CPV', p2) - OPEXK.reduce((s3, k2) => s3 + val(k2, p2), 0), bold: true },
+          { label: 'EBITDA', get: p2 => val('REV', p2) - CPVK.reduce((s3, k2) => s3 + val(k2, p2), 0) - OPEXK.reduce((s3, k2) => s3 + val(k2, p2), 0), bold: true },
           { label: '(−) Juros', get: p2 => -val('JUROS', p2), neg: true },
-          { label: 'RESULTADO (ex-depreciação)', get: p2 => val('REV', p2) - val('CPV', p2) - OPEXK.reduce((s3, k2) => s3 + val(k2, p2), 0) - val('JUROS', p2), bold: true },
+          { label: 'RESULTADO (ex-depreciação)', get: p2 => val('REV', p2) - CPVK.reduce((s3, k2) => s3 + val(k2, p2), 0) - OPEXK.reduce((s3, k2) => s3 + val(k2, p2), 0) - val('JUROS', p2), bold: true },
         ]
         const lbl = (p2: string) => mode === 'MES' ? ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'][Number(p2.slice(5, 7)) - 1] : p2
         return (
@@ -434,6 +445,7 @@ export default function DrePage() {
           <Waterfall steps={[
             { label: 'Receita líquida', value: v.liquida, kind: 'in' },
             { label: 'Custo dos produtos e serviços', value: v.cost, kind: 'out' },
+            { label: 'Compras a atribuir', value: m.bucket, kind: 'out' },
             { label: 'Lucro bruto', value: v.lucroBruto, kind: 'net' },
             { label: 'Despesas operacionais', value: m.opex, kind: 'out' },
             { label: 'EBITDA', value: v.ebitda, kind: 'net' },
@@ -475,6 +487,7 @@ export default function DrePage() {
           <Row label="RECEITA LÍQUIDA" value={v.liquida} />
           <Row label="(−) Custo dos produtos e serviços" value={-v.cost} sub k="cost"
             note={`frota própria OWN/TOOL ${usd(m.fleetCost)} capitalizada no Balanço — FORA do CPV (volta via depreciação, G4)${scope === 'COMPLETO' ? ` · dos quais carros (export): ${usd(m.carCost)}` : ''}`} />
+          <Row label="(−) Compras a atribuir" value={-m.bucket} sub k="bucket" note="conta de suspensão: o banco pagou, o carro ainda não foi dito — fora de toda margem por job; a fila A ATRIBUIR do Bank Link esvazia esta linha. Atribuir a um CARRO move o custo pro CPV do job (reconhecido na conclusão) — as colunas por período mudam de propósito. Compra no cartão sem nota entra 7 dias depois da data do banco (AUTO-BOOK fase B)" />
           <Row label="LUCRO BRUTO" value={v.lucroBruto} />
           <Row label="(−) Equipe — salários & bem-estar" value={-(m.payroll + m.aptCats + m.teamIn + (m.fixedBy.STAFF || 0))} sub k="payroll" note="salários, diárias, comida (TEAM), o dia a dia dos sócios e a moradia — o custo humano completo" />
           <Row label="(−) Consumíveis de oficina" value={-m.consum} sub k="consum" note="o que mantém a OFICINA rodando: WD40, limpeza, mobília miúda — comida é Equipe (TEAM) e óleo é ESTOQUE; o card do Data Checker reclassifica o blob CONSUMPTION" />
