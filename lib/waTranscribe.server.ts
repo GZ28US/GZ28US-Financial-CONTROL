@@ -35,22 +35,20 @@ export type WaTranscribeResult = {
 
 type PendingRow = { app: string; message_id: string; media_url: string }
 
-// Um áudio: baixa a mídia e devolve o texto. Erros viram exceção com mensagem
-// curta — quem chama grava no `transcript_error` da linha.
-async function transcribeOne(mediaUrl: string): Promise<string> {
+// O núcleo: bytes de áudio -> texto. Serve tanto a fila do espelho quanto o
+// upload de arquivo solto (áudio velho, de export de WhatsApp, que nunca passou
+// pelo hub). Erros viram exceção com mensagem curta — quem chama decide o que
+// fazer com ela.
+export async function sttTranscribe(buf: ArrayBuffer, ext = 'ogg'): Promise<string> {
+  if (!process.env.STT_API_KEY) throw new Error('no key')
   const base = (process.env.STT_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
   const model = process.env.STT_MODEL || 'whisper-1'
-  const key = process.env.STT_API_KEY!
 
-  const media = await fetch(mediaUrl)
-  if (!media.ok) throw new Error(`media ${media.status}`)
-  const buf = await media.arrayBuffer()
   if (buf.byteLength > MAX_BYTES) throw new Error(`too big (${Math.round(buf.byteLength / 1e6)}MB)`)
   if (buf.byteLength < 512) throw new Error('media empty')
 
   // O nome do arquivo importa: o provider decide o decoder pela extensão, e a
   // UltraMsg entrega voice note como .ogg (opus).
-  const ext = (mediaUrl.split('?')[0].match(/\.(ogg|oga|mp3|m4a|wav|webm|mp4)$/i)?.[1] || 'ogg').toLowerCase()
   const form = new FormData()
   form.append('file', new Blob([buf]), `audio.${ext}`)
   form.append('model', model)
@@ -58,12 +56,20 @@ async function transcribeOne(mediaUrl: string): Promise<string> {
 
   const r = await fetch(`${base}/audio/transcriptions`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${key}` },
+    headers: { Authorization: `Bearer ${process.env.STT_API_KEY}` },
     body: form,
   })
   const text = await r.text()
   if (!r.ok) throw new Error(`stt ${r.status}: ${text.replace(/\s+/g, ' ').slice(0, 160)}`)
   return text.trim()
+}
+
+// Um áudio do espelho: baixa a mídia e transcreve.
+async function transcribeOne(mediaUrl: string): Promise<string> {
+  const media = await fetch(mediaUrl)
+  if (!media.ok) throw new Error(`media ${media.status}`)
+  const ext = (mediaUrl.split('?')[0].match(/\.(ogg|oga|mp3|m4a|wav|webm|mp4)$/i)?.[1] || 'ogg').toLowerCase()
+  return sttTranscribe(await media.arrayBuffer(), ext)
 }
 
 // Varre os áudios ainda sem transcrição e transcreve `limit` deles. Idempotente
