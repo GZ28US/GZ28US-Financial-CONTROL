@@ -19,9 +19,11 @@ export async function GET(req: NextRequest) {
   if (!cronOk && !keyOk) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const limit = parseInt(req.nextUrl.searchParams.get('limit') || '20') || 20
+  // ?chat=<chatId> fura a fila por conversa — ver waTranscribePending.
+  const chatId = (req.nextUrl.searchParams.get('chat') || '').trim() || undefined
 
   try {
-    const result = await waTranscribePending({ limit })
+    const result = await waTranscribePending({ limit, chatId })
     return NextResponse.json({ ok: true, at: new Date().toISOString(), ...result })
   } catch (e) {
     console.error('[whatsapp-transcribe]', e)

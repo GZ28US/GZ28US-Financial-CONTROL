@@ -69,7 +69,7 @@ async function transcribeOne(mediaUrl: string): Promise<string> {
 // Varre os áudios ainda sem transcrição e transcreve `limit` deles. Idempotente
 // — a própria coluna `transcript_status` é a fila, então rodar duas vezes não
 // duplica trabalho nem cobra duas vezes.
-export async function waTranscribePending(opts: { limit?: number } = {}): Promise<WaTranscribeResult> {
+export async function waTranscribePending(opts: { limit?: number; chatId?: string } = {}): Promise<WaTranscribeResult> {
   const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100)
   if (!process.env.STT_API_KEY) return { scanned: 0, done: 0, failed: 0, skipped: 'no key' }
 
@@ -77,12 +77,18 @@ export async function waTranscribePending(opts: { limit?: number } = {}): Promis
   // Os que ainda não foram tentados. `error` fica de fora de propósito: falha
   // repetida não pode virar loop de cobrança — reprocessar é decisão manual
   // (zerar o transcript_status da linha).
-  const { data, error } = await db
+  //
+  // `chatId` fura a fila por conversa: quando a resposta de UM chat é o que
+  // trava uma decisão, não faz sentido esperar centenas de áudios de outras
+  // conversas passarem na frente só porque são mais recentes.
+  let q = db
     .from('whatsapp_messages')
     .select('app,message_id,media_url')
     .in('type', ['ptt', 'audio'])
     .not('media_url', 'is', null)
     .is('transcript_status', null)
+  if (opts.chatId) q = q.eq('chat_id', opts.chatId)
+  const { data, error } = await q
     .order('sent_at', { ascending: false })
     .limit(limit)
   if (error) throw new Error(`db: ${error.message}`)
