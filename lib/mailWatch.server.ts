@@ -12,15 +12,18 @@
 // conta — senão o watcher se alarma com o e-mail que nós mesmos mandamos.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { listMailAuths, freshAccessToken } from '@/lib/streamMail.server'
+import { listMailAuths, freshAccessToken, type MailAuth } from '@/lib/streamMail.server'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
+const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const SIGNATURE = 'Sent by GZ28US Control App®'
 const FIRST_RUN_MIN = 60
-// Só caixas Microsoft: a listagem abaixo é Graph. Caixa Google fica fora deste
-// watcher por enquanto (um mail_watches.slot apontando pra Gmail é ignorado).
-// A lista vem do banco desde 04/set/2026, não de [1, 2, 3].
+// As caixas vêm do banco (listMailAuths) e cada provedor tem sua perna: Graph
+// para as Microsoft, Gmail API para as Google. Até 04/set/2026 o watcher era
+// [1, 2, 3] e ignorava calado qualquer mail_watches.slot apontando para uma
+// caixa Google — e é justamente lá (gz28speedshop) que caem Home Depot, Target,
+// Sam's e cia. Vigia que não cobre a caixa onde o assunto vive é vigia inútil.
 
 export type MailWatch = {
   id: string
@@ -55,12 +58,69 @@ export function matches(w: MailWatch, fromAddr: string, subject: string): boolea
   return has(fromAddr, w.from_pattern) && has(subject, w.subject_pattern)
 }
 
+// Cursor por caixa: a MESMA linha de whatsapp_polling_state das duas pernas, para
+// que trocar o provedor de um slot não faça o watcher reprocessar o passado.
+async function readCursor(db: SupabaseClient, slot: number): Promise<string> {
+  const { data } = await db.from('whatsapp_polling_state').select('*').eq(`id`, `mail-watch-${slot}`).limit(1)
+  return data?.[0]?.last_message_id || new Date(Date.now() - FIRST_RUN_MIN * 60_000).toISOString()
+}
+async function saveCursor(db: SupabaseClient, slot: number, runStart: string): Promise<void> {
+  await db.from('whatsapp_polling_state').upsert({ id: `mail-watch-${slot}`, last_message_id: runStart, updated_at: runStart })
+}
+// Um achado vira aviso — igual nas duas pernas, para o alerta não depender do provedor.
+async function fire(db: SupabaseClient, w: MailWatch, fromAddr: string, subject: string, preview: string, when: string, alerts: string[]): Promise<void> {
+  await wa(w.notify_to, `📬 *RESPOSTA — ${w.label}*\nDe: ${fromAddr}\nAssunto: ${subject}\n\n${preview}${preview.length >= 400 ? '…' : ''}`)
+  await db.from('mail_watches').update({ hits: (w.hits || 0) + 1, last_hit_at: when }).eq('id', w.id)
+  w.hits = (w.hits || 0) + 1
+  alerts.push(`${w.label} ← ${fromAddr}`)
+}
+
+// ── Perna Google ────────────────────────────────────────────────────────────
+// in:anywhere cobre inbox, arquivados, spam e lixeira — a resposta que interessa
+// costuma já ter sido arquivada pelo organizer quando o watcher passa.
+// O `snippet` já vem no format=metadata e serve de preview sem baixar o corpo.
+async function gmailWatch(db: SupabaseClient, auth: MailAuth, slotWatches: MailWatch[], alerts: string[]): Promise<void> {
+  const token = await freshAccessToken(db, auth)
+  if (!token) return
+  const H = { Authorization: `Bearer ${token}` }
+  const self = String(auth.account || '').toLowerCase()
+  const slot = auth.id
+  const runStart = new Date().toISOString()
+  const cursor = await readCursor(db, slot)
+  // O `after:` do Gmail tem resolução de SEGUNDOS e é inclusivo; recuar 1s evita
+  // perder a mensagem que chegou no mesmo segundo em que a passada anterior fechou.
+  const afterSec = Math.floor(new Date(cursor).getTime() / 1000) - 1
+  const q = `in:anywhere after:${afterSec}`
+  const list = await fetch(`${GM}/messages?maxResults=100&q=${encodeURIComponent(q)}`, { headers: H }).then(r => r.json()).catch(() => null)
+  for (const stub of list?.messages || []) {
+    const m = await fetch(`${GM}/messages/${stub.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, { headers: H }).then(r => r.json()).catch(() => null)
+    if (!m?.id) continue
+    const hv = (n: string) => String((m.payload?.headers || []).find((h: { name?: string; value?: string }) => String(h.name || '').toLowerCase() === n)?.value || '')
+    const fromRaw = hv('from')
+    const fromAddr = (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).toLowerCase().trim()
+    if (!fromAddr || fromAddr === self) continue // o que NÓS mandamos não é resposta
+    const subject = hv('subject')
+    const when = m.internalDate ? new Date(Number(m.internalDate)).toISOString() : runStart
+    for (const w of slotWatches) {
+      if (!matches(w, fromAddr, subject)) continue
+      await fire(db, w, fromAddr, subject, clean(String(m.snippet || '')).slice(0, 400), when, alerts)
+    }
+  }
+  await saveCursor(db, slot, runStart)
+}
+
 export async function runMailWatch(db: SupabaseClient): Promise<{ alerts: string[] }> {
   const alerts: string[] = []
 
   const { data: rows } = await db.from('mail_watches').select('*').eq('active', true)
   const watches = (rows || []) as MailWatch[]
   if (!watches.length) return { alerts }
+
+  for (const auth of await listMailAuths(db, 'gmail')) {
+    const slotWatches = watches.filter(w => Number(w.slot) === auth.id)
+    if (!slotWatches.length) continue
+    try { await gmailWatch(db, auth, slotWatches, alerts) } catch (e) { console.error('[mail-watch gmail]', auth.id, e) }
+  }
 
   for (const auth of await listMailAuths(db, 'graph')) {
     const slot = auth.id
@@ -71,10 +131,8 @@ export async function runMailWatch(db: SupabaseClient): Promise<{ alerts: string
     if (!token) continue
     const self = String(auth.account || '').toLowerCase()
 
-    const stateId = `mail-watch-${slot}`
     const runStart = new Date().toISOString()
-    const { data: st } = await db.from('whatsapp_polling_state').select('*').eq('id', stateId).limit(1)
-    const cursor = st?.[0]?.last_message_id || new Date(Date.now() - FIRST_RUN_MIN * 60_000).toISOString()
+    const cursor = await readCursor(db, slot)
 
     // Caixa inteira, não só a inbox.
     const url = `${G}/me/messages?$filter=receivedDateTime gt ${cursor}&$top=100&$select=subject,from,receivedDateTime,body&$orderby=receivedDateTime desc`
@@ -87,16 +145,11 @@ export async function runMailWatch(db: SupabaseClient): Promise<{ alerts: string
 
       for (const w of slotWatches) {
         if (!matches(w, fromAddr, subject)) continue
-
-        const preview = clean(m.body?.content || '').slice(0, 400)
-        await wa(w.notify_to, `📬 *RESPOSTA — ${w.label}*\nDe: ${fromAddr}\nAssunto: ${subject}\n\n${preview}${preview.length >= 400 ? '…' : ''}`)
-        await db.from('mail_watches').update({ hits: (w.hits || 0) + 1, last_hit_at: m.receivedDateTime || runStart }).eq('id', w.id)
-        w.hits = (w.hits || 0) + 1
-        alerts.push(`${w.label} ← ${fromAddr}`)
+        await fire(db, w, fromAddr, subject, clean(m.body?.content || '').slice(0, 400), m.receivedDateTime || runStart, alerts)
       }
     }
 
-    await db.from('whatsapp_polling_state').upsert({ id: stateId, last_message_id: runStart, updated_at: runStart })
+    await saveCursor(db, slot, runStart)
   }
 
   return { alerts }
