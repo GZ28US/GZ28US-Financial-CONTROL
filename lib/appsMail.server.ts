@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getMailAuth, freshAccessToken, listMailAuths, mailProvider } from '@/lib/streamMail.server'
+import { getMailAuth, freshAccessToken, listMailAuths, mailProvider, maySweep } from '@/lib/streamMail.server'
 import { sendStreamWhatsApp } from '@/lib/stream.server'
 
 // APPS watcher — TODAS as caixas do Márcio são fonte das assinaturas de apps
@@ -614,6 +614,10 @@ export async function runAppsSweep(db: SupabaseClient, opts: { full?: boolean } 
   const apps = await loadApps(db)
   for (const auth of await listMailAuths(db)) {
     const slot = auth.id, box = auth.account || `slot${slot}`
+    // O APPS não apaga, mas MOVE (cria a árvore Apps/<app> e joga o recibo lá
+    // dentro) e ainda LANÇA dinheiro. Numa caixa de arquivo isso é reorganizar o
+    // acervo alheio: respeita o mesmo opt-in da faxina (04/set/2026).
+    if (!maySweep(auth)) continue
     try {
       if (mailProvider(auth) === 'gmail') await gmailSweep(db, slot, box, apps, out, opts)
       else await outlookSweep(db, slot, apps, out, opts)

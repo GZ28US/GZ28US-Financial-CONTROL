@@ -36,11 +36,17 @@ export type MailAuth = {
   // List-Unsubscribe fora das listas SAFE. "Uber: Seu recibo" e "Sua compra
   // chegou" da Mercado Livre não estão em SAFE nenhum: o robô ia limpar o
   // arquivo dele. Caixa nova NÃO nasce varrida — quem apaga é decisão por caixa.
-  auto_sweep?: boolean | null
+  auto_sweep: boolean | null
 }
-// Só as caixas onde a faxina automática está liberada (sweepSpam, sweepMarketing,
-// marketing kill). Leitura, rastreio, APPS e watchers seguem em TODAS as caixas.
-export const maySweep = (auth: Pick<MailAuth, 'auto_sweep'>): boolean => auth.auto_sweep !== false
+// Só as caixas onde a faxina automática está liberada: sweepSpam, sweepMarketing,
+// marketing kill (apagam) e o APPS sweep (move e cria pasta). Ler, rastrear e os
+// watchers seguem em TODAS as caixas — o opt-in é para quem MEXE na caixa.
+//
+// Compara com `=== true` de propósito: para robô que apaga e-mail, desconhecido
+// tem de falhar FECHADO. Se um dia a coluna sumir do select ou vier nula, ninguém
+// é varrido — e isso se percebe rápido; o inverso é o robô limpando calado a
+// caixa errada, que foi exatamente o acidente de 04/set com a gz28shopping.
+export const maySweep = (auth: Pick<MailAuth, 'auto_sweep'>): boolean => auth.auto_sweep === true
 
 // Multi-account (2026-07-24): one row per mailbox — id 1 = gz28us@hotmail.com
 // (the STREAM watcher's box, untouched default), id 2+ = the other accounts

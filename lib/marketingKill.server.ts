@@ -45,7 +45,10 @@ const G = 'https://graph.microsoft.com/v1.0'
 // +nº de pedido com hífen (111-9605878-5792209), que escapava da trava numérica.
 const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|\b\d{3}-\d{7}-\d{7}\b|\baprovad|\bapproved\b|\bcharged\b|\bsuspended\b|conta suspensa|account suspension|cancel|c[oó]digo|verification code|senha|password|2fa|refund|estorno|reembolso|invoice|fatura|boleto|nota fiscal|contrato|\bassinad|\bsignature\b|\bsigned\b|candidat|vaga de|check-?in|reserva confirmada|itiner|shipped|entregue|delivered|tracking|rastreio/i
 
-type Auth = { id: number; account: string; client_id: string; refresh_token: string; auto_sweep?: boolean | null }
+// auto_sweep é OBRIGATÓRIO no tipo de propósito: se alguém trocar o select('*')
+// por uma lista de colunas e esquecer dele, o tsc quebra em vez de o robô voltar
+// a varrer caixa proibida em silêncio.
+type Auth = { id: number; account: string; client_id: string; refresh_token: string; auto_sweep: boolean | null }
 type Row = { email: string; hits?: number; blocked?: number }
 
 async function msToken(db: SupabaseClient, a: Auth): Promise<string | null> {

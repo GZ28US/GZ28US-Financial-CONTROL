@@ -48,6 +48,11 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* best-effort */ }
 
-  await setMailAuth(db, { refresh_token: res.refresh_token, account, pkce_verifier: null, oauth_state: null }, slot)
+  // CAIXA NOVA NÃO NASCE VARRIDA (04/set/2026): conectar a gz28shopping ligou
+  // nela, no mesmo minuto, o sweep de marketing — que ia mandar para o lixo os
+  // avisos de compra de um arquivo de 12 mil e-mails. Quem acabou de chegar entra
+  // com a faxina DESLIGADA; ligar é decisão de gente, caixa por caixa.
+  const primeiraVez = !auth.refresh_token
+  await setMailAuth(db, { refresh_token: res.refresh_token, account, pkce_verifier: null, oauth_state: null, ...(primeiraVez ? { auto_sweep: false } : {}) }, slot)
   return page('Mailbox connected', `${account || 'A conta'} está conectada (slot ${slot}). Pode fechar esta aba.`, true)
 }

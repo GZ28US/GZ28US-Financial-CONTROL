@@ -58,7 +58,9 @@ export async function GET(req: NextRequest) {
   // no mesmo slot continua funcionando como sempre.
   const target = await routeToSlot(db, slot, auth, account)
   if (target !== slot) await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
-  await setMailAuth(db, { client_id: clientId, refresh_token: res.refresh_token, account, oauth_state: null, pkce_verifier: null }, target)
+  // Caixa nova não nasce varrida — mesma lei do mail-callback (04/set/2026).
+  const primeiraVez = target !== slot || !auth?.refresh_token
+  await setMailAuth(db, { client_id: clientId, refresh_token: res.refresh_token, account, oauth_state: null, pkce_verifier: null, ...(primeiraVez ? { auto_sweep: false } : {}) }, target)
   const moved = target !== slot ? ` — slot ${slot} já era ${auth?.account}, então foi para o slot ${target}` : ''
   return page('Gmail conectado', `${account || 'A conta'} está conectada (slot ${target})${moved}. Pode fechar esta aba.`, true)
 }
