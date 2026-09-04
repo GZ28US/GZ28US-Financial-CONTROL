@@ -138,6 +138,40 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
     const contentBytes = String(one.data).replace(/-/g, '+').replace(/_/g, '/')
     return NextResponse.json({ account: auth.account, provider: 'gmail', attachment: { id: att, name: meta2?.name || 'attachment', contentType: meta2?.contentType || 'application/octet-stream', size: one.size ?? null, contentBytes } })
   }
+
+  // mkdir / move NO GMAIL (04/set/2026) — a caixa da Chris (slot 5) podia ser
+  // LIDA e nao podia ser ARRUMADA: os dois ops so existiam no lado Graph, entao
+  // o inbox zero parava na porta dela. No Gmail nao ha "pasta": ha RoTULO, e
+  // "mover" e adicionar o rotulo e tirar o INBOX — mesma semantica do move do
+  // Graph (sai da caixa, passa a morar na pasta), mesma resposta, para quem
+  // chama nao precisar saber de que provedor a caixa e ([[claudinha-is-an-interface]]).
+  if (op === 'mkdir') {
+    const name = (p.get('name') || '').trim()
+    if (!name) return NextResponse.json({ error: 'missing name' }, { status: 400 })
+    // Rotulo repetido devolve 409 no Gmail; procurar antes deixa o op idempotente.
+    const ex = await (await fetch(`${API}/labels`, { headers: GH })).json()
+    const hit = (ex?.labels || []).find((l: any) => String(l.name).toLowerCase() === name.toLowerCase())
+    if (hit) return NextResponse.json({ account: auth.account, provider: 'gmail', folder: { id: hit.id, name: hit.name }, existed: true })
+    const c = await (await fetch(`${API}/labels`, {
+      method: 'POST', headers: { ...GH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }),
+    })).json()
+    if (!c?.id) return NextResponse.json({ error: c?.error?.message || 'mkdir failed' }, { status: 502 })
+    return NextResponse.json({ account: auth.account, provider: 'gmail', folder: { id: c.id, name: c.name }, existed: false })
+  }
+
+  if (op === 'move') {
+    const id = p.get('id')
+    const dest = p.get('dest')
+    if (!id || !dest) return NextResponse.json({ error: 'missing id or dest' }, { status: 400 })
+    const r = await fetch(`${API}/messages/${encodeURIComponent(id)}/modify`, {
+      method: 'POST', headers: { ...GH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addLabelIds: [dest], removeLabelIds: ['INBOX'] }),
+    })
+    const m = await r.json().catch(() => null)
+    if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'move failed' }, { status: 502 })
+    return NextResponse.json({ account: auth.account, provider: 'gmail', moved: m.id })
+  }
   return NextResponse.json({ error: `unknown op ${op}` }, { status: 400 })
 }
 
