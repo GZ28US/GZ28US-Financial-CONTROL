@@ -5,9 +5,11 @@ import { itemsDb, refreshItemTracking } from '@/lib/itemTracking.server'
 //   "Tem rastreio, o app deve rastrear e atualizar o badge do item na pagina
 //    dele, na origem, pra delivered, quando for entregue."
 //
-// Esta rota é o robô que cumpre essa frase. Ela NÃO toca no STREAM: lê as 5
+// Esta rota é o robô que cumpre essa frase. Ela NÃO toca no STREAM: lê as 6
 // tabelas de item comprado (invoice_expenses, inputs, inventory, goods,
-// good_expenses), pergunta à transportadora pelos números que ainda não
+// good_expenses e, desde 03/set/2026 por lei do dono, expenses — só a linha
+// com order_number ou tracking_number; folha nunca), pergunta à transportadora
+// pelos números que ainda não
 // chegaram e escreve a resposta NA PRÓPRIA LINHA — last_event, last_event_at,
 // eta, shipped_at, delivered_at.
 //

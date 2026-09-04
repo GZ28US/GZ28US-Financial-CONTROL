@@ -16,15 +16,27 @@
 //
 // O que ele faz, em uma frase: pega toda LINHA DE ITEM COMPRADO que tem
 // tracking_number e ainda não chegou, pergunta à transportadora, e escreve a
-// resposta NA PRÓPRIA LINHA — nas 5 tabelas de item comprado.
+// resposta NA PRÓPRIA LINHA — nas 6 tabelas de item comprado.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { EXPENSE_ITEM_GATE } from './deliverStatus'
 
-// As 5 tabelas de item comprado. São exatamente as que ganharam as colunas de
-// rastreio na migration de 29/ago/2026 — nenhuma outra tem, e não se cria mais
-// nenhuma (ordem dele: "Nao criar mais nenhuma coluna").
-export const ITEM_TABLES = ['invoice_expenses', 'inputs', 'inventory', 'goods', 'good_expenses'] as const
+// As 6 tabelas de item comprado. As 5 primeiras ganharam as colunas de rastreio
+// na migration de 29/ago/2026. A 6ª, expenses, entrou por lei do dono
+// (Márcio, 03/set/2026): "compra pessoal esta no lugar certo (expenses,
+// origin='PERSONAL'), mas TEM que estar no STREAM tambem, e tem que ter
+// rastreio" — a migration de 03/set deu a expenses as MESMAS colunas, com os
+// mesmos nomes e tipos. Nenhuma outra tabela tem, e não se cria mais nenhuma.
+//
+// ATENÇÃO com expenses: a tabela é, na maior parte, FOLHA (WEEKLY/MONTHLY/DAILY,
+// Zelle, mensal). Uma linha dela só é ITEM quando tem order_number OU
+// tracking_number — é EXPENSE_ITEM_GATE, aplicado NA QUERY por todo consumidor
+// de ITEM_TABLES (este robô, mailToItem, o STREAM), nunca só em JS depois. O
+// predicado mora em lib/deliverStatus.ts (módulo puro) para o STREAM, que roda
+// no browser, usar o mesmo sem importar este arquivo server-only.
+export const ITEM_TABLES = ['invoice_expenses', 'inputs', 'inventory', 'goods', 'good_expenses', 'expenses'] as const
 export type ItemTable = (typeof ITEM_TABLES)[number]
+export { EXPENSE_ITEM_GATE }
 
 export function itemsDb(): SupabaseClient {
   return createClient(
@@ -179,14 +191,19 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
   //   cancel_status NULL          → compra cancelada/estornada SAI da fila
   //                                 (30/ago/2026): não se consulta transportadora
   //                                 de compra que morreu.
+  //   expenses: + EXPENSE_ITEM_GATE  → folha nunca sai do banco (lei de
+  //                                 03/set/2026; aqui o tracking_number já
+  //                                 garante, mas o gate é o mesmo dos 3 lugares)
   const rows: { table: ItemTable; row: ItemRow }[] = []
   for (const table of ITEM_TABLES) {
-    const { data, error } = await db.from(table).select(COLS)
+    let q = db.from(table).select(COLS)
       .not('tracking_number', 'is', null)
       .is('delivered_at', null)
       .eq('picked_up', false)
       .not('payment_date', 'is', null)
       .is('cancel_status', null)
+    if (table === 'expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
+    const { data, error } = await q
     if (error) return { ...out, error: `${table}: ${error.message}` }
     for (const r of (data || []) as ItemRow[]) {
       if (String(r.tracking_number || '').trim()) rows.push({ table, row: r })

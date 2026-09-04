@@ -43,11 +43,26 @@
 // robô do rastreio e o scan têm de responder exatamente a mesma coisa, e a única
 // forma de garantir isso é ninguém mais calcular status em lugar nenhum.
 
-// ── AS 5 TABELAS DE ITEM COMPRADO ───────────────────────────────────────────
-// invoice_expenses, inputs, inventory, goods, good_expenses. Todas têm
-// picked_up, tracking_number, carrier, eta, shipped_at, delivered_at,
-// last_event, last_event_at — e todas têm payment_date, que é o degrau "pagou?".
-// E, desde 30/ago/2026, todas têm cancel_status (null | CANCELLED | REFUNDED).
+// ── AS 6 TABELAS DE ITEM COMPRADO ───────────────────────────────────────────
+// invoice_expenses, inputs, inventory, goods, good_expenses — e, desde
+// 03/set/2026, expenses. Todas têm picked_up, tracking_number, carrier, eta,
+// shipped_at, delivered_at, last_event, last_event_at — e todas têm
+// payment_date, que é o degrau "pagou?". E, desde 30/ago/2026, todas têm
+// cancel_status (null | CANCELLED | REFUNDED).
+//
+// expenses entrou por lei do dono (Márcio, 03/set/2026): "compra pessoal esta
+// no lugar certo (expenses, origin='PERSONAL'), mas TEM que estar no STREAM
+// tambem, e tem que ter rastreio". Só que expenses é, na maior parte, FOLHA —
+// uma linha dela só é ITEM quando tem order_number OU tracking_number. Esse
+// gate mora AQUI (módulo puro, importável por server e browser) para os três
+// enumeradores (STREAM, robô do 17TRACK, ponte de e-mail) usarem o MESMO
+// predicado NA QUERY do PostgREST — folha nunca sai do banco. A cascata abaixo
+// continua agnóstica de tabela: não sabe o que é expenses.
+// 04/set/2026: o gate anda SEMPRE com origin = 'PERSONAL' nos 3 consumidores. Sem isso,
+// passagem/compensacao de staff (PNR gravado em order_number: BLNKJJ, LA0457622ODMO,
+// BUSA-...) nascia BOUGHT no STREAM para sempre e entrava no dicionario da ponte de
+// e-mail — um recibo da Copa com 'entregue' carimbaria entrega numa passagem.
+export const EXPENSE_ITEM_GATE = 'order_number.not.is.null,tracking_number.not.is.null'
 
 export const DELIVER_STATUSES = ['PICKUP', 'BOUGHT', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'] as const
 export type DeliverStatus = (typeof DELIVER_STATUSES)[number]
@@ -82,7 +97,7 @@ export type DeliverRow = {
   last_event?: string | null
   last_event_at?: string | null
   // ── OS TRÊS CORTES DO DEGRAU 1 ───────────────────────────────────────────
-  // payment_date: existe nas 5 tabelas e é o "pagou?" — sem ele não há badge.
+  // payment_date: existe nas 6 tabelas e é o "pagou?" — sem ele não há badge.
   payment_date?: string | null
   // source_type (inputs/inventory) e stock_source_type (invoice_expenses):
   // 'DONATED' = a peça não foi comprada, veio de dentro de casa.

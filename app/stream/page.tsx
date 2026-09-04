@@ -10,8 +10,9 @@
 //    IMPORTANTE: O STREAM agora NAO TEM BANCO PROPRIO, ele e somente uma pagina
 //    de leitura dos itens em suas origens!!!!"
 //
-// Portanto esta página é uma VISTA, nada mais: ela LÊ as 5 tabelas de item
-// comprado (invoice_expenses, inputs, inventory, goods, good_expenses), deriva
+// Portanto esta página é uma VISTA, nada mais: ela LÊ as 6 tabelas de item
+// comprado (invoice_expenses, inputs, inventory, goods, good_expenses e
+// expenses), deriva
 // o badge com a MESMA cascata de todas as outras telas (lib/deliverStatus.ts →
 // deriveDeliverStatus) e lista. Nenhum insert, nenhum update, nenhum delete,
 // nenhuma leitura de part_streams — se um dia alguém quiser GRAVAR algo aqui,
@@ -21,11 +22,21 @@
 // Item SEM badge (não pago, doado, de estoque) NÃO aparece: a lista de filtros
 // do dono define o universo — stream é compra viva ou morta, não rascunho.
 // Invoice de quote também fica fora: quote não é compra.
+//
+// A 6ª tabela, expenses, entrou por lei do dono (Márcio, 03/set/2026): "compra
+// pessoal esta no lugar certo (expenses, origin='PERSONAL'), mas TEM que estar
+// no STREAM tambem, e tem que ter rastreio". expenses é quase toda FOLHA
+// (WEEKLY/MONTHLY/DAILY, Zelle, mensal): só a linha com order_number OU
+// tracking_number é ITEM, e o corte é feito NA QUERY (EXPENSE_ITEM_GATE, o
+// mesmo do robô e da ponte de e-mail) — salário nunca sai do banco para cá.
+// A linha aparece como PERSONAL · nome da pessoa e o link leva à própria
+// despesa na season dela.
 
 import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD, formatShortDate } from '@/lib/utils'
+import { EXPENSE_ITEM_GATE } from '@/lib/deliverStatus'
 import { DeliverChip, OrderChip, deriveDeliverStatus, type DeliverChipRow, type DeliverStatus } from '@/components/DeliverChip'
 
 // A ordem das seções e dos chips é A ORDEM DO DONO — não mexer.
@@ -42,7 +53,7 @@ const SECTION_LABEL: Record<DeliverStatus, string> = {
 
 type Chip = 'ALL' | DeliverStatus
 
-// Os campos comuns às 5 tabelas de que a derivação e a linha precisam. O tipo
+// Os campos comuns às 6 tabelas de que a derivação e a linha precisam. O tipo
 // estende DeliverChipRow de propósito: o compilador cobra os campos que a
 // cascata e o chip leem — esquecer um no select não compila.
 type BaseRow = DeliverChipRow & {
@@ -56,6 +67,13 @@ type InvoiceExpenseRow = BaseRow & { invoice_id: string | null; item: string | n
 type InputRow = BaseRow & { description: string | null; unit_price: number | null; quantity: number | null; source_type: string | null }
 type GoodRow = BaseRow & { description: string | null; unit_price: number | null; quantity: number | null }
 type GoodExpenseRow = BaseRow & { description: string | null; amount: number | null }
+// expenses NÃO tem quantity/unit_price/source_type: amount é o total pago, e
+// expense_date é a data da compra (lei "uma data": a data é a do pagamento).
+// Tipo próprio de propósito — reaproveitar InputRow/GoodRow passaria no tsc e
+// quebraria o select em runtime.
+type ExpenseRow = BaseRow & { description: string | null; amount: number | null; expense_date: string | null; origin: string | null; season_id: string | null }
+type SeasonRef = { id: string; staff_id: string | null }
+type StaffRef = { id: string; name: string | null }
 type InvoiceRef = { id: string; invoice_code: string; ride_id: string | null; is_quote: boolean | null }
 
 // Uma linha do stream, já derivada e pronta para desenhar.
@@ -77,11 +95,18 @@ const DELIVER_SELECT = 'picked_up, cancel_status, payment_date, tracking_number,
 // LEITURA PAGINADA. supabase-js corta em 1000 linhas EM SILÊNCIO e
 // invoice_expenses já passa disso — sem o .range() em loop a tela mentiria por
 // omissão. Erro NUNCA vira lista vazia: estoura para o estado de erro da tela.
-async function fetchAll<T>(table: string, select: string): Promise<T[]> {
+// `filter` é o corte em SQL de quem precisa (expenses: só linha que é ITEM) —
+// a tabela de folha inteira não pode nem viajar até o browser.
+// O builder do Supabase tem generics profundos demais para tipar o filtro (TS2589);
+// aqui `any` e deliberado e local — o mesmo compromisso que itemTracking.server.ts ja faz.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAll<T>(table: string, select: string, filter?: (q: any) => any): Promise<T[]> {
   const PAGE = 1000
   const out: T[] = []
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase.from(table).select(select).range(from, from + PAGE - 1)
+    let q = supabase.from(table).select(select)
+    if (filter) q = filter(q)
+    const { data, error } = await q.range(from, from + PAGE - 1)
     if (error) throw new Error(`${table}: ${error.message}`)
     const chunk = (data || []) as unknown as T[]
     out.push(...chunk)
@@ -103,16 +128,35 @@ export default function StreamPage() {
   async function load() {
     try {
       setErr(null)
-      const [ie, inputs, inventory, goods, goodExpenses, invoices] = await Promise.all([
+      const [ie, inputs, inventory, goods, goodExpenses, expenses, invoices] = await Promise.all([
         fetchAll<InvoiceExpenseRow>('invoice_expenses', `id, invoice_id, item, price, quantity, stock_source_type, ${DELIVER_SELECT}`),
         fetchAll<InputRow>('inputs', `id, description, unit_price, quantity, source_type, ${DELIVER_SELECT}`),
         fetchAll<InputRow>('inventory', `id, description, unit_price, quantity, source_type, ${DELIVER_SELECT}`),
         fetchAll<GoodRow>('goods', `id, description, unit_price, quantity, ${DELIVER_SELECT}`),
         fetchAll<GoodExpenseRow>('good_expenses', `id, description, amount, ${DELIVER_SELECT}`),
+        // expenses: o gate "é ITEM?" vai NA QUERY — folha nunca chega aqui.
+        fetchAll<ExpenseRow>('expenses', `id, description, amount, expense_date, origin, season_id, ${DELIVER_SELECT}`, q => q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)),
         fetchAll<InvoiceRef>('invoices', 'id, invoice_code, ride_id, is_quote'),
       ])
       const invMap = new Map(invoices.map(i => [i.id, i]))
       const list: StreamItem[] = []
+
+      // A pessoa da despesa: expenses → seasons.staff_id → staff.name. Só as
+      // seasons das (poucas) linhas que passaram no gate — barato.
+      const seasonById = new Map<string, SeasonRef>()
+      const staffById = new Map<string, StaffRef>()
+      const seasonIds = [...new Set(expenses.map(e => e.season_id).filter((s): s is string => !!s))]
+      if (seasonIds.length) {
+        const { data: seasons, error: sErr } = await supabase.from('seasons').select('id, staff_id').in('id', seasonIds)
+        if (sErr) throw new Error(`seasons: ${sErr.message}`)
+        for (const s of (seasons || []) as SeasonRef[]) seasonById.set(s.id, s)
+        const staffIds = [...new Set([...seasonById.values()].map(s => s.staff_id).filter((s): s is string => !!s))]
+        if (staffIds.length) {
+          const { data: staff, error: stErr } = await supabase.from('staff').select('id, name').in('id', staffIds)
+          if (stErr) throw new Error(`staff: ${stErr.message}`)
+          for (const s of (staff || []) as StaffRef[]) staffById.set(s.id, s)
+        }
+      }
 
       // invoice_expenses → a página da invoice no ride. Quote não é compra.
       for (const r of ie) {
@@ -174,6 +218,27 @@ export default function StreamPage() {
           amount: r.amount,
           paymentDate: r.payment_date || '',
           sourceLabel: 'GOODS', href: `${BASE_PATH}/goods`,
+        })
+      }
+      // expenses → a própria despesa na season da pessoa (lei do dono,
+      // 03/set/2026). amount é o total (sem quantity); a data é payment_date
+      // com expense_date atrás (uma data só: a do pagamento). PERSONAL é o
+      // rótulo quando origin diz isso; o resto é despesa de STAFF com pedido.
+      for (const r of expenses) {
+        const status = deriveDeliverStatus(r)
+        if (!status) continue
+        const season = r.season_id ? seasonById.get(r.season_id) : undefined
+        const person = season?.staff_id ? staffById.get(season.staff_id) : undefined
+        const who = person?.name ? ` · ${person.name}` : ''
+        list.push({
+          key: `ex-${r.id}`, status, row: r,
+          name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
+          amount: r.amount,
+          paymentDate: r.payment_date || r.expense_date || '',
+          sourceLabel: `${r.origin === 'PERSONAL' ? 'PERSONAL' : 'STAFF'}${who}`,
+          href: season?.staff_id && r.season_id
+            ? `${BASE_PATH}/staff/${season.staff_id}/seasons/${r.season_id}/expenses/edit/${r.id}`
+            : `${BASE_PATH}/staff`,
         })
       }
       setItems(list)

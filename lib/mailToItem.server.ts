@@ -57,7 +57,12 @@ import {
   extractTrackings, carrierFromText, isPurchaseConfirmation, type MailMsg,
 } from './streamMail.server'
 import { gmailAccessToken } from './appsMail.server'
-import { ITEM_TABLES, type ItemTable } from './itemTracking.server'
+import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from './itemTracking.server'
+
+// A lista de tabelas NÃO mora aqui: vem de ITEM_TABLES. Desde 03/set/2026 ela
+// inclui expenses (lei do dono: compra pessoal entra no STREAM e tem rastreio),
+// e a ponte passou a ler/escrever nela sem código próprio — só o gate de
+// "é ITEM?" (order_number OU tracking_number), igual ao do robô e do STREAM.
 
 // Número de pedido curto demais casa com qualquer coisa ("3440" está dentro de
 // um CEP, de um valor, de um id). Cinco caracteres é o piso: abaixo disso o
@@ -116,9 +121,14 @@ async function logFix(db: SupabaseClient, tabela: string, rowId: string, campo: 
 async function carregarLinhas(db: SupabaseClient): Promise<Map<string, Linha[]>> {
   const porPedido = new Map<string, Linha[]>()
   for (const tabela of ITEM_TABLES) {
-    const { data } = await db.from(tabela)
+    let q = db.from(tabela)
       .select('id, order_number, tracking_number, carrier, delivered_at, cancel_status, picked_up')
       .not('order_number', 'is', null)
+    // expenses: folha (WEEKLY/Zelle/mensal) nunca sai do banco — mesmo gate dos
+    // três consumidores (03/set/2026). O order_number acima já basta, mas o
+    // predicado é UM só, de propósito.
+    if (tabela === 'expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
+    const { data } = await q
     for (const r of (data || []) as any[]) {
       if (r.picked_up) continue
       const pedido = String(r.order_number || '').trim()

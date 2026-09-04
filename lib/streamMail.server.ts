@@ -639,7 +639,8 @@ export function extractItemHints(msg: MailMsg): string[] {
   return hints
 }
 
-// Uma linha de dinheiro de qualquer uma das 5 origens do rastreio.
+// Uma linha de dinheiro de qualquer uma das origens do rastreio (a enumeração
+// viva é ITEM_TABLES em lib/itemTracking.server.ts — 6 desde 03/set/2026).
 export type MoneyLine = { table: string; id: string; text: string; qty: number; supplier: string | null; order_number: string }
 
 // Prova textual item↔linha: part number (token com dígito, ≥5 chars) presente
@@ -693,7 +694,10 @@ export function decideBoxes(a: {
 
 // ── Helpers de banco do casador ─────────────────────────────────────────────
 // Índice pedido→linhas de dinheiro das 5 origens do rastreio (só app US — as
-// linhas BR moram no banco BR). POR LEI ficam FORA: expenses (staff),
+// linhas BR moram no banco BR). LEGADO sem consumidor vivo: a enumeração que
+// vale é ITEM_TABLES (lib/itemTracking.server.ts), que desde 03/set/2026 inclui
+// expenses por lei do dono — este índice NÃO foi atualizado de propósito.
+// Na lei antiga ficavam FORA: expenses (staff),
 // fixed_cost_expenses (jamais rastreadas), inventory DONATED (o order_number
 // dela é código de invoice interna) e QUALQUER order com cara de código
 // interno (US.016.1). BLINDAGEM dutyWatch: o lançamento de imposto grava em
