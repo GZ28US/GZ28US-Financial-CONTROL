@@ -111,7 +111,7 @@ async function resolveLiveBaselines(list: DynoPull[]): Promise<DynoPull[]> {
 // this WhatsApp group ONLY — never the default group.
 const REPORTS_GROUP = 'GZ28US - Tcal'
 
-function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packName }: { rideId: string; rideCode: string; rideTitle: string; buildNo: number; defaultLoss: string; packName: string }) {
+function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLoss, packName }: { rideId: string; rideCode: string; rideName: string; rideTitle: string; buildNo: number; defaultLoss: string; packName: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
   // A PERDA DO CARRO (ordem do usuário, 17/ago/2026): quando o carro tem uma puxada
   // BoneStock — em QUALQUER build — a perda dela é A perda do carro (deduzida da potência
@@ -881,7 +881,7 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
           r.onerror = reject
           r.readAsDataURL(blob)
         })
-        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone: 'US', code: rideCode, filename, subfolder: 'Performance', contentBase64: b64 }) })
+        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone: 'US', code: rideCode, name: rideName, filename, subfolder: 'Performance', contentBase64: b64 }) })
       } catch { /* non-fatal */ }
       // Receipt lines: BoneStock corrected → latest pull corrected (pulls are sorted newest first).
       const bs = pulls.find(isBoneStock)
@@ -1356,6 +1356,21 @@ async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | n
 function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
+  // O carro chega inteiro no tuneBase ("MOPAR 2023 DODGE CHALLENGER SRT HellCat
+  // RedEye SuperStock 6.2 ZF8HP90 (Auto8)"): fabricante, ano, modelo e versão.
+  // Converter para o OS do Demon 170 só faz sentido no Charger/Challenger HellCat
+  // (e derivados: RedEye, SuperStock, JailBreak) de 2020 pra cima — num Demon 170
+  // a opção não aparece, ele já é um.
+  const viraD170 = (() => {
+    const t = tuneBase.toLowerCase()
+    if (!/challenger|charger/.test(t)) return false
+    if (!/hellcat/.test(t)) return false
+    if (/demon\s*170/.test(t)) return false
+    return Number((tuneBase.match(/\b(?:19|20)\d{2}\b/) || ['0'])[0]) >= 2020
+  })()
+  // As opções de um campo podem depender do CARRO, não só do power source.
+  const opcoes = (f: BSField) =>
+    f.key === 'os_update' && viraD170 ? [...(f.options || []), 'Demon 170 Converted'] : (f.options || [])
   const [bsLoading, setBsLoading] = useState(true)
   const [bsSaving, setBsSaving] = useState(false)
   const [bsSending, setBsSending] = useState(false)
@@ -1414,7 +1429,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const found = new Set<string>()
     await Promise.all(['US'].map(async (zone) => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code: rideCode, match: 'bonestock tune' }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code: rideCode, name: rideName, match: 'stock tune' }) })
         const d = await res.json().catch(() => ({}))
         for (const f of d.files || []) found.add(String(f))
       } catch { /* status display only */ }
@@ -1438,7 +1453,12 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     })
     const ext = file.name.split('.').pop() || 'hpt'
     // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
-    const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} BoneStock Tune.${ext}`
+    // O OS do módulo entra no nome: quem lê o arquivo sabe o que tem dentro sem abrir.
+    const os = (sheet.os_update || 'Stock').trim()
+    const osTag = os === 'Demon 170 Converted' ? 'Demon170 Converted Stock'
+      : os === 'Stock' ? 'BoneStock'
+      : 'Other OS Converted Stock'
+    const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} ${osTag} Tune.${ext}`
     // O MESMO ARQUIVO EM DOIS LUGARES (Márcio, 06/set/2026): a pasta do carro,
     // como sempre, E o acervo da casa — que fica na RAIZ de Rides e existe nas
     // DUAS zonas ("todos os carros dos 2 apps, BR e US salvam nas 2 pastas").
@@ -1479,7 +1499,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       s[f.key] = v || (f.kind === 'so' ? 'Stock' : f.kind === 'text' ? '' : (f.options as string[])[0])
       // 'so' COM LISTA: o valor que bate com um conhecido seleciona a OPÇÃO —
       // só cai no Other (texto livre) o que não está na lista.
-      if (f.kind === 'so' && s[f.key] !== 'Stock' && v && !(f.options || []).includes(v)) om[f.key] = true
+      if (f.kind === 'so' && s[f.key] !== 'Stock' && v && !opcoes(f).includes(v)) om[f.key] = true
     }
     setSheet(s)
     setOtherMode(om)
@@ -1827,10 +1847,10 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
             ) : (
               <div className="flex gap-2">
                 <select
-                  value={otherMode[f.key] ? 'Other' : ((f.options || []).includes(sheet[f.key]) ? sheet[f.key] : 'Stock')}
+                  value={otherMode[f.key] ? 'Other' : (opcoes(f).includes(sheet[f.key]) ? sheet[f.key] : 'Stock')}
                   onChange={(e) => {
                     const v = e.target.value
-                    if (v === 'Other') { setOtherMode({ ...otherMode, [f.key]: true }); setSheet({ ...sheet, [f.key]: (f.options || []).includes(sheet[f.key]) || sheet[f.key] === 'Stock' ? '' : sheet[f.key] }) }
+                    if (v === 'Other') { setOtherMode({ ...otherMode, [f.key]: true }); setSheet({ ...sheet, [f.key]: opcoes(f).includes(sheet[f.key]) || sheet[f.key] === 'Stock' ? '' : sheet[f.key] }) }
                     // Stock ou um dos conhecidos: o próprio valor vai pra ficha e o
                     // texto livre se fecha.
                     else { setOtherMode({ ...otherMode, [f.key]: false }); setSheet({ ...sheet, [f.key]: v }) }
@@ -1839,7 +1859,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
                   style={otherMode[f.key] ? { width: '7rem' } : undefined}
                 >
                   <option value="Stock">Stock</option>
-                  {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+                  {opcoes(f).map((o) => <option key={o} value={o}>{o}</option>)}
                   <option value="Other">Other</option>
                 </select>
                 {otherMode[f.key] && (
@@ -1935,7 +1955,7 @@ export default function RidePerformancePage() {
       {!ride ? (
         <p className='text-xl text-gray-400'>Loading…</p>
       ) : tab === 'DYNO' ? (
-        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} packName={buildName} />
+        <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} packName={buildName} />
       ) : tab === 'BUILD SHEET' ? (
         <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} />
       ) : (

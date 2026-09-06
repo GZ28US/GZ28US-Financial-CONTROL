@@ -198,7 +198,7 @@ export default function EditRidePage() {
     const found = new Set<string>()
     await Promise.all(['US'].map(async (zone) => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code, match: 'bonestock tune' }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code, name: projectName, match: 'stock tune' }) })
         const d = await res.json().catch(() => ({}))
         for (const f of d.files || []) found.add(String(f))
       } catch { /* status display only */ }
@@ -223,16 +223,23 @@ export default function EditRidePage() {
       const trans = transmissionOptions.length === 1 ? transmissionOptions[0] : transmission
       const prefix = [manufacturer, year, brand, model, version, trans].filter(Boolean).join(' ')
       const filename = `${prefix ? prefix + ' ' : ''}${projectCode}${projectName ? ' - ' + projectName : ''} BoneStock Tune.${ext}`
-      let landed = 0
-      for (const zone of ['US']) {
+      const put = async (extra: Record<string, unknown>) => {
         try {
-          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: projectCode, name: projectName, filename, contentBase64: b64 }) })
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', code: projectCode, name: projectName, filename, contentBase64: b64, ...extra }) })
           const d = await res.json().catch(() => ({}))
-          if (d.ok && d.result === 'uploaded') landed++
-        } catch { /* counted below */ }
+          return !!(d.ok && d.result === 'uploaded')
+        } catch { return false }
       }
-      if (!landed) alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.')
-      else await loadTuneStatus(projectCode)
+      // Na pasta do carro (a zona deste app) e no acervo das DUAS zonas — o
+      // TuneRepository é da casa inteira, não de um app só.
+      const noCarro = await put({ zone: 'US' })
+      const faltou: string[] = []
+      for (const zone of ['US', 'BR']) { if (!(await put({ zone, rootFolder: 'BoneStock TuneRepository' }))) faltou.push(zone) }
+      if (!noCarro) alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.')
+      else {
+        if (faltou.length) alert(`BoneStock tune saved to the car folder, but the copy to BoneStock TuneRepository failed on: ${faltou.join(', ')}.`)
+        await loadTuneStatus(projectCode)
+      }
     } finally {
       setTuneUploading(false)
     }
