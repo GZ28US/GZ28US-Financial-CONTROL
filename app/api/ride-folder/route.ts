@@ -137,6 +137,9 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
 
 // Every ride folder carries these standard subfolders — ensured (idempotent) on
 // every create/rename so old folders self-heal too.
+// As três etiquetas de OS que o app carimba no nome do tune. "BoneStock" só fica
+// no carro que não teve atualização de OS (lei do Márcio, 06/set/2026).
+const OS_TAGS = ['BoneStock', 'Demon170 Converted Stock', 'Other OS Converted Stock']
 const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation']
 // A pasta de triagem tem nome POR ZONA — Screening nos rides US, Volante nos BR —
 // derivado do path, então qualquer um dos apps nomeia certo mexendo na outra zona.
@@ -198,8 +201,8 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!code || !['create', 'rename', 'rename-file', 'retag', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
-      return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|retag|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
+    if (!code || !['create', 'rename', 'rename-file', 'retag', 'retag-os', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
+      return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|retag|retag-os|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
     }
     const root = zone ? ROOTS[zone] : ''
     const target = `${code}${name ? ' - ' + name : ''}`
@@ -313,6 +316,68 @@ export async function POST(req: NextRequest) {
         }
       }
       return NextResponse.json({ ok: true, result: 'retagged', renamed, falhas })
+    }
+
+    // RETAG-OS: o nome do TUNE segue o OS do módulo (06/set/2026).
+    // "BoneStock" só fica no carro que não teve atualização de OS; convertido pro
+    // OS do Demon 170 é "Demon170 Converted Stock", qualquer outro é "Other OS
+    // Converted Stock". Antes, o nome só nascia no upload — mudar o OS na ficha
+    // deixava o arquivo mentindo (o caso do Dracula). Aqui a etiqueta de OS é
+    // trocada nos arquivos que JÁ estão no Dropbox, na pasta do carro e no acervo.
+    if (action === 'retag-os') {
+      const novo = sanitize(String(body.osTag || ''))
+      if (!OS_TAGS.includes(novo)) {
+        return NextResponse.json({ error: 'Bad request: retag-os needs osTag = ' + OS_TAGS.join(' | ') }, { status: 400 })
+      }
+      // Sem NOME o carro não se identifica: a etiqueta viraria só o número e
+      // findFolderByCode cairia na busca frouxa — foi assim que o tune do Dracula
+      // foi parar na pasta do Badillac. Sem nome, não mexe em nada.
+      if (!name) return NextResponse.json({ ok: true, result: 'no-name', renamed: 0 })
+      const etiqueta = sanitize(`${code} - ${name}`)
+      const dirs: string[] = []
+      const repoName = sanitize(String(body.rootFolder || ''))
+      if (repoName) dirs.push(`${root}/${repoName}`)
+      const folder = await findFolderByCode(token, root, code, name)
+      if (folder) for (const sub of SUBFOLDERS) dirs.push(`${root}/${folder}/${sub}`)
+      // "<prefixo> <CÓDIGO> - <Nome> <ETIQUETA DE OS> Tune.<ext>". O (.*) guloso
+      // casa a ÚLTIMA ocorrência da etiqueta, que é onde ela mora — o prefixo do
+      // arquivo pode conter as mesmas palavras.
+      // O sufixo de data é opcional e PRESERVADO: quem ganhou data num desempate
+      // de colisão continua sendo re-etiquetado, em vez de ficar congelado com a
+      // etiqueta velha para sempre.
+      const re = new RegExp(`^(.*) (${OS_TAGS.join('|')}) Tune( \\d{4}-\\d{2}-\\d{2})?(\\.[A-Za-z0-9]+)$`)
+      let renamed = 0
+      const falhas: string[] = []
+      for (const dir of dirs) {
+        const list = await dbx(token, 'files/list_folder', { path: dir, recursive: false, limit: 2000 })
+        if (!list.ok) continue   // pasta ausente não é erro: nada a renomear ali
+        for (const e of (list.data?.entries || [])) {
+          if (e['.tag'] !== 'file') continue
+          const nome = String(e.name)
+          // O acervo é plano e guarda o tune de TODO carro: só mexe no deste.
+          if (!nome.includes(etiqueta + ' ')) continue
+          const m = nome.match(re)
+          if (!m || m[2] === novo) continue
+          const to = `${m[1]} ${novo} Tune${m[3] || ''}${m[4]}`
+          const mv = await dbx(token, 'files/move_v2', { from_path: `${dir}/${nome}`, to_path: `${dir}/${to}`, autorename: false })
+          if (mv.ok) { renamed++; continue }
+          // COLISÃO: já existe um tune com o OS novo. São leituras diferentes do
+          // módulo e nenhuma se perde — a que chega desempata pela própria data.
+          // m[3] = já tem data de um desempate anterior. Datar de novo só faz o
+          // nome crescer; nesse caso a colisão vira falha relatada.
+          if (!m[3] && JSON.stringify(mv.data?.error || {}).includes('conflict')) {
+            const dia = String(e.client_modified || e.server_modified || '').slice(0, 10)
+            const ponto = to.lastIndexOf('.')
+            const datado = dia && ponto > 0 ? `${to.slice(0, ponto)} ${dia}${to.slice(ponto)}` : ''
+            if (datado) {
+              const mv2 = await dbx(token, 'files/move_v2', { from_path: `${dir}/${nome}`, to_path: `${dir}/${datado}`, autorename: false })
+              if (mv2.ok) { renamed++; continue }
+            }
+          }
+          falhas.push(`${nome}: ${JSON.stringify(mv.data?.error || {}).slice(0, 80)}`)
+        }
+      }
+      return NextResponse.json({ ok: true, result: 'retagged-os', renamed, falhas })
     }
 
     if (action === 'rename-file') {

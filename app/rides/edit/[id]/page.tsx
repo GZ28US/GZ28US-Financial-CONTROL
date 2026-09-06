@@ -222,7 +222,16 @@ export default function EditRidePage() {
       // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
       const trans = transmissionOptions.length === 1 ? transmissionOptions[0] : transmission
       const prefix = [manufacturer, year, brand, model, version, trans].filter(Boolean).join(' ')
-      const filename = `${prefix ? prefix + ' ' : ''}${projectCode}${projectName ? ' - ' + projectName : ''} BoneStock Tune.${ext}`
+      // O OS do módulo mora na Build Sheet, mas o arquivo é do CARRO: esta tela
+      // também tem que respeitar a etiqueta. "BoneStock" só fica no carro que não
+      // teve atualização de OS. Ficha sem OS não vota — vence a de build maior
+      // que TEM o campo preenchido.
+      const { data: fichas } = await supabase.from('ride_build_sheets').select('build_no, os_update').eq('ride_code', projectCode).order('build_no', { ascending: false })
+      const os = String((fichas || []).find((f: { os_update: string | null }) => f.os_update)?.os_update || 'Stock').trim()
+      const osTag = os === 'Demon 170 Converted' ? 'Demon170 Converted Stock'
+        : os === 'Stock' ? 'BoneStock'
+        : 'Other OS Converted Stock'
+      const filename = `${prefix ? prefix + ' ' : ''}${projectCode}${projectName ? ' - ' + projectName : ''} ${osTag} Tune.${ext}`
       const put = async (extra: Record<string, unknown>) => {
         try {
           const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', code: projectCode, name: projectName, filename, contentBase64: b64, ...extra }) })

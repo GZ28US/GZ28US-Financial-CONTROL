@@ -1356,6 +1356,9 @@ async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | n
 function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
+  // O OS que estava gravado quando a ficha abriu — é ele que diz se este SAVE
+  // MUDOU o OS ou só passou por perto.
+  const [osOriginal, setOsOriginal] = useState('Stock')
   // O carro chega inteiro no tuneBase ("MOPAR 2023 DODGE CHALLENGER SRT HellCat
   // RedEye SuperStock 6.2 ZF8HP90 (Auto8)"): fabricante, ano, modelo e versão.
   // Converter para o OS do Demon 170 só faz sentido no Charger/Challenger HellCat
@@ -1443,22 +1446,49 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // palavras finais. Escrever "Tune Repository" criaria uma segunda pasta.
   const BONESTOCK_REPO = 'BoneStock TuneRepository'
 
-  async function uploadTuneFile(file: File): Promise<boolean> {
-    if (file.size > 3 * 1024 * 1024) { alert('Tune file too big (max 3 MB).'); return false }
-    const b64: string = await new Promise((resolve, reject) => {
-      const r = new FileReader()
-      r.onload = () => resolve(String(r.result).split(',')[1] || '')
-      r.onerror = reject
-      r.readAsDataURL(file)
-    })
-    const ext = file.name.split('.').pop() || 'hpt'
-    // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
-    // O OS do módulo entra no nome: quem lê o arquivo sabe o que tem dentro sem abrir.
+  // O OS do módulo entra no nome do arquivo: quem lê sabe o que tem dentro sem
+  // abrir. "BoneStock" só fica no carro que NÃO teve atualização de OS.
+  const osTag = () => {
     const os = (sheet.os_update || 'Stock').trim()
-    const osTag = os === 'Demon 170 Converted' ? 'Demon170 Converted Stock'
+    return os === 'Demon 170 Converted' ? 'Demon170 Converted Stock'
       : os === 'Stock' ? 'BoneStock'
       : 'Other OS Converted Stock'
-    const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} ${osTag} Tune.${ext}`
+  }
+
+  // Mudou o OS na ficha? Os tunes que JÁ estão no Dropbox se renomeiam — na pasta
+  // do carro e no acervo das DUAS zonas. Sem isto, salvar "Demon 170 Converted"
+  // deixava o arquivo dizendo BoneStock (foi o que aconteceu com o Dracula).
+  async function retagTuneOs() {
+    const tag = osTag()
+    const ruim: string[] = []
+    await Promise.all(['US', 'BR'].map(async (zone) => {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'retag-os', zone, code: rideCode, name: rideName, osTag: tag, rootFolder: BONESTOCK_REPO }) })
+        const d = await res.json().catch(() => ({}))
+        // Rename que falha em silêncio deixa as duas zonas dizendo coisas
+        // diferentes sobre o mesmo carro. Melhor avisar do que fingir que deu.
+        if (!d.ok || (d.falhas || []).length) ruim.push(zone)
+      } catch { ruim.push(zone) }
+    }))
+    if (ruim.length) alert(`The build sheet was saved, but renaming the tune file to "${tag}" failed on: ${ruim.join(', ')}.`)
+  }
+
+  async function uploadTuneFile(file: File): Promise<boolean> {
+    if (file.size > 3 * 1024 * 1024) { alert('Tune file too big (max 3 MB).'); return false }
+    // Arquivo em drive de rede/pendrive some no meio da leitura e o FileReader
+    // rejeita. Sem este catch a exceção subia e matava o resto do SAVE em silêncio.
+    let b64 = ''
+    try {
+      b64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(String(r.result).split(',')[1] || '')
+        r.onerror = reject
+        r.readAsDataURL(file)
+      })
+    } catch { alert('The tune file could not be read. Pick it again.'); return false }
+    const ext = file.name.split('.').pop() || 'hpt'
+    // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] <OS> Tune"
+    const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} ${osTag()} Tune.${ext}`
     // O MESMO ARQUIVO EM DOIS LUGARES (Márcio, 06/set/2026): a pasta do carro,
     // como sempre, E o acervo da casa — que fica na RAIZ de Rides e existe nas
     // DUAS zonas ("todos os carros dos 2 apps, BR e US salvam nas 2 pastas").
@@ -1503,6 +1533,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     }
     setSheet(s)
     setOtherMode(om)
+    setOsOriginal(s.os_update || 'Stock')
     setBsLoading(false)
   }
 
@@ -1520,10 +1551,23 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       }
       const { error } = await supabase.from('ride_build_sheets').upsert(payload, { onConflict: 'ride_code,build_no' })
       if (error) { alert(error.message); return }
+      // QUANDO renomear o tune que já está lá:
+      //  · só se este SAVE mudou o OS, ou se o OS diz algo diferente de Stock.
+      //    Ficha sem OS mostra "Stock" por padrão — e omissão não pode rebatizar
+      //    de volta pra BoneStock o carro que outra build já marcou como convertido.
+      //  · e NUNCA quando vem tune novo no mesmo SAVE: o arquivo novo já nasce com
+      //    o nome certo, e o antigo é OUTRA leitura do módulo — o nome dele está
+      //    certo do jeito que está. Renomear os dois pro mesmo nome faria o upload
+      //    (overwrite) apagar a leitura anterior.
+      const osAgora = (sheet.os_update || 'Stock').trim()
+      if (!tuneFile && (osAgora !== (osOriginal || 'Stock').trim() || osAgora !== 'Stock')) await retagTuneOs()
+      setOsOriginal(osAgora)
       // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
       await syncSheetPdf()
       // A picked BoneStock tune rides along on the same SAVE.
-      if (tuneFile && await uploadTuneFile(tuneFile)) { setTuneFile(null); await loadTuneStatus() }
+      if (tuneFile && await uploadTuneFile(tuneFile)) setTuneFile(null)
+      // A tela sempre relê o Dropbox: o rename por OS muda o nome mesmo sem upload.
+      await loadTuneStatus()
       // success is silent — errors alert above / inside the sync
     } finally {
       setBsSaving(false)
