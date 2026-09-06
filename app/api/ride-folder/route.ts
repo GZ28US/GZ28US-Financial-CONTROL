@@ -281,8 +281,22 @@ export async function POST(req: NextRequest) {
           const to = String(e.name).split(oldTag).join(newTag)
           if (to === e.name) continue
           const mv = await dbx(token, 'files/move_v2', { from_path: `${dir}/${e.name}`, to_path: `${dir}/${to}`, autorename: false })
-          if (mv.ok) renamed++
-          else falhas.push(`${e.name}: ${JSON.stringify(mv.data?.error || {}).slice(0, 80)}`)
+          if (mv.ok) { renamed++; continue }
+          // COLISÃO: o nome novo já existe. Acontece com BuildSheet do MESMO pack
+          // gerada antes e depois de um rename — as duas viram o mesmo nome. NÃO
+          // sobrescrever: a sheet anterior fica na pasta (lei do Márcio). Desempata
+          // pela data do próprio arquivo, para que TODOS fiquem com o nome atual do
+          // carro e nenhum se perca.
+          if (JSON.stringify(mv.data?.error || {}).includes('conflict')) {
+            const dia = String(e.client_modified || e.server_modified || '').slice(0, 10)
+            const ponto = to.lastIndexOf('.')
+            const datado = dia && ponto > 0 ? `${to.slice(0, ponto)} ${dia}${to.slice(ponto)}` : ''
+            if (datado) {
+              const mv2 = await dbx(token, 'files/move_v2', { from_path: `${dir}/${e.name}`, to_path: `${dir}/${datado}`, autorename: false })
+              if (mv2.ok) { renamed++; continue }
+            }
+          }
+          falhas.push(`${e.name}: ${JSON.stringify(mv.data?.error || {}).slice(0, 80)}`)
         }
       }
       return NextResponse.json({ ok: true, result: 'retagged', renamed, falhas })
