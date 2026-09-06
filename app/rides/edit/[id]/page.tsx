@@ -254,6 +254,7 @@ export default function EditRidePage() {
     const newCode = projectCode.trim()
     const { data: cur } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
     const oldCode = cur?.project_code || ''
+    const oldName = cur?.project_name || ''
 
     const { error } = await supabase.from('rides').update({
       project_code: newCode,
@@ -334,7 +335,7 @@ export default function EditRidePage() {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'rename', zone, oldCode, newCode, name: projectName || '' }),
+          body: JSON.stringify({ action: 'rename', zone, oldCode, oldName, newCode, name: projectName || '' }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) folderFails.push(`${zone}: ${data.error || `HTTP ${res.status}`}`)
@@ -346,7 +347,6 @@ export default function EditRidePage() {
     // Roda DEPOIS do rename da pasta, de propósito: o retag procura a pasta pelo
     // código NOVO. Cobre a HB Tuning do carro (BoneStock Tune, BuildSheet PDF) e o
     // BoneStock TuneRepository das DUAS zonas — lá o nome é a única identidade.
-    const oldName = cur?.project_name || ''
     if (oldCode !== newCode || oldName !== (projectName || '')) {
       for (const zone of ['US', 'BR']) {
         try {

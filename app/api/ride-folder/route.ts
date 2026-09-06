@@ -58,9 +58,17 @@ async function dbx(token: string, endpoint: string, body: unknown): Promise<any>
   return { ok: res.ok, status: res.status, data, text }
 }
 
-// Find the folder whose name starts with "<code> " (e.g. "BR.469 - SilverBullet")
-// — folder nicknames may differ from the system name, the CODE is the key.
-async function findFolderByCode(token: string, root: string, code: string): Promise<string | null> {
+// Uma pasta só é do carro quando o CÓDIGO **e** o NOME batem.
+// O caso que ensinou (06/set/2026): o Badillac era US.030, virou US.036, e a pasta
+// velha "US.030 - Badillac" ficou para trás com o número colado. Procurando só pelo
+// número, o app achou ela e gravou o BoneStock e a BuildSheet do DRACULA — o US.030
+// de verdade — dentro da pasta do Badillac; o Dracula ficou sem os seus.
+// Nome que contradiz o ride não serve: é melhor criar a pasta certa do que escrever
+// na pasta de outro carro. Sem `name`, o número volta a mandar (chamadas antigas).
+const nomeNu = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+async function findFolderByCode(token: string, root: string, code: string, name?: string): Promise<string | null> {
+  const alvo = nomeNu(name || '')
+  let soCodigo: string | null = null
   let cursor: string | null = null
   do {
     const r: any = cursor
@@ -68,11 +76,16 @@ async function findFolderByCode(token: string, root: string, code: string): Prom
       : await dbx(token, 'files/list_folder', { path: root, recursive: false, limit: 1000 })
     if (!r.ok) throw new Error('list_folder failed: ' + r.text.slice(0, 200))
     for (const e of r.data.entries || []) {
-      if (e['.tag'] === 'folder' && (e.name === code || e.name.startsWith(code + ' '))) return e.name
+      if (e['.tag'] !== 'folder') continue
+      if (e.name === code) return e.name                       // "US.030" pelado: é dele
+      if (!e.name.startsWith(code + ' ')) continue
+      const dela = nomeNu(e.name.slice(code.length).replace(/^\s*-\s*/, ''))
+      if (alvo && dela === alvo) return e.name                 // código E nome batem
+      if (!soCodigo) soCodigo = e.name                         // só o número bate — suspeita
     }
     cursor = r.data.has_more ? r.data.cursor : null
   } while (cursor)
-  return null
+  return alvo ? null : soCodigo
 }
 
 // Find LEGACY-format folders for a ride — "317 - HeartBeat" or "GZ28BR.317 - HeartBeat"
@@ -202,9 +215,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Bad request: mirror needs distinct fromZone/toZone (US|BR).' }, { status: 400 })
       }
       const sub = sanitize(String(body.subfolder || 'HB Tuning'))
-      const srcFolder = await findFolderByCode(token, ROOTS[fz], code)
+      const srcFolder = await findFolderByCode(token, ROOTS[fz], code, name)
       if (!srcFolder) return NextResponse.json({ ok: true, result: 'no-source-folder', copied: [] })
-      let dstFolder = await findFolderByCode(token, ROOTS[tz], code)
+      let dstFolder = await findFolderByCode(token, ROOTS[tz], code, name)
       if (!dstFolder) {
         dstFolder = target
         const c = await dbx(token, 'files/create_folder_v2', { path: `${ROOTS[tz]}/${dstFolder}`, autorename: false })
@@ -238,7 +251,7 @@ export async function POST(req: NextRequest) {
     if (action === 'find') {
       const sub = sanitize(String(body.subfolder || 'HB Tuning'))
       const match = String(body.match || '').toLowerCase()
-      const folder = await findFolderByCode(token, root, code)
+      const folder = await findFolderByCode(token, root, code, name)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder', files: [] })
       const r = await dbx(token, 'files/list_folder', { path: `${root}/${folder}/${sub}`, recursive: false, limit: 1000 })
       if (!r.ok) return NextResponse.json({ ok: true, result: 'no-subfolder', files: [] })
@@ -249,8 +262,8 @@ export async function POST(req: NextRequest) {
     }
 
     // upload: drop a file into the ride folder's subfolder (default HB Tuning),
-    // overwriting any previous version. No self-heal folder creation — the file
-    // only lands where the car's folder actually exists (common cars: both zones).
+    // overwriting any previous version. Se a pasta do carro não existir, ela nasce:
+    // arquivo salvo é arquivo que tem que estar em algum lugar certo.
     // Renomeia UM arquivo dentro da subpasta do ride (ex.: o BuildSheet PDF quando o nome
     // do pack muda). `from` pode não existir (arquivo nunca gerado) — isso NÃO é erro:
     // devolve 'no-file' e o chamador decide se tenta um nome alternativo (Build.NN legado).
@@ -269,7 +282,7 @@ export async function POST(req: NextRequest) {
       const repoName = sanitize(String(body.rootFolder || ''))
       if (repoName) dirs.push(`${root}/${repoName}`)
       // a pasta do carro já foi renomeada pelo action 'rename' — busca pelo código NOVO
-      const folder = await findFolderByCode(token, root, sanitize(String(body.newCode || code)))
+      const folder = await findFolderByCode(token, root, sanitize(String(body.newCode || code)), name)
       if (folder) for (const sub of SUBFOLDERS) dirs.push(`${root}/${folder}/${sub}`)
       let renamed = 0
       const falhas: string[] = []
@@ -308,7 +321,7 @@ export async function POST(req: NextRequest) {
       const sub = sanitize(String(body.subfolder || 'HB Tuning'))
       if (!from || !to) return NextResponse.json({ error: 'Bad request: rename-file needs from + to.' }, { status: 400 })
       if (from === to) return NextResponse.json({ ok: true, result: 'same-name' })
-      const folder = await findFolderByCode(token, root, code)
+      const folder = await findFolderByCode(token, root, code, name)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
       const mv = await dbx(token, 'files/move_v2', {
         from_path: `${root}/${folder}/${sub}/${from}`,
@@ -343,8 +356,13 @@ export async function POST(req: NextRequest) {
         if (!upR.ok) return NextResponse.json({ error: 'upload failed: ' + upR.text.slice(0, 200) }, { status: 502 })
         return NextResponse.json({ ok: true, result: 'uploaded', path: `${rootFolder}/${filename}` })
       }
-      const folder = await findFolderByCode(token, root, code)
-      if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
+      let folder = await findFolderByCode(token, root, code, name)
+      if (!folder) {
+        // A pasta do carro pode não existir (ou a que existe é de outro carro com
+        // o número velho). O arquivo não pode se perder: cria a pasta certa.
+        await dbx(token, 'files/create_folder_v2', { path: `${root}/${target}`, autorename: false })
+        folder = target
+      }
       await ensureSubfolders(token, `${root}/${folder}`)
       const up = await dbxUpload(token, `${root}/${folder}/${sub}/${filename}`, Buffer.from(b64, 'base64'))
       if (!up.ok) return NextResponse.json({ error: 'upload failed: ' + up.text.slice(0, 200) }, { status: 502 })
@@ -357,7 +375,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'create') {
-      const existing = await findFolderByCode(token, root, code)
+      const existing = await findFolderByCode(token, root, code, name)
       if (existing) {
         await ensureSubfolders(token, `${root}/${existing}`)
         return NextResponse.json({ ok: true, result: 'already-exists', folder: existing })
@@ -383,7 +401,14 @@ export async function POST(req: NextRequest) {
 
     // rename / renumber
     const oldCode = sanitize(String(body.oldCode || ''))
-    const from = oldCode ? await findFolderByCode(token, root, oldCode) : null
+    const oldName = sanitize(String(body.oldName || ''))
+    // Com o nome velho em mãos a pasta se identifica sozinha. Sem ele, procura a
+    // pasta que já está com o nome novo (renomear seria à toa) e só então cede ao
+    // número. Assim o rename de um carro nunca renomeia a pasta de outro.
+    const from = oldCode
+      ? (await findFolderByCode(token, root, oldCode, oldName || undefined))
+        || (oldName ? null : await findFolderByCode(token, root, oldCode))
+      : null
     if (!from) {
       // Self-heal: no folder for the old code — adopt a legacy folder for the NEW code
       // if exactly one exists, else just create the new one.
