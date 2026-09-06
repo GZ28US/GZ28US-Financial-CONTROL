@@ -1298,7 +1298,10 @@ function DynoSection({ rideId, rideCode, rideTitle, buildNo, defaultLoss, packNa
 const POWER_SOURCES = ['Naturally Aspirated', 'Roots SuperCharged', 'Centrifugal SuperCharger', 'Turbo Born', 'Turbo Fitted']
 const BS_FUEL_OPTIONS = ['93', 'E85', '91']
 
-type BSField = { key: string; label: string; kind: 'so' | 'enum'; options?: string[]; show?: (ps: string) => boolean }
+// 'so' = Stock/Other com texto livre · 'enum' = lista fechada · 'text' = campo aberto,
+// pro que a ficha não pergunta (NOTES). 'text' não tem valor de fábrica: em branco é
+// em branco, e não conta como modificação em lugar nenhum.
+type BSField = { key: string; label: string; kind: 'so' | 'enum' | 'text'; options?: string[]; show?: (ps: string) => boolean }
 const BS_FIELDS: BSField[] = [
   { key: 'intake', label: 'Intake', kind: 'so', show: (ps) => ps !== 'Turbo Fitted' },
   { key: 'throttle_body', label: 'Throttle-Body', kind: 'so' },
@@ -1330,6 +1333,10 @@ const BS_FIELDS: BSField[] = [
   { key: 'transmission', label: 'Transmission', kind: 'so' },
   // Último campo (pedido 17/ago/2026): Stock/Other + texto livre quando Other.
   { key: 'traction_tires', label: 'Traction Tires Size', kind: 'so' },
+  // Últimos campos (pedido 06/set/2026): a atualização de OS do módulo, e um espaço
+  // aberto pro que a ficha não tem coluna.
+  { key: 'os_update', label: 'OS Update', kind: 'so' },
+  { key: 'notes', label: 'Notes', kind: 'text' },
 ]
 
 // GZ28 logo as a JPEG data-URI for the PDF header (canvas round-trip keeps jsPDF happy).
@@ -1469,7 +1476,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // Regional fuel dialect: a sheet written in the BR app stores BR pump fuels —
       // shown here as their US equivalents (Podium → 93 premium, Comum → 91 regular).
       if (f.key === 'fuel') v = ({ 'Podium': '93', 'Comum': '91' } as Record<string, string>)[v] || v
-      s[f.key] = v || (f.kind === 'so' ? 'Stock' : (f.options as string[])[0])
+      s[f.key] = v || (f.kind === 'so' ? 'Stock' : f.kind === 'text' ? '' : (f.options as string[])[0])
       // 'so' COM LISTA: o valor que bate com um conhecido seleciona a OPÇÃO —
       // só cai no Other (texto livre) o que não está na lista.
       if (f.kind === 'so' && s[f.key] !== 'Stock' && v && !(f.options || []).includes(v)) om[f.key] = true
@@ -1525,8 +1532,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       { label: 'Power Source', value: sheet.power_source || '—', modded: false },
       ...BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => {
         const v = (sheet[f.key] || '').trim() || '—'
-        const stockVal = f.kind === 'so' ? 'Stock' : (f.options as string[])[0]
-        return { label: f.label, value: v, modded: v !== '—' && v !== stockVal }
+        const stockVal = f.kind === 'so' ? 'Stock' : f.kind === 'text' ? '' : (f.options as string[])[0]
+        return { label: f.label, value: v, modded: f.kind !== 'text' && v !== '—' && v !== stockVal }
       }),
     ]
     // A META no PDF — a Build Sheet impressa abre com a mesma jornada da tela: DE ONDE o
@@ -1680,8 +1687,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         `Power Source: ${sheet.power_source}`,
         ...BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => {
           const v = (sheet[f.key] || '').trim() || '—'
-          const stockVal = f.kind === 'so' ? 'Stock' : (f.options as string[])[0]
-          const modded = v !== '—' && v !== stockVal
+          const stockVal = f.kind === 'so' ? 'Stock' : f.kind === 'text' ? '' : (f.options as string[])[0]
+          const modded = f.kind !== 'text' && v !== '—' && v !== stockVal
           return `${f.label}: ${modded ? `*${v}*` : v}`
         }),
         ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${p}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
@@ -1804,9 +1811,16 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           </select>
         </div>
         {BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => (
-          <div key={f.key}>
+          <div key={f.key} className={f.kind === 'text' ? 'md:col-span-2 xl:col-span-3' : undefined}>
             <label className="block mb-1 text-sm text-gray-400 font-bold">{f.label.toUpperCase()}</label>
-            {f.kind === 'enum' ? (
+            {f.kind === 'text' ? (
+              <textarea
+                value={sheet[f.key] || ''}
+                onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })}
+                rows={3}
+                className={`${sel} resize-y`}
+              />
+            ) : f.kind === 'enum' ? (
               <select value={sheet[f.key]} onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })} className={sel}>
                 {(f.options as string[]).map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
