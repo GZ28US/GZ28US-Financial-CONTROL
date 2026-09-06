@@ -1416,6 +1416,11 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   }
 
   // Upload the picked BoneStock tune into the car's Dropbox HB Tuning folder(s), overwrite mode.
+  // Lido do Dropbox em 06/set/2026: a pasta JÁ EXISTE nas duas raízes de Rides
+  // com este nome exato — "BoneStock TuneRepository", sem espaço entre as duas
+  // palavras finais. Escrever "Tune Repository" criaria uma segunda pasta.
+  const BONESTOCK_REPO = 'BoneStock TuneRepository'
+
   async function uploadTuneFile(file: File): Promise<boolean> {
     if (file.size > 3 * 1024 * 1024) { alert('Tune file too big (max 3 MB).'); return false }
     const b64: string = await new Promise((resolve, reject) => {
@@ -1427,15 +1432,30 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const ext = file.name.split('.').pop() || 'hpt'
     // "[manufacturer] [year] [brand] [model] [version] [transmission] [code] - [name] BoneStock Tune"
     const filename = `${tuneBase ? tuneBase + ' ' : ''}${rideCode}${rideName ? ' - ' + rideName : ''} BoneStock Tune.${ext}`
-    let landed = 0
-    for (const zone of ['US']) {
+    // O MESMO ARQUIVO EM DOIS LUGARES (Márcio, 06/set/2026): a pasta do carro,
+    // como sempre, E o acervo da casa — que fica na RAIZ de Rides e existe nas
+    // DUAS zonas ("todos os carros dos 2 apps, BR e US salvam nas 2 pastas").
+    // O nome da pasta foi lido do Dropbox, não inventado.
+    const put = async (extra: Record<string, unknown>): Promise<boolean> => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', code: rideCode, name: rideName, filename, contentBase64: b64, ...extra }) })
         const d = await res.json().catch(() => ({}))
-        if (d.ok && d.result === 'uploaded') landed++
-      } catch { /* counted below */ }
+        return d.ok && d.result === 'uploaded'
+      } catch { return false }
     }
-    if (!landed) { alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.'); return false }
+    // 1) a pasta do carro — esta é a que não pode falhar
+    const noCarro = await put({ zone: 'US' })
+    // 2) o acervo, nas duas zonas. O nome que o app gera já traz marca, ano,
+    //    modelo, versão, câmbio, código e nome do carro: é único por construção,
+    //    então numa pasta plana não colide com o tune de outro carro. E o upload
+    //    é overwrite, então regravar o mesmo carro substitui em vez de acumular.
+    const faltou: string[] = []
+    for (const zone of ['US', 'BR']) {
+      if (!(await put({ zone, rootFolder: BONESTOCK_REPO }))) faltou.push(zone)
+    }
+    if (!noCarro) { alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.'); return false }
+    // O tune está salvo no carro; o acervo é cópia. Avisa sem derrubar o SAVE.
+    if (faltou.length) alert(`BoneStock tune saved to the car folder, but the copy to BoneStock TuneRepository failed on: ${faltou.join(', ')}.`)
     return true
   }
 

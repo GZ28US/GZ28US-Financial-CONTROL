@@ -185,8 +185,8 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!code || !['create', 'rename', 'rename-file', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
-      return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
+    if (!code || !['create', 'rename', 'rename-file', 'retag', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
+      return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|retag|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
     }
     const root = zone ? ROOTS[zone] : ''
     const target = `${code}${name ? ' - ' + name : ''}`
@@ -254,6 +254,40 @@ export async function POST(req: NextRequest) {
     // Renomeia UM arquivo dentro da subpasta do ride (ex.: o BuildSheet PDF quando o nome
     // do pack muda). `from` pode não existir (arquivo nunca gerado) — isso NÃO é erro:
     // devolve 'no-file' e o chamador decide se tenta um nome alternativo (Build.NN legado).
+    // RETAG: o nome do carro dentro dos ARQUIVOS segue o ride (06/set/2026).
+    // Roda DEPOIS do rename da pasta — procura a etiqueta "<CODIGO> - <Nome>"
+    // que o app carimba no nome de todo arquivo que gera (BoneStock Tune,
+    // BuildSheet PDF) e troca só ela, preservando prefixo e extensão. Varre a
+    // HB Tuning do carro E a pasta plana do acervo, onde o nome do arquivo é a
+    // única identidade que existe.
+    if (action === 'retag') {
+      const oldTag = sanitize(`${String(body.oldCode || '')}${body.oldName ? ' - ' + String(body.oldName) : ''}`)
+      const newTag = sanitize(`${String(body.newCode || body.code || '')}${body.newName ? ' - ' + String(body.newName) : ''}`)
+      if (!oldTag || !newTag) return NextResponse.json({ error: 'Bad request: retag needs oldCode/newCode.' }, { status: 400 })
+      if (oldTag === newTag) return NextResponse.json({ ok: true, result: 'same-name', renamed: 0 })
+      const dirs: string[] = []
+      const repoName = sanitize(String(body.rootFolder || ''))
+      if (repoName) dirs.push(`${root}/${repoName}`)
+      // a pasta do carro já foi renomeada pelo action 'rename' — busca pelo código NOVO
+      const folder = await findFolderByCode(token, root, sanitize(String(body.newCode || code)))
+      if (folder) for (const sub of SUBFOLDERS) dirs.push(`${root}/${folder}/${sub}`)
+      let renamed = 0
+      const falhas: string[] = []
+      for (const dir of dirs) {
+        const list = await dbx(token, 'files/list_folder', { path: dir, recursive: false, limit: 2000 })
+        if (!list.ok) continue   // pasta ausente não é erro: nada a renomear ali
+        for (const e of (list.data?.entries || [])) {
+          if (e['.tag'] !== 'file' || !String(e.name).includes(oldTag)) continue
+          const to = String(e.name).split(oldTag).join(newTag)
+          if (to === e.name) continue
+          const mv = await dbx(token, 'files/move_v2', { from_path: `${dir}/${e.name}`, to_path: `${dir}/${to}`, autorename: false })
+          if (mv.ok) renamed++
+          else falhas.push(`${e.name}: ${JSON.stringify(mv.data?.error || {}).slice(0, 80)}`)
+        }
+      }
+      return NextResponse.json({ ok: true, result: 'retagged', renamed, falhas })
+    }
+
     if (action === 'rename-file') {
       const from = sanitize(String(body.from || ''))
       const to = sanitize(String(body.to || ''))
@@ -282,6 +316,18 @@ export async function POST(req: NextRequest) {
       const b64 = String(body.contentBase64 || '')
       if (!filename || !b64) {
         return NextResponse.json({ error: 'Bad request: upload needs filename + contentBase64.' }, { status: 400 })
+      }
+      // rootFolder: grava numa pasta da RAIZ de Rides em vez de dentro do carro.
+      // Nasceu para o BoneStock TuneRepository (06/set/2026), que é acervo da casa
+      // inteira e não pertence a nenhum carro. Sem isto, o upload só sabia achar
+      // pasta por código — e repositório não tem código.
+      const rootFolder = sanitize(String(body.rootFolder || ''))
+      if (rootFolder) {
+        // idempotente: se já existe, o Dropbox devolve conflito e seguimos.
+        await dbx(token, 'files/create_folder_v2', { path: `${root}/${rootFolder}`, autorename: false })
+        const upR = await dbxUpload(token, `${root}/${rootFolder}/${filename}`, Buffer.from(b64, 'base64'))
+        if (!upR.ok) return NextResponse.json({ error: 'upload failed: ' + upR.text.slice(0, 200) }, { status: 502 })
+        return NextResponse.json({ ok: true, result: 'uploaded', path: `${rootFolder}/${filename}` })
       }
       const folder = await findFolderByCode(token, root, code)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })

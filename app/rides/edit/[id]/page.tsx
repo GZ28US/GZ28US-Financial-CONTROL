@@ -248,9 +248,11 @@ export default function EditRidePage() {
     // Store "None" special edition as null so reports don't print "None".
     const seValue = specialEdition && specialEdition !== 'None' ? specialEdition : null
 
-    // Capture the previous code so invoice codes can follow a code change.
+    // Capture the previous code AND NAME: o código faz as invoices seguirem o
+    // rename, e o nome faz os ARQUIVOS seguirem (retag, 06/set/2026) — o nome do
+    // carro está carimbado dentro do nome de todo arquivo que o app gera.
     const newCode = projectCode.trim()
-    const { data: cur } = await supabase.from('rides').select('project_code').eq('id', rideId).single()
+    const { data: cur } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
     const oldCode = cur?.project_code || ''
 
     const { error } = await supabase.from('rides').update({
@@ -339,6 +341,22 @@ export default function EditRidePage() {
       } catch (e) { folderFails.push(`${zone}: ${String(e)}`) }
     }
     if (folderFails.length) alert('Ride saved, but the Dropbox folder sync failed —\n' + folderFails.join('\n'))
+
+    // O NOME DO CARRO DENTRO DOS ARQUIVOS SEGUE O RIDE (Márcio, 06/set/2026).
+    // Roda DEPOIS do rename da pasta, de propósito: o retag procura a pasta pelo
+    // código NOVO. Cobre a HB Tuning do carro (BoneStock Tune, BuildSheet PDF) e o
+    // BoneStock TuneRepository das DUAS zonas — lá o nome é a única identidade.
+    const oldName = cur?.project_name || ''
+    if (oldCode !== newCode || oldName !== (projectName || '')) {
+      for (const zone of ['US', 'BR']) {
+        try {
+          await fetch(`${BASE_PATH}/api/ride-folder`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'retag', zone, code: newCode, oldCode, oldName, newCode, newName: projectName || '', rootFolder: 'BoneStock TuneRepository' }),
+          })
+        } catch { /* não-fatal: o arquivo re-sincroniza com o nome novo no próximo save do tune */ }
+      }
+    }
 
     setSaving(false)
     router.push(`/rides/${rideId}`)
