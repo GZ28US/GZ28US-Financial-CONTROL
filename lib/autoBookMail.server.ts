@@ -120,15 +120,24 @@ export function parseMoney(texto: string): { amount: number; currency: string; s
 }
 
 // ── FORNECEDOR: vem do domínio de quem mandou, não de adivinhação no texto ──
+// APÓSTROFO NÃO É ENFEITE (07/set/2026). Eu escrevi "Lowes", "Sams Club" e
+// "OReilly" sem apóstrofo para fugir do escape do shell na hora de criar este
+// arquivo — e isso virou cegueira em produção: as linhas do app escrevem
+// "Lowe's 1652, 1300 W Osceola Pkwy", "Sam's Club 8290" e "O'Reilly Auto Parts",
+// então o `ilike` do robô achava ZERO e toda compra desses três chegava como
+// "não existe no app". Medido: 3 de 19 vendors cegos por isto.
+// (Os outros zeros do dicionário — RockAuto, NAPA, Holley, Kooks — são zeros
+//  CERTOS: não há uma linha sequer com esses fornecedores nos dois bancos.)
+// O nome aqui tem de ser, letra por letra, o que a linha do app escreve.
 const DOM_VENDOR: Record<string, string> = {
   'temu.com': 'Temu', 'amazon.com': 'Amazon', 'ebay.com': 'eBay', 'ebay.co.uk': 'eBay',
   'paypal.com': 'PayPal', 'hptuners.com': 'HP Tuners', 'hhpperformance.com': 'HHP',
-  'homedepot.com': 'Home Depot', 'lowes.com': 'Lowes', 'samsclub.com': 'Sams Club',
+  'homedepot.com': 'Home Depot', 'lowes.com': "Lowe's", 'samsclub.com': "Sam's Club",
   'summitracing.com': 'Summit Racing', 'rockauto.com': 'RockAuto', 'holley.com': 'Holley',
   'titanmotorsports.com': 'Titan Motorsports', 'kooksheaders.com': 'Kooks', 'halltech.com': 'HallTech',
   'mercadolivre.com.br': 'Mercado Livre', 'mercadolibre.com': 'Mercado Livre', 'wurth.com.br': 'Wurth',
   'uber.com': 'Uber', 'apple.com': 'Apple', 'walmart.com': 'Walmart', 'harborfreight.com': 'Harbor Freight',
-  'oreillyauto.com': 'OReilly', 'napaonline.com': 'NAPA', 'tirerack.com': 'Tire Rack',
+  'oreillyauto.com': "O'Reilly Auto Parts", 'napaonline.com': 'NAPA', 'tirerack.com': 'Tire Rack',
 }
 export function vendorOf(msg: MailMsg): string {
   const dom = (msg.fromAddr.split('@')[1] || '').toLowerCase()
