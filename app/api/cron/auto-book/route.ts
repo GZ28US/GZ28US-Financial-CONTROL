@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { runAutoBookMail } from '@/lib/autoBookMail.server'
 
@@ -21,15 +21,20 @@ import { runAutoBookMail } from '@/lib/autoBookMail.server'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-export async function GET() {
+// `horas` só existe para o dia em que a rodada ficou parada (deploy, cota, teto de
+// tempo) e é preciso pescar a janela perdida de uma vez. Teto de 168h = 7 dias: o
+// custo de varrer é o do provedor, mas o custo de uma janela larga sem querer é
+// encher a fila de dúvida com coisa velha já resolvida na mão.
+export async function GET(req: NextRequest) {
   const db = streamDb()
+  const h = Math.min(168, Math.max(1, parseInt(req.nextUrl.searchParams.get('horas') || '3') || 3))
   try {
-    const r = await runAutoBookMail(db, 3)
-    return NextResponse.json({ ok: true, ...r })
+    const r = await runAutoBookMail(db, h)
+    return NextResponse.json({ ok: true, horas: h, ...r })
   } catch (e) {
     console.error('[auto-book]', e)
     return NextResponse.json({ ok: false, error: String((e as Error)?.message || e) }, { status: 500 })
   }
 }
 
-export async function POST() { return GET() }
+export async function POST(req: NextRequest) { return GET(req) }
