@@ -922,10 +922,22 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {parts.length > 0 && (
+          {(parts.length > 0 || clientPaidTotal > 0) && (
             <div>
               <label className="block mb-3 text-lg font-bold">PARTS</label>
               <div className={sectionClass}>
+                {/* CLONE da despesa paga pelo cliente. Linha derivada: não existe em
+                    invoice_parts, por isso não se edita aqui — a verdade mora na
+                    despesa, e mexer nela move os dois lados juntos. */}
+                {clientPaidExpenses.map((e) => (
+                  <div key={'cli-' + e.id} className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold truncate" title={e.item || ''}>{e.item || e.supplier || '—'}</p>
+                      <p className="text-sm text-gray-400">PAID BY THE CLIENT · cloned from the expense — not editable</p>
+                    </div>
+                    <p className="font-bold">{formatUSD(e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0))}</p>
+                  </div>
+                ))}
                 {(() => { const seen = new Set<string>(); return parts.map((part) => {
                   if (part.kit_group) {
                     if (seen.has(part.kit_group)) return null
