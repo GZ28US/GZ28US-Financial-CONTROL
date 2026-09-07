@@ -221,6 +221,18 @@ export function classify(msg: MailMsg): { kind: AbKind; money: ReturnType<typeof
 // ── O DICIONÁRIO DE PEDIDOS JÁ CONHECIDOS ──────────────────────────────────
 // Diferente do dicionário do mailToItem: aqui entra TUDO, inclusive linha
 // entregue e de balcão. A pergunta é só "este pedido já tem dono no app?".
+//
+// PONTO CEGO CONHECIDO (07/set/2026), e ele já mordeu: este dicionário lê SÓ o
+// banco do US. Compra lançada no app do **BR** não existe aqui, então o robô
+// pergunta por ela como se estivesse fora do app. Foi o que aconteceu com o
+// pedido 1965912 da HP Tuners (6 Universal Credits, US$ 299,94, pagos pelo
+// PayPal do GZ28BR): a linha estava no BR desde 03/set 23:16 e a fila perguntou
+// mesmo assim. Não corrompe nada — `message_key` é único, então cada e-mail
+// pergunta no máximo uma vez —, mas gasta pergunta à toa.
+// Ler o BR daqui exige credencial de serviço do outro projeto no ambiente do
+// app US (o `lib/supabaseBR.ts` que existe hoje é anon + sessão de navegador,
+// não serve em cron). É decisão do dono, não minha: por enquanto a pergunta
+// avisa que o BR não foi consultado ([[nao-achei-onde-procurou]]).
 async function pedidosConhecidos(db: SupabaseClient): Promise<Set<string>> {
   const set = new Set<string>()
   for (const t of ITEM_TABLES) {
@@ -520,6 +532,8 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         const falta = [
           !it.order ? 'sem numero de pedido' : null,
           it.amount == null ? 'sem valor legivel' : !it.strong ? `valor ${it.amount} lido de rotulo fraco ("${it.label}")` : null,
+          // Honestidade sobre o escopo da busca: eu só olhei o banco do US.
+          it.order ? 'CONFERIR NO APP DO BR TAMBEM — este robo so olha o banco do US' : null,
         ].filter(Boolean)
         const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
         const question = c.kind === 'REFUND'

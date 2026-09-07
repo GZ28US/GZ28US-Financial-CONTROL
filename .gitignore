@@ -42,3 +42,9 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Rascunho solto na raiz (03/set/2026) — nao e codigo, nao vai pro deploy.
+# Dump de mensagem e id do Graph, de uma rodada de e-mail. Ignorado em vez de
+# apagado: o arquivo continua no disco de quem precisar.
+id.txt
+msg.json
