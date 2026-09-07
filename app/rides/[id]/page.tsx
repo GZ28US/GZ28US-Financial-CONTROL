@@ -86,7 +86,10 @@ type FleetExp = DeliverChipRow & {
   stock_source_type: string | null
 }
 const expLine = (e: FleetExp) =>
-  (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0) - (Number(e.item_discount) || 0)
+  // item_discount é PERCENTUAL, não moeda — ver expLine em lib/financials.ts e a
+  // régua em invoices/edit:1384. `price` já é o custo líquido; subtrair o percentual
+  // aqui tirava reais do custo e inflava o lucro.
+  (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0)
 const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '' }
 
 type Stats = {

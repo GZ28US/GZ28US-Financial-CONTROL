@@ -14,7 +14,11 @@ export const maxDuration = 300
 const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_|klass|priority|invoices_bucket|bank_merchant_rules_key|doubt_answered/
 const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 // Valor de uma linha de despesa de invoice (mesma conta do lib/financials).
-const expLine = (r: any) => num(r.price) * (num(r.quantity) || 1) + num(r.tax) + num(r.extra) - num(r.item_discount)
+// item_discount é PERCENTUAL (régua em invoices/edit:1384: amount / (1 - d/100)),
+// e `price` já é o custo LÍQUIDO. Subtrair o percentual daqui tirava reais do custo:
+// eram 5.880,99 no US e 2.392,96 no BR, em 67 invoices. A conta certa é a mesma do
+// expLine de lib/financials.ts — o desconto reconstitui o MAP, nunca abate o custo.
+const expLine = (r: any) => num(r.price) * (num(r.quantity) || 1) + num(r.tax) + num(r.extra)
 // Linha do banco com tudo que o balde precisa (raw do Plaid em aliases PostgREST).
 // Marcador nunca é cortado pelo limite de 200 (revisão 16): corta o rótulo, não a marca.
 const mark = (label: string, m: string) => String(label || '').slice(0, 200 - m.length - 1).trim() + ' ' + m
