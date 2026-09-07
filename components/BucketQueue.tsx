@@ -20,11 +20,11 @@ async function headers(): Promise<Record<string, string>> {
 }
 
 type Sug = { kind: 'CAR'; invoice_id: string; code: string; car: string; why: string; score: number } | { kind: 'TWIN'; table: string; id: string; label: string; days: number }
-type Row = { row_id: string; bank_id: string | null; date: string; amount: number; name: string; raw_name: string; source: string; supplier: string; item: string; klass: string | null; via: string | null; mcc: string | null; age_days: number | null; batch: string | null; trigger: string | null; started_at: string | null; orphan: boolean; suggestions: Sug[] }
+type Row = { row_id: string; bank_id: string | null; date: string; amount: number; name: string; raw_name: string; source: string; supplier: string; item: string; klass: string | null; via: string | null; mcc: string | null; age_days: number | null; batch: string | null; trigger: string | null; started_at: string | null; orphan: boolean; suggestions: Sug[]; reason?: string | null }
 type Inv = { id: string; code: string; ride_id: string; ride_code: string; ride_name: string; closed: boolean }
 type Sup = { id: string; company: string; cost_type: string }
 type Attributed = { bank_id: string; date: string; amount: number; name: string; dest: string; label: string; href: string; reviewed_at: string }
-type Data = { total: number; balance: number; older_7d: number; rows: Row[]; attributed: Attributed[]; invoices: Inv[]; fixed_suppliers: Sup[]; needs_migration?: boolean; error?: string; invariants: any }
+type Data = { total: number; balance: number; older_7d: number; rows: Row[]; attributed: Attributed[]; invoices: Inv[]; fixed_suppliers: Sup[]; seasons?: { id: string; staff: string; label: string }[]; needs_migration?: boolean; error?: string; invariants: any }
 type Part = { amount: string; dest: 'CAR' | 'STOCK' | 'SUPPLIES' | 'FIXO'; invoice_id: string; supplier_id: string; category: string; item: string }
 
 // Classe → rótulo e cor (casa com o classificador do motor).
@@ -54,6 +54,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
   const [pick, setPick] = useState<Record<string, string>>({})       // row_id → invoice_id
   const [invMode, setInvMode] = useState<Record<string, 'SUG' | 'ABERTAS' | 'FECHADAS'>>({})
   const [fixOpen, setFixOpen] = useState<Record<string, string>>({}) // row_id → supplier_id ('' = painel aberto sem escolha)
+  const [persOpen, setPersOpen] = useState<Record<string, string>>({}) // row_id → season_id (PESSOAL: lei do Márcio, expenses origin=PERSONAL)
   const [catPick, setCatPick] = useState<Record<string, string>>({})
   const [split, setSplit] = useState<Record<string, Part[]>>({})
   const [bulkInv, setBulkInv] = useState('')
@@ -90,7 +91,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
   }
   const fail = (e: unknown) => alert(String((e as Error).message || e))
 
-  async function assign(row: Row, dest: 'CAR' | 'STOCK' | 'SUPPLIES' | 'FIXO', extra: Record<string, unknown> = {}) {
+  async function assign(row: Row, dest: 'CAR' | 'STOCK' | 'SUPPLIES' | 'FIXO' | 'PERSONAL', extra: Record<string, unknown> = {}) {
     if (anyBusy || !row.bank_id) return
     if (dest === 'CAR') {
       const chosen = String(extra.invoice_id || pick[row.row_id] || '')
@@ -233,6 +234,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
                     </span>
                     <span className="tabular-nums font-bold text-red-400 shrink-0">−{usd(row.amount)}</span>
                     {(row.age_days || 0) > 7 && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800 shrink-0">{row.age_days} d</span>}
+                    {row.reason && <span title={row.reason} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-950 text-orange-300 border border-orange-800 shrink-0">{/acima do teto/i.test(row.reason) ? 'ACIMA DO TETO' : 'DÚVIDA'}</span>}
                     {row.orphan && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-950 text-red-300 border border-red-800 shrink-0" title="sem linha do banco apontando — o Data Checker purga">ÓRFÃ</span>}
                     {twin && <button disabled={anyBusy} onClick={() => rematch(row, twin)} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-950 text-red-300 border border-red-800 shrink-0" title={twin.label}>JÁ LANÇADO em {twin.label.slice(0, 40)} — TROCAR</button>}
                     <span className="flex gap-1 flex-wrap">
@@ -250,6 +252,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
                     <select value={catPick[row.row_id] || 'CONSUMPTION'} onChange={e => setCatPick(m => ({ ...m, [row.row_id]: e.target.value }))} className="bg-gray-900 border border-gray-700 rounded-xl px-1 py-1 text-[10px]" title="categoria do insumo">{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
                     <button disabled={anyBusy || !row.bank_id} onClick={() => assign(row, 'SUPPLIES', { category: catPick[row.row_id] || 'CONSUMPTION' })} className={`bg-purple-800 hover:bg-purple-700 ${BTN}`}>SUPPLIES</button>
                     <button disabled={anyBusy || !row.bank_id} onClick={() => setFixOpen(f => { const n = { ...f }; if (row.row_id in n) delete n[row.row_id]; else n[row.row_id] = ''; return n })} className={`bg-gray-800 hover:bg-gray-700 border border-gray-600 ${BTN}`}>FIXO</button>
+                    <button disabled={anyBusy || !row.bank_id || !(d?.seasons && d.seasons.length)} title={d?.seasons && d.seasons.length ? 'compra pessoal de alguém da equipe — sai do custo da empresa (expenses, origin PERSONAL)' : 'a rota ainda não manda as seasons — em breve'} onClick={() => setPersOpen(f => { const n = { ...f }; if (row.row_id in n) delete n[row.row_id]; else n[row.row_id] = ''; return n })} className={`bg-gray-800 hover:bg-gray-700 border border-gray-600 ${BTN}`}>PESSOAL</button>
                     <button disabled={anyBusy || !row.bank_id} onClick={() => setSplit(s => { const n = { ...s }; if (n[row.row_id]) delete n[row.row_id]; else n[row.row_id] = [{ amount: row.amount.toFixed(2), dest: 'CAR', invoice_id: pick[row.row_id] || '', supplier_id: '', category: 'CONSUMPTION', item: '' }]; return n })} className={`bg-gray-800 hover:bg-gray-700 border border-gray-600 ${BTN}`}>DIVIDIR</button>
                     <button disabled={anyBusy || !row.bank_id} onClick={() => undo(row)} className={`bg-gray-700 hover:bg-gray-600 ${BTN}`}>DESFAZER</button>
                   </div>
@@ -261,6 +264,16 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
                         {(d?.fixed_suppliers || []).map(s => <option key={s.id} value={s.id}>{s.company} · {s.cost_type}</option>)}
                       </select>
                       <button disabled={anyBusy || !fixOpen[row.row_id]} onClick={() => assign(row, 'FIXO', { supplier_id: fixOpen[row.row_id] })} className={`bg-gray-700 hover:bg-gray-600 ${BTN}`}>CONFIRMAR FIXO</button>
+                    </div>
+                  )}
+                  {row.row_id in persOpen && (
+                    <div className="mt-2 ml-24 flex gap-2 items-center flex-wrap text-xs">
+                      <span className="text-gray-400">compra pessoal de:</span>
+                      <select value={persOpen[row.row_id]} onChange={e => setPersOpen(f => ({ ...f, [row.row_id]: e.target.value }))} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs max-w-[18rem]">
+                        <option value="">— de quem? —</option>
+                        {(d?.seasons || []).map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+                      </select>
+                      <button disabled={anyBusy || !persOpen[row.row_id]} onClick={() => { if (confirm('PESSOAL: sai do custo da empresa e vira despesa da season escolhida. Continuar?')) assign(row, 'PERSONAL', { season_id: persOpen[row.row_id] }) }} className={`bg-gray-700 hover:bg-gray-600 ${BTN}`}>CONFIRMAR PESSOAL</button>
                     </div>
                   )}
                   {parts && (

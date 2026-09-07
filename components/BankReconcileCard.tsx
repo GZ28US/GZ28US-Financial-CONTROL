@@ -23,7 +23,13 @@ import BucketQueue from '@/components/BucketQueue'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; href?: string; detail?: string; score: number; dd: number | null }
-type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; candidates: Cand[] }
+// A DÚVIDA DO MOTOR, dita (BL 0.10.0): por que esta linha NÃO foi resolvida sozinha, com o candidato que ele viu.
+type Doubt = { kind: string; reason: string; klass?: string; supplier?: string; cands?: { table: string; id: string; label: string; date: string | null; amount: number; href?: string; days?: number | null }[] }
+type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; candidates: Cand[]; doubt?: Doubt | null; queued?: boolean }
+// PERGUNTAS POR FORNECEDOR: uma resposta = uma regra humana = todas as linhas do grupo, pra sempre.
+type QGroup = { key: string; name: string; klass: string; n: number; total: number; sample: string[]; oldest: string; newest: string; line_ids: string[]; suggested: { supplier_id: string | null; company: string | null; cost_type: string | null; ambiguous: { id: string; company: string | null; cost_type: string | null }[] } }
+type Questions = { suppliers: QGroup[]; money: { id: string; date: string; amount: number; name: string; klass: string; reason: string }[]; twins?: number; seasons?: { id: string; staff: string; label: string }[]; fixed_suppliers?: { id: string; company: string; cost_type: string }[] }
+type QPick = { target: string; supplier_id: string; category: string; season_id: string; company: string; cost_type: string }
 type AutoLine = { id: string; date: string; amount: number; name: string; raw_name?: string; engine: string; batch: string; note: string; source: string; backfilled: boolean; href?: string | null; status?: string; rule?: string | null }
 type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; name?: number; rule?: number; learn?: number; transfer?: number; bucket?: number; from: string; to: string; trigger?: string | null; started_at?: string | null }
 type AutoRun = { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }
@@ -59,6 +65,7 @@ const ORIGIN_BADGE: Record<string, [string, string]> = { LEARNED: ['APRENDIDA', 
 const fmtNY = (iso?: string | null) => iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') : ''
 const runLabel = (trigger?: string | null, at?: string | null) => (trigger && trigger !== 'human' ? 'AUTO · ' + trigger : 'APLICAR') + (at ? ' ' + fmtNY(at) : '')
 const BATCH_KEYS = new Set(['plan', 'apply', 'review_all'])
+const DOUBT_CHIP: Record<string, string> = { TWIN: 'bg-amber-950 text-amber-300 border-amber-800', SUPPLIER: 'bg-purple-950 text-purple-300 border-purple-800', MONEY: 'bg-blue-950 text-blue-300 border-blue-800', CAP: 'bg-orange-950 text-orange-300 border-orange-800', MATURITY: 'bg-gray-900 text-gray-400 border-gray-700' }
 
 export default function BankReconcileCard({ onCount }: { onCount?: (n: number, aConferir?: number, bucket?: number) => void }) {
   const [lines, setLines] = useState<Line[] | null>(null)
@@ -86,6 +93,11 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   const [familyFilter, setFamilyFilter] = useState<string | null>(null)   // triagem por família
   const [triageNote, setTriageNote] = useState('')
   // TO BOOK (João, 31/ago): ver SÓ a fila da triagem, com nota e destriagem.
+  // PERGUNTAS DO MOTOR (BL 0.10.0): dúvidas agrupadas por fornecedor; null = a rota ainda não responde (some).
+  const [questions, setQuestions] = useState<Questions | null>(null)
+  const [qOpen, setQOpen] = useState(true)
+  const [qBusy, setQBusy] = useState<string | null>(null)
+  const [qPick, setQPick] = useState<Record<string, QPick>>({})
   const [tobook, setTobook] = useState<{ id: string; date: string; amount: number; name: string; note: string }[] | null>(null)
   const [tobookOpen, setTobookOpen] = useState(false)
   // REGRAS & APELIDOS (BL 0.7.0): semeadura humana das tabelas do motor.
@@ -131,6 +143,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       setLines(d.lines); setTotalNew(d.total_new)
+      loadQuestions()   // em paralelo — a lista principal não espera as perguntas
       setAuto(d.auto || null); setNeedsMigration(!!d.needs_migration)
       setPick(prev => {
         const p: Record<string, string> = {}
@@ -145,6 +158,26 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
     }
   }
   useEffect(() => { load() }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadQuestions() {
+    try {
+      const r = await fetch(`${BASE_PATH}/api/bank/reconcile?questions=1`, { headers: await sessionHeaders() })
+      const d = await r.json().catch(() => ({}))
+      setQuestions(r.ok && Array.isArray(d.suppliers) ? d : null)
+    } catch { setQuestions(null) }
+  }
+  // Uma resposta por fornecedor: vira regra HUMANA e lança as linhas do grupo agora.
+  async function answerSupplier(g: QGroup, pk: QPick) {
+    if (anyBusy || qBusy) return
+    const dest = pk.target === 'FIXED' ? (pk.supplier_id === '__new__' ? 'novo prestador «' + pk.company.trim() + '»' : ((questions?.fixed_suppliers || []).find(x => x.id === pk.supplier_id)?.company || 'prestador')) : pk.target === 'SUPPLIES' ? 'insumo ' + pk.category : pk.target === 'BUCKET' ? 'balde (peça pra carro)' : pk.target === 'TRIP' ? 'viagem a trabalho' : pk.target === 'PERSONAL' ? 'PESSOAL (' + ((questions?.seasons || []).find(x => x.id === pk.season_id)?.label || 'season') + ')' : 'IGNORAR'
+    if (!confirm(`${g.name}: ${g.n} linha(s) · ${usd(g.total)} → ${dest}.\n${pk.target === 'IGNORE' ? 'As linhas ficam IGNORADAS (nada é lançado).' : pk.target === 'PERSONAL' ? 'Cada linha vira despesa PESSOAL na season escolhida — não é custo da empresa.' : 'Cria a regra (vale pra sempre) e lança as linhas agora.'} Continuar?`)) return
+    setQBusy(g.key)
+    try {
+      const d = await post({ action: 'answer_supplier', key: g.key, name: g.name, line_ids: g.line_ids, target: pk.target, supplier_id: pk.supplier_id && pk.supplier_id !== '__new__' ? pk.supplier_id : undefined, new_supplier: pk.supplier_id === '__new__' ? { company: pk.company.trim(), cost_type: pk.cost_type } : undefined, category: pk.category, season_id: pk.season_id || undefined })
+      alert(`${g.name}: ${d.booked ?? 0} lançada(s)${d.rule ? ' · regra criada' : ''}${d.errors?.length ? ' · erros: ' + d.errors.slice(0, 3).join(' | ') : ''}`)
+      await load()
+    } catch (e) { fail(e) } finally { setQBusy(null) }
+  }
 
   async function post(body: Record<string, unknown>) {
     const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
@@ -167,7 +200,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
       await post({ action, bank_id: l.id, ...extra })
       // MATCH tira um candidato do jogo pra TODAS as outras linhas — só o servidor sabe
       // quais ainda valem, então recarrega. Demais ações só somem com a linha.
-      if (action === 'match') await load()
+      if (action === 'match' || action === 'reject_twin') await load()   // NÃO (gêmeo): o motor pode devolver outra dúvida — recarrega em vez de sumir
       else { setLines(prev => (prev || []).filter(x => x.id !== l.id)); setTotalNew(n => n - 1); setPlan(null) }
     } catch (e) { if (fail(e).status === 409) await load() } finally { unlock(l.id) }
   }
@@ -480,6 +513,56 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
             </div>
           )}
 
+          {/* ── PERGUNTAS DO MOTOR (BL 0.10.0, lei do João de 4/set: silêncio é promessa de que está tudo certo;
+              o que o motor não resolve vira PERGUNTA com motivo — por FORNECEDOR, respondida uma vez) ── */}
+          {questions && (questions.suppliers.length > 0 || questions.money.length > 0) && (
+            <div className="border border-purple-900/60 rounded-2xl p-4">
+              <button onClick={() => setQOpen(o => !o)} className="w-full text-left font-bold">PERGUNTAS DO MOTOR <span className="text-purple-300">{questions.suppliers.length}</span> <span className="text-xs text-gray-500 font-normal">· {questions.suppliers.reduce((a, g) => a + g.n, 0)} linhas · {usd(questions.suppliers.reduce((a, g) => a + g.total, 0))} · uma resposta por fornecedor vira regra pra sempre{questions.money.length ? ` · ${questions.money.length} de dinheiro-movimento ficam com você em SEM CASAMENTO` : ''}</span> <span className="text-gray-500 ml-2">{qOpen ? '▴' : '▾'}</span></button>
+              {qOpen && (
+                <div className="divide-y divide-gray-800 mt-2">
+                  {questions.suppliers.length === 0 && <p className="text-emerald-400 text-sm font-bold py-2">Nenhuma pergunta — todo fornecedor tem resposta.</p>}
+                  {questions.suppliers.map(g => {
+                    const pk: QPick = qPick[g.key] || { target: g.suggested.supplier_id ? 'FIXED' : '', supplier_id: g.suggested.supplier_id || '', category: 'CONSUMPTION', season_id: '', company: '', cost_type: 'FIXED' }
+                    const set = (patch: Partial<QPick>) => setQPick(m => ({ ...m, [g.key]: { ...pk, ...patch } }))
+                    const ready = !!pk.target && !(pk.target === 'FIXED' && (!pk.supplier_id || (pk.supplier_id === '__new__' && !pk.company.trim()))) && !(pk.target === 'PERSONAL' && !pk.season_id)
+                    return (
+                      <div key={g.key} className="py-2 flex items-center gap-3 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-purple-800 bg-purple-950 text-purple-300 shrink-0">{g.klass}</span>
+                        <span className="min-w-[11rem] max-w-[16rem]"><span className="block font-bold truncate" title={g.name}>{g.name}</span><span className="block text-[10px] text-gray-500 truncate" title={g.sample.join(' · ')}>{g.sample[0]}</span></span>
+                        <span className="text-xs text-gray-400 shrink-0">{g.n}× · {usd(g.total)} · {formatShortDate(g.oldest)}–{formatShortDate(g.newest)}</span>
+                        {g.suggested.company && <span className="text-[10px] text-emerald-300 shrink-0" title="prestador vivo cujo nome bate">sugere {g.suggested.company}</span>}
+                        {g.suggested.ambiguous.length > 0 && <span className="text-[10px] text-amber-300 shrink-0" title={g.suggested.ambiguous.map(a => a.company).join(' | ')}>{g.suggested.ambiguous.length} prestadores batem — escolha</span>}
+                        <select value={pk.target} onChange={e => set({ target: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs">
+                          <option value="">— quem é pra nós? —</option>
+                          <option value="FIXED">custo de um prestador</option>
+                          <option value="SUPPLIES">insumo (supply)</option>
+                          <option value="BUCKET">peça pra carro (balde)</option>
+                          <option value="TRIP">viagem a trabalho</option>
+                          <option value="PERSONAL">pessoal (season)</option>
+                          <option value="IGNORE">não é nosso — ignorar</option>
+                        </select>
+                        {pk.target === 'FIXED' && (
+                          <select value={pk.supplier_id} onChange={e => set({ supplier_id: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs max-w-[16rem]">
+                            <option value="">— prestador —</option>
+                            {(questions.fixed_suppliers || []).map(x => <option key={x.id} value={x.id}>{x.company} · {x.cost_type}</option>)}
+                            <option value="__new__">+ novo prestador</option>
+                          </select>
+                        )}
+                        {pk.target === 'FIXED' && pk.supplier_id === '__new__' && (<>
+                          <input value={pk.company} onChange={e => set({ company: e.target.value })} placeholder="nome do prestador" className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs w-44" />
+                          <select value={pk.cost_type} onChange={e => set({ cost_type: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs">{['FIXED', 'APP', 'FLEET', 'STAFF', 'MARKETING', 'ASSET'].map(c => <option key={c} value={c}>{c}</option>)}</select>
+                        </>)}
+                        {pk.target === 'SUPPLIES' && <select value={pk.category} onChange={e => set({ category: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs">{INPUT_CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>}
+                        {pk.target === 'PERSONAL' && <select value={pk.season_id} onChange={e => set({ season_id: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-2 py-1 text-xs max-w-[16rem]"><option value="">— de quem? —</option>{(questions.seasons || []).map(x => <option key={x.id} value={x.id}>{x.label}</option>)}</select>}
+                        <button disabled={anyBusy || !!qBusy || !ready} onClick={() => answerSupplier(g, pk)} className="bg-purple-800 hover:bg-purple-700 disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs">{qBusy === g.key ? '…' : 'RESPONDER'}</button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ── SEM CASAMENTO (humano) ── */}
           <div>
             <p className="text-sm text-gray-400 mb-3 max-w-3xl">Cada linha do banco ou já existe no app (MATCH — Enter no seletor também casa; a data de pagamento do app é preenchida com a do banco se faltava), ou é transferência/ignorável, ou falta no app: EXPLAIN guarda o que foi pra lançar depois.</p>
@@ -529,6 +612,12 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                         <span className="text-gray-500 text-xs w-20 shrink-0">{formatShortDate(l.date)}</span>
                         <span className="flex-1 truncate text-sm" title={l.raw_name}>{l.name}{l.pending && <span className="ml-2 text-xs text-amber-400" title="ainda não postou — o Plaid troca o id ao postar; MATCH só depois">PENDING</span>}{l.fee && <span className="ml-2 text-[10px] font-bold text-teal-300">TARIFA</span>}{l.source === 'STATEMENT' && <span className="ml-2 text-xs text-gray-600">extrato</span>}</span>
                         <span className={`tabular-nums font-bold text-sm shrink-0 ${l.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{l.amount > 0 ? '−' : '+'}{usd(l.amount)}</span>
+                        {/* A dúvida do motor, dita (BL 0.10.0): o motivo no title, o candidato num clique. */}
+                        {l.doubt && <span title={l.doubt.reason} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${DOUBT_CHIP[l.doubt.kind] || 'border-gray-700 text-gray-400'}`}>{l.doubt.kind === 'TWIN' ? 'É ESTA?' : l.doubt.kind === 'SUPPLIER' ? 'QUEM É?' : l.doubt.kind === 'MONEY' ? 'DINHEIRO' : l.doubt.kind === 'CAP' ? 'TETO' : l.doubt.kind === 'MATURITY' ? 'MATURANDO' : l.doubt.reason === 'pendente' ? 'PENDENTE' : 'PARADA'}</span>}
+                        {l.doubt && l.doubt.kind === 'TWIN' && l.doubt.cands && l.doubt.cands[0] && (l.doubt.cands[0] as { exact?: boolean }).exact !== false && <button disabled={dis} onClick={() => act(l, 'match', { table: l.doubt!.cands![0].table, row_id: l.doubt!.cands![0].id })} className="bg-amber-800 hover:bg-amber-700 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title={`casa com: ${l.doubt.cands[0].label}${l.doubt.cands.length > 1 ? ` (+${l.doubt.cands.length - 1} candidato(s) na lista)` : ''}`}>SIM, É ESSA</button>}
+                        {l.doubt && l.doubt.kind === 'TWIN' && l.doubt.cands && l.doubt.cands[0] && <button disabled={dis} onClick={() => { if (confirm('NÃO é esse registro? A linha guarda a recusa e o motor decide na hora sem ele (regra ou balde) — ou mostra a próxima dúvida.')) act(l, 'reject_twin', { cand: l.doubt!.cands![0].table + ':' + l.doubt!.cands![0].id }) }} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title="não é esse — o motor segue sem ele">NÃO</button>}
+                        {l.doubt && l.doubt.kind === 'TWIN' && l.doubt.cands && l.doubt.cands[0] && <span className="text-[10px] text-gray-500 truncate max-w-[16rem]" title={l.doubt.cands[0].label}>{(l.doubt.cands[0] as { exact?: boolean }).exact === false ? 'valor difere · ' : ''}{l.doubt.cands[0].label}{l.doubt.cands.length > 1 ? ` (+${l.doubt.cands.length - 1})` : ''}</span>}
+                        {l.queued && <span className="text-[10px] text-amber-300 shrink-0" title="estava em TO BOOK (triagem) — o motor voltou a tentar">TO BOOK</span>}
                       </div>
                       {/* CONFERIR (UX #1, João 25/ago): as fontes dos dois lados, com link pro registro real. */}
                       {inspect.has(l.id) && (
