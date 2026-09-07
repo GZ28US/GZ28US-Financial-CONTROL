@@ -47,6 +47,7 @@ import {
 } from './streamMail.server'
 import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
+import { matchSupplier, supplierDirectoryFrom } from './supplierMatch'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
 export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
@@ -472,7 +473,23 @@ export async function lancar(
   dados: { vendor: string; order: string | null; amount: number; date: string; desc: string },
 ): Promise<{ table: string; id: string } | { erro: string }> {
   const t = String(target.table || '')
-  const base: Record<string, unknown> = { supplier: dados.vendor, order_number: dados.order, source: 'GZ28US' }
+  // O NOME DO FORNECEDOR ENTRA CURADO (ordem dele, 07/set/2026: *"normalize
+  // sempre os nomes dos fornecedores, ensine todos os robôs de escaneamento a
+  // fazer isso, assim os dados já entram certos"*). O e-mail escreve o remetente
+  // como bem entende — "Store #2484, 2074 Ctrl Fla Pkwy" em vez de AutoZone — e
+  // cada grafia nova é um fornecedor a mais no relatório. Hoje são 459 grafias
+  // para 107 cadastros nos dois bancos.
+  //
+  // Só AQUI, na ESCRITA. As BUSCAS (achaNoApp, temLinhaPorPerto, candidatosPara),
+  // a escolha de pasta (arquiva) e o papel (achaPapel) continuam com o nome CRU:
+  // elas procuram o que JÁ ESTÁ no banco e nas pastas, e lá o nome torto é o que
+  // existe. Curar na busca cegaria o robô para o histórico que ele precisa achar.
+  //
+  // Sem cadastro que case, grava o nome cru: matchSupplier devolve null em vez de
+  // adivinhar, e inventar nome é pior que repetir a grafia do vendedor.
+  const { data: sups } = await db.from('suppliers').select('name,aliases,is_dealership')
+  const casado = matchSupplier(dados.vendor, supplierDirectoryFrom(sups || []))
+  const base: Record<string, unknown> = { supplier: casado?.name || dados.vendor, order_number: dados.order, source: 'GZ28US' }
   for (const [k, v] of Object.entries(target)) if (k !== 'table') base[k] = v
   if (t === 'invoice_expenses') Object.assign(base, { item: dados.desc, price: dados.amount, quantity: 1, expense_date: dados.date })
   else if (t === 'expenses') Object.assign(base, { description: dados.desc, amount: dados.amount, expense_date: dados.date, type: base.type || 'SINGLE' })

@@ -21,7 +21,17 @@ export function supplierDirectoryFrom(rows: any[] | null | undefined): SupplierE
   return (rows || []).map((s: any) => ({
     name: s.name,
     official: s.is_dealership === true,
-    keys: [s.name, ...String(s.aliases || '').split(/[\n,]/)].map(normSup).filter(Boolean),
+    // O campo `aliases` virou bloco de notas: alguns carregam PROSA separada por
+    // vírgula, e o split por vírgula transformava isso em chaves de 129 caracteres
+    // ("naoporemailopedido2226792eumacheckoutconfirmation..."). Toda linha com prosa
+    // usa " — " antes do texto corrido, e nenhuma das que são só apelido usa
+    // (conferido nas 10 linhas de alias longo dos dois bancos, 07/set/2026).
+    // Corta-se ali E descarta-se chave com mais de 40 caracteres: no US a prosa
+    // usa DOIS-PONTOS, não travessão ("nao por e-mail: o pedido #2226792 e uma
+    // CHECKOUT CONFIRMATION do site…"), e gerava uma chave de 134. Apelido de
+    // fornecedor não passa de 40 caracteres; acima disso é recado, não nome.
+    keys: [s.name, ...String(s.aliases || '').split(/[\n,]/).map((x: string) => x.split(' — ')[0])]
+      .map(normSup).filter(k => k && k.length <= 40),
   }))
 }
 
@@ -40,6 +50,27 @@ export function matchSupplier(nome: string | null | undefined, dir: SupplierEntr
   if (!n) return null
   const exato = dir.find(d => d.keys.includes(n))
   if (exato) return exato
-  const prefixo = dir.filter(d => d.keys.some(k => k.length >= 6 && (n.startsWith(k) || k.startsWith(n))))
+  // DUAS TRAVAS no prefixo (07/set/2026), medidas contra as 459 grafias reais (310 US + 149 BR, 2.799 linhas) —
+  // sem elas o casamento INVENTA nome:
+  //   • "Mileide de Lima Brito" (2 linhas) casava com o cadastro "Mileide" e
+  //     perdia o nome legal de uma pessoa. Nome de PESSOA não casa por prefixo:
+  //     o resto do nome é sobrenome, não endereço, e cortar sobrenome é apagar
+  //     identidade. Nome de empresa continua casando por exato.
+  //   • "TRE Performance" (3 linhas) casava com o cadastro "TREperformance.com"
+  //     e virava URL como nome de fornecedor. Chave que é DOMÍNIO só casa por
+  //     prefixo com candidato que também é domínio.
+  // Filosofia da função, mantida: na dúvida devolve null em vez de adivinhar.
+  const cru = String(nome || '').trim()
+  // Pessoa é ALFABÉTICA: "VILLAGGIO 10 POSTO DE SERVICOS" também tem "DE" e 3
+  // palavras, e a trava crua o transformava em null — 2 linhas perdidas. Dígito
+  // ou forma jurídica no nome ⇒ é empresa, e empresa casa por prefixo normalmente.
+  const juridica = new RegExp('\\b(ltda|me|epp|eireli|sa|llc|inc|ltd|corp|gmbh)\\b', 'i').test(cru)
+  const pessoa = !/[0-9]/.test(cru) && !juridica
+    && new RegExp('\\b(de|da|do|dos|das)\\b', 'i').test(cru)
+    && cru.split(/\s+/).length >= 3
+  const dominio = (k: string) => /(com|combr|net|org)$/.test(k)
+  const ehDominio = dominio(n)
+  const prefixo = pessoa ? [] : dir.filter(d => d.keys.some(k =>
+    k.length >= 6 && (dominio(k) ? ehDominio : true) && (n.startsWith(k) || k.startsWith(n))))
   return prefixo.length === 1 ? prefixo[0] : null
 }
