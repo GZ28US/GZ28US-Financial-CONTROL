@@ -64,6 +64,8 @@ export type AutoBookMailResult = {
   duvidasApp: string[]
   arquivados: string[]
   semPasta: string[]
+  achadosNoApp: string[]
+  papelSemLinha: string[]
   erros: string[]
 }
 
@@ -237,7 +239,10 @@ export function classify(msg: MailMsg): { kind: AbKind; money: ReturnType<typeof
 // avisa que o BR não foi consultado ([[nao-achei-onde-procurou]]).
 async function pedidosConhecidos(db: SupabaseClient): Promise<Set<string>> {
   const set = new Set<string>()
-  for (const t of ITEM_TABLES) {
+  // `fixed_cost_expenses` entra junto com as 6 de item: e la que moram ASSETS,
+  // MARKETING, APPS, FIXED, FLEET, STAFF e BANK, e ela TEM `order_number`.
+  // Varrer so as 6 era procurar em meio app ([[nao-achei-onde-procurou]]).
+  for (const t of [...ITEM_TABLES, 'fixed_cost_expenses'] as const) {
     const { data } = await db.from(t).select('order_number').not('order_number', 'is', null)
     for (const r of (data || []) as { order_number: string }[]) {
       const s = String(r.order_number || '').trim()
@@ -329,6 +334,70 @@ async function assinaturaLancada(db: SupabaseClient, supplierId: string, data: s
   const ate = new Date(Date.parse(data + 'T12:00:00Z') + dias * 86400e3).toISOString().slice(0, 10)
   const { data: hit } = await db.from('fixed_cost_expenses').select('id').eq('supplier_id', supplierId).gte('expense_date', de).lte('expense_date', ate).limit(1)
   return (hit || []).length > 0
+}
+
+// ── ANTES DE PERGUNTAR, PROCURAR NOS DOIS LUGARES (ordem dele, 07/set/2026) ─
+//   "ponha o robô pra vasculhar o app pra esta nova despesa; se não encontrar,
+//    verificar as pastas PURCHASES dos carros; só se não encontrar nestes 2
+//    lugares, isto fica em dúvida."
+//
+// 1) O APP — e o app é MAIOR do que as 6 tabelas de item. `fixed_cost_expenses`
+//    é o par de ASSETS, MARKETING, APPS, FIXED, FLEET, STAFF e BANK (a mesma
+//    dupla `fixed_cost_suppliers` + `fixed_cost_expenses`, separada por
+//    `cost_type`). Eu varria só as 6 e ignorava essa — foi ele que apontou.
+//    Aqui a busca é por VALOR TOTAL + fornecedor + janela, não só por pedido:
+//    a maioria das linhas da casa nasce SEM `order_number`, então casar só por
+//    número é fingir que procurou.
+const TABELAS_VALOR = [
+  ['invoice_expenses', 'price', 'expense_date', 'supplier', 'item'],
+  ['inputs', 'unit_price', 'purchase_date', 'supplier', 'description'],
+  ['expenses', 'amount', 'expense_date', 'supplier', 'description'],
+  ['goods', 'unit_price', 'purchase_date', 'supplier', 'description'],
+  ['inventory', 'unit_price', 'purchase_date', 'supplier', 'description'],
+  ['good_expenses', 'amount', 'expense_date', '', 'description'],
+  ['fixed_cost_expenses', 'amount', 'expense_date', '', 'description'],
+] as const
+
+export async function achaNoApp(db: SupabaseClient, vendor: string, amount: number, data: string, dias = 15): Promise<string | null> {
+  const de = new Date(Date.parse(data + 'T12:00:00Z') - dias * 86400e3).toISOString().slice(0, 10)
+  const ate = new Date(Date.parse(data + 'T12:00:00Z') + dias * 86400e3).toISOString().slice(0, 10)
+  const like = `%${vendor.slice(0, 12)}%`
+  for (const [t, col, dt, sup, txt] of TABELAS_VALOR) {
+    // `select('*')`: o select montado por template confunde o parser de tipos do
+    // supabase-js, e as tabelas nao tem as mesmas colunas (good_expenses e
+    // fixed_cost_expenses nao tem quantity/tax/extra). Ler tudo e somar o que
+    // existir e mais simples e nao mente.
+    let q = db.from(t).select('*').gte(dt, de).lte(dt, ate)
+    q = sup ? q.ilike(sup, like) : q.ilike(txt, like)
+    const { data: rows } = await q
+    for (const r of (rows || []) as Record<string, unknown>[]) {
+      const total = Number(r[col] || 0) * (Number(r.quantity) || 1) + Number(r.tax || 0) + Number(r.extra || 0)
+      if (Math.abs(total - amount) < 0.02) return `${t}:${String(r.id).slice(0, 8)} — ${String(r[txt] || '').slice(0, 50)} (${String(r[dt]).slice(0, 10)})`
+    }
+  }
+  return null
+}
+
+// 2) O PAPEL. O robô roda na Vercel e NÃO enxerga o Dropbox — a pasta
+//    `Rides/<carro>/Purchases` só existe no disco dele. O que o robô alcança é
+//    o Storage, que é onde o mesmo PDF vive como `receipt_url`. Então ele
+//    procura o número do pedido no NOME dos arquivos guardados; achar lá
+//    significa "alguém já guardou o papel e não lançou a linha", que é um
+//    achado diferente de "não existe em lugar nenhum". O `search` da API de
+//    Storage não filtra (testado: não acha nem arquivo que acabou de subir),
+//    então lista-se a pasta e filtra-se aqui.
+const PASTAS_RECIBO: [string, string][] = [
+  ['good-receipts', 'inputs/purchases'], ['good-receipts', 'docs'], ['good-receipts', 'goods'],
+  ['good-receipts', 'expenses'], ['good-receipts', 'fleet'], ['expense-receipts', 'docs'],
+]
+export async function achaPapel(db: SupabaseClient, order: string): Promise<string | null> {
+  const alvo = order.toLowerCase()
+  for (const [bucket, prefix] of PASTAS_RECIBO) {
+    const { data } = await db.storage.from(bucket).list(prefix, { limit: 1000 })
+    const hit = (data || []).find(f => String(f.name || '').toLowerCase().includes(alvo))
+    if (hit) return `${bucket}/${prefix}/${hit.name}`
+  }
+  return null
 }
 
 // ── JÁ EXISTE ALGO DESTE COMERCIANTE POR PERTO? ────────────────────────────
@@ -472,7 +541,7 @@ async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMai
 }
 
 export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = 'cron'): Promise<AutoBookMailResult> {
-  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], arquivados: [], semPasta: [], erros: [] }
+  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], arquivados: [], semPasta: [], achadosNoApp: [], papelSemLinha: [], erros: [] }
   const rodada = await abreRodada(db, horas, trigger)
   const desde = new Date(Date.now() - horas * 3600e3).toISOString()
   out.janela = `desde ${desde}`
@@ -591,6 +660,20 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           }
         }
 
+        // ── AS DUAS BUSCAS ANTES DE PERGUNTAR (ordem dele, 07/set/2026) ──
+        // 1) o app inteiro, por valor + fornecedor + janela — nao so por pedido.
+        if (it.amount != null && it.amount > 0) {
+          const achado = await achaNoApp(db, vendor, it.amount, data)
+          if (achado) {
+            out.achadosNoApp.push(`${vendor} ${it.currency} ${it.amount} JA ESTA em ${achado}`)
+            if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
+            continue
+          }
+        }
+        // 2) o papel: o pedido aparece no nome de algum recibo ja guardado?
+        const papel = it.order ? await achaPapel(db, it.order) : null
+        if (papel) out.papelSemLinha.push(`${vendor} ${it.order} — papel guardado em ${papel}, mas SEM linha no app`)
+
         // A PERGUNTA. Uma só, com tudo que já foi lido e os destinos medidos.
         const cands = await candidatosPara(db, vendor)
         const falta = [
@@ -598,6 +681,9 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           it.amount == null ? 'sem valor legivel' : !it.strong ? `valor ${it.amount} lido de rotulo fraco ("${it.label}")` : null,
           // Honestidade sobre o escopo da busca: eu só olhei o banco do US.
           it.order ? 'CONFERIR NO APP DO BR TAMBEM — este robo so olha o banco do US' : null,
+          // Negativo so vale dizendo ONDE se procurou ([[nao-achei-onde-procurou]]).
+          it.amount ? 'procurei por valor+fornecedor nas 6 tabelas de item E em fixed_cost_expenses (ASSETS/APPS/MARKETING/FIXED/FLEET/STAFF/BANK): nao achei' : null,
+          it.order ? (papel ? `o PAPEL ja esta guardado em ${papel} — falta a linha` : 'nenhum recibo guardado com esse numero de pedido') : null,
         ].filter(Boolean)
         const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
         const question = c.kind === 'REFUND'
