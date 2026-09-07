@@ -390,12 +390,24 @@ const PASTAS_RECIBO: [string, string][] = [
   ['good-receipts', 'inputs/purchases'], ['good-receipts', 'docs'], ['good-receipts', 'goods'],
   ['good-receipts', 'expenses'], ['good-receipts', 'fleet'], ['expense-receipts', 'docs'],
 ]
-export async function achaPapel(db: SupabaseClient, order: string): Promise<string | null> {
-  const alvo = order.toLowerCase()
+// Procura pelo PEDIDO **e pelo FORNECEDOR**. O pedido sozinho não acha quase
+// nada, e isso custou caro em 07/set/2026: a Commercial Invoice do pedido
+// 1969205 estava guardada em `US.014 - GZ28US WorkTruck/Purchases` com o nome
+// **"HP Tuners - Access Licences.pdf"**. O número do pedido está DENTRO do
+// papel, nunca no nome — quem nomeia arquivo escreve o FORNECEDOR e o que é.
+// Procurar pelo número no nome é procurar pelo campo errado.
+// (E o papel é PDF impresso pelo Chrome, sem camada de texto: `pdftotext`
+// devolve 1 byte. Nem grep dentro do arquivo resolveria — só renderizando.)
+export async function achaPapel(db: SupabaseClient, order: string | null, vendor?: string): Promise<string | null> {
+  const alvos = [order, vendor && vendor.length >= 4 ? vendor : null]
+    .filter(Boolean).map(x => String(x).toLowerCase())
+  if (!alvos.length) return null
   for (const [bucket, prefix] of PASTAS_RECIBO) {
     const { data } = await db.storage.from(bucket).list(prefix, { limit: 1000 })
-    const hit = (data || []).find(f => String(f.name || '').toLowerCase().includes(alvo))
-    if (hit) return `${bucket}/${prefix}/${hit.name}`
+    for (const f of (data || [])) {
+      const nome = String(f.name || '').toLowerCase()
+      if (alvos.some(a => nome.includes(a))) return `${bucket}/${prefix}/${f.name}`
+    }
   }
   return null
 }
@@ -671,7 +683,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           }
         }
         // 2) o papel: o pedido aparece no nome de algum recibo ja guardado?
-        const papel = it.order ? await achaPapel(db, it.order) : null
+        const papel = await achaPapel(db, it.order, vendor)
         if (papel) out.papelSemLinha.push(`${vendor} ${it.order} — papel guardado em ${papel}, mas SEM linha no app`)
 
         // A PERGUNTA. Uma só, com tudo que já foi lido e os destinos medidos.
@@ -683,7 +695,10 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           it.order ? 'CONFERIR NO APP DO BR TAMBEM — este robo so olha o banco do US' : null,
           // Negativo so vale dizendo ONDE se procurou ([[nao-achei-onde-procurou]]).
           it.amount ? 'procurei por valor+fornecedor nas 6 tabelas de item E em fixed_cost_expenses (ASSETS/APPS/MARKETING/FIXED/FLEET/STAFF/BANK): nao achei' : null,
-          it.order ? (papel ? `o PAPEL ja esta guardado em ${papel} — falta a linha` : 'nenhum recibo guardado com esse numero de pedido') : null,
+          papel ? `o PAPEL ja esta guardado em ${papel} — falta a linha` : 'nenhum recibo guardado com esse pedido nem com esse fornecedor',
+          // O robo NAO ve o Dropbox: a pasta Rides/<carro>/Purchases so existe no
+          // disco dele. Quem confere aquilo sou eu, na rodada.
+          'a pasta Purchases do carro no Dropbox NAO foi conferida — o robo nao alcanca',
         ].filter(Boolean)
         const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
         const question = c.kind === 'REFUND'
