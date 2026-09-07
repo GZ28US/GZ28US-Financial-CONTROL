@@ -44,7 +44,13 @@ const BTN = 'px-3 py-1 rounded-xl font-bold text-xs disabled:opacity-40'
 export default function BucketQueue({ onCount, embedded }: { onCount?: (n: number, balance: number, older7: number) => void; embedded?: boolean }) {
   const [d, setD] = useState<Data | null>(null)
   const [err, setErr] = useState('')
-  const [open, setOpen] = useState(!embedded)
+  // Recolhida por padrão nos DOIS lugares (João, 7/set: a lista comia a página do Bank Link).
+  // O cabeçalho continua dizendo número, saldo e 7+ dias — nada some calado; a escolha fica no
+  // navegador (por lugar) e o link #a-atribuir do Data Checker sempre abre.
+  const [open, setOpen] = useState(false)
+  const OPEN_KEY = 'bl.bucket.open.' + (embedded ? 'card' : 'page')
+  useEffect(() => { try { const v = localStorage.getItem(OPEN_KEY); if (v === '1' || v === '0') setOpen(v === '1') } catch { /* navegador sem storage: fica recolhida */ } }, [OPEN_KEY])
+  const toggle = () => setOpen(o => { const n = !o; try { localStorage.setItem(OPEN_KEY, n ? '1' : '0') } catch { /* idem */ } return n })
   const [tab, setTab] = useState<'FILA' | 'ATRIBUIDAS'>('FILA')
   const [q, setQ] = useState('')
   const [klassF, setKlassF] = useState<string | null>(null)
@@ -165,10 +171,10 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
   const head = (
     <div className="flex items-center gap-3 flex-wrap">
       {/* Título é o único gatilho de abrir/fechar (botão dentro de botão quebrava as abas — revisão 3). */}
-      <button type="button" onClick={() => { if (embedded) setOpen(o => !o) }} className={`font-bold flex-1 text-left ${embedded ? 'cursor-pointer' : 'cursor-default'}`}>A ATRIBUIR <span className="text-amber-300">{d ? d.total : '…'}</span>{d ? <span className="text-xs text-gray-500 font-normal"> · balde {usd(d.balance)} · {d.older_7d} com mais de 7 dias</span> : null}{embedded ? <span className="text-gray-500 ml-2">{open ? '▴' : '▾'}</span> : null}</button>
+      <button type="button" onClick={toggle} title={open ? 'recolher a fila' : 'abrir a fila'} className="font-bold flex-1 text-left cursor-pointer">A ATRIBUIR <span className="text-amber-300">{d ? d.total : '…'}</span>{d ? <span className="text-xs text-gray-500 font-normal"> · balde {usd(d.balance)} · {d.older_7d} com mais de 7 dias</span> : null}<span className="text-gray-500 ml-2">{open ? '▴' : '▾'}</span></button>
       <div className="flex gap-1">
-        <button onClick={() => setTab('FILA')} className={`px-3 py-1 rounded-xl text-xs font-bold border ${tab === 'FILA' ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>A ATRIBUIR</button>
-        <button onClick={() => setTab('ATRIBUIDAS')} className={`px-3 py-1 rounded-xl text-xs font-bold border ${tab === 'ATRIBUIDAS' ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>ATRIBUÍDAS{d ? ` (${d.attributed.length})` : ''}</button>
+        <button onClick={() => { setTab('FILA'); if (!open) toggle() }} className={`px-3 py-1 rounded-xl text-xs font-bold border ${tab === 'FILA' ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>A ATRIBUIR</button>
+        <button onClick={() => { setTab('ATRIBUIDAS'); if (!open) toggle() }} className={`px-3 py-1 rounded-xl text-xs font-bold border ${tab === 'ATRIBUIDAS' ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>ATRIBUÍDAS{d ? ` (${d.attributed.length})` : ''}</button>
       </div>
       <button onClick={load} disabled={anyBusy} className="bg-gray-900 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">↻</button>
     </div>
@@ -319,7 +325,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
   return (
     <div id="a-atribuir" className="bg-gray-900 border border-gray-800 rounded-3xl p-6 mb-8">
       {head}
-      {body}
+      {open && body}
     </div>
   )
 }
