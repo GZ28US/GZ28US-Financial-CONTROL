@@ -316,7 +316,14 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                 {learnMsg && <p className="text-xs mt-1 text-fuchsia-300 font-bold">memória de comerciante: {learnMsg}</p>}
               </div>
               {needsMigration ? (
-                <p className="text-sm text-amber-300">Rode <b>MIGRATION_bank_reconcile_v030.sql</b> (raiz do projeto) no SQL Editor — os motores precisam das colunas match_engine / match_batch / reviewed_at / backfill.</p>
+                /* Este aviso NÃO nomeia mais uma migration só (07/set/2026). `needs_migration` tem
+                   várias origens — o probe da v030 (route.ts:417), o do bank_match_log (:888),
+                   `doubtColumnMissing()` (:400) e qualquer erro que case com MIGRATION_RE — e o texto
+                   antigo mandava rodar a v030 em todos os casos. Foi o que aconteceu de verdade: com
+                   `bank_transactions.doubt_answered` faltando, o card apagou PLANEJAR/APLICAR e a fila
+                   e mandou rodar a v030, cujas colunas já existiam há tempos. Instrução errada na tela
+                   custa mais caro que aviso genérico. */
+                <p className="text-sm text-amber-300">O motor pediu uma <b>migration</b> e o card não sabe dizer qual daqui. Rode no SQL Editor a que estiver faltando, na raiz do projeto — <b>MIGRATION_bank_reconcile_v030.sql</b> (match_engine / match_batch / reviewed_at / backfill), <b>MIGRATION_auto_book_silence.sql</b> (doubt_answered) ou <b>MIGRATION_bank_match_log.sql</b>. O nome exato vem no campo <code>error</code> da resposta de <code>/api/bank/reconcile</code>.</p>
               ) : (
                 <div className="flex gap-2 items-center">
                   {progress && <span className="text-xs text-emerald-300">{progress}</span>}
