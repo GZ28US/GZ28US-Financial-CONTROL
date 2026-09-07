@@ -71,16 +71,16 @@ const MIN_PEDIDO = 5
 // A entrega dita pelo e-mail. Deliberadamente curta e literal: "delivery" solto
 // fica de fora porque "Estimated delivery" aparece em todo e-mail de compra e
 // carimbaria entrega no dia em que o pedido foi feito.
-const ENTREGOU = /\b(was|has been|have been|is|were)\s+delivered\b|\bdelivered\s*[:！!]|\border\s+delivered\b|\bpackage\s+(?:was\s+)?delivered\b|\bentregue\b|\bfoi\s+entregue\b|\bdropped off\b/i
+export const ENTREGOU = /\b(was|has been|have been|is|were)\s+delivered\b|\bdelivered\s*[:！!]|\border\s+delivered\b|\bpackage\s+(?:was\s+)?delivered\b|\bentregue\b|\bfoi\s+entregue\b|\bdropped off\b/i
 
 // O ESTORNO tem de ser afirmado pelo VENDEDOR no passado. "refund policy",
 // "request a refund" e "eligible for refund" são conversa, não dinheiro de
 // volta — e carimbariam REFUNDED numa compra viva.
-const ESTORNOU = /\b(refund(?:ed)?\s+(?:was|has been|is)\s+issued|your refund was issued|we(?:'ve| have)\s+refunded|has been refunded|was refunded|refund(?:ed)?\s+to your|cancelled and refunded)\b|\breembolso (?:foi )?(?:emitido|processado|efetuado)\b|\bestornad[oa]\b/i
+export const ESTORNOU = /\b(refund(?:ed)?\s+(?:was|has been|is)\s+issued|your refund was issued|we(?:'ve| have)\s+refunded|has been refunded|was refunded|refund(?:ed)?\s+to your|cancelled and refunded)\b|\breembolso (?:foi )?(?:emitido|processado|efetuado)\b|\bestornad[oa]\b/i
 
 // Só se fala em compra NOVA quando o e-mail traz a palavra do pedido colada ao
 // número. Formatos que a casa usa de verdade — nada genérico.
-const PEDIDO_NOVO = [
+export const PEDIDO_NOVO = [
   /\border\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{2}-\d{5}-\d{5})\b/gi,        // eBay
   /\border\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{3}-\d{7}-\d{7})\b/gi,        // Amazon
   /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*(PO-\d{3}-\d{10,20})\b/gi,     // Temu
