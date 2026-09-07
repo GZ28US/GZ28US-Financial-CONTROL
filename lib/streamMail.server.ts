@@ -152,12 +152,15 @@ async function googleAccessToken(auth: MailAuth): Promise<string | null> {
 }
 
 // ── message scanning ────────────────────────────────────────────────────────
-export type MailMsg = { subject: string; from: string; fromAddr: string; received: string; text: string }
+// `id` entrou em 07/set/2026: sem ele nao da para ARQUIVAR o que o robo resolveu, e
+// o e-mail processado ficava eternamente na caixa dele ("porque tem tanto email da
+// sua pauta ainda na minha caixa?"). E opcional porque quem so le texto nao precisa.
+export type MailMsg = { id?: string; subject: string; from: string; fromAddr: string; received: string; text: string }
 
 export async function fetchRecentMessages(accessToken: string, sinceIso: string): Promise<MailMsg[]> {
   const q = new URLSearchParams({
     $top: '50',
-    $select: 'subject,from,receivedDateTime,body',
+    $select: 'id,subject,from,receivedDateTime,body',
     $filter: `receivedDateTime ge ${sinceIso}`,
     $orderby: 'receivedDateTime desc',
   })
@@ -167,6 +170,7 @@ export async function fetchRecentMessages(accessToken: string, sinceIso: string)
   const data = await r.json().catch(() => null)
   if (!Array.isArray(data?.value)) return []
   return data.value.map((m: any) => ({
+    id: String(m.id || ''),
     subject: String(m.subject || ''),
     from: String(m.from?.emailAddress?.name || ''),
     fromAddr: String(m.from?.emailAddress?.address || '').toLowerCase(),
@@ -222,6 +226,7 @@ export async function fetchRecentGmail(accessToken: string, sinceIso: string, op
       }
       walk(m.payload)
       out.push({
+        id: String(m.id || ''),
         subject: hv('subject'),
         from: fromRaw.replace(/<[^>]+>/, '').replace(/"/g, '').trim(),
         fromAddr: (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).toLowerCase().trim(),
@@ -398,6 +403,15 @@ export async function rideFolderMap(accessToken: string): Promise<Map<string, { 
     const m = String(f.displayName || '').match(/^(US\.\d+)\b/i)
     if (m) out.set(m[1].toUpperCase(), { id: f.id, name: f.displayName })
   }
+  return out
+}
+
+// Mapa das pastas de 1o nivel por nome minusculo. O AutoBook usa para achar a
+// pasta do fornecedor ("Temu", "eBay", "Amazon"); se nao existir, ele NAO move.
+export async function folderMap(accessToken: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const top = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders?$top=100`, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
+  for (const f of (top?.value || [])) out.set(String(f.displayName || '').trim().toLowerCase(), String(f.id))
   return out
 }
 

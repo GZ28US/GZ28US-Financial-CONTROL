@@ -43,7 +43,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail,
-  GMAIL_Q_COMPRA, type MailMsg, type MailAuth,
+  folderMap, moveMessage, maySweep, GMAIL_Q_COMPRA, type MailMsg, type MailAuth,
 } from './streamMail.server'
 import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
@@ -62,6 +62,8 @@ export type AutoBookMailResult = {
   semRecibo: string[]
   perguntas: string[]
   duvidasApp: string[]
+  arquivados: string[]
+  semPasta: string[]
   erros: string[]
 }
 
@@ -393,6 +395,31 @@ export async function lancar(
 
 const keyOf = (slot: number, m: MailMsg) => `${slot}|${m.received}|${m.fromAddr}|${m.subject.slice(0, 90)}`
 
+// ── ARQUIVAR O QUE FOI RESOLVIDO ───────────────────────────────────────────
+// Cobrança dele, 07/set/2026: *"porque tem tanto email da sua pauta ainda na
+// minha caixa?"*. O robô lançava e deixava tudo na inbox — processar não
+// terminava, terminava só a metade que ele não vê. Agora o que o robô RESOLVE
+// sai da caixa na mesma passada.
+//
+// Sai: o que já tem dono (rastreio/entrega de linha existente), o lançado por
+// regra, e o ignorado (regra IGNORE, total 0,00, assinatura já no APPS).
+// **NUNCA sai o que virou PERGUNTA** — pergunta aberta fica na caixa dele à
+// vista até ser respondida.
+//
+// Conservador de propósito: só move se existir uma pasta com o nome do
+// fornecedor na própria caixa. Sem pasta, não inventa nem cria: deixa o e-mail
+// e reporta. Caixa com `auto_sweep = false` (a 6, arquivo do BR) não é varrida
+// por robô nenhum — mesma lei do sweepSpam/sweepMarketing.
+async function arquiva(
+  token: string, pastas: Map<string, string>, msg: MailMsg, vendor: string, out: AutoBookMailResult,
+): Promise<void> {
+  if (!msg.id) return
+  const alvo = pastas.get(vendor.trim().toLowerCase())
+  if (!alvo) { out.semPasta.push(`${vendor} — "${msg.subject.slice(0, 50)}" (sem pasta "${vendor}" nesta caixa)`); return }
+  if (await moveMessage(token, msg.id, alvo)) out.arquivados.push(`${vendor} ← ${msg.subject.slice(0, 55)}`)
+  else out.erros.push(`falhou ao arquivar em ${vendor}: ${msg.subject.slice(0, 45)}`)
+}
+
 // ── O CORTE DO BR (lei dele, 06/set/2026) ──────────────────────────────────
 //   "pode processar as coisas do BR, mas SEM RETROATIVO, só daqui pra frente."
 // O AutoBook do BR nasceu em 06/set/2026, 00:00 de Brasília = 03:00Z. E-mail das
@@ -405,14 +432,19 @@ const CAIXAS_BR = /gz28br@|gz28shopping@/i
 const antesDoCorteBR = (account: string | null | undefined, received: string): boolean =>
   CAIXAS_BR.test(String(account || '')) && String(received || '') < BR_FLOOR
 
-async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Promise<{ nome: string; slot: number; msgs: MailMsg[] }> {
+type Caixa = { nome: string; slot: number; msgs: MailMsg[]; token: string | null; pastas: Map<string, string>; podeArquivar: boolean }
+async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Promise<Caixa> {
   const nome = auth.account || 'slot' + auth.id
+  const vazio = { nome, slot: auth.id || 0, msgs: [] as MailMsg[], token: null, pastas: new Map<string, string>(), podeArquivar: false }
   const token = await freshAccessToken(db, auth)
-  if (!token) return { nome: nome + ':sem-token', slot: auth.id || 0, msgs: [] }
-  const msgs = mailProvider(auth) === 'gmail'
-    ? await fetchRecentGmail(token, desde, { q: GMAIL_Q_COMPRA, max: 60 })
-    : await fetchRecentMessages(token, desde)
-  return { nome: `${nome}:${msgs.length}`, slot: auth.id || 0, msgs }
+  if (!token) return { ...vazio, nome: nome + ':sem-token' }
+  const gmail = mailProvider(auth) === 'gmail'
+  const msgs = gmail ? await fetchRecentGmail(token, desde, { q: GMAIL_Q_COMPRA, max: 60 }) : await fetchRecentMessages(token, desde)
+  // Só o Graph tem o mapa de pastas aqui, e só caixa com auto_sweep ligado é
+  // varrida por robô ([[email-multi-account]]).
+  const podeArquivar = !gmail && maySweep(auth)
+  const pastas = podeArquivar ? await folderMap(token) : new Map<string, string>()
+  return { nome: `${nome}:${msgs.length}`, slot: auth.id || 0, msgs, token, pastas, podeArquivar }
 }
 
 // ── PROVA DE VIDA ──────────────────────────────────────────────────────────
@@ -440,7 +472,7 @@ async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMai
 }
 
 export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = 'cron'): Promise<AutoBookMailResult> {
-  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], erros: [] }
+  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], arquivados: [], semPasta: [], erros: [] }
   const rodada = await abreRodada(db, horas, trigger)
   const desde = new Date(Date.now() - horas * 3600e3).toISOString()
   out.janela = `desde ${desde}`
@@ -453,7 +485,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
   const naFila = new Set(((jaNaFila || []) as { message_key: string }[]).map(r => r.message_key))
 
   for (const auth of await listMailAuths(db)) {
-    let caixa: { nome: string; slot: number; msgs: MailMsg[] }
+    let caixa: Caixa
     try { caixa = await lerCaixa(db, auth, desde) } catch { out.caixas.push((auth.account || 'slot' + auth.id) + ':erro'); continue }
     out.caixas.push(caixa.nome)
     out.lidos += caixa.msgs.length
@@ -476,6 +508,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
       if (app) {
         if (await assinaturaLancada(db, app.id, data)) {
           out.jaTemLinha.push(`${app.company || vendor} — recibo de assinatura ja lancado no APPS`)
+          if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, app.company || vendor, out)
         } else {
           out.duvidasApp.push(`${app.company || vendor} cobrou em ${data} e o robo de APPS nao lancou — "${msg.subject.slice(0, 60)}"`)
         }
@@ -490,6 +523,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
       // exatamente assim que o $4,17 do Temu apareceu na conferência à mão.
       if (pp && !c.orders.length && await temLinhaPorPerto(db, vendor, data)) {
         out.jaTemLinha.push(`${vendor} ${pp.currency} ${pp.amount} — recibo PayPal de compra já lançada`)
+        if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
         continue
       }
 
@@ -514,16 +548,25 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         if (naFila.has(chave)) continue
 
         // já tem dono? o mailToItem cuida dos fatos dessa linha.
-        if (it.order && conhecidos.has(it.order)) { out.jaTemLinha.push(`${it.order} — ${msg.subject.slice(0, 50)}`); continue }
+        if (it.order && conhecidos.has(it.order)) {
+          out.jaTemLinha.push(`${it.order} — ${msg.subject.slice(0, 50)}`)
+          if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
+          continue
+        }
 
         const desc = `${vendor}${it.order ? ' — pedido ' + it.order : ''} — ${msg.subject.slice(0, 90)}`
         // 0,00 não gera linha (PO de $0.00 do Temu).
-        if (it.amount === 0) { out.ignorados.push(`${vendor} ${it.order || ''} — total 0,00`); continue }
+        if (it.amount === 0) {
+          out.ignorados.push(`${vendor} ${it.order || ''} — total 0,00`)
+          if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
+          continue
+        }
 
         const regra = ruleFor(msg, vendor, rules)
         if (regra?.action === 'IGNORE') {
           out.ignorados.push(`${vendor} — ${msg.subject.slice(0, 50)} (regra "${regra.label || regra.id.slice(0, 8)}")`)
           await db.from('auto_book_mail_rules').update({ hits: (regra.hits || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', regra.id)
+          if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
           continue
         }
 
@@ -543,6 +586,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
             naFila.add(chave)
             out.lancados.push(`${vendor} ${it.order} ${it.currency} ${it.amount} → ${r.table}:${r.id.slice(0, 8)}`)
             out.semRecibo.push(`${r.table}:${r.id.slice(0, 8)} — ${vendor} ${it.order}`)
+            if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
             continue
           }
         }
