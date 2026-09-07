@@ -27,7 +27,11 @@ export const PAYMENT_METHODS_BR = ['PIX', 'TED', 'CASH', 'CHEQUE', 'CARD'] as co
 export const methodsFor = (paidTo: string | null | undefined): readonly string[] =>
   paidTo === 'GZ28BR' ? PAYMENT_METHODS_BR : PAYMENT_METHODS
 
-export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO', 'HERALDO'] as const
+// CLIENT = o cliente pagou o fornecedor direto, do bolso dele (Márcio, 06/set/2026).
+// É o único valor que NÃO é passivo: os outros significam "alguém bancou uma conta
+// nossa" e viram financiamento; o cliente só está quitando o que ele já devia. Ver
+// clientPaid() em lib/financials.ts.
+export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO', 'HERALDO', 'CLIENT'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
 export type PaymentInfo = {

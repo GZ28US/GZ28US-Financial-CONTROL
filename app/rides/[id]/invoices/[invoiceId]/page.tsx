@@ -435,6 +435,11 @@ export default function ViewInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Invoice not found.</p></main>
   )
 
+  // Soma das despesas que o CLIENTE pagou direto ao fornecedor.
+  function clientPaidTotalFor(list: { paid_from?: string | null; price: number; quantity?: number | null; tax?: number | null; extra?: number | null }[]) {
+    return list.filter(e => String(e.paid_from || '').trim().toUpperCase() === 'CLIENT')
+      .reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+  }
   const showPartNumbers = !!invoice.show_part_numbers
   const pnFor = (p: { source_item?: string | null; description: string }) => pnByItem.get(((p.source_item || p.description) || '').trim().toLowerCase()) || ''
   const partsSubTotal = parts.reduce((s, p) => s + p.unit_price * p.quantity, 0)
@@ -444,12 +449,20 @@ export default function ViewInvoicePage() {
   const partsAndServicesTotal = partsTotal + servicesTotal
   const hasDiscount = (invoice.global_discount || 0) > 0
   const globalDiscountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount
+  const grandTotal = partsAndServicesTotal - globalDiscountAmount + clientPaidTotalFor(expenses)
   // Match the edit page exactly: income counts only payments explicitly marked
   // PAID (paid_at), and the Florida parts tax is itself an expense GZ28 owes —
   // included in both the global and paid expense totals.
-  const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0)
-  const totalIncomeAll = payments.reduce((s, p) => s + p.amount, 0)
+  // PAGO PELO CLIENTE (Márcio, 06/set/2026): ele pôs a peça no cartão dele e pagou
+  // o fornecedor direto. Não houve movimentação financeira nossa, então o valor
+  // entra dos DOIS lados no mesmo montante — item e receita — e a linha fecha com
+  // margem zero. Fica FORA da base da FL tax e FORA do desconto global (decisão
+  // dele): dentro, a GZ28US passaria a dever imposto sobre uma venda sem margem, e
+  // o desconto jogaria a linha pra prejuízo.
+  const clientPaidExpenses = expenses.filter(e => String(e.paid_from || '').trim().toUpperCase() === 'CLIENT')
+  const clientPaidTotal = clientPaidExpenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+  const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0) + clientPaidTotal
+  const totalIncomeAll = payments.reduce((s, p) => s + p.amount, 0) + clientPaidTotal
   const balance = totalPaid - grandTotal
   // R$ (BRL) incomes: when any payment was paid via GZ28BR, the PDF shows a
   // second amount column with the recorded R$ values.
@@ -981,13 +994,23 @@ export default function ViewInvoicePage() {
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>ITEMS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
             {hasDiscount && <div className={rowClass}><span className={labelClass}>GLOBAL DISCOUNT ({invoice.global_discount}%)</span><span className="font-bold text-red-400">- {formatUSD(globalDiscountAmount)}</span></div>}
+            {clientPaidTotal > 0 && <div className={rowClass}><span className={labelClass}>ITEMS PAID DIRECTLY BY THE CLIENT</span><span className="font-bold">{formatUSD(clientPaidTotal)}</span></div>}
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>
 
-          {!invoice.is_quote && payments.length > 0 && (
+          {!invoice.is_quote && (payments.length > 0 || clientPaidTotal > 0) && (
             <div>
               <label className="block mb-3 text-lg font-bold">INCOME</label>
               <div className={sectionClass}>
+                {clientPaidTotal > 0 && (
+                  <div className={`flex items-center justify-between gap-4 px-4 py-3 ${payments.length ? 'border-b border-gray-700' : ''}`}>
+                    <div>
+                      <p className="text-base font-bold">{formatUSD(clientPaidTotal)}</p>
+                      <p className="text-sm text-gray-400">PAID DIRECTLY BY THE CLIENT · {clientPaidExpenses.length} item{clientPaidExpenses.length > 1 ? 's' : ''}</p>
+                      <p className="text-sm text-gray-500">The client paid the supplier — no money moved through GZ28US.</p>
+                    </div>
+                  </div>
+                )}
                 {payments.map((payment, index) => {
                   const isPaid = !!payment.paid_at
                   return (

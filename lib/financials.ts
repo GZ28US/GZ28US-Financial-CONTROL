@@ -15,6 +15,16 @@ const okDate = (d: string | null | undefined) => !!d && /^\d{4}-\d{2}-\d{2}/.tes
 // Uma linha de invoice_expenses: preço × qtd + tax + extra (mesma conta do app inteiro).
 export const expLine = (e: { price?: unknown; quantity?: unknown; tax?: unknown; extra?: unknown }) =>
   num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra)
+// PAGO PELO CLIENTE: ele pôs no cartão dele e pagou o fornecedor direto. O custo é
+// nosso (a peça está no carro do cliente), mas NENHUM dinheiro nosso se moveu, e a
+// dívida dele já nasce quitada no mesmo valor — margem zero na linha.
+// Não confundir com os FUNDERS (L~245): lá alguém BANCOU uma conta nossa e vira
+// passivo; aqui o cliente só está quitando o que ele deve. Por isso esta linha não
+// entra no caixa, não entra em Fornecedores a Pagar, e não vira financiamento.
+export const CLIENT_PAID = 'CLIENT'
+export const clientPaid = (r: { paid_from?: string | null }) =>
+  String(r?.paid_from || '').trim().toUpperCase() === CLIENT_PAID
+
 export const qtyLine = (r: { unit_price?: unknown; quantity?: unknown }) =>
   num(r.unit_price) * (num(r.quantity) || 1)
 
@@ -140,8 +150,13 @@ export function invoiceTotals(d: FinData, inv: any) {
   const discount = pAndS * (num(inv.global_discount) / 100)
   const grand = pAndS - discount
   const cost = d.invExpenses.filter(e => e.invoice_id === inv.id).reduce((s, e) => s + expLine(e), 0)
-  const received = d.payments.filter(p => p.invoice_id === inv.id && p.paid_at).reduce((s, p) => s + num(p.amount), 0)
-  return { parts, services, flTax, discount, grand, cost, received }
+  // O que o CLIENTE pagou direto ao fornecedor vira receita no MESMO valor (margem
+  // zero) e já nasce recebido. Entra DEPOIS do imposto e DEPOIS do desconto, de
+  // propósito (decisão dele, 06/set): dentro da base, a GZ28US passaria a dever FL
+  // tax sobre uma venda sem margem, e o desconto global jogaria a linha pra prejuízo.
+  const clientCost = d.invExpenses.filter(e => e.invoice_id === inv.id && clientPaid(e)).reduce((s, e) => s + expLine(e), 0)
+  const received = d.payments.filter(p => p.invoice_id === inv.id && p.paid_at).reduce((s, p) => s + num(p.amount), 0) + clientCost
+  return { parts, services, flTax, discount, grand: grand + clientCost, cost, received, clientCost }
 }
 
 // Dono do carro (CAR DESTINY): OWN/TOOL são NOSSOS — o custo deles é frota/
@@ -283,6 +298,10 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   }
   // Fornecedores de projeto (inclui compra de carro — separação é papo do DRE/D3).
   for (const e of d.invExpenses) {
+    // Pago pelo cliente: nenhum caixa nosso se moveu — nem saída, nem entrada.
+    // Sem este corte, a compra do cartão do cliente drenaria o caixa da LLC no DFC
+    // e abriria a régua contra o saldo do banco por um valor que nunca passou lá.
+    if (clientPaid(e)) continue
     const m = invoiceMeta(d, e.invoice_id)
     const car = isCarLine(e.item, expLine(e), invNickname(d, e.invoice_id))
     push(e.payment_date, 'OPER', car ? 'CAR_BUY' : 'JOB_COST', -expLine(e), m.code,
@@ -389,7 +408,8 @@ export function recognitionDate(d: FinData, inv: any): string | null {
 
 // Sem data de pagamento = ainda devido (vira Fornecedores a Pagar no Balanço).
 export function unpaidTotals(d: FinData) {
-  const inv = d.invExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + expLine(e), 0)
+  // Linha paga pelo cliente nunca é "Fornecedores a Pagar": a conta não é nossa.
+  const inv = d.invExpenses.filter(e => !okDate(e.payment_date) && !clientPaid(e)).reduce((s, e) => s + expLine(e), 0)
   const fixed = d.fixedExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)
   const staff = d.expenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)   // pessoal incluso (decisão 26/ago)
   const purchases = d.goods.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + qtyLine(g), 0)
