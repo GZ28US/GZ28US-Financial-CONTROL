@@ -61,6 +61,7 @@ export type AutoBookMailResult = {
   lancados: string[]
   semRecibo: string[]
   perguntas: string[]
+  duvidasApp: string[]
   erros: string[]
 }
 
@@ -196,7 +197,11 @@ export function paypalReceipt(msg: MailMsg): { vendor: string; amount: number; c
   const n = parseNumber(m[3])
   if (n == null || !(n > 0)) return null
   const currency = m[4]?.toUpperCase() || (/R\$/.test(m[2] || '') ? 'BRL' : 'USD')
-  return { vendor: m[1].replace(/\.{2,}$/, '').replace(/,\s*(LL|LLC|INC|LTD)\.*$/i, '').trim(), amount: n, currency }
+  // "HP Tuners LLC" tem de virar "HP Tuners": é assim que o fornecedor está
+  // escrito no app, e o sufixo societário fazia o casamento por nome falhar
+  // justo nos recibos que mais importam (07/set: o T46 de $499,99).
+  const vendor = m[1].replace(/\.{2,}$/, '').replace(/[,\s]+(LLC?|INC|LTD|CO|S\.?A|LTDA)\.?$/i, '').trim()
+  return { vendor, amount: n, currency }
 }
 
 export function classify(msg: MailMsg): { kind: AbKind; money: ReturnType<typeof parseMoney>; orders: string[] } | null {
@@ -256,6 +261,40 @@ export async function candidatosPara(db: SupabaseClient, vendor: string): Promis
     add('expenses', String(r.season_id), `expenses ${String(r.origin || '')} (season ${String(r.season_id).slice(0, 8)})`, String(r.expense_date || '').slice(0, 10))
   }
   return [...out.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1)).slice(0, 5)
+}
+
+// ── ASSINATURA JÁ TEM DONO: O MÓDULO APPS ──────────────────────────────────
+// O recibo de assinatura NÃO é desta fila. Quem cuida dele é o APPS sweep, que
+// casa o remetente por `fixed_cost_suppliers.mail_match` e lança em
+// `fixed_cost_expenses`. Perguntar aqui seria perguntar de novo o que já está
+// respondido — e o custo disso foi medido na 1ª rodada boa (07/set/2026): 10 das
+// 11 perguntas eram recarga da API da Anthropic, TODAS já lançadas em 04/set.
+// O texto não denunciava: o app escreve "Claude #2318-6983-2570", não
+// "Anthropic". Por isso o casamento aqui é por DOMÍNIO e por `supplier_id`,
+// nunca por nome no texto.
+export type AppSupplier = { id: string; company: string | null; mail_match: string | null; date_conclusion: string | null }
+async function appsPorDominio(db: SupabaseClient): Promise<Map<string, AppSupplier>> {
+  const m = new Map<string, AppSupplier>()
+  const { data } = await db.from('fixed_cost_suppliers').select('id, company, mail_match, date_conclusion')
+  for (const s of (data || []) as AppSupplier[]) {
+    for (const d of String(s.mail_match || '').split(/[,\n;]/)) {
+      const dom = d.trim().toLowerCase()
+      if (dom.length >= 4) m.set(dom, s)
+    }
+  }
+  return m
+}
+const appDoRemetente = (fromAddr: string, apps: Map<string, AppSupplier>): AppSupplier | null => {
+  const dom = (fromAddr.split('@')[1] || '').toLowerCase()
+  if (!dom) return null
+  for (const [k, v] of apps) if (dom === k || dom.endsWith('.' + k)) return v
+  return null
+}
+async function assinaturaLancada(db: SupabaseClient, supplierId: string, data: string, dias = 6): Promise<boolean> {
+  const de = new Date(Date.parse(data + 'T12:00:00Z') - dias * 86400e3).toISOString().slice(0, 10)
+  const ate = new Date(Date.parse(data + 'T12:00:00Z') + dias * 86400e3).toISOString().slice(0, 10)
+  const { data: hit } = await db.from('fixed_cost_expenses').select('id').eq('supplier_id', supplierId).gte('expense_date', de).lte('expense_date', ate).limit(1)
+  return (hit || []).length > 0
 }
 
 // ── JÁ EXISTE ALGO DESTE COMERCIANTE POR PERTO? ────────────────────────────
@@ -345,13 +384,14 @@ async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Prom
 }
 
 export async function runAutoBookMail(db: SupabaseClient, horas = 3): Promise<AutoBookMailResult> {
-  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], erros: [] }
+  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], erros: [] }
   const desde = new Date(Date.now() - horas * 3600e3).toISOString()
   out.janela = `desde ${desde}`
 
   const { data: rulesRaw } = await db.from('auto_book_mail_rules').select('*').eq('active', true)
   const rules = (rulesRaw || []) as AbRule[]
   const conhecidos = await pedidosConhecidos(db)
+  const apps = await appsPorDominio(db)
   const { data: jaNaFila } = await db.from('auto_book_mail').select('message_key').gte('created_at', new Date(Date.now() - 30 * 86400e3).toISOString())
   const naFila = new Set(((jaNaFila || []) as { message_key: string }[]).map(r => r.message_key))
 
@@ -373,6 +413,17 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3): Promise<Au
       const vendor = pp?.vendor || vendorOf(msg)
       const data = String(msg.received || new Date().toISOString()).slice(0, 10)
       const texto = `${msg.subject}\n${msg.text}`
+
+      // ── ASSINATURA É DO MÓDULO APPS, NÃO DESTA FILA ─────────────────────
+      const app = appDoRemetente(msg.fromAddr, apps)
+      if (app) {
+        if (await assinaturaLancada(db, app.id, data)) {
+          out.jaTemLinha.push(`${app.company || vendor} — recibo de assinatura ja lancado no APPS`)
+        } else {
+          out.duvidasApp.push(`${app.company || vendor} cobrou em ${data} e o robo de APPS nao lancou — "${msg.subject.slice(0, 60)}"`)
+        }
+        continue
+      }
 
       // ── O RECIBO DO PAYPAL É A PERNA DO PAGAMENTO, NÃO A COMPRA ──────────
       // Ele quase nunca traz número de pedido, então não dá para casar por
