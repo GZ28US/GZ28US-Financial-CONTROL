@@ -182,7 +182,17 @@ export async function fetchRecentMessages(accessToken: string, sinceIso: string)
 // Mesmo defeito de véspera (o vigia lia 1 caixa de 4), só que na caixa que fala
 // outro protocolo. Devolve o MESMO formato para o poll não precisar saber a
 // diferença.
-export async function fetchRecentGmail(accessToken: string, sinceIso: string): Promise<MailMsg[]> {
+// O `assunto` do recorte é PARÂMETRO desde 07/set/2026, e por um motivo medido:
+// o vocabulário abaixo é de DESPACHO, e quem chama este leitor atrás de COMPRA
+// (o AutoBook) ficava cego nas duas caixas Google — justamente onde moram os
+// recibos da Amazon e da Home Depot. Na 1ª rodada do AutoBook, 25 e-mails das
+// caixas Gmail entraram e nenhum era compra, porque a compra nunca passou por
+// aqui. Quem quer outro assunto manda o seu; quem não manda continua com o de
+// despacho, idêntico ao que sempre foi.
+export const GMAIL_Q_DESPACHO = '(shipped OR shipping OR tracking OR delivered OR "on its way" OR "a caminho" OR "foi enviado")'
+export const GMAIL_Q_COMPRA = '(order OR orders OR receipt OR invoice OR purchase OR refund OR refunded OR charged OR pedido OR recibo OR fatura OR reembolso OR "nota fiscal")'
+
+export async function fetchRecentGmail(accessToken: string, sinceIso: string, opts?: { q?: string; max?: number }): Promise<MailMsg[]> {
   const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
   const H = { Authorization: `Bearer ${accessToken}` }
   const afterSec = Math.floor(new Date(sinceIso).getTime() / 1000)
@@ -190,8 +200,9 @@ export async function fetchRecentGmail(accessToken: string, sinceIso: string): P
   // compras, que engolia pedido): rastreio só chega em nota de despacho, e o
   // vocabulário dela é pequeno e estável. Sem esse recorte a perna do Gmail
   // baixava o corpo de tudo e estourou os 60s da função no 1º deploy (26/ago).
-  const q = `after:${afterSec} -in:chats (shipped OR shipping OR tracking OR delivered OR "on its way" OR "a caminho" OR "foi enviado")`
-  const list = await fetch(`${GM}/messages?maxResults=25&q=${encodeURIComponent(q)}`, { headers: H }).then(r => r.json()).catch(() => null)
+  const q = `after:${afterSec} -in:chats ${opts?.q || GMAIL_Q_DESPACHO}`
+  const max = Math.min(100, Math.max(1, opts?.max || 25))
+  const list = await fetch(`${GM}/messages?maxResults=${max}&q=${encodeURIComponent(q)}`, { headers: H }).then(r => r.json()).catch(() => null)
   const stubs = list?.messages || []
   const out: MailMsg[] = []
   for (let i = 0; i < stubs.length; i += 8) {

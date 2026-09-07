@@ -43,6 +43,8 @@ type Fix =
   | { kind: 'rematch'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
   // BALDE (fase B): DESFAZER um ponteiro morto — a linha do banco volta a NEW e o motor recria.
   | { kind: 'unmatch'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
+  // SILÊNCIO (BL 0.10.0): ADOTAR — a agendada aberta que o banco já pagou recebe a linha (data, elo, valor).
+  | { kind: 'adopt'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -82,7 +84,7 @@ type SupRow = { id: string; text: string; part: string; candidates: { id: string
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
-type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] } }
+type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
@@ -979,6 +981,57 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     }
     checks.push({ group: 'BANK', key: 'bucket-invariants', title: 'Balde fora do padrão (invoice A ATRIBUIR)', blocks: 'o balde vazaria pra HOME, clientes ou relatórios', why: 'A pseudo-invoice A ATRIBUIR é UMA só, sem cliente, sem carro, nunca quote, sempre INCOMPLETE; cada linha do balde tem a data do banco, paid_from GZ28US e o elo purchase_group. Fora disso, o balde contamina outros números.', items: bad, impact: bad.reduce((s, i) => s + (i.amount || 0), 0) })
   }
+  // ── SILÊNCIO (BL 0.10.0 · DC 1.40.0): «silêncio é promessa de que está tudo certo» (João, 4/set) ──
+  // Nada fica parado calado: o que o motor não resolveu vira pergunta com motivo e
+  // resposta de um clique; o que está certo mas fora do padrão também aparece.
+  {
+    const ab2 = bank.autobook
+    if (ab2 && !ab2.needs_migration) {
+      // Sinal que FALHOU não é sinal verde: os três cards mostram SINAL em vez de «nada pendente».
+      const sigErr = ab2.silence_error || (ab2.questions === null ? 'o bloco do silêncio não respondeu' : null)
+      const sinal: Item[] = sigErr ? [{ href: '/adm/bank', code: 'SINAL', label: 'o sinal do motor falhou — ' + sigErr, extra: 'sem sinal não há promessa: este card não sabe se está tudo certo; recarregue ou veja o card AUTO-BOOK', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : []
+      // PAGA NO BANCO, ABERTA NO APP — deriva das três datas (X vencimento, Y banco, Z registro).
+      const dr = ab2.drift || []
+      const di: Item[] = dr.map(x => ({
+        href: '/costs/fixed/' + (x.supplier_id || ''), code: x.ambiguous ? 'AMBÍGUA' : x.late_fee ? 'MULTA' : 'DERIVA',
+        label: x.supplier + ' · vence ' + x.due + ' · banco pagou ' + x.bank_date + ' (' + (x.days >= 0 ? '+' : '') + x.days + ' d)',
+        extra: x.ambiguous ? 'duas contas iguais em aberto e UMA linha no banco — o motor não chuta: diga qual é (a outra segue a pagar)' : 'o app diz «a pagar» há ' + x.overdue_days + ' d; o banco já pagou — ADOTAR grava a data do banco e o elo (o vencimento fica na trilha)',
+        amount: x.amount, signal: x.bank_status === 'QUEUED' ? 'TO BOOK' : undefined,
+        link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' },
+        fix: x.ambiguous ? undefined : { kind: 'adopt' as const, table: 'fixed_cost_expenses', rowId: x.row_id, field: 'payment_date', bankId: x.bank_id, confirmText: 'Adotar: a agendada de ' + x.supplier + ' (' + x.due + ', ' + usd(x.amount) + ') foi paga no banco em ' + x.bank_date + '? A linha do banco casa com ela; payment_date = ' + x.bank_date + '; DESFAZER no Bank Link volta tudo.' },
+      }))
+      checks.push({ group: 'BANK', key: 'bank-drift', title: 'Paga no banco, aberta no app (deriva das três datas)', blocks: 'multa e juros falsos no card de vencidas; DRE do mês errado; a conta parece atrasada quando o dinheiro já saiu', why: 'Toda conta tem três datas: X (vencimento, a promessa), Y (banco, o fato) e Z (registro no app). O motor iguala Z a Y — mas a agendada aberta ninguém adota sozinho. Aqui o banco já pagou (mesmo valor, no vencimento ou até 40 d depois) e o app ainda diz «a pagar». ADOTAR fecha; AMBÍGUA pergunta qual das duas.', items: sigErr ? sinal : di, impact: [...new Map(dr.map(x => [x.bank_id, x.amount])).values()].reduce((t, a) => t + a, 0) })   // impacto por LINHA do banco (a AMBÍGUA tem duas contas e um pagamento)
+      // PERGUNTAS DO MOTOR — o que está parado NÃO está certo: está perguntando.
+      const q = ab2.questions || { suppliers: 0, supplier_total: 0, money: 0, twins: 0, caps: 0, maturity: 0, other: 0, lines: 0 }
+      {
+        const qi: Item[] = []
+        if (q.suppliers) qi.push({ href: '/adm/bank', code: 'FORNECEDOR', label: q.suppliers + ' fornecedor(es) sem regra · ' + usd(q.supplier_total), extra: 'quem é X pra nós? — FIXO (prestador), SUPPLIES, BALDE, PESSOAL (season) ou IGNORAR; uma resposta lança todas as linhas do fornecedor, hoje e sempre', amount: q.supplier_total, link: { href: BASE_PATH + '/adm/bank#perguntas', label: 'RESPONDER ↗' } })
+        if (q.money) qi.push({ href: '/adm/bank', code: 'DINHEIRO', label: q.money + ' linha(s) de dinheiro andando (transferência, wire, Zelle, entrada)', extra: 'o motor nunca chuta dinheiro-movimento: qual invoice, sócio ou conta? — escolha o candidato no Bank Link', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
+        if (q.twins) qi.push({ href: '/adm/bank', code: 'GÊMEO', label: q.twins + ' linha(s) com gêmeo provável no app', extra: 'o motor achou um registro parecido (nome + valor na faixa) e parou: «é este?» — SIM casa, NÃO libera o motor pra lançar', link: { href: BASE_PATH + '/adm/bank', label: 'DECIDIR ↗' } })
+        if (q.caps) qi.push({ href: '/adm/bank#a-atribuir', code: 'TETO', label: q.caps + ' linha(s) acima do teto da regra', extra: 'a regra entendeu o fornecedor mas o valor passou do teto; a linha vai pro balde com o motivo assim que madura — FIXO/CARRO na fila', link: { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'FILA ↗' } })
+        if (q.other) qi.push({ href: '/adm/bank', code: 'OUTRO', label: q.other + ' linha(s) paradas por outro motivo (feed duplicado, sem regra, sem classe)', extra: 'veja o chip de dúvida em cada linha no Bank Link', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
+        checks.push({ group: 'BANK', key: 'engine-questions', title: 'Perguntas do motor (nada fica parado calado)', blocks: 'cada linha parada é um custo fora do DRE e uma promessa falsa de que está tudo certo', why: 'Lei da casa (4/set/2026): silêncio significa que está TUDO certo. O que o motor não resolve vira pergunta com motivo e resposta de um clique — por fornecedor, não por categoria.' + (q.maturity ? ' ' + q.maturity + ' linha(s) só esperam a maturidade de 7 dias (o humano ainda lança atrasado) — não contam aqui.' : ''), items: sigErr ? sinal : qi, impact: q.supplier_total || 0 })
+      }
+      // FORA DO PADRÃO (FINANCIAL): gasto do mês muito acima da média + linha quicando entre decisões.
+      const an = ab2.anomalies || [], bo = ab2.bounce || []
+      const fi: Item[] = [
+        ...an.map(a => ({ href: '/costs/fixed/' + a.supplier_id, code: 'PICO', label: a.supplier + ' · ' + a.month + ' · ' + usd(a.current) + ' vs média ' + usd(a.avg3) + ' (×' + a.ratio + ')', extra: 'o mês passou de 2× a média dos 3 anteriores — conta dobrada, lançamento duplicado ou reajuste? confira antes de fechar o mês', amount: a.current })),
+        ...bo.map(b => ({ href: '/adm/bank', code: 'QUICANDO', label: 'linha ' + b.bank_id.slice(0, 8) + ' casada ' + b.n + '× em 14 dias', extra: 'casa, desfaz, casa de novo — o motor e alguém discordam; decida uma vez e ensine a regra', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })),
+      ]
+      checks.push({ group: 'FINANCIAL', key: 'out-of-pattern', title: 'Fora do padrão (pico de gasto · linha quicando)', blocks: 'um número estranho passa pro DRE sem ninguém olhar', why: 'O que é certo mas fora do padrão também merece pergunta: um prestador que custou o dobro este mês, uma linha que muda de dono toda semana. Sem correção automática — só a pergunta, com o link.', items: sigErr ? sinal : fi, impact: an.reduce((t, a) => t + a.current, 0) })
+    }
+    // PAGA NO APP, SEM BANCO — custo fixo «pago pela GZ28US» sem linha da Regions atrás.
+    const fxs: any[] = (d as any).fixedExpenses || []
+    const supMap: Map<string, any> = (d as any).fixedSuppliers instanceof Map ? (d as any).fixedSuppliers : new Map()
+    const supName = new Map<string, string>([...supMap.values()].map((x: any) => [x.id, String(x.company || '')]))
+    // Só com o sinal ?matched=1 vivo (sem ele o Set é vazio e TUDO viraria pergunta); só paid_from GZ28US
+    // (sem origem é o card de paid_from); 3 dias de maturidade (a linha do banco posta em 1–3 dias).
+    const cutoff3 = new Date(Date.parse(TODAY) - 3 * 864e5).toISOString().slice(0, 10)
+    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card AUTO-BOOK' }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
+      .sort((a: any, b: any) => String(b.payment_date).localeCompare(String(a.payment_date)))
+      .map((e: any) => ({ href: '/costs/fixed/' + (e.supplier_id || ''), code: e.paid_from ? 'GZ28US' : 'SEM ORIGEM', label: (supName.get(e.supplier_id) || '?') + ' · ' + String(e.payment_date).slice(0, 10) + ' · ' + String(e.description || '').slice(0, 60), extra: 'pago «pela GZ28US» mas nenhuma linha da Regions casa — pagou de outra conta (sócio? BR?) ou o casamento não foi feito', amount: Math.abs(Number(e.amount) || 0), link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }))
+    checks.push({ group: 'BANK', key: 'paid-no-bank', title: 'Paga no app, sem linha no banco', blocks: 'o caixa da Regions e o DRE contam dinheiro que talvez saiu de outro bolso (sócio = empréstimo, BR = intercompany)', why: 'Desde 2025-11-10 tudo que a GZ28US paga sai da Regions. Um custo fixo pago «pela GZ28US» sem linha casada é um de dois erros: paid_from errado (foi um sócio ou a BR) ou casamento faltando. Sem correção automática — a prova mora no extrato.', items: pn, impact: pn.reduce((t, i) => t + (i.amount || 0), 0) })
+  }
   return checks
 }
 
@@ -1273,7 +1326,11 @@ export default function DataCheckPage() {
     if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'AUTO-BOOK parou ou errou — veja o card', sub: 'o motor deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
     const bk = checks.find(c => c.key === 'bucket-aging')
     if (bk && bk.items.length) out.push({ title: `${bk.items.length} compra(s) sem dono há 7+ dias — diga o carro`, sub: `${usd(bk.impact || 0)} parados no balde · CARRO / ESTOQUE / SUPPLIES / FIXO na fila A ATRIBUIR`, group: 'BANK', open: 'bucket-aging' })
-    if (bankAConferir > 0) out.push({ title: `Conferir os ${bankAConferir} casamentos do motor`, sub: 'o banco propôs, você bate o martelo — OK ou DESFAZER, com ABRIR ↗ pra ver a prova', group: 'BANK', open: null })
+    // Silêncio (DC 1.40.0): casamento do motor é prova, não pendência — a missão «conferir» morreu; nasceram as perguntas e a deriva.
+    const dq = checks.find(c => c.key === 'engine-questions')
+    if (dq && dq.items.length) out.push({ title: `${dq.items.reduce((t, i) => t + (parseInt(i.label, 10) || 0), 0)} perguntas do motor — responda por fornecedor`, sub: 'nada fica parado calado: FIXO / SUPPLIES / BALDE / PESSOAL / IGNORAR — uma resposta lança todas as linhas', group: 'BANK', open: 'engine-questions' })
+    const dd = checks.find(c => c.key === 'bank-drift')
+    if (dd && dd.items.length) out.push({ title: `${dd.items.length} conta(s) pagas no banco e abertas no app — ADOTAR`, sub: `${usd(dd.impact || 0)} em atrasos e multas falsos; um clique por conta`, group: 'BANK', open: 'bank-drift' })
     const certoChecks = checks.filter(c => c.items.some(i => i.certain))
     const certos = certoChecks.reduce((s, c) => s + c.items.filter(i => i.certain).length, 0)
     if (certos > 0) {
@@ -1392,10 +1449,10 @@ export default function DataCheckPage() {
       } finally { setSaving(false) }
       return
     }
-    if (fix.kind === 'purge' || fix.kind === 'rematch' || fix.kind === 'unmatch') {
+    if (fix.kind === 'purge' || fix.kind === 'rematch' || fix.kind === 'unmatch' || fix.kind === 'adopt') {
       setSaving(true)
       try {
-        const body = fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : fix.kind === 'unmatch' ? { action: 'unmatch', bank_id: fix.bankId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
+        const body = fix.kind === 'adopt' ? { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId } : fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : fix.kind === 'unmatch' ? { action: 'unmatch', bank_id: fix.bankId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
         const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
@@ -1668,8 +1725,8 @@ export default function DataCheckPage() {
                         ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
                         : (
                           <div>
-                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
-                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : 'CONFIRMAR'}</button>
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : 'CONFIRMAR'}</button>
                           </div>
                         )}
                       {c.key === 'parts-identity' && gval === '__search__' && it.fix && (
@@ -1746,7 +1803,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -1786,14 +1843,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
-                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && !fixValue)}
+                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && it.fix.kind !== 'adopt' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>

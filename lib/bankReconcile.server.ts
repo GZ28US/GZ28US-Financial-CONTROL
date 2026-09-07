@@ -135,7 +135,11 @@ export async function candidatePool(db: any): Promise<Pool> {
   // Pagou/recebeu o Brasil ⇒ nunca passa na Regions. Datado no futuro ⇒ ainda não aconteceu.
   // Pago por sócio (BETO/HERALDO/RAFA) também nunca passou na Regions — fora
   // do pool igual ao GZ28BR (caso do histórico do Humberto, 26/ago).
-  const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA'].includes(String(r.paid_from || '')) || r.paid_to === 'GZ28BR'
+  // Quem pagou por fora da Regions nunca casa com o extrato. CLIENT entra aqui pelo
+// motivo mais forte de todos: a compra foi no cartão do próprio cliente — não existe
+// linha nenhuma no nosso banco pra casar, e sem este corte ela ficaria pra sempre
+// na fila do Bank Link, podendo ser auto-casada com a cobrança errada.
+const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].includes(String(r.paid_from || '')) || r.paid_to === 'GZ28BR'
   const future = (d: string | null) => !!d && d.slice(0, 10) > today
   // Valor negativo no app = estorno/crédito: vai pro pool OPOSTO com o valor absoluto.
   const push = (arr: Cand[], c: Cand) => {
@@ -307,8 +311,12 @@ const isFeeCand = (c: Cand) => { const segs = c.label.split(' · '); const sup =
 // humano); alvo TRANSFER (status, sem lançamento — só regra humana com regex);
 // direção; teto de valor. Precedência: HUMAN+regex > HUMAN só-pfc > LEARNED.
 export type MerchantRule = { id: string; pattern: string | null; target: 'FIXED_EXPENSE' | 'INPUT' | 'TRANSFER' | 'BUCKET'; supplier_id: string | null; category: string | null; label: string | null; active: boolean; pfc_primary?: string | null; pfc_detailed?: string | null; origin?: 'HUMAN' | 'LEARNED' | 'DEFAULT' | null; merchant_key?: string | null; direction?: 'OUT' | 'IN' | 'ANY' | null; amount_max?: number | null; key?: string | null; klass?: string | null; priority?: number | null; created_at?: string | null }
-export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET'; create: boolean; rule?: MerchantRule; adopt?: Sched; transfer?: boolean; cls?: Classified }
-export type Plan = { items: PlanItem[]; skipped: Record<string, number> }
+export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET'; create: boolean; rule?: MerchantRule; adopt?: Sched; transfer?: boolean; cls?: Classified; reason?: string }
+// A DÚVIDA DO MOTOR (BL 0.10.0, lei do João de 4/set: «silêncio é promessa de que está tudo
+// certo»). Toda linha que o plano NÃO resolve leva o motivo e o candidato que o motor viu —
+// a tela mostra o par e pergunta; nada fica parado calado.
+export type PlanDoubt = { kind: 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY' | 'OTHER'; reason: string; klass: Klass; cands?: (Cand & { exact?: boolean })[] }
+export type Plan = { items: PlanItem[]; skipped: Record<string, number>; doubts: Record<string, PlanDoubt> }
 export type BuildOpts = { today?: string; minCreateAge?: number; itemTwins?: Set<string> }
 
 // Chave de comerciante: o merchant_entity_id do Plaid (marca) ou o nome limpo.
@@ -357,7 +365,7 @@ const BRAND: [Klass, RegExp][] = [
   ['AUTO_SERVICE', /MONTWAY|COPART|CARFAX|AUTO BODY|HYDRAULIC H|ALIGNMENT|DYNO|\bTIRE\b/i],
   ['MARKETPLACE', /AMAZON MKTP|AMZN MKTP|AMAZON RETA|AMAZON\.COM|AMZN\.COM|\bEBAY\b|WALMART\.COM|WAL-MART\.COM/i],
   ['TEMU', /\bTEMU\b/i],
-  ['SAAS', /ANTHROPIC|CLAUDE\.AI|VERCEL|SUPABASE|DROPBOX|GOOGLE(?! ADS)|APPLE\.COM|PP\*APPLE|ITUNES|MICROSOFT|OPENAI|CHATGPT|MIDJOURNEY|LAGOSEC|NORDVPN|ULTRAMSG|TEAMVIEWER|GODADDY|RECRAFT|SKYWORK|GREEN-?API|ADOBE|CANVA|ZOOM\.US|NOTION|GITHUB|17TRACK|AMAZON PRIME|PRIME VIDEO/i],
+  ['SAAS', /ANTHROPIC|CLAUDE\.AI|VERCEL|SUPABASE|DROPBOX|GOOGLE(?! ADS)|APPLE\.COM|PP\*APPLE|\bAPPLE\b|ITUNES|MICROSOFT|OPENAI|CHATGPT|MIDJOURNEY|LAGOSEC|NORDVPN|ULTRAMSG|TEAMVIEWER|GODADDY|RECRAFT|SKYWORK|GREEN-?API|ADOBE|CANVA|ZOOM\.US|NOTION|GITHUB|17TRACK|AMAZON PRIME|PRIME VIDEO/i],
   ['TELECOM', /T-?MOBILE|TMOBILE|VERIZON|AT&T|SPECTRUM|XFINITY|COMCAST/i],
   ['UTILITY', /DUKE ENERGY|\bDUKE\b|OCBCC|SOLID WAS|ORANGE COUNTY UTIL|\bOUC\b/i],
   ['INSURANCE', /PROGRESSIVE|GEICO|STATE FARM|ALLSTATE/i],
@@ -573,8 +581,25 @@ export const twinKey = (l: any) => String(l.date).slice(0, 10) + '|' + (num(l.am
 export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], opts: BuildOpts = {}): Plan {
   const compiled = compileRules(rules)
   const today = opts.today || todayNY()
-  const plan: Plan = { items: [], skipped: {} }
-  const skip = (k: string) => { plan.skipped[k] = (plan.skipped[k] || 0) + 1 }
+  const plan: Plan = { items: [], skipped: {}, doubts: {} }
+  // Cada skip vira uma DÚVIDA na linha corrente, com o tipo derivado do motivo e os
+  // candidatos que o motor tinha na mão naquele instante (cur.cands).
+  const MONEY_K = new Set<Klass>(['TRANSFER', 'INCOME', 'BANK_FEE'])
+  // Classe humana com gêmeo LONGE (mesmo valor, meses atrás) é pergunta de FORNECEDOR, não «é este?»;
+  // dinheiro-movimento é sempre DINHEIRO; entrada (estorno) de classe humana não tem fornecedor a responder.
+  const kindOf = (k: string, klass: Klass, signed: number): PlanDoubt['kind'] =>
+    /feed duplicado/.test(k) ? 'OTHER'
+    : /candidato longe/.test(k) ? (MONEY_K.has(klass) ? 'MONEY' : HUMAN_TIER.has(klass) && signed > 0 ? 'SUPPLIER' : 'TWIN')
+    : /gêmeo|ambíguo|mais de 3 dias|nome não bate|sem data|valor repetido|série|valor redondo|tarifa ambígua/.test(k) ? 'TWIN'
+    : /acima do teto/.test(k) ? 'CAP' : /maturidade/.test(k) ? 'MATURITY'
+    : /sem candidato/.test(k) ? (MONEY_K.has(klass) ? 'MONEY' : HUMAN_TIER.has(klass) && signed > 0 ? 'SUPPLIER' : 'OTHER') : 'OTHER'
+  let cur: { l: any; cls: Classified; cands: Cand[] } | null = null
+  const skip = (k: string) => {
+    plan.skipped[k] = (plan.skipped[k] || 0) + 1
+    const c0 = cur; if (!c0) return
+    const amt0 = Math.abs(num(c0.l.amount))
+    plan.doubts[String(c0.l.id)] = { kind: kindOf(k, c0.cls.klass, num(c0.l.amount)), reason: k, klass: c0.cls.klass, cands: c0.cands.length ? c0.cands.slice(0, 3).map(c => { const { members, ...rest } = c; void members; return { ...rest, exact: Math.abs(c.amount - amt0) < 0.011 } }) : undefined }
+  }
   const used = new Set<string>()
   // Grupo consumido ⇒ membros fora; membro consumido ⇒ grupo fora (revisão #15).
   const consume = (c: Cand) => {
@@ -588,18 +613,24 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
   for (const l of sorted) {
     const amt = Math.abs(num(l.amount))
     const cls = classify(l)
+    cur = { l, cls, cands: [] }
+    // Gêmeo que o humano já disse «não é esse» (doubt_answered) nunca volta a ser oferecido.
+    const da = (l.doubt_answered && typeof l.doubt_answered === 'object') ? l.doubt_answered : {}
+    const rejected = new Set<string>([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : [])].map(String))
+    const notRejected = (x: Cand) => !rejected.has(x.table + ':' + x.id)
     // Feed duplicado (revisão D6): gêmea em OUTRA conexão nunca casa nem cria.
     if (opts.itemTwins && opts.itemTwins.has(twinKey(l))) { skip('gêmeo em outra conexão (feed duplicado)'); continue }
     if (isFee(l)) {
-      const c = pool.out.filter(x => free(x) && Math.abs(x.amount - amt) < 0.011 && x.date && daysBetween(x.date, l.date) <= 7 && isFeeCand(x))
+      const c = pool.out.filter(x => free(x) && notRejected(x) && Math.abs(x.amount - amt) < 0.011 && x.date && daysBetween(x.date, l.date) <= 7 && isFeeCand(x))
       if (c.length === 1) { consume(c[0]); plan.items.push({ line: l, cand: c[0], engine: 'FEE', create: false }) }
-      else if (c.length > 1) skip('tarifa ambígua (2+ lançadas)')
+      else if (c.length > 1) { if (cur) cur.cands = c; skip('tarifa ambígua (2+ lançadas)') }
       else plan.items.push({ line: l, cand: null, engine: 'FEE', create: true })
       continue
     }
     if (l.pending) { skip('pendente'); continue }
     const arr = num(l.amount) > 0 ? pool.out : pool.inn
-    const same = arr.filter(x => free(x) && Math.abs(x.amount - amt) < 0.011)
+    const same = arr.filter(x => free(x) && notRejected(x) && Math.abs(x.amount - amt) < 0.011)
+    if (cur) cur.cands = same
     // Mesmo valor a mais de 30 dias não é a mesma compra (dry run da fase B: 168
     // linhas presas por coincidência de valor) — sem candidato PERTO, a regra decide.
     const near = same.filter(x => !x.date || daysBetween(x.date, l.date) <= 30)
@@ -611,7 +642,18 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
       if (!rule) {
         // Regra que casaria não fosse o TETO (revisão 32): rótulo próprio, pro dono ver o que o teto segura.
         const capped = compiled.find(x => x.r.amount_max != null && amt > num(x.r.amount_max) && ruleMatches(x, l, 0, cls))
-        if (capped) { skip('acima do teto da regra ' + (capped.r.key || capped.r.label || '?') + ' ($' + num(capped.r.amount_max).toFixed(0) + ')'); continue }
+        if (capped) {
+          // TETO NUNCA SILENCIA (lei do João): a linha que a regra entendeu mas recusou pelo valor
+          // vai pro balde com o motivo — a fila resolve com FIXO/CARRO num clique. Só saída,
+          // madura, sem quase-gêmeo (mesmas guardas de qualquer criação).
+          const why = 'acima do teto da regra ' + (capped.r.key || capped.r.label || '?') + ' ($' + num(capped.r.amount_max).toFixed(0) + ')'
+          const age = Math.max(opts.minCreateAge || 0, RULE_AGE_DAYS)
+          const tail0 = Math.max(0.30, 0.005 * amt)
+          const twin0 = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail0 && x.date && daysBetween(x.date, l.date) <= 10 && nameHit(l, x))
+          if (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && signedDays(l.date, today) >= age && !twin0.length) { plan.items.push({ line: l, cand: null, engine: 'BUCKET', create: true, rule: capped.r, cls, reason: why }); continue }
+          if (twin0.length) { if (cur) cur.cands = twin0; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
+          skip(why); continue
+        }
         skip((same.length ? 'tem gêmeo no app — candidato longe' : 'sem candidato') + (HUMAN_TIER.has(cls.klass) ? ' (classe humana: ' + cls.klass + ')' : '')); continue
       }
       if (rule.r.target === 'TRANSFER') { plan.items.push({ line: l, cand: null, engine: 'RULE', create: false, transfer: true, rule: rule.r }); continue }
@@ -623,8 +665,8 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
       // app (consumir cegava a linha exata que vinha depois — reproduzido na revisão).
       {
         const tail = Math.max(0.30, 0.005 * amt)
-        const nearTwin = arr.filter(x => free(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail && x.date && daysBetween(x.date, l.date) <= 10 && nameHit(l, x))
-        if (nearTwin.length) { skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
+        const nearTwin = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail && x.date && daysBetween(x.date, l.date) <= 10 && nameHit(l, x))
+        if (nearTwin.length) { if (cur) cur.cands = nearTwin; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
       }
       if (rule.r.target === 'BUCKET') {
         // BALDE (fase B): despesa real no mesmo dia, sem dono. Maturidade de 7 dias
@@ -640,7 +682,8 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
         // Tolerância de valor (revisão do diff): agendada só é adotada se o valor
         // real ficar a ±50% (ou ≤ $100) do previsto — fora disso é OUTRA conta e
         // a linha fica pro humano (nunca sobrescreve o previsto às cegas).
-        const cands = near.filter(s => Math.abs(s.amount - amt) <= Math.max(100, 0.5 * s.amount))
+        // Agendada de $0 é «valor a definir» (1ª fatura não chegou, caso Duke/Luma): adota com qualquer valor.
+        const cands = near.filter(s => !(s.amount > 0) || Math.abs(s.amount - amt) <= Math.max(100, 0.5 * s.amount))
         if (near.length && !cands.length) { skip('agendada do mês com valor muito diferente (±50%)'); continue }
         cands.sort((a, b) => (daysBetween(a.expense_date, l.date) - daysBetween(b.expense_date, l.date)) || (Math.abs(a.amount - amt) - Math.abs(b.amount - amt)))
         const adopt = cands[0]
@@ -657,9 +700,10 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     if (near.length === 1) c = near[0]
     else {
       const byName = near.filter(x => nameHit(l, x))
-      if (byName.length !== 1) { skip('tem gêmeo no app — candidato ambíguo'); continue }
+      if (byName.length !== 1) { if (cur) cur.cands = byName.length ? byName : near; skip('tem gêmeo no app — candidato ambíguo'); continue }
       c = byName[0]; engineTag = 'NAME'
     }
+    if (cur) cur.cands = [c]
     if (!c.date) { skip('candidato sem data'); continue }
     const dd = daysBetween(c.date, l.date)
     if (dd > (c.undated ? 7 : 3)) { skip('tem gêmeo no app — mais de 3 dias'); continue }
@@ -738,7 +782,7 @@ export async function logMatchEvent(db: any, line: any, action: string, fields: 
 export async function writeMatch(db: any, line: any, cand: Cand | { table: string; id: string; members?: Member[] }, extra: Record<string, unknown>, pre: Backfill[] = []): Promise<{ backfill: Backfill[] }> {
   const { data: claimed, error: claimErr } = await db.from('bank_transactions')
     .update({ match_status: 'MATCHED', matched_table: cand.table, matched_id: cand.id, backfill: null, ...extra })
-    .eq('id', line.id).eq('match_status', 'NEW').select('id')
+    .eq('id', line.id).in('match_status', ['NEW', 'QUEUED']).select('id')
   if (claimErr) throw new Error(claimErr.message)
   if (!claimed || !claimed.length) throw new Error('linha do banco já decidida (outra aba ou sync) — recarregue')
   await logMatchEvent(db, line, 'MATCH', { matched_table: cand.table, matched_id: cand.id, note: (extra as any).matched_note, engine: (extra as any).match_engine, batch: (extra as any).match_batch, members: (cand as any).members || null })
@@ -850,6 +894,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       // Elo com o STREAM (PESCA fundida) morre junto com a linha apagada.
       { const { data: ids } = await db.from('invoice_expenses').select('id').eq('purchase_group', line.id).ilike('item', '%Bank Link)%'); const list = (ids || []).map((x: any) => x.id); if (list.length) await db.from('part_stream_items').delete().eq('source_table', 'invoice_expenses').in('source_id', list).then(() => undefined, () => undefined) }
       await del('invoice_expenses', q => q.eq('invoice_id', bucketId), 'item', 'compra do balde apagada')
+      { const { data: r, error } = await db.from('expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id'); if (error) throw new Error('expenses: ' + error.message); if (r && r.length) changed.push('despesa pessoal atribuída apagada') }
       await del('inputs', q => q, 'description', 'insumo atribuído apagado')
       await del('inventory', q => q, 'description', 'estoque atribuído apagado')
       {
@@ -868,7 +913,15 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       if (error) throw new Error('invoice_expenses: ' + error.message)
       if (r && r.length) changed.push('repasse criado pelo motor apagado')
     }
-    if (recorded || bucketHandled) { /* já revertido acima / balde já tratado */ } else if (DATE_TABLES.has(t)) {
+    // PESSOAL da PERGUNTA (engine nulo, sem backfill): a despesa da season que o motor criou
+    // morre com o DESFAZER — marcador + elo + origem, nunca linha de gente (revisão 4/set).
+    let personalHandled = false
+    if (t === 'expenses' && !bucketHandled) {
+      const { data: r, error } = await db.from('expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id')
+      if (error) throw new Error('expenses: ' + error.message)
+      if (r && r.length) { changed.push('despesa pessoal apagada'); personalHandled = true }
+    }
+    if (recorded || bucketHandled || personalHandled) { /* já revertido acima / balde já tratado */ } else if (DATE_TABLES.has(t)) {
       const { data: r, error } = await db.from(t).update({ payment_date: null }).eq('id', id).eq('payment_date', line.date).select('id')
       if (error) throw new Error(`${t}: ${error.message}`)
       if (r && r.length) changed.push(`${t}.payment_date→null`)
@@ -923,7 +976,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
 export async function writeStatus(db: any, line: any, status: 'IGNORED' | 'TRANSFER' | 'QUEUED', extra: { note?: string | null; engine?: string | null; batch?: string | null; rule?: string | null } = {}) {
   const { data, error } = await db.from('bank_transactions')
     .update({ match_status: status, matched_note: extra.note ?? null, matched_table: null, matched_id: null, match_engine: extra.engine ?? null, match_batch: extra.batch ?? null, match_rule: extra.rule ?? null, reviewed_at: null, backfill: null })
-    .eq('id', line.id).eq('match_status', 'NEW').select('id')
+    .eq('id', line.id).in('match_status', ['NEW', 'QUEUED']).select('id')
   if (error) throw new Error(error.message)
   if (!data || !data.length) throw new Error('linha do banco já decidida — recarregue')
   await logMatchEvent(db, line, status === 'IGNORED' ? 'IGNORE' : status === 'TRANSFER' ? 'TRANSFER' : 'QUEUE', { note: extra.note, engine: extra.engine, batch: extra.batch })
@@ -959,7 +1012,8 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
   const slice = plan.items.slice(offset, offset + max)
   const res: ApplyResult = { batch, fee_match: 0, fee_create: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0, remaining: Math.max(0, plan.items.length - offset - slice.length), errors: [] }
   const lineLabel = (l: any) => `${l.date} · ${l.merchant || l.name || ''} · ${num(l.amount)}`
-  const fix = (row_id: string, label: string, newValue = 'MATCHED') => ({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id, field: 'match_status', old_value: 'NEW', new_value: newValue, label: label.slice(0, 200) })
+  const statusOf = new Map<string, string>(plan.items.map(i => [String(i.line.id), String(i.line.match_status || 'NEW')]))
+  const fix = (row_id: string, label: string, newValue = 'MATCHED') => ({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id, field: 'match_status', old_value: statusOf.get(String(row_id)) || 'NEW', new_value: newValue, label: label.slice(0, 200) })
   let supplierId: string | null = null
   if (slice.some(i => i.engine === 'FEE' && i.create)) supplierId = await regionsSupplier(db)
   // Fase B: o balde e o nome canônico do fornecedor (UM FORNECEDOR, UM NOME) —
@@ -1116,13 +1170,13 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           rowId = row.id; inserted = true
         }
         try {
-          await writeMatch(db, l, { table: 'invoice_expenses', id: rowId }, { matched_note: ('AUTO · BUCKET · ' + cls.klass + ' · ' + supplier).slice(0, 150), match_engine: ENGINE_BUCKET, match_batch: batch, match_rule: r.id, reviewed_at: null })
+          await writeMatch(db, l, { table: 'invoice_expenses', id: rowId }, { matched_note: ('AUTO · BUCKET · ' + cls.klass + ' · ' + supplier + (it.reason ? ' · ' + it.reason : '')).slice(0, 150), match_engine: ENGINE_BUCKET, match_batch: batch, match_rule: r.id, reviewed_at: null })
         } catch (e) {
           if (inserted && await stillOurs('invoice_expenses', rowId)) await db.from('invoice_expenses').delete().eq('id', rowId).eq('invoice_id', bucketId).eq('purchase_group', l.id)
           throw e
         }
         res.bucket++
-        fixes.push(fix(l.id, `BUCKET criou A ATRIBUIR (${cls.klass}) · ${lineLabel(l)}`))
+        fixes.push(fix(l.id, `BUCKET criou A ATRIBUIR (${cls.klass}${it.reason ? ' · ' + it.reason : ''}) · ${lineLabel(l)}`))
       } else {
         const c = it.cand!
         const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: null })
@@ -1138,16 +1192,27 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
 
 // Linhas NEW com os campos do raw do Plaid que o motor usa (aliases PostgREST:
 // entity, pfc_detailed, authorized_date, processor — nulos nas linhas de extrato).
+// Pré-migration: sem a coluna doubt_answered o motor segue VIVO (sem memória de recusa) e a
+// rota avisa needs_migration — em vez de derrubar card, cron e webhook até alguém rodar o SQL.
+let DOUBT_COL_MISSING = false
+export const doubtColumnMissing = () => DOUBT_COL_MISSING
 export async function newLines(db: any, limit: number, opts: { since?: string } = {}) {
   const acc: any[] = []
-  const SEL = 'id, item_id, date, amount, name, merchant, pending, check_number, plaid_id, category, entity:raw->>merchant_entity_id, pfc_detailed:raw->personal_finance_category->>detailed, authorized_date:raw->>authorized_date, processor:raw->payment_meta->>payment_processor, cps:raw->counterparties, pfc_conf:raw->personal_finance_category->>confidence_level'
+  const SEL_FULL = 'id, item_id, date, amount, name, merchant, pending, check_number, plaid_id, category, match_status, doubt_answered, entity:raw->>merchant_entity_id, pfc_detailed:raw->personal_finance_category->>detailed, authorized_date:raw->>authorized_date, processor:raw->payment_meta->>payment_processor, cps:raw->counterparties, pfc_conf:raw->personal_finance_category->>confidence_level'
   for (let from = 0; from < limit; from += 1000) {   // pagina — PostgREST corta em 1.000 por request
-    let q = db.from('bank_transactions').select(SEL).eq('match_status', 'NEW')
-    if (opts.since) q = q.gte('date', opts.since)
-    const { data, error } = await q.order('date', { ascending: false }).order('id').range(from, Math.min(from + 999, limit - 1))
-    if (error) throw new Error('bank_transactions: ' + error.message)
-    acc.push(...(data || []))
-    if (!data || data.length < 1000) break
+    // NEW e QUEUED (fase «silêncio»): TO BOOK era «a lançar» e tirava a linha do motor pra sempre.
+    let page: any[] | null = null
+    for (let attempt = 0; attempt < 2 && !page; attempt++) {
+      const sel = DOUBT_COL_MISSING ? SEL_FULL.replace('doubt_answered, ', '') : SEL_FULL
+      let q = db.from('bank_transactions').select(sel).in('match_status', ['NEW', 'QUEUED'])
+      if (opts.since) q = q.gte('date', opts.since)
+      const { data, error } = await q.order('date', { ascending: false }).order('id').range(from, Math.min(from + 999, limit - 1))
+      if (error && /doubt_answered/.test(String(error.message)) && !DOUBT_COL_MISSING) { DOUBT_COL_MISSING = true; continue }
+      if (error) throw new Error('bank_transactions: ' + error.message)
+      page = data || []
+    }
+    acc.push(...(page || []))
+    if (!page || page.length < 1000) break
   }
   return acc
 }
@@ -1205,14 +1270,15 @@ export async function bucketReach(db: any, line: any, bucketId: string): Promise
   const out: { table: string; id: string; text: string; invoice_id?: string | null }[] = []
   const seen = new Set<string>()
   const add = (table: string, rows: any[] | null, col: string) => { for (const r of rows || []) { const k = table + ':' + r.id; if (seen.has(k)) continue; seen.add(k); out.push({ table, id: r.id, text: String(r[col] || ''), invoice_id: r.invoice_id ?? null }) } }
-  const [ie, inp, inv, fx] = await Promise.all([
+  const [ie, inp, inv, fx, ex] = await Promise.all([
     db.from('invoice_expenses').select('id, item, invoice_id').eq('purchase_group', line.id),
     db.from('inputs').select('id, description').eq('purchase_group', line.id),
     db.from('inventory').select('id, description').eq('purchase_group', line.id),
     db.from('fixed_cost_expenses').select('id, description').eq('bank_transaction_id', line.id),
+    db.from('expenses').select('id, description').eq('payment_reference', 'bank:' + line.id),   // PESSOAL (season) — sem purchase_group nessa tabela
   ])
-  for (const r of [ie, inp, inv, fx]) if (r.error) throw new Error(r.error.message)
-  add('invoice_expenses', ie.data, 'item'); add('inputs', inp.data, 'description'); add('inventory', inv.data, 'description'); add('fixed_cost_expenses', fx.data, 'description')
+  for (const r of [ie, inp, inv, fx, ex]) if (r.error) throw new Error(r.error.message)
+  add('invoice_expenses', ie.data, 'item'); add('inputs', inp.data, 'description'); add('inventory', inv.data, 'description'); add('fixed_cost_expenses', fx.data, 'description'); add('expenses', ex.data, 'description')
   const t = String(line.matched_table || ''), id = String(line.matched_id || '')
   if (id && ['invoice_expenses', 'inputs', 'inventory', 'fixed_cost_expenses'].includes(t) && !seen.has(t + ':' + id)) {
     const col = t === 'invoice_expenses' ? 'item' : 'description'
@@ -1315,7 +1381,8 @@ export const DEFAULTS: DefaultRule[] = [
 // Fornecedor de custo fixo ÚNICO que bate (company/description/mail_match) no
 // tipo pedido, vivo, e não marcado pra morrer. Dois = ambíguo = regra pulada.
 function resolveFixedSupplier(sups: any[], re: RegExp, costType: string): { id: string | null; n: number; row: any | null } {
-  const hits = sups.filter(s => s.cost_type === costType && !s.date_conclusion && !/DEIXAR MORRER|CANCEL|DUPLIC/i.test(String(s.description || '')) && (re.test(String(s.company || '')) || re.test(String(s.description || '')) || re.test(String(s.mail_match || ''))))
+  // date_conclusion é FIM DO TERMO (a apólice da frota termina em jan/2027 e está viva); só conclusão no passado mata.
+  const hits = sups.filter(s => s.cost_type === costType && (!s.date_conclusion || String(s.date_conclusion).slice(0, 10) >= todayNY()) && !/DEIXAR MORRER|CANCEL|DUPLIC/i.test(String(s.description || '')) && (re.test(String(s.company || '')) || re.test(String(s.description || '')) || re.test(String(s.mail_match || ''))))
   return { id: hits.length === 1 ? hits[0].id : null, n: hits.length, row: hits.length === 1 ? hits[0] : null }
 }
 

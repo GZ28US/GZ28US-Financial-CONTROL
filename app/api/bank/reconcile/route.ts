@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing } from '@/lib/bankReconcile.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
+import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines } from '@/lib/bankDoubt.server'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -10,7 +11,7 @@ import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 export const maxDuration = 300
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_|klass|priority|invoices_bucket|bank_merchant_rules_key/
+const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_|klass|priority|invoices_bucket|bank_merchant_rules_key|doubt_answered/
 const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 // Valor de uma linha de despesa de invoice (mesma conta do lib/financials).
 const expLine = (r: any) => num(r.price) * (num(r.quantity) || 1) + num(r.tax) + num(r.extra) - num(r.item_discount)
@@ -18,6 +19,19 @@ const expLine = (r: any) => num(r.price) * (num(r.quantity) || 1) + num(r.tax) +
 // Marcador nunca é cortado pelo limite de 200 (revisão 16): corta o rótulo, não a marca.
 const mark = (label: string, m: string) => String(label || '').slice(0, 200 - m.length - 1).trim() + ' ' + m
 const BSEL = 'id, date, amount, name, merchant, pending, plaid_id, match_status, matched_table, matched_id, matched_note, match_engine, match_rule, match_batch, reviewed_at, backfill, category, entity:raw->>merchant_entity_id, pfc_detailed:raw->personal_finance_category->>detailed, processor:raw->payment_meta->>payment_processor, cps:raw->counterparties'
+// Seasons ativas (PESSOAL, lei do Márcio): quem está na equipe hoje, com o nome —
+// a compra pessoal paga no cartão da empresa vai pra season da pessoa.
+async function activeSeasons(db: any): Promise<{ id: string; staff: string; label: string }[]> {
+  const today = todayNY()
+  const [seasons, staff] = await Promise.all([
+    fetchAll(db, 'seasons', 'id, season_code, staff_id, date_entry, date_conclusion', (q: any) => q.lte('date_entry', today)),
+    fetchAll(db, 'staff', 'id, name'),
+  ])
+  const nameOf = new Map<string, string>(staff.map((x: any) => [x.id, String(x.name || '')]))
+  return seasons.filter((x: any) => !x.date_conclusion || String(x.date_conclusion).slice(0, 10) >= today)
+    .map((x: any) => { const n = nameOf.get(x.staff_id) || '?'; return { id: x.id, staff: n, label: n + (x.season_code ? ' · ' + x.season_code : '') } })
+    .sort((a: any, b: any) => a.label.localeCompare(b.label))
+}
 
 export async function GET(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -26,14 +40,14 @@ export async function GET(req: NextRequest) {
     // ?matched=1 — só os pares (tabela, id) do app já casados com linha da Regions.
     // O Data Checker usa pra cravar paid_from = GZ28US: o banco provou quem pagou.
     if (req.nextUrl.searchParams.get('matched') === '1') {
-      // Só pares SÓLIDOS viram "certo" no Data Checker: decisão humana (engine null)
-      // ou casamento de motor JÁ conferido (reviewed_at) — revisão #20. O valor do
-      // banco acompanha pra conferir grupos (total mudou = não é mais certo).
+      // Todo par MATCHED é prova (BL 0.10.0, lei do silêncio): o motor casou e a
+      // correção é DESFAZER, não «conferir». reviewed_at ficou só como «visto». O
+      // valor do banco acompanha pra conferir grupos (total mudou = não é mais certo).
       const acc: { table: string; id: string; amount: number }[] = []
       for (let from = 0; ; from += 1000) {
         const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id, amount, match_engine, reviewed_at').eq('match_status', 'MATCHED').not('matched_id', 'is', null).order('id').range(from, from + 999)
         if (error) throw new Error(error.message)
-        for (const r of data || []) if (!r.match_engine || r.reviewed_at) acc.push({ table: r.matched_table, id: r.matched_id, amount: Math.abs(num(r.amount)) })
+        for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id, amount: Math.abs(num(r.amount)) })
         if (!data || data.length < 1000) break
       }
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
@@ -59,12 +73,13 @@ export async function GET(req: NextRequest) {
       const since7 = new Date(Date.now() - 7 * 864e5).toISOString(), since1 = new Date(Date.now() - 864e5).toISOString()
       const logs = await fetchAll(db, 'bank_match_log', 'at, action, engine', (q: any) => q.gte('at', since7).not('engine', 'is', null).in('action', ['MATCH', 'TRANSFER']))
       const by = (since: string) => logs.filter((r: any) => r.at >= since).reduce((m: Record<string, number>, r: any) => { m[r.engine] = (m[r.engine] || 0) + 1; return m }, {})
-      const { count: remaining } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_status', 'NEW').eq('pending', false).gte('date', AUTO_BOOK_FLOOR)
+      const { count: remaining } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).in('match_status', ['NEW', 'QUEUED']).eq('pending', false).gte('date', AUTO_BOOK_FLOOR)
       const errors = [...new Set(runs.filter((r: any) => r.started_at >= since7).flatMap((r: any) => Array.isArray(r.errors) ? r.errors : []))].slice(0, 10)
       // órfãos: linha criada pelo motor (marcador + elo) sem linha MATCHED apontando pra ela
       const fxAuto = await fetchAll(db, 'fixed_cost_expenses', 'id, description, amount, bank_transaction_id, payment_date, supplier_id', (q: any) => q.not('bank_transaction_id', 'is', null).ilike('description', '%Bank Link)%'))
       const inAuto = await fetchAll(db, 'inputs', 'id, description, unit_price, quantity, order_number, payment_date, category', (q: any) => q.like('order_number', 'bank:%'))
-      const bankIds = [...new Set([...fxAuto.map((r: any) => String(r.bank_transaction_id)), ...inAuto.map((r: any) => String(r.order_number).slice(5))])]
+      const exAuto = await fetchAll(db, 'expenses', 'id, description, amount, payment_reference', (q: any) => q.like('payment_reference', 'bank:%').eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'))
+      const bankIds = [...new Set([...fxAuto.map((r: any) => String(r.bank_transaction_id)), ...inAuto.map((r: any) => String(r.order_number).slice(5)), ...exAuto.map((r: any) => String(r.payment_reference).slice(5))])]
       const lineById = new Map<string, any>()
       for (let i = 0; i < bankIds.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, name, merchant, amount, match_status, matched_table, matched_id').in('id', bankIds.slice(i, i + 200)); for (const l of data || []) lineById.set(String(l.id), l) }
       const pointsAt = (bankId: string, table: string, id: string) => { const l = lineById.get(bankId); return !!l && l.match_status === 'MATCHED' && l.matched_table === table && String(l.matched_id) === String(id) }
@@ -75,6 +90,7 @@ export async function GET(req: NextRequest) {
       const orphans = [
         ...fxAuto.filter((r: any) => !pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, label: r.description, amount: num(r.amount), bank_id: r.bank_transaction_id, code: codeFor(String(r.bank_transaction_id)) })),
         ...inAuto.filter((r: any) => !pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, label: r.description, amount: num(r.unit_price) * (num(r.quantity) || 1), bank_id: String(r.order_number).slice(5), code: codeFor(String(r.order_number).slice(5)) })),
+        ...exAuto.filter((r: any) => !pointsAt(String(r.payment_reference).slice(5), 'expenses', r.id)).map((r: any) => ({ table: 'expenses', id: r.id, label: 'PESSOAL · ' + r.description, amount: num(r.amount), bank_id: String(r.payment_reference).slice(5), code: codeFor(String(r.payment_reference).slice(5)) })),
       ]
       // DUPLAS (revisão do diff: prova no nível dos motores, não menos): só
       // lançamentos criados por REGRA (tarifas fora), gêmeo na MESMA tabela e
@@ -135,7 +151,7 @@ export async function GET(req: NextRequest) {
             if (rowIds.has(String(l.matched_id))) continue
             const { data } = await db.from('invoice_expenses').select('id').eq('id', l.matched_id).maybeSingle()
             if (!data) deadPointers.push({ bank_id: l.id, table: 'invoice_expenses', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) })
-          } else if (['inputs', 'inventory', 'fixed_cost_expenses'].includes(String(l.matched_table))) {
+          } else if (['inputs', 'inventory', 'fixed_cost_expenses', 'expenses'].includes(String(l.matched_table))) {
             const { data } = await (db.from(l.matched_table) as any).select('id').eq('id', l.matched_id).maybeSingle()
             if (!data) deadPointers.push({ bank_id: l.id, table: l.matched_table, id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) })
           } else if (l.matched_table === 'purchase_group') {
@@ -145,7 +161,30 @@ export async function GET(req: NextRequest) {
         }
         try { seedSkipped = (await seedDefaultRules(db, { dryRun: true })).skipped } catch { /* sem migration */ }
       } catch { /* balde sem migration: sinal vazio, o card avisa */ }
-      return NextResponse.json({ ok: true, floor: AUTO_BOOK_FLOOR, runs: runs.slice(0, 10), booked_24h: by(since1), booked_7d: by(since7), remaining: remaining || 0, errors, orphans, dups, bucket: bucketSig, dead_pointers: deadPointers, amount_drift: amountDrift, seed: { skipped: seedSkipped } })
+      // ── SILÊNCIO (BL 0.10.0): deriva das três datas, fora do padrão, linha quicando,
+      // perguntas do motor — tudo que estava parado calado vira número no Data Checker.
+      let drift: any[] = [], anomalies: any[] = [], bounce: any[] = []
+      let questions: any = { suppliers: 0, supplier_total: 0, money: 0, twins: 0, caps: 0, maturity: 0, other: 0, lines: 0 }
+      let silenceError: string | null = null
+      try {
+        const supsAll = await fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion, mail_match, late_fee_fixed, late_fee_percent, late_fee_daily')
+        const openFixed = await fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, amount, expense_date, description', (q: any) => q.is('payment_date', null).is('bank_transaction_id', null))
+        await loadDbAliases(db)
+        const live = await newLines(db, 5000)
+        drift = driftRows(openFixed, live.filter((l: any) => num(l.amount) > 0), supsAll)
+        const fxAll = await fetchAll(db, 'fixed_cost_expenses', 'supplier_id, amount, expense_date, payment_date', (q: any) => q.gte('expense_date', new Date(Date.now() - 150 * 864e5).toISOString().slice(0, 10)))
+        anomalies = spendAnomalies(fxAll, supsAll)
+        const diary = await fetchAll(db, 'bank_match_log', 'bank_id, at, action', (q: any) => q.gte('at', new Date(Date.now() - 14 * 864e5).toISOString()))
+        bounce = bounceLines(diary)
+        const p = buildPlan(live, pool, await loadRules(db), { itemTwins: await itemTwinKeys(db), minCreateAge: RULE_AGE_DAYS })
+        const byId = new Map<string, any>(live.map((l: any) => [String(l.id), l]))
+        const dirQ = supplierDirectoryFrom(await fetchAll(db, 'suppliers', 'id, name, aliases, is_dealership'))
+        const supLines = Object.entries(p.doubts).filter(([, d]: any) => d.kind === 'SUPPLIER').map(([id]) => byId.get(id)).filter(Boolean)
+        const sq = groupSupplierDoubts(supLines, supsAll, dirQ)
+        const cnt = (k: string) => Object.values(p.doubts).filter((d: any) => d.kind === k).length
+        questions = { suppliers: sq.length, supplier_total: Math.round(sq.reduce((a: number, x: any) => a + x.total, 0) * 100) / 100, money: cnt('MONEY'), twins: cnt('TWIN'), caps: cnt('CAP'), maturity: cnt('MATURITY'), other: cnt('OTHER'), lines: Object.keys(p.doubts).length }
+      } catch (e) { silenceError = String((e as Error).message || e).slice(0, 200); questions = null; errors.push('silêncio: ' + silenceError) }
+      return NextResponse.json({ ok: true, floor: AUTO_BOOK_FLOOR, runs: runs.slice(0, 10), booked_24h: by(since1), booked_7d: by(since7), remaining: remaining || 0, errors, orphans, dups, bucket: bucketSig, dead_pointers: deadPointers, amount_drift: amountDrift, seed: { skipped: seedSkipped }, drift, anomalies, bounce, questions, silence_error: silenceError })
     }
     // A ATRIBUIR (fase B): a fila do balde — o saldo da conta de suspensão É a
     // lista de linhas; cada uma vem com classe, idade, gêmeo (guarda contra
@@ -165,10 +204,11 @@ export async function GET(req: NextRequest) {
       const since60 = new Date(Date.now() - 60 * 864e5).toISOString()
       const attribLines = await fetchAll(db, 'bank_transactions', BSEL, (q: any) => q.eq('match_engine', ENGINE_BUCKET).eq('match_status', 'MATCHED').gte('reviewed_at', since60))
       const pool = await candidatePool(db)
-      const [invoices, rides, fixedSups] = await Promise.all([
+      const [invoices, rides, fixedSups, seasons] = await Promise.all([
         fetchAll(db, 'invoices', 'id, invoice_code, ride_id, live_status, is_quote, origin', (q: any) => q.eq('is_quote', false).not('ride_id', 'is', null).neq('origin', BUCKET_ORIGIN).in('live_status', ['REALTIME', 'INCOMPLETE', 'CLOSED'])),
         fetchAll(db, 'rides', 'id, project_code, project_name'),
-        fetchAll(db, 'fixed_cost_suppliers', 'id, company, cost_type', (q: any) => q.neq('cost_type', 'BANK').is('date_conclusion', null)),
+        fetchAll(db, 'fixed_cost_suppliers', 'id, company, cost_type', (q: any) => q.neq('cost_type', 'BANK').or('date_conclusion.is.null,date_conclusion.gte.' + today)),
+        activeSeasons(db),
       ])
       const rideById = new Map(rides.map((r: any) => [r.id, r]))
       const invList = invoices.map((i: any) => { const r = rideById.get(i.ride_id); return { id: i.id, code: i.invoice_code, ride_id: i.ride_id, ride_code: r?.project_code || '', ride_name: r?.project_name || '', closed: i.live_status === 'CLOSED' } })
@@ -222,6 +262,8 @@ export async function GET(req: NextRequest) {
           supplier: r.supplier || '', item: String(r.item || '').replace(MARKER_BUCKET, '').trim(), klass: cls?.klass || null, via: cls?.via || null, mcc: cls?.mcc || null,
           age_days: r.payment_date ? signedDays(String(r.payment_date), today) : null, batch: l?.match_batch || null, trigger: run?.trigger || null, started_at: run?.started_at || null,
           orphan: !l, suggestions: suggest(r, l),
+          // ACIMA DO TETO: o motor entendeu o fornecedor e recusou o valor — o motivo vem na nota da linha.
+          reason: l ? ((/(acima do teto[^·]*)/i.exec(String(l.matched_note || '')) || [])[1] || null) : null,
         }
       }).sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.row_id).localeCompare(String(a.row_id))).slice(0, 2000)
       // ATRIBUÍDAS (60 dias): destino pelo ponteiro
@@ -231,16 +273,39 @@ export async function GET(req: NextRequest) {
       const invAll = new Map(invoices.map((i: any) => [i.id, i]))
       const attributed = attribLines.sort((a: any, b: any) => String(b.reviewed_at).localeCompare(String(a.reviewed_at))).map((l: any) => {
         const t = String(l.matched_table || '')
-        const dest = t === 'invoice_expenses' ? 'CAR' : t === 'inventory' ? 'STOCK' : t === 'inputs' ? 'SUPPLIES' : t === 'fixed_cost_expenses' ? 'FIXO' : t === 'purchase_group' ? 'SPLIT' : '?'
+        const dest = t === 'invoice_expenses' ? 'CAR' : t === 'inventory' ? 'STOCK' : t === 'inputs' ? 'SUPPLIES' : t === 'fixed_cost_expenses' ? 'FIXO' : t === 'purchase_group' ? 'SPLIT' : t === 'expenses' ? 'PESSOAL' : '?'
         const inv = t === 'invoice_expenses' ? invAll.get(carInv.get(String(l.matched_id)) || '') : null
-        const href = inv && inv.ride_id ? '/rides/' + inv.ride_id + '/invoices/' + inv.id : dest === 'STOCK' ? '/inventory' : dest === 'SUPPLIES' ? '/supplies' : dest === 'FIXO' ? '/costs/fixed' : '/adm/bank#a-atribuir'
+        const href = inv && inv.ride_id ? '/rides/' + inv.ride_id + '/invoices/' + inv.id : dest === 'STOCK' ? '/inventory' : dest === 'SUPPLIES' ? '/supplies' : dest === 'FIXO' ? '/costs/fixed' : dest === 'PESSOAL' ? '/staff' : '/adm/bank#a-atribuir'
         return { bank_id: l.id, date: l.date, amount: Math.abs(num(l.amount)), name: l.merchant || l.name || '', dest, label: String(l.matched_note || ''), href, reviewed_at: l.reviewed_at }
       })
       const balance = Math.round(brows.reduce((a: number, r: any) => a + expLine(r), 0) * 100) / 100
       return NextResponse.json({ ok: true, total: brows.length, balance, older_7d: rowsOut.filter((r: any) => (r.age_days || 0) > 7).length,
         invariants: invRow ? { id: invRow.id, invoice_code: invRow.invoice_code, ride_id: invRow.ride_id, client_id: invRow.client_id, is_quote: invRow.is_quote, live_status: invRow.live_status } : null,
-        invoices: invList, fixed_suppliers: fixedSups.sort((a: any, b: any) => String(a.company).localeCompare(String(b.company))).map((x: any) => ({ id: x.id, company: x.company, cost_type: x.cost_type })),
+        invoices: invList, seasons, fixed_suppliers: fixedSups.sort((a: any, b: any) => String(a.company).localeCompare(String(b.company))).map((x: any) => ({ id: x.id, company: x.company, cost_type: x.cost_type })),
         rows: rowsOut, attributed })
+    }
+    // PERGUNTAS DO MOTOR (BL 0.10.0): o que o motor NÃO resolveu, agrupado do jeito
+    // que se responde — por FORNECEDOR (uma resposta = uma regra = todas as linhas,
+    // hoje e sempre), dinheiro andando (invoice/sócio/conta) e gêmeos (é este?).
+    // Só linhas que o plano deixou paradas: o que a regra já lança não pergunta.
+    if (req.nextUrl.searchParams.get('questions') === '1') {
+      await loadDbAliases(db)
+      const [lines, pool, rules, twins] = await Promise.all([newLines(db, 5000), candidatePool(db), loadRules(db), itemTwinKeys(db)])
+      const plan = buildPlan(lines, pool, rules, { itemTwins: twins, minCreateAge: RULE_AGE_DAYS })
+      const byId = new Map<string, any>(lines.map((l: any) => [String(l.id), l]))
+      const of = (kind: string) => Object.entries(plan.doubts).filter(([, d]: any) => d.kind === kind).map(([id]) => byId.get(id)).filter(Boolean)
+      const [sups, dirRows, seasons] = await Promise.all([
+        fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion, mail_match'),
+        fetchAll(db, 'suppliers', 'id, name, aliases, is_dealership'),
+        activeSeasons(db),
+      ])
+      const dir = supplierDirectoryFrom(dirRows)
+      const suppliers = groupSupplierDoubts(of('SUPPLIER'), sups, dir)
+      const money = moneyDoubts(of('MONEY')).map(m => ({ ...m, cands: rank(byId.get(m.id), pool).slice(0, 3) }))
+      const twinsQ = Object.entries(plan.doubts).filter(([, d]: any) => d.kind === 'TWIN').map(([id, d]: any) => { const l = byId.get(id); return l ? { id, date: l.date, amount: num(l.amount), name: l.merchant || l.name || '', reason: d.reason, cands: d.cands || [] } : null }).filter(Boolean)
+      const today = todayNY()
+      return NextResponse.json({ ok: true, suppliers, money, twins: twinsQ, caps: of('CAP').length, maturity: of('MATURITY').length, other: of('OTHER').length, seasons, categories: INPUT_CATEGORIES,
+        fixed_suppliers: sups.filter((x: any) => x.cost_type !== 'BANK' && (!x.date_conclusion || String(x.date_conclusion).slice(0, 10) >= today)).map((x: any) => ({ id: x.id, company: x.company, cost_type: x.cost_type })).sort((a: any, b: any) => String(a.company).localeCompare(String(b.company))) })
     }
     // TO BOOK (João, 31/ago): a fila da TRIAGEM inteira, com nota — pra ver só
     // o que está marcado "a lançar" e destriar linha a linha.
@@ -251,10 +316,16 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(5000, Math.max(1, parseInt(req.nextUrl.searchParams.get('limit') || '3000', 10) || 3000))
     await loadDbAliases(db)
     const [lines, pool] = await Promise.all([newLines(db, limit), candidatePool(db)])
-    const { count: totalNew } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_status', 'NEW')
+    const { count: totalNew } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).in('match_status', ['NEW', 'QUEUED'])
+    // SILÊNCIO (BL 0.10.0): o plano roda SEMPRE — cada linha parada leva a dúvida do
+    // motor (tipo, motivo, candidato) e a tela pergunta em vez de calar. QUEUED (TO BOOK)
+    // voltou a ser linha viva: o motor pode lançar, o humano pode casar.
+    const rulesNow = await loadRules(db), twinsNow = await itemTwinKeys(db)
+    const planNow = buildPlan(lines, pool, rulesNow, { itemTwins: twinsNow, minCreateAge: RULE_AGE_DAYS })   // o que o CRON faria — a dúvida mostrada é a dúvida real
     const enriched = lines.map((l: any) => ({
       id: l.id, date: l.date, amount: num(l.amount), name: l.merchant || l.name || '', raw_name: l.name || '', pending: !!l.pending,
       source: String(l.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID', fee: isFee(l), candidates: rank(l, pool),
+      queued: l.match_status === 'QUEUED', doubt: planNow.doubts[String(l.id)] || null,
     }))
     // A CONFERIR: o que o motor casou e o Márcio ainda não viu. Sem a migration
     // (colunas match_engine/match_batch/reviewed_at/backfill) o card avisa e segue vivo.
@@ -324,10 +395,12 @@ export async function GET(req: NextRequest) {
       }
     }
     // Plano a seco (GET ?plan=1): quantas linhas os motores casariam agora.
-    const plan = req.nextUrl.searchParams.get('plan') === '1' ? planSummary(buildPlan(lines, pool, await loadRules(db), { itemTwins: await itemTwinKeys(db) })) : null
-    return NextResponse.json({ ok: true, total_new: totalNew || 0, lines: enriched, auto, needs_migration: needsMigration, plan })
+    // ?plan=1 (PLANEJAR/APLICAR humano): sem maturidade, igual ao POST que confere o hash.
+    const plan = req.nextUrl.searchParams.get('plan') === '1' ? planSummary(buildPlan(lines, pool, rulesNow, { itemTwins: twinsNow })) : null
+    return NextResponse.json({ ok: true, total_new: totalNew || 0, lines: enriched, auto, needs_migration: needsMigration || doubtColumnMissing(), plan })
   } catch (e) {
-    return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
+    const msg = String((e as Error).message || e)
+    return NextResponse.json({ error: msg.slice(0, 300), needs_migration: MIGRATION_RE.test(msg) }, { status: 500 })
   }
 }
 
@@ -385,6 +458,160 @@ export async function POST(req: NextRequest) {
       const r = await seedDefaultRules(db)
       await db.from('data_fixes').insert({ check_key: 'bank-bucket', table_name: 'bank_merchant_rules', row_id: 'seed', field: 'PADRÃO', old_value: null, new_value: String(r.inserted.length), label: ('SEMEAR PADRÕES · ' + r.inserted.length + ' novas · ' + r.skipped.length + ' puladas').slice(0, 200) }).then(() => undefined, () => undefined)
       return NextResponse.json({ ok: true, ...r })
+    }
+    // ── PERGUNTAS DO MOTOR (BL 0.10.0): responder por fornecedor ──
+    // Uma resposta = UMA regra HUMANA com padrão (o motor lança agora e pra sempre);
+    // PESSOAL e IGNORAR não viram regra (são por pessoa / por linha) — decidem as linhas de hoje.
+    if (action === 'answer_supplier') {
+      const ids = (Array.isArray(body.line_ids) ? body.line_ids : []).map(String).slice(0, 500)
+      const target = String(body.target || '')
+      const name = String(body.name || '').trim().slice(0, 80)
+      if (!ids.length || !name) return NextResponse.json({ error: 'line_ids/name required' }, { status: 400 })
+      const lines0 = await fetchAll(db, 'bank_transactions', BSEL + ', doubt_answered', (q: any) => q.in('id', ids).in('match_status', ['NEW', 'QUEUED']))
+      if (!lines0.length) return NextResponse.json({ error: 'nenhuma linha ainda em aberto — recarregue' }, { status: 409 })
+      const errors: string[] = []
+      let booked = 0, rule: string | null = null
+      const fixQ = (label: string, field: string, v: string) => db.from('data_fixes').insert({ check_key: 'engine-questions', table_name: 'bank_merchant_rules', row_id: String(body.key || name).slice(0, 80), field, old_value: null, new_value: v.slice(0, 200), label: label.slice(0, 200) }).then(() => undefined, () => undefined)
+      if (target === 'IGNORE') {
+        for (const l of lines0) { try { await writeStatus(db, l, 'IGNORED', { note: ('PERGUNTA · ignorar ' + name).slice(0, 150) }); booked++ } catch (e) { errors.push(String((e as Error).message || e).slice(0, 120)) } }
+        await fixQ('PERGUNTA · IGNORAR ' + name + ' · ' + booked + ' linhas', 'IGNORE', String(booked))
+        return NextResponse.json({ ok: true, booked, rule, errors })
+      }
+      if (target === 'PERSONAL') {
+        const seasonId = String(body.season_id || '')
+        const { data: se } = await db.from('seasons').select('id, staff_id, season_code').eq('id', seasonId).maybeSingle()
+        if (!se) return NextResponse.json({ error: 'season inválida' }, { status: 400 })
+        for (const l of lines0) {
+          try {
+            if (!(num(l.amount) > 0)) throw new Error('só saída vira despesa pessoal')
+            const amt = Math.abs(num(l.amount))
+            const desc = mark(name + ' · ' + String(l.name || ''), MARKER_ASSIGNED)
+            // Retry idempotente: UMA despesa pessoal por linha do banco (elo payment_reference).
+            const { data: prevE } = await db.from('expenses').select('id').eq('payment_reference', 'bank:' + l.id).eq('origin', 'PERSONAL').maybeSingle()
+            let c: any = prevE || null
+            if (!c) { const { data: ins, error } = await db.from('expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: desc, amount: amt, source: String(l.merchant || l.name || name).slice(0, 120), expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_reference: 'bank:' + l.id }).select('id').single(); if (error || !ins) throw new Error('expenses: ' + (error?.message || 'insert falhou')); c = ins }
+            try { await writeMatch(db, l, { table: 'expenses', id: c.id }, { matched_note: ('PESSOAL · ' + name + ' · season ' + (se.season_code || String(se.id).slice(0, 6))).slice(0, 150), match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }) }
+            catch (e) { await db.from('expenses').delete().eq('id', c.id).eq('payment_reference', 'bank:' + l.id); throw e }
+            booked++
+          } catch (e) { errors.push(String((e as Error).message || e).slice(0, 120)) }
+        }
+        await fixQ('PERGUNTA · PESSOAL ' + name + ' → season ' + (se.season_code || String(se.id).slice(0, 6)) + ' · ' + booked + ' linhas', 'PERSONAL', seasonId)
+        return NextResponse.json({ ok: true, booked, rule, errors, href: '/staff/' + se.staff_id + '/seasons/' + se.id + '/expenses' })
+      }
+      let supplierId: string | null = null, category: string | null = null, ruleTarget = ''
+      if (target === 'FIXED') {
+        supplierId = String(body.supplier_id || '') || null
+        if (!supplierId && body.new_supplier && body.new_supplier.company) {
+          const ns = body.new_supplier
+          const { data: created, error } = await db.from('fixed_cost_suppliers').insert({ company: String(ns.company).slice(0, 120), cost_type: String(ns.cost_type || 'FIXED'), description: 'criado pela pergunta do AutoBook Engine (' + todayNY() + ')' }).select('id').single()
+          if (error || !created) return NextResponse.json({ error: 'fixed_cost_suppliers: ' + (error?.message || 'insert falhou') }, { status: 500 })
+          supplierId = String((created as any).id)
+        }
+        if (!supplierId) return NextResponse.json({ error: 'escolha ou crie o prestador' }, { status: 400 })
+        const { data: sup } = await db.from('fixed_cost_suppliers').select('id, cost_type').eq('id', supplierId).maybeSingle()
+        if (!sup || sup.cost_type === 'BANK') return NextResponse.json({ error: 'prestador inválido' }, { status: 400 })
+        ruleTarget = 'FIXED_EXPENSE'
+      } else if (target === 'SUPPLIES') { ruleTarget = 'INPUT'; category = INPUT_CATEGORIES.includes(String(body.category)) ? String(body.category) : 'CONSUMPTION' }
+      else if (target === 'BUCKET') ruleTarget = 'BUCKET'
+      else return NextResponse.json({ error: 'target inválido' }, { status: 400 })
+      // O padrão: o nome canônico + as variações do banco que ele não cobre, testado linha a linha
+      // (o motor testa o regex em merchant+name, name e merchant — mesmo teste aqui).
+      // Vocabulário do BANCO nunca vira padrão (revisão 4/set: «RECURRING\W*CARD» lançaria T-Mobile,
+      // Spectrum e todo débito recorrente no prestador errado, pra sempre). Token = 2 palavras do
+      // COMERCIANTE (stmtMerchant tira o prefixo do extrato), com fronteira de palavra na frente.
+      const STOPW = new Set(['THE', 'CARD', 'PIN', 'PURCHASE', 'RECURRING', 'TRANSACTION', 'PAYPAL', 'INST', 'XFER', 'ECHECK', 'STORE', 'INC', 'LLC', 'COM', 'WWW', 'USA', 'ORLANDO', 'KISSIMMEE', 'FLORIDA', 'ONLINE', 'SHOP', 'BILL', 'SALE', 'PAYMENT', 'DEBIT', 'CREDIT', 'FROM', 'TRANSFER', 'DEPOSIT', 'REGIONS', 'WIRE', 'GZ28', 'SPEEDS', 'SPEEDSHOP', 'REF', 'CHECK', 'BANK', 'FEE', 'FEES', 'AND', 'WITH', 'FOR', 'BILLPAY', 'AUTOPAY', 'WEB', 'POS', 'ACH', 'ZELLE', 'TST', 'PPD', 'CCD'])
+      const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const tok = (x: string) => { const w = String(x || '').toUpperCase().replace(/PP\*|TST\*|SQ\s*\*|SP\s*\*/g, ' ').split(/[^A-Z]+/).filter(t => t.length >= 3 && !STOPW.has(t)).slice(0, 2); return w.length ? '\\b' + w.map(esc).join('\\W*') : '' }
+      const hit = (l: any, re: RegExp) => re.test((l.merchant || '') + ' ' + (l.name || '')) || re.test(l.name || '') || re.test(l.merchant || '')
+      const alts = new Set<string>()
+      const canon = tok(name); if (canon) alts.add(canon)
+      for (const l of lines0) { const re = alts.size ? new RegExp([...alts].join('|'), 'i') : null; if (re && hit(l, re)) continue; const t = tok(l.merchant || '') || tok(stmtMerchant(l.name || '')); if (t) alts.add(t) }
+      if (!alts.size) return NextResponse.json({ error: 'não deu pra montar o padrão — só sobrou vocabulário do banco; case na mão' }, { status: 400 })
+      const pattern = [...alts].slice(0, 8).join('|')
+      const misses = lines0.filter((l: any) => !hit(l, new RegExp(pattern, 'i')))
+      if (misses.length === lines0.length) return NextResponse.json({ error: 'o padrão «' + pattern.slice(0, 60) + '» não bate em nenhuma linha do grupo — nomes fora do padrão; case na mão' }, { status: 400 })
+      const amtMax = Math.round(Math.max(...lines0.map((l: any) => Math.abs(num(l.amount)))) * 3 * 100) / 100
+      const { data: r, error: rErr } = await db.from('bank_merchant_rules').insert({
+        origin: 'HUMAN', active: true, direction: 'OUT', klass: null, target: ruleTarget, priority: 50, supplier_id: supplierId, category, amount_max: amtMax, pattern,
+        label: ('pergunta · ' + name).slice(0, 80), key: ('q:' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + ':' + Date.now().toString(36)),
+      }).select('id').single()
+      if (rErr || !r) return NextResponse.json({ error: 'bank_merchant_rules: ' + (rErr?.message || 'insert falhou') }, { status: 500 })
+      rule = r.id
+      if (misses.length) errors.push(misses.length + ' linha(s) do grupo ficam fora do padrão (nome diferente) — seguem como dúvida')
+      await fixQ('PERGUNTA · ' + target + ' ' + name + ' · regra /' + pattern.slice(0, 60) + '/', target, String(r.id))
+      // Lança AGORA as linhas do grupo com a regra nova (maturidade normal: o que é
+      // recente espera os 7 dias e mostra a dúvida MATURITY; o cron pega).
+      await loadDbAliases(db)
+      const [pool, rules, twins] = await Promise.all([candidatePool(db), loadRules(db), itemTwinKeys(db)])
+      const plan = buildPlan(lines0, pool, rules, { itemTwins: twins })
+      let run: string | null = null
+      try { run = await acquireRun(db, 'human') } catch { run = null }
+      if (run) {
+        try {
+          const res = await applyPlan(db, plan, { max: 500, batch: run })
+          booked = res.rule_create + res.rule_adopt + res.bucket + res.exact + res.name
+          errors.push(...res.errors.slice(0, 5))
+          await finishRun(db, run, { status: res.errors.length ? 'PARTIAL' : 'DONE', counts: { rule_create: res.rule_create, rule_adopt: res.rule_adopt, bucket: res.bucket }, errors: res.errors, remaining: 0, note: ('PERGUNTA · ' + target + ' ' + name).slice(0, 150) })
+        } catch (e) { await finishRun(db, run, { status: 'ERROR', errors: [String((e as Error).message || e).slice(0, 300)], note: 'PERGUNTA · exceção' }); errors.push(String((e as Error).message || e).slice(0, 120)) }
+      } else errors.push('motor rodando — a regra ficou salva; as linhas entram na próxima rodada')
+      return NextResponse.json({ ok: true, booked, rule, errors, waiting: Object.keys(plan.doubts).length, doubts: plan.skipped })
+    }
+    // NÃO É ESSE (gêmeo): a linha guarda o candidato recusado (doubt_answered) e o
+    // motor decide na hora sem ele — regra ou balde — ou diz por que ainda não.
+    if (action === 'reject_twin') {
+      const bankId2 = String(body.bank_id || ''), cand = String(body.cand || '')
+      if (!bankId2 || !/^[a-z_]+:.+/.test(cand)) return NextResponse.json({ error: 'bank_id/cand required' }, { status: 400 })
+      const { data: cur0, error: e0 } = await db.from('bank_transactions').select('doubt_answered').eq('id', bankId2).maybeSingle()
+      if (e0) return NextResponse.json({ error: e0.message, needs_migration: MIGRATION_RE.test(e0.message) }, { status: 500 })
+      const da0: any = (cur0 && cur0.doubt_answered && typeof cur0.doubt_answered === 'object') ? cur0.doubt_answered : {}
+      const cands = [...new Set([...(Array.isArray(da0.cands) ? da0.cands : []), ...(da0.cand ? [da0.cand] : []), cand].map(String))].slice(-20)
+      const { data: upd, error } = await db.from('bank_transactions').update({ doubt_answered: { cands, at: new Date().toISOString() } }).eq('id', bankId2).in('match_status', ['NEW', 'QUEUED']).select('id')
+      if (error) return NextResponse.json({ error: error.message, needs_migration: MIGRATION_RE.test(error.message) }, { status: 500 })
+      if (!upd || !upd.length) return NextResponse.json({ error: 'linha já decidida — recarregue' }, { status: 409 })
+      await db.from('data_fixes').insert({ check_key: 'engine-questions', table_name: 'bank_transactions', row_id: bankId2, field: 'doubt_answered', old_value: null, new_value: cand.slice(0, 200), label: ('PERGUNTA · NÃO É ESSE · ' + cand).slice(0, 200) }).then(() => undefined, () => undefined)
+      await loadDbAliases(db)
+      const [all, pool, rules, twins] = await Promise.all([newLines(db, 5000), candidatePool(db), loadRules(db), itemTwinKeys(db)])
+      const l2 = all.find((x: any) => String(x.id) === bankId2) || null
+      // Replaneja o CONJUNTO (valor repetido no banco, série): só a linha alvo entra no aplicar.
+      const planAll = buildPlan(all, pool, rules, { itemTwins: twins, minCreateAge: RULE_AGE_DAYS })
+      const plan = { items: planAll.items.filter(i => String(i.line.id) === bankId2), skipped: planAll.skipped, doubts: planAll.doubts }
+      let booked = 0; const errors: string[] = []
+      if (plan.items.length) {
+        let run: string | null = null
+        try { run = await acquireRun(db, 'human') } catch { run = null }
+        if (run) {
+          try { const res = await applyPlan(db, plan, { max: 5, batch: run }); booked = res.rule_create + res.rule_adopt + res.bucket + res.exact + res.name; errors.push(...res.errors); await finishRun(db, run, { status: 'DONE', counts: { bucket: res.bucket, rule_create: res.rule_create, exact: res.exact }, errors: res.errors, remaining: 0, note: 'PERGUNTA · não é esse' }) }
+          catch (e) { await finishRun(db, run, { status: 'ERROR', errors: [String((e as Error).message || e).slice(0, 300)], note: 'PERGUNTA · exceção' }); errors.push(String((e as Error).message || e).slice(0, 120)) }
+        } else errors.push('motor rodando — entra na próxima rodada')
+      }
+      return NextResponse.json({ ok: true, booked, errors, doubt: l2 ? plan.doubts[String((l2 as any).id)] || null : null })
+    }
+    // ADOTAR (deriva das três datas, Data Checker): a agendada aberta que o banco já
+    // pagou recebe a linha — payment_date = data do banco, elo, valor; DESFAZER volta tudo.
+    if (action === 'adopt_scheduled') {
+      const bankId2 = String(body.bank_id || ''), rowId = String(body.row_id || '')
+      if (!bankId2 || !rowId) return NextResponse.json({ error: 'bank_id/row_id required' }, { status: 400 })
+      const { data: line } = await db.from('bank_transactions').select(BSEL).eq('id', bankId2).maybeSingle()
+      if (!line || !['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
+      if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar' }, { status: 409 })
+      if (!(num(line.amount) > 0)) return NextResponse.json({ error: 'linha de entrada não paga conta' }, { status: 409 })
+      const { data: a } = await db.from('fixed_cost_expenses').select('id, supplier_id, expense_date, amount, description, paid_from, payment_date, bank_transaction_id').eq('id', rowId).maybeSingle()
+      if (!a || a.payment_date || a.bank_transaction_id) return NextResponse.json({ error: 'agendada já paga ou já ligada — recarregue' }, { status: 409 })
+      const amt = Math.abs(num(line.amount))
+      if (num(a.amount) > 0 && Math.abs(num(a.amount) - amt) > Math.max(100, 0.5 * num(a.amount))) return NextResponse.json({ error: 'valor fora da faixa (±50% ou $100) — ajuste a agendada antes' }, { status: 409 })
+      const newDesc = (String(a.description || '') + ' ' + MARKER_ADOPTED).slice(0, 200)
+      const { data: claimed } = await db.from('fixed_cost_expenses').update({ amount: amt, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id, description: newDesc, payment_date: line.date }).eq('id', a.id).is('payment_date', null).is('bank_transaction_id', null).select('id')
+      if (!claimed || !claimed.length) return NextResponse.json({ error: 'agendada mudou — recarregue' }, { status: 409 })
+      const backfill: any[] = [
+        { t: 'fixed_cost_expenses', id: a.id, f: 'amount', v: String(amt), o: String(a.amount) }, { t: 'fixed_cost_expenses', id: a.id, f: 'paid_from', v: 'GZ28US', o: a.paid_from ?? null },
+        { t: 'fixed_cost_expenses', id: a.id, f: 'payment_method', v: 'BANK ACCOUNT', o: null }, { t: 'fixed_cost_expenses', id: a.id, f: 'bank_transaction_id', v: String(line.id), o: null },
+        { t: 'fixed_cost_expenses', id: a.id, f: 'description', v: newDesc, o: a.description ?? null }, { t: 'fixed_cost_expenses', id: a.id, f: 'payment_date', v: String(line.date), o: null },
+      ]
+      const days = signedDays(String(line.date), String(a.expense_date))
+      try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · Data Checker').slice(0, 150), match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }, backfill) }
+      catch (e) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id); return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
+      await db.from('data_fixes').insert({ check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: a.id, field: 'payment_date', old_value: null, new_value: String(line.date), label: ('ADOTAR · agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }).then(() => undefined, () => undefined)
+      return NextResponse.json({ ok: true, row_id: a.id, days })
     }
     // ── A FILA DO BALDE (fase B): atribuir / desatribuir ──
     if (action === 'assign' || action === 'assign_bulk' || action === 'unassign') {
@@ -482,6 +709,22 @@ export async function POST(req: NextRequest) {
           if (dest === 'SUPPLIES') learned = await learnFromMatch(db, line, { table: 'inputs', id: newId })
           href = dest === 'STOCK' ? '/inventory' : '/supplies'
           await fixRow(line, 'assign', 'A ATRIBUIR', dest, (dest === 'STOCK' ? 'ESTOQUE' : 'SUPPLIES ' + category) + ' · ' + lineLabel)
+        } else if (dest === 'PERSONAL') {
+          // PESSOAL (lei do Márcio): compra de alguém da equipe no cartão da empresa —
+          // sai do custo (expenses, origin PERSONAL, season da pessoa); elo = payment_reference bank:<id>.
+          const seasonId = String(b.season_id || '')
+          const { data: se } = await db.from('seasons').select('id, staff_id, season_code').eq('id', seasonId).maybeSingle()
+          if (!se) throw new Error('season inválida')
+          const { data: created, error } = await db.from('expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: mark(label, MARKER_ASSIGNED), amount: amt, source: supplier.slice(0, 120), expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', payment_reference: 'bank:' + line.id }).select('id').single()
+          if (error || !created) throw new Error('expenses: ' + (error?.message || 'insert falhou'))
+          newId = created.id
+          const note = 'ATRIBUÍDA · PESSOAL ' + (se.season_code || '') + ' · ' + label
+          const dropPersonal = () => db.from('expenses').delete().eq('id', newId).eq('payment_reference', 'bank:' + line.id)
+          if (!await repoint('expenses', newId, note)) { await dropPersonal(); throw new Error('linha do banco já decidida — recarregue') }
+          if (!await dropBucketRow()) { await unpoint('expenses', newId); await dropPersonal(); throw new Error('linha não está no balde — recarregue') }
+          await logMatchEvent(db, line, 'MATCH', { matched_table: 'expenses', matched_id: newId, note, engine: ENGINE_BUCKET })
+          href = '/staff/' + se.staff_id + '/seasons/' + se.id + '/expenses'
+          await fixRow(line, 'assign', 'A ATRIBUIR', 'PERSONAL', 'PESSOAL ' + (se.season_code || '') + ' · ' + lineLabel)
         } else if (dest === 'FIXO') {
           const supplierId = String(b.supplier_id || '')
           const { data: sup } = await db.from('fixed_cost_suppliers').select('id, company, cost_type').eq('id', supplierId).maybeSingle()
@@ -604,6 +847,7 @@ export async function POST(req: NextRequest) {
         const del = async (table: string, col: string, f: (q: any) => any, msg: string) => { const q0: any = (db.from(table) as any).delete().eq('purchase_group', line.id).ilike(col, '%' + MARKER_ASSIGNED + '%'); const { data: r } = await f(q0).select('id'); if (r && r.length) changed.push(msg + (r.length > 1 ? ' ×' + r.length : '')) }
         await del('inputs', 'description', q => q, 'insumo apagado'); await del('inventory', 'description', q => q, 'estoque apagado'); await del('invoice_expenses', 'item', q => q.neq('invoice_id', bucketId), 'parte apagada')
         { const { data: r } = await db.from('fixed_cost_expenses').delete().eq('bank_transaction_id', line.id).ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('custo fixo apagado') }
+        { const { data: r } = await db.from('expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('despesa pessoal apagada') }
         await logMatchEvent(db, line, 'MATCH', { matched_table: 'invoice_expenses', matched_id: made.id, note: 'DESATRIBUÍDA · ' + made.supplier, engine: ENGINE_BUCKET })
       }
       await fixRow(line, 'unassign', String(line.matched_table), 'A ATRIBUIR', ('DESATRIBUIR · ' + line.date + ' · ' + (line.merchant || line.name || '') + (changed.length ? ' → ' + changed.join(', ') : '')))
@@ -721,11 +965,11 @@ export async function POST(req: NextRequest) {
     // motor (marcador obrigatório) que ficou sem linha casada apontando pra ele.
     if (action === 'purge_orphan') {
       const table = String(body.table || ''), rowId = String(body.row_id || '')
-      if (!['fixed_cost_expenses', 'inputs', 'inventory', 'invoice_expenses'].includes(table) || !rowId) return NextResponse.json({ error: 'table/row_id inválidos' }, { status: 400 })
+      if (!['fixed_cost_expenses', 'inputs', 'inventory', 'invoice_expenses', 'expenses'].includes(table) || !rowId) return NextResponse.json({ error: 'table/row_id inválidos' }, { status: 400 })
       const { data: row } = await (db.from(table) as any).select('*').eq('id', rowId).maybeSingle()
       if (!row) return NextResponse.json({ error: 'linha não existe mais' }, { status: 404 })
       const marker = String(table === 'invoice_expenses' ? row.item : row.description || '')
-      const bankRef = table === 'fixed_cost_expenses' ? String(row.bank_transaction_id || '') : table === 'inputs' && String(row.order_number || '').startsWith('bank:') ? String(row.order_number || '').slice(5) : String(row.purchase_group || '')
+      const bankRef = table === 'fixed_cost_expenses' ? String(row.bank_transaction_id || '') : table === 'expenses' ? (String(row.payment_reference || '').startsWith('bank:') && row.origin === 'PERSONAL' ? String(row.payment_reference).slice(5) : '') : table === 'inputs' && String(row.order_number || '').startsWith('bank:') ? String(row.order_number || '').slice(5) : String(row.purchase_group || '')
       if (!bankRef || !/Bank Link\)/.test(marker)) return NextResponse.json({ error: 'não é lançamento do motor — nunca apago linha de gente' }, { status: 409 })
       if (table === 'invoice_expenses') { const bId = await bucketInvoiceId(db); if (row.invoice_id !== bId) return NextResponse.json({ error: 'linha de invoice fora do balde — nunca apago linha de gente' }, { status: 409 }) }
       // QUALQUER linha casada apontando (motor ou humano, por id ou por grupo) = não é órfão (revisão 19).
@@ -795,7 +1039,7 @@ export async function POST(req: NextRequest) {
       status = 'MATCHED'
     } else {
       // Toda decisão humana parte de NEW (revisão #9/#20): linha já casada precisa de DESFAZER antes.
-      if (line.match_status !== 'NEW') return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
+      if (!['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
       if (action === 'match') {
         await humanMatch(line)
         status = 'MATCHED'

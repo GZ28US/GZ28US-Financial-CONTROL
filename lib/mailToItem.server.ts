@@ -86,6 +86,13 @@ export const PEDIDO_NOVO = [
   /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*(PO-\d{3}-\d{10,20})\b/gi,     // Temu
   /\border\s*(?:number|#|no\.?)?\s*[:#]?\s*#?(\d{6,7})\b/gi,                 // HHP / HP Tuners
   /\bpedido\s*(?:n[ºo°]|#)?\s*[:#]?\s*(\d{5,})\b/gi,                          // lojas BR
+  // Varejo americano com prefixo de letras — Home Depot "Order #WH43863914",
+  // Lowe's, Walmart. A palavra "order" colada continua sendo a trava: sozinho,
+  // "WH43863914" tem a mesma cara de SKU e de nº de nota (07/set/2026: a compra
+  // de $186,47 da Home Depot ficou sem pedido nenhum por falta deste formato).
+  // (sem flag `i`: a palavra aceita as duas caixas, o CÓDIGO tem de vir em
+  //  maiúsculas — com `i`, "order the wh12345678" viraria pedido.)
+  /\b[Oo]rder\s*(?:[Nn]umber|#|[Nn]o\.?)?\s*[:#]?\s*#?([A-Z]{2,3}\d{6,12})\b/g, // Home Depot & cia
 ]
 
 type Linha = { tabela: ItemTable; id: string; order_number: string; tracking_number: string | null; carrier: string | null; delivered_at: string | null; cancel_status: string | null }

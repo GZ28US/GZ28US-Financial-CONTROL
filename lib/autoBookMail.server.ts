@@ -43,7 +43,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail,
-  isPurchaseConfirmation, type MailMsg, type MailAuth,
+  GMAIL_Q_COMPRA, type MailMsg, type MailAuth,
 } from './streamMail.server'
 import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
@@ -89,12 +89,20 @@ export function parseNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+// "Total" sozinho é fraco em qualquer lugar do e-mail — MENOS dentro do bloco de
+// fechamento da compra. Home Depot, Lowe's e Walmart escrevem "Order Summary …
+// Subtotal … Taxes … Total $186.47": ali o "Total" é o total do pedido, com todas
+// as letras. Medido em 07/set: sem esta subida a compra de $186,47 da Home Depot
+// nascia como dúvida de "rótulo fraco" mesmo tendo valor exato no e-mail.
+const BLOCO_FECHAMENTO = /(order|payment|purchase)\s+summary|resumo (do pedido|da compra)/i
+
 export function parseMoney(texto: string): { amount: number; currency: string; strong: boolean; label: string } | null {
   let best: { amount: number; currency: string; strong: boolean; label: string } | null = null
   for (const m of texto.matchAll(ROTULO)) {
     const label = m[1], sym = m[2] || '', n = parseNumber(m[3] || '')
     if (n == null) continue
-    const strong = FORTE.test(label)
+    const antes = texto.slice(Math.max(0, (m.index ?? 0) - 220), m.index ?? 0)
+    const strong = FORTE.test(label) || (/^total$/i.test(label.trim()) && BLOCO_FECHAMENTO.test(antes))
     // ZERO só vale de rótulo FORTE, e vale de propósito: o PO de $0.00 do Temu
     // é um total de verdade e a resposta certa a ele é "não gera linha". Zero
     // de rótulo fraco é lixo de rodapé ("Total: 0 items") e não conta.
@@ -130,16 +138,76 @@ export function orderNumbersIn(texto: string): string[] {
   return [...out]
 }
 
+// ── UM E-MAIL, VÁRIOS PEDIDOS ──────────────────────────────────────────────
+// O Temu é o fornecedor de maior volume da casa e ele parte a compra: "Your
+// purchase has been divided into 2 orders. Order 1 of 2 — Order ID: PO-…-…86085
+// … Order total $0.00 … Order 2 of 2 — Order ID: PO-…-…34042 … Order total
+// $3.94". Pegar "o maior total do e-mail" ali é simplesmente o valor errado
+// colado no pedido errado. Cada pedido tem o SEU total, e ele mora no texto
+// logo depois do número — é isso que esta função lê.
+// Fora de janela (>600 chars) não conta: total distante é de outro bloco.
+export function totaisPorPedido(texto: string): Record<string, { amount: number; currency: string }> {
+  const out: Record<string, { amount: number; currency: string }> = {}
+  for (const pedido of orderNumbersIn(texto)) {
+    const at = texto.indexOf(pedido)
+    if (at < 0) continue
+    const janela = texto.slice(at + pedido.length, at + pedido.length + 600)
+    const m = parseMoney(janela)
+    if (m?.strong) out[pedido] = { amount: m.amount, currency: m.currency }
+  }
+  return out
+}
+
 // ── A PENEIRA ──────────────────────────────────────────────────────────────
 // Só passa e-mail que carrega dinheiro que vira ou muda linha no app. É a lei
 // de escopo desta rodada, escrita em código: o resto não existe.
+//
+// NÃO se usa `isPurchaseConfirmation` aqui, e a diferença custou a primeira
+// rodada inteira (07/set/2026: 173 e-mails lidos, ZERO com dinheiro). Aquela
+// função responde outra pergunta — "posso confiar num rastreio dentro deste
+// e-mail?" — e por isso ela NEGA todo e-mail que fale de embarque. Só que
+// "Order confirmed. We're processing your order now!" da Home Depot diz, no
+// corpo, "we'll let you know when your items ship and tracking numbers are
+// available": vocabulário de embarque num e-mail que É a confirmação da compra,
+// com o total de $186,47 dentro. E "Your Temu orders confirmation" não casa com
+// `order (confirm…)` por causa do "s" no meio. Duas negativas, mesma origem:
+// julgar COMPRA pelo formato do assunto.
+//
+// A régua aqui é outra, e é sobre CONTEÚDO: um e-mail com um total de rótulo
+// FORTE e um número de pedido é uma compra, diga o assunto o que disser. O
+// assunto só entra como reforço, para o caso em que o valor não deu para ler.
+// "order has been received" não casa com `order (receiv…)`: tem quatro palavras
+// no meio. Por isso a janela de até 40 caracteres entre o pedido e o verbo — foi
+// assim que "Your HP Tuners order has been received!" passou batido em 07/set.
+const COMPRA_ASSUNTO = /\border\b.{0,40}?\b(confirmed|received|placed|acknowledged)\b|\border\s*(confirm|receiv|placed|acknowledg)|orders?\s+confirmation|confirmation of your order|confirmed:|thank(s| you) for (your|shopping)|your (order|purchase|receipt|invoice)\b|purchase (is )?confirmed|receipt for your (payment|purchase)|payment receipt|pedido (confirmado|recebido|realizado)|confirma[çc][ãa]o (do|de) pedido|recibo d[eo] pagamento|nota fiscal/i
+
+// ── O RECIBO DO PAYPAL ─────────────────────────────────────────────────────
+// O PayPal é o trilho de pagamento da casa e o recibo dele não tem rótulo
+// nenhum no corpo: o valor mora NO ASSUNTO — "Whaleco Commerce, LL...: $30.88
+// USD", "HP Tuners LLC: $499.99 USD". Nenhuma régua de rótulo pega isso, e são
+// exatamente os e-mails que provam o dinheiro saindo. O assunto do PayPal é
+// estruturado (<comerciante>: <valor> <moeda>), então dá para ler com certeza —
+// e o comerciante que vem dali vale mais que o domínio "paypal.com".
+const PAYPAL_ASSUNTO = /^(.{2,60}?)\s*:\s*(R\$|US\$|\$)?\s*([0-9][0-9.,]{0,13})\s*(USD|BRL)?\s*$/
+export function paypalReceipt(msg: MailMsg): { vendor: string; amount: number; currency: string } | null {
+  if (!/paypal\./i.test(msg.fromAddr)) return null
+  const m = msg.subject.match(PAYPAL_ASSUNTO)
+  if (!m) return null
+  const n = parseNumber(m[3])
+  if (n == null || !(n > 0)) return null
+  const currency = m[4]?.toUpperCase() || (/R\$/.test(m[2] || '') ? 'BRL' : 'USD')
+  return { vendor: m[1].replace(/\.{2,}$/, '').replace(/,\s*(LL|LLC|INC|LTD)\.*$/i, '').trim(), amount: n, currency }
+}
+
 export function classify(msg: MailMsg): { kind: AbKind; money: ReturnType<typeof parseMoney>; orders: string[] } | null {
   const texto = `${msg.subject}\n${msg.text}`
   const orders = orderNumbersIn(texto)
-  const money = parseMoney(texto)
+  const pp = paypalReceipt(msg)
+  const money = pp ? { amount: pp.amount, currency: pp.currency, strong: true, label: 'PayPal (assunto)' } : parseMoney(texto)
+  if (pp) return { kind: 'CHARGE', money, orders }
   const refund = ESTORNOU.test(texto)
-  const compra = isPurchaseConfirmation(msg)
   const cobranca = COBRANCA.test(texto)
+  const compra = COMPRA_ASSUNTO.test(msg.subject) || !!(money?.strong && orders.length)
   if (!refund && !compra && !cobranca) return null
   if (!orders.length && !money) return null
   return { kind: refund ? 'REFUND' : compra ? 'PURCHASE' : 'CHARGE', money, orders }
@@ -188,6 +256,34 @@ export async function candidatosPara(db: SupabaseClient, vendor: string): Promis
     add('expenses', String(r.season_id), `expenses ${String(r.origin || '')} (season ${String(r.season_id).slice(0, 8)})`, String(r.expense_date || '').slice(0, 10))
   }
   return [...out.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1)).slice(0, 5)
+}
+
+// ── JÁ EXISTE ALGO DESTE COMERCIANTE POR PERTO? ────────────────────────────
+// Teste deliberadamente FRACO: fornecedor parecido + data na janela, NUNCA
+// valor exato. Conferir recibo do PayPal por valor de uma linha só já deu
+// alarme falso quatro vezes (04/set) — o app parte a compra em price + tax +
+// extra e rateia entre carros, então o valor do recibo não existe em linha
+// nenhuma mesmo quando a compra está lançada. Aqui a pergunta é outra e mais
+// honesta: "temos QUALQUER coisa deste comerciante nestes dias?". Se não temos,
+// é dinheiro fora do app e vale perguntar.
+async function temLinhaPorPerto(db: SupabaseClient, vendor: string, data: string, dias = 6): Promise<boolean> {
+  const like = `%${vendor.slice(0, 12)}%`
+  const de = new Date(Date.parse(data + 'T12:00:00Z') - dias * 86400e3).toISOString().slice(0, 10)
+  const ate = new Date(Date.parse(data + 'T12:00:00Z') + dias * 86400e3).toISOString().slice(0, 10)
+  // `fixed_cost_expenses` (assinaturas) não tem coluna `supplier` — o prestador
+  // mora em supplier_id. Lá o nome que sobra é o da descrição, e é por ele que
+  // se procura; usar 'supplier' ali devolveria erro mudo e o teste diria "não
+  // existe" para toda assinatura da casa.
+  for (const [t, col, campo] of [
+    ['invoice_expenses', 'expense_date', 'supplier'],
+    ['expenses', 'expense_date', 'supplier'],
+    ['inputs', 'purchase_date', 'supplier'],
+    ['fixed_cost_expenses', 'expense_date', 'description'],
+  ] as const) {
+    const { data: hit } = await db.from(t).select('id').ilike(campo, like).gte(col, de).lte(col, ate).limit(1)
+    if ((hit || []).length) return true
+  }
+  return false
 }
 
 // ── REGRA ──────────────────────────────────────────────────────────────────
@@ -242,7 +338,9 @@ async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Prom
   const nome = auth.account || 'slot' + auth.id
   const token = await freshAccessToken(db, auth)
   if (!token) return { nome: nome + ':sem-token', slot: auth.id || 0, msgs: [] }
-  const msgs = mailProvider(auth) === 'gmail' ? await fetchRecentGmail(token, desde) : await fetchRecentMessages(token, desde)
+  const msgs = mailProvider(auth) === 'gmail'
+    ? await fetchRecentGmail(token, desde, { q: GMAIL_Q_COMPRA, max: 60 })
+    : await fetchRecentMessages(token, desde)
   return { nome: `${nome}:${msgs.length}`, slot: auth.id || 0, msgs }
 }
 
@@ -268,67 +366,99 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3): Promise<Au
       const c = classify(msg)
       if (!c) continue
       out.comDinheiro++
-      const chave = keyOf(caixa.slot, msg)
-      if (naFila.has(chave)) continue
 
-      // 3. já tem dono? o mailToItem cuida dos fatos dessa linha.
-      const dono = c.orders.find(o => conhecidos.has(o))
-      if (dono) { out.jaTemLinha.push(`${dono} — ${msg.subject.slice(0, 50)}`); continue }
-
-      const vendor = vendorOf(msg)
-      const order = c.orders[0] || null
-      const amount = c.money?.amount ?? null
+      // No recibo do PayPal quem interessa é o COMERCIANTE ("HP Tuners LLC"),
+      // não o trilho ("paypal.com") — é o comerciante que casa com o histórico.
+      const pp = paypalReceipt(msg)
+      const vendor = pp?.vendor || vendorOf(msg)
       const data = String(msg.received || new Date().toISOString()).slice(0, 10)
-      const desc = `${vendor}${order ? ' — pedido ' + order : ''} — ${msg.subject.slice(0, 90)}`
+      const texto = `${msg.subject}\n${msg.text}`
 
-      // 0,00 não gera linha (PO de $0.00 do Temu).
-      if (amount != null && amount === 0) { out.ignorados.push(`${vendor} ${order || ''} — total 0,00`); continue }
-
-      const regra = ruleFor(msg, vendor, rules)
-      if (regra?.action === 'IGNORE') {
-        out.ignorados.push(`${vendor} — ${msg.subject.slice(0, 50)} (regra "${regra.label || regra.id.slice(0, 8)}")`)
-        await db.from('auto_book_mail_rules').update({ hits: (regra.hits || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', regra.id)
+      // ── O RECIBO DO PAYPAL É A PERNA DO PAGAMENTO, NÃO A COMPRA ──────────
+      // Ele quase nunca traz número de pedido, então não dá para casar por
+      // pedido. Se já existe linha desse comerciante por perto da data, o
+      // recibo é o pagamento de algo JÁ lançado e perguntar seria ruído puro.
+      // Se não existe NADA dele na janela, aí sim é dinheiro fora do app — foi
+      // exatamente assim que o $4,17 do Temu apareceu na conferência à mão.
+      if (pp && !c.orders.length && await temLinhaPorPerto(db, vendor, data)) {
+        out.jaTemLinha.push(`${vendor} ${pp.currency} ${pp.amount} — recibo PayPal de compra já lançada`)
         continue
       }
 
-      // 4. REGRA DE LANÇAMENTO — só com valor de rótulo FORTE e pedido na mão.
-      if (regra?.action === 'BOOK' && regra.target && c.money?.strong && amount && order) {
-        const r = await lancar(db, regra.target as Record<string, unknown>, { vendor, order, amount, date: data, desc })
-        if ('erro' in r) { out.erros.push(`${vendor} ${order}: ${r.erro}`) }
-        else {
+      // ── UM PEDIDO POR VEZ ───────────────────────────────────────────────
+      // "Your purchase has been divided into 2 orders": dois pedidos, dois
+      // totais, dois destinos possíveis. Uma linha de fila por pedido.
+      const totais = totaisPorPedido(texto)
+      type Item = { order: string | null; amount: number | null; currency: string; strong: boolean; label: string | null }
+      const itens: Item[] = c.orders.length
+        ? c.orders.map((o): Item => {
+          const t = totais[o]
+          if (t) return { order: o, amount: t.amount, currency: t.currency, strong: true, label: 'Order total (do próprio pedido)' }
+          // Pedido único no e-mail: o total do e-mail é dele, sem ambiguidade.
+          if (c.orders.length === 1 && c.money) return { order: o, amount: c.money.amount, currency: c.money.currency, strong: c.money.strong, label: c.money.label }
+          // Vários pedidos e nenhum total colado: atribuir seria chute.
+          return { order: o, amount: null, currency: c.money?.currency || 'USD', strong: false, label: null }
+        })
+        : [{ order: null, amount: c.money?.amount ?? null, currency: c.money?.currency || 'USD', strong: !!c.money?.strong, label: c.money?.label ?? null }]
+
+      for (const it of itens) {
+        const chave = it.order ? `${keyOf(caixa.slot, msg)}#${it.order}` : keyOf(caixa.slot, msg)
+        if (naFila.has(chave)) continue
+
+        // já tem dono? o mailToItem cuida dos fatos dessa linha.
+        if (it.order && conhecidos.has(it.order)) { out.jaTemLinha.push(`${it.order} — ${msg.subject.slice(0, 50)}`); continue }
+
+        const desc = `${vendor}${it.order ? ' — pedido ' + it.order : ''} — ${msg.subject.slice(0, 90)}`
+        // 0,00 não gera linha (PO de $0.00 do Temu).
+        if (it.amount === 0) { out.ignorados.push(`${vendor} ${it.order || ''} — total 0,00`); continue }
+
+        const regra = ruleFor(msg, vendor, rules)
+        if (regra?.action === 'IGNORE') {
+          out.ignorados.push(`${vendor} — ${msg.subject.slice(0, 50)} (regra "${regra.label || regra.id.slice(0, 8)}")`)
           await db.from('auto_book_mail_rules').update({ hits: (regra.hits || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', regra.id)
-          await db.from('auto_book_mail').insert({
-            message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
-            from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: order,
-            currency: c.money.currency, amount, extracted: { label: c.money.label, orders: c.orders, regra: regra.label },
-            status: 'BOOKED', booked_table: r.table, booked_id: r.id, answered_at: new Date().toISOString(),
-            question: 'LANCADA POR REGRA — falta a printable invoice (PDF do vendedor) no receipt_url e na pasta Purchases',
-          })
-          naFila.add(chave)
-          out.lancados.push(`${vendor} ${order} ${c.money.currency} ${amount} → ${r.table}:${r.id.slice(0, 8)}`)
-          out.semRecibo.push(`${r.table}:${r.id.slice(0, 8)} — ${vendor} ${order}`)
           continue
         }
-      }
 
-      // 5. A PERGUNTA. Uma só, com tudo que já foi lido e os destinos medidos.
-      const cands = await candidatosPara(db, vendor)
-      const falta = [
-        !order ? 'sem numero de pedido' : null,
-        amount == null ? 'sem valor legivel' : !c.money?.strong ? `valor ${amount} lido de rotulo fraco ("${c.money?.label}")` : null,
-      ].filter(Boolean)
-      const question = c.kind === 'REFUND'
-        ? `Estorno de ${vendor}${order ? ' (pedido ' + order + ')' : ''}${amount ? ' — ' + c.money?.currency + ' ' + amount : ''}: qual linha ele abate?`
-        : `Compra de ${vendor}${order ? ' — pedido ' + order : ''}${amount ? ' — ' + c.money?.currency + ' ' + amount : ''}: entra em qual invoice/carro?${falta.length ? ' (' + falta.join('; ') + ')' : ''}`
-      const { error } = await db.from('auto_book_mail').insert({
-        message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
-        from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: order,
-        currency: c.money?.currency || 'USD', amount, question, cands,
-        extracted: { label: c.money?.label || null, strong: !!c.money?.strong, orders: c.orders, trecho: msg.text.slice(0, 900) },
-      })
-      if (error) { out.erros.push(`fila ${vendor}: ${error.message}`); continue }
-      naFila.add(chave)
-      out.perguntas.push(question)
+        // REGRA DE LANÇAMENTO — só com valor de rótulo FORTE e pedido na mão.
+        if (regra?.action === 'BOOK' && regra.target && it.strong && it.amount && it.order) {
+          const r = await lancar(db, regra.target as Record<string, unknown>, { vendor, order: it.order, amount: it.amount, date: data, desc })
+          if ('erro' in r) { out.erros.push(`${vendor} ${it.order}: ${r.erro}`) }
+          else {
+            await db.from('auto_book_mail_rules').update({ hits: (regra.hits || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', regra.id)
+            await db.from('auto_book_mail').insert({
+              message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
+              from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
+              currency: it.currency, amount: it.amount, extracted: { label: it.label, orders: c.orders, regra: regra.label },
+              status: 'BOOKED', booked_table: r.table, booked_id: r.id, answered_at: new Date().toISOString(),
+              question: 'LANCADA POR REGRA — falta a printable invoice (PDF do vendedor) no receipt_url e na pasta Purchases',
+            })
+            naFila.add(chave)
+            out.lancados.push(`${vendor} ${it.order} ${it.currency} ${it.amount} → ${r.table}:${r.id.slice(0, 8)}`)
+            out.semRecibo.push(`${r.table}:${r.id.slice(0, 8)} — ${vendor} ${it.order}`)
+            continue
+          }
+        }
+
+        // A PERGUNTA. Uma só, com tudo que já foi lido e os destinos medidos.
+        const cands = await candidatosPara(db, vendor)
+        const falta = [
+          !it.order ? 'sem numero de pedido' : null,
+          it.amount == null ? 'sem valor legivel' : !it.strong ? `valor ${it.amount} lido de rotulo fraco ("${it.label}")` : null,
+        ].filter(Boolean)
+        const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
+        const question = c.kind === 'REFUND'
+          ? `Estorno de ${vendor}${it.order ? ' (pedido ' + it.order + ')' : ''}${valor}: qual linha ele abate?`
+          : `${c.kind === 'CHARGE' ? 'Cobranca' : 'Compra'} de ${vendor}${it.order ? ' — pedido ' + it.order : ''}${valor}: entra em qual invoice/carro?${falta.length ? ' (' + falta.join('; ') + ')' : ''}`
+        const { error } = await db.from('auto_book_mail').insert({
+          message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
+          from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
+          currency: it.currency, amount: it.amount, question, cands,
+          extracted: { label: it.label, strong: it.strong, orders: c.orders, totais, trecho: msg.text.slice(0, 900) },
+        })
+        if (error) { out.erros.push(`fila ${vendor}: ${error.message}`); continue }
+        naFila.add(chave)
+        out.perguntas.push(question)
+      }
     }
   }
   return out
