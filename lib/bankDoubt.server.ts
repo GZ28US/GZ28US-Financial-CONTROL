@@ -32,9 +32,13 @@ const dayDiff = (a: string, b: string) => Math.round((Date.parse(String(a).slice
 // `date_conclusion` é FIM DO TERMO, não morte: a apólice da frota termina em jan/2027
 // e está viva. Só conclusão no PASSADO tira o prestador do jogo (revisão de 4/set:
 // o resolver antigo pulava a Progressive viva por isso).
-export type FixedSupplier = { id: string; company: string | null; description?: string | null; cost_type?: string | null; date_conclusion?: string | null; mail_match?: string | null; aliases?: string | null }
+// O apelido do prestador mora em mail_match (uma linha ou vírgula por apelido).
+// NÃO existe fixed_cost_suppliers.aliases no banco — o campo estava aqui prometendo
+// um casamento que nunca acontecia, porque o SELECT nunca o pedia e o valor caía
+// sempre em undefined. Campo novo aqui seria duplicar mail_match.
+export type FixedSupplier = { id: string; company: string | null; description?: string | null; cost_type?: string | null; date_conclusion?: string | null; mail_match?: string | null }
 export const supplierAlive = (s: FixedSupplier, today = todayNY()) => !s.date_conclusion || String(s.date_conclusion).slice(0, 10) >= today
-const supKeys = (s: FixedSupplier) => [s.company, ...String(s.mail_match || '').split(/[\n,]/), ...String(s.aliases || '').split(/[\n,]/)].map(x => normSup(String(x || ''))).filter(k => k.length >= 4)
+const supKeys = (s: FixedSupplier) => [s.company, ...String(s.mail_match || '').split(/[\n,]/)].map(x => normSup(String(x || ''))).filter(k => k.length >= 4)
 // Devolve o ÚNICO prestador vivo cujo nome/mail_match/alias casa com a linha; 2+ = ambíguo (lista); 0 = nenhum.
 export function matchFixedSupplier(l: any, cls: Classified, sups: FixedSupplier[], dir: SupplierEntry[], today = todayNY()): { one: FixedSupplier | null; hits: FixedSupplier[] } {
   const name = supplierNameFor(l, cls, dir)

@@ -516,7 +516,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
           {/* ── PERGUNTAS DO MOTOR (BL 0.10.0, lei do João de 4/set: silêncio é promessa de que está tudo certo;
               o que o motor não resolve vira PERGUNTA com motivo — por FORNECEDOR, respondida uma vez) ── */}
           {questions && (questions.suppliers.length > 0 || questions.money.length > 0) && (
-            <div className="border border-purple-900/60 rounded-2xl p-4">
+            <div id="perguntas" className="border border-purple-900/60 rounded-2xl p-4 scroll-mt-24">
               <button onClick={() => setQOpen(o => !o)} className="w-full text-left font-bold">PERGUNTAS DO MOTOR <span className="text-purple-300">{questions.suppliers.length}</span> <span className="text-xs text-gray-500 font-normal">· {questions.suppliers.reduce((a, g) => a + g.n, 0)} linhas · {usd(questions.suppliers.reduce((a, g) => a + g.total, 0))} · uma resposta por fornecedor vira regra pra sempre{questions.money.length ? ` · ${questions.money.length} de dinheiro-movimento ficam com você em SEM CASAMENTO` : ''}</span> <span className="text-gray-500 ml-2">{qOpen ? '▴' : '▾'}</span></button>
               {qOpen && (
                 <div className="divide-y divide-gray-800 mt-2">
