@@ -18,6 +18,7 @@ import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
+import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
@@ -1053,9 +1054,22 @@ export default function EditInvoicePage() {
 
   function confirmScannedPurchase() {
     if (!scannedPurchase) return
+    // O NOME DO FORNECEDOR ENTRA CURADO (ordem dele, 07/set/2026: *"normalize
+    // sempre os nomes dos fornecedores, ensine todos os robôs de escaneamento a
+    // fazer isso, assim os dados já entram certos"*). O recibo escreve o vendedor
+    // como bem entende — "AutoZone Store 02484", "HP tuners", "Ebay" — e cada
+    // grafia nova vira um fornecedor a mais no relatório. Medido nos dois bancos:
+    // 459 grafias distintas para 107 cadastros, em 2.799 linhas de valor.
+    //
+    // Só na ESCRITA. Sem cadastro que case, fica o nome CRU: matchSupplier devolve
+    // null em vez de adivinhar, e inventar fornecedor é pior que repetir a grafia
+    // do recibo. O `enrollParts` abaixo não precisa disto — lib/partsDb.ts já cura
+    // por dentro desde 04/set —, mas recebe o mesmo nome para não divergir.
+    const fornecedor = matchSupplier(scannedPurchase.supplier, supplierDirectoryFrom(suppliers))?.name
+      || scannedPurchase.supplier
     const groupId = generateUUID()
     const newItems: Expense[] = scannedPurchase.items.map(item => ({
-      supplier: scannedPurchase.supplier,
+      supplier: fornecedor,
       item: item.description,
       part_number: item.part_number || '',
       amount: item.amount,
@@ -1068,7 +1082,7 @@ export default function EditInvoicePage() {
       receipt_urls: [scannedPurchase.receiptUrl],
       purchase_group: groupId,
       export_status: 'FRESH',
-      item_discount: normalizeItemDiscount(scannedPurchase.supplier, item.item_discount),
+      item_discount: normalizeItemDiscount(fornecedor, item.item_discount),
       source: scannedPurchase.source || DEFAULT_SOURCE,
       payment_method: 'CASH',
       // The scanned payer (matched to GZ28US/GZ28BR) is who PAID the invoice.
@@ -1083,7 +1097,7 @@ export default function EditInvoicePage() {
       // entrega no escaneamento da compra, e Bought; se nao teve, e PickUp."
       // Amazon & cia nunca são picked_up — loja online não tem balcão. Se a nota
       // trouxe rastreio, o badge vira SHIPPED sozinho, por derivação.
-      picked_up: pickedUpFromScan({ supplier: scannedPurchase.supplier, shipTo: scannedPurchase.ship_to }),
+      picked_up: pickedUpFromScan({ supplier: fornecedor, shipTo: scannedPurchase.ship_to }),
       // O scan NÃO aprende cancelamento (30/ago/2026): estorno chega por e-mail
       // depois, nunca no documento de compra. Nota escaneada é compra VIVA.
       cancel_status: null,
@@ -1124,7 +1138,7 @@ export default function EditInvoicePage() {
     void enrollParts(scannedPurchase.items.map(it => ({
       item: it.description,
       part_number: it.part_number,
-      supplier: scannedPurchase.supplier,
+      supplier: fornecedor,
       unit_price: it.amount,
       tax: it.tax,
       extra: it.extra,
