@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
+import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 
 type Part = {
   id: string
@@ -340,7 +341,13 @@ export default function PartsPage() {
       const fx = await scanCurrencyFx(parsed.currency)
       if (fx == null) { setScanning(false); return }
       const money = (v: any) => (((parseFloat(v) || 0) * fx)).toFixed(2)
-      const supplier = String(parsed.supplier || '').trim()
+      // O nome ja entra CURADO no popup: o enrollParts grava o nome do cadastro
+      // (partsDb: "if (sup) row.supplier = sup.name"), entao mostrar o cru aqui
+      // fazia a tela prometer "AutoZone Store 02484" e salvar "AutoZone". Sem
+      // cadastro que case, matchSupplier devolve null e fica o cru — igual ao
+      // que o banco vai gravar. O campo continua editavel.
+      const cru = String(parsed.supplier || '').trim()
+      const supplier = matchSupplier(cru, supplierDirectoryFrom(naSuppliers))?.name || cru
       const date = String(parsed.date || '')
       const items = (parsed.items || []).map((i: any) => ({
         item: String(i.description || ''),
