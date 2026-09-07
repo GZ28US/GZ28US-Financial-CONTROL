@@ -261,9 +261,29 @@ export async function candidatosPara(db: SupabaseClient, vendor: string): Promis
   const { data: ie } = await db.from('invoice_expenses')
     .select('invoice_id, expense_date, item')
     .ilike('supplier', like).order('expense_date', { ascending: false }).limit(60)
+  // O rótulo é o CÓDIGO da invoice e o nome do carro, nunca o uuid cru. Um
+  // "invoice 31931adb" não diz nada a quem vai responder — e me fez achar, em
+  // 07/set, que a sugestão apontava para invoice inexistente (era só o uuid
+  // truncado que eu não sabia consultar). Duas queries a mais por rodada valem
+  // uma sugestão legível.
+  const invIds = [...new Set((ie || []).map(r => String((r as Record<string, unknown>).invoice_id || '')).filter(Boolean))]
+  const rotulo = new Map<string, string>()
+  if (invIds.length) {
+    const { data: invs } = await db.from('invoices').select('id, invoice_code, ride_id').in('id', invIds)
+    const rideIds = [...new Set((invs || []).map(i => String((i as Record<string, unknown>).ride_id || '')).filter(Boolean))]
+    const carro = new Map<string, string>()
+    if (rideIds.length) {
+      const { data: rides } = await db.from('rides').select('id, project_code, project_name').in('id', rideIds)
+      for (const r of (rides || []) as Record<string, unknown>[]) carro.set(String(r.id), `${r.project_code || ''} ${r.project_name || ''}`.trim())
+    }
+    for (const i of (invs || []) as Record<string, unknown>[]) {
+      const c = i.ride_id ? carro.get(String(i.ride_id)) : ''
+      rotulo.set(String(i.id), [i.invoice_code || String(i.id).slice(0, 8), c].filter(Boolean).join(' — '))
+    }
+  }
   for (const r of (ie || []) as Record<string, unknown>[]) {
     if (!r.invoice_id) continue
-    add('invoice_expenses', String(r.invoice_id), `invoice ${String(r.invoice_id).slice(0, 8)}`, String(r.expense_date || '').slice(0, 10))
+    add('invoice_expenses', String(r.invoice_id), rotulo.get(String(r.invoice_id)) || `invoice ${String(r.invoice_id).slice(0, 8)}`, String(r.expense_date || '').slice(0, 10))
   }
   const { data: ex } = await db.from('expenses')
     .select('season_id, expense_date, origin').ilike('supplier', like)
