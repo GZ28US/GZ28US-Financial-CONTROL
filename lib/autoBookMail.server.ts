@@ -226,6 +226,18 @@ export async function lancar(
 
 const keyOf = (slot: number, m: MailMsg) => `${slot}|${m.received}|${m.fromAddr}|${m.subject.slice(0, 90)}`
 
+// ── O CORTE DO BR (lei dele, 06/set/2026) ──────────────────────────────────
+//   "pode processar as coisas do BR, mas SEM RETROATIVO, só daqui pra frente."
+// O AutoBook do BR nasceu em 06/set/2026, 00:00 de Brasília = 03:00Z. E-mail das
+// caixas brasileiras anterior a isso não se processa nem vira pergunta — é
+// histórico, e só entra se ele mandar. A trava mora AQUI, e não na janela do
+// cron, porque a janela é ajustável: uma varredura larga pra recuperar uma
+// rodada perdida não pode ressuscitar o retroativo do BR por efeito colateral.
+const BR_FLOOR = '2026-09-06T03:00:00Z'
+const CAIXAS_BR = /gz28br@|gz28shopping@/i
+const antesDoCorteBR = (account: string | null | undefined, received: string): boolean =>
+  CAIXAS_BR.test(String(account || '')) && String(received || '') < BR_FLOOR
+
 async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Promise<{ nome: string; slot: number; msgs: MailMsg[] }> {
   const nome = auth.account || 'slot' + auth.id
   const token = await freshAccessToken(db, auth)
@@ -252,6 +264,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3): Promise<Au
     out.lidos += caixa.msgs.length
 
     for (const msg of caixa.msgs) {
+      if (antesDoCorteBR(auth.account, msg.received)) continue
       const c = classify(msg)
       if (!c) continue
       out.comDinheiro++
