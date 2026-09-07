@@ -37,11 +37,11 @@ const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 // chave, 29/ago: "o tracking, carrier e o que quer que seja necessario pra
 // rastrear agora vive como coluna nova da tabela dos itens comprados, na
 // origem") — nada de join com part_streams para saber se a peça chegou.
-type FleetExpense = DeliverChipRow & { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; order_number: string | null }
+type FleetExpense = DeliverChipRow & { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; order_number: string | null; receipt_url: string | null }
 // pickedUp/tracking/carrier: a despesa da frota é item comprado como qualquer
 // outro. Desde 30/ago/2026 não há SELETOR de status — "sem campo pra isso, e
 // uma INTERPRETACAO". Guarda-se só o fato que nenhuma conta produz: balcão.
-const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '' }
+const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '', receiptUrl: '' }
 // Duas coisas diferentes se chamam "nota" num carro:
 //   titleNotes  — rides.title_notes, o DOSSIÊ do documento. Bloco único, escrito
 //                 em TITLE & DOCS na tela do ride. Aqui só se lê.
@@ -128,6 +128,16 @@ export default function GoodsPage() {
   const [fleet, setFleet] = useState<FleetCar[]>([])
   const [openCar, setOpenCar] = useState<Set<string>>(new Set())
   const [fleetForm, setFleetForm] = useState<typeof emptyFleetForm | null>(null)
+  // SCAN DA DESPESA DO CARRO. Guarda o carro junto porque a confirmação precisa da
+  // invoice dele (onde a linha nasce) e do código+nome (pasta do Dropbox).
+  const [scanningFleet, setScanningFleet] = useState<string | null>(null)
+  const [scannedFleet, setScannedFleet] = useState<{
+    carId: string; invoiceId: string; code: string; name: string
+    supplier: string; date: string; orderNumber: string; tracking: string; carrier: string
+    receiptUrl: string; fileName: string; fileB64: string
+    lines: { item: string; amount: string; quantity: string }[]
+  } | null>(null)
+  const [savingFleetScan, setSavingFleetScan] = useState(false)
   const [savingFleetExp, setSavingFleetExp] = useState(false)
   const [confirmFleetExp, setConfirmFleetExp] = useState<string | null>(null)
   const [notesCar, setNotesCar] = useState<FleetCar | null>(null)
@@ -233,6 +243,10 @@ export default function GoodsPage() {
       cancel_status: fleetForm.cancelStatus,
       tracking_number: fleetForm.tracking.trim() || null,
       carrier: fleetForm.carrier.trim() || null,
+      // PRINTABLE INVOICE (lei sagrada): o documento do vendedor mora NA despesa.
+      // Antes o form da frota não guardava recibo nenhum — quem lançava à mão
+      // perdia o papel. O scan preenche isto sozinho; digitado à mão fica vazio.
+      receipt_url: fleetForm.receiptUrl.trim() || null,
     }
     setSavingFleetExp(true)
     try {
@@ -265,7 +279,9 @@ export default function GoodsPage() {
     const invIds = (invs || []).map((i: any) => i.id)
     // Mesma janela da migration à mão (ver /rides/[id]): sem o desvio, os 8 carros
     // da frota apareciam com $0 — e ainda eram ORDENADOS por esse zero.
-    const GCOLS = 'id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, stock_source_type, order_number, ' + DELIVER_COLUMNS
+    // receipt_url entra na leitura porque o EDIT precisa devolvê-lo ao form: sem
+    // isso, editar uma despesa escaneada apagaria o documento do vendedor.
+    const GCOLS = 'id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, stock_source_type, order_number, receipt_url, ' + DELIVER_COLUMNS
     let expsRes: any = invIds.length
       ? await supabase.from('invoice_expenses').select(GCOLS).in('invoice_id', invIds)
       : { data: [] as any[], error: null }
@@ -369,6 +385,109 @@ export default function GoodsPage() {
       else next.add(groupId)
       return next
     })
+  }
+
+  // ESCANEAR A DESPESA DE UM CARRO. Mesmo caminho do scan de mercadoria logo
+  // abaixo — a diferença é o destino: aqui a linha nasce em invoice_expenses, na
+  // invoice DO CARRO, e o recibo vai também para a pasta Purchases dele.
+  async function handleScanFleet(file: File, car: FleetCar) {
+    if (!car.invoiceId) { alert('Este carro não tem invoice para receber a despesa.'); return }
+    setScanningFleet(car.id)
+    try {
+      const ext = file.name.split('.').pop() || 'pdf'
+      const path = `fleet/${car.code}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: upErr } = await supabase.storage.from('good-receipts').upload(path, file, { upsert: true })
+      if (upErr) { alert(upErr.message); return }
+      const { data: urlData } = supabase.storage.from('good-receipts').getPublicUrl(path)
+
+      // Os bytes ORIGINAIS, para o Dropbox — fileForScan pode reencodar a imagem
+      // para o modelo, e o que vai pra pasta do carro tem que ser o documento.
+      const fileB64: string = await new Promise((res, rej) => {
+        const r = new FileReader()
+        r.onload = () => res(String(r.result).split(',')[1] || '')
+        r.onerror = rej
+        r.readAsDataURL(file)
+      })
+
+      const { base64, mediaType } = await fileForScan(file)
+      const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // separateExtras: imposto rateado por item e frete como linha própria —
+        // é o modo feito para despesa de invoice, que é o que esta linha é.
+        body: JSON.stringify({ base64, mediaType, separateExtras: true, today: todayStr() }),
+      })
+      const data = await response.json()
+      if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); return }
+      const parsed = JSON.parse(String(data.content?.map((c: any) => c.text || '').join('') || '').replace(/```json|```/g, '').trim())
+
+      // Documento em outra moeda nunca entra como dólar cru.
+      const fx = await scanCurrencyFx(parsed.currency)
+      if (fx == null) return
+
+      const rawItems = (parsed.items || [])
+      const lines = rawItems.map((i: any) => ({
+        item: String(i.description || '').trim() || 'item',
+        // price da linha JÁ com o imposto rateado e o extra que a rota separou:
+        // é assim que fleetLine() soma na tela (price × qty + tax + extra).
+        amount: (((parseFloat(i.amount) || 0) + (parseFloat(i.tax) || 0) + (parseFloat(i.extra) || 0)) * fx).toFixed(2),
+        quantity: String(parseInt(i.quantity, 10) || 1),
+      })).filter((l: { amount: string }) => parseFloat(l.amount) > 0)
+      if (!lines.length) { alert('O scan não achou nenhum item neste documento.'); return }
+
+      setScannedFleet({
+        carId: car.id, invoiceId: car.invoiceId, code: car.code, name: car.name,
+        supplier: String(parsed.supplier || '').trim(),
+        date: String(parsed.date || ''),
+        orderNumber: String(parsed.order_number || '').trim(),
+        tracking: String(parsed.tracking_number || '').trim(),
+        carrier: String(parsed.carrier || '').trim(),
+        receiptUrl: urlData.publicUrl, fileName: file.name, fileB64, lines,
+      })
+    } finally { setScanningFleet(null) }
+  }
+
+  // Confirmado: N linhas nascem juntas, com o MESMO purchase_group (um pedido é um
+  // grupo), e o recibo vai pra pasta Purchases do carro no Dropbox — lei sagrada
+  // do PRINTABLE INVOICE: o documento fica nos dois lugares.
+  async function confirmFleetScan() {
+    if (!scannedFleet) return
+    const s = scannedFleet
+    setSavingFleetScan(true)
+    try {
+      const d = /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? s.date : null
+      const grupo = crypto.randomUUID()
+      const rows = s.lines.map((l) => ({
+        invoice_id: s.invoiceId,
+        item: l.item,
+        supplier: s.supplier || null,
+        price: parseFloat(l.amount) || 0,
+        quantity: parseInt(l.quantity, 10) || 1,
+        expense_date: d,
+        payment_date: d,          // recibo na mão é compra paga (expense-date-vs-paid)
+        order_number: s.orderNumber || null,
+        tracking_number: s.tracking || null,
+        carrier: s.carrier || null,
+        receipt_url: s.receiptUrl,
+        purchase_group: grupo,
+      }))
+      const { error } = await supabase.from('invoice_expenses').insert(rows)
+      if (error) { alert(error.message); return }
+
+      // O papel também na pasta do carro. Falhar aqui não desfaz o lançamento —
+      // avisa, porque a lei manda o documento estar nos dois lugares.
+      try {
+        const nome = `${s.supplier || 'Compra'}${s.orderNumber ? ' - ' + s.orderNumber : d ? ' - ' + d : ''}.${(s.fileName.split('.').pop() || 'pdf')}`
+        const r = await fetch(`${BASE_PATH}/api/ride-folder`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'upload', zone: 'US', code: s.code, name: s.name, subfolder: 'Purchases', filename: nome, contentBase64: s.fileB64 }),
+        })
+        const rd = await r.json().catch(() => ({}))
+        if (!rd.ok) alert('A despesa entrou, mas o recibo não subiu para a pasta Purchases do carro.')
+      } catch { alert('A despesa entrou, mas o recibo não subiu para a pasta Purchases do carro.') }
+
+      setScannedFleet(null)
+      await loadFleet()
+    } finally { setSavingFleetScan(false) }
   }
 
   async function handleScanGood(file: File) {
@@ -948,6 +1067,17 @@ export default function GoodsPage() {
                     onClick={() => { setOpenCar(prev => new Set(prev).add(car.id)); setFleetForm({ ...emptyFleetForm, carId: car.id, invoiceId: car.invoiceId || '', date: new Date().toISOString().slice(0, 10) }) }}
                     className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold"
                   >+ ADD EXPENSE</button>
+                  {/* ESCANEAR A DESPESA: o recibo vira as linhas, em vez de o
+                      humano digitar. Fica ao lado do ADD, como o SCAN PULL na tela
+                      de Performance. Sem invoice no carro não há onde a linha
+                      nascer — então o botão nem aparece. */}
+                  {car.invoiceId && (
+                    <label className={`px-5 py-3 rounded-2xl font-bold cursor-pointer ${scanningFleet === car.id ? 'bg-gray-700 text-gray-400' : 'bg-purple-700 hover:bg-purple-600'}`}>
+                      {scanningFleet === car.id ? 'LENDO…' : '📄 SCAN EXPENSE'}
+                      <input type="file" accept="application/pdf,image/*" className="hidden" disabled={scanningFleet === car.id}
+                        onChange={(ev) => { const f = ev.target.files?.[0]; ev.target.value = ''; if (f) void handleScanFleet(f, car) }} />
+                    </label>
+                  )}
                   <Link href={`/rides/${car.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">OPEN RIDE</Link>
                 </div>
 
@@ -972,6 +1102,39 @@ export default function GoodsPage() {
                       <button onClick={() => setFleetForm({ ...fleetForm, paid: !fleetForm.paid })} className={`px-5 py-3 rounded-2xl font-bold ${fleetForm.paid ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>{fleetForm.paid ? 'PAID ✓' : 'NOT PAID'}</button>
                       <button onClick={saveFleetExp} disabled={savingFleetExp} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{savingFleetExp ? 'SAVING…' : 'SAVE'}</button>
                       <button onClick={() => setFleetForm(null)} className="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-2xl font-bold">CANCEL</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* O QUE O SCAN LEU, antes de gravar. Um pedido é um grupo: as N
+                    linhas nascem juntas, com o mesmo purchase_group, e o order
+                    number / rastreio da nota vai em TODAS — é na linha do item que
+                    o STREAM e o semáforo moram. */}
+                {scannedFleet && scannedFleet.carId === car.id && (
+                  <div className="mt-4 bg-gray-950 border border-purple-700 rounded-2xl p-5 space-y-4">
+                    <h3 className="text-xl font-bold">O QUE O RECIBO DIZ</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-base">
+                      <p><span className="text-gray-400">Fornecedor:</span> <span className="font-bold">{scannedFleet.supplier || '—'}</span></p>
+                      <p><span className="text-gray-400">Data:</span> <span className="font-bold">{scannedFleet.date || '—'}</span></p>
+                      <p><span className="text-gray-400">Order:</span> <span className="font-bold">{scannedFleet.orderNumber || '—'}</span></p>
+                      <p><span className="text-gray-400">Rastreio:</span> <span className="font-bold">{scannedFleet.tracking ? `${scannedFleet.tracking}${scannedFleet.carrier ? ' · ' + scannedFleet.carrier : ''}` : '—'}</span></p>
+                    </div>
+                    <div className="border border-gray-700 rounded-2xl overflow-hidden">
+                      {scannedFleet.lines.map((l, i) => (
+                        <div key={i} className={`flex items-center justify-between gap-4 px-4 py-2 ${i < scannedFleet.lines.length - 1 ? 'border-b border-gray-800' : ''}`}>
+                          <p className="text-base truncate" title={l.item}>{l.item}{Number(l.quantity) > 1 ? ` × ${l.quantity}` : ''}</p>
+                          <span className="font-bold shrink-0">{formatUSD(parseFloat(l.amount) * (parseInt(l.quantity, 10) || 1))}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-gray-700 bg-gray-900">
+                        <span className="font-bold">{scannedFleet.lines.length} linha{scannedFleet.lines.length > 1 ? 's' : ''} · imposto e frete já rateados</span>
+                        <span className="text-xl font-bold">{formatUSD(scannedFleet.lines.reduce((s, l) => s + (parseFloat(l.amount) || 0) * (parseInt(l.quantity, 10) || 1), 0))}</span>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-500">O recibo fica na despesa e vai também para a pasta <span className="font-bold">Purchases</span> do carro.</p>
+                    <div className="flex gap-3 flex-wrap">
+                      <button onClick={confirmFleetScan} disabled={savingFleetScan} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{savingFleetScan ? 'LANÇANDO…' : `LANÇAR ${scannedFleet.lines.length} LINHA${scannedFleet.lines.length > 1 ? 'S' : ''}`}</button>
+                      <button onClick={() => setScannedFleet(null)} className="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-2xl font-bold">CANCEL</button>
                     </div>
                   </div>
                 )}
@@ -1005,7 +1168,7 @@ export default function GoodsPage() {
                             </>
                           ) : (
                             <>
-                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '', receiptUrl: e.receipt_url || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => setConfirmFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </>
                           )}
