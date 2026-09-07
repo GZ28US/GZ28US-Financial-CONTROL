@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { normNature } from '@/lib/itemNature'
@@ -390,6 +391,20 @@ export default function GoodsPage() {
   // ESCANEAR A DESPESA DE UM CARRO. Mesmo caminho do scan de mercadoria logo
   // abaixo — a diferença é o destino: aqui a linha nasce em invoice_expenses, na
   // invoice DO CARRO, e o recibo vai também para a pasta Purchases dele.
+  // O NOME DO FORNECEDOR ENTRA CURADO. O scan lê o que está impresso no papel —
+  // "AutoZone Store 02484", "HP tuners", "Texas Speed & Performance" — e o cadastro
+  // tem UM nome para cada um. Curar na ESCRITA faz o dado nascer certo; sem cadastro
+  // que case, matchSupplier devolve null e fica o nome cru, porque inventar nome é
+  // pior que repetir a grafia do vendedor.
+  async function nomeCurado(cru: string): Promise<string> {
+    const bruto = (cru || '').trim()
+    if (!bruto) return bruto
+    try {
+      const { data } = await supabase.from('suppliers').select('name,aliases,is_dealership')
+      return matchSupplier(bruto, supplierDirectoryFrom(data || []))?.name || bruto
+    } catch { return bruto }
+  }
+
   async function handleScanFleet(file: File, car: FleetCar) {
     if (!car.invoiceId) { alert('Este carro não tem invoice para receber a despesa.'); return }
     setScanningFleet(car.id)
@@ -436,7 +451,7 @@ export default function GoodsPage() {
 
       setScannedFleet({
         carId: car.id, invoiceId: car.invoiceId, code: car.code, name: car.name,
-        supplier: String(parsed.supplier || '').trim(),
+        supplier: await nomeCurado(String(parsed.supplier || '')),
         date: String(parsed.date || ''),
         orderNumber: String(parsed.order_number || '').trim(),
         tracking: String(parsed.tracking_number || '').trim(),
@@ -519,7 +534,7 @@ export default function GoodsPage() {
       const fx = await scanCurrencyFx(parsed.currency)
       if (fx == null) { setScanningPurchase(false); return }
 
-      const supplier = String(parsed.supplier || '').trim()
+      const supplier = await nomeCurado(String(parsed.supplier || ''))
       const date = String(parsed.date || '')
       const source = matchSource(String(parsed.source || '').trim())
       // Nº do pedido como impresso (zeros à esquerda, hífens, sem '#').
