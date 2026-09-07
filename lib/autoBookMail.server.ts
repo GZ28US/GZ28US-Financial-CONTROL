@@ -383,8 +383,33 @@ async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Prom
   return { nome: `${nome}:${msgs.length}`, slot: auth.id || 0, msgs }
 }
 
-export async function runAutoBookMail(db: SupabaseClient, horas = 3): Promise<AutoBookMailResult> {
+// ── PROVA DE VIDA ──────────────────────────────────────────────────────────
+// Sem isto, fila vazia significa DUAS coisas ao mesmo tempo — "rodou e não achou
+// nada" e "não rodou" — e não há como distinguir. Já aconteceu nesta casa: o
+// mail-poll morreu calado no teto de tempo e passou 4 dias sem rodar sem ninguém
+// perceber, porque a ausência de resultado parecia resultado. A linha nasce ANTES
+// do trabalho, como o `last_poll` do mail-poll: passada que estoura no meio deixa
+// RUNNING pendurado, e RUNNING velho é justamente o sintoma que se quer ver.
+async function abreRodada(db: SupabaseClient, horas: number, trigger: string): Promise<string | null> {
+  const { data } = await db.from('auto_book_mail_runs').insert({ trigger, horas, status: 'RUNNING' }).select('id').single()
+  return data ? String((data as { id: string }).id) : null
+}
+async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMailResult, status: 'DONE' | 'ERROR'): Promise<void> {
+  if (!id) return
+  await db.from('auto_book_mail_runs').update({
+    status, finished_at: new Date().toISOString(),
+    counts: {
+      lidos: r.lidos, com_dinheiro: r.comDinheiro, perguntas: r.perguntas.length,
+      lancados: r.lancados.length, ja_tem_linha: r.jaTemLinha.length,
+      ignorados: r.ignorados.length, duvidas_app: r.duvidasApp.length, sem_recibo: r.semRecibo.length,
+    },
+    caixas: r.caixas, errors: r.erros,
+  }).eq('id', id)
+}
+
+export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = 'cron'): Promise<AutoBookMailResult> {
   const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], erros: [] }
+  const rodada = await abreRodada(db, horas, trigger)
   const desde = new Date(Date.now() - horas * 3600e3).toISOString()
   out.janela = `desde ${desde}`
 
@@ -512,5 +537,10 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3): Promise<Au
       }
     }
   }
+  // Erro dentro da passada (uma caixa que falhou, uma escrita recusada) fecha a
+  // rodada como ERROR mas com os números do que deu certo. Erro que ESTOURA a
+  // função — o provedor fora do ar, o teto de tempo da Vercel — nem chega aqui:
+  // a linha fica RUNNING pendurada, e RUNNING velho é o sintoma que se quer ver.
+  await fechaRodada(db, rodada, out, out.erros.length ? 'ERROR' : 'DONE')
   return out
 }

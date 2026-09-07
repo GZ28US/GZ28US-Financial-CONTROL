@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const db = streamDb()
   const h = Math.min(168, Math.max(1, parseInt(req.nextUrl.searchParams.get('horas') || '3') || 3))
   try {
-    const r = await runAutoBookMail(db, h)
+    const r = await runAutoBookMail(db, h, req.nextUrl.searchParams.get('horas') ? 'human' : 'cron')
     return NextResponse.json({ ok: true, horas: h, ...r })
   } catch (e) {
     console.error('[auto-book]', e)
