@@ -491,14 +491,28 @@ const keyOf = (slot: number, m: MailMsg) => `${slot}|${m.received}|${m.fromAddr}
 // fornecedor na própria caixa. Sem pasta, não inventa nem cria: deixa o e-mail
 // e reporta. Caixa com `auto_sweep = false` (a 6, arquivo do BR) não é varrida
 // por robô nenhum — mesma lei do sweepSpam/sweepMarketing.
+// CASCATA DE DESTINO (07/set/2026, 2a cobranca dele: "ainda tem email na minha
+// inbox das nossas pautas, processar significa tambem guardar o email no lugar
+// certo"). A 1a versao so movia se existisse pasta com o NOME DO FORNECEDOR, e
+// nao existe pasta "HP Tuners" na caixa 1 — entao a compra ficou la, resolvida e
+// visivel, que e o pior dos dois mundos. Agora a busca desce degrau a degrau:
+//   1. a pasta do CARRO ("US.014 - GZ28US WorkTruck"), quando se sabe o carro;
+//   2. a pasta do FORNECEDOR ("Temu", "eBay", "Texas Speed");
+//   3. **"Purchases"** — o guarda-chuva que ja existe nas caixas e ja tem compra
+//      dentro. Compra resolvida NUNCA fica na inbox por falta de pasta exata.
+// So depois disso ele desiste e reporta. Continua sem CRIAR pasta: inventar
+// pasta e decisao de arrumacao da casa, nao de robo.
+const DESTINO_FINAL = 'purchases'
 async function arquiva(
-  token: string, pastas: Map<string, string>, msg: MailMsg, vendor: string, out: AutoBookMailResult,
+  token: string, pastas: Map<string, string>, msg: MailMsg, vendor: string, out: AutoBookMailResult, carro?: string | null,
 ): Promise<void> {
   if (!msg.id) return
-  const alvo = pastas.get(vendor.trim().toLowerCase())
-  if (!alvo) { out.semPasta.push(`${vendor} — "${msg.subject.slice(0, 50)}" (sem pasta "${vendor}" nesta caixa)`); return }
-  if (await moveMessage(token, msg.id, alvo)) out.arquivados.push(`${vendor} ← ${msg.subject.slice(0, 55)}`)
-  else out.erros.push(`falhou ao arquivar em ${vendor}: ${msg.subject.slice(0, 45)}`)
+  const tentar = [carro || '', vendor, DESTINO_FINAL].map(x => String(x).trim().toLowerCase()).filter(Boolean)
+  let alvo: string | undefined, onde = ''
+  for (const t of tentar) { const id = pastas.get(t); if (id) { alvo = id; onde = t; break } }
+  if (!alvo) { out.semPasta.push(`${vendor} — "${msg.subject.slice(0, 50)}" (sem pasta do carro, do fornecedor nem "Purchases")`); return }
+  if (await moveMessage(token, msg.id, alvo)) out.arquivados.push(`${onde} ← ${msg.subject.slice(0, 55)}`)
+  else out.erros.push(`falhou ao arquivar em ${onde}: ${msg.subject.slice(0, 45)}`)
 }
 
 // ── O CORTE DO BR (lei dele, 06/set/2026) ──────────────────────────────────
@@ -547,6 +561,8 @@ async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMai
       lidos: r.lidos, com_dinheiro: r.comDinheiro, perguntas: r.perguntas.length,
       lancados: r.lancados.length, ja_tem_linha: r.jaTemLinha.length,
       ignorados: r.ignorados.length, duvidas_app: r.duvidasApp.length, sem_recibo: r.semRecibo.length,
+      arquivados: r.arquivados.length, sem_pasta: r.semPasta.length,
+      achados_no_app: r.achadosNoApp.length, papel_sem_linha: r.papelSemLinha.length,
     },
     caixas: r.caixas, errors: r.erros,
   }).eq('id', id)
