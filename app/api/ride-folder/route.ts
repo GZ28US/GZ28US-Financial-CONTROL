@@ -505,6 +505,17 @@ export async function POST(req: NextRequest) {
 
       const jaLa = await listaArquivos(token, destino)
       const hashDe = new Map(jaLa.map(f => [f.name, f.hash]))
+
+      // ATALHO DO CASO COMUM. A URL de um recibo é imutável (o nome no storage
+      // leva timestamp + aleatório), então nome esperado presente e nada
+      // sobrando na pasta querem dizer "nada mudou". Sem isto, todo SAVE
+      // baixaria os recibos inteiros da invoice só para calcular hash.
+      const nomesEsperados = new Set(esperados.map(e => e.nome))
+      const faltando = esperados.some(e => !hashDe.has(e.nome))
+      const sobrando = jaLa.some(f => !nomesEsperados.has(f.name))
+      if (!faltando && !sobrando) {
+        return NextResponse.json({ ok: true, result: 'unchanged', folder: destino, uploaded: [], unchanged: esperados.map(e => e.nome), renamedAway: [], purchasesCleared: [], failed: [], pending: 0 })
+      }
       const enviados: string[] = [], iguais: string[] = [], falhos: string[] = []
       const hashesCertos = new Set<string>()
       let restam = 0
