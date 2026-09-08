@@ -1543,7 +1543,8 @@ export default function DataCheckPage() {
         let jl = await rl.json().catch(() => ({}))
         // CATEGORIA SOZINHA (DC 1.42.0): peça sem veredito da IA → lê agora (até 80 por carga),
         // preenche as certas e recarrega o sinal. Uma vez por abertura da página.
-        if (rl.ok && jl.totals && (jl.category_ai_pending || 0) > 0 && !jl.needs_category_ai_migration && !AUTO_CAT_RAN) {
+        // Também quando o LIGAR está ligado e há certas já lidas esperando (o marcador pode ter sido ligado sem o clique — 8/set).
+        if (rl.ok && jl.totals && ((jl.category_ai_pending || 0) > 0 || (jl.auto_fill_enabled && (jl.certain_ready || 0) > 0)) && !jl.needs_category_ai_migration && !AUTO_CAT_RAN) {
           AUTO_CAT_RAN = true
           try {
             const rc = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'classify_categories', max: 80 }) })

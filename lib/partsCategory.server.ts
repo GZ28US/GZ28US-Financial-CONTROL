@@ -66,13 +66,14 @@ export async function enableAutoFill(db: any): Promise<void> {
   if (await autoFillEnabled(db)) return
   await db.from('data_fixes').insert({ check_key: 'parts-category', table_name: 'parts_database', row_id: 'auto-fill', field: 'ENABLED', old_value: null, new_value: 'on', label: 'LIGADO · a categoria entra sozinha quando palavra-chave e IA concordam' })
 }
-export async function classifyParts(db: any, parts: any[], opts: { max?: number; dry?: boolean; force?: boolean; fill?: boolean } = {}): Promise<{ read: number; filled: number; asked: number; not_part: number; no_ai: number; errors: string[] }> {
+export async function classifyParts(db: any, parts: any[], opts: { max?: number; dry?: boolean; force?: boolean; fill?: boolean; knownMax?: number } = {}): Promise<{ read: number; filled: number; asked: number; not_part: number; no_ai: number; errors: string[] }> {
   const res = { read: 0, filled: 0, asked: 0, not_part: 0, no_ai: 0, errors: [] as string[] }
   const fill = opts.fill !== false
   const empty = parts.filter(p => !p.category || !VOCAB.has(p.category))
   const todo = empty.filter(p => opts.force || !p.category_ai).slice(0, opts.max ?? 80)
   // Já lidas pela IA (veredito guardado): só a régua e o preenchimento, sem reler.
-  const known = fill && !opts.dry ? empty.filter(p => p.category_ai && !todo.includes(p)) : []
+  // Lote das já lidas limitado (8/set: 407 de uma vez levaram 87 s — a rota tem 60 s); o que sobrar entra na próxima abertura.
+  const known = fill && !opts.dry ? empty.filter(p => p.category_ai && !todo.includes(p)).slice(0, opts.knownMax ?? 150) : []
   const verdict = todo.length ? await classifyWithAI(todo.map(p => ({ id: String(p.id), text: partText(p) }))) : new Map<string, string | null>()
   for (const p of known) verdict.set(String(p.id), String(p.category_ai))
   res.read = todo.length
