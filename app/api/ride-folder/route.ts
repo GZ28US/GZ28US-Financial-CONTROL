@@ -31,7 +31,10 @@ const ROOTS: Record<string, string> = {
 
 // Windows-invalid filename characters can't exist in Dropbox names that need
 // to sync to the PC; also collapse whitespace.
-const sanitize = (s: string) => (s || '').replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim()
+// O PONTO FINAL TAMBÉM NÃO EXISTE no Windows: uma pasta chamada "...Campo Grande."
+// nasce no Dropbox mas chega ao PC como "...Campo Grande_", e aí nuvem e disco
+// carregam nomes diferentes para sempre (visto na BR.539.1, 08/set/2026).
+const sanitize = (s: string) => (s || '').replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '')
 
 async function dbxAccessToken(): Promise<string> {
   const res = await fetch('https://api.dropbox.com/oauth2/token', {
