@@ -199,9 +199,9 @@ export async function GET(req: NextRequest) {
     let autoRecent: any[] = []
     try {
       const since = new Date(Date.now() - 7 * 864e5).toISOString()
-      const { data: fx } = await db.from('data_fixes').select('id, row_id, new_value, old_value, created_at, label').eq('check_key', 'parts-category').like('label', 'AUTO ·%').gte('created_at', since).order('created_at', { ascending: false }).limit(500)
+      const { data: fx } = await db.from('data_fixes').select('id, row_id, new_value, old_value, fixed_at, label').eq('check_key', 'parts-category').like('label', 'AUTO ·%').gte('fixed_at', since).order('fixed_at', { ascending: false }).limit(500)
       const byId = new Map(parts.map((p: any) => [String(p.id), p]))
-      autoRecent = (fx || []).filter((f: any) => byId.get(String(f.row_id)) && byId.get(String(f.row_id)).category === f.new_value).map((f: any) => ({ fix_id: f.id, id: f.row_id, item: String(byId.get(String(f.row_id)).alias || byId.get(String(f.row_id)).item || '').slice(0, 70), category: f.new_value, old: f.old_value, at: f.created_at }))
+      autoRecent = (fx || []).filter((f: any) => byId.get(String(f.row_id)) && byId.get(String(f.row_id)).category === f.new_value).map((f: any) => ({ fix_id: f.id, id: f.row_id, item: String(byId.get(String(f.row_id)).alias || byId.get(String(f.row_id)).item || '').slice(0, 70), category: f.new_value, old: f.old_value, at: f.fixed_at }))
     } catch { /* trilha indisponível: o card mostra sem a lista */ }
     return NextResponse.json({
       ok: true, needs_migration: needsMigration,
@@ -246,7 +246,7 @@ export async function POST(req: NextRequest) {
     const db = bankDb()
     const rowId = String(b.row_id || '')
     if (!rowId) return NextResponse.json({ error: 'row_id required' }, { status: 400 })
-    const { data: fx } = await db.from('data_fixes').select('id, old_value, new_value').eq('check_key', 'parts-category').eq('row_id', rowId).like('label', 'AUTO ·%').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    const { data: fx } = await db.from('data_fixes').select('id, old_value, new_value').eq('check_key', 'parts-category').eq('row_id', rowId).like('label', 'AUTO ·%').order('fixed_at', { ascending: false }).limit(1).maybeSingle()
     if (!fx) return NextResponse.json({ error: 'não foi o app que preencheu esta categoria' }, { status: 409 })
     const { data: ok, error } = await db.from('parts_database').update({ category: fx.old_value ?? null }).eq('id', rowId).eq('category', fx.new_value).select('id')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
