@@ -129,7 +129,13 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
-      'Dropbox-API-Arg': JSON.stringify({ path, mode: 'overwrite', autorename: false, mute: true }),
+      // O caminho viaja em CABEÇALHO HTTP, que é ISO-8859-1: "ç" e "ã" chegariam
+      // como bytes inválidos e o arquivo nasceria numa pasta de nome quebrado
+      // (aconteceu com "Atualização GZ28" em 08/set/2026 — duas pastas, a certa
+      // vazia e a torta com os arquivos dentro). A receita da Dropbox é escapar
+      // tudo que passa de ASCII como \uXXXX; o JSON continua válido do outro lado.
+      'Dropbox-API-Arg': JSON.stringify({ path, mode: 'overwrite', autorename: false, mute: true })
+        .replace(/[^ -~]/g, (c) => String.fromCharCode(92) + 'u' + c.charCodeAt(0).toString(16).padStart(4, '0')),
       'Content-Type': 'application/octet-stream',
     },
     body: bytes as unknown as BodyInit,
