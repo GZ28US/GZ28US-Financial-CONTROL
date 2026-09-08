@@ -25,6 +25,7 @@ import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
 import { DC_CHANGELOG } from '@/lib/dcVersion'
 import { NATURES, NATURE_LABEL, NATURE_HINT, type Nature } from '@/lib/itemNature'
+import { classifyInput } from '@/lib/inputsCategory'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 // Relógio do app = Orlando (regra de 20/08): depois das 20h o UTC já é amanhã.
@@ -65,6 +66,7 @@ const CERTAIN_PROOF: Record<string, string> = {
   'paid-from': 'linhas já casadas com a Regions → GZ28US (prova, não palpite)',
   'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
   'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
+  'inputs-category': 'identidade da loja (mercado/lanchonete → TEAM, pet → CATS, ferragem → oficina) ou loja e texto concordando',
   'parts-category': 'palavra-chave e IA concordam na categoria — dois leitores independentes, não um palpite',
   'admission-mileage': 'a milhagem já está na invoice do carro (mesmo valor em outro lugar do banco de dados)',
   'bank-drift': 'o nome do prestador está na linha do banco e o valor é único na janela — a mesma prova que o motor usa pra adotar',
@@ -112,9 +114,9 @@ let AUTO_CAT_RAN = false   // categoria sozinha: uma leitura da IA por abertura 
 let AUTO_NATURE_RAN = false   // natureza sozinha (carro → dinheiro, PN → peça, hábito): uma rodada por abertura
 let AUTO_RAN = false          // níveis CERTOS dos cards: uma rodada por abertura
 // Cards cujos itens CERTOS o app resolve sozinho (com trilha «AUTO ·» e DESFAZER no card SOZINHO).
-const AUTO_KEYS = new Set(['paid-from', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled'])
+const AUTO_KEYS = new Set(['paid-from', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled', 'inputs-category'])
 // Cards que aceitam «visto, está certo» (dispensa com memória — nunca mais pergunta a mesma linha).
-const DISMISSABLE = new Set(['out-of-pattern', 'parts-suppliers', 'destiny-review', 'fixed-dup-month'])
+const DISMISSABLE = new Set(['out-of-pattern', 'parts-suppliers', 'destiny-review', 'fixed-dup-month', 'inputs-category'])
 const nameTok = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length >= 4 && !['STORE', 'INC', 'LLC', 'CORP', 'THE', 'AND', 'COMPANY'].includes(w))
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 // WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
@@ -153,7 +155,8 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
     items = items.flatMap(i => {
       const rowId = i.fix ? String(i.fix.rowId) : (i.code + '|' + i.label).slice(0, 150)
       const k = c.key + '|' + rowId
-      if (auto.dismissed[k] !== undefined) return []
+      // Dispensa esconde; DESFEITO (a pessoa desfez um AUTO) não esconde — só impede a máquina de refazer.
+      if (auto.dismissed[k] !== undefined && auto.dismissed[k] !== 'DESFEITO') return []
       if (i.fix) return [i]
       return [{ ...i, fix: { kind: 'dismiss' as const, table: 'data_check', rowId, field: 'DISMISSED', checkKey: c.key, confirmText: `Marcar «visto, está certo» em «${i.label.slice(0, 90)}»? O card para de perguntar isto (fica na trilha; dá pra voltar).` } }]
     })
@@ -760,24 +763,23 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   // INPUTS · O BLOB TÓXICO (João, 26/ago): 139 insumos num "CONSUMPTION" que
   // mistura comida (Equipe), óleo (ESTOQUE de verdade) e consumível de oficina.
   {
-    const HINT: [RegExp, string][] = [
-      [/oil|óleo|oleo|\b[05]w[- ]?[234]0\b|quart|paint|tinta|touch.?up|brake|fluid|coolant|filtro|filter/i, '__stock__'],
-      [/food|comida|coffee|café|cafe|snack|kraft|kft|velveeta|água|agua|water|soda|drink|lunch|pizza|leite|milk|bread|pão|pao/i, 'TEAM'],
-      [/apartment|apto|mattress|bed\b|cookw|kitchen|pillow|sofa|couch/i, 'APARTMENT'],
-      [/\bcats?\b|gato|pet\b|purina/i, 'CATS'],
-      [/wd-?40|alcohol|álcool|alcool|clean|limp|paper|papel|towel|toalha|glove|luva|tape|fita|trash|lixo|shipping|parcel|box|caixa|zip|shelf|prateleira|organizer|chair|cadeira|desk|mesa/i, 'SHOP'],
-    ]
+    // DC 1.45.0: dois leitores (texto + LOJA) em lib/inputsCategory — a mesma régua que o motor usa ao criar o insumo.
     const items: Item[] = []
     for (const x of d.inputs) {
-      if (x.category && x.category !== 'CONSUMPTION') continue
+      if (x.category && x.category !== 'CONSUMPTION' && x.category !== 'SHOP') continue   // SHOP: opção antiga do card, mesma coisa que CONSUMPTION
       const text = String(x.description || '')
-      const sug = (HINT.find(([re]) => re.test(text)) || [])[1] as string | undefined
+      const v = classifyInput((x as any).supplier, text)
+      // Consumível de oficina em loja de ferragem já está CERTO: silêncio (não é pergunta, não é escrita).
+      if (v.tier === 'CERTAIN' && v.category === 'CONSUMPTION' && (x.category === 'CONSUMPTION' || x.category === 'SHOP')) continue
+      // STOCK nunca é certo (mover é de gente); CONSUMPTION certo só entra sozinho onde a categoria está vazia.
+      const certain = v.tier === 'CERTAIN' && v.category !== 'STOCK'
+      const sug = v.category === 'STOCK' ? '__stock__' : v.category === 'CONSUMPTION' && !certain ? '__keep__' : (v.category || undefined)
       items.push({
-        href: '/supplies', code: x.category ? 'BLOB' : 'SEM CAT.', label: text.slice(0, 70) || '(sem descrição)',
-        extra: sug === '__stock__' ? 'palpite: é ESTOQUE (óleo/material de job) — mover' : sug ? 'palpite: ' + sug : 'sem palpite — decida',
-        amount: qtyLine(x), suggest: sug, signal: sug ? 'source' : undefined,
+        href: '/supplies', code: certain ? 'CERTA' : x.category ? 'BLOB' : 'SEM CAT.', label: text.slice(0, 70) || '(sem descrição)',
+        extra: v.category === 'STOCK' ? 'é ESTOQUE (óleo/material de job) — mover · ' + v.why : certain ? v.why + ' — entra sozinho' : v.category ? 'palpite: ' + v.category + ' · ' + v.why : v.why,
+        amount: qtyLine(x), suggest: sug, certain, signal: certain ? 'matched' : sug ? 'source' : undefined,
         fix: { kind: 'select' as const, table: 'inputs', rowId: x.id, field: 'category', current: x.category || null, meta: { description: x.description, supplier: (x as any).supplier, unit_price: x.unit_price, quantity: x.quantity, purchase_date: x.purchase_date, payment_date: x.payment_date, paid_from: x.paid_from, paid_to: (x as any).paid_to, source: (x as any).source, purchase_group: x.purchase_group, order_number: (x as any).order_number }, options: [
-          { value: 'SHOP', label: 'SHOP — consumível da oficina (WD40, limpeza, mobília miúda)' },
+          { value: '__keep__', label: '✓ É CONSUMÍVEL DA OFICINA — fica em CONSUMPTION (o card para de perguntar)' },
           { value: 'TEAM', label: 'TEAM — comida & bem-estar (vira Equipe no DRE)' },
           { value: 'APARTMENT', label: 'APARTMENT — apto (moradia da equipe)' },
           { value: 'CATS', label: 'CATS — mascotes' },
@@ -788,7 +790,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     checks.push({
       group: 'INVENTORY', key: 'inputs-category', title: 'Insumo na categoria errada (o blob CONSUMPTION)',
       blocks: 'comida, óleo e consumível misturados envenenam o DRE (Equipe × Consumíveis × Estoque)',
-      why: 'João achou o veneno (26/ago): 139 insumos num balaio único misturando comida (que é EQUIPE), óleo de motor (que é ESTOQUE — material de job) e consumível de verdade (o que mantém a OFICINA rodando). O palpite por palavra-chave ajuda, o martelo é humano — MODO GUIADO recomendado. SHOP fica na linha Consumíveis; TEAM vai pra Equipe; 📦 ESTOQUE cria a linha na INVENTORY e apaga o insumo, com trilha.',
+      why: 'João achou o veneno (26/ago): insumos num balaio único misturando comida (que é EQUIPE), óleo de motor (que é ESTOQUE — material de job) e consumível de verdade (o que mantém a OFICINA rodando). Desde 8/set dois leitores decidem: o TEXTO e a LOJA. Ferragem (Ace, Harbor Freight, Home Depot) é consumível de oficina — fica calada; mercado e lanchonete são EQUIPE e pet é CATS — entram sozinhos; loja mista (Walmart, Target, Sams, Amazon, Temu, Dollar Tree) só sugere pelo texto. «É consumível da oficina» ensina: a linha some do card e fica na trilha. O motor do Bank Link cria o insumo já com a mesma régua.',
       items,
     })
   }
@@ -1609,9 +1611,10 @@ export default function DataCheckPage() {
   // trilha «AUTO · <prova>»; casar/adotar vão pela rota (A CONFERIR com DESFAZER); apagar leva a foto
   // da linha na trilha (DESFAZER recria). Nada roda sem a Regions carregada (a prova mora nela).
   useEffect(() => {
-    if (AUTO_RAN || !d || !bank.matched.size || bank.cashState === 'loading' || linker.state !== 'ok' || auto.state === 'loading') return
+    // Sem a MEMÓRIA (dispensas e desfeitos) carregada, nada é escrito: a máquina não passa por cima de uma decisão que não leu.
+    if (AUTO_RAN || !d || !bank.matched.size || bank.cashState === 'loading' || linker.state !== 'ok' || auto.state !== 'ok') return
     const jobs: { check: Check; item: Item }[] = []
-    for (const c of checks) if (AUTO_KEYS.has(c.key)) for (const it of c.items) if (it.certain && it.fix && !done.has(it.fix.rowId + '|' + fixField(it.fix))) jobs.push({ check: c, item: it })
+    for (const c of checks) if (AUTO_KEYS.has(c.key)) for (const it of c.items) if (it.certain && it.fix && !done.has(it.fix.rowId + '|' + fixField(it.fix)) && auto.dismissed[c.key + '|' + String(it.fix.rowId)] === undefined) jobs.push({ check: c, item: it })
     if (!jobs.length) return
     AUTO_RAN = true
     ;(async () => {
@@ -1621,9 +1624,12 @@ export default function DataCheckPage() {
         try {
           if ((fix.kind === 'select' || fix.kind === 'number') && item.suggest) {
             const val: any = fix.kind === 'number' ? (parseFloat(item.suggest) || 0) : item.suggest
-            const { data: ok, error } = await supabase.from(fix.table).update({ [fix.field]: val }).eq('id', fix.rowId).is(fix.field, null).select('id')
+            // Guarda pelo valor que o card viu: vazio → só se ainda vazio; CONSUMPTION → só se ainda CONSUMPTION (ninguém mexeu no meio).
+            const cur = fix.kind === 'select' && fix.current != null ? String(fix.current) : null
+            const q0 = supabase.from(fix.table).update({ [fix.field]: val }).eq('id', fix.rowId)
+            const { data: ok, error } = await (cur != null ? q0.eq(fix.field, cur) : q0.is(fix.field, null)).select('id')
             if (error || !ok || !ok.length) continue
-            await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: fix.field, old_value: null, new_value: String(val), label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.code + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
+            await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field: fix.field, old_value: cur, new_value: String(val), label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.code + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
             n++
           } else if (fix.kind === 'trash') {
             // A FOTO antes do apagar: sem trilha gravada, nada é apagado (senão não há volta).
@@ -1670,6 +1676,23 @@ export default function DataCheckPage() {
     if (check.key === 'inputs-category' && fix.kind === 'select') {
       setSaving(true)
       try {
+        if (value === '__keep__' && !fix.current) {
+          // Sem categoria ainda: «é consumível da oficina» GRAVA CONSUMPTION (dispensar o vazio deixaria o buraco).
+          const { error: e0 } = await supabase.from('inputs').update({ category: 'CONSUMPTION' }).eq('id', fix.rowId).is('category', null)
+          if (e0) { alert(e0.message); return }
+          await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'inputs', row_id: fix.rowId, field: 'category', old_value: null, new_value: 'CONSUMPTION', label: `${item.code} · ${item.label}`.slice(0, 200) })
+          setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field)); setFixing(null); setFixValue('')
+          return
+        }
+        if (value === '__keep__') {
+          // Está certo como está: dispensa com memória (a linha some do card e fica na trilha).
+          const r = await fetch(`${BASE_PATH}/api/data-check/auto`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'dismiss', check_key: check.key, row_id: fix.rowId, table: 'inputs', reason: 'consumível da oficina — fica em CONSUMPTION', label: item.label.slice(0, 120) }) })
+          const j = await r.json().catch(() => ({}))
+          if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+          setAuto(prev => ({ ...prev, dismissed: { ...prev.dismissed, [check.key + '|' + fix.rowId]: 'consumível da oficina' } }))
+          setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field)); setFixing(null); setFixValue('')
+          return
+        }
         if (value === '__stock__') {
           const src = (fix.meta || {}) as any
           const { error: e1 } = await supabase.from('inventory').insert({
@@ -1863,9 +1886,11 @@ export default function DataCheckPage() {
     for (const it of items) {
       const fix = it.fix!; const field = fixField(fix)
       setBulk(`${n + 1}/${items.length}`)
-      const { error: err } = await supabase.from(fix.table).update({ [field]: value }).eq('id', fix.rowId).is(field, null)
+      const cur = fix.kind === 'select' && fix.current != null ? String(fix.current) : null
+      const qb = supabase.from(fix.table).update({ [field]: value }).eq('id', fix.rowId)
+      const { error: err } = await (cur != null ? qb.eq(field, cur) : qb.is(field, null))
       if (err) { errors.push(`${it.code} · ${it.label}: ${err.message}`); continue }
-      await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: value, label: `${tag} · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+      await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: cur, new_value: value, label: `${tag} · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
       setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
     }
     setBulk(''); setSaving(false)
@@ -1875,8 +1900,10 @@ export default function DataCheckPage() {
     const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
     if (!items.length) return
     // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
-    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category') {
-      const msg = check.key === 'parts-category'
+    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category' || check.key === 'inputs-category') {
+      const msg = check.key === 'inputs-category'
+        ? `Preencher ${items.length} categoria(s) de insumo? Prova por linha: identidade da loja (mercado → TEAM, pet → CATS) ou loja e texto concordando. Cada linha recebe a SUA categoria. Tudo na trilha.`
+        : check.key === 'parts-category'
         ? `Preencher ${items.length} categoria(s) em que palavra-chave e IA concordam? Cada peça recebe a SUA categoria; tudo na trilha, com DESFAZER por 7 dias no card.`
         : check.key === 'parts-suppliers'
         ? `Linkar ${items.length} peças ao fornecedor oficial? Todas batem pelo nome/apelido exato. Tudo na trilha.`
@@ -1890,9 +1917,11 @@ export default function DataCheckPage() {
         const fix = it.fix!
         setBulk(`${n + 1}/${items.length}`)
         const field = fix.kind === 'select' ? fix.field : 'part_id'
-        const { error: err } = await supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId).is(field, null)
+        const cur = fix.kind === 'select' && fix.current != null ? String(fix.current) : null
+        const qc = supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId)
+        const { error: err } = await (cur != null ? qc.eq(field, cur) : qc.is(field, null))
         if (err) continue
-        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: it.suggest, label: (check.key === 'parts-category' ? `AUTO · palavra-chave + IA concordam (PREENCHER CERTOS) · ${it.label}` : `LINK CERTO · ${it.code} · ${it.label}`).slice(0, 200) }).then(() => undefined, () => undefined)
+        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: cur, new_value: it.suggest, label: (check.key === 'parts-category' ? `AUTO · palavra-chave + IA concordam (PREENCHER CERTOS) · ${it.label}` : `LINK CERTO · ${it.code} · ${it.label}`).slice(0, 200) }).then(() => undefined, () => undefined)
         setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
       }
       setBulk(''); setSaving(false)

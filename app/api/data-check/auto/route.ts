@@ -65,6 +65,8 @@ export async function POST(req: NextRequest) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       if (!ok || !ok.length) return NextResponse.json({ error: 'o campo já mudou depois — nada desfeito' }, { status: 409 })
     }
+    // DESFAZER é a pessoa discordando da prova: a máquina não refaz esta linha (DESFEITO na memória; o card ainda pergunta).
+    if (table !== 'bank_transactions') await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field: 'DISMISSED', old_value: null, new_value: 'DESFEITO', label: ('DESFEITO · o app não refaz sozinho · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)
     await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field, old_value: fx.new_value ?? null, new_value: field === 'DELETED' ? 'RESTORED' : (fx.old_value ?? null), label: ('DESFEITO · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)
     return NextResponse.json({ ok: true })
   }

@@ -34,7 +34,7 @@ function formatDate(d: string) {
 }
 
 const NEW_SUPPLIER = '+ NEW SUPPLIER'
-const categories = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS']
+const categories = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS', 'TEAM']   // TEAM (comida & bem-estar) existe desde o Data Checker de 26/ago e o DRE; faltava aqui
 
 function SupplierField({ suppliers, value, onChange }: { suppliers: string[], value: string, onChange: (v: string) => void }) {
   const [showNew, setShowNew] = useState(suppliers.length === 0)

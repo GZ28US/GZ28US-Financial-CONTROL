@@ -1,3 +1,4 @@
+import { classifyInput } from './inputsCategory'
 // lib/bankReconcile.server.ts — pool, ranking e motores da conciliação bancária.
 // Só servidor (service key). A rota app/api/bank/reconcile/route.ts é fina e usa isto.
 //
@@ -85,6 +86,18 @@ export const HUMAN_TIER = new Set(['TRANSFER', 'BANK_FEE', 'INCOME', 'RESTAURANT
 export const ATTRIB_REPORT_DAYS = 14                       // balão «EXPENSE PAID» só quando a compra é recente (data do banco)
 export const ORPHAN_GRACE_MIN = 10                         // purga de órfão do balde só depois de 10 min (janela das ações da fila)
 export const INPUT_CATEGORIES = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS', 'TEAM']   // vocabulário das telas de supplies — SHOP nunca existiu
+// A categoria do insumo que a regra cria (BL 1.2.1): a LOJA decide quando é identidade (mercado → TEAM,
+// ferragem → CONSUMPTION, pet → CATS — a classe do Plaid também conta); senão a categoria da regra;
+// senão CONSUMPTION. STOCK nunca: mover pro estoque é de gente.
+export function inputCategoryFor(r: { category: string | null; origin?: string | null }, klass: string | null | undefined, merchant: string, bankName: string): string {
+  const rc = INPUT_CATEGORIES.includes(String(r.category)) ? String(r.category) : null
+  // Regra HUMANA ou APRENDIDA carrega intenção (o Márcio disse APARTMENT pra IKEA): a loja não passa por cima.
+  if (rc && r.origin && r.origin !== 'DEFAULT') return rc
+  // O nome do banco vira parte do NOME DA LOJA, nunca texto de item («S ORANGE BLOSSOM» não é laranja).
+  const v = classifyInput(merchant + ' ' + bankName, '', klass)
+  if (v.tier === 'CERTAIN' && v.category && v.category !== 'STOCK') return v.category
+  return rc || 'CONSUMPTION'
+}
 
 // Monta o pool de candidatos do app: saídas (OUT) e entradas (IN), já sem o
 // que outra linha do banco casou — inclusive o cruzamento grupo ⇄ item.
@@ -840,7 +853,7 @@ export const planSummary = (plan: Plan) => {
   for (const i of bucket) { const k = i.cls?.klass || '?'; byKlass[k] = (byKlass[k] || 0) + 1 }
   const ruleLabel = (i: PlanItem) => { const l = i.line, r = i.rule!; const base = `${l.date} · ${l.merchant || l.name} · $${Math.abs(num(l.amount)).toFixed(2)}`
     if (i.adopt) return `${base} → ADOTA agendada de ${i.adopt.expense_date} ($${i.adopt.amount.toFixed(2)} → $${Math.abs(num(l.amount)).toFixed(2)})${r.label ? ' · ' + r.label : ''}`
-    return `${base} → CRIA ${r.target === 'INPUT' ? 'SUPPLY ' + (r.category || 'CONSUMPTION') : 'despesa do fornecedor'}${r.label ? ' · ' + r.label : ''}${i.engine === 'LEARN' ? ' (regra aprendida)' : ''}` }
+    return `${base} → CRIA ${r.target === 'INPUT' ? 'SUPPLY ' + inputCategoryFor(r, (i.cls || classify(l)).klass, String(l.merchant || l.name || ''), String(l.name || '')) : 'despesa do fornecedor'}${r.label ? ' · ' + r.label : ''}${i.engine === 'LEARN' ? ' (regra aprendida)' : ''}` }
   return {
     fee_create: fee.filter(i => i.create).length, fee_match: fee.filter(i => !i.create).length, exact: exact.length, set: setM.length, ignore: ignore.length,
     name: name.length, rule_create: creates.filter(i => !i.adopt).length, rule_adopt: creates.filter(i => !!i.adopt).length,
@@ -1262,12 +1275,13 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           // INPUT/SUPPLY — inputs não tem bank_transaction_id: o elo idempotente
           // vai em order_number ('bank:<id>'), que também documenta a origem.
           const linkRef = ('bank:' + l.id).slice(0, 120)
+          const inputCat = inputCategoryFor(r, clsRule.klass, canon, bankName)
           const { data: prev } = await db.from('inputs').select('id').eq('order_number', linkRef).maybeSingle()
           let rowId: string = prev?.id || ''
           let inserted = false
           if (!rowId) {
             const { data: row, error } = await db.from('inputs').insert({
-              description: (canon + ' — ' + bankName.slice(0, 80) + ' ' + MARKER_CREATED).slice(0, 200), category: INPUT_CATEGORIES.includes(String(r.category)) ? r.category : 'CONSUMPTION',
+              description: (canon + ' — ' + bankName.slice(0, 80) + ' ' + MARKER_CREATED).slice(0, 200), category: inputCat,
               quantity: 1, unit_price: amtAbs, supplier: canon,
               purchase_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', order_number: linkRef,
               // Mesma tradução do balde: a regra cria o insumo JÁ classificado.
@@ -1281,7 +1295,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           } catch (e) { if (inserted && await stillOurs('inputs', rowId)) await db.from('inputs').delete().eq('id', rowId).eq('order_number', linkRef); throw e }
           res.rule_create++
           if (tag === 'LEARN') res.learn++
-          fixes.push(fix(l.id, `${tag} criou SUPPLY ${INPUT_CATEGORIES.includes(String(r.category)) ? r.category : 'CONSUMPTION'} · ${lineLabel(l)}`))
+          fixes.push(fix(l.id, `${tag} criou SUPPLY ${inputCat} · ${lineLabel(l)}`))
         }
       } else if (it.engine === 'BUCKET' && it.create && it.rule) {
         // BALDE (fase B): a compra vira despesa REAL no mesmo dia, na pseudo-invoice
