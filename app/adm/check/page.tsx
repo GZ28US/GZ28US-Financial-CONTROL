@@ -103,7 +103,7 @@ type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: st
 type BankLine = { d: string; a: number; id: string; n: string; s: string }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; lines: BankLine[]; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 // O APP PREENCHEU SOZINHO + DISPENSAS (DC 1.44.0): trilha «AUTO ·» dos últimos 7 dias (com DESFAZER genérico) e «visto, está certo».
-type AutoRow = { id: string; check_key: string; table_name: string; row_id: string; field: string; old_value: string | null; new_value: string | null; label: string; created_at: string }
+type AutoRow = { id: string; check_key: string; table_name: string; row_id: string; field: string; old_value: string | null; new_value: string | null; label: string; fixed_at: string }
 type AutoSignal = { state: 'loading' | 'error' | 'ok'; rows: AutoRow[]; dismissed: Record<string, string> }
 // Sugestões da fila A ATRIBUIR (?bucket=1) e as invoices com o estado FECHADA — o card do balde fala por fornecedor.
 type BucketSig = { state: 'loading' | 'error' | 'ok'; sug: Map<string, { invoice_id: string; code: string; car: string; why: string; score: number }>; invoices: { id: string; code: string; ride_code: string; ride_name: string; closed: boolean }[] }
@@ -1090,8 +1090,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const items: Item[] = auto.state === 'error' ? [{ href: '/adm/check', code: 'SINAL', label: 'sinal de /api/data-check/auto indisponível — a lista do que o app fez sozinho NÃO carregou', extra: 'recarregue' }]
       : auto.rows.map(a => ({
         href: a.table_name === 'bank_transactions' ? '/adm/bank' : a.table_name === 'parts_database' ? '/parts' : a.table_name === 'rides' ? '/rides/edit/' + a.row_id : a.table_name === 'fixed_cost_expenses' ? '/costs/fixed' : a.table_name === 'invoice_expenses' ? '/invoices' : '/adm/check',
-        code: KEY_LABEL[a.check_key] || a.check_key.toUpperCase(), when: String(a.created_at).slice(0, 10),
-        label: String(a.label || '').replace(/^AUTO · /, ''), extra: (a.field === 'DELETED' ? 'linha apagada (com foto — DESFAZER recria)' : `${a.field}: ${a.old_value ?? 'vazio'} → ${a.new_value ?? 'vazio'}`) + ' · ' + String(a.created_at).slice(0, 16).replace('T', ' '),
+        code: KEY_LABEL[a.check_key] || a.check_key.toUpperCase(), when: String(a.fixed_at).slice(0, 10),
+        label: String(a.label || '').replace(/^AUTO · /, ''), extra: (a.field === 'DELETED' ? 'linha apagada (com foto — DESFAZER recria)' : `${a.field}: ${a.old_value ?? 'vazio'} → ${a.new_value ?? 'vazio'}`) + ' · ' + String(a.fixed_at).slice(0, 16).replace('T', ' '),
         fix: a.table_name === 'bank_transactions' ? undefined : { kind: 'undo_auto' as const, table: a.table_name, rowId: a.row_id, field: a.field, fixId: a.id, confirmText: `Desfazer «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? ${a.field}: volta a ${a.old_value ?? 'vazio'}. Fica na trilha.` },
         link: a.table_name === 'bank_transactions' ? { href: BASE_PATH + '/adm/bank', label: 'DESFAZER em A CONFERIR ↗' } : undefined,
       }))

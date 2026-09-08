@@ -15,8 +15,8 @@ export async function GET(req: NextRequest) {
   const db = bankDb()
   const since = new Date(Date.now() - 7 * 864e5).toISOString()
   const [{ data: auto, error: e1 }, { data: dis, error: e2 }] = await Promise.all([
-    db.from('data_fixes').select('id, check_key, table_name, row_id, field, old_value, new_value, label, created_at').like('label', 'AUTO ·%').gte('created_at', since).order('created_at', { ascending: false }).limit(1000),
-    db.from('data_fixes').select('id, check_key, row_id, new_value, created_at').eq('field', 'DISMISSED').order('created_at', { ascending: false }).limit(2000),
+    db.from('data_fixes').select('id, check_key, table_name, row_id, field, old_value, new_value, label, fixed_at').like('label', 'AUTO ·%').gte('fixed_at', since).order('fixed_at', { ascending: false }).limit(1000),
+    db.from('data_fixes').select('id, check_key, row_id, new_value, fixed_at').eq('field', 'DISMISSED').order('fixed_at', { ascending: false }).limit(2000),
   ])
   if (e1 || e2) return NextResponse.json({ error: (e1 || e2)!.message }, { status: 500 })
   // Uma dispensa vale até ser desfeita (new_value 'UNDISMISS' mais recente cancela).
