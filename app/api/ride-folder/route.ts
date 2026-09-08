@@ -453,7 +453,17 @@ export async function POST(req: NextRequest) {
       const { data: ride } = await db.from('rides').select('project_code, project_name').eq('id', inv.ride_id).maybeSingle()
       if (!ride?.project_code) return NextResponse.json({ ok: true, result: 'no-ride' })
 
-      const folder = await findFolderByCode(token, root, sanitize(String(ride.project_code)), sanitize(String(ride.project_name || '')))
+      const rCode = sanitize(String(ride.project_code))
+      const rName = sanitize(String(ride.project_name || ''))
+      let folder = await findFolderByCode(token, root, rCode, rName)
+      if (!folder) {
+        // PASTA COM O NOME VELHO ("178 - SigSauer", sem prefixo de zona): número
+        // E nome têm de bater, e só serve resposta única — recibo não entra em
+        // pasta escolhida no chute. Aqui só se ESCREVE nela; adotar (renomear) é
+        // trabalho do create/rename, não do sincronizador de recibo.
+        const legado = await findLegacyFolders(token, root, zone || '', rCode, rName)
+        if (legado.length === 1) folder = legado[0]
+      }
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
       const invCode = sanitize(String(inv.invoice_code || ''))
       const invName = sanitize(String(inv.service || '').trim() || String(ride.project_name || ''))
