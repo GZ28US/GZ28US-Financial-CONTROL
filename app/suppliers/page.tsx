@@ -54,10 +54,20 @@ export default function SuppliersPage() {
     setHuntAvg(out)
   }
 
+  // ESTA TELA É A DOS SUPPLIERS, NÃO A DE TODOS OS MERCHANTS (Márcio, 08/set/2026:
+  // *"todos os merchands, todos pra quem pagamos algo, estarão nesta tabela, e todos
+  // terão uma categoria... a HHP estará como SUPPLIER, o WAWA como GROCERIES/FOOD"*).
+  //
+  // A tabela passou a ser o cadastro de TODO MUNDO a quem pagamos — a view
+  // `merchants` mostra todos. Quem fornece peça e serviço de carro é `category
+  // = 'SUPPLIER'`, e é só isso que esta tela lista, exatamente como antes da
+  // mudança. Sem este filtro, o mercado e o posto de gasolina apareceriam na
+  // lista de fornecedores no instante em que fossem cadastrados.
   async function loadSuppliers() {
     const { data } = await supabase
       .from('suppliers')
       .select('*')
+      .eq('category', 'SUPPLIER')
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     setSuppliers((data || []) as Supplier[])
