@@ -487,8 +487,30 @@ export async function POST(req: NextRequest) {
       const curado = (n: string) => (n ? (matchSupplier(n, dir)?.name || n) : n)
 
       const { data: exps } = await db.from('invoice_expenses').select('supplier, order_number, receipt_url').eq('invoice_id', invoiceId)
+
+      // COMPRA RATEADA — "toda compra rateada deve ter o arquivo em todas as
+      // pastas" (Márcio, 08/set/2026). Uma compra dividida entre carros é UMA
+      // nota só e costuma estar anexada em uma invoice só, mas é documento de
+      // todos os carros que entraram nela. O elo é o ORDER NUMBER, que é
+      // sagrado e único por compra; o fornecedor entra na chave porque pedido
+      // "1000" de duas lojas não é a mesma compra. Sem pedido não há elo —
+      // rateio não se deduz por semelhança.
+      const chaveCompra = (s: string, o: string) => nomeNu(curado(String(s || '').trim())) + '|' + nomeNu(String(o || ''))
+      const meusPedidos = [...new Set((exps || [])
+        .map((e: any) => String(e.order_number || '').trim())
+        .filter((o) => nomeNu(o).length >= 4))]
+      const minhasChaves = new Set((exps || [])
+        .filter((e: any) => nomeNu(String(e.order_number || '')).length >= 4)
+        .map((e: any) => chaveCompra(e.supplier, e.order_number)))
+      let irmas: any[] = []
+      if (meusPedidos.length) {
+        const { data: outras } = await db.from('invoice_expenses')
+          .select('invoice_id, supplier, order_number, receipt_url').in('order_number', meusPedidos)
+        irmas = (outras || []).filter((r: any) => r.invoice_id !== invoiceId && minhasChaves.has(chaveCompra(r.supplier, r.order_number)))
+      }
+
       const porUrl = new Map<string, { supplier: string; order: string }>()
-      for (const e of exps || []) {
+      for (const e of [...(exps || []), ...irmas]) {
         for (const u of parseReceiptUrls((e as any).receipt_url)) {
           const at = porUrl.get(u) || { supplier: '', order: '' }
           if (!at.supplier) at.supplier = curado(String((e as any).supplier || '').trim())
