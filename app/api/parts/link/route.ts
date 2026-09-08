@@ -90,13 +90,21 @@ export async function GET(req: NextRequest) {
     const catalog = parts.map((p: any) => ({
       id: p.id, label: [p.part_number, p.item].filter(Boolean).join(' · ').slice(0, 90),
       pn: normPN(p.part_number), toks: new Set([...words(p.item), ...words(p.alias)]), locked: !!p.locked_at, supplier: p.supplier || '',
+      flat: normPN(p.item), flatAlias: normPN(p.alias),
     }))
     const withPN = catalog.filter(c => c.pn.length >= 5)
     // candidatos pra um texto livre
     const candidatesFor = (text: string, supplier: string) => {
       const t = normPN(text), tw = words(text), sup = String(supplier || '').toUpperCase()
       const scored: { id: string; label: string; certain: boolean; score: number }[] = []
-      for (const c of withPN) if (t.includes(c.pn)) scored.push({ id: c.id, label: c.label, certain: true, score: 100 + c.pn.length })
+      // CERTO só com identidade: o texto inteiro é o item/apelido do catálogo, ou há UM PN de
+      // catálogo no texto e ele está na cabeça (40 primeiros caracteres). «PN em qualquer lugar»
+      // linkava o header da Kooks à junta que vem junto e o damper da ATI ao retentor — as duas
+      // «certas» de 8/set eram erradas.
+      if (t.length >= 8) for (const c of catalog) if (t === c.flat || (c.flatAlias.length >= 8 && t === c.flatAlias)) scored.push({ id: c.id, label: c.label, certain: true, score: 200 })
+      const pnHits = withPN.filter(c => t.includes(c.pn))
+      const head = t.slice(0, 40)
+      for (const c of pnHits) if (!scored.some(s => s.id === c.id)) scored.push({ id: c.id, label: c.label, certain: pnHits.length === 1 && head.includes(c.pn), score: 100 + c.pn.length })
       if (!scored.length) for (const c of catalog) {
         let hit = 0; for (const w of tw) if (c.toks.has(w)) hit++
         if (c.supplier && sup && String(c.supplier).toUpperCase().includes(sup.slice(0, 6))) hit++
@@ -172,7 +180,8 @@ export async function GET(req: NextRequest) {
     const mapBad = parts.filter((p: any) => p.map_price != null && p.unit_price != null && Number(p.map_price) > 0 && Number(p.map_price) < Number(p.unit_price))
       .map((p: any) => ({ id: p.id, item: String(p.alias || p.item || '').slice(0, 60), cost: Number(p.unit_price), map: Number(p.map_price) }))
     const noSource = parts.filter((p: any) => !p.source_type).map((p: any) => String(p.alias || p.item || '').slice(0, 60))
-    const kitMismatch = parts.filter((p: any) => (p.source_type === 'KIT') !== !!p.is_kit && (p.source_type === 'KIT' || p.is_kit)).map((p: any) => ({ item: String(p.alias || p.item || '').slice(0, 60), st: p.source_type, kit: !!p.is_kit }))
+    // Só o caso LEGADO (source_type 'KIT' sem is_kit): kit novo nasce MANUAL + is_kit por lei (24/ago) — a condição antiga marcava todo kit pra sempre (30 falsos em 8/set).
+    const kitMismatch = parts.filter((p: any) => p.source_type === 'KIT' && !p.is_kit).map((p: any) => ({ item: String(p.alias || p.item || '').slice(0, 60), st: p.source_type, kit: !!p.is_kit }))
     // categorias: vazia ou fora do vocabulário fechado → sugestão por palavra-chave
     const catSet = new Set<string>(PART_CATEGORIES as unknown as string[])
     // Dois leitores: palavra-chave + IA. Concordaram → já foi preenchida (não está aqui);

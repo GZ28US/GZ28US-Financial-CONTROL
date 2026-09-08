@@ -381,21 +381,29 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     byKey.forEach((rows, k) => {
       const [supId, month] = k.split('|')
       const sup = d.fixedSuppliers.get(supId)
-      const slots = ((sup?.payment_day_1 != null ? 1 : 0) + (sup?.payment_day_2 != null ? 1 : 0)) || 1
-      if (rows.length <= slots) return
-      const linked = rows.filter((r: any) => r.bank_transaction_id || r.payment_date)
+      if (rows.length < 2) return
+      // DUPLICATA é identidade dura: mesmo fornecedor, mesmo mês e MESMO VALOR (ou mesma descrição).
+      // Contar «slots» marcava aluguel + garagem da Luma (duas cobranças legítimas no mesmo dia) e
+      // oferecia APAGAR um aluguel real — 28 falsos positivos medidos em 8/set/2026.
+      const amt = (r: any) => Math.round((parseFloat(r.amount) || 0) * 100) / 100
+      const desc = (r: any) => String(r.description || '').trim().toLowerCase()
+      const twin = (o: any) => rows.find((r: any) => r.id !== o.id && (Math.abs(amt(r) - amt(o)) < 0.011 || (desc(o) && desc(r) === desc(o))))
       const open = rows.filter((r: any) => !r.bank_transaction_id && !r.payment_date)
-      for (const o of open) items.push({
-        href: '/costs/fixed/' + supId, code: 'DUPLA MÊS', when: String(o.expense_date || '').slice(0, 10),
-        label: `${sup?.company || sup?.description || ''} · ${month} · ${rows.length} contas (${slots} slot)`,
-        extra: linked.length ? `já existe a paga/ligada ao banco: ${linked.map((r: any) => (r.description || '') + ' ' + usd(parseFloat(r.amount) || 0)).join(' · ').slice(0, 120)}` : 'nenhuma delas paga ainda — decida qual vive',
-        amount: parseFloat(o.amount) || 0,
-        fix: { kind: 'trash' as const, table: 'fixed_cost_expenses', rowId: o.id, field: 'DELETED', confirmText: `Apagar a conta em aberto de ${String(o.expense_date || '').slice(0, 10)} (${usd(parseFloat(o.amount) || 0)})? O mês ${month} de ${sup?.company || ''} já tem ${linked.length ? 'a linha paga/ligada ao banco' : rows.length + ' contas'}. Fica na trilha.` },
-      })
+      for (const o of open) {
+        const t = twin(o); if (!t) continue
+        const tPaid = !!(t.bank_transaction_id || t.payment_date)
+        items.push({
+          href: '/costs/fixed/' + supId, code: 'DUPLA MÊS', when: String(o.expense_date || '').slice(0, 10),
+          label: `${sup?.company || sup?.description || ''} · ${month} · ${usd(amt(o))} duas vezes`,
+          extra: tPaid ? `a gêmea (${String(t.expense_date || '').slice(0, 10)}, ${usd(amt(t))}) já está paga/ligada ao banco — esta em aberto é sobra do gerador` : `as duas estão em aberto (${String(t.expense_date || '').slice(0, 10)} e ${String(o.expense_date || '').slice(0, 10)}) — decida qual vive`,
+          amount: amt(o), signal: tPaid ? 'matched' : undefined,
+          fix: { kind: 'trash' as const, table: 'fixed_cost_expenses', rowId: o.id, field: 'DELETED', confirmText: `Apagar a conta em aberto de ${String(o.expense_date || '').slice(0, 10)} (${usd(amt(o))})? O mês ${month} de ${sup?.company || ''} tem outra igual${tPaid ? ', paga/ligada ao banco' : ' em aberto'}. Fica na trilha.` },
+        })
+      }
     })
     if (items.length) checks.push({
       group: 'FINANCIAL', key: 'fixed-dup-month', title: 'Fornecedor MONTHLY com 2+ contas no mesmo mês', blocks: 'a mesma conta pesa duas vezes: no DRE e em "a pagar"',
-      why: 'O gerador agenda uma conta por slot e mês; quando o banco cria ou adota a conta do mês (AUTO-BOOK) ou alguém lança a mesma conta à mão, sobra uma agendada em aberto ao lado da paga. APP fica fora (assinaturas com recibo do Gmail cobram várias vezes no mês por natureza). Apague a sobra em aberto — a paga/ligada ao banco é a verdadeira.',
+      why: 'Duplicata é identidade dura: mesmo fornecedor, mesmo mês e MESMO VALOR (ou mesma descrição) — aluguel e garagem no mesmo dia NÃO são duplicata (Luma, 8/set). Quando o banco cria ou adota a conta do mês (AUTO-BOOK) ou alguém lança a mesma conta à mão, sobra uma agendada em aberto ao lado da paga. APP fica fora (assinaturas com recibo do Gmail cobram várias vezes no mês por natureza). Apague a sobra em aberto — a paga/ligada ao banco é a verdadeira.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -560,7 +568,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
           // SOURCE contradizendo o sinal é CONFLITO, não palpite BR (revisão #3 — o
           // ternário antigo dava GZ28BR dos dois lados).
           if (r.source === 'GZ28US') { suggest = 'GZ28US'; extra = 'fora da Regions, mas SOURCE diz GZ28US — conferir'; signal = 'conflict' }
-          else { suggest = 'GZ28BR'; extra = 'fora da Regions'; signal = 'absent' }
+          // Ausente da Regions NÃO é prova de BR: medido em 8/set nas linhas já preenchidas, 85% das
+          // «ausentes» eram GZ28US (valor partido, pedido somado). Sem palpite — a resposta é de gente.
+          else { extra = 'fora da Regions (±10d) — GZ28BR, sócio ou valor partido? sem palpite'; signal = 'absent' }
         }
         else if (r.source === 'GZ28BR' || r.source === 'GZ28US') { suggest = r.source; extra = 'sugestão: ' + r.source; signal = 'source' }
       }
@@ -982,12 +992,15 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   if (Array.isArray(d.bucket)) {
     const rows = d.bucket as any[]
     const total = rows.reduce((s, e) => s + expLine(e), 0)
-    const ages = rows.map(e => e.payment_date ? dayDiff(TODAY, String(e.payment_date)) : 0)
+    // Idade = desde que ENTROU no balde (created_at), não a data do banco: o backlog de nov/2025
+    // varrido em 4/set entrou há dias, não há meses — a missão gritava urgência falsa (8/set).
+    const entry = (e: any) => String(e.created_at || e.payment_date || '').slice(0, 10)
+    const ages = rows.map(e => entry(e) ? dayDiff(TODAY, entry(e)) : 0)
     const maxAge = ages.length ? Math.max(...ages) : 0
     const open = d.invoices.filter((i: any) => !i.is_quote && i.ride_id && ['REALTIME', 'INCOMPLETE'].includes(String(i.live_status))).map((i: any) => { const r = d.rides.get(i.ride_id); return { value: i.id, label: `${r?.project_code || ''} — ${r?.project_name || ''} · ${i.invoice_code}` } }).sort((a: any, b: any) => a.label.localeCompare(b.label))
     const options = [...open, { value: '__stock__', label: '📦 ESTOQUE (vira inventário)' }, { value: '__supplies__', label: '🧴 SUPPLIES (insumo CONSUMPTION)' }]
-    const items: Item[] = rows.filter(e => e.payment_date && dayDiff(TODAY, String(e.payment_date)) > 7).sort((a, b) => String(a.payment_date).localeCompare(String(b.payment_date))).map(e => ({
-      href: '/adm/bank', code: 'SEM DONO', label: [e.supplier, String(e.item || '').replace('(a atribuir · Bank Link)', '').trim()].filter(Boolean).join(' · '), when: e.payment_date, extra: `${dayDiff(TODAY, String(e.payment_date))} dias no balde`, amount: expLine(e),
+    const items: Item[] = rows.filter(e => entry(e) && dayDiff(TODAY, entry(e)) > 7).sort((a, b) => entry(a).localeCompare(entry(b))).map(e => ({
+      href: '/adm/bank', code: 'SEM DONO', label: [e.supplier, String(e.item || '').replace('(a atribuir · Bank Link)', '').trim()].filter(Boolean).join(' · '), when: e.payment_date, extra: `${dayDiff(TODAY, entry(e))} dias no balde (entrou ${entry(e)} · compra de ${String(e.payment_date || '').slice(0, 10)})`, amount: expLine(e),
       link: { href: `${BASE_PATH}/adm/bank#a-atribuir`, label: 'FILA ↗' },
       fix: { kind: 'select' as const, table: 'invoice_expenses', rowId: e.id, field: 'invoice_id', current: null, options },
     }))

@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   if (String(b.action) !== 'trim') return NextResponse.json({ error: 'bad request' }, { status: 400 })
   const dutyId = String(b.duty_id || ''), segStart = String(b.seg_start || ''), segEnd = String(b.seg_end || '')
   const newEndLocal = String(b.new_end_local || '')   // 'YYYY-MM-DDTHH:mm' na hora de Orlando
-  if (!dutyId || !segStart || !segEnd || !/^d{4}-d{2}-d{2}Td{2}:d{2}/.test(newEndLocal)) return NextResponse.json({ error: 'dados incompletos' }, { status: 400 })
+  if (!dutyId || !segStart || !segEnd || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(newEndLocal)) return NextResponse.json({ error: 'dados incompletos' }, { status: 400 })
   // Orlando está em EDT (-04:00) no período coberto; a trilha guarda o instante exato.
   const newEnd = new Date(newEndLocal + ':00-04:00').toISOString()
   if (!(newEnd > segStart && newEnd < segEnd)) return NextResponse.json({ error: 'o fim aparado tem que ficar DENTRO do segmento' }, { status: 400 })
