@@ -33,6 +33,37 @@ function pad3(n: number | string) {
   return isNaN(num) ? String(n) : String(num).padStart(3, '0')
 }
 
+// A PASTA DA INVOICE (Márcio, 08/set/2026): cada invoice tem a sua dentro de
+// "Invoices" na pasta do carro — "US.021.1 - Z1250sc GoldenEye Pack" — e é lá que
+// os recibos das expenses dela moram. Idempotente: chamar de novo só conserta o
+// nome. Nunca derruba o save: pasta é consequência, não condição.
+// OS RECIBOS DA INVOICE (Márcio, 08/set/2026): os documentos das expenses moram
+// na pasta da invoice, com "[cod invoice] [carro] - [fornecedor] [pedido]". Quem
+// nomeia é a rota, lendo o banco — a tela só avisa que esta invoice mexeu. Não
+// se espera pelo resultado: papel é consequência do lançamento, nunca condição.
+function syncInvoiceReceipts(invoiceId: string) {
+  fetch(`${BASE_PATH}/api/ride-folder`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'invoice-receipts', zone: 'US', invoiceId }),
+  }).catch(() => { /* Dropbox fora do ar não derruba a invoice */ })
+}
+
+async function syncInvoiceFolder(rideId: string, invoiceCode: string, service: string | null, oldInvoiceCode?: string) {
+  try {
+    const { data: r } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
+    if (!r?.project_code) return
+    await fetch(`${BASE_PATH}/api/ride-folder`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'invoice-folder', zone: 'US',
+        code: r.project_code, name: r.project_name || '',
+        invoiceCode, invoiceName: (service || '').trim() || r.project_name || '',
+        oldInvoiceCode: oldInvoiceCode || undefined,
+      }),
+    })
+  } catch { /* Dropbox fora do ar não derruba a invoice */ }
+}
+
 export default function NewInvoicePage() {
   const params = useParams()
   const router = useRouter()
@@ -114,6 +145,8 @@ export default function NewInvoicePage() {
       const { data: inv, error } = await supabase.from('invoices').insert([row]).select().single()
       if (error || !inv) { alert(error?.message || 'Error duplicating quote'); router.back(); return }
       createdId = inv.id
+      // Quote não ganha pasta (o ride dela também não tem) — só invoice de verdade.
+      if (!inv.is_quote && inv.ride_id) await syncInvoiceFolder(inv.ride_id, inv.invoice_code, inv.service)
 
       // Copy children with EXPLICIT, insertable columns only. invoice_parts.total is
       // a generated column and updated_at is server-managed — copying them verbatim
@@ -159,6 +192,9 @@ export default function NewInvoicePage() {
       }))
       if (payRows.length) { const { error: pae } = await supabase.from('invoice_payments').insert(payRows); if (pae) throw new Error('incomes: ' + pae.message) }
 
+      // O clone é cópia fiel: os recibos da origem viraram linhas aqui, então a
+      // pasta desta invoice recebe os mesmos papéis com o nome dela.
+      if (!inv.is_quote && inv.ride_id) syncInvoiceReceipts(inv.id)
       router.replace(`${basePath}/edit/${inv.id}`)
     } catch (err) {
       // Roll back the half-created copy so a failed duplicate leaves nothing behind.
@@ -295,6 +331,8 @@ export default function NewInvoicePage() {
 
     const { data: invoice, error } = await supabase.from('invoices').insert([row]).select().single()
     if (error || !invoice) { alert(error?.message || `Error creating ${isQuote ? 'quote' : 'invoice'}`); setSaving(false); return }
+    // Quote não ganha pasta (o ride dela também não tem) — só invoice de verdade.
+    if (!invoice.is_quote && invoice.ride_id) await syncInvoiceFolder(invoice.ride_id, invoice.invoice_code, invoice.service)
 
     const chosenAddons = addons.filter(a => selectedAddonIds.has(a.id))
     if (pack) {

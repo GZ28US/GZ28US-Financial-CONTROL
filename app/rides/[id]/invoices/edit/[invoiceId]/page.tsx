@@ -239,6 +239,37 @@ function formatTsDate(ts: string) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+// A PASTA DA INVOICE (Márcio, 08/set/2026): cada invoice tem a sua dentro de
+// "Invoices" na pasta do carro — "US.021.1 - Z1250sc GoldenEye Pack" — e é lá que
+// os recibos das expenses dela moram. Idempotente: chamar de novo só conserta o
+// nome. Nunca derruba o save: pasta é consequência, não condição.
+// OS RECIBOS DA INVOICE (Márcio, 08/set/2026): os documentos das expenses moram
+// na pasta da invoice, com "[cod invoice] [carro] - [fornecedor] [pedido]". Quem
+// nomeia é a rota, lendo o banco — a tela só avisa que esta invoice mexeu. Não
+// se espera pelo resultado: papel é consequência do lançamento, nunca condição.
+function syncInvoiceReceipts(invoiceId: string) {
+  fetch(`${BASE_PATH}/api/ride-folder`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'invoice-receipts', zone: 'US', invoiceId }),
+  }).catch(() => { /* Dropbox fora do ar não derruba a invoice */ })
+}
+
+async function syncInvoiceFolder(rideId: string, invoiceCode: string, service: string | null, oldInvoiceCode?: string) {
+  try {
+    const { data: r } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
+    if (!r?.project_code) return
+    await fetch(`${BASE_PATH}/api/ride-folder`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'invoice-folder', zone: 'US',
+        code: r.project_code, name: r.project_name || '',
+        invoiceCode, invoiceName: (service || '').trim() || r.project_name || '',
+        oldInvoiceCode: oldInvoiceCode || undefined,
+      }),
+    })
+  } catch { /* Dropbox fora do ar não derruba a invoice */ }
+}
+
 export default function EditInvoicePage() {
   const params = useParams()
   const router = useRouter()
@@ -2295,10 +2326,17 @@ export default function EditInvoicePage() {
       })
     } catch { /* non-blocking */ }
     // Cascade: re-code every invoice on this ride from the old ride code to the new one.
-    const { data: invs } = await supabase.from('invoices').select('id, invoice_code').eq('ride_id', ride.id)
+    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, service').eq('ride_id', ride.id)
     for (const inv of (invs || [])) {
       if (oldRideCode && inv.invoice_code?.startsWith(oldRideCode + '.')) {
-        await supabase.from('invoices').update({ invoice_code: newRideCode + inv.invoice_code.slice(oldRideCode.length) }).eq('id', inv.id)
+        const novoCod = newRideCode + inv.invoice_code.slice(oldRideCode.length)
+        await supabase.from('invoices').update({ invoice_code: novoCod }).eq('id', inv.id)
+        // A pasta da invoice carrega o código do carro no nome: renumerou o ride,
+        // renomeia a pasta de CADA invoice dele. O código velho é quem a encontra.
+        await syncInvoiceFolder(ride.id, novoCod, inv.service, inv.invoice_code)
+        // O código também está no NOME de cada recibo — a rota renomeia por
+        // conteúdo e apaga a versão com o nome velho.
+        syncInvoiceReceipts(inv.id)
       }
     }
     // Migrate the ride's client too, if it was still a quote client.
@@ -2323,6 +2361,9 @@ export default function EditInvoicePage() {
 
   // End of the save flow: leave the editor, or stay and refresh state from the DB.
   async function leaveOrStay() {
+    // Salvou: os recibos das expenses vão para a pasta da invoice com o nome de
+    // agora. Roda solto — sair da tela não pode esperar por Dropbox.
+    syncInvoiceReceipts(invoiceId)
     if (exitAfterSaveRef.current) { router.push(basePath); return }
     await loadData(true)
     setSavedFlash(true)

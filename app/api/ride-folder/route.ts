@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash } from 'node:crypto'
+import { createClient } from '@supabase/supabase-js'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 
@@ -19,7 +21,7 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 // Rename finds the existing folder by its CODE prefix (folder names may carry
 // older nicknames); if none exists it self-heals by creating the folder.
 
-export const maxDuration = 30
+export const maxDuration = 60
 
 const ROOTS: Record<string, string> = {
   US: '/001 - GZ28US/GZ28US Rides',
@@ -140,7 +142,54 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
 // As três etiquetas de OS que o app carimba no nome do tune. "BoneStock" só fica
 // no carro que não teve atualização de OS (lei do Márcio, 06/set/2026).
 const OS_TAGS = ['BoneStock', 'Demon170 Converted Stock', 'Other OS Converted Stock']
-const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation']
+// "Invoices" guarda uma pasta POR INVOICE do carro ("US.021.1 - <nome>"), e dentro
+// dela os recibos das expenses daquela invoice. Purchases continua existindo para o
+// que é do carro mas não se sabe de qual invoice (Márcio, 08/set/2026).
+const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation', 'Invoices']
+// A pasta de uma invoice: código + nome (o `service` da invoice; sem ele, o nome do
+// carro). É o mesmo formato da pasta do ride, um nível abaixo.
+const invoiceFolderName = (code: string, name: string) => sanitize(`${code}${name ? ' - ' + name : ''}`)
+// O RECIBO PODE ESTAR EM VÁRIAS LINHAS. O scan grava a mesma URL no grupo de
+// compra inteiro, e o campo nasceu como URL crua e virou lista JSON — as duas
+// formas convivem no banco. Aqui as duas viram a mesma coisa: uma lista de URLs.
+function parseReceiptUrls(v: unknown): string[] {
+  if (!v) return []
+  const bruto = Array.isArray(v) ? v.map(String) : (() => {
+    const s = String(v).trim()
+    if (!s || s === '[]') return []
+    if (s.startsWith('[')) { try { const a = JSON.parse(s); return Array.isArray(a) ? a.map(String) : [] } catch { return [] } }
+    return [s]
+  })()
+  return bruto.map(s => s.trim()).filter(s => /^https?:\/\//.test(s))
+}
+
+// O Dropbox identifica CONTEÚDO por um hash próprio: SHA-256 de cada bloco de
+// 4 MiB, concatenados, SHA-256 de novo. É ele que responde "este arquivo já é o
+// mesmo documento?" sem baixar nada. Dele saem as duas garantias desta rota:
+// não reenviar o que já está lá, e só apagar da Purchases o que já está salvo
+// IDÊNTICO no lugar certo (ordem do Márcio, 08/set/2026).
+function dropboxHash(buf: Buffer): string {
+  const BLOCO = 4 * 1024 * 1024
+  const partes: Buffer[] = []
+  for (let i = 0; i < buf.length; i += BLOCO) partes.push(createHash('sha256').update(buf.subarray(i, i + BLOCO)).digest())
+  return createHash('sha256').update(Buffer.concat(partes)).digest('hex')
+}
+
+// Lista rasa que não explode quando a pasta ainda não existe.
+async function listaArquivos(token: string, path: string): Promise<{ name: string; hash: string }[]> {
+  const out: { name: string; hash: string }[] = []
+  let cursor: string | null = null
+  do {
+    const r: any = cursor
+      ? await dbx(token, 'files/list_folder/continue', { cursor })
+      : await dbx(token, 'files/list_folder', { path, recursive: false, limit: 2000 })
+    if (!r.ok) return out
+    for (const e of r.data.entries || []) if (e['.tag'] === 'file') out.push({ name: e.name, hash: e.content_hash || '' })
+    cursor = r.data.has_more ? r.data.cursor : null
+  } while (cursor)
+  return out
+}
+
 // A pasta de triagem tem nome POR ZONA — Screening nos rides US, Volante nos BR —
 // derivado do path, então qualquer um dos apps nomeia certo mexendo na outra zona.
 async function ensureSubfolders(token: string, folderPath: string) {
@@ -201,7 +250,7 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if (!code || !['create', 'rename', 'rename-file', 'retag', 'retag-os', 'upload', 'find', 'mirror'].includes(action) || (!zone && action !== 'mirror')) {
+    if ((!code && action !== 'invoice-receipts') || !['create', 'rename', 'rename-file', 'retag', 'retag-os', 'upload', 'find', 'mirror', 'invoice-folder', 'invoice-receipts'].includes(action) || (!zone && action !== 'mirror')) {
       return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|retag|retag-os|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
     }
     const root = zone ? ROOTS[zone] : ''
@@ -380,6 +429,143 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, result: 'retagged-os', renamed, falhas })
     }
 
+    // RECIBOS DA INVOICE (Márcio, 08/set/2026). "TODAS as invoices de expenses
+    // desta invoice, devidamente nomeadas, com o [cod invoice] [ride] - [supplier]
+    // [order #]". A tela manda só o invoiceId — código, carro, fornecedor e pedido
+    // saem do banco, que é quem sabe a verdade de agora. Por isso renomear a
+    // invoice ou renumerar o carro conserta os arquivos: é só chamar de novo.
+    // dryRun devolve o plano sem tocar em nada.
+    if (action === 'invoice-receipts') {
+      const invoiceId = String(body.invoiceId || '')
+      if (!invoiceId) return NextResponse.json({ error: 'Bad request: invoice-receipts needs invoiceId.' }, { status: 400 })
+      const dry = !!body.dryRun
+      const sUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const sKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+      if (!sUrl || !sKey) return NextResponse.json({ error: 'no service key' }, { status: 500 })
+      const db = createClient(sUrl, sKey, { auth: { persistSession: false } })
+
+      const { data: inv } = await db.from('invoices').select('id, invoice_code, service, ride_id, is_quote').eq('id', invoiceId).maybeSingle()
+      if (!inv) return NextResponse.json({ ok: true, result: 'no-invoice' })
+      // Quote não tem pasta (o carro dela também não tem) e invoice sem carro não
+      // tem onde morar — as duas saem em silêncio, não são erro.
+      if (inv.is_quote || !inv.ride_id) return NextResponse.json({ ok: true, result: 'quote-or-no-ride' })
+      const { data: ride } = await db.from('rides').select('project_code, project_name').eq('id', inv.ride_id).maybeSingle()
+      if (!ride?.project_code) return NextResponse.json({ ok: true, result: 'no-ride' })
+
+      const folder = await findFolderByCode(token, root, sanitize(String(ride.project_code)), sanitize(String(ride.project_name || '')))
+      if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
+      const invCode = sanitize(String(inv.invoice_code || ''))
+      const invName = sanitize(String(inv.service || '').trim() || String(ride.project_name || ''))
+      const destino = `${root}/${folder}/Invoices/${invoiceFolderName(invCode, invName)}`
+
+      const { data: exps } = await db.from('invoice_expenses').select('supplier, order_number, receipt_url').eq('invoice_id', invoiceId)
+      const porUrl = new Map<string, { supplier: string; order: string }>()
+      for (const e of exps || []) {
+        for (const u of parseReceiptUrls((e as any).receipt_url)) {
+          const at = porUrl.get(u) || { supplier: '', order: '' }
+          if (!at.supplier) at.supplier = String((e as any).supplier || '').trim()
+          if (!at.order) at.order = String((e as any).order_number || '').trim()
+          porUrl.set(u, at)
+        }
+      }
+      if (!porUrl.size) return NextResponse.json({ ok: true, result: 'no-receipts', folder: destino })
+
+      // O NOME. Ordenado pela URL para o desempate de homônimos ser sempre o
+      // mesmo — rodar de novo não pode renomear o que já está certo.
+      const carro = sanitize(String(ride.project_name || ''))
+      const usados = new Map<string, number>()
+      const esperados: { url: string; nome: string }[] = []
+      for (const u of [...porUrl.keys()].sort()) {
+        const { supplier, order } = porUrl.get(u)!
+        const ext = ((u.split('?')[0].split('/').pop() || '').split('.').pop() || 'pdf').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'pdf'
+        const base = sanitize(`${invCode}${carro ? ' ' + carro : ''} - ${supplier || 'Receipt'}${order ? ' ' + order : ''}`)
+        const n = (usados.get(base) || 0) + 1
+        usados.set(base, n)
+        esperados.push({ url: u, nome: `${base}${n > 1 ? ' (' + n + ')' : ''}.${ext}` })
+      }
+
+      const jaLa = await listaArquivos(token, destino)
+      const hashDe = new Map(jaLa.map(f => [f.name, f.hash]))
+      const enviados: string[] = [], iguais: string[] = [], falhos: string[] = []
+      const hashesCertos = new Set<string>()
+      let restam = 0
+      for (const { url, nome } of esperados) {
+        // Já está lá com o mesmo conteúdo? Não baixa, não sobe: o caso comum é
+        // este, e é ele que faz a rota ser barata de chamar em todo save.
+        const bytes = await fetch(url).then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null)
+        if (!bytes) { falhos.push(nome); continue }
+        const buf = Buffer.from(bytes)
+        const h = dropboxHash(buf)
+        hashesCertos.add(h)
+        if (hashDe.get(nome) === h) { iguais.push(nome); continue }
+        if (dry) { enviados.push(nome); continue }
+        if (enviados.length >= 25) { restam++; continue }   // teto por chamada; chamar de novo continua
+        await dbx(token, 'files/create_folder_v2', { path: destino, autorename: false })
+        const up = await dbxUpload(token, `${destino}/${nome}`, buf)
+        if (up.ok) enviados.push(nome); else falhos.push(nome)
+      }
+
+      // SOBRAS DO NOME VELHO. Arquivo nesta pasta que não é nenhum dos esperados,
+      // mas cujo CONTEÚDO é de um deles, é o mesmo documento com o nome de antes
+      // do renome — morre. O que não bate hash nenhum fica: pode ser papel que o
+      // Márcio pôs à mão, e isso não se apaga por dedução.
+      const removidos: string[] = []
+      const nomesCertos = new Set(esperados.map(e => e.nome))
+      for (const f of jaLa) {
+        if (nomesCertos.has(f.name) || !hashesCertos.has(f.hash)) continue
+        if (!dry) await dbx(token, 'files/delete_v2', { path: `${destino}/${f.name}` })
+        removidos.push(f.name)
+      }
+
+      // PURCHASES: "só deixe nas pastas purchases o que vc não encontrar de qual
+      // invoice é". O que já está salvo IDÊNTICO na pasta da invoice sai de lá —
+      // e a régua é o hash, nunca o nome.
+      const daPurchases: string[] = []
+      const pur = `${root}/${folder}/Purchases`
+      for (const f of await listaArquivos(token, pur)) {
+        if (!hashesCertos.has(f.hash)) continue
+        if (!dry) await dbx(token, 'files/delete_v2', { path: `${pur}/${f.name}` })
+        daPurchases.push(f.name)
+      }
+
+      return NextResponse.json({
+        ok: true, result: dry ? 'plan' : 'synced', folder: destino,
+        uploaded: enviados, unchanged: iguais, renamedAway: removidos,
+        purchasesCleared: daPurchases, failed: falhos, pending: restam,
+      })
+    }
+
+    // INVOICE-FOLDER: garante "Invoices/<código> - <nome>" dentro do carro, e a
+    // renomeia quando o código ou o nome da invoice mudam. Chamada no nascimento da
+    // invoice e a cada save dela — é o que mantém a pasta viva junto com o dado.
+    if (action === 'invoice-folder') {
+      const invCode = sanitize(String(body.invoiceCode || ''))
+      const invName = sanitize(String(body.invoiceName || ''))
+      if (!invCode) return NextResponse.json({ error: 'Bad request: invoice-folder needs invoiceCode.' }, { status: 400 })
+      const folder = await findFolderByCode(token, root, code, name)
+      if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
+      const base = `${root}/${folder}/Invoices`
+      await dbx(token, 'files/create_folder_v2', { path: base, autorename: false })
+      const alvo = invoiceFolderName(invCode, invName)
+
+      // Já existe uma pasta desta invoice com OUTRO nome? Renomeia em vez de criar
+      // uma segunda — o código da invoice é a identidade, o nome é etiqueta.
+      const velhoCode = sanitize(String(body.oldInvoiceCode || '')) || invCode
+      const lista = await dbx(token, 'files/list_folder', { path: base, recursive: false, limit: 2000 })
+      const atual = (lista.data?.entries || []).find((e: any) =>
+        e['.tag'] === 'folder' && (e.name === velhoCode || e.name.startsWith(velhoCode + ' ')))
+      if (atual && atual.name !== alvo) {
+        const mv = await dbx(token, 'files/move_v2', { from_path: `${base}/${atual.name}`, to_path: `${base}/${alvo}`, autorename: false })
+        if (mv.ok) return NextResponse.json({ ok: true, result: 'renamed', from: atual.name, folder: alvo })
+      }
+      if (atual) return NextResponse.json({ ok: true, result: 'already-exists', folder: alvo })
+      const c = await dbx(token, 'files/create_folder_v2', { path: `${base}/${alvo}`, autorename: false })
+      if (!c.ok && !c.text.includes('conflict')) {
+        return NextResponse.json({ error: 'invoice folder create failed: ' + c.text.slice(0, 200) }, { status: 502 })
+      }
+      return NextResponse.json({ ok: true, result: 'created', folder: alvo })
+    }
+
     if (action === 'rename-file') {
       const from = sanitize(String(body.from || ''))
       const to = sanitize(String(body.to || ''))
@@ -429,6 +615,16 @@ export async function POST(req: NextRequest) {
         folder = target
       }
       await ensureSubfolders(token, `${root}/${folder}`)
+      // RECIBO DE EXPENSE: cai em "Invoices/<código> - <nome>", não solto no carro.
+      // O sanitize come a barra, então o caminho aninhado vem em campo próprio.
+      const invFolder = invoiceFolderName(sanitize(String(body.invoiceCode || '')), sanitize(String(body.invoiceName || '')))
+      if (invFolder) {
+        const destino = `${root}/${folder}/Invoices/${invFolder}`
+        await dbx(token, 'files/create_folder_v2', { path: destino, autorename: false })
+        const upI = await dbxUpload(token, `${destino}/${filename}`, Buffer.from(b64, 'base64'))
+        if (!upI.ok) return NextResponse.json({ error: 'upload failed: ' + upI.text.slice(0, 200) }, { status: 502 })
+        return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/Invoices/${invFolder}/${filename}` })
+      }
       const up = await dbxUpload(token, `${root}/${folder}/${sub}/${filename}`, Buffer.from(b64, 'base64'))
       if (!up.ok) return NextResponse.json({ error: 'upload failed: ' + up.text.slice(0, 200) }, { status: 502 })
       return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/${sub}/${filename}` })
