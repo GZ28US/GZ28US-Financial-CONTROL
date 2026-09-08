@@ -5,6 +5,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches, partStatusBadge, isLockedPart } from '@/lib/utils'
+import { sessionHeaders } from '@/components/BankReconcileCard'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
@@ -308,9 +309,11 @@ export default function PartsPage() {
     }
     const res = kitId
       ? await supabase.from('parts_database').update(row).eq('id', kitId)
-      : await supabase.from('parts_database').insert([row])
+      : await supabase.from('parts_database').insert([row]).select('id')
     setSaving(false)
     if (res.error) { alert(res.error.message); return }
+    // Nasce classificada (DC 1.42.0): a rota lê a IA e, se LIGADO e os leitores concordarem, grava a categoria.
+    if (!kitId) { const nid = (res.data as any)?.[0]?.id; if (nid) fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'classify_categories', ids: [nid], max: 1 }) }).catch(() => undefined) }
     setShowKit(false)
     load()
   }

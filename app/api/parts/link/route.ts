@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
 import { PART_CATEGORIES, suggestCategory } from '@/lib/partsMeta'
+import { classifyParts, tierFor, partText, NOT_A_PART, autoFillEnabled, enableAutoFill } from '@/lib/partsCategory.server'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 
@@ -76,8 +77,16 @@ export async function GET(req: NextRequest) {
     const db = bankDb()
     let hasSupplierId = true
     let parts: any[] = []
-    try { parts = await fetchAll(db, 'parts_database', 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit, supplier_id') }
-    catch (e) { if (!/supplier_id/.test(String(e))) throw e; hasSupplierId = false; parts = await fetchAll(db, 'parts_database', 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit') }
+    // category entra no select (antes não entrava: o card dizia 737 sem categoria quando eram 611);
+    // category_ai é o veredito do segundo leitor (MIGRATION_parts_category_ai.sql) — sem a coluna, segue sem ela.
+    let hasCatAi = true
+    const PSEL = 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit, category'
+    const tryParts = async (sel: string) => { try { return await fetchAll(db, 'parts_database', sel) } catch (e) { const m = String(e); if (/category_ai/.test(m)) { hasCatAi = false; return null } if (/supplier_id/.test(m)) { hasSupplierId = false; return null } throw e } }
+    let got: any[] | null = await tryParts(PSEL + ', supplier_id, category_ai')
+    if (!got && !hasCatAi && hasSupplierId) got = await tryParts(PSEL + ', supplier_id')
+    if (!got && !hasSupplierId) { hasCatAi = true; got = await tryParts(PSEL + ', category_ai') }
+    if (!got) { hasCatAi = false; got = await fetchAll(db, 'parts_database', PSEL) }
+    parts = got
     const catalog = parts.map((p: any) => ({
       id: p.id, label: [p.part_number, p.item].filter(Boolean).join(' · ').slice(0, 90),
       pn: normPN(p.part_number), toks: new Set([...words(p.item), ...words(p.alias)]), locked: !!p.locked_at, supplier: p.supplier || '',
@@ -166,17 +175,32 @@ export async function GET(req: NextRequest) {
     const kitMismatch = parts.filter((p: any) => (p.source_type === 'KIT') !== !!p.is_kit && (p.source_type === 'KIT' || p.is_kit)).map((p: any) => ({ item: String(p.alias || p.item || '').slice(0, 60), st: p.source_type, kit: !!p.is_kit }))
     // categorias: vazia ou fora do vocabulário fechado → sugestão por palavra-chave
     const catSet = new Set<string>(PART_CATEGORIES as unknown as string[])
-    const catItems = parts.filter((p: any) => !p.category || !catSet.has(p.category)).map((p: any) => ({
-      id: p.id, item: String(p.alias || p.item || '').slice(0, 70), current: p.category || null,
-      suggest: suggestCategory([p.item, p.alias, p.category].filter(Boolean).join(' ')),
-    }))
+    // Dois leitores: palavra-chave + IA. Concordaram → já foi preenchida (não está aqui);
+    // discordaram / só um sabe / IA pendente → item com as opiniões; «não é peça» → pilha própria.
+    const catItems = parts.filter((p: any) => !p.category || !catSet.has(p.category)).map((p: any) => {
+      const kw = suggestCategory(partText(p))
+      const ai = hasCatAi ? (p.category_ai || null) : undefined
+      const t = tierFor(kw, ai)
+      return { id: p.id, item: String(p.alias || p.item || '').slice(0, 70), current: p.category || null, suggest: kw || (ai && ai !== NOT_A_PART ? ai : null), keyword: kw, ai: ai ?? null, tier: t.tier }
+    })
+    const catAiPending = hasCatAi ? parts.filter((p: any) => (!p.category || !catSet.has(p.category)) && !p.category_ai).length : 0
+    const autoOn = await autoFillEnabled(db).catch(() => false)
+    const certainReady = catItems.filter((c: any) => c.tier === 'CERTAIN').length
+    // Preenchidas sozinhas nos últimos 7 dias (trilha «AUTO ·»), com DESFAZER no card.
+    let autoRecent: any[] = []
+    try {
+      const since = new Date(Date.now() - 7 * 864e5).toISOString()
+      const { data: fx } = await db.from('data_fixes').select('id, row_id, new_value, old_value, created_at, label').eq('check_key', 'parts-category').like('label', 'AUTO ·%').gte('created_at', since).order('created_at', { ascending: false }).limit(500)
+      const byId = new Map(parts.map((p: any) => [String(p.id), p]))
+      autoRecent = (fx || []).filter((f: any) => byId.get(String(f.row_id)) && byId.get(String(f.row_id)).category === f.new_value).map((f: any) => ({ fix_id: f.id, id: f.row_id, item: String(byId.get(String(f.row_id)).alias || byId.get(String(f.row_id)).item || '').slice(0, 70), category: f.new_value, old: f.old_value, at: f.created_at }))
+    } catch { /* trilha indisponível: o card mostra sem a lista */ }
     return NextResponse.json({
       ok: true, needs_migration: needsMigration,
       totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length, sup_unlinked: supItems.length, map_bad: mapBad.length },
       inventory: invItems, streams: psItems, no_pn: noPN.slice(0, 200), dup_pn: dupPN.slice(0, 50),
       suppliers_unlinked: supItems, suppliers_all: [...offRows].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(o => ({ id: o.id, name: o.name })), map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
       ebay_pn: ebayPnRows.slice(0, 100),
-      categories: catItems, category_vocab: PART_CATEGORIES,
+      categories: catItems, category_vocab: PART_CATEGORIES, category_ai_pending: catAiPending, needs_category_ai_migration: !hasCatAi, auto_categories: autoRecent, auto_fill_enabled: autoOn, certain_ready: certainReady,
     })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
@@ -186,6 +210,41 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
+  // A CATEGORIA SE PREENCHE SOZINHA (DC 1.42.0): lê a IA pras peças sem veredito (até max),
+  // grava o veredito, preenche as CERTAS (palavra-chave + IA concordam) com trilha. dry = só conta.
+  if (String(b.action) === 'classify_categories') {
+    const db = bankDb()
+    const ids: string[] = Array.isArray(b.ids) ? b.ids.map(String) : []
+    let parts: any[]
+    try { parts = ids.length ? (await db.from('parts_database').select('id, item, alias, category, category_ai').in('id', ids)).data || [] : await fetchAll(db, 'parts_database', 'id, item, alias, category, category_ai') }
+    catch (e) { return NextResponse.json({ error: 'rode MIGRATION_parts_category_ai.sql antes: ' + String((e as Error).message || e).slice(0, 160), needs_category_ai_migration: true }, { status: 409 }) }
+    const fill = await autoFillEnabled(db).catch(() => false)
+    const r = await classifyParts(db, parts, { max: Math.min(200, Math.max(1, Number(b.max) || 80)), dry: !!b.dry, force: !!b.force, fill })
+    return NextResponse.json({ ok: true, ...r, auto_fill_enabled: fill })
+  }
+  // LIGAR o preenchimento sozinho (uma vez): grava o marcador e preenche agora todas as certas já lidas.
+  if (String(b.action) === 'enable_auto_fill') {
+    const db = bankDb()
+    let parts: any[]
+    try { parts = await fetchAll(db, 'parts_database', 'id, item, alias, category, category_ai') }
+    catch (e) { return NextResponse.json({ error: 'rode MIGRATION_parts_category_ai.sql antes: ' + String((e as Error).message || e).slice(0, 160), needs_category_ai_migration: true }, { status: 409 }) }
+    await enableAutoFill(db)
+    const r = await classifyParts(db, parts, { max: 0, fill: true })   // max 0: não relê a IA; só as já lidas entram
+    return NextResponse.json({ ok: true, ...r })
+  }
+  // DESFAZER uma categoria que o app preencheu sozinho (7 dias): volta ao valor anterior, com trilha.
+  if (String(b.action) === 'undo_category') {
+    const db = bankDb()
+    const rowId = String(b.row_id || '')
+    if (!rowId) return NextResponse.json({ error: 'row_id required' }, { status: 400 })
+    const { data: fx } = await db.from('data_fixes').select('id, old_value, new_value').eq('check_key', 'parts-category').eq('row_id', rowId).like('label', 'AUTO ·%').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (!fx) return NextResponse.json({ error: 'não foi o app que preencheu esta categoria' }, { status: 409 })
+    const { data: ok, error } = await db.from('parts_database').update({ category: fx.old_value ?? null }).eq('id', rowId).eq('category', fx.new_value).select('id')
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!ok || !ok.length) return NextResponse.json({ error: 'a categoria já mudou depois — nada desfeito' }, { status: 409 })
+    await db.from('data_fixes').insert({ check_key: 'parts-category', table_name: 'parts_database', row_id: rowId, field: 'category', old_value: fx.new_value, new_value: fx.old_value ?? null, label: ('DESFEITO · o app tinha preenchido ' + fx.new_value + ' sozinho').slice(0, 200) }).then(() => undefined, () => undefined)
+    return NextResponse.json({ ok: true })
+  }
   // Fricção #4 do João (25/ago): resolver o fornecedor SEM sair da tela.
   // create_supplier cria (ou REUSA, por identidade dura — nada de duplicata) e já
   // linka a peça; teach_alias grava a grafia escolhida à mão como apelido.
@@ -236,6 +295,8 @@ export async function POST(req: NextRequest) {
     const { data: created, error: cErr } = await db.from('parts_database').insert({ item, supplier: String(b.supplier || '').trim().slice(0, 60) || null, source_type: 'MANUAL' }).select('id')
     if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
     const pid = created![0].id
+    // Nasce classificada (DC 1.42.0): lê a IA pra esta peça; entra sozinha se LIGADO e os dois leitores concordarem.
+    try { const fill = await autoFillEnabled(db); await classifyParts(db, [{ id: pid, item, alias: null, category: null, category_ai: null }], { max: 1, fill }) } catch { /* sem IA agora: fica IA PENDENTE no card */ }
     const { data: linked, error: lErr } = await db.from(linkTable).update({ part_id: pid }).eq('id', linkId).is('part_id', null).select('id')
     if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 })
     if (!linked || !linked.length) return NextResponse.json({ error: 'linha já linkada — recarregue (a peça criada ficou no catálogo)', part_id: pid }, { status: 409 })

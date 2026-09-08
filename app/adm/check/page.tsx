@@ -47,6 +47,9 @@ type Fix =
   | { kind: 'adopt'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
   // CASAR COM AJUSTE (BL 1.1.0): SOLTAR — a passagem diz que casou, a linha do banco não a aponta; limpa o elo, nunca apaga.
   | { kind: 'unlink'; table: string; rowId: string; field: string; confirmText: string }
+  // CATEGORIA SOZINHA (DC 1.42.0): DESFAZER o que o app preencheu (palavra-chave + IA concordaram).
+  | { kind: 'undo_category'; table: string; rowId: string; field: string; confirmText: string }
+  | { kind: 'enable_autofill'; table: string; rowId: string; field: string; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -58,6 +61,7 @@ const CERTAIN_PROOF: Record<string, string> = {
   'paid-from': 'linhas já casadas com a Regions → GZ28US (prova, não palpite)',
   'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
   'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
+  'parts-category': 'palavra-chave e IA concordam na categoria — dois leitores independentes, não um palpite',
 }
 const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 // Categorias do Data Checker (João, 22/ago: inglês, casando com o menu do app).
@@ -81,14 +85,15 @@ type AbsurdSeg = { key: string; duty_id: string; staff_name: string; label: stri
 type SilentComp = { key: string; staff_name: string; after: string; days: string[]; label: string }
 type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; incidents: DutyIncident[]; history: { absurd: AbsurdSeg[]; comps: SilentComp[] } }
 type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
-type CatRow = { id: string; item: string; current: string | null; suggest: string | null }
+type CatRow = { id: string; item: string; current: string | null; suggest: string | null; keyword?: string | null; ai?: string | null; tier?: 'CERTAIN' | 'ASK' | 'NOT_PART' | 'PENDING' }
 type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null; ebay_bare?: boolean; ebay_item?: string | null }
-type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[] }
+type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[]; category_ai_pending?: number; needs_category_ai_migration?: boolean; auto_fill_enabled?: boolean; certain_ready?: number; auto_categories?: { fix_id: string; id: string; item: string; category: string; old: string | null; at: string }[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null; runs_7d?: { n: number; errors: number } }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 const REGIONS_OPENED = '2025-11-10'
+let AUTO_CAT_RAN = false   // categoria sozinha: uma leitura da IA por abertura da página
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 // WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
 type WaSignal = { state: 'loading' | 'ok' | 'missing' | 'error'; fails: { id: string; at: string; destination: string | null; group_name: string | null; kind: string | null; body_head: string | null; error: string | null; http_status: number | null }[] }
@@ -856,21 +861,41 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
-  // INVENTORY · CATEGORIAS — vocabulário fechado (13), 650 vazias com palpite
-  // por palavra-chave. Palpite é palpite: martelo é humano, sem bulk cego.
+  // INVENTORY · CATEGORIAS — vocabulário fechado (13). DC 1.42.0 (João, 8/set): «é óbvio,
+  // não precisa de gente». Dois leitores (palavra-chave + IA) concordando = CERTA, o app
+  // preenche sozinho com trilha e DESFAZER por 7 dias; discordando ou só um sabendo =
+  // PERGUNTA com as duas opiniões; a IA dizendo «não é peça» = pilha própria.
   {
     const items: Item[] = []
     const vocab = linker.category_vocab.length ? linker.category_vocab : []
-    for (const c of linker.categories) items.push({
-      href: '/parts', code: c.current ? 'FORA VOC.' : 'SEM CAT.',
-      label: `${c.item}${c.current ? ` · hoje: "${c.current}"` : ''}`,
-      extra: c.suggest ? 'palpite: ' + c.suggest : 'sem palpite — escolha',
-      suggest: c.suggest || undefined, signal: c.suggest ? 'source' : undefined,
-      fix: vocab.length ? { kind: 'select' as const, table: 'parts_database', rowId: c.id, field: 'category', options: vocab.map(v => ({ value: v, label: v })), current: c.current } : undefined,
+    const opts = (first: (string | null | undefined)[]) => { const f = first.filter((x): x is string => !!x && vocab.includes(x)); return [...f, ...vocab.filter(v => !f.includes(v))].map(v => ({ value: v, label: v })) }
+    if (!linker.auto_fill_enabled && (linker.certain_ready || 0) > 0) items.push({
+      href: '/parts', code: 'LIGAR', label: (linker.certain_ready || 0) + ' peça(s) com os dois leitores concordando — prontas pra entrar sozinhas', extra: 'primeira rodada só leu; LIGAR grava estas agora e, daqui em diante, toda peça nova em que palavra-chave e IA concordarem entra sem perguntar (com trilha e DESFAZER por 7 dias)',
+      fix: { kind: 'enable_autofill' as const, table: 'parts_database', rowId: 'auto-fill', field: 'ENABLED', confirmText: 'Ligar o preenchimento sozinho? Grava agora as ' + (linker.certain_ready || 0) + ' categorias em que palavra-chave e IA concordam e, daqui em diante, faz o mesmo com toda peça nova. Tudo fica na trilha; cada uma tem DESFAZER por 7 dias.' },
     })
+    for (const a of linker.auto_categories || []) items.push({
+      href: '/parts', code: 'SOZINHO', label: a.item + ' → ' + a.category, extra: 'palavra-chave e IA concordaram — preenchida pelo app em ' + formatShortDate(a.at) + '; DESFAZER volta ao que era', when: a.at,
+      fix: { kind: 'undo_category' as const, table: 'parts_database', rowId: a.id, field: 'category', confirmText: 'Desfazer a categoria «' + a.category + '» que o app preencheu sozinho em «' + a.item + '»? Volta a ' + (a.old || 'vazio') + ' e fica na trilha.' },
+    })
+    for (const c of linker.categories) {
+      const both = c.keyword && c.ai && c.ai !== 'NOT_A_PART' && c.keyword !== c.ai
+      const code = c.tier === 'CERTAIN' ? 'CERTA' : c.tier === 'NOT_PART' ? 'NÃO É PEÇA' : c.tier === 'PENDING' ? 'IA PENDENTE' : c.current ? 'FORA VOC.' : both ? 'DISCORDAM' : 'SEM CAT.'
+      const extra = c.tier === 'CERTAIN' ? 'palavra-chave e IA concordam: ' + c.keyword + ' — entra sozinha quando o preenchimento estiver LIGADO (ou um clique aqui)' : c.tier === 'NOT_PART' ? 'a IA diz que isto não é peça nem serviço (frete, placa, texto solto) — OTHER ou apague em PARTS'
+        : both ? 'palavra-chave: ' + c.keyword + ' · IA: ' + c.ai + ' — os dois leitores discordam, você decide'
+        : c.keyword && !c.ai ? 'só a palavra-chave palpita: ' + c.keyword + (c.tier === 'PENDING' ? ' — a IA ainda não leu' : ' — a IA não soube')
+        : c.ai && c.ai !== 'NOT_A_PART' ? 'só a IA palpita: ' + c.ai + ' — sem palavra-chave; confirme'
+        : 'nenhum leitor soube — escolha'
+      items.push({
+        href: '/parts', code, label: c.item + (c.current ? ' · hoje: "' + c.current + '"' : ''), extra,
+        suggest: c.suggest || undefined, signal: c.tier === 'CERTAIN' ? 'matched' : c.suggest ? 'source' : undefined, certain: c.tier === 'CERTAIN',
+        fix: vocab.length ? { kind: 'select' as const, table: 'parts_database', rowId: c.id, field: 'category', options: opts([c.ai && c.ai !== 'NOT_A_PART' ? c.ai : null, c.keyword, c.tier === 'NOT_PART' ? 'OTHER' : null]), current: c.current } : undefined,
+      })
+    }
+    const pend = linker.category_ai_pending || 0
     checks.push({
       group: 'INVENTORY', key: 'parts-category', title: 'Peça sem categoria', blocks: 'ninguém acha a peça na hora de montar um pacote',
-      why: 'Decisão de 24/ago (João+Márcio): categoria entra pra valer, com 13 valores fechados. O app dá o palpite por palavra-chave (supercharger → ENGINE, injector → FUEL SYSTEM…); quem bate o martelo é você — por isso não tem bulk aqui: palpite não é prova.',
+      why: 'Decisão de 24/ago (categoria fechada, 13 valores) + 8/set (João: «é óbvio, não precisa de gente»). Dois leitores independentes — a palavra-chave e a IA — concordando é PROVA: a categoria entra sozinha, com trilha, e fica aqui como SOZINHO por 7 dias com DESFAZER. Quando discordam, ou só um sabe, a pergunta traz as duas opiniões; «não é peça» é pilha própria.'
+        + (linker.needs_category_ai_migration ? ' RODE MIGRATION_parts_category_ai.sql — sem ela só a palavra-chave palpita.' : pend ? ' A IA ainda vai ler ' + pend + ' peça(s) (roda sozinha ao abrir o Data Checker).' : ''),
       items,
     })
   }
@@ -1385,9 +1410,18 @@ export default function DataCheckPage() {
         if (rd.ok && Array.isArray(jd.incidents)) setDuty({ state: 'ok', maxHours: jd.max_hours || 10, incidents: jd.incidents, history: jd.history || { absurd: [], comps: [] } })
         else setDuty(prev => ({ ...prev, state: 'error' }))
         // LINKER: identidade de peças (pré-P1 do Crew Chief) — inventory/stream → catálogo.
-        const rl = await fetch(`${BASE_PATH}/api/parts/link`, { headers: await sessionHeaders() })
-        const jl = await rl.json().catch(() => ({}))
-        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, needsSupplierMigration: !!jl.needs_supplier_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [], suppliers_unlinked: jl.suppliers_unlinked || [], suppliers_all: jl.suppliers_all || [], map_bad: jl.map_bad || [], no_source: jl.no_source || [], kit_mismatch: jl.kit_mismatch || [], ebay_pn: jl.ebay_pn || [], categories: jl.categories || [], category_vocab: jl.category_vocab || [] })
+        let rl = await fetch(`${BASE_PATH}/api/parts/link`, { headers: await sessionHeaders() })
+        let jl = await rl.json().catch(() => ({}))
+        // CATEGORIA SOZINHA (DC 1.42.0): peça sem veredito da IA → lê agora (até 80 por carga),
+        // preenche as certas e recarrega o sinal. Uma vez por abertura da página.
+        if (rl.ok && jl.totals && (jl.category_ai_pending || 0) > 0 && !jl.needs_category_ai_migration && !AUTO_CAT_RAN) {
+          AUTO_CAT_RAN = true
+          try {
+            const rc = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'classify_categories', max: 80 }) })
+            if (rc.ok) { rl = await fetch(`${BASE_PATH}/api/parts/link`, { headers: await sessionHeaders() }); jl = await rl.json().catch(() => ({})) }
+          } catch { /* sem IA agora: fica IA PENDENTE, tenta na próxima abertura */ }
+        }
+        if (rl.ok && jl.totals) setLinker({ state: 'ok', needsMigration: !!jl.needs_migration, needsSupplierMigration: !!jl.needs_supplier_migration, totals: jl.totals, inventory: jl.inventory || [], streams: jl.streams || [], no_pn: jl.no_pn || [], dup_pn: jl.dup_pn || [], suppliers_unlinked: jl.suppliers_unlinked || [], suppliers_all: jl.suppliers_all || [], map_bad: jl.map_bad || [], no_source: jl.no_source || [], kit_mismatch: jl.kit_mismatch || [], ebay_pn: jl.ebay_pn || [], categories: jl.categories || [], category_vocab: jl.category_vocab || [], category_ai_pending: jl.category_ai_pending || 0, needs_category_ai_migration: !!jl.needs_category_ai_migration, auto_categories: jl.auto_categories || [] })
         else setLinker(prev => ({ ...prev, state: 'error', needsMigration: !!jl.needs_migration }))
       } catch { setBank(prev => ({ ...prev, cashState: 'error' })) /* sem banco, sem certeza */ }
     })()
@@ -1549,6 +1583,18 @@ export default function DataCheckPage() {
       } finally { setSaving(false) }
       return
     }
+    if (fix.kind === 'undo_category' || fix.kind === 'enable_autofill') {
+      setSaving(true)
+      try {
+        const r = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(fix.kind === 'enable_autofill' ? { action: 'enable_auto_fill' } : { action: 'undo_category', row_id: fix.rowId }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
+        setFixing(null); setFixValue('')
+        if (fix.kind === 'enable_autofill') { alert((j.filled || 0) + ' categoria(s) preenchida(s) sozinhas agora. Daqui em diante entram sem perguntar.'); setReloadN(n => n + 1) }
+      } finally { setSaving(false) }
+      return
+    }
     if (fix.kind === 'purge' || fix.kind === 'rematch' || fix.kind === 'unmatch' || fix.kind === 'adopt' || fix.kind === 'unlink') {
       setSaving(true)
       try {
@@ -1636,8 +1682,10 @@ export default function DataCheckPage() {
     const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
     if (!items.length) return
     // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
-    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from') {
-      const msg = check.key === 'parts-suppliers'
+    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category') {
+      const msg = check.key === 'parts-category'
+        ? `Preencher ${items.length} categoria(s) em que palavra-chave e IA concordam? Cada peça recebe a SUA categoria; tudo na trilha, com DESFAZER por 7 dias no card.`
+        : check.key === 'parts-suppliers'
         ? `Linkar ${items.length} peças ao fornecedor oficial? Todas batem pelo nome/apelido exato. Tudo na trilha.`
         : check.key === 'paid-from'
         ? `Preencher ${items.length} "quem pagou?"? Prova por linha: casada com a Regions (o banco) ou o campo antigo SOURCE (o app já sabia). Cada linha recebe o SEU valor. Tudo na trilha.`
@@ -1651,7 +1699,7 @@ export default function DataCheckPage() {
         const field = fix.kind === 'select' ? fix.field : 'part_id'
         const { error: err } = await supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId).is(field, null)
         if (err) continue
-        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: it.suggest, label: `LINK CERTO · ${it.code} · ${it.label}`.slice(0, 200) }).then(() => undefined, () => undefined)
+        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: null, new_value: it.suggest, label: (check.key === 'parts-category' ? `AUTO · palavra-chave + IA concordam (PREENCHER CERTOS) · ${it.label}` : `LINK CERTO · ${it.code} · ${it.label}`).slice(0, 200) }).then(() => undefined, () => undefined)
         setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
       }
       setBulk(''); setSaving(false)
@@ -1825,8 +1873,8 @@ export default function DataCheckPage() {
                         ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
                         : (
                           <div>
-                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
-                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : 'CONFIRMAR'}</button>
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink' || it.fix.kind === 'undo_category' || it.fix.kind === 'enable_autofill') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : it.fix.kind === 'undo_category' ? 'DESFAZER' : it.fix.kind === 'enable_autofill' ? 'LIGAR' : 'CONFIRMAR'}</button>
                           </div>
                         )}
                       {c.key === 'parts-identity' && gval === '__search__' && it.fix && (
@@ -1904,7 +1952,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : it.fix.kind === 'undo_category' ? 'DESFAZER' : it.fix.kind === 'enable_autofill' ? 'LIGAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -1944,14 +1992,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink' || it.fix.kind === 'undo_category' || it.fix.kind === 'enable_autofill') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
-                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && it.fix.kind !== 'adopt' && it.fix.kind !== 'unlink' && !fixValue)}
+                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && it.fix.kind !== 'adopt' && it.fix.kind !== 'unlink' && it.fix.kind !== 'undo_category' && it.fix.kind !== 'enable_autofill' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : it.fix.kind === 'unlink' ? 'SOLTAR AGORA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : it.fix.kind === 'unlink' ? 'SOLTAR AGORA' : it.fix.kind === 'undo_category' ? 'DESFAZER AGORA' : it.fix.kind === 'enable_autofill' ? 'LIGAR AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>
