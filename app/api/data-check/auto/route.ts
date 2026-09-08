@@ -14,16 +14,17 @@ export async function GET(req: NextRequest) {
   if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const db = bankDb()
   const since = new Date(Date.now() - 7 * 864e5).toISOString()
-  const [{ data: auto, error: e1 }, { data: dis, error: e2 }] = await Promise.all([
+  const [{ data: auto, error: e1 }, { data: dis, error: e2 }, { count: total }] = await Promise.all([
     db.from('data_fixes').select('id, check_key, table_name, row_id, field, old_value, new_value, label, fixed_at').like('label', 'AUTO ·%').gte('fixed_at', since).order('fixed_at', { ascending: false }).limit(1000),
     db.from('data_fixes').select('id, check_key, row_id, new_value, fixed_at').eq('field', 'DISMISSED').order('fixed_at', { ascending: false }).limit(2000),
+    db.from('data_fixes').select('id', { count: 'exact', head: true }).like('label', 'AUTO ·%').gte('fixed_at', since),   // a lista é cortada em 1.000; o card diz o total
   ])
   if (e1 || e2) return NextResponse.json({ error: (e1 || e2)!.message }, { status: 500 })
   // Uma dispensa vale até ser desfeita (new_value 'UNDISMISS' mais recente cancela).
   const dismissed: Record<string, string> = {}
   const seen = new Set<string>()
   for (const r of dis || []) { const k = r.check_key + '|' + r.row_id; if (seen.has(k)) continue; seen.add(k); if (r.new_value !== 'UNDISMISS') dismissed[k] = String(r.new_value || 'visto') }
-  return NextResponse.json({ ok: true, auto: auto || [], dismissed })
+  return NextResponse.json({ ok: true, auto: auto || [], dismissed, total: total ?? (auto || []).length })
 }
 
 export async function POST(req: NextRequest) {

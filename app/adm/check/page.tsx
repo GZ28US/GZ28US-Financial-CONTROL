@@ -77,7 +77,7 @@ const fixField = (f: Fix) => (f.kind === 'received' ? 'paid_at' : f.field)
 // (duty timer, 1099, FL sales tax); seção sem card não aparece.
 const GROUP_ORDER = ['BANK', 'FINANCIAL', 'RIDES', 'INVOICES', 'INVENTORY', 'STAFF', 'TAX', 'SYSTEM'] as const
 type Group = typeof GROUP_ORDER[number]
-type Check = { group: Group; key: string; title: string; why: string; blocks: string; items: Item[]; impact?: number }
+type Check = { group: Group; key: string; title: string; why: string; blocks: string; items: Item[]; impact?: number; good?: boolean }   // good: notícia boa (o que o app fez sozinho) — não conta como pendência, não fica amarelo
 
 const DESTINY_OPTIONS = CAR_DESTINY.map(o => ({ value: o.value, label: o.option }))
 const TYPE_OPTIONS = ['FIXED', 'APP', 'MARKETING', 'ASSET'].map(v => ({ value: v, label: v }))
@@ -104,7 +104,7 @@ type BankLine = { d: string; a: number; id: string; n: string; s: string }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; lines: BankLine[]; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 // O APP PREENCHEU SOZINHO + DISPENSAS (DC 1.44.0): trilha «AUTO ·» dos últimos 7 dias (com DESFAZER genérico) e «visto, está certo».
 type AutoRow = { id: string; check_key: string; table_name: string; row_id: string; field: string; old_value: string | null; new_value: string | null; label: string; fixed_at: string }
-type AutoSignal = { state: 'loading' | 'error' | 'ok'; rows: AutoRow[]; dismissed: Record<string, string> }
+type AutoSignal = { state: 'loading' | 'error' | 'ok'; rows: AutoRow[]; dismissed: Record<string, string>; total?: number }
 // Sugestões da fila A ATRIBUIR (?bucket=1) e as invoices com o estado FECHADA — o card do balde fala por fornecedor.
 type BucketSig = { state: 'loading' | 'error' | 'ok'; sug: Map<string, { invoice_id: string; code: string; car: string; why: string; score: number }>; invoices: { id: string; code: string; ride_code: string; ride_name: string; closed: boolean }[] }
 const REGIONS_OPENED = '2025-11-10'
@@ -1095,7 +1095,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         fix: a.table_name === 'bank_transactions' ? undefined : { kind: 'undo_auto' as const, table: a.table_name, rowId: a.row_id, field: a.field, fixId: a.id, confirmText: `Desfazer «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? ${a.field}: volta a ${a.old_value ?? 'vazio'}. Fica na trilha.` },
         link: a.table_name === 'bank_transactions' ? { href: BASE_PATH + '/adm/bank', label: 'DESFAZER em A CONFERIR ↗' } : undefined,
       }))
-    checks.push({ group: 'FINANCIAL', key: 'auto-fills', title: 'O app preencheu sozinho (7 dias)', blocks: 'nada — é a prova de vida do Data Checker autossuficiente; sem esta lista o silêncio seria uma promessa vazia', why: 'Lei de 8/set (João): o app age sozinho onde há PROVA — dois leitores concordando, identidade dura, hábito unânime, o banco como testemunha — e só pergunta o que é decisão de gente. Cada escrita sem clique aparece aqui por 7 dias com DESFAZER; casamentos do banco se desfazem em A CONFERIR.', items })
+    const cut = auto.state === 'ok' && auto.total != null && auto.total > auto.rows.length ? ` · mostrando as ${auto.rows.length.toLocaleString('en-US')} mais recentes de ${auto.total.toLocaleString('en-US')}` : ''
+    checks.push({ group: 'FINANCIAL', key: 'auto-fills', good: true, title: 'O app preencheu sozinho (7 dias)', blocks: 'notícia boa, não pendência: cada linha tem a prova e DESFAZER por 7 dias — confira quando quiser' + cut, why: 'Lei de 8/set (João): o app age sozinho onde há PROVA — dois leitores concordando, identidade dura, hábito unânime, o banco como testemunha — e só pergunta o que é decisão de gente. Cada escrita sem clique aparece aqui por 7 dias com DESFAZER; casamentos do banco se desfazem em A CONFERIR.', items })
   }
   // ── TAX · IMPOSTO FL COBRADO, RECOLHIMENTO NÃO LANÇADO (DC 1.44.0, levantamento de 8/set) ──
   {
@@ -1530,7 +1531,7 @@ export default function DataCheckPage() {
         else setDuty(prev => ({ ...prev, state: 'error' }))
         // LINKER: identidade de peças (pré-P1 do Crew Chief) — inventory/stream → catálogo.
         // O que o app fez sozinho + dispensas; e as sugestões da fila A ATRIBUIR (balde por fornecedor).
-        try { const ra = await fetch(`${BASE_PATH}/api/data-check/auto`, { headers: await sessionHeaders() }); const ja = await ra.json().catch(() => ({})); setAuto(ra.ok ? { state: 'ok', rows: ja.auto || [], dismissed: ja.dismissed || {} } : { state: 'error', rows: [], dismissed: {} }) } catch { setAuto({ state: 'error', rows: [], dismissed: {} }) }
+        try { const ra = await fetch(`${BASE_PATH}/api/data-check/auto`, { headers: await sessionHeaders() }); const ja = await ra.json().catch(() => ({})); setAuto(ra.ok ? { state: 'ok', rows: ja.auto || [], dismissed: ja.dismissed || {}, total: typeof ja.total === 'number' ? ja.total : undefined } : { state: 'error', rows: [], dismissed: {} }) } catch { setAuto({ state: 'error', rows: [], dismissed: {} }) }
         try {
           const rb = await fetch(`${BASE_PATH}/api/bank/reconcile?bucket=1`, { headers: await sessionHeaders() }); const jb = await rb.json().catch(() => ({}))
           if (rb.ok && Array.isArray(jb.rows)) { const sug = new Map<string, { invoice_id: string; code: string; car: string; why: string; score: number }>(); for (const row of jb.rows) { const best = (row.suggestions || []).filter((s: any) => s.kind === 'CAR').sort((a: any, b: any) => b.score - a.score)[0]; if (best) sug.set(String(row.row_id), { invoice_id: best.invoice_id, code: best.code, car: best.car, why: best.why, score: best.score }) } setBucketSig({ state: 'ok', sug, invoices: (jb.invoices || []).map((i: any) => ({ id: i.id, code: i.code, ride_code: i.ride_code, ride_name: i.ride_name, closed: !!i.closed })) }) }
@@ -1554,8 +1555,9 @@ export default function DataCheckPage() {
   }, [reloadN])
 
   const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig])
-  const totalIssues = checks.reduce((s, c) => s + c.items.length, 0) + bankCount
-  const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + c.items.length, 0)
+  // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
+  const totalIssues = checks.reduce((s, c) => s + (c.good ? 0 : c.items.length), 0) + bankCount
+  const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g && !c.good).reduce((s, c) => s + c.items.length, 0)
 
   // Trilha agrupada por dia — a "sessão" do double-check.
   const history = useMemo(() => {
@@ -1598,7 +1600,7 @@ export default function DataCheckPage() {
       out.push({ title: `${certos} respostas prontas — um clique por card`, sub: `PREENCHER CERTOS onde há prova; comece por "${best.title}"`, group: best.group, open: best.key })
     }
     if (bankCount > 50) out.push({ title: `Triagem por família: ${bankCount.toLocaleString('en-US')} linhas sem casamento`, sub: 'os chips (AMAZON, COMBUSTÍVEL…) explicam centenas de uma vez', group: 'BANK', open: null })
-    const heavy = [...checks].filter(c => c.items.length > 0 && c.key !== 'cash-match' && (c.impact || 0) > 0).sort((a, b) => (b.impact || 0) - (a.impact || 0))[0]
+    const heavy = [...checks].filter(c => !c.good && c.items.length > 0 && c.key !== 'cash-match' && (c.impact || 0) > 0).sort((a, b) => (b.impact || 0) - (a.impact || 0))[0]
     if (heavy) out.push({ title: `Maior valor parado: ${heavy.title}`, sub: `${heavy.items.length} itens · ${usd(heavy.impact || 0)} — se ignorar: ${heavy.blocks}`, group: heavy.group, open: heavy.key })
     return out.slice(0, 3)
   }, [checks, bankCount, bankAConferir])
@@ -1928,7 +1930,7 @@ export default function DataCheckPage() {
       <div className="flex items-center gap-4 flex-wrap mb-8">
         <div className={`rounded-2xl border px-5 py-3 ${totalIssues === 0 ? 'bg-emerald-950/50 border-emerald-800 text-emerald-200' : 'bg-gray-900 border-gray-700'}`}>
           <span className="text-2xl font-bold">{totalIssues === 0 ? 'TUDO LIMPO ✓' : `${totalIssues} pendências`}</span>
-          {totalIssues > 0 && <span className="text-sm text-gray-400 ml-3">{checks.filter(c => c.items.length > 0).length} de {checks.length} verificações</span>}
+          {totalIssues > 0 && <span className="text-sm text-gray-400 ml-3">{checks.filter(c => !c.good && c.items.length > 0).length} de {checks.filter(c => !c.good).length} verificações</span>}
         </div>
         {fixesToday > 0 && <div className="rounded-2xl border border-sky-900 bg-sky-950/40 px-5 py-3"><span className="text-2xl font-bold text-sky-300">{fixesToday}</span><span className="text-sm text-gray-400 ml-2">conserto(s) hoje</span></div>}
         <button onClick={() => { setDone(new Set()); setReloadN(x => x + 1) }} className="bg-gray-900 hover:bg-gray-700 border border-gray-700 px-5 py-3 rounded-2xl font-bold">↻ REFRESH</button>
@@ -1996,14 +1998,14 @@ export default function DataCheckPage() {
               {/* Conciliação bancária mora na categoria BANK — lê/escreve por /api/bank/reconcile. */}
               {g === 'BANK' && <BankReconcileCard onCount={(n, ac) => { setBankCount(n); setBankAConferir(ac || 0) }} />}   {/* fase B: o balde tem card próprio (bucket-aging); o 3º argumento fica por conta da fila */}
               {checks.filter(c => c.group === g).map(c => (
-          <div key={c.key} className={`border rounded-2xl overflow-hidden ${c.items.length === 0 ? 'border-emerald-900/60' : 'border-gray-700'}`}>
-            <button onClick={() => setOpen(open === c.key ? null : c.key)} className="w-full text-left px-5 py-4 bg-gray-900 hover:bg-gray-800 flex items-center gap-4">
-              <span className={`text-2xl font-bold tabular-nums w-14 shrink-0 ${c.items.length === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>
-                {c.items.length === 0 ? '✓' : c.items.length}
+          <div key={c.key} className={`border rounded-2xl overflow-hidden ${c.good ? 'border-emerald-800 bg-emerald-950/20' : c.items.length === 0 ? 'border-emerald-900/60' : 'border-gray-700'}`}>
+            <button onClick={() => setOpen(open === c.key ? null : c.key)} className={`w-full text-left px-5 py-4 flex items-center gap-4 ${c.good ? 'bg-emerald-950/40 hover:bg-emerald-950/70' : 'bg-gray-900 hover:bg-gray-800'}`}>
+              <span className={`text-2xl font-bold tabular-nums w-14 shrink-0 ${c.good || c.items.length === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>
+                {c.good ? (c.items.length ? c.items.length.toLocaleString('en-US') : '✓') : c.items.length === 0 ? '✓' : c.items.length}
               </span>
               <span className="flex-1">
-                <span className="font-bold block">{c.title}</span>
-                <span className="text-xs text-gray-500">se ignorar: {c.blocks}{c.impact ? ` · impacto ${usd(c.impact)}` : ''}</span>
+                <span className="font-bold block">{c.good && <span className="text-[10px] font-bold text-emerald-300 border border-emerald-700 rounded-full px-2 py-0.5 mr-2 align-middle">SOZINHO</span>}{c.title}</span>
+                <span className={`text-xs ${c.good ? 'text-emerald-200/70' : 'text-gray-500'}`}>{c.good ? c.blocks : `se ignorar: ${c.blocks}`}{c.impact ? ` · impacto ${usd(c.impact)}` : ''}</span>
               </span>
               <span className="text-gray-500">{open === c.key ? '▴' : '▾'}</span>
             </button>
@@ -2088,7 +2090,7 @@ export default function DataCheckPage() {
                   {/* item-nature não tem MODO GUIADO: o guiado é "um de cada vez",
                       e ali a unidade é o GRUPO — passar de fornecedor em fornecedor
                       com 5 botões já é o modo guiado dele. */}
-                  {c.key !== 'item-nature' && filtered(c).length > 1 && (
+                  {c.key !== 'item-nature' && !c.good && filtered(c).length > 1 && (
                     <button onClick={() => { const l = filtered(c); setGuided({ key: c.key, idx: 0, start: l.length }); setGval(gPrefill(l[0])) }} className="bg-indigo-800 hover:bg-indigo-700 px-3 py-1.5 rounded-xl font-bold text-xs">▶ MODO GUIADO — um de cada vez</button>
                   )}
                 </div>
@@ -2128,7 +2130,7 @@ export default function DataCheckPage() {
                     lista padrão de itens não sabe fazer isso. */}
                 {c.key === 'item-nature' ? <NatureWorkbench sig={nature} setSig={setNature} />
                 : c.key === 'auto-book' && bank.autobook ? <AutoBookBoard ab={bank.autobook} check={c} saving={saving} done={done} onFix={(ck, it) => applyFix(ck, it, '')} />
-                : c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
+                : c.items.length === 0 ? <p className="text-emerald-400 font-bold">{c.good ? 'O app não preencheu nada sozinho nos últimos 7 dias.' : 'Nada pendente aqui.'}</p> : (
                   <div className="max-h-[32rem] overflow-y-auto divide-y divide-gray-800">
                     {filtered(c).map((it, i) => {
                       const fixKey = it.fix ? c.key + '|' + it.fix.rowId : ''
