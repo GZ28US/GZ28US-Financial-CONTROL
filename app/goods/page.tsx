@@ -491,17 +491,19 @@ export default function GoodsPage() {
       const { error } = await supabase.from('invoice_expenses').insert(rows)
       if (error) { alert(error.message); return }
 
-      // O papel também na pasta do carro. Falhar aqui não desfaz o lançamento —
-      // avisa, porque a lei manda o documento estar nos dois lugares.
+      // O papel também na pasta do carro — na pasta DESTA invoice, com o nome
+      // "[cod invoice] [carro] - [fornecedor] [pedido]" (Márcio, 08/set/2026).
+      // Quem nomeia é a rota, lendo a linha que acabou de entrar: aqui não se
+      // inventa nome nenhum. Falhar não desfaz o lançamento — avisa, porque a lei
+      // manda o documento estar nos dois lugares.
       try {
-        const nome = `${s.supplier || 'Compra'}${s.orderNumber ? ' - ' + s.orderNumber : d ? ' - ' + d : ''}.${(s.fileName.split('.').pop() || 'pdf')}`
         const r = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'upload', zone: 'US', code: s.code, name: s.name, subfolder: 'Purchases', filename: nome, contentBase64: s.fileB64 }),
+          body: JSON.stringify({ action: 'invoice-receipts', zone: 'US', invoiceId: s.invoiceId }),
         })
         const rd = await r.json().catch(() => ({}))
-        if (!rd.ok) alert('A despesa entrou, mas o recibo não subiu para a pasta Purchases do carro.')
-      } catch { alert('A despesa entrou, mas o recibo não subiu para a pasta Purchases do carro.') }
+        if (!rd.ok) alert('A despesa entrou, mas o recibo não subiu para a pasta da invoice.')
+      } catch { alert('A despesa entrou, mas o recibo não subiu para a pasta da invoice.') }
 
       setScannedFleet(null)
       await loadFleet()
