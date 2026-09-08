@@ -264,8 +264,15 @@ export default function PartsPage() {
   function memberPrices(p?: Part): { retail: number; cost: number } {
     if (!p) return { retail: 0, cost: 0 }
     if (p.source_type === 'HUNT') { const d = huntDelivered(p); return { retail: d.mapDel, cost: d.costDel ?? d.mapDel } }
-    const u = Number(p.unit_price) || 0
-    return { retail: u, cost: landedOf(p) || u }
+    // RETAIL É O MAP, NÃO O CUSTO (Márcio, 08/set/2026). A peça de caçada já lia
+    // `map_price` acima; a peça de scan lia `unit_price` nos dois lados — e
+    // unit_price É O CUSTO, e map_price é o MAP. O kit das duas sondas
+    // nasceu mostrando RETAIL 201,44 (a soma dos custos) e "0% off" em vez de
+    // MAP 332,26. Sem MAP conhecido a peça entra pelo próprio custo: markup que
+    // não se sabe é markup zero, nunca um retail inventado nem uma linha zerada.
+    const cost = landedOf(p) || (Number(p.unit_price) || 0)
+    const map = Number(p.map_price) || 0
+    return { retail: map > 0 ? map : cost, cost }
   }
   function kitTotals(kit: Part): { retail: number; cost: number } {
     return (kit.kit_items || []).reduce((a, m) => {
