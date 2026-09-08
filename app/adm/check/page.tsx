@@ -934,10 +934,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       href: '/parts', code: 'LIGAR', label: (linker.certain_ready || 0) + ' peça(s) com os dois leitores concordando — prontas pra entrar sozinhas', extra: 'primeira rodada só leu; LIGAR grava estas agora e, daqui em diante, toda peça nova em que palavra-chave e IA concordarem entra sem perguntar (com trilha e DESFAZER por 7 dias)',
       fix: { kind: 'enable_autofill' as const, table: 'parts_database', rowId: 'auto-fill', field: 'ENABLED', confirmText: 'Ligar o preenchimento sozinho? Grava agora as ' + (linker.certain_ready || 0) + ' categorias em que palavra-chave e IA concordam e, daqui em diante, faz o mesmo com toda peça nova. Tudo fica na trilha; cada uma tem DESFAZER por 7 dias.' },
     })
-    for (const a of linker.auto_categories || []) items.push({
-      href: '/parts', code: 'SOZINHO', label: a.item + ' → ' + a.category, extra: 'palavra-chave e IA concordaram — preenchida pelo app em ' + formatShortDate(a.at) + '; DESFAZER volta ao que era', when: a.at,
-      fix: { kind: 'undo_category' as const, table: 'parts_database', rowId: a.id, field: 'category', confirmText: 'Desfazer a categoria «' + a.category + '» que o app preencheu sozinho em «' + a.item + '»? Volta a ' + (a.old || 'vazio') + ' e fica na trilha.' },
-    })
+    // As preenchidas sozinhas NÃO ficam aqui (8/set: 408 SOZINHO contavam como pendência e o número não caía) — vivem no card verde «O app preencheu sozinho», com DESFAZER.
     for (const c of linker.categories) {
       const both = c.keyword && c.ai && c.ai !== 'NOT_A_PART' && c.keyword !== c.ai
       const code = c.tier === 'CERTAIN' ? 'CERTA' : c.tier === 'NOT_PART' ? 'NÃO É PEÇA' : c.tier === 'PENDING' ? 'IA PENDENTE' : c.current ? 'FORA VOC.' : both ? 'DISCORDAM' : 'SEM CAT.'
@@ -955,7 +952,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const pend = linker.category_ai_pending || 0
     checks.push({
       group: 'INVENTORY', key: 'parts-category', title: 'Peça sem categoria', blocks: 'ninguém acha a peça na hora de montar um pacote',
-      why: 'Decisão de 24/ago (categoria fechada, 13 valores) + 8/set (João: «é óbvio, não precisa de gente»). Dois leitores independentes — a palavra-chave e a IA — concordando é PROVA: a categoria entra sozinha, com trilha, e fica aqui como SOZINHO por 7 dias com DESFAZER. Quando discordam, ou só um sabe, a pergunta traz as duas opiniões; «não é peça» é pilha própria.'
+      why: 'Decisão de 24/ago (categoria fechada, 13 valores) + 8/set (João: «é óbvio, não precisa de gente»). Dois leitores independentes — a palavra-chave e a IA — concordando é PROVA: a categoria entra sozinha, com trilha, e aparece no card verde «O app preencheu sozinho» por 7 dias, com DESFAZER — aqui só fica o que ainda pede gente. Quando discordam, ou só um sabe, a pergunta traz as duas opiniões; «não é peça» é pilha própria.'
         + (linker.needs_category_ai_migration ? ' RODE MIGRATION_parts_category_ai.sql — sem ela só a palavra-chave palpita.' : pend ? ' A IA ainda vai ler ' + pend + ' peça(s) (roda sozinha ao abrir o Data Checker).' : ''),
       items,
     })
