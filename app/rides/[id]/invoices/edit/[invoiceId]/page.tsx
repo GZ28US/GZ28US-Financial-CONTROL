@@ -937,7 +937,20 @@ export default function EditInvoicePage() {
       if (fx == null) { setScanningPurchase(false); return }
       const money = (v: any) => (((parseFloat(v) || 0) * fx)).toFixed(2)
 
-      const supplier = String(parsed.supplier || '').trim()
+      // O NOME DO FORNECEDOR JÁ CURADO AQUI, no instante da leitura — não só na
+      // gravação (Márcio, 08/set/2026: *"o escaneamento não normalizou o nome do
+      // supplier, isso não pode acontecer... quando eu escanear a compra, é pra
+      // aparecer o nome do supplier certo"*).
+      //
+      // Curar só no confirmScannedPurchase() não bastava: a nota da AutoZone vem
+      // como "Store #2484, 2074 Ctrl Fla Pkwy" e era ISSO que aparecia no popup de
+      // revisão. Pior, o desconto de atacado é procurado por este nome
+      // (supplierDiscount/supplierIsVariable logo abaixo do campo) — com a grafia
+      // do recibo o cadastro não é encontrado e a linha nasce sem o desconto.
+      // Curando na leitura, o que ele VÊ é o que o banco VAI gravar, e o campo
+      // segue editável se o casamento errar.
+      const supplierCru = String(parsed.supplier || '').trim()
+      const supplier = matchSupplier(supplierCru, supplierDirectoryFrom(suppliers))?.name || supplierCru
       const scannedSource = String(parsed.source || '').trim()
       const paid = parsed.paid !== false
       const rawDate = String(parsed.date || '')
@@ -946,7 +959,11 @@ export default function EditInvoicePage() {
       // A scanned PURCHASE invoice is treated as already paid, so it always needs a
       // valid invoice date: the receipt's date when present, otherwise today.
       const date = isValidDate(rawDate) ? rawDate : todayStr()
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: money(i.amount), quantity: String(i.quantity || '1'), tax: money(i.tax), extra: money(i.extra), item_discount: String(i.item_discount || '0'), list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0', weight_lbs: String(i.weight_lbs || '0') }))
+      // `nature` e `alias` viajam junto porque o catálogo precisa deles: a NATUREZA
+      // decide se o item é peça (SERVICE/DIGITAL/MONEY não entram no parts DB) e o
+      // apelido guarda o SKU da loja. Sem a natureza, o enrollParts cai no regex,
+      // que é o fallback — foi assim que "Dodge PCM Services" virou peça.
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: money(i.amount), quantity: String(i.quantity || '1'), tax: money(i.tax), extra: money(i.extra), item_discount: String(i.item_discount || '0'), list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0', weight_lbs: String(i.weight_lbs || '0'), nature: String(i.nature || '') }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), order_number: String(parsed.order_number || '').trim(), ship_to: String(parsed.ship_to || '').trim(), tracking_number: String(parsed.tracking_number || '').trim(), carrier: String(parsed.carrier || '').trim(), items, receiptUrl, paid })
@@ -1166,6 +1183,12 @@ export default function EditInvoicePage() {
     setExpandedGroups(prev => new Set([...prev, groupId]))
     // Enroll the scanned items into the parts data bank (last purchase for parts,
     // cheapest for extras).
+    // A PEÇA ENTRA NO CATÁLOGO COM TUDO QUE A NOTA TEM (Márcio, 08/set/2026:
+    // *"se não existem estes itens no parts DB, tem que entrar, como SCANNED, com
+    // TODAS as INFOS, todas"*). Faltavam duas coisas que a nota traz e o catálogo
+    // guarda: o RECIBO (só 9 de 734 peças tinham) e a NATUREZA (sem ela o
+    // enrollParts cai no regex, o fallback que deixou "Dodge PCM Services"
+    // virar peça). O SKU da loja já vem dentro de part_number.
     void enrollParts(scannedPurchase.items.map(it => ({
       item: it.description,
       part_number: it.part_number,
@@ -1177,8 +1200,12 @@ export default function EditInvoicePage() {
       item_discount: it.item_discount,
       purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedPurchase.date) ? scannedPurchase.date : null,
       // MAP (printed List/Retail) + weight when the official-supplier invoice shows them.
+      // Na AutoZone o MAP vem impresso como "List Price" — não precisa pesquisar na web.
       list_price: (it as any).list_price,
       weight_lbs: (it as any).weight_lbs,
+      nature: (it as any).nature,
+      receipt_url: scannedPurchase.receiptUrl,
+      // moeda não vai: este app é USD, e o enrollParts já assume USD por padrão.
     })))
     setScannedPurchase(null)
   }
