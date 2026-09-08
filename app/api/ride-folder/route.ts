@@ -547,8 +547,16 @@ export async function POST(req: NextRequest) {
       if (!faltando && !sobrando) {
         return NextResponse.json({ ok: true, result: 'unchanged', folder: destino, uploaded: [], unchanged: esperados.map(e => e.nome), renamedAway: [], purchasesCleared: [], failed: [], pending: 0 })
       }
-      const enviados: string[] = [], iguais: string[] = [], falhos: string[] = []
+      const enviados: string[] = [], iguais: string[] = [], falhos: string[] = [], repetidos: string[] = []
       const hashesCertos = new Set<string>()
+      // O MESMO DOCUMENTO DUAS VEZES NÃO É DOIS DOCUMENTOS. A mesma nota pode
+      // estar no storage sob duas URLs (subida uma vez por invoice), e desde o
+      // rateio ela chega aqui pelos dois caminhos — sem esta trava a pasta
+      // ganharia "HHP 382528.pdf" e "HHP 382528 (2).pdf" com bytes idênticos.
+      // Quem manda é o conteúdo: o primeiro nome fica, o resto nem sobe e sai
+      // dos nomes esperados, para a limpeza abaixo apagar cópia antiga igual.
+      const jaVistos = new Set<string>()
+      const guardados: string[] = []
       let restam = 0
       for (const { url, nome } of esperados) {
         // Já está lá com o mesmo conteúdo? Não baixa, não sobe: o caso comum é
@@ -558,6 +566,9 @@ export async function POST(req: NextRequest) {
         const buf = Buffer.from(bytes)
         const h = dropboxHash(buf)
         hashesCertos.add(h)
+        if (jaVistos.has(h)) { repetidos.push(nome); continue }
+        jaVistos.add(h)
+        guardados.push(nome)
         if (hashDe.get(nome) === h) { iguais.push(nome); continue }
         if (dry) { enviados.push(nome); continue }
         if (enviados.length >= 25) { restam++; continue }   // teto por chamada; chamar de novo continua
@@ -571,7 +582,9 @@ export async function POST(req: NextRequest) {
       // do renome — morre. O que não bate hash nenhum fica: pode ser papel que o
       // Márcio pôs à mão, e isso não se apaga por dedução.
       const removidos: string[] = []
-      const nomesCertos = new Set(esperados.map(e => e.nome))
+      // Só os GUARDADOS são nome certo: o que caiu na trava de conteúdo repetido
+      // não deve existir na pasta, e se existir de uma passada antiga sai aqui.
+      const nomesCertos = new Set(guardados)
       for (const f of jaLa) {
         if (nomesCertos.has(f.name) || !hashesCertos.has(f.hash)) continue
         if (!dry) await dbx(token, 'files/delete_v2', { path: `${destino}/${f.name}` })
@@ -593,6 +606,7 @@ export async function POST(req: NextRequest) {
         ok: true, result: dry ? 'plan' : 'synced', folder: destino,
         uploaded: enviados, unchanged: iguais, renamedAway: removidos,
         purchasesCleared: daPurchases, failed: falhos, pending: restam,
+        duplicates: repetidos,
       })
     }
 
