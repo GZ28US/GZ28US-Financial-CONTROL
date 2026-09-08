@@ -1555,10 +1555,23 @@ export default function EditInvoicePage() {
   }
   // Normaliza o % de um item pela casta do fornecedor: carimbo fixo vence tudo,
   // variável mantém o que veio (invoice/mão), o resto é 0 — sem exceção.
+  // O DESCONTO IMPRESSO NA NOTA NUNCA SE JOGA FORA (Márcio, 08/set/2026:
+  // *"as invoices da AutoZone são as mais fáceis de ter o MAP, vem nelas!!!
+  //   as infos das peças são sagradas"*).
+  //
+  // Como era: fornecedor não reconhecido caía no `: '0'` e o percentual que o
+  // documento imprimiu era descartado. Aconteceu de verdade — a nota da AutoZone
+  // trazia 40,2% e 38,7% na coluna List, o scanner leu certo, e a linha nasceu
+  // com 0% porque o cadastro ainda não conhecia a grafia "Store #2484…".
+  // Com 0% o app entende que o preço pago É o de tabela e a margem some.
+  //
+  // Regra agora: desconto FIXO cadastrado manda (é contrato, vale mais que a
+  // folha); fora isso vale o que está IMPRESSO. Zero só quando a nota não
+  // mostrou desconto nenhum.
   function normalizeItemDiscount(supplier: string | undefined | null, current: string | undefined | null): string {
     const fx = supplierDiscount(supplier)
     if (fx != null) return String(fx)
-    return supplierIsVariable(supplier) ? String(parseFloat(current || '0') || 0) : '0'
+    return String(parseFloat(current || '0') || 0)
   }
   function formatMileage(value: string) {
     const clean = value.replace(/[^0-9.]/g, '')
