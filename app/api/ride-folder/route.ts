@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { supplierDirectoryFrom, matchSupplier } from '@/lib/supplierMatch'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 
@@ -458,12 +459,20 @@ export async function POST(req: NextRequest) {
       const invName = sanitize(String(inv.service || '').trim() || String(ride.project_name || ''))
       const destino = `${root}/${folder}/Invoices/${invoiceFolderName(invCode, invName)}`
 
+      // O NOME NO ARQUIVO É O DO CADASTRO (lei de 04/set/2026). A linha antiga
+      // guarda a grafia crua do recibo — "Titan Motorsports, 11370 Boggy Creek
+      // Rd. Orlando FL 32824" — e ela viraria nome de arquivo e caminho de 230
+      // caracteres. Sem cadastro que case, fica a grafia crua: inventar é pior.
+      const { data: sups } = await db.from('suppliers').select('name, aliases, is_dealership')
+      const dir = supplierDirectoryFrom(sups || [])
+      const curado = (n: string) => (n ? (matchSupplier(n, dir)?.name || n) : n)
+
       const { data: exps } = await db.from('invoice_expenses').select('supplier, order_number, receipt_url').eq('invoice_id', invoiceId)
       const porUrl = new Map<string, { supplier: string; order: string }>()
       for (const e of exps || []) {
         for (const u of parseReceiptUrls((e as any).receipt_url)) {
           const at = porUrl.get(u) || { supplier: '', order: '' }
-          if (!at.supplier) at.supplier = String((e as any).supplier || '').trim()
+          if (!at.supplier) at.supplier = curado(String((e as any).supplier || '').trim())
           if (!at.order) at.order = String((e as any).order_number || '').trim()
           porUrl.set(u, at)
         }
