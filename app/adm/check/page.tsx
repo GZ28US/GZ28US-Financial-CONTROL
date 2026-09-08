@@ -45,6 +45,8 @@ type Fix =
   | { kind: 'unmatch'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
   // SILÊNCIO (BL 0.10.0): ADOTAR — a agendada aberta que o banco já pagou recebe a linha (data, elo, valor).
   | { kind: 'adopt'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
+  // CASAR COM AJUSTE (BL 1.1.0): SOLTAR — a passagem diz que casou, a linha do banco não a aponta; limpa o elo, nunca apaga.
+  | { kind: 'unlink'; table: string; rowId: string; field: string; confirmText: string }
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -84,7 +86,7 @@ type SupRow = { id: string; text: string; part: string; candidates: { id: string
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
-type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null }
+type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null; runs_7d?: { n: number; errors: number } }
 type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
 const REGIONS_OPENED = '2025-11-10'
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
@@ -915,6 +917,12 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       else if (['ERROR', 'ABORTED'].includes(last.status)) items.push({ href: '/adm/check', code: 'MOTOR', label: `última rodada ${last.status} (${last.trigger}, ${when(last.started_at)})`, extra: (last.errors || [])[0] ? String(last.errors![0]).slice(0, 140) : `${last.remaining ?? 0} linhas ficaram pra próxima` })
       for (const e of ab.errors) items.push({ href: '/adm/check', code: 'ERRO', label: String(e).slice(0, 160), extra: 'erro do motor nos últimos 7 dias' })
       for (const o of ab.orphans) {
+        if (o.table === 'expenses') {
+          // ELO SOLTO: passagem da folha ligada (CASAR COM AJUSTE) a uma linha do banco que não a aponta mais.
+          items.push({ href: '/staff', code: o.code === 'SUBSTITUÍDA' ? 'SUBSTITUÍDA' : 'ELO SOLTO', label: o.label || '', extra: o.code === 'SUBSTITUÍDA' ? 'a linha do banco foi trocada pelo Plaid; a nova casa esta passagem e limpa o elo velho sozinha na próxima rodada — não solte' : 'a passagem diz que foi casada com uma linha do banco, mas a linha não a aponta mais (DESFAZER, reset ou linha trocada) — SOLTAR limpa o elo e a passagem volta a poder casar; nada é apagado', amount: o.amount,
+            fix: o.code === 'SUBSTITUÍDA' ? undefined : { kind: 'unlink' as const, table: 'expenses', rowId: o.id, field: 'bank_transaction_id', confirmText: `Soltar o elo da passagem «${o.label}» (${usd(o.amount)})? A linha do banco não aponta mais pra ela. Nada é apagado; a passagem volta ao pool.` } })
+          continue
+        }
         const oHref = o.table === 'inputs' ? '/supplies' : o.table === 'inventory' ? '/inventory' : o.table === 'invoice_expenses' ? '/adm/bank' : '/costs/fixed'
         if (o.code === 'SUBSTITUÍDA') { items.push({ href: oHref, code: 'SUBSTITUÍDA', label: o.label || '', extra: `a linha do banco foi trocada pelo Plaid (pending → posted); a linha nova vai casar este lançamento na próxima rodada — não apague · ${usd(o.amount)}`, amount: o.amount }); continue }
         items.push({
@@ -929,14 +937,14 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       // BALDE (fase B): ponteiro morto (linha do banco apontando pra registro apagado),
       // valor mudado pelo Plaid depois do lançamento, e PADRÃO que não pôde ser semeado.
       for (const x of ab.dead_pointers || []) items.push({
-        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco e o motor recria · ${usd(x.amount)}`, amount: x.amount,
+        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: (x.table === 'expenses' || x.table === 'expense_group') ? `a linha do banco aponta pra passagem da folha que não existe mais — DESFAZER em A CONFERIR e refaça CASAR COM AJUSTE (o motor não recria folha) · ${usd(x.amount)}` : `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco e o motor recria · ${usd(x.amount)}`, amount: x.amount,
         fix: { kind: 'unmatch' as const, table: x.table, rowId: x.id, field: 'match_status', bankId: x.bank_id, confirmText: `Devolver a linha do banco «${x.label}» (${usd(x.amount)}) a SEM CASAMENTO? O registro apontado já não existe; o motor recria na próxima rodada.` },
       })
-      for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila e deixe o motor recriar`, amount: Math.abs(x.bank_amount - x.row_amount) })
+      for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: /folha ×/.test(String(x.label || '')) ? `as passagens da folha somam ${usd(x.row_amount)} e o banco cobrou ${usd(x.bank_amount)} (alguém editou depois do casamento) — DESFAZER em A CONFERIR e refaça CASAR COM AJUSTE` : `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila e deixe o motor recriar`, amount: Math.abs(x.bank_amount - x.row_amount) })
       for (const k of (ab.seed && ab.seed.skipped) || []) items.push({ href: '/adm/bank', code: 'PADRÃO', label: k, extra: 'regra padrão não semeada — fornecedor ambíguo ou ausente; nomeie o fornecedor certo no ⚙ do Bank Link (regra humana)' })
       const b24 = Object.values(ab.booked_24h || {}).reduce((s, v) => s + v, 0), b7 = Object.values(ab.booked_7d || {}).reduce((s, v) => s + v, 0)
       checks.push({
-        group: 'BANK', key: 'auto-book', title: 'AUTO-BOOK — o motor registrou sozinho?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
+        group: 'BANK', key: 'auto-book', title: 'AutoBook Engine — rodou? errou? deixou sobras?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
         why: `Desde ${ab.floor} cada linha nova do banco é REGISTRADA pelo motor depois do sync (cron 6/6h + webhook), uma rodada por vez. Registradas: ${b24} nas últimas 24 h · ${b7} em 7 dias · ${ab.remaining} NEW restantes desde o piso. RULE/LEARN esperam 7 dias de maturidade (o humano ainda lança atrasado) — daí a DUPLA: quando o humano lança depois do banco, TROCAR desfaz o do motor e casa o humano. ÓRFÃO = lançamento do motor sem linha casada (sobra de DESFAZER ou falha): PURGAR. Tudo desfazível no Bank Link (A CONFERIR · DESFAZER LOTE).`,
         items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
       })
@@ -1048,6 +1056,98 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
 //      escreve em linha nenhuma sozinho — o anel branco no botão é sugestão.
 //   3. Toda escrita vai pela rota /api/item-nature: é lá que mora a trava
 //      .is('nature', null) (regra pode PÔR, nunca TIRAR) e a trilha data_fixes.
+// ── O PAINEL DO AUTOBOOK ENGINE — corpo próprio do card (João, 8/set/2026: «parece uma
+// lista de issues que não dá pra ler»). Três andares, em português de gente:
+//   1. SAÚDE — rodou? quando? errou? quanto registrou sozinho (24 h / 7 d, por motor).
+//   2. SOBRAS por FAMÍLIA — cada família recolhida, com «o que é» e «o que fazer» numa
+//      linha; dentro, as linhas com o botão (PURGAR / TROCAR / DESFAZER) que já existia.
+//   3. VAZIO honesto — quando não sobrou nada, diz isso com os números (lei do silêncio:
+//      silêncio é promessa; aqui a promessa vem escrita).
+// Os itens continuam os mesmos (missões e contadores não mudam); só a leitura muda.
+const AB_ENGINE: Record<string, string> = { RULE: 'por regra', BUCKET: 'no balde', EXACT: 'casadas', NAME: 'pelo nome', FEE: 'tarifas', LEARN: 'aprendidas', TRANSFER: 'transferências' }
+const AB_FAMILIES: { codes: string[]; title: string; what: string; action: string; tone: string }[] = [
+  { codes: ['MOTOR', 'ERRO'], title: 'O motor parou ou errou', what: 'o cron (6/6 h) ou o webhook do Plaid não chamaram o motor, ou a rodada terminou em erro', action: 'confira a Vercel e o erro; até voltar, as linhas novas ficam sem dono', tone: 'border-red-800 bg-red-950/40 text-red-300' },
+  { codes: ['ÓRFÃO'], title: 'Lançamento do motor sem linha do banco', what: 'sobra de um DESFAZER ou de uma rodada que falhou no meio — nenhuma linha do banco aponta pra ele', action: 'PURGAR apaga (fica na trilha)', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
+  { codes: ['SUBSTITUÍDA'], title: 'Linha trocada pelo Plaid (pending → posted)', what: 'o banco trocou o id da linha ao postar; a linha nova casa este lançamento na próxima rodada', action: 'nada — não apague', tone: 'border-gray-700 bg-gray-900 text-gray-300' },
+  { codes: ['DUPLA'], title: 'O motor e uma pessoa lançaram a mesma compra', what: 'alguém lançou à mão depois que o banco já tinha lançado', action: 'TROCAR desfaz o do motor e casa a linha com o registro humano', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
+  { codes: ['PONTEIRO MORTO'], title: 'A linha do banco aponta pra um registro apagado', what: 'alguém apagou no editor o lançamento que o motor tinha criado', action: 'DESFAZER devolve a linha ao banco; o motor recria', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
+  { codes: ['VALOR MUDOU'], title: 'O Plaid corrigiu o valor depois do lançamento', what: 'o valor da linha do banco mudou e o lançamento ficou com o valor antigo', action: 'DESFAZER na fila A ATRIBUIR e deixe o motor recriar', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
+  { codes: ['ELO SOLTO'], title: 'Passagem da folha com elo solto', what: 'a passagem diz que foi casada com uma linha do banco, mas a linha não a aponta mais (DESFAZER, reset ou linha trocada)', action: 'SOLTAR limpa o elo (nada é apagado) — a passagem volta a poder casar', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
+  { codes: ['PADRÃO'], title: 'Regra padrão esperando um prestador', what: 'a regra conhece o comerciante mas não achou o cadastro do prestador pra apontar', action: 'crie o prestador em Custos Fixos (ou nomeie no ⚙ do Bank Link) — a regra nasce na próxima rodada', tone: 'border-purple-800 bg-purple-950/40 text-purple-300' },
+]
+// «def:saas:microsoft: 0 fornecedores batem» → «Microsoft · assinatura (APP) — nenhum prestador com esse nome»
+function padraoLabel(k: string): string {
+  const m = /^def:([a-z-]+)(?::([a-z0-9-]+))?/i.exec(k)
+  if (!m) return k
+  const fam = m[1] === 'saas' ? 'assinatura (APP)' : m[1]
+  const name = (m[2] || m[1]).split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  const cnt = /(\d+) fornecedores/.exec(k)
+  const n = cnt ? parseInt(cnt[1], 10) : NaN
+  return name + ' · ' + fam + (n === 0 ? ' — nenhum prestador com esse nome: crie em Custos Fixos' : n >= 2 ? ' — ' + n + ' prestadores batem: escolha ou funda, e nomeie no ⚙' : /ambígu/i.test(k) ? ' — mais de um prestador bate, escolha' : ' — ' + k.replace(/^def:[^:]+(?::[^:]+)?:?\s*/, ''))
+}
+function AutoBookBoard({ ab, check, saving, done, onFix }: { ab: AutoBookSignal; check: Check; saving: boolean; done: Set<string>; onFix: (check: Check, item: Item) => void }) {
+  const [openSec, setOpenSec] = useState<string | null>(null)
+  const last = ab.runs[0]
+  const now = Date.now()
+  const stamp = (iso: string) => { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) + ' (Orlando)' } catch { return String(iso).slice(0, 16).replace('T', ' ') } }
+  const stale = !last || now - Date.parse(last.started_at) > 12 * 3600e3
+  const bad = !!last && ['ERROR', 'ABORTED'].includes(last.status)
+  const runs7 = ab.runs.filter(r => now - Date.parse(r.started_at) <= 7 * 864e5)
+  const runs7n = ab.runs_7d ? ab.runs_7d.n : runs7.length
+  const errs7 = ab.runs_7d ? ab.runs_7d.errors : runs7.filter(r => ['ERROR', 'ABORTED'].includes(r.status) || (Array.isArray(r.errors) && r.errors.length)).length
+  const total = (m: Record<string, number> | undefined) => Object.values(m || {}).reduce((s, v) => s + v, 0)
+  const say = (m: Record<string, number> | undefined) => Object.entries(m || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => v + ' ' + (AB_ENGINE[k] || k.toLowerCase())).join(' · ')
+  const healthy = !stale && !bad && errs7 === 0 && (ab.errors || []).length === 0
+  const fams = AB_FAMILIES.map(f => ({ ...f, items: check.items.filter(it => f.codes.includes(it.code)) })).filter(f => f.items.length)
+  const leftover = fams.reduce((s, f) => s + f.items.length, 0)
+  const b24 = total(ab.booked_24h), b7 = total(ab.booked_7d)
+  return (
+    <div className="space-y-3">
+      <div className={'rounded-2xl border px-4 py-3 ' + (healthy ? 'border-emerald-800 bg-emerald-950/30' : 'border-red-800 bg-red-950/30')}>
+        <p className="font-bold">{healthy ? '● Motor vivo' : stale ? '● Motor parado' : '● Motor com erro'}<span className="text-xs text-gray-400 font-normal ml-3">{last ? 'última rodada ' + stamp(last.started_at) + ' (' + last.trigger + ', ' + last.status + ')' : 'nenhuma rodada registrada'} · {runs7n} rodada(s) em 7 dias{errs7 ? ', ' + errs7 + ' com erro' : ', nenhuma com erro'}{ab.remaining ? ' · ' + ab.remaining + ' linha(s) ainda sem decisão' : ''}</span></p>
+        <p className="text-xs text-gray-300 mt-1">Registrou sozinho: <b>{b24}</b> linha(s) nas últimas 24 h{b24 ? ' (' + say(ab.booked_24h) + ')' : ''} · <b>{b7}</b> em 7 dias{b7 ? ' (' + say(ab.booked_7d) + ')' : ''}{ab.bucket ? ' · balde: ' + ab.bucket.total + ' compra(s) a atribuir, ' + usd(ab.bucket.balance) + (ab.bucket.older_7d ? ', ' + ab.bucket.older_7d + ' com 7+ dias' : '') : ''}</p>
+      </div>
+      {leftover === 0 ? (
+        <p className="text-emerald-400 font-bold">Nenhuma sobra: o motor rodou, registrou e não deixou órfão, dupla, ponteiro morto nem valor mudado.</p>
+      ) : fams.map(f => {
+        const key = f.codes[0]
+        const amt = f.items.reduce((s, it) => s + (it.amount || 0), 0)
+        const isOpen = openSec === key
+        const border = f.tone.split(' ').filter(c => c.startsWith('border')).join(' ')
+        return (
+          <div key={key} className={'rounded-2xl border bg-gray-900 ' + border}>
+            <button onClick={() => setOpenSec(isOpen ? null : key)} className="w-full text-left px-4 py-3 flex items-center gap-3 flex-wrap">
+              <span className={'px-2 py-0.5 rounded-full text-[10px] font-bold border ' + f.tone}>{f.items.length}</span>
+              <span className="font-bold flex-1">{f.title}{amt ? <span className="text-gray-500 font-normal text-sm"> · {usd(amt)}</span> : null}</span>
+              <span className="text-gray-500">{isOpen ? '▴' : '▾'}</span>
+              <span className="basis-full text-xs text-gray-400">{f.what} — <b className="text-gray-300">{f.action}</b></span>
+            </button>
+            {isOpen && (
+              <div className="px-4 pb-3 divide-y divide-gray-800 max-h-[24rem] overflow-y-auto">
+                {f.items.map((it, i) => {
+                  const fx = it.fix
+                  const isDone = !!fx && done.has(fx.rowId + '|' + fixField(fx))
+                  const txt = fx && 'confirmText' in fx ? fx.confirmText : ''
+                  const verb = fx ? (fx.kind === 'purge' ? 'PURGAR' : fx.kind === 'rematch' ? 'TROCAR' : fx.kind === 'unmatch' ? 'DESFAZER' : fx.kind === 'adopt' ? 'ADOTAR' : fx.kind === 'unlink' ? 'SOLTAR' : 'CONSERTAR') : ''
+                  return (
+                    <div key={i} className={'py-2 flex items-center gap-3 text-sm' + (isDone ? ' opacity-40' : '')}>
+                      <span className="flex-1 min-w-0"><span className="block truncate" title={it.label}>{it.code === 'PADRÃO' ? padraoLabel(it.label) : it.label}</span>{it.extra && <span className="block text-[11px] text-gray-500 truncate" title={it.extra}>{it.extra}</span>}</span>
+                      {it.amount ? <span className="text-gray-300 shrink-0">{usd(it.amount)}</span> : null}
+                      {it.link && <a href={it.link.href} className="text-xs text-sky-300 underline shrink-0">{it.link.label}</a>}
+                      {fx && !isDone && <button disabled={saving} onClick={() => { if (!txt || confirm(txt)) onFix(check, it) }} className={(fx.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600') + ' disabled:opacity-40 px-3 py-1 rounded-xl font-bold text-xs shrink-0'}>{verb}</button>}
+                      {isDone && <span className="text-xs text-emerald-400 font-bold shrink-0">feito</span>}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function NatureWorkbench({ sig, setSig }: { sig: NatureSignal; setSig: Dispatch<SetStateAction<NatureSignal>> }) {
   const [openKey, setOpenKey] = useState<string | null>(null)
   const [remember, setRemember] = useState<Record<string, boolean>>({})
@@ -1449,10 +1549,10 @@ export default function DataCheckPage() {
       } finally { setSaving(false) }
       return
     }
-    if (fix.kind === 'purge' || fix.kind === 'rematch' || fix.kind === 'unmatch' || fix.kind === 'adopt') {
+    if (fix.kind === 'purge' || fix.kind === 'rematch' || fix.kind === 'unmatch' || fix.kind === 'adopt' || fix.kind === 'unlink') {
       setSaving(true)
       try {
-        const body = fix.kind === 'adopt' ? { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId } : fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : fix.kind === 'unmatch' ? { action: 'unmatch', bank_id: fix.bankId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
+        const body = fix.kind === 'unlink' ? { action: 'unlink_expense', row_id: fix.rowId } : fix.kind === 'adopt' ? { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId } : fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : fix.kind === 'unmatch' ? { action: 'unmatch', bank_id: fix.bankId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
         const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
@@ -1725,8 +1825,8 @@ export default function DataCheckPage() {
                         ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
                         : (
                           <div>
-                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
-                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : 'CONFIRMAR'}</button>
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : 'CONFIRMAR'}</button>
                           </div>
                         )}
                       {c.key === 'parts-identity' && gval === '__search__' && it.fix && (
@@ -1788,6 +1888,7 @@ export default function DataCheckPage() {
                     trabalho é o GRUPO DE FORNECEDOR (com exceção por linha), e a
                     lista padrão de itens não sabe fazer isso. */}
                 {c.key === 'item-nature' ? <NatureWorkbench sig={nature} setSig={setNature} />
+                : c.key === 'auto-book' && bank.autobook ? <AutoBookBoard ab={bank.autobook} check={c} saving={saving} done={done} onFix={(ck, it) => applyFix(ck, it, '')} />
                 : c.items.length === 0 ? <p className="text-emerald-400 font-bold">Nada pendente aqui.</p> : (
                   <div className="max-h-[32rem] overflow-y-auto divide-y divide-gray-800">
                     {filtered(c).map((it, i) => {
@@ -1803,7 +1904,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : 'FIX'}
+                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -1843,14 +1944,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
-                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && it.fix.kind !== 'adopt' && !fixValue)}
+                                <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && it.fix.kind !== 'adopt' && it.fix.kind !== 'unlink' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : it.fix.kind === 'unlink' ? 'SOLTAR AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>

@@ -13,7 +13,7 @@
 // E a deriva das três datas (X previsto · Y banco · Z registro): conta AGENDADA que o
 // banco já pagou e o app ainda diz «a pagar» — a multa nasce dessa mentira.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { num, classify, supplierNameFor, type Classified, type Klass } from './bankReconcile.server'
+import { num, classify, supplierNameFor, nameHit, type Classified, type Klass } from './bankReconcile.server'
 import { normSup, type SupplierEntry } from './supplierMatch'
 
 export type DoubtKind = 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY'
@@ -133,4 +133,51 @@ export function bounceLines(diary: { bank_id: string; at: string; action: string
   const c = new Map<string, number>()
   for (const r of diary) if (r.action === 'MATCH' && Date.parse(r.at) >= since) c.set(String(r.bank_id), (c.get(String(r.bank_id)) || 0) + 1)
   return [...c.entries()].filter(([, n]) => n >= 3).map(([bank_id, n]) => ({ bank_id, n })).sort((a, b) => b.n - a.n)
+}
+
+// ── CASAR COM AJUSTE (BL 1.1.0): a passagem da folha que o banco cobrou com deriva ──
+// Copa Airlines, 7/set: $312.33 no banco × $312.23 na season (câmbio), $807.49 × 2 passagens
+// de $403.75 marcadas como pagas pela GZ28BR, $764.11 × 2 × $375.22. O motor exige valor ao
+// centavo, pagador GZ28US e um registro por cobrança — a folha não tem nada disso. Aqui:
+// registros CRUS (inclusive pagos por outra conta), tolerância min($50, max($3, 3%)),
+// ±10 dias, nome batendo (ou, sem nome, passagem/hotel a ≤3 dias — marcado «nome não
+// confirmado»), sozinho ou em par/trio do mesmo dia. Devolve os 3 melhores por |Δ|.
+export type NearCand = { ids: string[]; amount: number; delta: number; pct: number; date: string; label: string; staff: string[]; paid_from: string[]; paid_from_mismatch: boolean; name_ok: boolean; exact: boolean; brl: number | null }
+export const adjustTol = (amt: number) => Math.min(50, Math.max(3, 0.03 * amt))
+const cents = (x: number) => Math.round(x * 100) / 100
+export function nearExpenseMatches(line: any, rows: any[], staffOf: Map<string, string>, rejected: Set<string> = new Set()): NearCand[] {
+  if (!(num(line.amount) > 0) || !line.date) return []
+  // Dinheiro andando (Zelle da folha, wire, entrada) nunca casa por aproximação — é o seletor normal.
+  const klass = classify(line).klass
+  if (MONEY_KLASSES.has(klass)) return []
+  const amt = cents(Math.abs(num(line.amount)))
+  const tol = adjustTol(amt)
+  const dd = (a: string, b: string) => Math.abs(Math.round((Date.parse(String(a).slice(0, 10)) - Date.parse(String(b).slice(0, 10))) / 864e5))
+  const rowDate = (r: any) => String(r.payment_date || r.expense_date || '').slice(0, 10)
+  const labelOf = (r: any) => [r.description, r.source && !/auto-captura/i.test(String(r.source)) ? r.source : '', r.type].filter(Boolean).join(' · ')
+  const travelish = (r: any) => /passagem|flight|ticket|voo|airfare|fare|hotel|hospedagem|uber|lyft/i.test(String(r.description || ''))
+  const elig = rows.filter(r => !r.bank_transaction_id && !String(r.payment_reference || '').startsWith('bank:') && !rejected.has('expenses:' + r.id) && rowDate(r) && dd(rowDate(r), line.date) <= 10 && num(r.amount) > 0)
+    .map(r => ({ r, hit: nameHit(line, { table: 'expenses', id: r.id, label: labelOf(r), date: rowDate(r), amount: num(r.amount), undated: false } as any) }))
+  const strong = elig.filter(x => x.hit)
+  // Sem nome só em linha de VIAGEM/HOSPEDAGEM (passagem auto-capturada não traz a companhia): medido em 8/set,
+  // fora disso o «sem nome» casava compensação de carbono com Aldi e Uber com Anthropic.
+  const pool = strong.length ? strong : (klass === 'TRAVEL' || klass === 'LODGING') ? elig.filter(x => travelish(x.r) && dd(rowDate(x.r), line.date) <= 3) : []
+  // Registro EXATO com pagador certo existe? Então o caminho é o normal (SIM/EXACT) — nenhum vizinho aqui.
+  if (pool.some(x => Math.abs(num(x.r.amount) - amt) < 0.011 && !(x.r.paid_from && x.r.paid_from !== 'GZ28US'))) return []
+  const out: NearCand[] = []
+  const mk = (xs: typeof pool) => {
+    const sum = cents(xs.reduce((s, x) => s + num(x.r.amount), 0)); const delta = cents(amt - sum)
+    if (Math.abs(delta) > tol) return
+    // Valor EXATO com pagador certo é o caminho normal (SIM / EXACT) — aqui só entra o que precisa de ajuste.
+    if (xs.length === 1 && Math.abs(delta) < 0.011 && !xs.some(x => x.r.paid_from && x.r.paid_from !== 'GZ28US')) return   // par exato NÃO tem outro caminho — fica
+    out.push({ ids: xs.map(x => String(x.r.id)), amount: sum, delta, pct: sum ? Math.round(Math.abs(delta) / sum * 1000) / 10 : 0, date: rowDate(xs[0].r), label: xs.map(x => String(x.r.description || x.r.type || '').slice(0, 60)).join(' + '), staff: [...new Set(xs.map(x => staffOf.get(String(x.r.season_id)) || '?'))], paid_from: [...new Set(xs.map(x => String(x.r.paid_from || '—')))], paid_from_mismatch: xs.some(x => x.r.paid_from && x.r.paid_from !== 'GZ28US'), name_ok: xs.every(x => x.hit), exact: Math.abs(delta) < 0.011, brl: cents(xs.reduce((s, x) => s + num(x.r.amount_brl), 0)) || null })
+  }
+  for (const x of pool) mk([x])
+  const few = [...pool].sort((a, b) => Math.abs(num(a.r.amount) - amt) - Math.abs(num(b.r.amount) - amt)).slice(0, 8)
+  for (let i = 0; i < few.length; i++) for (let j = i + 1; j < few.length; j++) {
+    if (dd(rowDate(few[i].r), rowDate(few[j].r)) > 3) continue
+    mk([few[i], few[j]])
+    for (let k = j + 1; k < few.length; k++) { if (dd(rowDate(few[i].r), rowDate(few[k].r)) > 3 || dd(rowDate(few[j].r), rowDate(few[k].r)) > 3) continue; mk([few[i], few[j], few[k]]) }
+  }
+  return out.sort((a, b) => Math.abs(a.delta) - Math.abs(b.delta) || Number(b.name_ok) - Number(a.name_ok) || a.ids.length - b.ids.length).slice(0, 3)
 }

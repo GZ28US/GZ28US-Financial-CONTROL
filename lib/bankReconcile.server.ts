@@ -56,9 +56,10 @@ export type Cand = { table: string; id: string; label: string; date: string | nu
 // de criar uma segunda linha (risco #1 confirmado pela revisão: valor diferente
 // nos centavos duplicava a conta e deixava um "a pagar" fantasma).
 export type Sched = { id: string; supplier_id: string; expense_date: string; amount: number; description: string | null; paid_from: string | null }
-export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[] }
+// shadow: registros da FOLHA pagos por outra conta (brPaid) — não casam, mas guardam contra gêmeo (CASAR COM AJUSTE).
+export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[] }
 // `o` = valor ANTERIOR do campo (undefined nos registros antigos = volta pra null).
-export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id'; v: string; o?: string | null }
+export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference'; v: string; o?: string | null }
 export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'invoice_parts'])
 
 // AUTO-BOOK — constantes de doutrina (3/set/2026; donos podem mover):
@@ -87,12 +88,32 @@ export const INPUT_CATEGORIES = ['CONSUMPTION', 'STOCK', 'APARTMENT', 'CATS', 'T
 
 // Monta o pool de candidatos do app: saídas (OUT) e entradas (IN), já sem o
 // que outra linha do banco casou — inclusive o cruzamento grupo ⇄ item.
+// Elo da FOLHA (expenses) com o banco — CASAR COM AJUSTE (BL 1.1.0): coluna própria
+// bank_transaction_id (MIGRATION_expenses_bank_link.sql). Antes da migration o pool e as
+// varreduras seguem vivos sem ela; a rota avisa em vez de cair.
+let EXP_LINK_COL_MISSING = false, EXP_LINK_MISSING_AT = 0   // re-sonda a cada 60 s: a migration rodou num servidor quente
+export const expenseLinkColumnMissing = () => EXP_LINK_COL_MISSING
+export const EXP_SEL = 'id, description, type, amount, amount_brl, payment_date, expense_date, origin, paid_from, paid_to, source, season_id, payment_reference'
+export async function expensesRows(db: any, sel: string = EXP_SEL, filter?: (q: any) => any): Promise<any[]> {
+  if (!EXP_LINK_COL_MISSING || Date.now() - EXP_LINK_MISSING_AT > 60000) {
+    try { const rows = await fetchAll(db, 'expenses', sel + ', bank_transaction_id', filter); EXP_LINK_COL_MISSING = false; return rows }
+    catch (e) { if (/bank_transaction_id/.test(String((e as Error).message || e))) { EXP_LINK_COL_MISSING = true; EXP_LINK_MISSING_AT = Date.now() } else throw e }
+  }
+  return fetchAll(db, 'expenses', sel, filter)
+}
+// Sonda direta (antes de escrever): a coluna existe? Atualiza a bandeira nos dois sentidos.
+export async function probeExpenseLink(db: any): Promise<boolean> {
+  const { error } = await db.from('expenses').select('bank_transaction_id').limit(1)
+  EXP_LINK_COL_MISSING = !!(error && /bank_transaction_id/.test(error.message)); if (EXP_LINK_COL_MISSING) EXP_LINK_MISSING_AT = Date.now()
+  return EXP_LINK_COL_MISSING
+}
+
 export async function candidatePool(db: any): Promise<Pool> {
   const [invExp, fixed, suppliers, expenses, goods, goodExp, inputs, inventory, payments, invParts, invoices, rides, clients, capital, finEv, financing, matched] = await Promise.all([
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, purchase_group, paid_from'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from, bank_transaction_id'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type'),
-    fetchAll(db, 'expenses', 'id, description, type, amount, payment_date, expense_date, origin, paid_from'),
+    expensesRows(db),
     fetchAll(db, 'goods', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
     fetchAll(db, 'good_expenses', 'id, good_id, description, supplier, amount, payment_date, expense_date, paid_from'),
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from, category'),
@@ -107,10 +128,11 @@ export async function candidatePool(db: any): Promise<Pool> {
     fetchAll(db, 'financing', 'id, lender').catch(() => []),
     // Linha REMOVED pelo Plaid (pending que virou posted com outro id) solta o
     // alvo: a linha nova casa com a MESMA linha do app em vez de criar gêmea.
-    fetchAll(db, 'bank_transactions', 'matched_table, matched_id', (q: any) => q.not('matched_id', 'is', null).neq('match_status', 'REMOVED')),
+    fetchAll(db, 'bank_transactions', 'id, matched_table, matched_id', (q: any) => q.not('matched_id', 'is', null).neq('match_status', 'REMOVED')),
   ])
   const today = todayNY()
   const taken = new Set(matched.filter((m: any) => m.matched_id).map((m: any) => m.matched_table + ':' + m.matched_id))
+  const linkedLines = new Set(matched.map((m: any) => String(m.id)))   // linhas do banco com casamento VIVO (elo da folha só prende se a linha ainda aponta)
   // Grupo casado ⇒ seus itens saem; item casado ⇒ seu grupo sai.
   const takenGroups = new Set([...taken].filter(k => k.startsWith('purchase_group:')).map(k => k.slice('purchase_group:'.length)))
   const brokenGroups = new Set<string>()
@@ -162,7 +184,17 @@ const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].inclu
   // futuro: a agendada costuma ter data DEPOIS da cobrança real.
   const sched: Sched[] = fixed.filter((f: any) => !f.payment_date && !f.bank_transaction_id && !brPaid(f) && f.supplier_id && okDate(f.expense_date))
     .map((f: any) => ({ id: f.id, supplier_id: f.supplier_id, expense_date: String(f.expense_date).slice(0, 10), amount: num(f.amount), description: f.description || null, paid_from: f.paid_from || null }))
-  for (const x of expenses) if (!brPaid(x)) push(out, { table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date), href: '/staff', detail: `${x.origin === 'PERSONAL' ? 'DESPESA PESSOAL' : 'FOLHA/STAFF'} · ${dts(x.payment_date, x.expense_date, 'lançada')}` })
+  // FOLHA (expenses): ligada a um casamento vivo sai do pool (elo bank_transaction_id ou
+  // payment_reference bank:<id> do PESSOAL); elo pra linha REMOVED/resetada não prende — o
+  // órfão ELO SOLTO avisa. Paga por outra conta (brPaid) não casa, mas vira SOMBRA: guarda
+  // de gêmeo pra regra não lançar em dobro a passagem que a Regions pagou (CASAR COM AJUSTE).
+  const shadow: Cand[] = []
+  const expLinked = (x: any) => (x.bank_transaction_id && linkedLines.has(String(x.bank_transaction_id))) || (String(x.payment_reference || '').startsWith('bank:') && linkedLines.has(String(x.payment_reference).slice(5)))
+  for (const x of expenses) {
+    if (expLinked(x)) continue
+    const c: Cand = { table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}${x.source && !/auto-captura/i.test(String(x.source)) ? ' · ' + x.source : ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date), href: '/staff', detail: `${x.origin === 'PERSONAL' ? 'DESPESA PESSOAL' : 'FOLHA/STAFF'} · ${dts(x.payment_date, x.expense_date, 'lançada')}` }
+    if (brPaid(x)) { if (!taken.has('expenses:' + x.id) && c.amount > 0.005 && !future(c.date)) shadow.push(c) } else push(out, c)
+  }
   for (const g of goods) if (!brPaid(g) && memberFree(g)) push(out, { table: 'goods', id: g.id, group: grp(g), label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.purchase_date || null, amount: num(g.unit_price) * (num(g.quantity) || 1), undated: !okDate(g.payment_date), href: '/goods', detail: `BEM/EQUIPAMENTO (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.purchase_date, 'comprado')}` })
   for (const g of goodExp) if (!brPaid(g)) push(out, { table: 'good_expenses', id: g.id, label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.expense_date || null, amount: num(g.amount), undated: !okDate(g.payment_date), href: '/goods', detail: `DESPESA de bem/equipamento (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.expense_date, 'lançada')}` })
   for (const x of inputs) if (!brPaid(x) && memberFree(x)) push(out, { table: 'inputs', id: x.id, group: grp(x), label: `SUPPLY · ${x.category ? x.category + ' · ' : ''}${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date), href: '/supplies', detail: `INSUMO (SUPPLIES${x.category ? ' · ' + x.category : ''}) · ${x.supplier || 'sem fornecedor'} · ${num(x.unit_price)}×${num(x.quantity) || 1} · ${dts(x.payment_date, x.purchase_date, 'comprado')}` })
@@ -217,7 +249,7 @@ const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].inclu
     }
   }
   groups.forEach((g, id) => { if (g.n > 1) push(out, { table: 'purchase_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members, detail: `PEDIDO: soma de ${g.n} itens comprados juntos — o banco cobra o pedido inteiro de uma vez` }) })
-  return { out, inn, sched }
+  return { out, inn, sched, shadow }
 }
 
 /* ─────────────── NOME: o que conta como "bate" ─────────────── */
@@ -315,7 +347,7 @@ export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' |
 // A DÚVIDA DO MOTOR (BL 0.10.0, lei do João de 4/set: «silêncio é promessa de que está tudo
 // certo»). Toda linha que o plano NÃO resolve leva o motivo e o candidato que o motor viu —
 // a tela mostra o par e pergunta; nada fica parado calado.
-export type PlanDoubt = { kind: 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY' | 'OTHER'; reason: string; klass: Klass; cands?: (Cand & { exact?: boolean })[] }
+export type PlanDoubt = { kind: 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY' | 'FOLHA' | 'OTHER'; reason: string; klass: Klass; cands?: (Cand & { exact?: boolean })[] }
 export type Plan = { items: PlanItem[]; skipped: Record<string, number>; doubts: Record<string, PlanDoubt> }
 export type BuildOpts = { today?: string; minCreateAge?: number; itemTwins?: Set<string> }
 
@@ -588,7 +620,8 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
   // Classe humana com gêmeo LONGE (mesmo valor, meses atrás) é pergunta de FORNECEDOR, não «é este?»;
   // dinheiro-movimento é sempre DINHEIRO; entrada (estorno) de classe humana não tem fornecedor a responder.
   const kindOf = (k: string, klass: Klass, signed: number): PlanDoubt['kind'] =>
-    /feed duplicado/.test(k) ? 'OTHER'
+    /folha/.test(k) ? 'FOLHA'   // CASAR COM AJUSTE ou NÃO — nunca SIM (o registro não é candidato exato)
+    : /feed duplicado/.test(k) ? 'OTHER'
     : /candidato longe/.test(k) ? (MONEY_K.has(klass) ? 'MONEY' : HUMAN_TIER.has(klass) && signed > 0 ? 'SUPPLIER' : 'TWIN')
     : /gêmeo|ambíguo|mais de 3 dias|nome não bate|sem data|valor repetido|série|valor redondo|tarifa ambígua/.test(k) ? 'TWIN'
     : /acima do teto/.test(k) ? 'CAP' : /maturidade/.test(k) ? 'MATURITY'
@@ -618,6 +651,32 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     const da = (l.doubt_answered && typeof l.doubt_answered === 'object') ? l.doubt_answered : {}
     const rejected = new Set<string>([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : [])].map(String))
     const notRejected = (x: Cand) => !rejected.has(x.table + ':' + x.id)
+    // FOLHA (CASAR COM AJUSTE): a MESMA régua da tela (bankDoubt.nearExpenseMatches) — nome (ou,
+    // em viagem/hospedagem, passagem/hotel a ≤3 d), ±10 d, tolerância min($50, max($3, 3%)),
+    // sozinha ou em par do mesmo dia; vale pro pool E pra sombra (pagas por outra conta no papel).
+    // Se a tela oferece CASAR COM AJUSTE, o motor NÃO cria — senão o cron lança a passagem em dobro
+    // (revisão de 8/set: a guarda antiga era mais estreita que a oferta).
+    const folhaTwin = (): Cand[] | null => {
+      if (MONEY_K.has(cls.klass) || !(num(l.amount) > 0)) return null
+      const tol = Math.min(50, Math.max(3, 0.03 * amt))
+      const list = [...arr, ...(pool.shadow || [])].filter(x => x.table === 'expenses' && free(x) && notRejected(x) && x.date && daysBetween(x.date, l.date) <= 10)
+      const strong = list.filter(x => nameHit(l, x))
+      const cand = strong.length ? strong : (cls.klass === 'TRAVEL' || cls.klass === 'LODGING') ? list.filter(x => /passagem|flight|ticket|voo|airfare|fare|hotel|hospedagem|uber|lyft/i.test(x.label) && daysBetween(x.date!, l.date) <= 3) : []
+      if (!cand.length) return null
+      const isShadow = (x: Cand) => (pool.shadow || []).includes(x)
+      // Exato com pagador certo é o caminho normal; só entra o que precisa de ajuste (ou de pagador).
+      const singles = cand.filter(x => Math.abs(x.amount - amt) <= tol && (Math.abs(x.amount - amt) >= 0.011 || isShadow(x))).sort((a, b) => Math.abs(a.amount - amt) - Math.abs(b.amount - amt))
+      if (singles.length) return singles.slice(0, 3)
+      const few = [...cand].sort((a, b) => Math.abs(a.amount - amt) - Math.abs(b.amount - amt)).slice(0, 8)
+      for (let i = 0; i < few.length; i++) for (let j = i + 1; j < few.length; j++) {
+        if (daysBetween(few[i].date!, few[j].date!) > 3) continue
+        const s = few[i].amount + few[j].amount
+        if (Math.abs(s - amt) <= tol) return [few[i], few[j]]
+        // trio (mesma régua da tela): três passagens numa cobrança
+        for (let k = j + 1; k < few.length; k++) { if (daysBetween(few[i].date!, few[k].date!) > 3 || daysBetween(few[j].date!, few[k].date!) > 3) continue; if (Math.abs(s + few[k].amount - amt) <= tol) return [few[i], few[j], few[k]] }
+      }
+      return null
+    }
     // Feed duplicado (revisão D6): gêmea em OUTRA conexão nunca casa nem cria.
     if (opts.itemTwins && opts.itemTwins.has(twinKey(l))) { skip('gêmeo em outra conexão (feed duplicado)'); continue }
     if (isFee(l)) {
@@ -634,6 +693,7 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     // Mesmo valor a mais de 30 dias não é a mesma compra (dry run da fase B: 168
     // linhas presas por coincidência de valor) — sem candidato PERTO, a regra decide.
     const near = same.filter(x => !x.date || daysBetween(x.date, l.date) <= 30)
+    if (!near.length) { const ft = folhaTwin(); if (ft) { if (cur) cur.cands = ft; skip('a folha tem esta compra (deriva de câmbio, par de passagens ou pagador errado no papel) — CASAR COM AJUSTE ou NÃO'); continue } }
     if (!near.length) {
       // Sem candidato: a REGRA decide (BL 0.7.0 → 0.8.0). TRANSFER = status sem
       // lançamento; FIXED_EXPENSE ADOTA a agendada do mês ou cria; INPUT cria.
@@ -785,6 +845,26 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
     .eq('id', line.id).in('match_status', ['NEW', 'QUEUED']).select('id')
   if (claimErr) throw new Error(claimErr.message)
   if (!claimed || !claimed.length) throw new Error('linha do banco já decidida (outra aba ou sync) — recarregue')
+  // FOLHA (CASAR COM AJUSTE / EXACT / NAME): registro já ligado a OUTRA linha do banco. Elo VIVO
+  // (a outra linha ainda aponta) = conflito: solta o casamento em vez de contar duas vezes (corrida
+  // com o cron, pool carregado antes). Elo MORTO (linha REMOVED/resetada) = limpa e segue — é a
+  // substituta do Plaid casando a mesma passagem. Antes do diário, pra não registrar MATCH fantasma.
+  if (!EXP_LINK_COL_MISSING && (cand.table === 'expenses' || cand.table === 'expense_group')) {
+    const ids = cand.table === 'expenses' ? [cand.id] : (cand.members || []).map(m => m.id)
+    if (ids.length) {
+      const { data: rows, error } = await db.from('expenses').select('id, bank_transaction_id').in('id', ids)
+      if (error && /bank_transaction_id/.test(error.message)) { EXP_LINK_COL_MISSING = true; EXP_LINK_MISSING_AT = Date.now() }
+      for (const o of (rows || []).filter((r: any) => r.bank_transaction_id && String(r.bank_transaction_id) !== String(line.id))) {
+        const { data: ol } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').eq('id', o.bank_transaction_id).maybeSingle()
+        const live = !!ol && ol.match_status === 'MATCHED' && ((ol.matched_table === 'expenses' && String(ol.matched_id) === String(o.id)) || (ol.matched_table === 'expense_group' && String(ol.matched_id) === String(ol.id)))
+        if (live) {
+          await db.from('bank_transactions').update({ match_status: line.match_status || 'NEW', matched_table: null, matched_id: null, matched_note: line.matched_note ?? null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }).eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id)
+          throw new Error('registro da folha já ligado a outra linha do banco — recarregue')
+        }
+        await db.from('expenses').update({ bank_transaction_id: null }).eq('id', o.id).eq('bank_transaction_id', o.bank_transaction_id)
+      }
+    }
+  }
   await logMatchEvent(db, line, 'MATCH', { matched_table: cand.table, matched_id: cand.id, note: (extra as any).matched_note, engine: (extra as any).match_engine, batch: (extra as any).match_batch, members: (cand as any).members || null })
   const backfill: Backfill[] = [...pre]
   const fill = async (table: string, ids: string[], field: 'payment_date' | 'paid_at', value: string) => {
@@ -795,7 +875,7 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
   }
   if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
   else if (cand.table === 'invoice_payments') await fill('invoice_payments', [cand.id], 'paid_at', paidAtFor(line.date))
-  else if (cand.table === 'purchase_group' || cand.table === 'kit_group') {
+  else if (cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group') {
     // Só os MEMBROS que formaram o total do grupo (revisão #18), nunca "todo mundo do grupo".
     const byTable = new Map<string, string[]>()
     for (const m of cand.members || []) byTable.set(m.table, [...(byTable.get(m.table) || []), m.id])
@@ -867,6 +947,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
         const { data: r, error } = await db.from(b.t).update({ [b.f]: prev }).eq('id', b.id).eq(b.f, b.v).select('id')
         if (error) throw new Error(`${b.t}: ${error.message}`)
         if (r && r.length) changed.push(`${b.t}.${b.f}→${prev ?? 'null'}`)
+        else changed.push(`${b.t}.${b.f} NÃO revertido (editado depois; esperado ${b.v})`)   // lei do silêncio: undo parcial se diz
       }
     }
     if (['FEE', 'RULE', 'LEARN'].includes(String(line.match_engine)) && t === 'fixed_cost_expenses') {
@@ -915,6 +996,8 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     }
     // PESSOAL da PERGUNTA (engine nulo, sem backfill): a despesa da season que o motor criou
     // morre com o DESFAZER — marcador + elo + origem, nunca linha de gente (revisão 4/set).
+    // CASAR COM AJUSTE sem backfill gravado (restore/reset): solta o elo da folha pela coluna.
+    if ((t === 'expense_group' || (t === 'expenses' && String(line.match_engine) === 'ADJUST')) && !recorded && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
     let personalHandled = false
     if (t === 'expenses' && !bucketHandled) {
       const { data: r, error } = await db.from('expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id')
