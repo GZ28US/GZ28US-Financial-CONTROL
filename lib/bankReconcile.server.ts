@@ -294,6 +294,8 @@ export async function loadDbAliases(db: any): Promise<void> {
 
 // Nome bate? Em Zelle/wire o BENEFICIÁRIO tem que aparecer no rótulo (revisão #3);
 // nas demais, palavra útil em comum (prefixo de 5 vale) ou alias inteiro.
+// Chave da SÉRIE (engine SET): duas primeiras palavras do comerciante + valor ao centavo.
+export const setKeyOf = (l: any) => words((l.merchant || l.name || '')).slice(0, 2).join(' ') + '|' + Math.abs(num(l.amount)).toFixed(2)
 export function nameHit(line: any, c: Cand): boolean {
   const bank = ((line.merchant || '') + ' ' + (line.name || '')).toLowerCase()
   const lab = String(c.label || '').toLowerCase()
@@ -342,14 +344,14 @@ const isFeeCand = (c: Cand) => { const segs = c.label.split(' · '); const sup =
 // chave de comerciante; origem HUMAN (digitada) ou LEARNED (aprendida do MATCH
 // humano); alvo TRANSFER (status, sem lançamento — só regra humana com regex);
 // direção; teto de valor. Precedência: HUMAN+regex > HUMAN só-pfc > LEARNED.
-export type MerchantRule = { id: string; pattern: string | null; target: 'FIXED_EXPENSE' | 'INPUT' | 'TRANSFER' | 'BUCKET'; supplier_id: string | null; category: string | null; label: string | null; active: boolean; pfc_primary?: string | null; pfc_detailed?: string | null; origin?: 'HUMAN' | 'LEARNED' | 'DEFAULT' | null; merchant_key?: string | null; direction?: 'OUT' | 'IN' | 'ANY' | null; amount_max?: number | null; key?: string | null; klass?: string | null; priority?: number | null; created_at?: string | null }
-export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET'; create: boolean; rule?: MerchantRule; adopt?: Sched; transfer?: boolean; cls?: Classified; reason?: string }
+export type MerchantRule = { id: string; pattern: string | null; target: 'FIXED_EXPENSE' | 'INPUT' | 'TRANSFER' | 'BUCKET' | 'IGNORE'; supplier_id: string | null; category: string | null; label: string | null; active: boolean; pfc_primary?: string | null; pfc_detailed?: string | null; origin?: 'HUMAN' | 'LEARNED' | 'DEFAULT' | null; merchant_key?: string | null; direction?: 'OUT' | 'IN' | 'ANY' | null; amount_max?: number | null; key?: string | null; klass?: string | null; priority?: number | null; created_at?: string | null }
+export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET' | 'SET'; create: boolean; rule?: MerchantRule; adopt?: Sched; transfer?: boolean; ignore?: boolean; cls?: Classified; reason?: string }
 // A DÚVIDA DO MOTOR (BL 0.10.0, lei do João de 4/set: «silêncio é promessa de que está tudo
 // certo»). Toda linha que o plano NÃO resolve leva o motivo e o candidato que o motor viu —
 // a tela mostra o par e pergunta; nada fica parado calado.
 export type PlanDoubt = { kind: 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY' | 'FOLHA' | 'OTHER'; reason: string; klass: Klass; cands?: (Cand & { exact?: boolean })[] }
 export type Plan = { items: PlanItem[]; skipped: Record<string, number>; doubts: Record<string, PlanDoubt> }
-export type BuildOpts = { today?: string; minCreateAge?: number; itemTwins?: Set<string> }
+export type BuildOpts = { today?: string; minCreateAge?: number; itemTwins?: Set<string>; pendingKeys?: Set<string> }
 
 // Chave de comerciante: o merchant_entity_id do Plaid (marca) ou o nome limpo.
 export const merchantKey = (l: any): string | null => {
@@ -643,7 +645,45 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
   const free = (c: Cand) => !used.has(c.table + ':' + c.id)
   const key = (l: any) => (num(l.amount) > 0 ? 'o' : 'i') + Math.abs(num(l.amount)).toFixed(2)
   const sorted = [...lines].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  // SÉRIE CASADA (engine SET, DC autossuficiente 8/set): n linhas do banco iguais (mesmo comerciante,
+  // mesmo valor) e EXATAMENTE n candidatos livres do app com o mesmo valor e nome batendo, cada par
+  // a ≤3 dias — o conjunto fecha sozinho, mesmo que cada linha isolada esbarre em «valor repetido no
+  // banco» / «candidato ambíguo». Medido: 47 grupos, 77 linhas (7× HP Tuners $299.94 ↔ 7 registros).
+  // Tudo ou nada por grupo; candidato consumido aqui nunca é reoferecido no laço.
+  const setDone = new Set<string>()
+  {
+    const setKey = setKeyOf
+    const rejOf = (l: any) => { const da = l.doubt_answered && typeof l.doubt_answered === 'object' ? l.doubt_answered : {}; return new Set<string>([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : [])].map(String)) }
+    // Grupo com irmã PENDENTE (ainda vai postar) ou duplicada em outra conexão não fecha: o (n+1)º candidato é dela.
+    const blocked = new Set<string>(opts.pendingKeys || [])
+    const groups = new Map<string, any[]>()
+    for (const l of sorted) {
+      if (!(num(l.amount) > 0) || !l.date) continue
+      const k = setKey(l); if (k.startsWith('|')) continue
+      if (l.pending || (opts.itemTwins && opts.itemTwins.has(twinKey(l)))) { blocked.add(k); continue }
+      groups.set(k, [...(groups.get(k) || []), l])
+    }
+    groups.forEach((gl, key) => {
+      if (gl.length < 2 || blocked.has(key)) return
+      const amt0 = Math.abs(num(gl[0].amount))
+      const cands = pool.out.filter(x => free(x) && Math.abs(x.amount - amt0) < 0.011 && x.date && gl.some(l => nameHit(l, x)))
+      if (cands.length !== gl.length) return
+      const ls = [...gl].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      const cs = [...cands].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      const pairs: [any, Cand][] = []
+      const used = new Set<string>()
+      for (const l of ls) {
+        let best: Cand | null = null, bd = 99
+        const rej = rejOf(l)   // o NÃO do humano vale aqui também: par recusado nunca volta
+        for (const c of cs) { if (used.has(c.id) || rej.has(c.table + ':' + c.id)) continue; const dd = daysBetween(c.date!, l.date); if (dd < bd) { bd = dd; best = c } }
+        if (!best || bd > 3) return
+        used.add(best.id); pairs.push([l, best])
+      }
+      for (const [l, c] of pairs) { consume(c); plan.items.push({ line: l, cand: c, engine: 'SET', create: false }); setDone.add(String(l.id)) }
+    })
+  }
   for (const l of sorted) {
+    if (setDone.has(String(l.id))) continue
     const amt = Math.abs(num(l.amount))
     const cls = classify(l)
     cur = { l, cls, cands: [] }
@@ -710,12 +750,14 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
           const age = Math.max(opts.minCreateAge || 0, RULE_AGE_DAYS)
           const tail0 = Math.max(0.30, 0.005 * amt)
           const twin0 = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail0 && x.date && daysBetween(x.date, l.date) <= 10 && nameHit(l, x))
-          if (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && signedDays(l.date, today) >= age && !twin0.length) { plan.items.push({ line: l, cand: null, engine: 'BUCKET', create: true, rule: capped.r, cls, reason: why }); continue }
+          if (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && capped.r.target !== 'IGNORE' && signedDays(l.date, today) >= age && !twin0.length) { plan.items.push({ line: l, cand: null, engine: 'BUCKET', create: true, rule: capped.r, cls, reason: why }); continue }
           if (twin0.length) { if (cur) cur.cands = twin0; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
           skip(why); continue
         }
         skip((same.length ? 'tem gêmeo no app — candidato longe' : 'sem candidato') + (HUMAN_TIER.has(cls.klass) ? ' (classe humana: ' + cls.klass + ')' : '')); continue
       }
+      // IGNORAR que ensina (BL 1.2.0): regra HUMANA alvo IGNORE — a linha nasce IGNORED, com trilha.
+      if (rule.r.target === 'IGNORE') { plan.items.push({ line: l, cand: null, engine: 'RULE', create: false, ignore: true, rule: rule.r }); continue }
       if (rule.r.target === 'TRANSFER') { plan.items.push({ line: l, cand: null, engine: 'RULE', create: false, transfer: true, rule: rule.r }); continue }
       if (!(num(l.amount) > 0)) { skip('entrada nunca cria'); continue }
       if (opts.minCreateAge && signedDays(l.date, today) < opts.minCreateAge) { skip(`aguardando maturidade (${opts.minCreateAge}d)`); continue }
@@ -793,13 +835,14 @@ export const planSummary = (plan: Plan) => {
   const creates = plan.items.filter(i => (i.engine === 'RULE' || i.engine === 'LEARN') && i.create)
   const learn = plan.items.filter(i => i.engine === 'LEARN'), transfer = plan.items.filter(i => i.transfer)
   const bucket = plan.items.filter(i => i.engine === 'BUCKET')
+  const setM = plan.items.filter(i => i.engine === 'SET'), ignore = plan.items.filter(i => i.ignore)
   const byKlass: Record<string, number> = {}
   for (const i of bucket) { const k = i.cls?.klass || '?'; byKlass[k] = (byKlass[k] || 0) + 1 }
   const ruleLabel = (i: PlanItem) => { const l = i.line, r = i.rule!; const base = `${l.date} · ${l.merchant || l.name} · $${Math.abs(num(l.amount)).toFixed(2)}`
     if (i.adopt) return `${base} → ADOTA agendada de ${i.adopt.expense_date} ($${i.adopt.amount.toFixed(2)} → $${Math.abs(num(l.amount)).toFixed(2)})${r.label ? ' · ' + r.label : ''}`
     return `${base} → CRIA ${r.target === 'INPUT' ? 'SUPPLY ' + (r.category || 'CONSUMPTION') : 'despesa do fornecedor'}${r.label ? ' · ' + r.label : ''}${i.engine === 'LEARN' ? ' (regra aprendida)' : ''}` }
   return {
-    fee_create: fee.filter(i => i.create).length, fee_match: fee.filter(i => !i.create).length, exact: exact.length,
+    fee_create: fee.filter(i => i.create).length, fee_match: fee.filter(i => !i.create).length, exact: exact.length, set: setM.length, ignore: ignore.length,
     name: name.length, rule_create: creates.filter(i => !i.adopt).length, rule_adopt: creates.filter(i => !!i.adopt).length,
     learn: learn.length, transfer: transfer.length, bucket: bucket.length, by_klass: byKlass,
     total: plan.items.length, skipped: plan.skipped, hash: planHash(plan),
@@ -1116,7 +1159,12 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
       return !(data && data.matched_table === table && String(data.matched_id) === String(rowId))
     }
     try {
-      if (it.transfer && it.rule) {
+      if (it.ignore && it.rule) {
+        const r = it.rule
+        await writeStatus(db, l, 'IGNORED', { note: ('AUTO · RULE · IGNORE · ' + (r.label || l.merchant || l.name || '')).slice(0, 150), engine: 'RULE', batch, rule: r.id })
+        res.transfer++
+        fixes.push(fix(l.id, 'RULE → IGNORED · ' + lineLabel(l), 'IGNORED'))
+      } else if (it.transfer && it.rule) {
         const r = it.rule
         await writeStatus(db, l, 'TRANSFER', { note: ('AUTO · RULE · TRANSFER · ' + (r.label || l.merchant || l.name || '')).slice(0, 150), engine: 'RULE', batch, rule: r.id })
         res.transfer++
@@ -1623,10 +1671,12 @@ export async function autoBook(db: any, opts: { trigger: 'cron' | 'webhook' | 'h
     const [rules, itemTwins] = await Promise.all([loadRules(db), itemTwinKeys(db)])
     const maxItems = opts.maxItems || 900
     for (let guard = 0; guard < 20; guard++) {
-      const all = (await newLines(db, 5000, { since: AUTO_BOOK_FLOOR })).filter((l: any) => !l.pending)
+      const allRaw = await newLines(db, 5000, { since: AUTO_BOOK_FLOOR })
+      const all = allRaw.filter((l: any) => !l.pending)
+      const pendingKeys = new Set<string>(allRaw.filter((l: any) => l.pending).map(setKeyOf))   // a SÉRIE vê a irmã pendente
       lines = all.length
       const pool = await candidatePool(db)
-      const plan = buildPlan(all, pool, rules, { minCreateAge: RULE_AGE_DAYS, itemTwins })
+      const plan = buildPlan(all, pool, rules, { minCreateAge: RULE_AGE_DAYS, itemTwins, pendingKeys })
       remaining = plan.items.length
       if (!plan.items.length) break
       if (Date.now() - t0 > opts.deadlineMs - 25_000 || applied >= maxItems) { status = 'PARTIAL'; break }

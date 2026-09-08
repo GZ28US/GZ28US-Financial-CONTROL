@@ -83,7 +83,7 @@ export function moneyDoubts(lines: any[]): { id: string; date: string; amount: n
 // valor a ±25 dias: o banco pagou, o app diz «a pagar», a multa corre à toa.
 // Duas contas iguais pra uma linha (dois aluguéis de $7.006,69) = AMBÍGUA: pergunta,
 // nunca chute.
-export type DriftRow = { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean }
+export type DriftRow = { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean; name_ok: boolean; unique: boolean }
 export function driftRows(openFixed: any[], bankLines: any[], sups: FixedSupplier[], today = todayNY()): DriftRow[] {
   const byId = new Map(sups.map(s => [s.id, s]))
   const outs = bankLines.filter(b => num(b.amount) > 0 && ['NEW', 'QUEUED'].includes(String(b.match_status)))
@@ -109,7 +109,7 @@ export function driftRows(openFixed: any[], bankLines: any[], sups: FixedSupplie
     const b = cands[0]
     usedBank.set(String(b.id), (usedBank.get(String(b.id)) || 0) + 1)
     const s: any = byId.get(x.supplier_id) || {}
-    out.push({ row_id: x.id, supplier_id: x.supplier_id || null, supplier: s.company || String(x.description || '').slice(0, 40), amount: amt, due: String(x.expense_date).slice(0, 10), bank_id: String(b.id), bank_date: String(b.date).slice(0, 10), bank_status: String(b.match_status), days: dayDiff(b.date, x.expense_date), overdue_days: dayDiff(today, x.expense_date), ambiguous: false, late_fee: !!(s.late_fee_fixed || s.late_fee_percent || s.late_fee_daily) })
+    out.push({ row_id: x.id, supplier_id: x.supplier_id || null, supplier: s.company || String(x.description || '').slice(0, 40), amount: amt, due: String(x.expense_date).slice(0, 10), bank_id: String(b.id), bank_date: String(b.date).slice(0, 10), bank_status: String(b.match_status), days: dayDiff(b.date, x.expense_date), overdue_days: dayDiff(today, x.expense_date), ambiguous: false, late_fee: !!(s.late_fee_fixed || s.late_fee_percent || s.late_fee_daily), name_ok: nameOk(b), unique: cands.length === 1 })
   }
   for (const r of out) if ((usedBank.get(r.bank_id) || 0) > 1) r.ambiguous = true   // uma linha do banco, duas contas iguais
   return out.sort((a, b) => b.amount - a.amount)

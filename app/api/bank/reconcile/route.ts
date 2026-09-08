@@ -83,11 +83,11 @@ export async function GET(req: NextRequest) {
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
       // pra sugerir quem pagou. A conta abriu em 2025-11-10 com $0: antes disso,
       // nada foi GZ28US.
-      const outs: { d: string; a: number }[] = []
+      const outs: { d: string; a: number; id: string; n: string; s: string }[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('bank_transactions').select('date, amount').gt('amount', 0).neq('match_status', 'REMOVED').order('id').range(from, from + 999)
+        const { data, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status').gt('amount', 0).eq('pending', false).neq('match_status', 'REMOVED').order('id').range(from, from + 999)
         if (error) throw new Error(error.message)
-        for (const r of data || []) outs.push({ d: r.date, a: Math.round(num(r.amount) * 100) / 100 })
+        for (const r of data || []) outs.push({ d: r.date, a: Math.round(num(r.amount) * 100) / 100, id: r.id, n: String(r.merchant || r.name || '').slice(0, 60), s: String(r.match_status) })
         if (!data || data.length < 1000) break
       }
       return NextResponse.json({ ok: true, matched: acc, outflows: outs, account_opened: '2025-11-10' })
@@ -408,7 +408,7 @@ export async function GET(req: NextRequest) {
     let auto: any = null, needsMigration = false
     const { data: autoRows, error: autoErr } = await db.from('bank_transactions')
       .select('id, date, amount, name, merchant, match_status, matched_table, matched_id, matched_note, match_engine, match_batch, match_rule, reviewed_at, plaid_id, backfill')
-      .not('match_engine', 'is', null).in('match_status', ['MATCHED', 'TRANSFER']).order('date', { ascending: false }).range(0, 1999)
+      .not('match_engine', 'is', null).in('match_status', ['MATCHED', 'TRANSFER', 'IGNORED']).order('date', { ascending: false }).range(0, 1999)
     if (autoErr) needsMigration = MIGRATION_RE.test(autoErr.message)
     else {
       // CONFERIR também no A CONFERIR (UX #1, João 25/ago): cada casamento do motor
@@ -631,12 +631,10 @@ export async function POST(req: NextRequest) {
       } catch (e) { errors.push('folha não conferida: ' + String((e as Error).message || e).slice(0, 120)) }
       if (held.length) errors.push(held.length + ' linha(s) têm registro parecido na folha — CASAR COM AJUSTE decide; ficaram de fora')
       const lines0Free = lines0.filter((l: any) => !held.includes(l))
+      const ignoreLines = async () => { for (const l of lines0Free) { try { await writeStatus(db, l, 'IGNORED', { note: ('PERGUNTA · ignorar ' + name).slice(0, 150), engine: null, rule: rule || null }); booked++ } catch (e) { errors.push(String((e as Error).message || e).slice(0, 120)) } } }
       const fixQ = (label: string, field: string, v: string) => db.from('data_fixes').insert({ check_key: 'engine-questions', table_name: 'bank_merchant_rules', row_id: String(body.key || name).slice(0, 80), field, old_value: null, new_value: v.slice(0, 200), label: label.slice(0, 200) }).then(() => undefined, () => undefined)
-      if (target === 'IGNORE') {
-        for (const l of lines0) { try { await writeStatus(db, l, 'IGNORED', { note: ('PERGUNTA · ignorar ' + name).slice(0, 150) }); booked++ } catch (e) { errors.push(String((e as Error).message || e).slice(0, 120)) } }
-        await fixQ('PERGUNTA · IGNORAR ' + name + ' · ' + booked + ' linhas', 'IGNORE', String(booked))
-        return NextResponse.json({ ok: true, booked, rule, errors })
-      }
+      // IGNORAR que ensina (BL 1.2.0): marca as linhas de hoje E vira regra HUMANA alvo IGNORE (o padrão é montado abaixo).
+      const ignoreNow = target === 'IGNORE'
       if (target === 'PERSONAL') {
         const seasonId = String(body.season_id || '')
         const { data: se } = await db.from('seasons').select('id, staff_id, season_code').eq('id', seasonId).maybeSingle()
@@ -673,6 +671,7 @@ export async function POST(req: NextRequest) {
         ruleTarget = 'FIXED_EXPENSE'
       } else if (target === 'SUPPLIES') { ruleTarget = 'INPUT'; category = INPUT_CATEGORIES.includes(String(body.category)) ? String(body.category) : 'CONSUMPTION' }
       else if (target === 'BUCKET') ruleTarget = 'BUCKET'
+      else if (target === 'IGNORE') ruleTarget = 'IGNORE'
       else if (target === 'TRIP') {
         // VIAGEM A TRABALHO: um prestador da casa («Viagens a trabalho», FIXED) — achado ou criado uma vez.
         const { data: trip } = await db.from('fixed_cost_suppliers').select('id').ilike('company', 'Viagens a trabalho%').limit(1).maybeSingle()
@@ -693,15 +692,21 @@ export async function POST(req: NextRequest) {
       const alts = new Set<string>()
       const canon = tok(name); if (canon) alts.add(canon)
       for (const l of lines0) { const re = alts.size ? new RegExp([...alts].join('|'), 'i') : null; if (re && hit(l, re)) continue; const t = tok(l.merchant || '') || tok(stmtMerchant(l.name || '')); if (t) alts.add(t) }
-      if (!alts.size) return NextResponse.json({ error: 'não deu pra montar o padrão — só sobrou vocabulário do banco; case na mão' }, { status: 400 })
+      if (!alts.size) { if (ignoreNow) { errors.push('sem padrão possível (só vocabulário do banco) — as linhas de hoje foram ignoradas, sem regra'); await ignoreLines(); return NextResponse.json({ ok: true, booked, rule, errors }) } return NextResponse.json({ error: 'não deu pra montar o padrão — só sobrou vocabulário do banco; case na mão' }, { status: 400 }) }
       const pattern = [...alts].slice(0, 8).join('|')
       const misses = lines0.filter((l: any) => !hit(l, new RegExp(pattern, 'i')))
-      if (misses.length === lines0.length) return NextResponse.json({ error: 'o padrão «' + pattern.slice(0, 60) + '» não bate em nenhuma linha do grupo — nomes fora do padrão; case na mão' }, { status: 400 })
+      if (misses.length === lines0.length) { if (ignoreNow) { errors.push('o padrão não bate em nenhuma linha — as linhas de hoje foram ignoradas, sem regra'); await ignoreLines(); return NextResponse.json({ ok: true, booked, rule, errors }) } return NextResponse.json({ error: 'o padrão «' + pattern.slice(0, 60) + '» não bate em nenhuma linha do grupo — nomes fora do padrão; case na mão' }, { status: 400 }) }
       const amtMax = Math.round(Math.max(...lines0.map((l: any) => Math.abs(num(l.amount)))) * 3 * 100) / 100
       const { data: r, error: rErr } = await db.from('bank_merchant_rules').insert({
-        origin: 'HUMAN', active: true, direction: 'OUT', klass: null, target: ruleTarget, priority: 50, supplier_id: supplierId, category, amount_max: amtMax, pattern,
+        origin: 'HUMAN', active: true, direction: 'OUT', klass: null, target: ruleTarget, priority: 50, supplier_id: supplierId, category, amount_max: ruleTarget === 'IGNORE' ? null : amtMax, pattern,
         label: ('pergunta · ' + name).slice(0, 80), key: ('q:' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + ':' + Date.now().toString(36)),
       }).select('id').single()
+      if (ignoreNow) {
+        if (rErr || !r) errors.push('regra IGNORE não criada (' + String(rErr?.message || '').slice(0, 80) + ') — rode MIGRATION_bank_rules_ignore.sql; as linhas de hoje foram ignoradas mesmo assim')
+        else { rule = r.id; await fixQ('PERGUNTA · IGNORAR ' + name + ' · regra /' + pattern.slice(0, 60) + '/', 'IGNORE', String(r.id)) }
+        await ignoreLines()
+        return NextResponse.json({ ok: true, booked, rule, errors })
+      }
       if (rErr || !r) return NextResponse.json({ error: 'bank_merchant_rules: ' + (rErr?.message || 'insert falhou') }, { status: 500 })
       rule = r.id
       if (misses.length) errors.push(misses.length + ' linha(s) do grupo ficam fora do padrão (nome diferente) — seguem como dúvida')
@@ -776,9 +781,9 @@ export async function POST(req: NextRequest) {
         { t: 'fixed_cost_expenses', id: a.id, f: 'description', v: newDesc, o: a.description ?? null }, { t: 'fixed_cost_expenses', id: a.id, f: 'payment_date', v: String(line.date), o: null },
       ]
       const days = signedDays(String(line.date), String(a.expense_date))
-      try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · Data Checker').slice(0, 150), match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }, backfill) }
+      try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · Data Checker').slice(0, 150), match_engine: body.engine === 'AUTO' ? 'NAME' : null, match_batch: null, match_rule: null, reviewed_at: body.engine === 'AUTO' ? null : new Date().toISOString() }, backfill) }   // AUTO (Data Checker): fica em A CONFERIR com DESFAZER
       catch (e) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id); return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
-      await db.from('data_fixes').insert({ check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: a.id, field: 'payment_date', old_value: null, new_value: String(line.date), label: ('ADOTAR · agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }).then(() => undefined, () => undefined)
+      await db.from('data_fixes').insert({ check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: a.id, field: 'payment_date', old_value: null, new_value: String(line.date), label: ((body.engine === 'AUTO' ? 'AUTO · deriva: nome do prestador + linha única · ' : 'ADOTAR · ') + 'agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }).then(() => undefined, () => undefined)
       return NextResponse.json({ ok: true, row_id: a.id, days })
     }
     // ── A FILA DO BALDE (fase B): atribuir / desatribuir ──
@@ -1091,9 +1096,9 @@ export async function POST(req: NextRequest) {
       const { data: runRow } = await db.from('bank_auto_runs').select('status').eq('id', batch).maybeSingle().then((x: any) => x, () => ({ data: null }))
       if (runRow && runRow.status === 'RUNNING') return NextResponse.json({ error: 'rodada em andamento — espere terminar (ou 15 min) antes de desfazer' }, { status: 409 })
       // Fase B: lotes de centenas de linhas — desfaz em fatias de 200 (o card repete enquanto remaining > 0).
-      const { data: rows, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status, matched_table, matched_id, match_engine, match_rule, backfill, reviewed_at, match_batch').eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER']).order('date').limit(200)
+      const { data: rows, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status, matched_table, matched_id, match_engine, match_rule, backfill, reviewed_at, match_batch').eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER', 'IGNORED']).order('date').limit(200)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      const { count: totalInBatch } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER'])
+      const { count: totalInBatch } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER', 'IGNORED'])
       let n = 0; const errors: string[] = []; const fixes: any[] = []; const undone: string[] = []
       for (const r of rows || []) {
         try {
@@ -1164,7 +1169,7 @@ export async function POST(req: NextRequest) {
     const changed: string[] = []
     if (action === 'review') {
       if (line.match_engine === ENGINE_BUCKET) return NextResponse.json({ error: 'linha do balde se revisa atribuindo — use a fila A ATRIBUIR' }, { status: 409 })
-      const { error } = await db.from('bank_transactions').update({ reviewed_at: new Date().toISOString() }).eq('id', bankId).in('match_status', ['MATCHED', 'TRANSFER'])
+      const { error } = await db.from('bank_transactions').update({ reviewed_at: new Date().toISOString() }).eq('id', bankId).in('match_status', ['MATCHED', 'TRANSFER', 'IGNORED'])
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true })
     }
@@ -1179,9 +1184,11 @@ export async function POST(req: NextRequest) {
       const arr = num(cur.amount) > 0 ? pool.out : pool.inn
       const cand = arr.find(c => c.table === table && c.id === rowId)
       if (!cand || Math.abs(cand.amount - Math.abs(num(cur.amount))) >= 0.011) throw new Error('candidato não vale mais (já casado, valor mudou ou direção errada) — recarregue')
-      const { backfill } = await writeMatch(db, cur, cand, { matched_note: String(body.note || '') || null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null })
+      // Data Checker autossuficiente: casamento por PROVA (valor exato + nome + linha única) vem com engine NAME — cai em A CONFERIR com DESFAZER, nota «AUTO ·».
+      const autoMatch = body.engine === 'AUTO'
+      const { backfill } = await writeMatch(db, cur, cand, { matched_note: (autoMatch ? 'AUTO · Data Checker · ' : '') + (String(body.note || '') || (autoMatch ? 'valor exato + nome + linha única' : '')) || null, match_engine: autoMatch ? 'NAME' : null, match_batch: null, match_rule: null, reviewed_at: null })
       for (const b of backfill) changed.push(`${b.t}.${b.f}=${b.v.slice(0, 10)}`)
-      learned = await learnFromMatch(db, cur, cand)
+      if (!autoMatch) learned = await learnFromMatch(db, cur, cand)   // máquina não ensina regra: aprender é decisão de gente
     }
     if (action === 'unmatch') {
       await writeUnmatch(db, line, changed, { unlearn: true }); status = 'NEW'

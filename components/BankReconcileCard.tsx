@@ -36,7 +36,7 @@ type AutoLine = { id: string; date: string; amount: number; name: string; raw_na
 type Batch = { batch: string; n: number; pending: number; fee: number; exact: number; name?: number; rule?: number; learn?: number; transfer?: number; bucket?: number; from: string; to: string; trigger?: string | null; started_at?: string | null }
 type AutoRun = { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }
 type Auto = { pending: AutoLine[]; reviewed: number; batches: Batch[]; runs?: AutoRun[] }
-type Plan = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; rule_adopt?: number; learn?: number; transfer?: number; bucket?: number; by_klass?: Record<string, number>; seed?: string | null; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[]; name: string[]; rule: string[]; transfer?: string[]; bucket?: string[] } }
+type Plan = { fee_create: number; fee_match: number; exact: number; set?: number; ignore?: number; name: number; rule_create: number; rule_adopt?: number; learn?: number; transfer?: number; bucket?: number; by_klass?: Record<string, number>; seed?: string | null; total: number; hash: string; skipped: Record<string, number>; samples: { fee: string[]; exact: string[]; name: string[]; rule: string[]; transfer?: string[]; bucket?: string[] } }
 type Applied = { fee_create: number; fee_match: number; exact: number; name: number; rule_create: number; rule_adopt: number; learn: number; transfer: number; bucket: number; errors: string[] }
 
 export async function sessionHeaders(): Promise<Record<string, string>> {
@@ -59,7 +59,7 @@ const FAMILIES: [RegExp, string][] = [
 ]
 const famOf = (l: { name: string; raw_name: string }) => { const s = (l.name + ' ' + l.raw_name).toUpperCase(); for (const [re, f] of FAMILIES) if (re.test(s)) return f; return null }
 
-const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800', NAME: 'bg-sky-950 text-sky-300 border-sky-800', RULE: 'bg-purple-950 text-purple-300 border-purple-800', LEARN: 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800', TRANSFER: 'bg-blue-950 text-blue-300 border-blue-800', BUCKET: 'bg-amber-950 text-amber-300 border-amber-800', ADJUST: 'bg-lime-950 text-lime-300 border-lime-800' }
+const ENGINE_CHIP: Record<string, string> = { FEE: 'bg-teal-950 text-teal-300 border-teal-800', EXACT: 'bg-emerald-950 text-emerald-300 border-emerald-800', NAME: 'bg-sky-950 text-sky-300 border-sky-800', RULE: 'bg-purple-950 text-purple-300 border-purple-800', LEARN: 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800', TRANSFER: 'bg-blue-950 text-blue-300 border-blue-800', BUCKET: 'bg-amber-950 text-amber-300 border-amber-800', ADJUST: 'bg-lime-950 text-lime-300 border-lime-800', SET: 'bg-cyan-950 text-cyan-300 border-cyan-800', IGNORED: 'bg-gray-900 text-gray-400 border-gray-700' }
 // Vocabulário das telas de supplies (fase B): SHOP nunca existiu ali.
 const INPUT_CATS = ['CONSUMPTION', 'APARTMENT', 'CATS', 'TEAM']
 const ORIGIN_BADGE: Record<string, [string, string]> = { LEARNED: ['APRENDIDA', 'bg-fuchsia-950 text-fuchsia-300'], DEFAULT: ['PADRÃO', 'bg-amber-950 text-amber-300'], HUMAN: ['HUMANA', 'bg-purple-950 text-purple-300'] }
@@ -88,7 +88,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   const [planOpen, setPlanOpen] = useState(false)
   const [applied, setApplied] = useState<Applied | null>(null)
   const [progress, setProgress] = useState('')
-  const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET' | 'ADJUST'>('ALL')
+  const [engineFilter, setEngineFilter] = useState<'ALL' | 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET' | 'ADJUST' | 'SET'>('ALL')
   const [originFilter, setOriginFilter] = useState<'ALL' | 'HUMAN' | 'DEFAULT' | 'LEARNED'>('ALL')   // ⚙ (fase B)
   const [bucketN, setBucketN] = useState(0)
   const [learnMsg, setLearnMsg] = useState<string | null>(null)   // "regra aprendida…" depois de um MATCH humano
@@ -258,7 +258,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
   }
   async function applyRun() {
     if (anyBusy || !plan) return
-    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA, ${plan.rule_adopt || 0} agendadas ADOTADAS (valor ajustado, não duplicadas), ${plan.learn || 0} por regra aprendida, ${plan.transfer || 0} transferências, ${plan.bucket || 0} caem no balde A ATRIBUIR (despesa real, sem dono ainda). Tudo fica em A CONFERIR e pode ser desfeito.`)) return
+    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.set || 0} em série (SET), ${plan.ignore || 0} ignorados por regra, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA, ${plan.rule_adopt || 0} agendadas ADOTADAS (valor ajustado, não duplicadas), ${plan.learn || 0} por regra aprendida, ${plan.transfer || 0} transferências, ${plan.bucket || 0} caem no balde A ATRIBUIR (despesa real, sem dono ainda). Tudo fica em A CONFERIR e pode ser desfeito.`)) return
     lock('apply')
     const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0, errors: [] }
     try {
@@ -374,7 +374,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
             </div>
             {plan && (
               <div className="mt-3 text-sm">
-                <p><b>{plan.total}</b> linhas casariam agora: <span className="text-teal-300">FEE {plan.fee_create + plan.fee_match}</span> ({plan.fee_create} tarifas a criar, {plan.fee_match} já lançadas) · <span className="text-emerald-300">EXACT {plan.exact}</span> · <span className="text-sky-300">NAME {plan.name || 0}</span> · <span className="text-purple-300">RULE {plan.rule_create || 0} a criar · {plan.rule_adopt || 0} agendadas a adotar</span> · <span className="text-fuchsia-300">LEARN {plan.learn || 0}</span> · <span className="text-blue-300">TRANSFER {plan.transfer || 0}</span> · <span className="text-amber-300">A ATRIBUIR {plan.bucket || 0}</span>{plan.total === 0 ? ' — nada certo o bastante; siga pelas sugestões.' : ''}{plan.by_klass && Object.keys(plan.by_klass).length ? <span className="block text-xs text-gray-500 mt-1">balde por classe: {Object.entries(plan.by_klass).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')}</span> : null}{plan.seed ? <span className="block text-xs text-amber-300 mt-1">PADRÃO: {plan.seed}</span> : null}</p>
+                <p><b>{plan.total}</b> linhas casariam agora: <span className="text-teal-300">FEE {plan.fee_create + plan.fee_match}</span> ({plan.fee_create} tarifas a criar, {plan.fee_match} já lançadas) · <span className="text-emerald-300">EXACT {plan.exact}</span> · <span className="text-cyan-300">SET {plan.set || 0}</span> · <span className="text-gray-400">IGNORE {plan.ignore || 0}</span> · <span className="text-sky-300">NAME {plan.name || 0}</span> · <span className="text-purple-300">RULE {plan.rule_create || 0} a criar · {plan.rule_adopt || 0} agendadas a adotar</span> · <span className="text-fuchsia-300">LEARN {plan.learn || 0}</span> · <span className="text-blue-300">TRANSFER {plan.transfer || 0}</span> · <span className="text-amber-300">A ATRIBUIR {plan.bucket || 0}</span>{plan.total === 0 ? ' — nada certo o bastante; siga pelas sugestões.' : ''}{plan.by_klass && Object.keys(plan.by_klass).length ? <span className="block text-xs text-gray-500 mt-1">balde por classe: {Object.entries(plan.by_klass).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')}</span> : null}{plan.seed ? <span className="block text-xs text-amber-300 mt-1">PADRÃO: {plan.seed}</span> : null}</p>
                 <button onClick={() => setPlanOpen(o => !o)} className="text-xs text-gray-400 underline mt-1">{planOpen ? 'esconder' : 'ver'} amostra e motivos de recusa</button>
                 {planOpen && (
                   <div className="mt-2 grid md:grid-cols-2 gap-3 text-xs text-gray-400">
@@ -514,7 +514,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
               <div className="flex items-center gap-3 flex-wrap mb-3">
                 <p className="font-bold flex-1">A CONFERIR <span className="text-amber-300">{auto.pending.length}</span> <span className="text-xs text-gray-500 font-normal">· {auto.reviewed} já conferidas</span></p>
                 <div className="flex gap-1">
-                  {(['ALL', 'FEE', 'EXACT', 'NAME', 'RULE', 'LEARN', 'BUCKET', 'ADJUST'] as const).map(k => <button key={k} onClick={() => setEngineFilter(k)} className={`px-3 py-1 rounded-xl text-xs font-bold border ${engineFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : k}</button>)}
+                  {(['ALL', 'FEE', 'EXACT', 'NAME', 'RULE', 'LEARN', 'BUCKET', 'ADJUST', 'SET'] as const).map(k => <button key={k} onClick={() => setEngineFilter(k)} className={`px-3 py-1 rounded-xl text-xs font-bold border ${engineFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : k}</button>)}
                 </div>
                 {auto.pending.some(a => a.engine === 'FEE') && <button disabled={anyBusy} onClick={reviewAllFees} className="bg-teal-800 hover:bg-teal-700 disabled:opacity-40 px-3 py-1.5 rounded-xl font-bold text-xs">{busy.has('review_all') ? '…' : 'OK TODAS AS TARIFAS'}</button>}
               </div>
@@ -533,7 +533,7 @@ export default function BankReconcileCard({ onCount }: { onCount?: (n: number, a
                   {pendingReview.slice(0, 150).map(a => (
                     <div key={a.id} className="py-2 flex items-center gap-3 flex-wrap">
                       <span className="text-gray-500 text-xs w-20 shrink-0">{formatShortDate(a.date)}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${ENGINE_CHIP[a.status === 'TRANSFER' ? 'TRANSFER' : a.engine] || 'border-gray-700 text-gray-400'}`}>{a.status === 'TRANSFER' ? 'TRANSFER' : a.engine}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${ENGINE_CHIP[a.status === 'TRANSFER' ? 'TRANSFER' : a.status === 'IGNORED' ? 'IGNORED' : a.engine] || 'border-gray-700 text-gray-400'}`}>{a.status === 'TRANSFER' ? 'TRANSFER' : a.status === 'IGNORED' ? 'IGNORADA' : a.engine}</span>
                       <span className="text-sm truncate max-w-[18rem]" title={a.raw_name || a.name}>{a.name}</span>
                       <span className={`tabular-nums font-bold text-sm shrink-0 ${a.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{a.amount > 0 ? '−' : '+'}{usd(a.amount)}</span>
                       <span className="text-xs text-gray-400 flex-1 truncate min-w-[12rem]" title={a.note}>⇄ {a.note}{a.engine === 'ADJUST' ? <span className="ml-2 text-[10px] text-lime-300" title="valor e pagador da folha ajustados pelo banco — DESFAZER devolve tudo">ajustada pelo banco</span> : a.backfilled ? <span className="ml-2 text-[10px] text-sky-300" title="a data de pagamento do app foi preenchida com a do banco">data preenchida</span> : null}</span>
