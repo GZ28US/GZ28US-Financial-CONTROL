@@ -37,7 +37,26 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       }
       if (mounted) setStatus(session ? 'in' : 'out')
     }
-    supabase.auth.getSession().then(({ data }) => onSession(data.session))
+    // SESSÃO QUE PARECE VIVA E NÃO ESTÁ (08/set/2026). `getSession()` devolve o
+    // que está guardado no navegador; quando o refresh token também morre, ela
+    // continua devolvendo a sessão velha e a tela abre LOGADA — enquanto toda
+    // rota com `requireUser` responde 401. Foi o que escondeu por 33 dias que a
+    // sessão tinha vencido em 06/ago: o Flow renderizava os valores, o menu
+    // mostrava SIGN OUT, e só as rotas de API recusavam. Mais um que morria
+    // calado.
+    //
+    // Quem sabe se o token vale é o SERVIDOR, e é `getUser()` que pergunta.
+    // Resposta de autenticação (4xx) manda para a tela de login; erro de rede
+    // NÃO desloga ninguém — internet ruim não é sessão vencida.
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) return onSession(null)
+      try {
+        const { error } = await supabase.auth.getUser()
+        const st = (error as { status?: number } | null)?.status
+        if (error && typeof st === 'number' && st >= 400 && st < 500) return onSession(null)
+      } catch { /* rede: mantém a sessão, a próxima navegação tenta de novo */ }
+      onSession(data.session)
+    })
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       void onSession(session)
     })
