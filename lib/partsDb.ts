@@ -190,6 +190,26 @@ export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'u
 
   // A SCAN from an OFFICIAL SUPPLIER (dealer contract → dealer_supplier set) is
   // REAL LIFE at its most trusted: it re-validates any row and LOCKS the result.
+  //
+  // ── O CADEADO NÃO MORA NA ORIGEM (achado da sessão PESCA/AutoBook, 09/set) ─
+  // O "untangle" do catálogo (24/ago/2026, lib/appVersion.ts) separou duas coisas
+  // que viviam no mesmo campo: `source_type` voltou a ser só ORIGEM — SCAN, HUNT,
+  // MANUAL, INVOICE — e o cadeado passou a morar em `locked_at`/`locked_by`. A
+  // migration levou as linhas LOCKED para lá; hoje são 173 com `locked_at` e ZERO
+  // com `source_type = 'LOCKED'`.
+  //
+  // Só que este enroller continuava ESCREVENDO `source_type: 'LOCKED'` no scan de
+  // fornecedor oficial. Não é só duplicar campo (o que a lei da casa já proíbe):
+  // é APAGAR a origem real da peça e pôr o cadeado no lugar dela. Cada scan de
+  // dealership comeria um dado que o untangle tinha acabado de separar — e calado,
+  // porque na tela o 🔒 aparece igual. Não detonou ainda (zero linhas), mas 396
+  // peças têm `dealer_supplier`: era questão de qual scan viesse primeiro.
+  //
+  // Agora ele tranca onde a TELA tranca (app/parts/page.tsx:179), e a origem fica.
+  const cadeadoDoOficial = () => ({
+    locked_at: new Date().toISOString(),
+    locked_by: `AUTO · scan de fornecedor oficial${row.dealer_supplier ? ' (' + row.dealer_supplier + ')' : ''}`,
+  })
   // ...menos quando o custo é rateado: travar linha sem custo congelaria para
   // sempre uma peça que nunca teve preço.
   const officialScan = row.source_type === 'SCAN' && !!row.dealer_supplier && !custoDerivado
@@ -197,7 +217,7 @@ export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'u
   if (!existing) {
     // A scanned MAP gets THE discount (MAP→OUR COST) computed on insert.
     // An official-supplier purchase enters already validated: status LOCKED.
-    const base = officialScan ? { ...row, source_type: 'LOCKED' } : row
+    const base = officialScan ? { ...row, ...cadeadoDoOficial() } : row
     const toInsert = base.map_price != null && Number(base.map_price) > 0
       // cost 0 quando derivado: sem custo não há desconto a calcular — e
       // ourCostOf cairia no próprio MAP, gravando um falso "0% de desconto".
@@ -308,10 +328,12 @@ export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'u
       receipt_url: row.receipt_url ?? null,
       shipping: row.shipping ?? null,
       handling: row.handling ?? null,
-      // An official-supplier purchase VALIDATES the row: its status becomes
-      // LOCKED and the guard above freezes it forever — the bank compiles
-      // itself into a purchase-proven catalog.
-      source_type: officialScan ? 'LOCKED' : (row.source_type ?? existing.source_type ?? null),
+      // An official-supplier purchase VALIDATES the row: the guard above freezes
+      // it forever — the bank compiles itself into a purchase-proven catalog. O
+      // cadeado vai em `locked_at`/`locked_by` (logo abaixo); `source_type` fica
+      // sendo o que sempre devia ter sido, a ORIGEM.
+      source_type: row.source_type ?? existing.source_type ?? null,
+      ...(officialScan ? cadeadoDoOficial() : {}),
       // The market this row belongs to. Same as the existing row by construction (a
       // match never crosses markets), written explicitly so the pair can never drift.
       currency: myMarket,
