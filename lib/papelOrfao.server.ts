@@ -9,40 +9,51 @@
 // SEMPRE. Não é bug: é ausência de gatilho, e nenhum conserto de extração de
 // e-mail tapa esse buraco, porque nada nunca chega.
 //
-// O que sobra como sinal é o PAPEL NA PASTA, e ele já existe: ele salva o PDF
-// da compra dentro da pasta da invoice. O fluxo normal é "e-mail procurando
-// invoice"; este é o inverso — "papel procurando lançamento".
+// O que sobra como sinal é o PAPEL NA PASTA: ele salva o PDF da compra dentro
+// da pasta da invoice. O fluxo normal é "e-mail procurando invoice"; este é o
+// inverso — "papel procurando lançamento".
 //
-// ── A RÉGUA, E ELA JÁ ESTAVA LÁ ────────────────────────────────────────────
-// Todo recibo que o app arquiva sai com o nome que a rota `invoice-receipts`
-// escreve, lendo o banco: `<código da invoice> <carro> - <fornecedor> <pedido>`
-// (app/api/ride-folder/route.ts). Papel que ninguém lançou não tem linha no
-// banco para nomear, então **fica com o nome que veio da loja** — e sobrevive a
-// toda arrumação de pasta, porque a limpeza só apaga o que bate `content_hash`
-// com um recibo do banco ([[pasta-por-invoice]]).
+// ── DUAS RÉGUAS, PORQUE UMA SÓ MENTE (v2, 09/set/2026) ─────────────────────
+// A primeira versão olhava só o NOME: todo recibo que o app arquiva sai batizado
+// pela rota `invoice-receipts`, lendo o banco (`<código> <carro> - <fornecedor>
+// <pedido>`), então papel sem lançamento fica com o nome que veio da loja. Foi
+// assim que `AutoZone - Fluids.pdf` atravessou duas arrumações de pasta e só
+// sumiu quando a compra foi lançada.
 //
-// Foi exatamente o que aconteceu: `AutoZone - Fluids.pdf` atravessou duas
-// rodadas de arrumação da pasta da US.001.2 e só sumiu quando a compra foi
-// lançada — aí a rota renomeou e apagou o velho na primeira chamada.
+// Só que a régua do nome tem um ponto cego, achado pela sessão PESCA/AutoBook:
+// a migração de 08/set moveu 116 papéis "que só existiam no Dropbox" usando
+// PREFIXO + NOME ORIGINAL. Eles passam no teste do nome e continuam podendo ser
+// compra não lançada. Com essa régua sozinha a varredura dizia "0 órfãos" com
+// 279 papéis sem recibo correspondente no banco — e varredura que diz zero
+// quando não é zero é pior que varredura nenhuma.
 //
-// Então o teste é barato e não precisa baixar nada: **arquivo dentro de uma
-// pasta de invoice cujo nome NÃO começa com o código daquela invoice é suspeito
-// de compra não lançada.** O `content_hash` vem de graça na listagem e serve de
-// desempate para quem quiser conferir depois.
+// A segunda régua é de CONTAGEM, e não custa download nenhum: papéis na pasta
+// contra URLs distintas de recibo daquela invoice no banco. O que sobra tem dois
+// destinos possíveis, e a diferença entre eles é o que importa:
 //
-// Cobre AutoZone, compra de balcão, loja física, serviço fechado por telefone —
-// tudo que nunca vai gerar e-mail. Ver [[fornecedor-sem-email-nao-tem-gatilho]].
+//   RECIBO A COLAR   — sobra papel E a invoice tem despesa SEM `receipt_url`.
+//                      O dinheiro já está no app; o que falta é o vínculo
+//                      ([[printable-invoice-law]] quer o documento nos dois
+//                      lugares). Aqui o papel é a cura, não o alarme.
+//   SUSPEITA         — sobra papel e TODA despesa já tem recibo. Então ou o
+//                      papel não é recibo (lista de peças, orçamento) ou é
+//                      COMPRA QUE NUNCA VIROU LINHA. É aqui que mora dinheiro
+//                      fora do app.
+//
+// Nenhuma das duas abre arquivo: `list_folder` já traz nome, data e
+// `content_hash`. Ver [[fornecedor-sem-email-nao-tem-gatilho]].
 
 import { token } from './dropboxRead.server'
 import { leCaminho } from './dropboxHunt.server'
+import { streamDb } from './stream.server'
 
 const ROOTS = ['/001 - GZ28US/GZ28US Rides', '/000 - GZ28BR/GZ28BR Rides']
 
-// Arquivos que não são recibo de compra e não devem virar suspeita: o buildsheet
-// do carro, a planilha de trabalho, o que o Dropbox mesmo cria.
-const IGNORAR = /^(\.|~\$|desktop\.ini$|icon\r?$)|\.(ini|tmp|db|part)$/i
+// Arquivos que não são papel de compra: o que o sistema operacional cria e o
+// que o editor deixa para trás.
+const IGNORAR = /^(\.|~\$)|^desktop\.ini$|\.(ini|tmp|db|part)$/i
 
-export type PapelOrfao = {
+export type PapelSuspeito = {
   path: string
   file: string
   rideCode: string
@@ -51,14 +62,28 @@ export type PapelOrfao = {
   modified: string      // client_modified — o carimbo da mão de quem salvou
   hash: string          // content_hash, de graça na listagem
   bytes: number
+  foraDoPadrao: boolean // o nome NÃO começa com o código da invoice
+}
+
+export type InvoiceComSobra = {
+  invoiceCode: string
+  rideCode: string
+  rideName: string
+  papeis: number            // arquivos na pasta da invoice
+  recibos: number           // URLs distintas de recibo nas despesas dela
+  despesasSemRecibo: number
+  sobra: number             // papeis - recibos, quando positivo
+  veredito: 'RECIBO A COLAR' | 'SUSPEITA DE COMPRA NAO LANCADA'
 }
 
 export type VarreduraPapel = {
-  vistos: number        // arquivos dentro de pastas de invoice
-  comNome: number       // já nomeados pelo app (têm lançamento)
-  orfaos: PapelOrfao[]
+  vistos: number
+  comNome: number
+  foraDoPadrao: PapelSuspeito[]     // régua 1 — o nome não é o que o app escreve
+  comSobra: InvoiceComSobra[]       // régua 2 — sobra papel para o que o banco conhece
+  totais: { sobra: number; aColar: number; suspeitas: number }
   paginas: number
-  truncou: boolean      // o orçamento de páginas acabou antes da árvore
+  truncou: boolean
 }
 
 async function lista(tk: string, body: unknown, cont = false): Promise<{ entries: Record<string, unknown>[]; cursor: string; more: boolean }> {
@@ -73,25 +98,39 @@ async function lista(tk: string, body: unknown, cont = false): Promise<{ entries
   return { entries: j.entries || [], cursor: String(j.cursor || ''), more: !!j.has_more }
 }
 
+/** Um `receipt_url` pode ser texto, JSON de array, ou array — mesma leitura da rota que arquiva. */
+function urlsDoRecibo(v: unknown): string[] {
+  if (!v) return []
+  if (Array.isArray(v)) return v.map(String).filter(Boolean)
+  const s = String(v).trim()
+  if (!s) return []
+  if (s.startsWith('[')) { try { const a = JSON.parse(s); return Array.isArray(a) ? a.map(String).filter(Boolean) : [] } catch { /* texto puro */ } }
+  return [s]
+}
+
 /**
- * Varre as pastas `Invoices/` dos dois cofres e devolve o papel que ninguém
- * lançou.
+ * Varre as pastas `Invoices/` dos dois cofres e devolve o papel que o banco não
+ * explica.
  *
- * Não baixa arquivo nenhum: só `list_folder`, que já traz nome, data e
- * `content_hash`. `maxPaginas` existe porque a árvore de Rides tem mídia dentro
- * (fotos e vídeo dos carros) e uma varredura sem teto estouraria os 60s da
- * função — quando o teto é atingido, `truncou` sai true em vez de a resposta
- * mentir que acabou.
+ * Não baixa arquivo nenhum. `maxPaginas` existe porque a árvore de Rides tem
+ * mídia dentro (fotos e vídeo dos carros) e uma varredura sem teto estouraria os
+ * 60s da função — batido o teto, `truncou` sai true em vez de a resposta mentir
+ * que acabou.
  */
 export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
   const tk = await token()
-  const out: VarreduraPapel = { vistos: 0, comNome: 0, orfaos: [], paginas: 0, truncou: false }
+  const out: VarreduraPapel = {
+    vistos: 0, comNome: 0, foraDoPadrao: [], comSobra: [],
+    totais: { sobra: 0, aColar: 0, suspeitas: 0 }, paginas: 0, truncou: false,
+  }
+  // Papéis agrupados pela pasta da invoice — a régua de contagem precisa do total.
+  const porInvoice = new Map<string, { rideCode: string; rideName: string; papeis: number }>()
 
   for (const root of ROOTS) {
     let cursor = ''
     let more = true
     while (more) {
-      if (out.paginas >= maxPaginas) { out.truncou = true; return out }
+      if (out.paginas >= maxPaginas) { out.truncou = true; more = false; break }
       const r = cursor
         ? await lista(tk, { cursor }, true)
         : await lista(tk, { path: root, recursive: true, limit: 2000, include_deleted: false, include_media_info: false })
@@ -100,30 +139,75 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
       for (const e of r.entries) {
         if (e['.tag'] !== 'file') continue
         const path = String(e.path_display || e.path_lower || '')
-        // Só interessa o que está DENTRO de uma pasta de invoice.
-        if (!/\/Invoices\//i.test(path)) continue
+        if (!/\/Invoices\//i.test(path)) continue          // só o que está DENTRO de pasta de invoice
         const nome = String(e.name || path.split('/').pop() || '')
         if (IGNORAR.test(nome)) continue
         const lido = leCaminho(path)
-        // O código da invoice tem de vir da PASTA, não do nome do arquivo — é
+        // O código da invoice sai da PASTA, nunca do nome do arquivo — é
         // justamente o nome que está sob suspeita aqui.
-        const daPasta = path.split('/').slice(0, -1).map(s => s.match(/^([A-Za-z]{2}\.\d+\.\d+)/)?.[1]).filter(Boolean).pop()
+        const daPasta = path.split('/').slice(0, -1)
+          .map(s => s.match(/^([A-Za-z]{2}\.\d+\.\d+)/)?.[1]).filter(Boolean).pop()
         if (!lido || !daPasta) continue
-        out.vistos++
         const codigo = daPasta.toUpperCase()
-        // Nome escrito pelo app começa com o código da invoice. Qualquer outro
-        // nome é o que veio da loja — papel que o banco nunca nomeou.
+        out.vistos++
+        const g = porInvoice.get(codigo) || { rideCode: lido.rideCode, rideName: lido.rideName, papeis: 0 }
+        g.papeis++
+        porInvoice.set(codigo, g)
         if (nome.toUpperCase().startsWith(codigo)) { out.comNome++; continue }
-        out.orfaos.push({
+        out.foraDoPadrao.push({
           path, file: nome,
           rideCode: lido.rideCode, rideName: lido.rideName, invoiceCode: codigo,
           modified: String(e.client_modified || e.server_modified || ''),
           hash: String(e.content_hash || ''),
           bytes: Number(e.size) || 0,
+          foraDoPadrao: true,
         })
       }
     }
   }
-  out.orfaos.sort((a, b) => (a.modified < b.modified ? 1 : -1))
+  out.foraDoPadrao.sort((a, b) => (a.modified < b.modified ? 1 : -1))
+  if (!porInvoice.size) return out
+
+  // ── A SEGUNDA RÉGUA: O QUE O BANCO CONHECE DAQUELA INVOICE ────────────────
+  const db = streamDb()
+  const codigos = [...porInvoice.keys()]
+  const idPorCodigo = new Map<string, string>()
+  const codigoPorId = new Map<string, string>()
+  for (let i = 0; i < codigos.length; i += 200) {
+    const { data } = await db.from('invoices').select('id, invoice_code').in('invoice_code', codigos.slice(i, i + 200))
+    for (const r of (data || []) as Record<string, unknown>[]) {
+      idPorCodigo.set(String(r.invoice_code), String(r.id))
+      codigoPorId.set(String(r.id), String(r.invoice_code))
+    }
+  }
+  const ids = [...idPorCodigo.values()]
+  const recibos = new Map<string, Set<string>>()   // código → URLs distintas
+  const semRecibo = new Map<string, number>()      // código → despesas sem recibo
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await db.from('invoice_expenses').select('invoice_id, receipt_url').in('invoice_id', ids.slice(i, i + 100))
+    for (const r of (data || []) as Record<string, unknown>[]) {
+      const cod = codigoPorId.get(String(r.invoice_id))
+      if (!cod) continue
+      const us = urlsDoRecibo(r.receipt_url)
+      if (!recibos.has(cod)) recibos.set(cod, new Set())
+      if (!us.length) semRecibo.set(cod, (semRecibo.get(cod) || 0) + 1)
+      for (const u of us) recibos.get(cod)!.add(u)
+    }
+  }
+
+  for (const [cod, g] of porInvoice) {
+    const nRec = recibos.get(cod)?.size || 0
+    const nSem = semRecibo.get(cod) || 0
+    const sobra = g.papeis - nRec
+    if (sobra <= 0) continue
+    // Despesa sem recibo na invoice ⇒ o papel provavelmente é o vínculo que
+    // falta, não uma compra perdida. Sem nenhuma, o papel não tem linha para
+    // onde ir — e isso é dinheiro possivelmente fora do app.
+    const veredito = nSem > 0 ? 'RECIBO A COLAR' as const : 'SUSPEITA DE COMPRA NAO LANCADA' as const
+    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesasSemRecibo: nSem, sobra, veredito })
+    out.totais.sobra += sobra
+    if (veredito === 'RECIBO A COLAR') out.totais.aColar += sobra; else out.totais.suspeitas += sobra
+  }
+  out.comSobra.sort((a, b) => (a.veredito === b.veredito ? b.sobra - a.sobra : a.veredito === 'SUSPEITA DE COMPRA NAO LANCADA' ? -1 : 1))
   return out
 }
