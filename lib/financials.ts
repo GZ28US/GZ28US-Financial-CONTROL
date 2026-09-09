@@ -90,9 +90,13 @@ export async function loadFinancials(): Promise<FinData> {
   const [invoices, payments, invExpenses, invParts, invServices, expenses,
     fixedExpenses, fixedSuppliers, goods, goodExpenses, inputs, inventory, rides, clients] = await Promise.all([
     fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
-    fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description'),
+    // mirror_expense_id diz que a renda e ESPELHO de despesa paga pelo cliente:
+    // conta na invoice, NUNCA no caixa — nenhum dinheiro nosso se moveu.
+    fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
     fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at'),
-    fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity'),
+    // base_tributavel e paid_from vem JUNTO: e a base do imposto e do desconto
+    // que a linha do cliente zera (coluna GERADA, o Postgres calcula).
+    fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity, paid_from, base_tributavel, mirror_expense_id'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
     fetchAll('expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
     fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, bank_transaction_id'),
@@ -143,10 +147,17 @@ export async function loadFinancials(): Promise<FinData> {
 
 // ── Totais por invoice (mesmas fórmulas da tela de invoices) ────────────────
 export function invoiceTotals(d: FinData, inv: any) {
-  const parts = d.invParts.filter(p => p.invoice_id === inv.id).reduce((s, p) => s + num(p.unit_price) * num(p.quantity), 0)
+  const minhas = d.invParts.filter(p => p.invoice_id === inv.id)
+  // A BASE é a coluna GERADA: linha paga pelo cliente vale ZERO nela. Antes isto
+  // era uma subtração que cada leitor precisava lembrar de fazer; agora o banco
+  // já entrega o número certo, e somar unit_price × quantity para calcular
+  // imposto passou a parecer errado a olho — que era o objetivo.
+  const base = minhas.reduce((s, p) => s + num(p.base_tributavel), 0)
+  const doCliente = minhas.filter(p => clientPaid(p)).reduce((s, p) => s + num(p.unit_price) * num(p.quantity), 0)
+  const parts = base + doCliente
   const services = d.invServices.filter(s2 => s2.invoice_id === inv.id).reduce((s, x) => s + num(x.price), 0)
-  const flTax = parts * (num(inv.florida_taxes) / 100)
-  const pAndS = parts + flTax + services
+  const flTax = base * (num(inv.florida_taxes) / 100)
+  const pAndS = base + flTax + services
   const discount = pAndS * (num(inv.global_discount) / 100)
   const grand = pAndS - discount
   const cost = d.invExpenses.filter(e => e.invoice_id === inv.id).reduce((s, e) => s + expLine(e), 0)
@@ -154,9 +165,16 @@ export function invoiceTotals(d: FinData, inv: any) {
   // zero) e já nasce recebido. Entra DEPOIS do imposto e DEPOIS do desconto, de
   // propósito (decisão dele, 06/set): dentro da base, a GZ28US passaria a dever FL
   // tax sobre uma venda sem margem, e o desconto global jogaria a linha pra prejuízo.
-  const clientCost = d.invExpenses.filter(e => e.invoice_id === inv.id && clientPaid(e)).reduce((s, e) => s + expLine(e), 0)
-  const received = d.payments.filter(p => p.invoice_id === inv.id && p.paid_at).reduce((s, p) => s + num(p.amount), 0) + clientCost
-  return { parts, services, flTax, discount, grand: grand + clientCost, cost, received, clientCost }
+  // Desde 09/set quem garante esse "depois" é a coluna GERADA base_tributavel, não
+  // uma subtração que o leitor precisa lembrar.
+  // O que o cliente pagou já é LINHA: item e renda existem no banco, com o mesmo
+  // valor da despesa (ordem dele de 09/set — "tem que ser tudo preenchido"). Por
+  // isso não se soma mais nada por fora: a renda espelho já tem baixa e entra em
+  // `received` sozinha. Somar de novo era a contagem dupla que este trabalho
+  // existiu para evitar.
+  const clientCost = doCliente
+  const received = d.payments.filter(p => p.invoice_id === inv.id && p.paid_at).reduce((s, p) => s + num(p.amount), 0)
+  return { parts, services, flTax, discount, grand: grand + doCliente, cost, received, clientCost }
 }
 
 // Dono do carro (CAR DESTINY): OWN/TOOL são NOSSOS — o custo deles é frota/
@@ -279,6 +297,12 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   // pela GZ28BR (2025) é linha própria: é receita nossa que virou saldo lá.
   for (const p of d.payments) {
     if (!p.paid_at) continue
+    // ESPELHO NÃO É CAIXA. O cliente pagou o fornecedor direto: a dívida dele
+    // nasceu quitada e nenhum dinheiro nosso entrou. A marca é o ELO com a
+    // despesa, nunca `paid_from` — a renda não tem paid_from por decisão de
+    // 26/ago ("é sempre o cliente"), e usar esse campo faria o caixa inteiro
+    // sumir no dia em que alguém o preenchesse por essa outra razão.
+    if (p.mirror_expense_id) continue
     const m = invoiceMeta(d, p.invoice_id)
     // Data do caixa é o RECEBIMENTO (paid_at); payment_date é só o agendado.
     const cashDate = String(p.paid_at).slice(0, 10)

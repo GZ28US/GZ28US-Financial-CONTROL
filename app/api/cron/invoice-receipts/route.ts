@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sincronizarEspelhoCliente } from '@/lib/clientPaidMirror.server'
 
 // O RECIBO TAMBÉM CHEGA NA PASTA QUANDO QUEM ESCREVE É ROBÔ.
 //
@@ -40,13 +41,28 @@ export async function GET(req: NextRequest) {
   if (!d) return NextResponse.json({ error: 'no service key' }, { status: 500 })
 
   const desde = new Date(Date.now() - JANELA_H * 3600_000).toISOString()
-  // Só linha COM recibo interessa: despesa sem papel não tem o que sincronizar.
+  // ESPELHO: toda despesa mexida conta, COM ou SEM recibo — a linha do cliente
+  // precisa de item e renda mesmo antes de existir comprovante (o imposto da
+  // FedEx nasceu sem recibo e sem data, e já tinha de ter os três boxes).
+  const { data: todasMexidas } = await d.from('invoice_expenses')
+    .select('invoice_id, paid_from').gte('updated_at', desde)
+  const idsEspelho = [...new Set((todasMexidas || [])
+    .filter((e) => String(e.paid_from || '').trim().toUpperCase() === 'CLIENT')
+    .map((e) => e.invoice_id).filter(Boolean))]
+  const espelhos: Array<Record<string, unknown>> = []
+  for (const id of idsEspelho) {
+    const r = await sincronizarEspelhoCliente(d, id)
+    if (r.criados || r.atualizados || r.removidos || r.erros.length) espelhos.push(r)
+  }
+
+  // RECIBO: aqui sim só a linha COM papel interessa — sem recibo não há o que
+  // levar para a pasta.
   const { data: mexidas } = await d.from('invoice_expenses')
     .select('invoice_id, updated_at, receipt_url')
     .gte('updated_at', desde)
     .not('receipt_url', 'is', null)
   const ids = [...new Set((mexidas || []).map((e) => e.invoice_id).filter(Boolean))]
-  if (!ids.length) return NextResponse.json({ ok: true, desde, invoices: 0, resultados: [] })
+  if (!ids.length) return NextResponse.json({ ok: true, desde, invoices: 0, resultados: [], espelhos })
 
   // A zona sai do CÓDIGO da invoice, não do app que está rodando: o cofre BR
   // guarda carros US.xxx espelhados, e mandar zona errada faz a rota procurar
@@ -70,5 +86,5 @@ export async function GET(req: NextRequest) {
   }
   const subiu = resultados.reduce((a, x) => a + (Number(x.uploaded) || 0), 0)
   if (subiu) console.log('[invoice-receipts] papéis colocados na pasta:', subiu)
-  return NextResponse.json({ ok: true, desde, invoices: resultados.length, subiu, resultados })
+  return NextResponse.json({ ok: true, desde, invoices: resultados.length, subiu, resultados, espelhos })
 }

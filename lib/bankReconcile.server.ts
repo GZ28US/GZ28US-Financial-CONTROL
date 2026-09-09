@@ -131,7 +131,7 @@ export async function candidatePool(db: any): Promise<Pool> {
     fetchAll(db, 'good_expenses', 'id, good_id, description, supplier, amount, payment_date, expense_date, paid_from'),
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from, category'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
-    fetchAll(db, 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, description, paid_to'),
+    fetchAll(db, 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, description, paid_to, mirror_expense_id'),
     fetchAll(db, 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, payment_date, kit_group, kit_name'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'rides', 'id, project_name, client_id'),
@@ -217,7 +217,10 @@ const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].inclu
     push(e.kind === 'DISBURSEMENT' ? inn : out, c)
   }
   for (const c of capital) push(c.kind === 'CONTRIBUTION' ? inn : out, { table: 'capital_events', id: c.id, label: `CAPITAL · ${c.kind === 'CONTRIBUTION' ? 'APORTE' : 'RETIRADA'} · ${c.member || ''}${c.description ? ' · ' + c.description : ''}`, date: c.event_date, amount: num(c.amount), undated: false, href: '/adm/financials', detail: `${c.kind === 'CONTRIBUTION' ? 'APORTE de capital' : 'RETIRADA de capital'} · ${c.member || 'sócio'} · em ${c.event_date}` })
-  for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p)) continue
+  // ESPELHO NÃO É CANDIDATO: renda gerada por despesa que o CLIENTE pagou direto
+  // nunca teve depósito correspondente. Deixá-la na fila fazia ela casar com um
+  // depósito real do cliente e QUEIMAR o par certo.
+  for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p) || p.mirror_expense_id) continue
     push(inn, { table: 'invoice_payments', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at, href: invHref(p.invoice_id), detail: `RECEBIMENTO da invoice ${invLabel(p.invoice_id)} · cliente ${invClient(p.invoice_id) || '—'} · ${p.paid_at ? 'baixado ' + String(p.paid_at).slice(0, 10) : 'previsto ' + (p.payment_date || '—') + ' · SEM baixa'}${p.source ? ' · via ' + p.source : ''}` }) }
   // CUSTO dos parts vendidos (ponto cego da 1ª rodada, João+Márcio 24/ago): o
   // invoice_part tem preço de VENDA (unit_price) e CUSTO (base_cost) — o banco

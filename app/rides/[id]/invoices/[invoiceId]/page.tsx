@@ -44,7 +44,7 @@ type Client = {
   preferred_message_method: string | null
 }
 
-type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null }
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; paid_from?: string | null; mirror_expense_id?: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
@@ -111,6 +111,7 @@ export default function ViewInvoicePage() {
   const [ride, setRide] = useState<any>(null)
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [parts, setParts] = useState<Part[]>([])
+  const [clientParts, setClientParts] = useState<Part[]>([])
   // item (lowercased) -> manufacturer part number, for the SHOW PART NUMBERS display.
   const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
   const [services, setServices] = useState<Service[]>([])
@@ -186,7 +187,14 @@ export default function ViewInvoicePage() {
     const { data: backup } = await supabase.from('quote_backups').select('*').eq('invoice_id', invoiceId).order('archived_at', { ascending: false }).limit(1).maybeSingle()
     if (backup) setQuoteBackup(backup)
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData)
+    // A linha PAGA PELO CLIENTE agora é linha de verdade no banco (09/set), e não
+    // pode entrar na lista comum: ela tem bloco próprio na tela e fica FORA da
+    // base do imposto e do desconto. Separar na carga é o que mantém o número
+    // idêntico ao de antes — só a origem mudou, de soma na hora para linha lida.
+    if (partsData) {
+      setParts(partsData.filter((p: any) => !p.mirror_expense_id))
+      setClientParts(partsData.filter((p: any) => !!p.mirror_expense_id))
+    }
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData)
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
@@ -449,7 +457,11 @@ export default function ViewInvoicePage() {
   const partsAndServicesTotal = partsTotal + servicesTotal
   const hasDiscount = (invoice.global_discount || 0) > 0
   const globalDiscountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount + clientPaidTotalFor(expenses)
+  // O valor do cliente vem da LINHA gravada, não mais somado da despesa na hora.
+  // Mesmo número, outra origem — é a ordem dele de 09/set: "tem que estar gravado
+  // no banco certo", e a tela lê o que está lá.
+  const clientPartsTotal = clientParts.reduce((s2, p) => s2 + p.unit_price * p.quantity, 0)
+  const grandTotal = partsAndServicesTotal - globalDiscountAmount + clientPartsTotal
   // Match the edit page exactly: income counts only payments explicitly marked
   // PAID (paid_at), and the Florida parts tax is itself an expense GZ28 owes —
   // included in both the global and paid expense totals.
@@ -460,9 +472,12 @@ export default function ViewInvoicePage() {
   // dele): dentro, a GZ28US passaria a dever imposto sobre uma venda sem margem, e
   // o desconto jogaria a linha pra prejuízo.
   const clientPaidExpenses = expenses.filter(e => String(e.paid_from || '').trim().toUpperCase() === 'CLIENT')
-  const clientPaidTotal = clientPaidExpenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
-  const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0) + clientPaidTotal
-  const totalIncomeAll = payments.reduce((s, p) => s + p.amount, 0) + clientPaidTotal
+  const clientPaidTotal = clientPartsTotal
+  // NÃO se soma mais nada por fora: a renda espelho já é linha em invoice_payments,
+  // já vem com baixa, e portanto JÁ está dentro destes dois. Somar de novo era a
+  // contagem dupla que este trabalho existe para evitar.
+  const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0)
+  const totalIncomeAll = payments.reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
   // R$ (BRL) incomes: when any payment was paid via GZ28BR, the PDF shows a
   // second amount column with the recorded R$ values.
