@@ -69,7 +69,7 @@ const CERTAIN_PROOF: Record<string, string> = {
   'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
   'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
   'inputs-category': 'identidade da loja (mercado/lanchonete → TEAM, pet → CATS, ferragem → oficina) ou loja e texto concordando',
-  'inv-no-supplier': 'o banco é a testemunha (linha casada → comerciante) ou a irmã do mesmo pedido já diz quem vendeu',
+  'inv-no-supplier': 'o texto da linha nomeia um fornecedor do cadastro, o mesmo item já veio 2+ vezes do mesmo vendedor, o banco é a testemunha ou a irmã do pedido já diz',
   'undated-inv': 'valor exato + nome do fornecedor + UMA linha NEW da Regions a ±10 d da data prevista',
   'parts-category': 'palavra-chave e IA concordam na categoria — dois leitores independentes, não um palpite',
   'admission-mileage': 'a milhagem já está na invoice do carro (mesmo valor em outro lugar do banco de dados)',
@@ -101,7 +101,7 @@ type DutySignal = { state: 'loading' | 'error' | 'ok'; maxHours: number; inciden
 type LinkerRow = { table: string; id: string; text: string; supplier: string; extra: string; candidates: { id: string; label: string; certain: boolean }[] }
 type CatRow = { id: string; item: string; current: string | null; suggest: string | null; keyword?: string | null; ai?: string | null; tier?: 'CERTAIN' | 'ASK' | 'NOT_PART' | 'PENDING' }
 type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null; ebay_bare?: boolean; ebay_item?: string | null }
-type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[]; category_ai_pending?: number; needs_category_ai_migration?: boolean; auto_fill_enabled?: boolean; certain_ready?: number; auto_categories?: { fix_id: string; id: string; item: string; category: string; old: string | null; at: string }[] }
+type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string; aliases?: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[]; category_ai_pending?: number; needs_category_ai_migration?: boolean; auto_fill_enabled?: boolean; certain_ready?: number; auto_categories?: { fix_id: string; id: string; item: string; category: string; old: string | null; at: string }[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsAliasMigration?: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean; name_ok?: boolean; unique?: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null; runs_7d?: { n: number; errors: number } }
@@ -403,45 +403,72 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
-  // ── LINHA DE INVOICE SEM FORNECEDOR (DC 1.46.0 — levantamento de 9/set: 71 linhas, $66k, cegas pro 1099, pro hábito de natureza e pros gêmeos) ──
-  // Duas provas: o BANCO (a linha já casou com uma saída da Regions — o comerciante é o fornecedor) e a IRMÃ do
-  // mesmo pedido (um pedido, um vendedor). Sem prova: pergunta, com VISTO.
+  // ── LINHA DE INVOICE SEM FORNECEDOR (DC 1.46.2 — João, 9/set: «HP Tuners ECU Unlock, quem vendeu? está ESCRITO HP Tuners») ──
+  // Leitores, do mais forte ao mais fraco: o TEXTO da linha nomeia um fornecedor do cadastro (nome ou apelido inteiro,
+  // palavra inteira) — identidade; o mesmo ITEM já comprado antes sempre do mesmo vendedor (histórico unânime, 2+ vezes);
+  // o BANCO (linha casada cujo comerciante resolve num cadastro) e a IRMÃ do pedido. Uma palavra de marca solta é
+  // sugestão. Lavagem, combustível, pedágio, frete, guincho, bagagem: não são compra de vendedor — nem entram.
   {
     const items: Item[] = []
+    const NOT_PURCHASE = /car ?wash|lavagem|\bfuel\b|gasolina|\btoll\b|sunpass|fdot|\benvio\b|shipping|frete|sedex|guinch|towing|\btow\b|wrapping|luggage|bagagem|\btaxa\b|\bfee\b|parking|estacionamento|\buber\b|\blyft\b|hotel|flight|passagem|\bcc [A-Z]/i
+    const GENERIC = new Set(['AUTO', 'PARTS', 'RACING', 'PERFORMANCE', 'SHOP', 'MOTOR', 'MOTORS', 'SALES', 'SERVICE', 'SERVICES', 'ONLINE', 'STORE', 'GROUP', 'COMPANY', 'DESIGNS', 'DESIGN', 'SYSTEMS', 'PRODUCTS', 'SUPPLY', 'DIRECT', 'GENUINE', 'ORIGINAL', 'TURBO', 'BRANDS', 'INNOVATIONS', 'TECH', 'PRO'])
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // Frases do cadastro: nome e apelidos inteiros (≥5 letras ou duas palavras), como palavra inteira no texto.
+    const registry = (linker.suppliers_all || []).map(s => {
+      const phrases = [s.name, ...String(s.aliases || '').split(/[,\n]/)].map(x => x.trim()).filter(x => x && (x.replace(/[^A-Za-z0-9]/g, '').length >= 5 || /\s/.test(x)) && !/^https?:|\.com$|\.br$/i.test(x))
+      return { name: s.name, res: phrases.map(p => new RegExp('(^|[^A-Za-z0-9])' + esc(p) + '([^A-Za-z0-9]|$)', 'i')) }
+    })
+    const registryTok = new Map<string, Set<string>>()   // token distintivo → fornecedores que o usam
+    for (const s of linker.suppliers_all || []) for (const t of nameTok(s.name).filter(t => t.length >= 5 && !GENERIC.has(t))) registryTok.set(t, new Set([...(registryTok.get(t) || []), s.name]))
+    const normItem = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()
+    const history = new Map<string, Map<string, number>>()
+    for (const x of d.invExpenses) { const sup = String(x.supplier || '').trim(); const k = normItem(x.item); if (!sup || !k) continue; const m = history.get(k) || new Map<string, number>(); m.set(sup, (m.get(sup) || 0) + 1); history.set(k, m) }
     const sibSup = new Map<string, Set<string>>()
     for (const x of d.invExpenses) if (x.purchase_group && String(x.supplier || '').trim()) { const s = sibSup.get(x.purchase_group) || new Set<string>(); s.add(String(x.supplier).trim()); sibSup.set(x.purchase_group, s) }
-    // O nome do banco só é prova quando resolve num fornecedor do cadastro (um só, por palavra distintiva); canal e processador
-    // (eBay, PayPal, Square, Zelle, wire, cheque) nunca são vendedor — a lei do eBay.
-    const CHANNEL_RX = /EBAY|PAYPAL|\bSQ \*|SQUARE|VENMO|ZELLE|CASH ?APP|WIRE|CHECK|CHEQUE|AMZN|AMAZON MKTPL|STRIPE|SHOP ?PAY/i
-    const official = (linker.suppliers_all || []).map(s => ({ name: s.name, toks: nameTok(s.name).filter(t => t.length >= 5) }))
-    const resolveBank = (bn: string | null): string | null => {
-      if (!bn || CHANNEL_RX.test(bn)) return null
-      const bt = new Set(nameTok(bn))
-      const hits = official.filter(o => o.toks.length && o.toks.some(t => bt.has(t)))
-      return hits.length === 1 ? hits[0].name : null
-    }
+    const CHANNEL_RX = /EBAY|PAYPAL|\bSQ \*|SQUARE|VENMO|ZELLE|WIRE|CHECK|CHEQUE|AMZN|AMAZON MKTPL|STRIPE|SHOP ?PAY/i
+    const resolveBank = (bn: string | null): string | null => { if (!bn || CHANNEL_RX.test(bn)) return null; const hits = registry.filter(o => o.res.some(re => re.test(bn))); return hits.length === 1 ? hits[0].name : null }
     for (const e of d.invExpenses) {
       if (String(e.supplier || '').trim()) continue
+      const text = String(e.item || '')
+      if (NOT_PURCHASE.test(text) || e.nature === 'CHARGE') continue   // não é compra de vendedor
       const m = invoiceMeta(d, e.invoice_id)
+      // 1 · o texto nomeia um fornecedor do cadastro (frase inteira)
+      const named = registry.filter(o => o.res.some(re => re.test(text))).map(o => o.name)
+      const byText = named.length === 1 ? named[0] : null
+      // 2 · o mesmo item no histórico, sempre do mesmo vendedor
+      const h = history.get(normItem(text)); const hist = h && h.size === 1 ? [...h.entries()][0] : null
+      const byHist = hist && hist[1] >= 2 ? hist[0] : null, histWeak = hist && hist[1] === 1 ? hist[0] : null
+      // 3 · banco e irmã
       const bnRaw = bank.matchedName.get('invoice_expenses:' + e.id) || (e.purchase_group ? bank.matchedName.get('purchase_group:' + e.purchase_group) : undefined) || null
-      const bn = resolveBank(bnRaw)
+      const byBank = resolveBank(bnRaw)
       const sibs = e.purchase_group ? sibSup.get(e.purchase_group) : undefined
-      const sib = sibs && sibs.size === 1 ? [...sibs][0] : null
-      const conflict = !!(bn && sib && bn.toUpperCase() !== sib.toUpperCase())
-      const sug = conflict ? null : (bn || sib)
-      const why = conflict ? 'o banco diz «' + bn + '» e a irmã do pedido diz «' + sib + '» — decida' : bn ? 'o banco é a testemunha: a linha casou com «' + bnRaw + '» = ' + bn + ' no cadastro' : sib ? 'a irmã do mesmo pedido diz «' + sib + '»' : bnRaw ? 'a linha casou com «' + bnRaw + '», que não resolve num fornecedor do cadastro (canal ou nome desconhecido) — quem vendeu?' : 'sem prova — quem vendeu?'
-      const options = [...new Set([bn, sib, ...(sibs ? [...sibs] : [])].filter((x): x is string => !!x))].map(v => ({ value: v, label: v }))
+      const bySib = sibs && sibs.size === 1 ? [...sibs][0] : null
+      // 4 · palavra de marca solta (token distintivo de UM cadastro) — só sugestão
+      const brand = (() => { const hits = new Set<string>(); for (const t of nameTok(text)) { const s = registryTok.get(t); if (s && s.size === 1) hits.add([...s][0]) } return hits.size === 1 ? [...hits][0] : null })()
+      const proofs = [...new Set([byText, byHist, byBank, bySib].filter((x): x is string => !!x))]
+      const conflict = proofs.length > 1
+      const sug = conflict ? null : (proofs[0] || null)
+      const soft = !sug && !conflict ? (histWeak || brand) : null
+      const why = conflict ? 'as provas discordam: ' + proofs.map(p => '«' + p + '»').join(' × ') + ' — decida'
+        : byText ? 'o texto nomeia «' + byText + '» (cadastro)' + (byHist || bySib || byBank ? ' — e o histórico/pedido/banco concordam' : '')
+        : byHist ? 'o mesmo item já veio ' + hist![1] + '× de «' + byHist + '»'
+        : byBank ? 'o banco é a testemunha: a linha casou com «' + bnRaw + '» = ' + byBank
+        : bySib ? 'a irmã do mesmo pedido diz «' + bySib + '»'
+        : histWeak ? 'o mesmo item veio 1× de «' + histWeak + '» — confirme'
+        : brand ? 'o texto cita a marca «' + brand + '» — é ela quem vendeu?'
+        : bnRaw ? 'a linha casou com «' + bnRaw + '», que não resolve num cadastro — quem vendeu?'
+        : 'sem prova — quem vendeu?'
+      const options = [...new Set([sug, soft, ...proofs, ...(sibs ? [...sibs] : [])].filter((x): x is string => !!x))].map(v => ({ value: v, label: v }))
       items.push({
-        href: m.href, code: sug ? 'CERTA' : conflict ? 'DISCORDAM' : 'SEM FORN.', label: (e.item || '(sem descrição)') + ' · ' + usd(expLine(e)), extra: [whoFor(e.invoice_id), why].filter(Boolean).join(' · '), amount: expLine(e), when: e.expense_date || e.payment_date || undefined,
-        certain: !!sug, suggest: sug || undefined, signal: sug ? 'matched' : conflict ? 'conflict' : undefined,
-        // Sem opção: a dispensa é POR LINHA (rowId), nunca pelo texto — «Shipping · $25» de dois carros são duas linhas.
+        href: m.href, code: sug ? 'CERTA' : conflict ? 'DISCORDAM' : soft ? 'PALPITE' : 'SEM FORN.', label: text.slice(0, 70) || '(sem descrição)', extra: [whoFor(e.invoice_id), why].filter(Boolean).join(' · '), amount: expLine(e), when: e.expense_date || e.payment_date || undefined,
+        certain: !!sug, suggest: sug || soft || undefined, signal: sug ? 'matched' : conflict ? 'conflict' : soft ? 'source' : undefined,
         fix: options.length ? { kind: 'select' as const, table: 'invoice_expenses', rowId: e.id, field: 'supplier', options, current: e.supplier ?? null }
-          : { kind: 'dismiss' as const, table: 'data_check', rowId: e.id, field: 'DISMISSED', checkKey: 'inv-no-supplier', confirmText: `Marcar «visto, está certo» em «${(e.item || '').slice(0, 60)}» (sem fornecedor de propósito: carro, cartão do sócio…)? O card para de perguntar esta linha (fica na trilha; dá pra voltar).` },
+          : { kind: 'dismiss' as const, table: 'data_check', rowId: e.id, field: 'DISMISSED', checkKey: 'inv-no-supplier', confirmText: `Marcar «visto, está certo» em «${text.slice(0, 60)}» (sem fornecedor de propósito)? O card para de perguntar esta linha (fica na trilha; dá pra voltar).` },
       })
     }
     checks.push({
       group: 'FINANCIAL', key: 'inv-no-supplier', title: 'Linha de invoice sem fornecedor', blocks: 'o 1099, o hábito de natureza e a busca de gêmeos ficam cegos pra esta linha',
-      why: 'O editor aceita item + valor sem fornecedor; o motor sempre grava um. Levantamento de 9/set: 71 linhas, $66k, 70 delas também sem natureza (o hábito é por fornecedor). Prova: a linha casada com a Regions tem o comerciante (o banco é a testemunha) ou a irmã do mesmo pedido já diz quem vendeu — entram sozinhas. Compra de carro e «cc Beto» são decisão de gente: VISTO com motivo.',
+      why: 'O editor aceita item + valor sem fornecedor; o motor sempre grava um. Provas, da mais forte à mais fraca: o TEXTO da linha nomeia um fornecedor do cadastro (nome ou apelido inteiro — «HP Tuners ECU Unlock» é HP Tuners), o mesmo item já veio 2+ vezes do mesmo vendedor, a linha casou com a Regions e o comerciante resolve no cadastro, a irmã do pedido já diz. Isso entra sozinho. Marca solta e histórico de 1× são palpite pré-carregado. Lavagem, combustível, pedágio, frete, guincho e bagagem não são compra de vendedor e não entram. Compra de carro e «cc Beto» são decisão de gente: VISTO com motivo.',
       items, impact: items.reduce((s, x) => s + (x.amount || 0), 0),
     })
   }

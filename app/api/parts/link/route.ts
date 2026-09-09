@@ -127,7 +127,7 @@ export async function GET(req: NextRequest) {
     const suppliers = await fetchAll(db, 'suppliers', 'id, name, aliases')
     const offRows = suppliers.map((s: any) => {
       const rawAliases = String(s.aliases || '').split(/[,\n]/)
-      return { id: s.id, name: s.name, n: supNorm(s.name), h: supHard(s.name), aliases: rawAliases.map(supNorm).filter(Boolean), hAliases: rawAliases.map(supHard).filter(Boolean) }
+      return { id: s.id, name: s.name, rawAliases: String(s.aliases || ''), n: supNorm(s.name), h: supHard(s.name), aliases: rawAliases.map(supNorm).filter(Boolean), hAliases: rawAliases.map(supHard).filter(Boolean) }
     })
     const supCandidates = (text: string) => {
       const t = supNorm(text), th = supHard(text)
@@ -210,7 +210,7 @@ export async function GET(req: NextRequest) {
       ok: true, needs_migration: needsMigration,
       totals: { parts: parts.length, locked: catalog.filter(c => c.locked).length, inv_unlinked: invItems.length, inv_total: inv.length, ps_unlinked: psItems.length, ps_total: ps.length, no_pn: noPN.length, dup_pn: dupPN.length, sup_unlinked: supItems.length, map_bad: mapBad.length },
       inventory: invItems, streams: psItems, no_pn: noPN.slice(0, 200), dup_pn: dupPN.slice(0, 50),
-      suppliers_unlinked: supItems, suppliers_all: [...offRows].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(o => ({ id: o.id, name: o.name })), map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
+      suppliers_unlinked: supItems, suppliers_all: [...offRows].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(o => ({ id: o.id, name: o.name, aliases: o.rawAliases })), map_bad: mapBad.slice(0, 60), no_source: noSource.slice(0, 60), kit_mismatch: kitMismatch.slice(0, 40), needs_supplier_migration: !hasSupplierId,
       ebay_pn: ebayPnRows.slice(0, 100),
       categories: catItems, category_vocab: PART_CATEGORIES, category_ai_pending: catAiPending, needs_category_ai_migration: !hasCatAi, auto_categories: autoRecent, auto_fill_enabled: autoOn, certain_ready: certainReady,
     })
