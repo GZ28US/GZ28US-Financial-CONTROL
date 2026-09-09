@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
+import { writeUnmatch, logMatchEvent } from '@/lib/bankReconcile.server'
 
 // O APP PREENCHEU SOZINHO — a memória do Data Checker autossuficiente (DC 1.44.0, João, 8/set/2026:
 // «só chamar a gente quando for REALMENTE necessário»). Tudo que o app escreve sem clique deixa
@@ -56,7 +57,14 @@ export async function POST(req: NextRequest) {
       const { error } = await (db.from(table) as any).insert(snap)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     } else if (table === 'bank_transactions') {
-      return NextResponse.json({ error: 'casamento se desfaz no Bank Link (A CONFERIR → DESFAZER)' }, { status: 409 })
+      // BL 1.4.0: o casamento do motor nasce visto e sai de A CONFERIR — o DESFAZER por linha mora aqui.
+      // Só desfaz o que ainda é o MESMO casamento (MATCHED, nota «AUTO ·»); writeUnmatch devolve o backfill e vira NÃO É ESSE.
+      const { data: line } = await db.from('bank_transactions').select('*').eq('id', rowId).maybeSingle()
+      if (!line || line.match_status !== 'MATCHED') return NextResponse.json({ error: 'a linha já não está casada — nada a desfazer' }, { status: 409 })
+      if (!/^AUTO ·/.test(String(line.matched_note || ''))) return NextResponse.json({ error: 'este casamento é de gente, não do app — desfaça no Bank Link' }, { status: 409 })
+      const changed: string[] = []
+      try { await writeUnmatch(db, line, changed, { unlearn: false }); await logMatchEvent(db, line, 'UNMATCH', { note: 'DESFAZER · Data Checker (card verde)' }) }
+      catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
     } else {
       const prev = fx.old_value === undefined ? null : fx.old_value
       let q: any = (db.from(table) as any).update({ [field]: prev === '' ? null : prev }).eq('id', rowId)

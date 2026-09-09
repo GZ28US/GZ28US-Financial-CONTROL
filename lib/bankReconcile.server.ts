@@ -923,7 +923,7 @@ export async function adoptScheduled(db: any, line: any, a: any, opts: { engine:
   ]
   const days = signedDays(String(line.date), String(a.expense_date))
   const auto = opts.engine === 'AUTO'
-  try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · ' + opts.via).slice(0, 150), match_engine: auto ? 'NAME' : null, match_batch: opts.batch || null, match_rule: null, reviewed_at: auto ? null : new Date().toISOString() }, backfill) }
+  try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · ' + opts.via).slice(0, 150), match_engine: auto ? 'NAME' : null, match_batch: opts.batch || null, match_rule: null, reviewed_at: new Date().toISOString() }, backfill) }   // BL 1.4.0: casamento do motor nasce visto; o DESFAZER mora no card verde
   catch (e) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id); throw e }
   // AUTO: a trilha aponta pra LINHA DO BANCO — o DESFAZER genérico (um campo só) deixaria a conta ligada e re-valorada; o certo é A CONFERIR → DESFAZER (writeUnmatch devolve os seis campos).
   await db.from('data_fixes').insert(auto
@@ -1252,7 +1252,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           rowId = row.id
         }
         try {
-          await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: 'AUTO · FEE · TARIFA · ' + desc.slice(0, 150), match_engine: 'FEE', match_batch: batch, reviewed_at: null })
+          await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: 'AUTO · FEE · TARIFA · ' + desc.slice(0, 150), match_engine: 'FEE', match_batch: batch, reviewed_at: new Date().toISOString() })
         } catch (e) {
           if (!prev && await stillOurs('fixed_cost_expenses', rowId)) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
           throw e
@@ -1311,7 +1311,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
             rowId = row.id; inserted = true
           }
           try {
-            await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: ('AUTO · ' + tag + ' · ' + (r.label || bankName) + (adopted && a ? ' · ADOTOU agendada de ' + a.expense_date : '')).slice(0, 150), match_engine: tag, match_batch: batch, match_rule: r.id, reviewed_at: null }, pre)
+            await writeMatch(db, l, { table: 'fixed_cost_expenses', id: rowId }, { matched_note: ('AUTO · ' + tag + ' · ' + (r.label || bankName) + (adopted && a ? ' · ADOTOU agendada de ' + a.expense_date : '')).slice(0, 150), match_engine: tag, match_batch: batch, match_rule: r.id, reviewed_at: new Date().toISOString() }, pre)
           } catch (e) {
             if (adopted && a) { if (await stillOurs('fixed_cost_expenses', a.id)) await db.from('fixed_cost_expenses').update({ amount: a.amount, paid_from: a.paid_from ?? null, payment_method: null, bank_transaction_id: null, description: a.description }).eq('id', a.id).eq('bank_transaction_id', l.id) }
             else if (inserted && await stillOurs('fixed_cost_expenses', rowId)) await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id)
@@ -1340,7 +1340,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
             rowId = row.id; inserted = true
           }
           try {
-            await writeMatch(db, l, { table: 'inputs', id: rowId }, { matched_note: ('AUTO · ' + tag + ' · ' + (r.label || bankName)).slice(0, 150), match_engine: tag, match_batch: batch, match_rule: r.id, reviewed_at: null })
+            await writeMatch(db, l, { table: 'inputs', id: rowId }, { matched_note: ('AUTO · ' + tag + ' · ' + (r.label || bankName)).slice(0, 150), match_engine: tag, match_batch: batch, match_rule: r.id, reviewed_at: new Date().toISOString() })
           } catch (e) { if (inserted && await stillOurs('inputs', rowId)) await db.from('inputs').delete().eq('id', rowId).eq('order_number', linkRef); throw e }
           res.rule_create++
           if (tag === 'LEARN') res.learn++
@@ -1373,7 +1373,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         fixes.push(fix(l.id, `BUCKET criou A ATRIBUIR (${cls.klass}${it.reason ? ' · ' + it.reason : ''}) · ${lineLabel(l)}`))
       } else {
         const c = it.cand!
-        const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: null })
+        const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: new Date().toISOString() })
         if (it.engine === 'FEE') res.fee_match++; else if (it.engine === 'NAME') res.name++; else res.exact++
         fixes.push(fix(l.id, `${it.engine} · ${lineLabel(l)} ⇄ ${c.label}${backfill.length ? ' → ' + backfill.map(b => `${b.t}.${b.f}=${b.v.slice(0, 10)}`).join(', ') : ''}`))
       }
@@ -1541,7 +1541,7 @@ const SAAS_SLUGS: { slug: string; pattern: string; sup: RegExp }[] = [
   { slug: 'ultramsg', pattern: 'ULTRAMSG', sup: /ULTRAMSG|SWIFT TECH/i }, { slug: 'lagosec', pattern: 'LAGOSEC|NORDVPN|NORD SEC', sup: /LAGOSEC|NORD/i }, { slug: 'teamviewer', pattern: 'TEAMVIEWER', sup: /TEAMVIEWER/i },
   { slug: 'godaddy', pattern: 'GODADDY', sup: /GODADDY/i }, { slug: 'microsoft', pattern: 'MICROSOFT', sup: /MICROSOFT/i }, { slug: 'openai', pattern: 'OPENAI|CHATGPT', sup: /OPENAI/i },
   { slug: 'midjourney', pattern: 'MIDJOURNEY', sup: /MIDJOURNEY/i }, { slug: 'recraft', pattern: 'RECRAFT', sup: /RECRAFT/i }, { slug: 'skywork', pattern: 'SKYWORK', sup: /SKYWORK/i },
-  { slug: 'green-api', pattern: 'GREEN-?API', sup: /GREEN.?API/i }, { slug: 'amazon-prime', pattern: 'AMAZON PRIME|PRIME VIDEO', sup: /AMAZON PRIME|^AMAZON/i },
+  { slug: 'amazon-prime', pattern: 'AMAZON PRIME|PRIME VIDEO', sup: /AMAZON PRIME|^AMAZON/i },
 ]
 const saasCap = (s: any) => { const a = num(s?.amount_1); return a > 0 ? Math.max(200, Math.round(3 * a * 100) / 100) : 500 }
 export const DEFAULTS: DefaultRule[] = [

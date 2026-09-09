@@ -1176,7 +1176,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       : auto.rows.map(a => ({
         href: a.table_name === 'bank_transactions' ? '/adm/bank' : a.table_name === 'parts_database' ? '/parts' : a.table_name === 'rides' ? '/rides/edit/' + a.row_id : a.table_name === 'fixed_cost_expenses' ? '/costs/fixed' : a.table_name === 'invoice_expenses' ? '/invoices' : '/adm/check',
         code: KEY_LABEL[a.check_key] || a.check_key.toUpperCase(), when: String(a.fixed_at).slice(0, 10),
-        label: String(a.label || '').replace(/^AUTO · /, ''), extra: (a.field === 'DELETED' ? 'linha apagada (com foto — DESFAZER recria)' : `${a.field}: ${a.old_value ?? 'vazio'} → ${a.new_value ?? 'vazio'}`) + ' · ' + String(a.fixed_at).slice(0, 16).replace('T', ' '),
+        label: String(a.label || '').replace(/^AUTO · /, ''), extra: (a.field === 'DELETED' ? 'linha apagada (com foto — DESFAZER recria)' : a.table_name === 'bank_transactions' ? 'casamento do motor — DESFAZER devolve a linha ao banco e desfaz o que o casamento preencheu' : `${a.field}: ${a.old_value ?? 'vazio'} → ${a.new_value ?? 'vazio'}`) + ' · ' + String(a.fixed_at).slice(0, 16).replace('T', ' '),
         fix: a.table_name === 'bank_transactions' ? undefined : { kind: 'undo_auto' as const, table: a.table_name, rowId: a.row_id, field: a.field, fixId: a.id, confirmText: `Desfazer «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? ${a.field}: volta a ${a.old_value ?? 'vazio'}. Fica na trilha.` },
         link: a.table_name === 'bank_transactions' ? { href: BASE_PATH + '/adm/bank', label: 'DESFAZER em A CONFERIR ↗' } : undefined,
       }))

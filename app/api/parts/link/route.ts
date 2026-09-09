@@ -168,7 +168,8 @@ export async function GET(req: NextRequest) {
       const suggest = toks.find((t: string) => /^\d{8}$/.test(t)) || toks.sort((a: string, b: string) => b.length - a.length)[0] || null
       return { id: p.id, item: String(p.alias || p.item || '').slice(0, 60), listing, suggest, supplier: String(p.supplier || '').slice(0, 40) }
     })
-    const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim()).map((p: any) => {
+    // Item da CASA (fornecedor = GZ28: serviço, produto próprio, take-off) não tem fornecedor a linkar — nunca pergunta (João, 9/set).
+    const supItems = hasSupplierId ? parts.filter((p: any) => !p.supplier_id && String(p.supplier || '').trim() && !/GZ28/i.test(String(p.supplier || ''))).map((p: any) => {
       const eb = ebayHandle(String(p.supplier || ''))
       const ebayish = eb != null || /ebay/i.test(String(p.supplier || ''))
       // O número do anúncio costuma ter sido gravado como "PN" (9–13 dígitos) —

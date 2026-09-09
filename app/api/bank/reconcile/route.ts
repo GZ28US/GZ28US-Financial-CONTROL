@@ -1178,7 +1178,7 @@ export async function POST(req: NextRequest) {
       const autoMatch = body.engine === 'AUTO'
       // A máquina respeita o NÃO: par recusado (doubt_answered — inclusive o DESFAZER de um AUTO anterior) não casa sozinho.
       if (autoMatch) { const { data: daRow } = await db.from('bank_transactions').select('doubt_answered').eq('id', cur.id).maybeSingle(); if (rejectedOf(daRow || {}).has(cand.table + ':' + cand.id)) throw new Error('par recusado antes (NÃO É ESSE / DESFAZER) — não casa sozinho') }
-      const { backfill } = await writeMatch(db, cur, cand, { matched_note: (autoMatch ? 'AUTO · Data Checker · ' : '') + (String(body.note || '') || (autoMatch ? 'valor exato + nome + linha única' : '')) || null, match_engine: autoMatch ? 'NAME' : null, match_batch: null, match_rule: null, reviewed_at: null })
+      const { backfill } = await writeMatch(db, cur, cand, { matched_note: (autoMatch ? 'AUTO · Data Checker · ' : '') + (String(body.note || '') || (autoMatch ? 'valor exato + nome + linha única' : '')) || null, match_engine: autoMatch ? 'NAME' : null, /* BL 1.4.0: nasce visto (o DESFAZER mora no card verde) */ match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() })
       for (const b of backfill) changed.push(`${b.t}.${b.f}=${b.v.slice(0, 10)}`)
       if (!autoMatch) learned = await learnFromMatch(db, cur, cand)   // máquina não ensina regra: aprender é decisão de gente
     }
