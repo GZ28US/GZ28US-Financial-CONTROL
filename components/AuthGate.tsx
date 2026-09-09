@@ -48,13 +48,28 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     // Quem sabe se o token vale é o SERVIDOR, e é `getUser()` que pergunta.
     // Resposta de autenticação (4xx) manda para a tela de login; erro de rede
     // NÃO desloga ninguém — internet ruim não é sessão vencida.
+    // A pergunta certa é "isto é falha de REDE?", não "veio 4xx?". A primeira
+    // versão testava `status >= 400 && < 500`, e erro sem status numérico —
+    // refresh token morto costuma estourar ANTES da resposta HTTP — escapava
+    // pela peneira e o portão abria logado do mesmo jeito (visto pela sessão
+    // PESCA/AutoBook). Invertido: rede mantém a sessão, QUALQUER outro erro
+    // manda para o login, que é o lado recuperável do engano.
+    const ehFalhaDeRede = (e: unknown) => {
+      const x = e as { name?: string; status?: number; isRetryable?: boolean; message?: string } | null
+      if (!x) return false
+      if (x.isRetryable === true) return true
+      if (x.name === 'AuthRetryableFetchError' || x.name === 'TypeError') return true
+      if (typeof x.status === 'number' && (x.status === 0 || x.status >= 500)) return true
+      return /fetch|network|timeout|offline/i.test(String(x.message || ''))
+    }
     supabase.auth.getSession().then(async ({ data }) => {
       if (!data.session) return onSession(null)
       try {
         const { error } = await supabase.auth.getUser()
-        const st = (error as { status?: number } | null)?.status
-        if (error && typeof st === 'number' && st >= 400 && st < 500) return onSession(null)
-      } catch { /* rede: mantém a sessão, a próxima navegação tenta de novo */ }
+        if (error && !ehFalhaDeRede(error)) return onSession(null)
+      } catch (e) {
+        if (!ehFalhaDeRede(e)) return onSession(null)
+      }
       onSession(data.session)
     })
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
