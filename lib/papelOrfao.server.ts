@@ -79,6 +79,10 @@ export type InvoiceComSobra = {
   despesas: number          // linhas de despesa da invoice NESTE banco
   despesasSemRecibo: number
   sobra: number             // papeis - recibos, quando positivo
+  // Os nomes dos papéis daquela pasta. Sem eles a varredura devolve um número e
+  // deixa a pessoa procurar no Dropbox — e quem vai conferir precisa saber O QUE
+  // conferir, não quantos.
+  arquivos: string[]
   veredito: 'RECIBO A COLAR' | 'SUSPEITA DE COMPRA NAO LANCADA' | 'INVOICE FORA DESTE BANCO'
 }
 
@@ -130,7 +134,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
     totais: { sobra: 0, aColar: 0, suspeitas: 0, foraDesteBanco: 0 }, paginas: 0, truncou: false,
   }
   // Papéis agrupados pela pasta da invoice — a régua de contagem precisa do total.
-  const porInvoice = new Map<string, { rideCode: string; rideName: string; papeis: number }>()
+  const porInvoice = new Map<string, { rideCode: string; rideName: string; papeis: number; arquivos: string[] }>()
 
   for (const root of ROOTS) {
     let cursor = ''
@@ -156,8 +160,9 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
         if (!lido || !daPasta) continue
         const codigo = daPasta.toUpperCase()
         out.vistos++
-        const g = porInvoice.get(codigo) || { rideCode: lido.rideCode, rideName: lido.rideName, papeis: 0 }
+        const g = porInvoice.get(codigo) || { rideCode: lido.rideCode, rideName: lido.rideName, papeis: 0, arquivos: [] }
         g.papeis++
+        if (g.arquivos.length < 40) g.arquivos.push(nome)
         porInvoice.set(codigo, g)
         if (nome.toUpperCase().startsWith(codigo)) { out.comNome++; continue }
         out.foraDoPadrao.push({
@@ -217,7 +222,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
     // por esse motivo, o que sozinho invalidaria a lista.
     // O negativo tem de dizer ONDE se procurou ([[nao-achei-onde-procurou]]).
     if (!idPorCodigo.has(cod)) {
-      out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: 0, despesas: 0, despesasSemRecibo: 0, sobra, veredito: 'INVOICE FORA DESTE BANCO' })
+      out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: 0, despesas: 0, despesasSemRecibo: 0, sobra, arquivos: g.arquivos, veredito: 'INVOICE FORA DESTE BANCO' })
       out.totais.foraDesteBanco += sobra
       continue
     }
@@ -225,7 +230,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
     // falta, não uma compra perdida. Sem nenhuma, o papel não tem linha para
     // onde ir — e isso é dinheiro possivelmente fora do app.
     const veredito = nSem > 0 ? 'RECIBO A COLAR' as const : 'SUSPEITA DE COMPRA NAO LANCADA' as const
-    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesas: nDesp, despesasSemRecibo: nSem, sobra, veredito })
+    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesas: nDesp, despesasSemRecibo: nSem, sobra, arquivos: g.arquivos, veredito })
     out.totais.sobra += sobra
     if (veredito === 'RECIBO A COLAR') out.totais.aColar += sobra; else out.totais.suspeitas += sobra
   }
