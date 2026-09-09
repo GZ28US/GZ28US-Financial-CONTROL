@@ -43,6 +43,10 @@
     {
       "path": "/ca/api/cron/auto-book",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/ca/api/cron/invoice-receipts",
+      "schedule": "23 */2 * * *"
     }
   ],
   "rewrites": [
