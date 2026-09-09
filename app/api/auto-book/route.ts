@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { lancar } from '@/lib/autoBookMail.server'
+import { cacaNaPasta, respostaUnica } from '@/lib/dropboxHunt.server'
 
 // AUTO-BOOK — A MESA DA DÚVIDA.
 //
@@ -26,6 +27,22 @@ export async function GET(req: NextRequest) {
   if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const p = req.nextUrl.searchParams
   const db = streamDb()
+
+  // ── ?pasta=<fornecedor>&pedido=<n> — O QUE O ROBÔ ENXERGA NAS PASTAS ──────
+  // Somente LEITURA. Existe porque a caça na pasta só roda quando um e-mail
+  // chega à dúvida, e numa casa em dia isso pode não acontecer por dias —
+  // então a feature ficaria sem prova de que funciona ([[denial-is-not-proof]]:
+  // não disparar não é o mesmo que funcionar). Com esta porta eu pergunto
+  // direto: "para a Summit, pedido 430475, o que você acha no Dropbox?".
+  if (p.get('pasta') || p.get('pedido')) {
+    try {
+      const hits = await cacaNaPasta({ vendor: p.get('pasta'), order: p.get('pedido'), quando: p.get('quando') })
+      return NextResponse.json({ ok: true, n: hits.length, unica: respostaUnica(hits), hits })
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: String((e as Error)?.message || e) }, { status: 500 })
+    }
+  }
+
   const status = p.get('status') || 'DOUBT'
   let q = db.from('auto_book_mail').select('*').order('received_at', { ascending: false }).limit(Math.min(200, parseInt(p.get('limit') || '50') || 50))
   if (status !== 'ALL') q = q.eq('status', status)
