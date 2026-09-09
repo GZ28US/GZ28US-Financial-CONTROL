@@ -39,6 +39,11 @@
 //                      papel não é recibo (lista de peças, orçamento) ou é
 //                      COMPRA QUE NUNCA VIROU LINHA. É aqui que mora dinheiro
 //                      fora do app.
+//   FORA DESTE BANCO — a pasta é de um carro do BR, e o banco deste app é o do
+//                      US. Não é veredito, é a confissão de que a pergunta não
+//                      foi feita no lugar certo — a primeira medição marcou 29
+//                      invoices BR como suspeita só por isso, o que sozinho
+//                      invalidaria a lista ([[nao-achei-onde-procurou]]).
 //
 // Nenhuma das duas abre arquivo: `list_folder` já traz nome, data e
 // `content_hash`. Ver [[fornecedor-sem-email-nao-tem-gatilho]].
@@ -71,9 +76,10 @@ export type InvoiceComSobra = {
   rideName: string
   papeis: number            // arquivos na pasta da invoice
   recibos: number           // URLs distintas de recibo nas despesas dela
+  despesas: number          // linhas de despesa da invoice NESTE banco
   despesasSemRecibo: number
   sobra: number             // papeis - recibos, quando positivo
-  veredito: 'RECIBO A COLAR' | 'SUSPEITA DE COMPRA NAO LANCADA'
+  veredito: 'RECIBO A COLAR' | 'SUSPEITA DE COMPRA NAO LANCADA' | 'INVOICE FORA DESTE BANCO'
 }
 
 export type VarreduraPapel = {
@@ -81,7 +87,7 @@ export type VarreduraPapel = {
   comNome: number
   foraDoPadrao: PapelSuspeito[]     // régua 1 — o nome não é o que o app escreve
   comSobra: InvoiceComSobra[]       // régua 2 — sobra papel para o que o banco conhece
-  totais: { sobra: number; aColar: number; suspeitas: number }
+  totais: { sobra: number; aColar: number; suspeitas: number; foraDesteBanco: number }
   paginas: number
   truncou: boolean
 }
@@ -121,7 +127,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
   const tk = await token()
   const out: VarreduraPapel = {
     vistos: 0, comNome: 0, foraDoPadrao: [], comSobra: [],
-    totais: { sobra: 0, aColar: 0, suspeitas: 0 }, paginas: 0, truncou: false,
+    totais: { sobra: 0, aColar: 0, suspeitas: 0, foraDesteBanco: 0 }, paginas: 0, truncou: false,
   }
   // Papéis agrupados pela pasta da invoice — a régua de contagem precisa do total.
   const porInvoice = new Map<string, { rideCode: string; rideName: string; papeis: number }>()
@@ -183,6 +189,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
   const ids = [...idPorCodigo.values()]
   const recibos = new Map<string, Set<string>>()   // código → URLs distintas
   const semRecibo = new Map<string, number>()      // código → despesas sem recibo
+  const despesas = new Map<string, number>()       // código → linhas de despesa
   for (let i = 0; i < ids.length; i += 100) {
     const { data } = await db.from('invoice_expenses').select('invoice_id, receipt_url').in('invoice_id', ids.slice(i, i + 100))
     for (const r of (data || []) as Record<string, unknown>[]) {
@@ -190,6 +197,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
       if (!cod) continue
       const us = urlsDoRecibo(r.receipt_url)
       if (!recibos.has(cod)) recibos.set(cod, new Set())
+      despesas.set(cod, (despesas.get(cod) || 0) + 1)
       if (!us.length) semRecibo.set(cod, (semRecibo.get(cod) || 0) + 1)
       for (const u of us) recibos.get(cod)!.add(u)
     }
@@ -198,16 +206,30 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
   for (const [cod, g] of porInvoice) {
     const nRec = recibos.get(cod)?.size || 0
     const nSem = semRecibo.get(cod) || 0
+    const nDesp = despesas.get(cod) || 0
     const sobra = g.papeis - nRec
     if (sobra <= 0) continue
+    // ── PRIMEIRO: EU CONHEÇO ESTA INVOICE? ──────────────────────────────────
+    // A varredura lê as pastas dos DOIS cofres (Rides US e BR), mas o banco
+    // deste app é só o do US. Invoice do BR não está aqui — e chamar isso de
+    // "compra não lançada" seria transformar "não procurei no banco certo" em
+    // acusação. Na primeira medição foram 29 invoices BR marcadas como suspeita
+    // por esse motivo, o que sozinho invalidaria a lista.
+    // O negativo tem de dizer ONDE se procurou ([[nao-achei-onde-procurou]]).
+    if (!idPorCodigo.has(cod)) {
+      out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: 0, despesas: 0, despesasSemRecibo: 0, sobra, veredito: 'INVOICE FORA DESTE BANCO' })
+      out.totais.foraDesteBanco += sobra
+      continue
+    }
     // Despesa sem recibo na invoice ⇒ o papel provavelmente é o vínculo que
     // falta, não uma compra perdida. Sem nenhuma, o papel não tem linha para
     // onde ir — e isso é dinheiro possivelmente fora do app.
     const veredito = nSem > 0 ? 'RECIBO A COLAR' as const : 'SUSPEITA DE COMPRA NAO LANCADA' as const
-    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesasSemRecibo: nSem, sobra, veredito })
+    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesas: nDesp, despesasSemRecibo: nSem, sobra, veredito })
     out.totais.sobra += sobra
     if (veredito === 'RECIBO A COLAR') out.totais.aColar += sobra; else out.totais.suspeitas += sobra
   }
-  out.comSobra.sort((a, b) => (a.veredito === b.veredito ? b.sobra - a.sobra : a.veredito === 'SUSPEITA DE COMPRA NAO LANCADA' ? -1 : 1))
+  const ordem = (v: string) => (v === 'SUSPEITA DE COMPRA NAO LANCADA' ? 0 : v === 'RECIBO A COLAR' ? 1 : 2)
+  out.comSobra.sort((a, b) => ordem(a.veredito) - ordem(b.veredito) || b.sobra - a.sobra)
   return out
 }
