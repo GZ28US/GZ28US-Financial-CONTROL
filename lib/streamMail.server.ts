@@ -10,6 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { guessCarrier, type StreamRow } from './stream'
+import { protectedSender } from './mailProtected'
 
 export const MAIL_REDIRECT = 'https://www.gz28us.com/ca/api/stream/mail-callback'
 // The Azure app is "Personal Microsoft accounts only" — those must authorize
@@ -890,6 +891,11 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
           const subj = String(m.subject || '')
           const hit = SPAM_SENDERS.some(re => re.test(addr)) || (/facebookmail\.com/i.test(addr) && SPAM_FB_SUBJECT.test(subj)) || /^Lembrete: Anivers/i.test(subj)
           if (!hit) continue
+          // TRAVA ÚNICA (08/set/2026): remetente protegido não vai pra lixeira,
+          // venha o robô que vier. A checagem fica COLADA no move — é ela que
+          // sobrevive a refatoração, não a que mora lá na triagem.
+          const prot = protectedSender(addr, subj)
+          if (prot) { console.warn('[spam-sweep] protegido, não apaguei:', prot, addr); continue }
           const mv = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/move`, {
             method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
             body: JSON.stringify({ destinationId: 'deleteditems' }),
@@ -923,6 +929,8 @@ export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: str
         const addr = String(m.from?.emailAddress?.address || '')
         const subj = String(m.subject || '')
         if (SAFE_SENDER.test(addr) || SAFE_SUBJECT.test(subj)) continue
+        const protM = protectedSender(addr, subj)
+        if (protM) { console.warn('[marketing-sweep] protegido, não apaguei:', protM, addr); continue }
         // header check costs one GET per candidate — only non-safe mail gets here.
         const h = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders`, { headers: graphH(token) })
         const hd = await h.json().catch(() => null)
