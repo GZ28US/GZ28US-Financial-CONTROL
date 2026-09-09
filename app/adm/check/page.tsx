@@ -1085,7 +1085,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   }
   // ── O APP PREENCHEU SOZINHO (DC 1.44.0): tudo que entrou sem clique nos últimos 7 dias, com DESFAZER ──
   {
-    const KEY_LABEL: Record<string, string> = { 'paid-from': 'QUEM PAGOU', 'parts-suppliers': 'FORNECEDOR', 'parts-category': 'CATEGORIA', 'item-nature': 'NATUREZA', 'admission-mileage': 'MILHAGEM', 'sub-ended-scheduled': 'ASSINATURA', 'bank-drift': 'ADOTADA', 'paid-no-bank': 'CASADA' }
+    const KEY_LABEL: Record<string, string> = { 'paid-from': 'QUEM PAGOU', 'parts-suppliers': 'FORNECEDOR', 'parts-category': 'CATEGORIA', 'item-nature': 'NATUREZA', 'admission-mileage': 'MILHAGEM', 'sub-ended-scheduled': 'ASSINATURA', 'bank-drift': 'ADOTADA', 'paid-no-bank': 'CASADA', 'bank-auto': 'BANCO', 'sub-reopen': 'REABERTO', 'inputs-category': 'INSUMO' }
     const items: Item[] = auto.state === 'error' ? [{ href: '/adm/check', code: 'SINAL', label: 'sinal de /api/data-check/auto indisponível — a lista do que o app fez sozinho NÃO carregou', extra: 'recarregue' }]
       : auto.rows.map(a => ({
         href: a.table_name === 'bank_transactions' ? '/adm/bank' : a.table_name === 'parts_database' ? '/parts' : a.table_name === 'rides' ? '/rides/edit/' + a.row_id : a.table_name === 'fixed_cost_expenses' ? '/costs/fixed' : a.table_name === 'invoice_expenses' ? '/invoices' : '/adm/check',
@@ -1644,7 +1644,8 @@ export default function DataCheckPage() {
             const body = fix.kind === 'match' ? { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' } : { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' }
             const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
             if (!r.ok) continue
-            await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'bank_transactions', row_id: fix.bankId, field: 'match_status', old_value: 'NEW', new_value: 'MATCHED', label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
+            // ADOTAR: a rota (adoptScheduled) já grava a trilha AUTO na linha do banco; aqui só o CASAR.
+            if (fix.kind === 'match') await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'bank_transactions', row_id: fix.bankId, field: 'match_status', old_value: 'NEW', new_value: 'MATCHED', label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
             setDone(prev => new Set(prev).add(fix.rowId + '|' + fixField(fix)))
             n++
           }

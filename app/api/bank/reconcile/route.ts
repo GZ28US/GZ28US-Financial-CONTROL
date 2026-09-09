@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink } from '@/lib/bankReconcile.server'
+import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled } from '@/lib/bankReconcile.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
 
@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
       // e o NOME do banco batendo no rótulo — igual ao EXACT exige.
       const pool = await candidatePool(db)
       const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(String(a).slice(0, 10)) - Date.parse(String(b).slice(0, 10))) / 864e5))
-      const isRule = (desc: any) => /\(regra · Bank Link/.test(String(desc || ''))
+      const isRule = (desc: any) => /\((regra|auto) · Bank Link/.test(String(desc || ''))   // regra (MARKER_CREATED) e a tarifa que o FEE cria («(auto · Bank Link)») — tudo que o motor criou
       const autoRows = [
         ...fxAuto.filter((r: any) => isRule(r.description) && pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, amount: num(r.amount), date: r.payment_date, bank_id: String(r.bank_transaction_id), label: r.description, supplier_id: r.supplier_id || null, category: null as string | null })),
         ...inAuto.filter((r: any) => isRule(r.description) && pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, amount: num(r.unit_price) * (num(r.quantity) || 1), date: r.payment_date, bank_id: String(r.order_number).slice(5), label: r.description, supplier_id: null as string | null, category: r.category || null })),
@@ -770,20 +770,10 @@ export async function POST(req: NextRequest) {
       if (!(num(line.amount) > 0)) return NextResponse.json({ error: 'linha de entrada não paga conta' }, { status: 409 })
       const { data: a } = await db.from('fixed_cost_expenses').select('id, supplier_id, expense_date, amount, description, paid_from, payment_date, bank_transaction_id').eq('id', rowId).maybeSingle()
       if (!a || a.payment_date || a.bank_transaction_id) return NextResponse.json({ error: 'agendada já paga ou já ligada — recarregue' }, { status: 409 })
-      const amt = Math.abs(num(line.amount))
-      if (num(a.amount) > 0 && Math.abs(num(a.amount) - amt) > Math.max(100, 0.5 * num(a.amount))) return NextResponse.json({ error: 'valor fora da faixa (±50% ou $100) — ajuste a agendada antes' }, { status: 409 })
-      const newDesc = (String(a.description || '') + ' ' + MARKER_ADOPTED).slice(0, 200)
-      const { data: claimed } = await db.from('fixed_cost_expenses').update({ amount: amt, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id, description: newDesc, payment_date: line.date }).eq('id', a.id).is('payment_date', null).is('bank_transaction_id', null).select('id')
-      if (!claimed || !claimed.length) return NextResponse.json({ error: 'agendada mudou — recarregue' }, { status: 409 })
-      const backfill: any[] = [
-        { t: 'fixed_cost_expenses', id: a.id, f: 'amount', v: String(amt), o: String(a.amount) }, { t: 'fixed_cost_expenses', id: a.id, f: 'paid_from', v: 'GZ28US', o: a.paid_from ?? null },
-        { t: 'fixed_cost_expenses', id: a.id, f: 'payment_method', v: 'BANK ACCOUNT', o: null }, { t: 'fixed_cost_expenses', id: a.id, f: 'bank_transaction_id', v: String(line.id), o: null },
-        { t: 'fixed_cost_expenses', id: a.id, f: 'description', v: newDesc, o: a.description ?? null }, { t: 'fixed_cost_expenses', id: a.id, f: 'payment_date', v: String(line.date), o: null },
-      ]
-      const days = signedDays(String(line.date), String(a.expense_date))
-      try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · Data Checker').slice(0, 150), match_engine: body.engine === 'AUTO' ? 'NAME' : null, match_batch: null, match_rule: null, reviewed_at: body.engine === 'AUTO' ? null : new Date().toISOString() }, backfill) }   // AUTO (Data Checker): fica em A CONFERIR com DESFAZER
-      catch (e) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id); return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
-      await db.from('data_fixes').insert({ check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: a.id, field: 'payment_date', old_value: null, new_value: String(line.date), label: ((body.engine === 'AUTO' ? 'AUTO · deriva: nome do prestador + linha única · ' : 'ADOTAR · ') + 'agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }).then(() => undefined, () => undefined)
+      // BL 1.3.0: a adoção mora no motor (adoptScheduled) — a rota só valida a linha e chama.
+      let days = 0
+      try { days = (await adoptScheduled(db, line, a, { engine: body.engine === 'AUTO' ? 'AUTO' : null, via: 'Data Checker' })).days }
+      catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
       return NextResponse.json({ ok: true, row_id: a.id, days })
     }
     // ── A FILA DO BALDE (fase B): atribuir / desatribuir ──

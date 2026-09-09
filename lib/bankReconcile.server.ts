@@ -311,6 +311,7 @@ export async function loadDbAliases(db: any): Promise<void> {
 // Nome bate? Em Zelle/wire o BENEFICIÁRIO tem que aparecer no rótulo (revisão #3);
 // nas demais, palavra útil em comum (prefixo de 5 vale) ou alias inteiro.
 // Chave da SÉRIE (engine SET): duas primeiras palavras do comerciante + valor ao centavo.
+export const PROCESSOR_RX = /PAYPAL|\bSQ \*|SQUARE|VENMO|CASH ?APP|STRIPE|SHOP ?PAY|SHOPIFY|AFFIRM|KLARNA|APPLE PAY|GOOGLE PAY/i
 export const setKeyOf = (l: any) => words((l.merchant || l.name || '')).slice(0, 2).join(' ') + '|' + Math.abs(num(l.amount)).toFixed(2)
 export function nameHit(line: any, c: Cand): boolean {
   const bank = ((line.merchant || '') + ' ' + (line.name || '')).toLowerCase()
@@ -352,7 +353,7 @@ export const isFee = (l: any) => num(l.amount) > 0 && num(l.amount) <= 300 && !l
 // Tarifa já lançada no app: vocabulário de tarifa E fornecedor Regions (revisão #5 —
 // "Taxes & Fees" da concessionária ou "Plug Wire Set" não são tarifa bancária).
 const FEE_LABEL = /\b(regions( bank)?|wire (transfer )?fee|analysis charge|service assessment|tarifa banc\w*|taxa banc\w*|bank fee)\b/i
-const isFeeCand = (c: Cand) => { const segs = c.label.split(' · '); const sup = segs[segs.length - 1] || ''; return FEE_LABEL.test(c.label) && (/regions/i.test(sup) || (c.table === 'fixed_cost_expenses' && /^FIXO · regions/i.test(c.label))) }
+const isFeeCand = (c: Cand) => { const segs = c.label.split(' · '); const sup = segs[segs.length - 1] || ''; return FEE_LABEL.test(c.label) && (/regions/i.test(sup) || (c.table === 'fixed_cost_expenses' && /^(FIXO|TARIFA) · regions/i.test(c.label))) }
 
 // BL 0.7.0: NAME = ambíguo desempatado por nome/apelido (289 medidos em 31/ago);
 // RULE = linha sem candidato de família conhecida que a regra humana manda CRIAR.
@@ -826,12 +827,19 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     const dd = daysBetween(c.date, l.date)
     if (dd > (c.undated ? 7 : 3)) { skip('tem gêmeo no app — mais de 3 dias'); continue }
     // Unicidade do lado do BANCO: outra linha NEW com mesmo valor e direção a ±30d.
-    const twins = sorted.filter(o => o !== l && key(o) === key(l) && daysBetween(o.date, l.date) <= 30)
+    // Gêmea do banco só conta se ELA também bate no candidato pelo nome (BL 1.3.0): outro comerciante
+    // cobrando o mesmo valor no mês não disputa este registro — a prova é a mesma que o EXACT usa do lado do app.
+    // Irmã PENDENTE do banco (mesmo comerciante, mesmo valor, ainda vai postar) disputa o registro: espera.
+    if (opts.pendingKeys && opts.pendingKeys.has(setKeyOf(l))) { skip('irmã pendente no banco'); continue }
+    // Linha de PROCESSADOR (PayPal, Square, Venmo…) não carrega o nome do vendedor — pode ser ela a dona do registro: conta como gêmea.
+    const twins = sorted.filter(o => o !== l && key(o) === key(l) && daysBetween(o.date, l.date) <= 30 && (nameHit(o, c) || PROCESSOR_RX.test(String(o.merchant || o.name || ''))))
     if (twins.length) { skip('valor repetido no banco'); continue }
     const rep45 = sorted.filter(o => o !== l && key(o) === key(l) && daysBetween(o.date, l.date) <= 45).length
     if (rep45 >= 2) { skip('série (≥3× em 45d)'); continue }
     if (!nameHit(l, c)) { skip('tem gêmeo no app — nome não bate'); continue }
-    if (amt % 50 === 0 && amt < 1000) { skip('valor redondo < $1k'); continue }
+    // Valor redondo só assusta em dinheiro-movimento (Zelle/wire pra gente): com nome batendo, candidato único,
+    // ≤3 d e sem gêmea, $100/$250/$500 de fornecedor é prova como outra qualquer (BL 1.3.0).
+    if (amt % 50 === 0 && amt < 1000 && ['TRANSFER', 'INCOME', 'BANK_FEE'].includes(String(cls.klass))) { skip('valor redondo < $1k'); continue }
     consume(c)
     plan.items.push({ line: l, cand: c, engine: engineTag, create: false })
   }
@@ -898,6 +906,32 @@ export async function logMatchEvent(db: any, line: any, action: string, fields: 
 // `pre` (BL 0.8.0) = escritas que o chamador JÁ fez no app antes de trancar a
 // linha (adoção da agendada: valor/paid_from/elo) — entram no `backfill` pra
 // DESFAZER devolver cada campo ao valor anterior.
+// ADOTAR a agendada (BL 1.3.0 — antes vivia só na rota): a conta em aberto do prestador vira paga com a data e o
+// valor do banco, elo + backfill reversível, trilha. AUTO (Data Checker ou motor) fica em A CONFERIR com DESFAZER.
+export async function adoptScheduled(db: any, line: any, a: any, opts: { engine: 'AUTO' | null; batch?: string | null; via: string }): Promise<{ days: number }> {
+  const amt = Math.abs(num(line.amount))
+  // Conta marcada como paga por sócio, GZ28BR ou cliente nunca passou na Regions: não se adota, não se sobrescreve o pagador.
+  if (a.paid_from && String(a.paid_from) !== 'GZ28US') throw new Error('agendada marcada como paga por ' + a.paid_from + ' — não é do banco; mude o pagador antes')
+  if (num(a.amount) > 0 && Math.abs(num(a.amount) - amt) > Math.max(100, 0.5 * num(a.amount))) throw new Error('valor fora da faixa (±50% ou $100) — ajuste a agendada antes')
+  const newDesc = (String(a.description || '') + ' ' + MARKER_ADOPTED).slice(0, 200)
+  const { data: claimed } = await db.from('fixed_cost_expenses').update({ amount: amt, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id, description: newDesc, payment_date: line.date }).eq('id', a.id).is('payment_date', null).is('bank_transaction_id', null).select('id')
+  if (!claimed || !claimed.length) throw new Error('agendada mudou — recarregue')
+  const backfill: any[] = [
+    { t: 'fixed_cost_expenses', id: a.id, f: 'amount', v: String(amt), o: String(a.amount) }, { t: 'fixed_cost_expenses', id: a.id, f: 'paid_from', v: 'GZ28US', o: a.paid_from ?? null },
+    { t: 'fixed_cost_expenses', id: a.id, f: 'payment_method', v: 'BANK ACCOUNT', o: null }, { t: 'fixed_cost_expenses', id: a.id, f: 'bank_transaction_id', v: String(line.id), o: null },
+    { t: 'fixed_cost_expenses', id: a.id, f: 'description', v: newDesc, o: a.description ?? null }, { t: 'fixed_cost_expenses', id: a.id, f: 'payment_date', v: String(line.date), o: null },
+  ]
+  const days = signedDays(String(line.date), String(a.expense_date))
+  const auto = opts.engine === 'AUTO'
+  try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · ' + opts.via).slice(0, 150), match_engine: auto ? 'NAME' : null, match_batch: opts.batch || null, match_rule: null, reviewed_at: auto ? null : new Date().toISOString() }, backfill) }
+  catch (e) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id); throw e }
+  // AUTO: a trilha aponta pra LINHA DO BANCO — o DESFAZER genérico (um campo só) deixaria a conta ligada e re-valorada; o certo é A CONFERIR → DESFAZER (writeUnmatch devolve os seis campos).
+  await db.from('data_fixes').insert(auto
+    ? { check_key: 'bank-drift', table_name: 'bank_transactions', row_id: line.id, field: 'match_status', old_value: String(line.match_status || 'NEW'), new_value: 'MATCHED', label: ('AUTO · deriva: nome do prestador + linha única · agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }
+    : { check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: a.id, field: 'payment_date', old_value: null, new_value: String(line.date), label: ('ADOTAR · agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }).then(() => undefined, () => undefined)
+  return { days }
+}
+
 export async function writeMatch(db: any, line: any, cand: Cand | { table: string; id: string; members?: Member[] }, extra: Record<string, unknown>, pre: Backfill[] = []): Promise<{ backfill: Backfill[] }> {
   const { data: claimed, error: claimErr } = await db.from('bank_transactions')
     .update({ match_status: 'MATCHED', matched_table: cand.table, matched_id: cand.id, backfill: null, ...extra })
@@ -1147,7 +1181,7 @@ export type ApplyResult = { batch: string; fee_match: number; fee_create: number
 // BL 0.8.0: TRANSFER por regra (status, sem lançamento); FIXED_EXPENSE ADOTA a
 // agendada do mês (valor ajustado, elo gravado no backfill pra DESFAZER) ou cria;
 // INPUT cria; LEARN = regra aprendida (mesmo caminho, contado à parte).
-export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch?: string; offset?: number } = {}): Promise<ApplyResult> {
+export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch?: string; offset?: number; auto?: boolean } = {}): Promise<ApplyResult> {
   const max = opts.max || 150
   const offset = opts.offset || 0
   const batch = opts.batch || randomUUID()
@@ -1155,7 +1189,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
   const res: ApplyResult = { batch, fee_match: 0, fee_create: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0, remaining: Math.max(0, plan.items.length - offset - slice.length), errors: [] }
   const lineLabel = (l: any) => `${l.date} · ${l.merchant || l.name || ''} · ${num(l.amount)}`
   const statusOf = new Map<string, string>(plan.items.map(i => [String(i.line.id), String(i.line.match_status || 'NEW')]))
-  const fix = (row_id: string, label: string, newValue = 'MATCHED') => ({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id, field: 'match_status', old_value: statusOf.get(String(row_id)) || 'NEW', new_value: newValue, label: label.slice(0, 200) })
+  const fix = (row_id: string, label: string, newValue = 'MATCHED') => ({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id, field: 'match_status', old_value: statusOf.get(String(row_id)) || 'NEW', new_value: newValue, label: ((opts.auto ? 'AUTO · ' : '') + label).slice(0, 200) })
   let supplierId: string | null = null
   if (slice.some(i => i.engine === 'FEE' && i.create)) supplierId = await regionsSupplier(db)
   // Fase B: o balde e o nome canônico do fornecedor (UM FORNECEDOR, UM NOME) —
@@ -1528,16 +1562,79 @@ export const DEFAULTS: DefaultRule[] = [
 
 // Fornecedor de custo fixo ÚNICO que bate (company/description/mail_match) no
 // tipo pedido, vivo, e não marcado pra morrer. Dois = ambíguo = regra pulada.
-function resolveFixedSupplier(sups: any[], re: RegExp, costType: string): { id: string | null; n: number; row: any | null } {
+function resolveFixedSupplier(sups: any[], re: RegExp, costType: string): { id: string | null; n: number; row: any | null; why: string | null } {
   // date_conclusion é FIM DO TERMO (a apólice da frota termina em jan/2027 e está viva); só conclusão no passado mata.
-  const hits = sups.filter(s => s.cost_type === costType && (!s.date_conclusion || String(s.date_conclusion).slice(0, 10) >= todayNY()) && !/DEIXAR MORRER|CANCEL|DUPLIC/i.test(String(s.description || '')) && (re.test(String(s.company || '')) || re.test(String(s.description || '')) || re.test(String(s.mail_match || ''))))
-  return { id: hits.length === 1 ? hits[0].id : null, n: hits.length, row: hits.length === 1 ? hits[0] : null }
+  const today = todayNY()
+  const byName = sups.filter(s => s.cost_type === costType && (re.test(String(s.company || '')) || re.test(String(s.description || '')) || re.test(String(s.mail_match || ''))))
+  const alive = byName.filter(s => (!s.date_conclusion || String(s.date_conclusion).slice(0, 10) >= today) && !/DEIXAR MORRER|CANCEL|DUPLIC/i.test(String(s.description || '')))
+  // O MOTIVO honesto (8/set: «0 fornecedores batem» escondia Microsoft/OpenAI/Nord ENCERRADOS e o Data Checker
+  // mandava criar prestador que existe). Existe mas não vale: diz qual e por quê — isso é nota, não pergunta.
+  let why: string | null = null
+  if (!alive.length && byName.length) {
+    const s = byName[0], end = s.date_conclusion ? String(s.date_conclusion).slice(0, 10) : ''
+    why = end && end < today ? s.company + ' encerrado em ' + end + ' (o banco não cobrou depois — se voltar a cobrar, o app reabre sozinho)' : s.company + ' marcado «' + ((/DEIXAR MORRER|CANCEL|DUPLIC/i.exec(String(s.description || '')) || ['?'])[0]) + '» na descrição'
+  }
+  return { id: alive.length === 1 ? alive[0].id : null, n: alive.length, row: alive.length === 1 ? alive[0] : null, why }
+}
+
+// ENCERRADO MAS PAGO DEPOIS (BL 1.3.0): prestador com fim de termo no passado que o banco (ou um recibo
+// lançado) continua pagando não está morto — dois leitores independentes concordam e o app reabre
+// sozinho: date_conclusion volta a vazio com trilha «AUTO ·» (DESFAZER genérico; DESFEITO vira memória
+// e o app não refaz; ENCERRAR de gente depois da reabertura também vale «não»). Carência: 10 dias na
+// assinatura, 21 no contrato — a última conta chega depois do fim e não reabre nada. A PROVA é só a
+// linha do banco ainda sem dono (NEW/QUEUED), na faixa do valor conhecido, e só quando ela não tem
+// outro dono possível: as três Progressive (apólices separadas, nunca duplicatas — lei da casa)
+// batem no mesmo nome, e a cobrança de setembro é da apólice VIVA — irmã viva com o mesmo nome =
+// ambíguo, fica pra gente. Conta paga depois do fim NÃO reabre: a última parcela atrasada é normal.
+// Roda ANTES da semeadura, pra regra PADRÃO ver a linha viva.
+export async function reopenPaidAfterEnd(db: any): Promise<{ reopened: string[]; errors: string[] }> {
+  const out = { reopened: [] as string[], errors: [] as string[] }
+  const today = todayNY()
+  const all = await fetchAll(db, 'fixed_cost_suppliers', 'id, company, cost_type, date_conclusion, description, amount_1')
+  // Marca de morte do dono (DEIXAR MORRER / CANCEL / DUPLIC) e prestador BANK: nunca reabre.
+  const sups = all.filter((s: any) => s.date_conclusion && String(s.date_conclusion).slice(0, 10) < today && s.cost_type !== 'BANK' && !/DEIXAR MORRER|CANCEL|DUPLIC/i.test(String(s.description || '')))
+  if (!sups.length) return out
+  // MEMÓRIA: a última escrita humana de date_conclusion (ENCERRAR) ou um DESFEITO depois da reabertura vale «não» —
+  // sem a memória lida, nada é escrito (mesma regra do Data Checker).
+  const { data: mem, error: memErr } = await db.from('data_fixes').select('row_id, field, label, fixed_at').eq('table_name', 'fixed_cost_suppliers').in('field', ['date_conclusion', 'DISMISSED']).order('fixed_at', { ascending: false }).limit(2000)
+  if (memErr) { out.errors.push('memória indisponível (' + memErr.message.slice(0, 60) + ') — nada reaberto'); return out }
+  const latest = new Map<string, any>()
+  for (const r of mem || []) if (!latest.has(String(r.row_id))) latest.set(String(r.row_id), r)
+  const memo = new Set<string>([...latest.entries()].filter(([, r]) => r.field === 'DISMISSED' || !/^AUTO ·/.test(String(r.label || ''))).map(([id]) => id))
+  const minEnd = sups.map((s: any) => String(s.date_conclusion).slice(0, 10)).sort()[0]
+  // Prova só de linha que ainda não tem dono (NEW/QUEUED): casada, ignorada ou transferência já foi explicada.
+  const lines = await fetchAll(db, 'bank_transactions', 'id, date, name, merchant, amount', (q: any) => q.gt('amount', 0).in('match_status', ['NEW', 'QUEUED']).eq('pending', false).gt('date', minEnd))
+  const STOP = new Set(['INC', 'LLC', 'LTD', 'CORP', 'COMPANY', 'THE', 'AND', 'SERVICES', 'SERVICE', 'GROUP', 'SECURITY'])
+  const toks = (s: string) => words(String(s || '')).map(w => w.toUpperCase()).filter(w => w.length >= 4 && !STOP.has(w))
+  const hit = (sup: any, l: any) => { const st = toks(sup.company); if (!st.length) return false; const bw = words(String(l.merchant || l.name || '')).map(w => w.toUpperCase()); return st.some(t => bw.some(w => w === t || (t.length >= 5 && w.startsWith(t)))) }
+  // Irmã com o mesmo nome (token ≥5 letras em comum) viva ou encerrada DEPOIS: a cobrança pode ser dela.
+  const alive = (s: any) => !s.date_conclusion || String(s.date_conclusion).slice(0, 10) >= today
+  const sibling = (s: any) => { const st = new Set(toks(s.company).filter(t => t.length >= 5)); return all.some((o: any) => o.id !== s.id && (alive(o) || String(o.date_conclusion).slice(0, 10) > String(s.date_conclusion).slice(0, 10)) && toks(o.company).some(t => st.has(t))) }
+  for (const s of sups) {
+    if (memo.has(String(s.id)) || sibling(s)) continue
+    const end = String(s.date_conclusion).slice(0, 10)
+    // Carência: 10 dias na assinatura (a API cobra o uso do mês em atraso), 21 no contrato (a última conta chega depois do fim).
+    const floor = new Date(Date.parse(end) + (s.cost_type === 'APP' ? 10 : 21) * 864e5).toISOString().slice(0, 10)
+    // Na faixa do valor conhecido (amount_1 ±25%, mínimo $5): compra avulsa na loja do mesmo nome não reabre assinatura.
+    const band = num(s.amount_1) > 0 ? (l: any) => Math.abs(Math.abs(num(l.amount)) - num(s.amount_1)) <= Math.max(5, 0.25 * num(s.amount_1)) : () => true
+    let evidence: string | null = null
+    const bank = lines.filter((l: any) => String(l.date) > floor && hit(s, l) && band(l)).sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)))[0]
+    if (bank) evidence = 'linha do banco em ' + bank.date + ' ($' + Math.abs(num(bank.amount)).toFixed(2) + ' · ' + String(bank.merchant || bank.name || '').slice(0, 30) + ')'
+    if (!evidence) continue
+    const { data: ok, error } = await db.from('fixed_cost_suppliers').update({ date_conclusion: null }).eq('id', s.id).eq('date_conclusion', s.date_conclusion).select('id')
+    if (error) { out.errors.push(s.company + ': ' + error.message.slice(0, 80)); continue }
+    if (!ok || !ok.length) continue
+    await db.from('data_fixes').insert({ check_key: 'sub-reopen', table_name: 'fixed_cost_suppliers', row_id: s.id, field: 'date_conclusion', old_value: end, new_value: null, label: ('AUTO · encerrado mas pago depois · ' + s.company + ' · fim ' + end + ' · ' + evidence).slice(0, 200) }).then(() => undefined, () => undefined)
+    out.reopened.push(String(s.company))
+  }
+  return out
 }
 
 // SEMEIA as regras PADRÃO: idempotente por chave estável; regra desligada pelo
 // dono é lápide (nunca renasce); fornecedor ambíguo = pulada com nota.
-export async function seedDefaultRules(db: any, opts: { dryRun?: boolean } = {}): Promise<{ inserted: string[]; skipped: string[] }> {
-  const inserted: string[] = [], skipped: string[] = []
+export async function seedDefaultRules(db: any, opts: { dryRun?: boolean } = {}): Promise<{ inserted: string[]; skipped: string[]; quiet: string[] }> {
+  // skipped = pede gente (nenhum ou vários prestadores); quiet = nada a semear (encerrado/marcado), só nota.
+  const inserted: string[] = [], skipped: string[] = [], quiet: string[] = []
   const haveRows = await fetchAll(db, 'bank_merchant_rules', 'key', (q: any) => q.not('key', 'is', null))
   const have = new Set(haveRows.map((r: any) => String(r.key)))
   const sups = await fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion, mail_match, amount_1')
@@ -1550,7 +1647,7 @@ export async function seedDefaultRules(db: any, opts: { dryRun?: boolean } = {})
       else { if (!fleet) fleet = await ensureFleetSupplier(db); supplier_id = fleet }
     } else if (d.supplier) {
       const r = resolveFixedSupplier(sups, d.supplier.re, d.supplier.cost_type)
-      if (!r.id) { skipped.push(d.key + ': ' + r.n + ' fornecedores batem'); continue }
+      if (!r.id) { if (r.why) quiet.push(d.key + ': ' + r.why); else skipped.push(d.key + ': ' + r.n + ' fornecedores batem'); continue }
       supplier_id = r.id
       if (d.supplier.cap) amount_max = d.supplier.cap(r.row)
     }
@@ -1563,7 +1660,7 @@ export async function seedDefaultRules(db: any, opts: { dryRun?: boolean } = {})
     if (error) { if (String(error.code) === '23505') skipped.push(d.key + ': já existe'); else skipped.push(d.key + ': ' + error.message) }
     else inserted.push(d.key)
   }
-  return { inserted, skipped }
+  return { inserted, skipped, quiet }
 }
 
 /* ─────────────── AUTO-BOOK (BL 0.8.0) — o motor automático ─────────────── */
@@ -1585,7 +1682,12 @@ export async function itemTwinKeys(db: any): Promise<Set<string>> {
 }
 
 export async function loadRules(db: any): Promise<MerchantRule[]> {
-  try { return await fetchAll(db, 'bank_merchant_rules', '*', (q: any) => q.eq('active', true)) } catch { return [] }
+  try {
+    const rules = await fetchAll(db, 'bank_merchant_rules', '*', (q: any) => q.eq('active', true))
+    // Regra PADRÃO de prestador ENCERRADO dorme (BL 1.3.0): reabertura desfeita não pode deixar a regra lançando.
+    const ended = new Set<string>((await fetchAll(db, 'fixed_cost_suppliers', 'id, date_conclusion', (q: any) => q.not('date_conclusion', 'is', null).lt('date_conclusion', todayNY()))).map((s: any) => String(s.id)))
+    return rules.filter((r: any) => !(r.origin === 'DEFAULT' && r.supplier_id && ended.has(String(r.supplier_id))))
+  } catch { return [] }
 }
 
 // UMA rodada por vez: índice parcial único em bank_auto_runs (status RUNNING).
@@ -1683,7 +1785,8 @@ export async function autoBook(db: any, opts: { trigger: 'cron' | 'webhook' | 'h
     // Purga e semeadura são NOTAS da rodada, nunca erros (revisão: fornecedor
     // ambíguo viraria missão permanente no Data Checker; PADRÃO pulado tem item próprio).
     try { const purged = await purgeBucketOrphans(db); if (purged) notes.push(`${purged} órfão(s) do balde purgado(s)`) } catch (e) { errors.push('purga do balde: ' + String((e as Error).message || e).slice(0, 160)) }
-    try { const seeded = await seedDefaultRules(db); if (seeded.inserted.length) notes.push(seeded.inserted.length + ' PADRÃO semeado(s)'); if (seeded.skipped.length) notes.push('PADRÃO pulado: ' + seeded.skipped.join(' · ').slice(0, 200)) } catch (e) { errors.push('semear PADRÃO: ' + String((e as Error).message || e).slice(0, 160)) }
+    try { const ro = await reopenPaidAfterEnd(db); if (ro.reopened.length) notes.push(('reaberto(s), pago depois do fim: ' + ro.reopened.join(', ')).slice(0, 200)); if (ro.errors.length) notes.push(('reabertura falhou: ' + ro.errors.join(' · ')).slice(0, 200)) } catch (e) { notes.push('reabertura: ' + String((e as Error).message || e).slice(0, 120)) }
+    try { const seeded = await seedDefaultRules(db); if (seeded.inserted.length) notes.push(seeded.inserted.length + ' PADRÃO semeado(s)'); if (seeded.skipped.length) notes.push(('PADRÃO pulado: ' + seeded.skipped.join(' · ')).slice(0, 160)); if (seeded.quiet.length) notes.push(('PADRÃO sem o que semear: ' + seeded.quiet.join(' · ')).slice(0, 160)) } catch (e) { notes.push('semeadura PADRÃO: ' + String((e as Error).message || e).slice(0, 120)) }
     await loadDbAliases(db)
     const [rules, itemTwins] = await Promise.all([loadRules(db), itemTwinKeys(db)])
     const maxItems = opts.maxItems || 900
@@ -1697,7 +1800,7 @@ export async function autoBook(db: any, opts: { trigger: 'cron' | 'webhook' | 'h
       remaining = plan.items.length
       if (!plan.items.length) break
       if (Date.now() - t0 > opts.deadlineMs - 25_000 || applied >= maxItems) { status = 'PARTIAL'; break }
-      const res = await applyPlan(db, plan, { max: 150, batch: run })
+      const res = await applyPlan(db, plan, { max: 150, batch: run, auto: true })
       const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer + res.bucket
       applied += done
       for (const k of Object.keys(counts)) counts[k] += (res as any)[k] || 0
