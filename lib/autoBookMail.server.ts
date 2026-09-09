@@ -248,6 +248,32 @@ export function classify(msg: MailMsg): { kind: AbKind; money: ReturnType<typeof
 // app US (o `lib/supabaseBR.ts` que existe hoje é anon + sessão de navegador,
 // não serve em cron). É decisão do dono, não minha: por enquanto a pergunta
 // avisa que o BR não foi consultado ([[nao-achei-onde-procurou]]).
+// O MESMO PEDIDO ESCRITO DE DUAS MANEIRAS (08/set/2026, achado pela sessão
+// PESCA/AutoBook). O e-mail de confirmação da Summit diz "Order Number:
+// 0430475"; a fatura em PDF do MESMO pedido diz "430475". Comparando string
+// crua, `'0430475' !== '430475'` — o robô não via que a linha já existia e abria
+// DÚVIDA para uma compra lançada. Custo real: alguém responde a dúvida e lança
+// a despesa duas vezes.
+//
+// A trava do outro lado é mais importante que a correção: casar DEMAIS é pior
+// que perguntar demais. Dúvida falsa se vê; pedido que o robô acha que já tem
+// dono some em silêncio e a compra nunca é lançada. Por isso a forma sem zero
+// só entra quando ainda tem 5+ caracteres — "000803" não vira "803", que
+// colidiria com um pedido curto de outra loja. Medido em 08/set nas 446 linhas
+// com pedido dos quatro cofres (69 começam com zero): ZERO colisões com esta
+// régua. Se um dia der colisão, é aqui que se aperta.
+export const normOrdem = (s: unknown) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+export const ordemSemZero = (s: unknown) => normOrdem(s).replace(/^0+/, '')
+/** As formas sob as quais um pedido deve ser conhecido/procurado. */
+export function formasDoPedido(s: unknown): string[] {
+  const n = normOrdem(s)
+  const out: string[] = []
+  if (n.length >= 5) out.push(n)
+  const z = ordemSemZero(n)
+  if (z.length >= 5 && z !== n) out.push(z)
+  return out
+}
+
 async function pedidosConhecidos(db: SupabaseClient): Promise<Set<string>> {
   const set = new Set<string>()
   // `fixed_cost_expenses` entra junto com as 6 de item: e la que moram ASSETS,
@@ -256,8 +282,7 @@ async function pedidosConhecidos(db: SupabaseClient): Promise<Set<string>> {
   for (const t of [...ITEM_TABLES, 'fixed_cost_expenses'] as const) {
     const { data } = await db.from(t).select('order_number').not('order_number', 'is', null)
     for (const r of (data || []) as { order_number: string }[]) {
-      const s = String(r.order_number || '').trim()
-      if (s.length >= 5) set.add(s)
+      for (const f of formasDoPedido(r.order_number)) set.add(f)
     }
   }
   return set
@@ -706,8 +731,9 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         const chave = it.order ? `${keyOf(caixa.slot, msg)}#${it.order}` : keyOf(caixa.slot, msg)
         if (naFila.has(chave)) continue
 
-        // já tem dono? o mailToItem cuida dos fatos dessa linha.
-        if (it.order && conhecidos.has(it.order)) {
+        // já tem dono? o mailToItem cuida dos fatos dessa linha. A comparação
+        // passa pelas MESMAS formas com que o índice foi montado — ver normOrdem.
+        if (it.order && formasDoPedido(it.order).some(f => conhecidos.has(f))) {
           out.jaTemLinha.push(`${it.order} — ${msg.subject.slice(0, 50)}`)
           if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
           continue
