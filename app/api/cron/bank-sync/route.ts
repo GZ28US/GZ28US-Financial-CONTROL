@@ -19,9 +19,30 @@ export async function GET(req: NextRequest) {
   // Orçamento do motor conta a partir do INÍCIO do request (o sync já gastou):
   // 300 s de lambda − 25 s de folga − o que o sync levou, nunca menos de 30 s.
   const auto = await autoBook(bankDb(), { trigger: 'cron', deadlineMs: Math.max(30_000, 275_000 - (Date.now() - t0)) })
+
+  // TRAZER ZERO NÃO É ESTAR SAUDÁVEL (08/set/2026). As oito rodadas anteriores
+  // disseram DONE com `errors: []` enquanto o feed estava mudo desde 04/set —
+  // o Zelle de US$ 632,26 que o Regions confirmou nem apareceu. A rodada só
+  // sabia dizer "não deu erro", que é coisa diferente de "trouxe o dia".
+  // É a mesma doença do mail-poll, que morreu calado por quatro dias.
+  // Silêncio prolongado passa a ser ALERTA na resposta e no log.
+  const db = bankDb()
+  const alertas: string[] = []
+  const { data: contas } = await db.from('bank_accounts').select('id, display_name, institution, status').eq('status', 'ACTIVE')
+  for (const c of contas || []) {
+    const { data: u } = await db.from('bank_transactions').select('date').eq('item_id', c.id)
+      .order('date', { ascending: false }).limit(1).maybeSingle()
+    if (!u?.date) continue
+    const dias = Math.floor((Date.now() - new Date(u.date + 'T12:00:00Z').getTime()) / 86_400_000)
+    // 3 dias já cobre fim de semana; 7 é cegueira. Conservador de propósito:
+    // alerta que grita à toa vira alerta ignorado.
+    if (dias >= 3) alertas.push(`${c.display_name || c.institution}: sem transação nova há ${dias} dias (última ${u.date}) — ver /api/bank/health`)
+  }
+  if (alertas.length) console.error('[bank-sync] FEED PARADO:', alertas.join(' | '))
+
   /* eslint-disable @typescript-eslint/no-explicit-any */
   return NextResponse.json({
-    ok: true, at: new Date().toISOString(),
+    ok: alertas.length === 0, alertas, at: new Date().toISOString(),
     results: (results as any[]).map((r) => ({ account: r.account, added: r.added, modified: r.modified, removed: r.removed, balances: r.balances, error: r.error || r.balance_error || null })),
     auto: { run: auto.run || null, status: auto.status, skipped: auto.skipped || null, counts: auto.counts, errors: auto.errors.length, remaining: auto.remaining, lines: auto.lines },
   })
