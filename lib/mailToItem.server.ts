@@ -84,7 +84,17 @@ export const PEDIDO_NOVO = [
   /\border\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{2}-\d{5}-\d{5})\b/gi,        // eBay
   /\border\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{3}-\d{7}-\d{7})\b/gi,        // Amazon
   /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*(PO-\d{3}-\d{10,20})\b/gi,     // Temu
-  /\border\s*(?:number|#|no\.?)?\s*[:#]?\s*#?(\d{6,7})\b/gi,                 // HHP / HP Tuners
+  // `id` entra na lista de palavras (09/set/2026): o PayPal escreve "Order ID
+  // 384734" em texto puro, sem "number" e sem "#", e a compra da HHP de US$
+  // 1.290,93 ficou "sem numero de pedido" com o número à vista no corpo.
+  /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*#?(\d{6,7})\b/gi,               // HHP / HP Tuners / PayPal
+  // O NÚMERO ENTRE PARÊNTESES, depois de uma palavra qualquer. A própria HHP
+  // manda "Your High Horse Performance, Inc. Order Confirmation (#384734)" — a
+  // palavra "Confirmation" entra no meio e derruba a regra de cima, que exige o
+  // número colado em "order". Aqui a trava é o parêntese com cerquilha: `(#…)`
+  // depois de "order", na MESMA linha e a no máximo 40 caracteres. Nº de nota
+  // solto não vem embrulhado assim.
+  /\border\b[^\n]{0,40}?\(#(\d{5,8})\)/gi,                                    // "Order Confirmation (#384734)"
   /\bpedido\s*(?:n[ºo°]|#)?\s*[:#]?\s*(\d{5,})\b/gi,                          // lojas BR
   // Varejo americano com prefixo de letras — Home Depot "Order #WH43863914",
   // Lowe's, Walmart. A palavra "order" colada continua sendo a trava: sozinho,

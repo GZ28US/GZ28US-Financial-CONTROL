@@ -115,8 +115,16 @@ export function parseMoney(texto: string): { amount: number; currency: string; s
     // de rótulo fraco é lixo de rodapé ("Total: 0 items") e não conta.
     if (!(n > 0) && !strong) continue
     const currency = /R\$|BRL/i.test(sym) ? 'BRL' : 'USD'
-    // rótulo forte ganha de fraco; entre iguais, o MAIOR valor (o total é o teto)
-    if (!best || (strong && !best.strong) || (strong === best.strong && n > best.amount)) best = { amount: n, currency, strong, label }
+    // O SUBTOTAL É O PIOR DOS FRACOS, E ERA ELE QUE GANHAVA (09/set/2026).
+    // O desempate entre rótulos fracos era "o MAIOR valor, porque o total é o
+    // teto" — e isso é verdade em nota sem desconto. Com desconto o subtotal
+    // fica ACIMA do total, então a regra escolhia justamente o número errado: a
+    // compra da HHP mostrou 1.444,75 (subtotal) no lugar de 1.290,93 pago
+    // (subtotal 1.444,75 − desconto 161,77 + manuseio 7,95).
+    // Três degraus, e o valor só desempata dentro do mesmo degrau.
+    const degrau = strong ? 2 : /^sub\s*total$/i.test(label.trim()) ? 0 : 1
+    const degrauBest = !best ? -1 : best.strong ? 2 : /^sub\s*total$/i.test(best.label.trim()) ? 0 : 1
+    if (!best || degrau > degrauBest || (degrau === degrauBest && n > best.amount)) best = { amount: n, currency, strong, label }
   }
   return best
 }

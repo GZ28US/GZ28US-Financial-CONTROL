@@ -113,6 +113,53 @@ export function termoFornecedor(vendor: string): string | null {
   return p.slice(0, 2).join(' ').trim() || null
 }
 
+// QUEM NOMEIA A PASTA É O CADASTRO — então quem procura nela tem de falar a
+// mesma língua (achado da sessão PESCA/AutoBook, 09/set/2026).
+//
+// O caso: ele comprou na HHP às 11h36, salvou o PDF na pasta às 11h39, e o robô
+// das 12h00 respondeu "nenhum arquivo". O arquivo estava lá havia 21 minutos. O
+// robô procurou por `Highhorseperformance` (o remetente do e-mail) e por
+// `High Horse Performan…` (o PayPal trunca); a pasta se chama `HHP`, que é o
+// nome do CADASTRO — porque é a rota que a nomeia, com o nome curado.
+//
+// A lei [[fornecedor-nome-curado]] diz "cura na escrita, busca usa o cru", e ela
+// continua certa para o BANCO. A pasta é o caso oposto: lá o nome JÁ nasceu
+// curado, então procurar só pelo cru é procurar pelo nome que ninguém escreveu.
+// Busca-se com os dois — e com cada apelido do cadastro, que é onde moram
+// "High Horse Performance, Inc." e "HHP Racing".
+//
+// Teto de 4 termos: cada um custa duas chamadas ao Dropbox (uma por cofre), e
+// fornecedor com dez apelidos não justifica vinte buscas.
+export async function termosDeBusca(vendor: string): Promise<string[]> {
+  const termos = new Set<string>()
+  const cru = termoFornecedor(vendor)
+  if (cru) termos.add(cru)
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key || !String(vendor || '').trim()) return [...termos]
+  try {
+    const { createClient } = await import('@supabase/supabase-js')
+    const { supplierDirectoryFrom, matchSupplier } = await import('./supplierMatch')
+    const db = createClient(url, key, { auth: { persistSession: false } })
+    const { data } = await db.from('suppliers').select('name, aliases, is_dealership')
+    const achado = matchSupplier(vendor, supplierDirectoryFrom(data || []))
+    if (achado) {
+      const t = termoFornecedor(achado.name)
+      if (t) termos.add(t)
+      const linha = (data || []).find((s: { name?: string }) => s.name === achado.name)
+      for (const a of String(linha?.aliases || '').split(/[\n,]/)) {
+        // Apelido longo é PROSA, não apelido — o campo virou bloco de notas em
+        // várias linhas. Mesma régua de 40 caracteres do supplierDirectoryFrom.
+        const limpo = a.trim()
+        if (!limpo || limpo.length > 40) continue
+        const t2 = termoFornecedor(limpo)
+        if (t2) termos.add(t2)
+      }
+    }
+  } catch { /* sem cadastro a busca segue com o cru, que é melhor que nada */ }
+  return [...termos].slice(0, 4)
+}
+
 // ── A CAÇA ─────────────────────────────────────────────────────────────────
 // Devolve as pastas que já responderam a pergunta, da evidência mais forte para
 // a mais fraca:
@@ -154,13 +201,17 @@ export async function cacaNaPasta(
   }
 
   const ordem = String(args.order || '').trim()
+  // Os termos saem UMA vez, antes do laço: são os mesmos nos dois cofres.
+  const termos = await termosDeBusca(args.vendor || '')
   for (const root of ROOTS) {
     // O pedido primeiro: é a evidência que não admite dúvida.
     if (ordem.length >= 4) {
       try { for (const md of await busca(tk, root, ordem)) guarda(md, 'ORDEM') } catch { /* uma raiz fora do ar não cala a outra */ }
     }
-    const termo = termoFornecedor(args.vendor || '')
-    if (termo) {
+    // O fornecedor vai com TODOS os nomes que ele tem — o do e-mail e os do
+    // cadastro. A pasta foi nomeada com o curado; procurar só pelo cru foi o
+    // que fez a compra da HHP virar dúvida com o arquivo já salvo.
+    for (const termo of termos) {
       try { for (const md of await busca(tk, root, termo)) guarda(md, 'FORNECEDOR') } catch { /* idem */ }
     }
   }
