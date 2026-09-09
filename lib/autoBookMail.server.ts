@@ -48,6 +48,7 @@ import {
 import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
 import { matchSupplier, supplierDirectoryFrom } from './supplierMatch'
+import { cacaNaPasta, respostaUnica, type PastaHit } from './dropboxHunt.server'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
 export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
@@ -310,6 +311,41 @@ export async function candidatosPara(db: SupabaseClient, vendor: string): Promis
     add('expenses', String(r.season_id), `expenses ${String(r.origin || '')} (season ${String(r.season_id).slice(0, 8)})`, String(r.expense_date || '').slice(0, 10))
   }
   return [...out.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1)).slice(0, 5)
+}
+
+// ── A PASTA VEM ANTES DO HISTÓRICO (Márcio, 08/set/2026) ───────────────────
+//   "o primeiro lugar que o robô tem que caçar é nas pastas das invoices"
+// `candidatosPara` mede estatística — onde as compras ANTERIORES deste fornecedor
+// foram parar. A pasta mede outra coisa, e melhor: onde a PESSOA guardou o papel
+// DESTA compra. Uma é palpite informado; a outra é a resposta já dada. Por isso
+// a pasta entra na frente da lista, e com o rótulo dizendo por que ela está ali.
+// Ver lib/dropboxHunt.server.ts para o caso medido que virou esta lei.
+export async function candidatosDaPasta(db: SupabaseClient, hits: PastaHit[]): Promise<AbCand[]> {
+  const comInvoice = hits.filter(h => h.invoiceCode)
+  const codigos = [...new Set(comInvoice.map(h => h.invoiceCode as string))]
+  const ids = new Map<string, string>()
+  if (codigos.length) {
+    const { data } = await db.from('invoices').select('id, invoice_code').in('invoice_code', codigos)
+    for (const i of (data || []) as Record<string, unknown>[]) ids.set(String(i.invoice_code), String(i.id))
+  }
+  const out: AbCand[] = []
+  for (const h of hits) {
+    // Sem invoice_id não há para onde lançar — o achado vira só texto na pergunta.
+    const id = h.invoiceCode ? ids.get(h.invoiceCode) : undefined
+    if (!id) continue
+    const porque = h.forca === 'ORDEM' ? 'o PEDIDO está no nome do arquivo'
+      : h.forca === 'RECENTE' ? 'arquivo salvo JUNTO com este e-mail'
+      : 'arquivo do mesmo fornecedor nesta pasta'
+    out.push({
+      table: 'invoice_expenses', ref: id,
+      label: `PASTA ${h.forca}: ${h.invoiceCode} — ${h.rideCode} ${h.rideName} (${porque}: "${h.file}")`,
+      n: h.forca === 'ORDEM' ? 999 : h.forca === 'RECENTE' ? 998 : 1,
+      last: String(h.modified || '').slice(0, 10),
+    })
+  }
+  // Uma invoice só, mesmo achada por dois arquivos.
+  const vistas = new Set<string>()
+  return out.filter(c => (vistas.has(c.ref) ? false : (vistas.add(c.ref), true))).slice(0, 5)
 }
 
 // ── ASSINATURA JÁ TEM DONO: O MÓDULO APPS ──────────────────────────────────
@@ -728,8 +764,21 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         const papel = await achaPapel(db, it.order, vendor)
         if (papel) out.papelSemLinha.push(`${vendor} ${it.order} — papel guardado em ${papel}, mas SEM linha no app`)
 
+        // ── A TERCEIRA BUSCA, E ELA VEM PRIMEIRO NA RESPOSTA (08/set/2026) ──
+        // "o primeiro lugar que o robô tem que caçar é nas pastas das invoices".
+        // O Dropbox é alcançável pela API (as chaves já servem ao ride-folder) —
+        // o "ponto cego" era suposição. Falha de rede aqui não pode derrubar a
+        // rodada: sem pasta, a pergunta sai como saía antes.
+        let pasta: PastaHit[] = []
+        try { pasta = await cacaNaPasta({ vendor, order: it.order, quando: msg.received }) }
+        catch (e) { out.erros.push(`pasta ${vendor}: ${e instanceof Error ? e.message : String(e)}`) }
+        const daPasta = pasta.length ? await candidatosDaPasta(db, pasta) : []
+        const unica = respostaUnica(pasta)
+
         // A PERGUNTA. Uma só, com tudo que já foi lido e os destinos medidos.
-        const cands = await candidatosPara(db, vendor)
+        // A pasta na frente do histórico: resposta dada por gente vale mais que
+        // estatística de fornecedor.
+        const cands = [...daPasta, ...(await candidatosPara(db, vendor))].slice(0, 8)
         const falta = [
           !it.order ? 'sem numero de pedido' : null,
           it.amount == null ? 'sem valor legivel' : !it.strong ? `valor ${it.amount} lido de rotulo fraco ("${it.label}")` : null,
@@ -738,9 +787,12 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           // Negativo so vale dizendo ONDE se procurou ([[nao-achei-onde-procurou]]).
           it.amount ? 'procurei por valor+fornecedor nas 6 tabelas de item E em fixed_cost_expenses (ASSETS/APPS/MARKETING/FIXED/FLEET/STAFF/BANK): nao achei' : null,
           papel ? `o PAPEL ja esta guardado em ${papel} — falta a linha` : 'nenhum recibo guardado com esse pedido nem com esse fornecedor',
-          // O robo NAO ve o Dropbox: a pasta Rides/<carro>/Purchases so existe no
-          // disco dele. Quem confere aquilo sou eu, na rodada.
-          'a pasta Purchases do carro no Dropbox NAO foi conferida — o robo nao alcanca',
+          // A PASTA — primeiro lugar de caça desde 08/set/2026. Negativo aqui
+          // também diz ONDE se procurou ([[nao-achei-onde-procurou]]).
+          unica
+            ? `A PASTA JA RESPONDEU: o arquivo "${unica.file}" esta em ${unica.invoiceCode} (${unica.rideCode} ${unica.rideName})`
+            : daPasta.length ? `${daPasta.length} pasta(s) de invoice com papel deste fornecedor — a primeira sugestao vem de la`
+            : 'procurei nas pastas de invoice do Dropbox (Rides US e BR, por numero de pedido e por fornecedor): nenhum arquivo',
         ].filter(Boolean)
         const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
         const question = c.kind === 'REFUND'
