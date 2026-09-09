@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { normSup, matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
 import { normNature } from './itemNature'
+import { isLockedPart } from './utils'
 
 
 // Items whose name matches these are "extras" (shipping/handling/etc). For the
@@ -148,10 +149,20 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
 
   // LOCKED is ABSOLUTE (user law 2026-08-05: "when locked, nothing with the same
   // part-number gets enrolled in the system, no matter what, not even in a kit").
-  // LOCKED is the part's STATUS (source_type), same level as SCAN/HUNT/MANUAL —
-  // a LOCKED row is frozen: no scan, hunt, manual entry or kit member ever touches
+  // A LOCKED row is frozen: no scan, hunt, manual entry or kit member ever touches
   // it; everything that matches its PN resolves TO the locked row instead.
-  if (existing.source_type === 'LOCKED') return { status: 'kept', error: null }
+  //
+  // DUAS RÉGUAS PARA A MESMA PERGUNTA (achado da sessão PESCA/AutoBook, 09/set/2026).
+  // A TELA marca 🔒 por `locked_at` — é o que o botão TRAVAR grava; este enroller
+  // olhava só `source_type === 'LOCKED'`. Medido no catálogo inteiro: 173 peças
+  // com `locked_at` preenchido e ZERO com aquele source_type — ou seja, 173
+  // cadeados desenhados na tela e nenhum segurando nada. Ele clicou 173 vezes
+  // achando que estava congelando o custo, e o robô entrava por baixo.
+  //
+  // Não é escolher uma régua: a lei é dele e o cadeado é o da tela. Passa a valer
+  // `isLockedPart`, a MESMA função que desenha o cadeado — uma verdade só, que é
+  // o único jeito de as duas nunca mais divergirem.
+  if (isLockedPart(existing)) return { status: 'kept', error: null }
 
   // Who wins the row? Both sides are in the SAME currency by construction (the match
   // above never crosses markets), so these are plain number comparisons again — no rate,
