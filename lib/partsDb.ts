@@ -89,7 +89,13 @@ function withDerived(row: any, map: number | null, cost: number): any {
 //   the lowest cost. The kept alias is preserved; a known weight is never erased.
 export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
   const { data } = await supabase.from('parts_database')
-    .select('id, item, alias, part_number, source_type, unit_price, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, currency')
+    // `locked_at` e `supplier` VÊM JUNTO, e não é enfeite: sem `locked_at` a
+    // função que decide o cadeado (`isLockedPart`) recebe sempre undefined e
+    // devolve "destravado" para tudo — o conserto das 173 peças nasceria morto.
+    // Sem `supplier` a exceção do cadeado não sabe se a nota é do MESMO
+    // fornecedor e nunca dispara. É a doença do select coluna a coluna: a marca
+    // existe no banco e quem lê não a pede.
+    .select('id, item, alias, part_number, source_type, unit_price, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, currency, locked_at, supplier')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   // Two part numbers are the SAME part when the normalized forms match exactly OR
@@ -162,7 +168,47 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   // Não é escolher uma régua: a lei é dele e o cadeado é o da tela. Passa a valer
   // `isLockedPart`, a MESMA função que desenha o cadeado — uma verdade só, que é
   // o único jeito de as duas nunca mais divergirem.
-  if (isLockedPart(existing)) return { status: 'kept', error: null }
+  // A ÚNICA EXCEÇÃO DO CADEADO (Márcio, 09/set/2026):
+  //   "sempre que uma compra real é feita, da mesma peça, no mesmo fornecedor,
+  //    tem que atualizar o valor da peça no parts db, MESMO QUE BLOQUEADA."
+  //
+  // O cadeado existe para ele se proteger de scan de terceiro e de caçada na
+  // web — não da nota do próprio fornecedor. Preço que a loja acabou de cobrar
+  // É a realidade, e a lei da casa é que a vida real manda.
+  //
+  // TRÊS CONDIÇÕES CUMULATIVAS, e faltando uma o cadeado volta inteiro:
+  //   1. compra REAL — veio de SCAN de nota, com data e custo de verdade.
+  //      Hunt não passa, cotação não passa, linha sem data não passa.
+  //   2. mesma PEÇA — já garantido: só se chega aqui com o PN casado.
+  //   3. mesmo FORNECEDOR — pelo nome do CADASTRO, não pelo texto cru da nota.
+  //      (`row.supplier` já entra curado; ver a cura na escrita mais abaixo.)
+  //
+  // E ela mexe no CUSTO, nunca no ESTADO: `locked_at` fica onde está. Travar e
+  // destravar continua sendo a mão dele.
+  const compraReal = row.source_type === 'SCAN'
+    && /^\d{4}-\d{2}-\d{2}$/.test(String(row.purchase_date || ''))
+    && Number(row.unit_price) > 0
+  const mesmoFornecedor = !!row.supplier && !!existing.supplier
+    && normSup(String(row.supplier)) === normSup(String(existing.supplier))
+
+  if (isLockedPart(existing)) {
+    if (!(compraReal && mesmoFornecedor)) return { status: 'kept', error: null }
+    // Atualização CIRÚRGICA: só o que a nota prova. Nada de deixar a linha
+    // passar pela disputa de "quem ganha" lá embaixo — peça travada não entra
+    // em concurso, ela recebe o preço da nota e pronto.
+    const patch: Record<string, unknown> = {
+      unit_price: row.unit_price,
+      purchase_date: row.purchase_date,
+      updated_at: new Date().toISOString(),
+    }
+    if (row.part_discount != null) patch.part_discount = row.part_discount
+    if (row.receipt_url) patch.receipt_url = row.receipt_url
+    if (row.dealer_supplier) patch.dealer_supplier = row.dealer_supplier
+    // MAP só quando a nota IMPRIME o List — MAP não se deduz de custo.
+    if (row.map_price != null && Number(row.map_price) > 0) patch.map_price = row.map_price
+    const { error } = await supabase.from('parts_database').update(patch).eq('id', existing.id)
+    return { status: error ? 'kept' : 'updated', error }
+  }
 
   // Who wins the row? Both sides are in the SAME currency by construction (the match
   // above never crosses markets), so these are plain number comparisons again — no rate,
