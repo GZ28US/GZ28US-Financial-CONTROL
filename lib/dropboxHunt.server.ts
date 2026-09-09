@@ -144,6 +144,8 @@ export async function termosDeBusca(vendor: string): Promise<string[]> {
     const { data } = await db.from('suppliers').select('name, aliases, is_dealership')
     const achado = matchSupplier(vendor, supplierDirectoryFrom(data || []))
     if (achado) {
+      // O NOME DO CADASTRO ENTRA SEMPRE, curto ou não: é ele que nomeia a pasta
+      // ("HHP" tem três letras e é a resposta certa).
       const t = termoFornecedor(achado.name)
       if (t) termos.add(t)
       const linha = (data || []).find((s: { name?: string }) => s.name === achado.name)
@@ -152,8 +154,17 @@ export async function termosDeBusca(vendor: string): Promise<string[]> {
         // várias linhas. Mesma régua de 40 caracteres do supplierDirectoryFrom.
         const limpo = a.trim()
         if (!limpo || limpo.length > 40) continue
-        const t2 = termoFornecedor(limpo)
-        if (t2) termos.add(t2)
+        // O APELIDO VAI INTEIRO, NÃO PELA PRIMEIRA PALAVRA (09/set/2026).
+        // Encurtar "High Horse Performance" para `High` — que é o que
+        // `termoFornecedor` faz, porque a primeira palavra tem 4+ letras —
+        // envenenou a caça: 139 hits viraram 266, e o lixo genérico subiu para o
+        // andar RECENTE com FedEx e T1 Race dentro. Três invoices no andar que
+        // decide ⇒ `respostaUnica` devolve null, e a caça que funcionava parou
+        // de responder. Um token genérico de 4 letras estraga a busca inteira.
+        //
+        // Frase inteira o Dropbox aceita e é específica. Palavra solta só entra
+        // com 6+ caracteres: abaixo disso não distingue nada.
+        if (limpo.includes(' ') || limpo.length >= 6) termos.add(limpo)
       }
     }
   } catch { /* sem cadastro a busca segue com o cru, que é melhor que nada */ }
