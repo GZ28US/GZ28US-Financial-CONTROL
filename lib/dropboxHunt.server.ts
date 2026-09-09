@@ -135,7 +135,15 @@ export async function cacaNaPasta(
     if (!path) return
     const lido = leCaminho(path)
     if (!lido) return
-    const modified = String(md.server_modified || '')
+    // ── QUAL RELÓGIO (erro medido em 08/set/2026, 20h07) ────────────────────
+    // `server_modified` é a hora em que o DROPBOX tocou no arquivo — sobe toda
+    // vez que o cliente de desktop re-sincroniza a pasta. Na primeira prova em
+    // produção, três recibos da Summit de julho e agosto apareceram com
+    // "20h3x de hoje" e viraram RECENTE por causa de uma ressincronização.
+    // `client_modified` é a hora do arquivo NO CLIENTE no momento do upload, e
+    // não muda quando o Dropbox re-desce a pasta: é o carimbo da mão de quem
+    // salvou. Ele manda; `server_modified` só cobre o caso de vir vazio.
+    const modified = String(md.client_modified || md.server_modified || '')
     // Recência promove: o mesmo arquivo achado pelo fornecedor vira RECENTE se
     // foi salvo junto com o e-mail.
     const perto = modified && Math.abs(Date.parse(modified) - t0) <= JANELA_MS
@@ -162,12 +170,21 @@ export async function cacaNaPasta(
 
 function peso(f: PastaForca): number { return f === 'ORDEM' ? 3 : f === 'RECENTE' ? 2 : 1 }
 
-// A pasta respondeu SEM AMBIGUIDADE? Só quando a evidência é forte (o pedido no
-// nome, ou o arquivo salvo junto com o e-mail) E ela aponta para UMA invoice só.
-// Duas invoices com evidência forte não é resposta, é empate — e empate volta a
-// ser pergunta, com as duas na frente da lista.
+// A pasta respondeu SEM AMBIGUIDADE? O ANDAR MAIS FORTE PRESENTE DECIDE — e é
+// só ele que fala. Quem tem ORDEM não perde para RECENTE, nem que apareçam dez.
+//
+// ERRO MEDIDO NA PRIMEIRA PROVA EM PRODUÇÃO (08/set/2026, 20h07 Orlando): a
+// caça achou 7 arquivos da Summit. O certo veio em 1º, por ORDEM
+// (US.042.2 SublimeHell, pedido 430475 no nome). Mas eu tratava ORDEM e RECENTE
+// no mesmo balde de "forte", e três arquivos antigos empataram com ele —
+// resultado: "nenhuma resposta única", justamente quando havia uma, provada
+// pelo número do pedido. Peneirar por andar conserta: com ORDEM na mesa,
+// RECENTE nem é consultado.
 export function respostaUnica(hits: PastaHit[]): PastaHit | null {
-  const fortes = hits.filter(h => h.forca !== 'FORNECEDOR' && h.invoiceCode)
-  const codigos = new Set(fortes.map(h => h.invoiceCode))
-  return codigos.size === 1 ? fortes[0] : null
+  for (const andar of ['ORDEM', 'RECENTE'] as const) {
+    const nivel = hits.filter(h => h.forca === andar && h.invoiceCode)
+    if (!nivel.length) continue
+    return new Set(nivel.map(h => h.invoiceCode)).size === 1 ? nivel[0] : null
+  }
+  return null
 }

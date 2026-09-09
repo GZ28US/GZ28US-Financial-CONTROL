@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   if (p.get('pasta') || p.get('pedido')) {
     try {
       const hits = await cacaNaPasta({ vendor: p.get('pasta'), order: p.get('pedido'), quando: p.get('quando') })
-      return NextResponse.json({ ok: true, n: hits.length, unica: respostaUnica(hits), hits })
+      return NextResponse.json({ ok: true, n: hits.length, unica: respostaUnica(hits), hits })  // hits trazem o relogio usado (client_modified)
     } catch (e) {
       return NextResponse.json({ ok: false, error: String((e as Error)?.message || e) }, { status: 500 })
     }
