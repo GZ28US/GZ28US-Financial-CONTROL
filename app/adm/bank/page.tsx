@@ -57,7 +57,22 @@ export default function BankPage() {
   }
   const [busy, setBusy] = useState<string | null>(null)
 
-  useEffect(() => { void load(); void loadLive() }, [])
+  // FEED MUDO TEM DE APARECER NA TELA (08/set/2026). O sync dizia DONE e trazia
+  // zero havia quatro dias — o Zelle de US$ 632,26 que o Regions confirmou nem
+  // entrou. Ninguém viu porque o diagnóstico do Plaid (`/item/get`) só existia
+  // numa rota que ninguém chamava, e chamar exige o header que só o app monta.
+  // Então quem chama é o app, na abertura desta tela, que é onde se conserta.
+  type Saude = { conta: string; dias_em_silencio?: number; veredito_do_dado?: string; item_error?: { code: string; msg: string } | null; ultima_transacao?: string | null; ultima_atualizacao_plaid?: string | null; diagnostico?: string }
+  const [saude, setSaude] = useState<Saude[] | null>(null)
+  async function loadSaude() {
+    try {
+      const r = await fetch(`${BASE_PATH}/api/bank/health`, { headers: await sessionHeaders() })
+      const d = await r.json().catch(() => ({}))
+      if (r.ok) setSaude(d.contas || [])
+    } catch { /* diagnóstico é melhor esforço: não derruba a tela */ }
+  }
+
+  useEffect(() => { void load(); void loadLive(); void loadSaude() }, [])
 
   const [showAll, setShowAll] = useState(false)
   async function load(all = showAll) {
@@ -148,6 +163,25 @@ export default function BankPage() {
         </div>
       </div>
       <p className="text-xl text-gray-400 mb-6">The banking universe — every transaction the bank posts lands here by itself.</p>
+
+      {/* O AVISO QUE FALTAVA. Só aparece quando há o que avisar — banner que
+          vive na tela vira parte do papel de parede e ninguém lê. */}
+      {(saude || []).filter(s => s.item_error || s.veredito_do_dado === 'CEGO' || s.veredito_do_dado === 'SUSPEITO').map((s, i) => {
+        const grave = !!s.item_error || s.veredito_do_dado === 'CEGO'
+        return (
+          <div key={i} className={`mb-6 rounded-3xl border p-5 ${grave ? 'border-red-700 bg-red-950' : 'border-amber-700 bg-amber-950'}`}>
+            <p className="text-xl font-bold">{grave ? '⚠ O FEED ESTÁ MUDO' : 'Feed sem novidade há alguns dias'} — {s.conta}</p>
+            <p className="text-lg text-gray-200 mt-2">{s.diagnostico}</p>
+            <p className="text-base text-gray-400 mt-2">
+              última transação {s.ultima_transacao || '—'}
+              {typeof s.dias_em_silencio === 'number' ? ` · ${s.dias_em_silencio} dia(s) em silêncio` : ''}
+              {s.ultima_atualizacao_plaid ? ` · Plaid falou com o banco em ${String(s.ultima_atualizacao_plaid).slice(0, 16).replace('T', ' ')}` : ''}
+              {s.item_error ? ` · ${s.item_error.code}: ${s.item_error.msg}` : ''}
+            </p>
+            {grave && <p className="text-base text-gray-300 mt-2">Se o Plaid acusa erro de conexão, o conserto é <strong>+ CONNECT BANK</strong> aqui em cima — reconectar é login do banco, só você faz.</p>}
+          </div>
+        )
+      })}
 
       {/* CAIXA CONSOLIDADO — manchete da página (Márcio, 22/ago): o que a empresa tem
           agora somando todas as conexões. Não é card: os cards são só os bancos. */}
