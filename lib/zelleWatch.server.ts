@@ -243,6 +243,19 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
           invoice_id: target.invoice_id, amount: hit.amount, payment_date: hit.when, source: 'ZELLE', paid_to: 'GZ28US',
           description: `Zelle from ${hit.party} — conf ${hit.conf} (Regions •9336)`,
           receipt_url: recibo,
+          // ── A BAIXA É `paid_at`, NÃO `payment_date` (Márcio, 08/set/2026: ──
+          // "se escreveu o income do Jesse McGee no lugar certo, porque está
+          //  marcando como devido ainda?")
+          // `payment_date` é só a data PREVISTA; quem tira do "a receber" e vira
+          // caixa é `paid_at` (`lib/financials.ts:281` — "só o que TEM paid_at;
+          // agendado ainda não é caixa"). Este robô nasceu escrevendo só a
+          // prevista, então TODO Zelle que ele lançou continuou aparecendo como
+          // devido: o do Martez (US$ 1.000, 11/ago) ficou assim por um mês.
+          // E aqui a baixa é certa por definição — o Regions escreve "we have
+          // successfully DEPOSITED"; o dinheiro já está na conta.
+          // Meio-dia de Orlando pela mesma razão do resto do app: data não
+          // escorrega de fuso.
+          paid_at: `${hit.when}T12:00:00-04:00`,
         })
         // A PENDENTE QUE ESTE DINHEIRO QUITA MORRE AQUI — e só quando bate ao
         // centavo. Deixar as duas faz a invoice mostrar o dobro recebido; apagar
