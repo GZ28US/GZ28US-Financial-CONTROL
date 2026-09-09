@@ -35,7 +35,18 @@ export async function GET() {
   const t0 = Date.now()
   try {
     const r = await refreshItemTracking(itemsDb())
-    return NextResponse.json({ ok: !r.error, ms: Date.now() - t0, ...r })
+    // ── 200 COM ok:false É UM ERRO QUE NINGUÉM VÊ (09/set/2026) ────────────
+    // O comentário no topo desta rota prometia "erro visível, nunca
+    // silencioso" — e devolvia HTTP 200. O cron da Vercel conta 200 como
+    // sucesso, então o robô de rastreio do BR passou MESES respondendo
+    // `{ok:false, error:"TRACK17_API_KEY missing"}` de hora em hora, aos :37,
+    // sem uma única falha registrada. Medido quando alguém finalmente olhou:
+    // 91% das linhas com rastreio entregues no US contra 35% no BR.
+    //
+    // Agora o status HTTP conta a verdade. É a diferença entre um robô que
+    // não achou nada para fazer (200, tudo em dia) e um robô que NÃO PÔDE
+    // fazer nada (500, alguém precisa saber).
+    return NextResponse.json({ ok: !r.error, ms: Date.now() - t0, ...r }, { status: r.error ? 500 : 200 })
   } catch (e) {
     console.error('[items/track]', e)
     return NextResponse.json({ ok: false, error: String(e) }, { status: 500 })
