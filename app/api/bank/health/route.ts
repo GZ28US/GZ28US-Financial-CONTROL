@@ -92,7 +92,41 @@ export async function GET(req: NextRequest) {
             ? 'O PLAID TEM E NÓS PERDEMOS — o defeito está na nossa ingestão, não na conexão'
             : s.has_more
               ? 'sem linhas nesta página mas o Plaid diz que há mais — paginação'
-              : 'o Plaid não tem nada novo desde o cursor — o buraco é ANTES de nós (o banco não postou ao Plaid)',
+              : 'nada novo DESDE O CURSOR — falta saber se o Plaid nunca teve ou se o cursor já passou por cima',
+        }
+
+        // O CURSOR NÃO SEPARA AS DUAS HISTÓRIAS (ressalva da sessão PESCA/AutoBook,
+        // e ela está certa). "Nada novo desde o cursor" tanto vale para "o banco
+        // não postou" quanto para "uma rodada consumiu a página, a escrita falhou
+        // e o next_cursor foi salvo assim mesmo" — cursor avançado sobre dado
+        // perdido responde IGUALZINHO a banco parado. A sonda pergunta a partir
+        // do ponto onde o estrago terminou.
+        //
+        // Quem separa é a JANELA: `/transactions/get` por intervalo de datas não
+        // usa cursor nenhum. Se o Plaid devolver transação depois da última que
+        // temos, ele tinha e nós perdemos; se devolver nada, o banco não postou.
+        // Uma chamada, sem gravar nada, e responde no mesmo clique.
+        if (novas === 0 && !s.has_more && linha.ultima_transacao) {
+          try {
+            const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+            const g = await plaid('/transactions/get', {
+              access_token: c.plaid_access_token,
+              start_date: linha.ultima_transacao, end_date: hoje,
+              options: { count: 100, offset: 0 },
+            })
+            const depois = (g.transactions || []).filter((t: any) => String(t.date) > String(linha.ultima_transacao))
+            linha.sonda.janela = {
+              de: linha.ultima_transacao, ate: hoje,
+              total_no_intervalo: (g.transactions || []).length,
+              depois_da_ultima_que_temos: depois.length,
+              amostra: depois.slice(0, 5).map((t: any) => `${t.date} ${t.amount} ${String(t.name || '').slice(0, 40)}`),
+              veredito: depois.length > 0
+                ? 'O PLAID TEM E NÓS PERDEMOS — o cursor passou por cima; conserto é NOSSO, no laço do sync'
+                : 'o Plaid também não tem nada no intervalo — o banco não postou, e o dono do problema é o Regions',
+            }
+          } catch (e) {
+            linha.sonda.janela = { erro: String((e as Error).message || e).slice(0, 200) }
+          }
         }
       } catch (e) {
         linha.sonda = { erro: String((e as Error).message || e).slice(0, 200) }

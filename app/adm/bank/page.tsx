@@ -62,7 +62,8 @@ export default function BankPage() {
   // entrou. Ninguém viu porque o diagnóstico do Plaid (`/item/get`) só existia
   // numa rota que ninguém chamava, e chamar exige o header que só o app monta.
   // Então quem chama é o app, na abertura desta tela, que é onde se conserta.
-  type Sonda = { added?: number; modified?: number; removed?: number; has_more?: boolean; cursor_mudou?: boolean; amostra?: string[]; veredito?: string; erro?: string }
+  type Janela = { de?: string; ate?: string; total_no_intervalo?: number; depois_da_ultima_que_temos?: number; amostra?: string[]; veredito?: string; erro?: string }
+  type Sonda = { added?: number; modified?: number; removed?: number; has_more?: boolean; cursor_mudou?: boolean; amostra?: string[]; veredito?: string; erro?: string; janela?: Janela }
   type Saude = { conta: string; dias_em_silencio?: number; veredito_do_dado?: string; item_error?: { code: string; msg: string } | null; ultima_transacao?: string | null; ultima_atualizacao_plaid?: string | null; diagnostico?: string; sonda?: Sonda }
   const [saude, setSaude] = useState<Saude[] | null>(null)
   const [sondando, setSondando] = useState(false)
@@ -190,6 +191,16 @@ export default function BankPage() {
                 <strong>{s.sonda.veredito || s.sonda.erro}</strong>
                 {typeof s.sonda.added === 'number' ? <span className="text-gray-400"> · o Plaid devolveu {s.sonda.added} nova(s), {s.sonda.modified} alterada(s){s.sonda.has_more ? ', e diz que há mais' : ''}</span> : null}
                 {(s.sonda.amostra || []).map((a, j) => <span key={j} className="block text-gray-400 font-mono text-sm mt-1">{a}</span>)}
+                {s.sonda.janela && (
+                  <span className="block mt-3 pt-3 border-t border-gray-700">
+                    <strong>{s.sonda.janela.veredito || s.sonda.janela.erro}</strong>
+                    <span className="block text-gray-400 mt-1">
+                      janela {s.sonda.janela.de} → {s.sonda.janela.ate} · {s.sonda.janela.total_no_intervalo} no intervalo,
+                      {' '}{s.sonda.janela.depois_da_ultima_que_temos} depois da última que temos
+                    </span>
+                    {(s.sonda.janela.amostra || []).map((a, j) => <span key={j} className="block text-gray-400 font-mono text-sm mt-1">{a}</span>)}
+                  </span>
+                )}
               </p>
             ) : (
               <button onClick={() => void loadSaude(true)} disabled={sondando} className="mt-3 bg-gray-800 hover:bg-gray-700 border border-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold">
