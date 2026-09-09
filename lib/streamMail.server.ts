@@ -21,7 +21,22 @@ const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0'
 // /api/stream/mail-auth.
 // Mail.Send added 2026-07-23: the assistant answers emails (with the user's
 // explicit go-ahead per message) — e.g. payment confirmations to Kravitz & Guerra.
-export const MAIL_SCOPE = 'offline_access Mail.ReadWrite Mail.Send'
+// DOIS ESCOPOS DE PROPÓSITO — e a diferença entre eles é o que impede um
+// escopo novo de derrubar o e-mail inteiro (Márcio autorizou o reconsentimento
+// em 08/set/2026, para conseguirmos LER as regras da caixa e fechar o caso do
+// despachante apagado duas vezes).
+//
+// MAIL_SCOPE vai na TELA DE CONSENTIMENTO e na troca do code: é o que ele
+// aprova clicando em Allow, e pode pedir mais.
+//
+// MAIL_SCOPE_REFRESH vai no refresh_token, e é o conjunto ANTIGO. Motivo: a
+// Microsoft recusa refresh que peça escopo ainda não consentido — se as duas
+// strings fossem a mesma, TODA caixa que não reconsentiu (slots 2, 3 e 6)
+// perderia o token na primeira renovação e os 15 robôs do mail-poll parariam
+// juntos. Pedir um SUBCONJUNTO do que foi consentido é sempre válido, então
+// esta string continua servindo caixa reconsentida e caixa intocada.
+export const MAIL_SCOPE = 'offline_access Mail.ReadWrite Mail.Send MailboxSettings.Read'
+export const MAIL_SCOPE_REFRESH = 'offline_access Mail.ReadWrite Mail.Send'
 
 export type MailAuth = {
   id: number
@@ -131,12 +146,42 @@ export async function freshAccessToken(db: SupabaseClient, auth: MailAuth): Prom
   // a exigência de client_id é só do ramo Microsoft.
   if (mailProvider(auth) === 'gmail') return googleAccessToken(auth)
   if (!auth.client_id) return null
-  const res = await tokenRequest({ client_id: auth.client_id, grant_type: 'refresh_token', refresh_token: auth.refresh_token, scope: MAIL_SCOPE })
+  // Escopo ANTIGO no refresh, sempre — ver a nota em MAIL_SCOPE_REFRESH.
+  const res = await tokenRequest({ client_id: auth.client_id, grant_type: 'refresh_token', refresh_token: auth.refresh_token, scope: MAIL_SCOPE_REFRESH })
   if (!res?.access_token) return null
   if (res.refresh_token && res.refresh_token !== auth.refresh_token) {
     await setMailAuth(db, { refresh_token: res.refresh_token }, auth.id || 1)
   }
   return res.access_token
+}
+
+// AS REGRAS DA PRÓPRIA CAIXA — quem apaga sem ser robô nosso.
+//
+// Nasceu do caso do despachante (08/set/2026): uma resposta da Auto Tags & Title
+// foi parar nos Itens Excluídos pela SEGUNDA vez, e a medição inocentou os cinco
+// robôs deste repositório — nenhum filtro casa com aquele remetente, e a tabela
+// `marketing_senders` nem tem linha dele. O que sobrava era regra do lado do
+// servidor, criada na própria caixa, que nenhuma mudança de código conserta.
+//
+// Ler regra exige `MailboxSettings.Read`, que só existe na caixa RECONSENTIDA.
+// Por isso o token é pedido aqui, com o escopo cheio, em vez de reaproveitar o
+// do refresh normal: caixa que não reconsentiu devolve erro, esta função
+// devolve o motivo, e NADA no fluxo normal de e-mail é afetado.
+export async function inboxRules(db: SupabaseClient, auth: MailAuth): Promise<{ rules: any[] | null; error: string | null }> {
+  if (!auth.refresh_token || !auth.client_id) return { rules: null, error: 'caixa sem token' }
+  if (mailProvider(auth) === 'gmail') return { rules: null, error: 'caixa Google não tem regras do Outlook' }
+  const res = await tokenRequest({ client_id: auth.client_id, grant_type: 'refresh_token', refresh_token: auth.refresh_token, scope: MAIL_SCOPE })
+  if (!res?.access_token) {
+    return { rules: null, error: `sem MailboxSettings.Read nesta caixa — reconsentir em /api/stream/mail-auth?slot=${auth.id || 1} (${res?.error || 'refresh recusado'})` }
+  }
+  // O refresh_token rotaciona também aqui; perder o novo mata a corrente.
+  if (res.refresh_token && res.refresh_token !== auth.refresh_token) {
+    await setMailAuth(db, { refresh_token: res.refresh_token }, auth.id || 1)
+  }
+  const r = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messageRules', { headers: graphH(res.access_token) })
+  const j = await r.json().catch(() => null)
+  if (!r.ok) return { rules: null, error: `Graph ${r.status}: ${String(j?.error?.message || '').slice(0, 140)}` }
+  return { rules: j?.value || [], error: null }
 }
 
 // Google exige client_secret mesmo em app "web"; ele mora no ambiente
