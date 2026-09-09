@@ -433,12 +433,18 @@ export function recognitionDate(d: FinData, inv: any): string | null {
 // Sem data de pagamento = ainda devido (vira Fornecedores a Pagar no Balanço).
 export function unpaidTotals(d: FinData) {
   // Linha paga pelo cliente nunca é "Fornecedores a Pagar": a conta não é nossa.
+  // Conta AGENDADA do futuro também não é dívida de hoje (FIN 0.14.1 — a régua do DRE 0.13.1, medido em 9/set:
+  // 105 contas futuras, $84,8k, entravam no passivo; só 8 venciam): entra o que venceu ou não tem data prevista;
+  // o resto é compromisso, devolvido à parte em `scheduled` pra quem quiser mostrar como memorando.
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const due = (e: any) => !okDate(e.payment_date) && (!e.expense_date || String(e.expense_date).slice(0, 10) <= today)
   const inv = d.invExpenses.filter(e => !okDate(e.payment_date) && !clientPaid(e)).reduce((s, e) => s + expLine(e), 0)
-  const fixed = d.fixedExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)
-  const staff = d.expenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + num(e.amount), 0)   // pessoal incluso (decisão 26/ago)
+  const fixed = d.fixedExpenses.filter(due).reduce((s, e) => s + num(e.amount), 0)
+  const staff = d.expenses.filter(due).reduce((s, e) => s + num(e.amount), 0)   // pessoal incluso (decisão 26/ago)
+  const scheduled = d.fixedExpenses.filter(e => !okDate(e.payment_date) && !due(e)).reduce((s, e) => s + num(e.amount), 0) + d.expenses.filter(e => !okDate(e.payment_date) && !due(e)).reduce((s, e) => s + num(e.amount), 0)
   const purchases = d.goods.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + qtyLine(g), 0)
     + d.goodExpenses.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + num(g.amount), 0)
     + d.inputs.filter(x => !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)
     + d.inventory.filter(x => x.source_type === 'PURCHASED' && !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)
-  return { inv, fixed, staff, purchases, total: inv + fixed + staff + purchases }
+  return { inv, fixed, staff, purchases, scheduled, total: inv + fixed + staff + purchases }
 }

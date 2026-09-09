@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
     // category entra no select (antes não entrava: o card dizia 737 sem categoria quando eram 611);
     // category_ai é o veredito do segundo leitor (MIGRATION_parts_category_ai.sql) — sem a coluna, segue sem ela.
     let hasCatAi = true
-    const PSEL = 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit, category'
+    const PSEL = 'id, item, alias, part_number, supplier, unit_price, map_price, locked_at, source_type, is_kit, category, is_extra'
     const tryParts = async (sel: string) => { try { return await fetchAll(db, 'parts_database', sel) } catch (e) { const m = String(e); if (/category_ai/.test(m)) { hasCatAi = false; return null } if (/supplier_id/.test(m)) { hasSupplierId = false; return null } throw e } }
     let got: any[] | null = await tryParts(PSEL + ', supplier_id, category_ai')
     if (!got && !hasCatAi && hasSupplierId) got = await tryParts(PSEL + ', supplier_id')
@@ -186,13 +186,15 @@ export async function GET(req: NextRequest) {
     const catSet = new Set<string>(PART_CATEGORIES as unknown as string[])
     // Dois leitores: palavra-chave + IA. Concordaram → já foi preenchida (não está aqui);
     // discordaram / só um sabe / IA pendente → item com as opiniões; «não é peça» → pilha própria.
-    const catItems = parts.filter((p: any) => !p.category || !catSet.has(p.category)).map((p: any) => {
+    // is_extra (frete/imposto) fica de fora: encargo da compra, não peça. Caixa diferente da mesma categoria é CERTA (identidade).
+    const catItems = parts.filter((p: any) => !p.is_extra && (!p.category || !catSet.has(p.category))).map((p: any) => {
       const kw = suggestCategory(partText(p))
       const ai = hasCatAi ? (p.category_ai || null) : undefined
       const t = tierFor(kw, ai)
-      return { id: p.id, item: String(p.alias || p.item || '').slice(0, 70), current: p.category || null, suggest: kw || (ai && ai !== NOT_A_PART ? ai : null), keyword: kw, ai: ai ?? null, tier: t.tier }
+      const caseFix = p.category && catSet.has(String(p.category).toUpperCase()) ? String(p.category).toUpperCase() : null
+      return { id: p.id, item: String(p.alias || p.item || '').slice(0, 70), current: p.category || null, suggest: caseFix || kw || (ai && ai !== NOT_A_PART ? ai : null), keyword: caseFix || kw, ai: caseFix || (ai ?? null), tier: caseFix ? 'CERTAIN' : t.tier, case: !!caseFix }
     })
-    const catAiPending = hasCatAi ? parts.filter((p: any) => (!p.category || !catSet.has(p.category)) && !p.category_ai).length : 0
+    const catAiPending = hasCatAi ? parts.filter((p: any) => !p.is_extra && (!p.category || !catSet.has(p.category)) && !p.category_ai).length : 0   // is_extra nunca é lida
     const autoOn = await autoFillEnabled(db).catch(() => false)
     const certainReady = catItems.filter((c: any) => c.tier === 'CERTAIN').length
     // Preenchidas sozinhas nos últimos 7 dias (trilha «AUTO ·»), com DESFAZER no card.
@@ -225,7 +227,7 @@ export async function POST(req: NextRequest) {
     const db = bankDb()
     const ids: string[] = Array.isArray(b.ids) ? b.ids.map(String) : []
     let parts: any[]
-    try { parts = ids.length ? (await db.from('parts_database').select('id, item, alias, category, category_ai').in('id', ids)).data || [] : await fetchAll(db, 'parts_database', 'id, item, alias, category, category_ai') }
+    try { parts = ids.length ? (await db.from('parts_database').select('id, item, alias, category, category_ai, is_extra').in('id', ids)).data || [] : await fetchAll(db, 'parts_database', 'id, item, alias, category, category_ai, is_extra') }
     catch (e) { return NextResponse.json({ error: 'rode MIGRATION_parts_category_ai.sql antes: ' + String((e as Error).message || e).slice(0, 160), needs_category_ai_migration: true }, { status: 409 }) }
     const fill = await autoFillEnabled(db).catch(() => false)
     const r = await classifyParts(db, parts, { max: Math.min(200, Math.max(1, Number(b.max) || 80)), dry: !!b.dry, force: !!b.force, fill })
@@ -235,7 +237,7 @@ export async function POST(req: NextRequest) {
   if (String(b.action) === 'enable_auto_fill') {
     const db = bankDb()
     let parts: any[]
-    try { parts = await fetchAll(db, 'parts_database', 'id, item, alias, category, category_ai') }
+    try { parts = await fetchAll(db, 'parts_database', 'id, item, alias, category, category_ai, is_extra') }
     catch (e) { return NextResponse.json({ error: 'rode MIGRATION_parts_category_ai.sql antes: ' + String((e as Error).message || e).slice(0, 160), needs_category_ai_migration: true }, { status: 409 }) }
     await enableAutoFill(db)
     const r = await classifyParts(db, parts, { max: 0, fill: true })   // max 0: não relê a IA; só as já lidas entram
@@ -288,7 +290,7 @@ export async function POST(req: NextRequest) {
       if (!r || !r.length) return NextResponse.json({ error: 'peça já linkada — recarregue', supplier: { id: sup.id, name: sup.name } }, { status: 409 })
       await db.from('data_fixes').insert({
         check_key: 'parts-suppliers', table_name: 'parts_database', row_id: linkId, field: 'supplier_id',
-        old_value: null, new_value: sup.id, label: ('FORNECEDOR ' + (reused ? '(reusado)' : 'NOVO') + ' · ' + (r[0].alias || r[0].item) + ' → ' + sup.name).slice(0, 200),
+        old_value: null, new_value: sup.id, label: ((b.auto ? 'AUTO · handle do eBay = identidade do vendedor' + (reused ? ' (cadastro existente)' : ' (cadastro criado, via eBay)') : 'FORNECEDOR ' + (reused ? '(reusado)' : 'NOVO')) + ' · ' + (r[0].alias || r[0].item) + ' → ' + sup.name).slice(0, 200),
       }).then(() => undefined, () => undefined)
     }
     return NextResponse.json({ ok: true, supplier: { id: sup.id, name: sup.name }, reused })

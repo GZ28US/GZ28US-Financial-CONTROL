@@ -50,6 +50,8 @@ type Fix =
   | { kind: 'unlink'; table: string; rowId: string; field: string; confirmText: string }
   // CATEGORIA SOZINHA (DC 1.42.0): DESFAZER o que o app preencheu (palavra-chave + IA concordaram).
   | { kind: 'undo_category'; table: string; rowId: string; field: string; confirmText: string }
+  // eBay (DC 1.46.0): o handle É o vendedor — cadastra (ou reusa) o fornecedor via eBay e linka a peça; entra sozinho.
+  | { kind: 'ebay_link'; table: string; rowId: string; field: string; handle: string; spelling: string; confirmText: string }
   | { kind: 'enable_autofill'; table: string; rowId: string; field: string; confirmText: string }
   // DC 1.44.0: DESFAZER genérico do que o app preencheu sozinho; VISTO (dispensa com memória); CASAR por prova (paga no app, sem banco).
   | { kind: 'undo_auto'; table: string; rowId: string; field: string; fixId: string; confirmText: string }
@@ -63,10 +65,12 @@ type Item = { href: string; code: string; label: string; extra?: string; amount?
 // A prova de cada PREENCHER CERTOS, na língua do card (achado do João, 25/ago:
 // a legenda da Regions aparecia até nos cards de peças).
 const CERTAIN_PROOF: Record<string, string> = {
-  'paid-from': 'linhas já casadas com a Regions → GZ28US (prova, não palpite)',
+  'paid-from': 'linhas já casadas com a Regions → GZ28US, ou a irmã do mesmo pedido já diz quem pagou (prova, não palpite)',
   'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
   'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
   'inputs-category': 'identidade da loja (mercado/lanchonete → TEAM, pet → CATS, ferragem → oficina) ou loja e texto concordando',
+  'inv-no-supplier': 'o banco é a testemunha (linha casada → comerciante) ou a irmã do mesmo pedido já diz quem vendeu',
+  'undated-inv': 'valor exato + nome do fornecedor + UMA linha NEW da Regions a ±10 d da data prevista',
   'parts-category': 'palavra-chave e IA concordam na categoria — dois leitores independentes, não um palpite',
   'admission-mileage': 'a milhagem já está na invoice do carro (mesmo valor em outro lugar do banco de dados)',
   'bank-drift': 'o nome do prestador está na linha do banco e o valor é único na janela — a mesma prova que o motor usa pra adotar',
@@ -99,11 +103,12 @@ type CatRow = { id: string; item: string; current: string | null; suggest: strin
 type SupRow = { id: string; text: string; part: string; candidates: { id: string; label: string; certain: boolean }[]; ebay?: string | null; ebay_bare?: boolean; ebay_item?: string | null }
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[]; category_ai_pending?: number; needs_category_ai_migration?: boolean; auto_fill_enabled?: boolean; certain_ready?: number; auto_categories?: { fix_id: string; id: string; item: string; category: string; old: string | null; at: string }[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
-type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; years: { year: string; payees: TaxPayee[] }[] }
+type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsAliasMigration?: boolean; years: { year: string; payees: TaxPayee[] }[] }
 type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean; name_ok?: boolean; unique?: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null; runs_7d?: { n: number; errors: number } }
 // As saídas da Regions com id, nome e status (DC 1.44.0): «paga no app, sem banco» casa por prova e o imposto FL acha o recolhimento pelo nome.
 type BankLine = { d: string; a: number; id: string; n: string; s: string }
-type BankSignal = { matched: Set<string>; groups: Map<string, number>; outflows: Map<string, string[]>; lines: BankLine[]; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null }
+type HealthRow = { conta: string; status: string; ultima_transacao: string | null; dias_em_silencio?: number; veredito_do_dado?: string; item_error: { code: string; msg: string } | null; ultima_atualizacao_plaid: string | null; diagnostico?: string }
+type BankSignal = { matched: Set<string>; matchedName: Map<string, string>; groups: Map<string, number>; outflows: Map<string, string[]>; lines: BankLine[]; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null; health?: HealthRow[] | null; healthState?: 'loading' | 'error' | 'ok' }
 // O APP PREENCHEU SOZINHO + DISPENSAS (DC 1.44.0): trilha «AUTO ·» dos últimos 7 dias (com DESFAZER genérico) e «visto, está certo».
 type AutoRow = { id: string; check_key: string; table_name: string; row_id: string; field: string; old_value: string | null; new_value: string | null; label: string; fixed_at: string }
 type AutoSignal = { state: 'loading' | 'error' | 'ok'; rows: AutoRow[]; dismissed: Record<string, string>; total?: number }
@@ -114,10 +119,12 @@ let AUTO_CAT_RAN = false   // categoria sozinha: uma leitura da IA por abertura 
 let AUTO_NATURE_RAN = false   // natureza sozinha (carro → dinheiro, PN → peça, hábito): uma rodada por abertura
 let AUTO_RAN = false          // níveis CERTOS dos cards: uma rodada por abertura
 // Cards cujos itens CERTOS o app resolve sozinho (com trilha «AUTO ·» e DESFAZER no card SOZINHO).
-const AUTO_KEYS = new Set(['paid-from', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled', 'inputs-category'])
+const AUTO_KEYS = new Set(['paid-from', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled', 'inputs-category', 'inv-no-supplier', 'undated-inv'])
 // Cards que aceitam «visto, está certo» (dispensa com memória — nunca mais pergunta a mesma linha).
-const DISMISSABLE = new Set(['out-of-pattern', 'parts-suppliers', 'destiny-review', 'fixed-dup-month', 'inputs-category'])
-const nameTok = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length >= 4 && !['STORE', 'INC', 'LLC', 'CORP', 'THE', 'AND', 'COMPANY'].includes(w))
+const DISMISSABLE = new Set(['out-of-pattern', 'parts-suppliers', 'destiny-review', 'fixed-dup-month', 'inputs-category'])   // legado: a dispensa vale em todo card fora dos PROOF_GATED
+// Cards de PROVA (a régua do caixa, o que o app fez sozinho, o painel do motor, a bancada de natureza, as contagens do motor): sem VISTO — não há o que dispensar.
+const PROOF_GATED = new Set(['cash-match', 'auto-fills', 'auto-book', 'item-nature', 'engine-questions'])
+const nameTok = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length >= 4 && !['AUTO', 'PARTS', 'RACING', 'PERFORMANCE', 'SHOP', 'MOTOR', 'MOTORS', 'SALES', 'SERVICE', 'SERVICES', 'ONLINE', 'PAYPAL', 'SQUARE', 'SUPER', 'MARKET', 'CENTER', 'GROUP', 'COMPANY', 'STORE', 'INC', 'LLC', 'CORP', 'THE', 'AND', 'COMPANY'].includes(w))
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 // WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
 type WaSignal = { state: 'loading' | 'ok' | 'missing' | 'error'; fails: { id: string; at: string; destination: string | null; group_name: string | null; kind: string | null; body_head: string | null; error: string | null; http_status: number | null }[] }
@@ -151,13 +158,14 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
   return checks.map(c => {
     let items = c.items
     if (c.key === 'undated-fixed' && driftIds.size) items = items.filter(i => !(i.fix && driftIds.has(String(i.fix.rowId))))
-    if (!DISMISSABLE.has(c.key)) return { ...c, items }
+    if (PROOF_GATED.has(c.key)) return { ...c, items }   // 9/set: VISTO em todo card fora da prova pura (8 cards acumulavam item sem conserto e sem saída)
     items = items.flatMap(i => {
       const rowId = i.fix ? String(i.fix.rowId) : (i.code + '|' + i.label).slice(0, 150)
       const k = c.key + '|' + rowId
       // Dispensa esconde; DESFEITO (a pessoa desfez um AUTO) não esconde — só impede a máquina de refazer.
       if (auto.dismissed[k] !== undefined && auto.dismissed[k] !== 'DESFEITO') return []
-      if (i.fix) return [i]
+      // Aviso de saúde do próprio card (sinal que não veio, migration, motor, feed) nunca se dispensa: seria calar a verificação.
+      if (i.fix || ['SINAL', 'MIGRATION', 'MOTOR', 'ERRO', 'FEED', 'FEED?'].includes(i.code)) return [i]
       return [{ ...i, fix: { kind: 'dismiss' as const, table: 'data_check', rowId, field: 'DISMISSED', checkKey: c.key, confirmText: `Marcar «visto, está certo» em «${i.label.slice(0, 90)}»? O card para de perguntar isto (fica na trilha; dá pra voltar).` } }]
     })
     return { ...c, items }
@@ -167,6 +175,13 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
+  // O FEED até quando? Toda prova «por ausência no banco» (paga no app sem linha, assinatura sem cobrança) só vale
+  // até a última linha que o feed trouxe; feed cego (Plaid com erro ou 7+ dias mudo) suspende essas provas.
+  // Só a conta ATIVA fala (a conexão velha, NEEDS_REAUTH, não cega o feed vivo). Sem o sinal (ainda carregando ou falhou) = cego: nada se prova por ausência.
+  const feedRows = (bank.health || []).filter(h => !h.status || h.status === 'ACTIVE')
+  const feedKnown = bank.healthState === 'ok' && feedRows.length > 0
+  const feedBlind = !feedKnown || feedRows.some(h => !!h.item_error || h.veredito_do_dado === 'CEGO')
+  const feedUntil = feedKnown ? (feedRows.map(h => String(h.ultima_transacao || '')).filter(Boolean).sort().reverse()[0] || TODAY) : TODAY
 
   // Quem é o dono da pendência: carro (project name) · cliente. Invoice de
   // shop sem project name cai no nome do cliente — "006.8 Pending balance"
@@ -364,16 +379,70 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const rows = d.invExpenses.filter((e: any) => !e.payment_date && e.expense_date && String(e.expense_date).slice(0, 10) <= TODAY)
     const items = rows.map((e: any) => {
       const m = invoiceMeta(d, e.invoice_id)
+      // PROVA (DC 1.46.0): UMA linha NEW da Regions com o valor exato, o nome do fornecedor e ±10 d da data prevista —
+      // a mesma régua de «paga no app, sem banco»; o feed tem que enxergar a data (feed cego não julga). CASAR grava
+      // data e elo pela rota (A CONFERIR com DESFAZER). Linha dentro de pedido: o banco cobrou o pedido inteiro — fica pra gente.
+      const amt = expLine(e), ed = String(e.expense_date).slice(0, 10), toks = nameTok(e.supplier)
+      // Paga por sócio/BR/cliente nunca passou na Regions (mesma exclusão do candidatePool); e o valor tem que ser único também do lado do APP.
+      const outside = ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].includes(String(e.paid_from || '')) || String((e as any).paid_to || '') === 'GZ28BR'
+      const appTwin = !outside && amt > 0 && [...d.invExpenses.filter((x: any) => x.id !== e.id && !x.payment_date), ...d.fixedExpenses.filter((x: any) => !x.payment_date), ...d.goods.filter((x: any) => !x.payment_date), ...d.inputs.filter((x: any) => !x.payment_date)].some((x: any) => { const a2 = 'item' in x ? expLine(x) : 'unit_price' in x ? qtyLine(x) : Number(x.amount) || 0; const dt = String(x.expense_date || x.purchase_date || '').slice(0, 10); return Math.abs(a2 - amt) < 0.011 && dt && dayDiff(dt, ed) <= 10 })
+      const cands = !feedBlind && !outside && !appTwin && ed <= feedUntil && !e.purchase_group && amt > 0 && toks.length ? bank.lines.filter(x => { if (x.s !== 'NEW' || Math.abs(x.a - amt) >= 0.011 || dayDiff(x.d, ed) > 10) return false; const lt = new Set(nameTok(x.n)); return toks.some(t => lt.has(t)) }) : []
+      const one = cands.length === 1 ? cands[0] : null
       return {
-        href: m.href, code: m.code, label: e.item || '(despesa sem descrição)',
-        extra: [whoFor(e.invoice_id), e.supplier, 'previsto ' + String(e.expense_date).slice(0, 10)].filter(Boolean).join(' · '), amount: expLine(e),
-        fix: { kind: 'date' as const, table: 'invoice_expenses', rowId: e.id, field: 'payment_date' },
+        href: m.href, code: one ? 'CASAR' : m.code, label: e.item || '(despesa sem descrição)',
+        extra: [whoFor(e.invoice_id), e.supplier, 'previsto ' + ed, one ? 'a Regions tem UMA linha igual: ' + one.d + ' ' + usd(one.a) + ' «' + one.n + '» — casa sozinha' : ''].filter(Boolean).join(' · '), amount: amt,
+        certain: !!one, signal: one ? 'matched' : undefined, suggest: one ? one.id : undefined,
+        fix: one ? { kind: 'match' as const, table: 'invoice_expenses', rowId: e.id, field: 'bank_transaction_id', bankId: one.id, confirmText: `Casar «${e.item || ''}» com a linha da Regions ${one.d} ${usd(one.a)} «${one.n}»? Grava data e elo; DESFAZER no Bank Link.` }
+          : { kind: 'date' as const, table: 'invoice_expenses', rowId: e.id, field: 'payment_date' },
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'undated-inv', title: 'Despesa venceu e o pagamento não foi lançado', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
       why: 'Não pago = sem data é o estado NORMAL de uma despesa (aparece como Not paid yet na invoice e em Fornecedores a pagar) — não é pendência e não entra aqui. O que entra: a linha tinha data prevista (parcela agendada ou o espelho legado) que já passou, e o pagamento continua sem lançar. Se pagou, registre a data; se atrasou, é cobrança, não conserto.',
       items, impact: rows.reduce((s: number, e: any) => s + expLine(e), 0),
+    })
+  }
+
+  // ── LINHA DE INVOICE SEM FORNECEDOR (DC 1.46.0 — levantamento de 9/set: 71 linhas, $66k, cegas pro 1099, pro hábito de natureza e pros gêmeos) ──
+  // Duas provas: o BANCO (a linha já casou com uma saída da Regions — o comerciante é o fornecedor) e a IRMÃ do
+  // mesmo pedido (um pedido, um vendedor). Sem prova: pergunta, com VISTO.
+  {
+    const items: Item[] = []
+    const sibSup = new Map<string, Set<string>>()
+    for (const x of d.invExpenses) if (x.purchase_group && String(x.supplier || '').trim()) { const s = sibSup.get(x.purchase_group) || new Set<string>(); s.add(String(x.supplier).trim()); sibSup.set(x.purchase_group, s) }
+    // O nome do banco só é prova quando resolve num fornecedor do cadastro (um só, por palavra distintiva); canal e processador
+    // (eBay, PayPal, Square, Zelle, wire, cheque) nunca são vendedor — a lei do eBay.
+    const CHANNEL_RX = /EBAY|PAYPAL|\bSQ \*|SQUARE|VENMO|ZELLE|CASH ?APP|WIRE|CHECK|CHEQUE|AMZN|AMAZON MKTPL|STRIPE|SHOP ?PAY/i
+    const official = (linker.suppliers_all || []).map(s => ({ name: s.name, toks: nameTok(s.name).filter(t => t.length >= 5) }))
+    const resolveBank = (bn: string | null): string | null => {
+      if (!bn || CHANNEL_RX.test(bn)) return null
+      const bt = new Set(nameTok(bn))
+      const hits = official.filter(o => o.toks.length && o.toks.some(t => bt.has(t)))
+      return hits.length === 1 ? hits[0].name : null
+    }
+    for (const e of d.invExpenses) {
+      if (String(e.supplier || '').trim()) continue
+      const m = invoiceMeta(d, e.invoice_id)
+      const bnRaw = bank.matchedName.get('invoice_expenses:' + e.id) || (e.purchase_group ? bank.matchedName.get('purchase_group:' + e.purchase_group) : undefined) || null
+      const bn = resolveBank(bnRaw)
+      const sibs = e.purchase_group ? sibSup.get(e.purchase_group) : undefined
+      const sib = sibs && sibs.size === 1 ? [...sibs][0] : null
+      const conflict = !!(bn && sib && bn.toUpperCase() !== sib.toUpperCase())
+      const sug = conflict ? null : (bn || sib)
+      const why = conflict ? 'o banco diz «' + bn + '» e a irmã do pedido diz «' + sib + '» — decida' : bn ? 'o banco é a testemunha: a linha casou com «' + bnRaw + '» = ' + bn + ' no cadastro' : sib ? 'a irmã do mesmo pedido diz «' + sib + '»' : bnRaw ? 'a linha casou com «' + bnRaw + '», que não resolve num fornecedor do cadastro (canal ou nome desconhecido) — quem vendeu?' : 'sem prova — quem vendeu?'
+      const options = [...new Set([bn, sib, ...(sibs ? [...sibs] : [])].filter((x): x is string => !!x))].map(v => ({ value: v, label: v }))
+      items.push({
+        href: m.href, code: sug ? 'CERTA' : conflict ? 'DISCORDAM' : 'SEM FORN.', label: (e.item || '(sem descrição)') + ' · ' + usd(expLine(e)), extra: [whoFor(e.invoice_id), why].filter(Boolean).join(' · '), amount: expLine(e), when: e.expense_date || e.payment_date || undefined,
+        certain: !!sug, suggest: sug || undefined, signal: sug ? 'matched' : conflict ? 'conflict' : undefined,
+        // Sem opção: a dispensa é POR LINHA (rowId), nunca pelo texto — «Shipping · $25» de dois carros são duas linhas.
+        fix: options.length ? { kind: 'select' as const, table: 'invoice_expenses', rowId: e.id, field: 'supplier', options, current: e.supplier ?? null }
+          : { kind: 'dismiss' as const, table: 'data_check', rowId: e.id, field: 'DISMISSED', checkKey: 'inv-no-supplier', confirmText: `Marcar «visto, está certo» em «${(e.item || '').slice(0, 60)}» (sem fornecedor de propósito: carro, cartão do sócio…)? O card para de perguntar esta linha (fica na trilha; dá pra voltar).` },
+      })
+    }
+    checks.push({
+      group: 'FINANCIAL', key: 'inv-no-supplier', title: 'Linha de invoice sem fornecedor', blocks: 'o 1099, o hábito de natureza e a busca de gêmeos ficam cegos pra esta linha',
+      why: 'O editor aceita item + valor sem fornecedor; o motor sempre grava um. Levantamento de 9/set: 71 linhas, $66k, 70 delas também sem natureza (o hábito é por fornecedor). Prova: a linha casada com a Regions tem o comerciante (o banco é a testemunha) ou a irmã do mesmo pedido já diz quem vendeu — entram sozinhas. Compra de carro e «cc Beto» são decisão de gente: VISTO com motivo.',
+      items, impact: items.reduce((s, x) => s + (x.amount || 0), 0),
     })
   }
 
@@ -468,7 +537,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const supToks = nameTok(sup?.company)
       const chargedAfter = end ? bank.lines.some(x => x.d > end && (() => { const lt = new Set(nameTok(x.n)); return supToks.some(t => lt.has(t)) })()) : true
       // CERTA só com nome real (≥4 letras), fim há 7+ dias (a última fatura posta DEPOIS do fim) e a Regions carregada.
-      const mature = !!end && end <= new Date(Date.parse(TODAY) - 7 * 864e5).toISOString().slice(0, 10)
+      // Maduro = o feed já enxergou 7 dias depois do fim (feed cego nunca certifica ausência).
+      const mature = !feedBlind && !!end && end <= new Date(Date.parse(feedUntil) - 7 * 864e5).toISOString().slice(0, 10)
       if (end && due2 && due2 > end) items.push({
         certain: supToks.length > 0 && mature && bank.lines.length > 0 && !chargedAfter, signal: supToks.length > 0 && mature && bank.lines.length > 0 && !chargedAfter ? 'matched' : undefined,
         href: e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', code: 'FANTASMA',
@@ -588,6 +658,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const groupSums = new Map<string, number>()
     const addG = (rows: any[], amt: (r: any) => number) => { for (const r of rows) if (r.purchase_group) groupSums.set(r.purchase_group, (groupSums.get(r.purchase_group) || 0) + amt(r)) }
     addG(d.invExpenses, expLine); addG(d.goods, qtyLine); addG(d.inputs, qtyLine); addG(d.inventory.filter((x: any) => x.source_type === 'PURCHASED'), qtyLine)
+    // Irmã do mesmo pedido já diz quem pagou (um pedido, um pagamento — chave purchase_group): identidade dura.
+    const groupPaid = new Map<string, Set<string>>()
+    const addP = (rows: any[]) => { for (const r of rows) if (r.purchase_group && r.paid_from) { const s = groupPaid.get(r.purchase_group) || new Set<string>(); s.add(String(r.paid_from)); groupPaid.set(r.purchase_group, s) } }
+    addP(d.invExpenses); addP(d.goods); addP(d.inputs); addP(d.inventory)
     const mk = (table: string, r: any, code: string, href: string, label: string, amount: number): Item => {
       const date: string | null = r.payment_date || r.expense_date || r.purchase_date || null
       const gid: string | null = r.purchase_group || null
@@ -604,6 +678,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       let suggest: string | undefined, extra: string | undefined, signal = 'source'
       if (bankCertain && srcMapped && srcMapped !== 'GZ28US') { certain = false; extra = `banco provou GZ28US, mas o SOURCE antigo diz ${srcMapped} — conferir`; signal = 'conflict' }
       else if (bankCertain) { suggest = 'GZ28US'; extra = groupCertain ? 'pedido casado com a Regions' : 'casada com a Regions'; signal = 'matched' }
+      else if (gid && groupPaid.get(gid)?.size === 1 && srcMapped && srcMapped !== [...groupPaid.get(gid)!][0]) { extra = 'a irmã do pedido diz ' + [...groupPaid.get(gid)!][0] + ', mas o SOURCE antigo diz ' + srcMapped + ' — conferir'; signal = 'conflict' }
+      else if (gid && groupPaid.get(gid)?.size === 1) { certain = true; suggest = [...groupPaid.get(gid)!][0]; extra = 'pedido pago junto: a irmã do mesmo pedido já diz ' + suggest; signal = 'matched' }
       else if (srcMapped && srcMapped !== 'GZ28US') { certain = true; suggest = srcMapped; extra = `o campo antigo SOURCE já dizia: ${srcMapped}`; signal = 'source' }
       else if (srcMapped === 'GZ28US' && inRegions(amount, date) !== false) { certain = true; suggest = 'GZ28US'; extra = 'o campo antigo SOURCE já dizia: GZ28US'; signal = 'source' }
       else if (srcMapped === 'GZ28US') { suggest = 'GZ28US'; extra = 'SOURCE antigo diz GZ28US, mas não consta na Regions — conferir'; signal = 'conflict' }
@@ -703,6 +779,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const items: Item[] = []
     if (tax.state === 'error') items.push({ href: '/adm/tax', code: 'SINAL', label: 'sinal do 1099 indisponível — verificação NÃO rodou', extra: 'recarregue; se persistir, veja TAX SHIELD' })
     if (tax.needsMigration) items.push({ href: '/adm/tax', code: 'MIGRATION', label: 'Rodar MIGRATION_tax_1099.sql no SQL Editor', extra: 'classificação/W-9 só gravam com a tabela criada' })
+    if (tax.needsAliasMigration) items.push({ href: '/adm/tax', code: 'MIGRATION', label: 'Rodar MIGRATION_tax_1099_v2.sql no SQL Editor', extra: 'sem a coluna aliases o mesmo beneficiário grafado de dois jeitos vira dois — cada um pode cair abaixo de $600 e sumir da lista; UNIR falha até rodar' })
     for (const y of tax.years) for (const p of y.payees) {
       // Fricção final do João (25/ago): "parece só uma lista". Agora a linha AGE:
       // classificar e marcar W-9 aqui mesmo (o /api/tax/1099 grava e faz a trilha).
@@ -903,12 +980,15 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       items.push({
         href: '/parts', code: r.ebay ? 'EBAY' : r.ebay_bare ? 'EBAY?' : 'FORN.', label: `"${r.text}" · ${r.part}`,
         extra: best ? (best.certain ? 'nome oficial bate — certo' : 'candidato — conferir')
-          : r.ebay ? `vendedor do eBay "${r.ebay}" — crie o fornecedor REAL (fica marcado: via eBay)`
+          : r.ebay ? `vendedor do eBay "${r.ebay}" — o handle é a identidade do vendedor: um clique cadastra (via eBay) e linka`
           : r.ebay_bare ? (r.ebay_item ? 'compra no eBay sem vendedor à vista — o vendedor está na página do anúncio' : 'compra no eBay sem vendedor à vista — ache-o no histórico de compras do eBay e crie aqui')
           : 'sem candidato — escolha na lista ou crie aqui',
         link: r.ebay_item ? { href: `https://www.ebay.com/itm/${r.ebay_item}`, label: 'ANÚNCIO ↗' } : undefined,
-        certain: !!best?.certain, suggest: best?.id, signal: best ? (best.certain ? 'matched' : 'source') : undefined,
-        fix: { kind: 'select' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', options, current: null, spelling: r.text, ebay: r.ebay || undefined },
+        // Sem candidato mas com handle do eBay: o handle é a identidade do vendedor (lei de 25/ago) — UM clique cadastra via eBay e linka.
+        // Não entra sozinho: criar cadastro é ato de registro (63 vendedores de uma vez encheriam a lista de fornecedores sem ninguém olhar).
+        certain: !!best?.certain, suggest: best?.id || (!best && r.ebay ? '__ebay__' : undefined), signal: best ? (best.certain ? 'matched' : 'source') : r.ebay ? 'source' : undefined,
+        fix: !best && r.ebay ? { kind: 'ebay_link' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', handle: r.ebay, spelling: r.text, confirmText: `Cadastrar o vendedor «${r.ebay}» como fornecedor (via eBay) e linkar «${r.part}»? A grafia «${r.text}» vira apelido. Fica na trilha.` }
+          : { kind: 'select' as const, table: 'parts_database', rowId: r.id, field: 'supplier_id', options, current: null, spelling: r.text, ebay: r.ebay || undefined },
       })
     }
     for (const m of linker.map_bad) items.push({ href: '/parts', code: 'MAP<CUSTO', label: `${m.item}: custo ${usd(m.cost)} > MAP ${usd(m.map)}`, extra: 'preço fora da lei da casa — conferir em PARTS', amount: m.cost - m.map })
@@ -937,8 +1017,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     // As preenchidas sozinhas NÃO ficam aqui (8/set: 408 SOZINHO contavam como pendência e o número não caía) — vivem no card verde «O app preencheu sozinho», com DESFAZER.
     for (const c of linker.categories) {
       const both = c.keyword && c.ai && c.ai !== 'NOT_A_PART' && c.keyword !== c.ai
-      const code = c.tier === 'CERTAIN' ? 'CERTA' : c.tier === 'NOT_PART' ? 'NÃO É PEÇA' : c.tier === 'PENDING' ? 'IA PENDENTE' : c.current ? 'FORA VOC.' : both ? 'DISCORDAM' : 'SEM CAT.'
-      const extra = c.tier === 'CERTAIN' ? 'palavra-chave e IA concordam: ' + c.keyword + ' — entra sozinha quando o preenchimento estiver LIGADO (ou um clique aqui)' : c.tier === 'NOT_PART' ? 'a IA diz que isto não é peça nem serviço (frete, placa, texto solto) — OTHER ou apague em PARTS'
+      const code = (c as any).case ? 'CAIXA' : c.tier === 'CERTAIN' ? 'CERTA' : c.tier === 'NOT_PART' ? 'NÃO É PEÇA' : c.tier === 'PENDING' ? 'IA PENDENTE' : c.current ? 'FORA VOC.' : both ? 'DISCORDAM' : 'SEM CAT.'
+      const extra = (c as any).case ? 'mesma categoria, caixa diferente («' + c.current + '» = ' + c.suggest + ') — identidade: entra sozinha' : c.tier === 'CERTAIN' ? 'palavra-chave e IA concordam: ' + c.keyword + ' — entra sozinha quando o preenchimento estiver LIGADO (ou um clique aqui)' : c.tier === 'NOT_PART' ? 'a IA diz que isto não é peça nem serviço (frete, placa, texto solto) — OTHER ou apague em PARTS'
         : both ? 'palavra-chave: ' + c.keyword + ' · IA: ' + c.ai + ' — os dois leitores discordam, você decide'
         : c.keyword && !c.ai ? 'só a palavra-chave palpita: ' + c.keyword + (c.tier === 'PENDING' ? ' — a IA ainda não leu' : ' — a IA não soube')
         : c.ai && c.ai !== 'NOT_A_PART' ? 'só a IA palpita: ' + c.ai + ' — sem palavra-chave; confirme'
@@ -1025,6 +1105,12 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })
       for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: /folha ×/.test(String(x.label || '')) ? `as passagens da folha somam ${usd(x.row_amount)} e o banco cobrou ${usd(x.bank_amount)} (alguém editou depois do casamento) — DESFAZER em A CONFERIR e refaça CASAR COM AJUSTE` : `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila e deixe o motor recriar`, amount: Math.abs(x.bank_amount - x.row_amount) })
       for (const k of (ab.seed && ab.seed.skipped) || []) items.push({ href: '/adm/bank', code: 'PADRÃO', label: k, extra: 'regra padrão não semeada — fornecedor ambíguo ou ausente; nomeie o fornecedor certo no ⚙ do Bank Link (regra humana)' })
+      // FEED (9/set): a rodada dizia DONE com o feed mudo há 4 dias — «não deu erro» não é «trouxe o dia».
+      if (bank.healthState === 'error' || (bank.healthState === 'ok' && feedRows.length === 0)) items.push({ href: '/adm/bank', code: 'SINAL', label: 'a saúde do feed (/api/bank/health) não respondeu — o card não sabe se o feed está vivo', extra: 'toda prova «não consta no banco» fica suspensa até o sinal voltar; recarregue, e se persistir veja o Bank Link', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
+      for (const h of feedRows) if (h.item_error || h.veredito_do_dado === 'CEGO' || h.veredito_do_dado === 'SUSPEITO') items.push({
+        href: '/adm/bank', code: h.item_error || h.veredito_do_dado === 'CEGO' ? 'FEED' : 'FEED?', label: `${h.conta} · última linha ${h.ultima_transacao || '—'}${h.dias_em_silencio != null ? ' (' + h.dias_em_silencio + ' d mudo)' : ''} · ${h.item_error ? 'Plaid acusa ' + h.item_error.code : h.veredito_do_dado === 'CEGO' ? 'feed CEGO' : 'suspeito'}`,
+        extra: (h.ultima_atualizacao_plaid ? 'o Plaid falou com o banco em ' + String(h.ultima_atualizacao_plaid).slice(0, 16).replace('T', ' ') + ' · ' : '') + (h.diagnostico || ''), link: { href: BASE_PATH + '/adm/bank', label: 'SONDA no Bank Link ↗' },
+      })
       const b24 = Object.values(ab.booked_24h || {}).reduce((s, v) => s + v, 0), b7 = Object.values(ab.booked_7d || {}).reduce((s, v) => s + v, 0)
       checks.push({
         group: 'BANK', key: 'auto-book', title: 'AutoBook Engine — rodou? errou? deixou sobras?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
@@ -1164,8 +1250,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const supName = new Map<string, string>([...supMap.values()].map((x: any) => [x.id, String(x.company || '')]))
     // Só com o sinal ?matched=1 vivo (sem ele o Set é vazio e TUDO viraria pergunta); só paid_from GZ28US
     // (sem origem é o card de paid_from); 3 dias de maturidade (a linha do banco posta em 1–3 dias).
-    const cutoff3 = new Date(Date.parse(TODAY) - 3 * 864e5).toISOString().slice(0, 10)
-    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card AUTO-BOOK' }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
+    // Até onde o feed enxerga (feedUntil), menos 3 dias de postagem; feed cego = este card não julga ausência.
+    const cutoff3 = feedBlind ? '0000-00-00' : new Date(Date.parse(feedUntil) - 3 * 864e5).toISOString().slice(0, 10)
+    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card AUTO-BOOK' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AutoBook', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
       .sort((a: any, b: any) => String(b.payment_date).localeCompare(String(a.payment_date)))
       .map((e: any) => {
         // PROVA (DC 1.44.0): UMA linha NEW da Regions com o valor exato, o nome do prestador e ±10 d — o casamento faltou, não o pagador.
@@ -1212,6 +1299,9 @@ const AB_FAMILIES: { codes: string[]; title: string; what: string; action: strin
   { codes: ['PONTEIRO MORTO'], title: 'A linha do banco aponta pra um registro apagado', what: 'alguém apagou no editor o lançamento que o motor tinha criado', action: 'DESFAZER devolve a linha ao banco; o motor recria', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
   { codes: ['VALOR MUDOU'], title: 'O Plaid corrigiu o valor depois do lançamento', what: 'o valor da linha do banco mudou e o lançamento ficou com o valor antigo', action: 'DESFAZER na fila A ATRIBUIR e deixe o motor recriar', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
   { codes: ['ELO SOLTO'], title: 'Passagem da folha com elo solto', what: 'a passagem diz que foi casada com uma linha do banco, mas a linha não a aponta mais (DESFAZER, reset ou linha trocada)', action: 'SOLTAR limpa o elo (nada é apagado) — a passagem volta a poder casar', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
+  { codes: ['FEED'], title: 'O feed do banco emudeceu', what: 'nenhuma linha nova da Regions há dias — a rodada diz DONE porque «não deu erro», que não é «trouxe o dia»; até voltar, toda prova «não consta no banco» fica suspensa', action: 'abra o Bank Link: o aviso vermelho tem a SONDA (pergunta ao Plaid sem gravar nada); Plaid acusando erro = reconectar, e isso é do dono da conta', tone: 'border-red-800 bg-red-950/40 text-red-300' },
+  { codes: ['SINAL'], title: 'O sinal de saúde do feed não veio', what: 'a conexão com o Plaid não respondeu (ou a rota falhou) — sem ela o card não sabe se o feed está vivo', action: 'recarregue; se persistir, abra o Bank Link', tone: 'border-red-800 bg-red-950/40 text-red-300' },
+  { codes: ['FEED?'], title: 'O feed do banco está quieto', what: 'alguns dias sem linha nova — fim de semana prolongado e feriado cabem aqui; olhar de novo amanhã', action: 'nada por enquanto; se passar de uma semana vira FEED CEGO', tone: 'border-amber-800 bg-amber-950/40 text-amber-300' },
   { codes: ['PADRÃO'], title: 'Regra padrão esperando um prestador', what: 'a regra conhece o comerciante mas não achou o cadastro do prestador pra apontar', action: 'crie o prestador em Custos Fixos (ou nomeie no ⚙ do Bank Link) — a regra nasce na próxima rodada', tone: 'border-purple-800 bg-purple-950/40 text-purple-300' },
 ]
 // «def:saas:microsoft: 0 fornecedores batem» → «Microsoft · assinatura (APP) — nenhum prestador com esse nome»
@@ -1236,14 +1326,15 @@ function AutoBookBoard({ ab, check, saving, done, onFix }: { ab: AutoBookSignal;
   const errs7 = ab.runs_7d ? ab.runs_7d.errors : runs7.filter(r => ['ERROR', 'ABORTED'].includes(r.status) || (Array.isArray(r.errors) && r.errors.length)).length
   const total = (m: Record<string, number> | undefined) => Object.values(m || {}).reduce((s, v) => s + v, 0)
   const say = (m: Record<string, number> | undefined) => Object.entries(m || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => v + ' ' + (AB_ENGINE[k] || k.toLowerCase())).join(' · ')
-  const healthy = !stale && !bad && errs7 === 0 && (ab.errors || []).length === 0
+  const feedMute = check.items.some(it => it.code === 'FEED' || it.code === 'SINAL')
+  const healthy = !stale && !bad && errs7 === 0 && (ab.errors || []).length === 0 && !feedMute
   const fams = AB_FAMILIES.map(f => ({ ...f, items: check.items.filter(it => f.codes.includes(it.code)) })).filter(f => f.items.length)
   const leftover = fams.reduce((s, f) => s + f.items.length, 0)
   const b24 = total(ab.booked_24h), b7 = total(ab.booked_7d)
   return (
     <div className="space-y-3">
       <div className={'rounded-2xl border px-4 py-3 ' + (healthy ? 'border-emerald-800 bg-emerald-950/30' : 'border-red-800 bg-red-950/30')}>
-        <p className="font-bold">{healthy ? '● Motor vivo' : stale ? '● Motor parado' : '● Motor com erro'}<span className="text-xs text-gray-400 font-normal ml-3">{last ? 'última rodada ' + stamp(last.started_at) + ' (' + last.trigger + ', ' + last.status + ')' : 'nenhuma rodada registrada'} · {runs7n} rodada(s) em 7 dias{errs7 ? ', ' + errs7 + ' com erro' : ', nenhuma com erro'}{ab.remaining ? ' · ' + ab.remaining + ' linha(s) ainda sem decisão' : ''}</span></p>
+        <p className="font-bold">{healthy ? '● Motor vivo' : feedMute && !stale && !bad ? (check.items.some(it => it.code === 'FEED') ? '● Feed do banco mudo' : '● Feed sem sinal') : stale ? '● Motor parado' : '● Motor com erro'}<span className="text-xs text-gray-400 font-normal ml-3">{last ? 'última rodada ' + stamp(last.started_at) + ' (' + last.trigger + ', ' + last.status + ')' : 'nenhuma rodada registrada'} · {runs7n} rodada(s) em 7 dias{errs7 ? ', ' + errs7 + ' com erro' : ', nenhuma com erro'}{ab.remaining ? ' · ' + ab.remaining + ' linha(s) ainda sem decisão' : ''}</span></p>
         <p className="text-xs text-gray-300 mt-1">Registrou sozinho: <b>{b24}</b> linha(s) nas últimas 24 h{b24 ? ' (' + say(ab.booked_24h) + ')' : ''} · <b>{b7}</b> em 7 dias{b7 ? ' (' + say(ab.booked_7d) + ')' : ''}{ab.bucket ? ' · balde: ' + ab.bucket.total + ' compra(s) a atribuir, ' + usd(ab.bucket.balance) + (ab.bucket.older_7d ? ', ' + ab.bucket.older_7d + ' com 7+ dias' : '') : ''}</p>
       </div>
       {leftover === 0 ? (
@@ -1446,7 +1537,7 @@ export default function DataCheckPage() {
   const [reloadN, setReloadN] = useState(0)
   const [bankCount, setBankCount] = useState(0)   // linhas NEW do banco (card próprio)
   const [bankAConferir, setBankAConferir] = useState(0)   // casamentos do motor aguardando OK
-  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), groups: new Map(), outflows: new Map(), lines: [], opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
+  const [bank, setBank] = useState<BankSignal>({ matched: new Set(), matchedName: new Map(), groups: new Map(), outflows: new Map(), lines: [], opened: REGIONS_OPENED, cash: null, cashState: 'loading' })   // sinal da Regions
   const [tax, setTax] = useState<TaxSignal>({ state: 'loading', needsMigration: false, years: [] })   // sinal do 1099 (TAX HUB)
   const [duty, setDuty] = useState<DutySignal>({ state: 'loading', maxHours: 10, incidents: [], history: { absurd: [], comps: [] } })   // sinal do STAFF DUTY WATCH
   const [linker, setLinker] = useState<LinkerSignal>({ state: 'loading', needsMigration: false, needsSupplierMigration: false, totals: null, inventory: [], streams: [], no_pn: [], dup_pn: [], suppliers_unlinked: [], suppliers_all: [], map_bad: [], no_source: [], kit_mismatch: [], ebay_pn: [], categories: [], category_vocab: [] })   // identidade de peças
@@ -1504,7 +1595,9 @@ export default function DataCheckPage() {
           // total do pedido ainda bate com o que o banco cobrou (revisão #1).
           const groups = new Map<string, number>()
           for (const m of j.matched as { table: string; id: string; amount: number }[]) if (m.table === 'purchase_group') groups.set(m.id, Number(m.amount) || 0)
-          setBank(prev => ({ ...prev, matched: new Set((j.matched as { table: string; id: string }[]).map(m => m.table + ':' + m.id)), groups, outflows, lines, opened: j.account_opened || REGIONS_OPENED }))
+          // Quem é o comerciante da linha casada: prova pro «sem fornecedor» (o banco é a testemunha).
+          const matchedName = new Map<string, string>((j.matched as { table: string; id: string; n?: string }[]).filter(m => m.n).map(m => [m.table + ':' + m.id, String(m.n)]))
+          setBank(prev => ({ ...prev, matched: new Set((j.matched as { table: string; id: string }[]).map(m => m.table + ':' + m.id)), matchedName, groups, outflows, lines, opened: j.account_opened || REGIONS_OPENED }))
         }
         // AUTO-BOOK (BL 0.8.0): rodadas, erros, órfãos e duplas do motor automático.
         try {
@@ -1512,6 +1605,13 @@ export default function DataCheckPage() {
           const ja = await ra.json().catch(() => ({}))
           if (ra.ok && ja.ok) setBank(prev => ({ ...prev, autobook: ja as AutoBookSignal }))
         } catch { /* sinal ausente = card não aparece */ }
+        // SAÚDE DO FEED (/api/bank/health, Márcio 8/set): o card «Motor vivo» só olhava as rodadas — feed cego com rodada DONE pintava verde.
+        try {
+          const rh = await fetch(`${BASE_PATH}/api/bank/health`, { headers: await sessionHeaders() })
+          const jh = await rh.json().catch(() => ({}))
+          if (rh.ok && Array.isArray(jh.contas)) setBank(prev => ({ ...prev, health: jh.contas as HealthRow[], healthState: 'ok' }))
+          else setBank(prev => ({ ...prev, healthState: 'error' }))
+        } catch { setBank(prev => ({ ...prev, healthState: 'error' })) }   // sem saúde = feed CEGO pras provas por ausência, e o card diz
         // Saldo REAL do banco × linhas do feed — o "caixa não bate" (João, 22/ago).
         // Estado explícito: sem resposta = verificação NÃO rodou (revisão #16).
         const rb = await fetch(`${BASE_PATH}/api/plaid/balance`, { headers: await sessionHeaders() })
@@ -1521,7 +1621,7 @@ export default function DataCheckPage() {
         // 1099 (TAX HUB): beneficiários $600+/ano sem classificação ou serviço sem W-9.
         const rt = await fetch(`${BASE_PATH}/api/tax/1099`, { headers: await sessionHeaders() })
         const jt = await rt.json().catch(() => ({}))
-        if (rt.ok && Array.isArray(jt.years)) setTax({ state: 'ok', needsMigration: !!jt.needs_migration, years: jt.years })
+        if (rt.ok && Array.isArray(jt.years)) setTax({ state: 'ok', needsMigration: !!jt.needs_migration, needsAliasMigration: !!jt.needs_alias_migration, years: jt.years })
         else setTax(prev => ({ ...prev, state: 'error' }))
         // DUTY WATCH: timer esquecido / duties simultâneas / virada de noite (Márcio: 10h).
         const rd = await fetch(`${BASE_PATH}/api/staff-duties`, { headers: await sessionHeaders() })
@@ -1556,8 +1656,14 @@ export default function DataCheckPage() {
 
   const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
-  const totalIssues = checks.reduce((s, c) => s + (c.good ? 0 : c.items.length), 0) + bankCount
-  const groupCount = (g: string) => (g === 'BANK' ? bankCount : 0) + checks.filter(c => c.group === g && !c.good).reduce((s, c) => s + c.items.length, 0)
+  // O chip BANK conta o que PERGUNTA a gente: linhas com dúvida menos as que só esperam maturidade (o motor cuida).
+  const q0 = bank.autobook && !bank.autobook.needs_migration ? bank.autobook.questions : null
+  const bankMaturity = q0 ? Number(q0.maturity || 0) : 0
+  const bankAsk = q0 ? Math.max(0, Number(q0.lines || 0) - bankMaturity) : bankCount
+  // FEED? (feed quieto há 3–6 dias, normal em feriado) é informação no painel, não pendência.
+  const pend = (c: Check) => c.good ? 0 : c.items.filter(i => i.code !== 'FEED?').length
+  const totalIssues = checks.reduce((s, c) => s + pend(c), 0) + bankAsk
+  const groupCount = (g: string) => (g === 'BANK' ? bankAsk : 0) + checks.filter(c => c.group === g).reduce((s, c) => s + pend(c), 0)
 
   // Trilha agrupada por dia — a "sessão" do double-check.
   const history = useMemo(() => {
@@ -1639,6 +1745,12 @@ export default function DataCheckPage() {
             const { error } = await supabase.from(fix.table).delete().eq('id', fix.rowId)
             if (error) { await supabase.from('data_fixes').delete().eq('id', tr[0].id); continue }
             n++
+          } else if (fix.kind === 'ebay_link') {
+            // A rota cadastra (ou reusa por identidade dura), ensina a grafia como apelido e linka — a trilha AUTO é dela.
+            const r = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'create_supplier', name: fix.handle, via: 'eBay', spelling: fix.spelling, link_part_id: fix.rowId, auto: true }) })
+            if (!r.ok) continue
+            setDone(prev => new Set(prev).add(fix.rowId + '|' + fixField(fix)))
+            n++
           } else if (fix.kind === 'adopt' || fix.kind === 'match') {
             // Direto pela rota (sem alert na carga); a trilha AUTO aponta pra linha do banco (DESFAZER em A CONFERIR).
             const body = fix.kind === 'match' ? { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' } : { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' }
@@ -1672,6 +1784,16 @@ export default function DataCheckPage() {
     }
     // Detox dos insumos (João, 26/ago): reclassifica a categoria, ou 📦 MOVE a
     // linha pro estoque de verdade (cria em inventory, apaga o input, trilha).
+    if (fix.kind === 'ebay_link') {
+      setSaving(true)
+      try {
+        const r = await fetch(`${BASE_PATH}/api/parts/link`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'create_supplier', name: fix.handle, via: 'eBay', spelling: fix.spelling, link_part_id: fix.rowId }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
+        setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field)); setFixing(null); setFixValue('')
+      } finally { setSaving(false) }
+      return
+    }
     if (check.key === 'inputs-category' && fix.kind === 'select') {
       setSaving(true)
       try {
@@ -1899,8 +2021,10 @@ export default function DataCheckPage() {
     const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
     if (!items.length) return
     // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
-    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category' || check.key === 'inputs-category') {
-      const msg = check.key === 'inputs-category'
+    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category' || check.key === 'inputs-category' || check.key === 'inv-no-supplier') {
+      const msg = check.key === 'inv-no-supplier'
+        ? `Preencher ${items.length} fornecedor(es)? Prova por linha: a irmã do mesmo pedido ou o comerciante da linha do banco resolvido no cadastro. Cada linha recebe o SEU fornecedor. Tudo na trilha.`
+        : check.key === 'inputs-category'
         ? `Preencher ${items.length} categoria(s) de insumo? Prova por linha: identidade da loja (mercado → TEAM, pet → CATS) ou loja e texto concordando. Cada linha recebe a SUA categoria. Tudo na trilha.`
         : check.key === 'parts-category'
         ? `Preencher ${items.length} categoria(s) em que palavra-chave e IA concordam? Cada peça recebe a SUA categoria; tudo na trilha, com DESFAZER por 7 dias no card.`
@@ -1920,7 +2044,7 @@ export default function DataCheckPage() {
         const qc = supabase.from(fix.table).update({ [field]: it.suggest }).eq('id', fix.rowId)
         const { error: err } = await (cur != null ? qc.eq(field, cur) : qc.is(field, null))
         if (err) continue
-        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: cur, new_value: it.suggest, label: (check.key === 'parts-category' ? `AUTO · palavra-chave + IA concordam (PREENCHER CERTOS) · ${it.label}` : `LINK CERTO · ${it.code} · ${it.label}`).slice(0, 200) }).then(() => undefined, () => undefined)
+        await supabase.from('data_fixes').insert({ check_key: check.key, table_name: fix.table, row_id: fix.rowId, field, old_value: cur, new_value: it.suggest, label: (check.key === 'parts-category' ? (it.code === 'CAIXA' ? `AUTO · identidade dura (mesma categoria, caixa diferente) · ${it.label}` : `AUTO · palavra-chave + IA concordam (PREENCHER CERTOS) · ${it.label}`) : `LINK CERTO · ${it.code} · ${it.label}`).slice(0, 200) }).then(() => undefined, () => undefined)
         setDone(prev => new Set(prev).add(fix.rowId + '|' + field)); n++
       }
       setBulk(''); setSaving(false)
@@ -2020,7 +2144,7 @@ export default function DataCheckPage() {
           <section key={g}>
             <div className="flex items-baseline gap-3 mb-2">
               <h2 className="text-lg font-bold tracking-widest text-gray-300">{g}</h2>
-              <span className={`text-xs font-bold ${groupCount(g) === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>{groupCount(g) === 0 ? '✓ limpo' : groupCount(g).toLocaleString('en-US') + ' pendências'}</span>
+              <span className={`text-xs font-bold ${groupCount(g) === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>{groupCount(g) === 0 ? '✓ limpo' : groupCount(g).toLocaleString('en-US') + ' pendências' + (g === 'BANK' && bankMaturity > 0 ? ' · ' + bankMaturity + ' em maturidade (o motor cuida)' : '')}</span>
             </div>
             <div className="space-y-4">
               {/* Conciliação bancária mora na categoria BANK — lê/escreve por /api/bank/reconcile. */}
@@ -2094,7 +2218,7 @@ export default function DataCheckPage() {
                         ) : it.fix.kind === 'trim' ? <p className="text-sm text-gray-500">este tipo (APARAR) tem controle próprio — use a lista completa</p>
                         : (
                           <div>
-                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink' || it.fix.kind === 'undo_category' || it.fix.kind === 'enable_autofill' || it.fix.kind === 'undo_auto' || it.fix.kind === 'dismiss' || it.fix.kind === 'match') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
+                            {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink' || it.fix.kind === 'undo_category' || it.fix.kind === 'ebay_link' || it.fix.kind === 'enable_autofill' || it.fix.kind === 'undo_auto' || it.fix.kind === 'dismiss' || it.fix.kind === 'match') && <p className="text-sm text-gray-300 mb-2">{it.fix.confirmText}</p>}
                             <button disabled={saving} onClick={() => apply('')} className={`${it.fix.kind === 'trash' || it.fix.kind === 'purge' ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-600'} disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm`}>{it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : it.fix.kind === 'undo_category' ? 'DESFAZER' : it.fix.kind === 'enable_autofill' ? 'LIGAR' : it.fix.kind === 'undo_auto' ? 'DESFAZER' : it.fix.kind === 'dismiss' ? 'VISTO' : it.fix.kind === 'match' ? 'CASAR' : 'CONFIRMAR'}</button>
                           </div>
                         )}
@@ -2173,7 +2297,7 @@ export default function DataCheckPage() {
                             {it.fix && (
                               <button onClick={() => { setFixing(fixing === fixKey ? null : fixKey); setFixValue(fixing === fixKey ? '' : (it.suggest || '')) }}
                                 className={`px-3 py-1 rounded-xl text-xs font-bold shrink-0 ${fixing === fixKey ? 'bg-white text-black' : 'bg-blue-700 hover:bg-blue-600'}`}>
-                                {it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : it.fix.kind === 'undo_category' ? 'DESFAZER' : it.fix.kind === 'enable_autofill' ? 'LIGAR' : it.fix.kind === 'undo_auto' ? 'DESFAZER' : it.fix.kind === 'dismiss' ? 'VISTO' : it.fix.kind === 'match' ? 'CASAR' : 'FIX'}
+                                {it.fix.kind === 'ebay_link' ? 'VENDEDOR = HANDLE' : it.fix.kind === 'received' ? 'BAIXA' : it.fix.kind === 'flag' ? 'MARCAR' : it.fix.kind === 'trim' ? 'APARAR' : it.fix.kind === 'trash' ? 'APAGAR' : it.fix.kind === 'purge' ? 'PURGAR' : it.fix.kind === 'rematch' ? 'TROCAR' : it.fix.kind === 'unmatch' ? 'DESFAZER' : it.fix.kind === 'adopt' ? 'ADOTAR' : it.fix.kind === 'unlink' ? 'SOLTAR' : it.fix.kind === 'undo_category' ? 'DESFAZER' : it.fix.kind === 'enable_autofill' ? 'LIGAR' : it.fix.kind === 'undo_auto' ? 'DESFAZER' : it.fix.kind === 'dismiss' ? 'VISTO' : it.fix.kind === 'match' ? 'CASAR' : 'FIX'}
                               </button>
                             )}
                           </div>
@@ -2213,14 +2337,14 @@ export default function DataCheckPage() {
                                   <p className="mt-1 text-xs text-sky-300">Sugestão pré-carregada: início + limite. O aparo desconta só o excesso que o segmento bancou; tudo vai pra trilha e a história ganha um evento TRIMMED.</p>
                                 </div>
                               )}
-                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink' || it.fix.kind === 'undo_category' || it.fix.kind === 'enable_autofill' || it.fix.kind === 'undo_auto' || it.fix.kind === 'dismiss' || it.fix.kind === 'match') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
+                              {(it.fix.kind === 'flag' || it.fix.kind === 'trash' || it.fix.kind === 'purge' || it.fix.kind === 'rematch' || it.fix.kind === 'unmatch' || it.fix.kind === 'adopt' || it.fix.kind === 'unlink' || it.fix.kind === 'undo_category' || it.fix.kind === 'ebay_link' || it.fix.kind === 'enable_autofill' || it.fix.kind === 'undo_auto' || it.fix.kind === 'dismiss' || it.fix.kind === 'match') && <p className="text-sm text-gray-300">{it.fix.confirmText}</p>}
                               {it.fix.kind === 'received' && <p className="text-sm text-gray-300">Confirma que este pagamento FOI RECEBIDO? A baixa entra com data de hoje e o valor vira caixa no DFC.</p>}
                               <div className="flex gap-3 items-center">
                                 <button onClick={() => { setFixing(null); setFixValue('') }} className="text-gray-400 font-bold px-2 text-sm">Cancel</button>
                                 <button disabled={saving || (it.fix.kind !== 'received' && it.fix.kind !== 'flag' && it.fix.kind !== 'purge' && it.fix.kind !== 'rematch' && it.fix.kind !== 'unmatch' && it.fix.kind !== 'adopt' && it.fix.kind !== 'unlink' && it.fix.kind !== 'undo_category' && it.fix.kind !== 'enable_autofill' && it.fix.kind !== 'undo_auto' && it.fix.kind !== 'dismiss' && it.fix.kind !== 'match' && !fixValue)}
                                   onClick={() => applyFix(c, it, fixValue)}
                                   className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                                  {saving ? 'SAVING…' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : it.fix.kind === 'unlink' ? 'SOLTAR AGORA' : it.fix.kind === 'undo_category' ? 'DESFAZER AGORA' : it.fix.kind === 'enable_autofill' ? 'LIGAR AGORA' : it.fix.kind === 'undo_auto' ? 'DESFAZER AGORA' : it.fix.kind === 'dismiss' ? 'VISTO, ESTÁ CERTO' : it.fix.kind === 'match' ? 'CASAR AGORA' : 'SALVAR'}
+                                  {saving ? 'SAVING…' : it.fix.kind === 'ebay_link' ? 'CADASTRAR E LINKAR' : it.fix.kind === 'received' ? 'CONFIRMAR BAIXA' : it.fix.kind === 'flag' ? 'CONFIRMAR' : it.fix.kind === 'trim' ? 'APARAR SEGMENTO' : it.fix.kind === 'trash' ? 'APAGAR AGORA' : it.fix.kind === 'purge' ? 'PURGAR AGORA' : it.fix.kind === 'rematch' ? 'TROCAR AGORA' : it.fix.kind === 'unmatch' ? 'DESFAZER AGORA' : it.fix.kind === 'adopt' ? 'ADOTAR AGORA' : it.fix.kind === 'unlink' ? 'SOLTAR AGORA' : it.fix.kind === 'undo_category' ? 'DESFAZER AGORA' : it.fix.kind === 'enable_autofill' ? 'LIGAR AGORA' : it.fix.kind === 'undo_auto' ? 'DESFAZER AGORA' : it.fix.kind === 'dismiss' ? 'VISTO, ESTÁ CERTO' : it.fix.kind === 'match' ? 'CASAR AGORA' : 'SALVAR'}
                                 </button>
                               </div>
                             </div>

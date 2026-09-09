@@ -73,11 +73,11 @@ export async function GET(req: NextRequest) {
       // Todo par MATCHED é prova (BL 0.10.0, lei do silêncio): o motor casou e a
       // correção é DESFAZER, não «conferir». reviewed_at ficou só como «visto». O
       // valor do banco acompanha pra conferir grupos (total mudou = não é mais certo).
-      const acc: { table: string; id: string; amount: number }[] = []
+      const acc: { table: string; id: string; amount: number; n: string }[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id, amount, match_engine, reviewed_at').eq('match_status', 'MATCHED').not('matched_id', 'is', null).order('id').range(from, from + 999)
+        const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id, amount, match_engine, reviewed_at, name, merchant').eq('match_status', 'MATCHED').not('matched_id', 'is', null).order('id').range(from, from + 999)
         if (error) throw new Error(error.message)
-        for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id, amount: Math.abs(num(r.amount)) })
+        for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id, amount: Math.abs(num(r.amount)), n: String(r.merchant || r.name || '').slice(0, 60) })   // n: o comerciante — prova pro «sem fornecedor»
         if (!data || data.length < 1000) break
       }
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
@@ -1176,6 +1176,8 @@ export async function POST(req: NextRequest) {
       if (!cand || Math.abs(cand.amount - Math.abs(num(cur.amount))) >= 0.011) throw new Error('candidato não vale mais (já casado, valor mudou ou direção errada) — recarregue')
       // Data Checker autossuficiente: casamento por PROVA (valor exato + nome + linha única) vem com engine NAME — cai em A CONFERIR com DESFAZER, nota «AUTO ·».
       const autoMatch = body.engine === 'AUTO'
+      // A máquina respeita o NÃO: par recusado (doubt_answered — inclusive o DESFAZER de um AUTO anterior) não casa sozinho.
+      if (autoMatch) { const { data: daRow } = await db.from('bank_transactions').select('doubt_answered').eq('id', cur.id).maybeSingle(); if (rejectedOf(daRow || {}).has(cand.table + ':' + cand.id)) throw new Error('par recusado antes (NÃO É ESSE / DESFAZER) — não casa sozinho') }
       const { backfill } = await writeMatch(db, cur, cand, { matched_note: (autoMatch ? 'AUTO · Data Checker · ' : '') + (String(body.note || '') || (autoMatch ? 'valor exato + nome + linha única' : '')) || null, match_engine: autoMatch ? 'NAME' : null, match_batch: null, match_rule: null, reviewed_at: null })
       for (const b of backfill) changed.push(`${b.t}.${b.f}=${b.v.slice(0, 10)}`)
       if (!autoMatch) learned = await learnFromMatch(db, cur, cand)   // máquina não ensina regra: aprender é decisão de gente

@@ -1128,7 +1128,9 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     }
     for (const tg of targets) {
       const { data: fx } = await db.from('data_fixes').select('id').eq('check_key', 'paid-from').eq('table_name', tg.t).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'CERTO (Regions)%').limit(1)
-      if (fx && fx.length) {
+      // O preenchimento automático (AUTO · linhas já casadas…) é a mesma prova do casamento: também volta.
+      const { data: fx2 } = fx && fx.length ? { data: fx } : await db.from('data_fixes').select('id').eq('check_key', 'paid-from').eq('table_name', tg.t).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'AUTO ·%').limit(1)
+      if (fx2 && fx2.length) {
         const { data: r } = await db.from(tg.t).update({ paid_from: null }).eq('id', tg.id).eq('paid_from', 'GZ28US').select('id')
         if (r && r.length) changed.push(tg.t + '.paid_from→null (era prova do casamento)')
       }
@@ -1140,7 +1142,17 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     const { data: r } = await db.from('bank_merchant_rules').update({ active: false, paused_reason: 'pausada por DESFAZER em ' + todayNY() }).eq('id', line.match_rule).eq('origin', 'LEARNED').select('id')
     if (r && r.length) changed.push('regra aprendida pausada')
   }
-  const update = { match_status: 'NEW', matched_table: null, matched_id: null, matched_note: null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }
+  // DESFAZER de um casamento que a máquina fez (nota «AUTO ·», sem revisão) é a pessoa dizendo NÃO É ESSE:
+  // o par recusado entra em doubt_answered e nem o motor nem o Data Checker o refazem (BL 1.3.0, revisão).
+  const update: any = { match_status: 'NEW', matched_table: null, matched_id: null, matched_note: null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }
+  if (line.matched_table && line.matched_id && !line.reviewed_at && /^AUTO ·/.test(String(line.matched_note || ''))) {
+    // Lê o doubt_answered ATUAL do banco (a linha recebida pode vir sem a coluna): nunca apagar os NÃO anteriores.
+    const { data: cur0 } = await db.from('bank_transactions').select('doubt_answered').eq('id', line.id).maybeSingle()
+    const src = (cur0 && cur0.doubt_answered && typeof cur0.doubt_answered === 'object') ? cur0.doubt_answered : ((line.doubt_answered && typeof line.doubt_answered === 'object') ? line.doubt_answered : {})
+    const da = src
+    const cands = [...new Set([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : []), String(line.matched_table) + ':' + String(line.matched_id)].map(String))]
+    update.doubt_answered = { cands, at: new Date().toISOString() }
+  }
   const { data, error } = await db.from('bank_transactions').update(update).eq('id', line.id).eq('match_status', line.match_status).select('id')
   if (error) throw new Error(error.message)
   if (!data || !data.length) throw new Error('linha mudou enquanto desfazia — recarregue')

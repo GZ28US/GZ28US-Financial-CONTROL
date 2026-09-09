@@ -69,7 +69,20 @@ export async function enableAutoFill(db: any): Promise<void> {
 export async function classifyParts(db: any, parts: any[], opts: { max?: number; dry?: boolean; force?: boolean; fill?: boolean; knownMax?: number } = {}): Promise<{ read: number; filled: number; asked: number; not_part: number; no_ai: number; errors: string[] }> {
   const res = { read: 0, filled: 0, asked: 0, not_part: 0, no_ai: 0, errors: [] as string[] }
   const fill = opts.fill !== false
-  const empty = parts.filter(p => !p.category || !VOCAB.has(p.category))
+  // Caixa diferente da mesma categoria («Electronics» = ELECTRONICS) é identidade dura: entra sozinha, sem perguntar.
+  // A memória: linha que gente DESFEZ (DISMISSED=DESFEITO) nunca é refeita — nem aqui, nem na categoria certa.
+  const { data: memRows } = fill && !opts.dry ? await db.from('data_fixes').select('row_id').eq('check_key', 'parts-category').eq('field', 'DISMISSED') : { data: [] as any[] }
+  const memo = new Set((memRows || []).map((r: any) => String(r.row_id)))
+  for (const p of parts) {
+    const up = String(p.category || '').toUpperCase()
+    if (!p.category || VOCAB.has(p.category) || !VOCAB.has(up) || opts.dry || !fill || memo.has(String(p.id))) continue
+    const { data: ok } = await db.from('parts_database').update({ category: up }).eq('id', p.id).eq('category', p.category).select('id')
+    if (!ok || !ok.length) continue
+    await db.from('data_fixes').insert({ check_key: 'parts-category', table_name: 'parts_database', row_id: p.id, field: 'category', old_value: p.category, new_value: up, label: ('AUTO · identidade dura (mesma categoria, caixa diferente) · ' + partText(p)).slice(0, 200) }).then(() => undefined, () => undefined)
+    p.category = up; res.filled++
+  }
+  // Frete, imposto e manuseio (is_extra) são encargo da compra, não peça: nunca entram na pergunta.
+  const empty = parts.filter(p => !p.is_extra && (!p.category || !VOCAB.has(p.category)))
   const todo = empty.filter(p => opts.force || !p.category_ai).slice(0, opts.max ?? 80)
   // Já lidas pela IA (veredito guardado): só a régua e o preenchimento, sem reler.
   // Lote das já lidas limitado (8/set: 407 de uma vez levaram 87 s — a rota tem 60 s); o que sobrar entra na próxima abertura.
@@ -87,6 +100,7 @@ export async function classifyParts(db: any, parts: any[], opts: { max?: number;
     if (t.tier === 'NOT_PART') { res.not_part++; continue }
     if (t.tier !== 'CERTAIN') { res.asked++; continue }
     if (opts.dry || !fill) { res.filled++; continue }   // desligado: conta como «certa, pronta» sem gravar
+    if (memo.has(String(p.id))) { res.asked++; continue }   // desfeita por gente: a máquina não refaz
     // Escrita guardada pelo valor atual (vazio ou fora do vocabulário): 0 linhas = alguém mexeu.
     let q = db.from('parts_database').update({ category: t.certain }).eq('id', p.id)
     q = p.category ? q.eq('category', p.category) : q.is('category', null)
