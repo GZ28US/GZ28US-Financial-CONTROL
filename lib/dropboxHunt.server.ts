@@ -60,6 +60,50 @@ async function token(): Promise<string> {
   return j.access_token
 }
 
+// ── PALAVRAS DE UM TERMO, PARA CONFERIR O QUE VOLTOU ───────────────────────
+// Só palavra de 3+ letras conta. Termo que não tem nenhuma ("3% a 16", "7%)",
+// apelidos que alguém usou como bloco de notas no cadastro) não confirma nada —
+// e por isso também não vale como busca.
+const semAcento = (t: string) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+export function palavrasDoTermo(termo: string): string[] {
+  return semAcento(termo).split(/[^a-z0-9]+/).filter((p) => p.length >= 3)
+}
+
+// O NOME QUE VOLTOU CONFIRMA O TERMO QUE FOI PROCURADO?
+//
+// ── POR QUE ISSO PRECISA EXISTIR (medido em produção, 09/set/2026) ─────────
+// Pela porta de leitura (`/api/auto-book?pasta=eBay`): a consulta `eBay` devolveu
+// 139 arquivos e só 44 tinham "ebay" no nome. Vieram junto AutoZone, HHP, FedEx,
+// T1 Race, BuildSheet e até extrato do Regions.
+//
+// Não é busca de conteúdo — `Subtotal` devolve ZERO, o `filename_only` está
+// valendo. Não é termo genérico — `termosDeBusca("eBay")` é exatamente ["eBay"].
+// É o motor do Dropbox afrouxando o casamento em algumas consultas (`Payment`:
+// 29 achados, 15 com a palavra). Não dá para consertar do lado de lá.
+//
+// E o estrago é caro, porque esse lixo entra pelo andar de cima: arquivo salvo
+// hoje vira RECENTE, e RECENTE vira SUGESTÃO DE DESTINO de dinheiro. Na rodada
+// das 13h00 de 09/set o PDF da AutoZone que tinha acabado de ser arquivado foi
+// oferecido como destino de um e-mail do eBay. Recência PROMOVE, nunca ELEGE —
+// mas isso só vale se o casamento com o fornecedor for de verdade.
+//
+// Então não se confia no ranking de quem procurou: confere-se o nome que voltou.
+// TODA palavra do termo tem de estar ali. Cada termo é buscado sozinho e os
+// achados se somam, então exigir o termo inteiro não perde nada — "HHP 384734.pdf"
+// entra pelo termo "HHP", não pelo "High Horse Performance".
+//
+// Medido contra os achados reais de produção: eBay 139 → 44 (e os destinos
+// RECENTE caem de 7 para 1, o único que é mesmo do eBay); Kong 116 → 102, que
+// são os arquivos que a alias-lixo "3% a 16" tinha deixado entrar. HHP 139→139,
+// AutoZone 30→30, Summit 7→7, Titan 19→19, BONOSS 4→4, T1 Race 13→13: zero
+// perda em todos os outros.
+export function nomeConfirma(nome: string, termo: string): boolean {
+  const palavras = palavrasDoTermo(termo)
+  if (!palavras.length) return false
+  const alvo = semAcento(nome)
+  return palavras.every((p) => alvo.includes(p))
+}
+
 // Busca por NOME DE ARQUIVO. `filename` (e não o modo que lê o conteúdo) porque
 // o que importa aqui é o que a pessoa escreveu no nome e em que pasta salvou —
 // e porque busca de conteúdo é lenta e paga por indexação.
@@ -74,8 +118,12 @@ async function busca(tk: string, root: string, query: string): Promise<Array<Rec
   })
   if (!res.ok) throw new Error(`Dropbox search ${res.status}: ${(await res.text()).slice(0, 200)}`)
   const j = await res.json()
-  return (j.matches || []).map((m: Record<string, unknown>) =>
-    ((m.metadata as Record<string, unknown>)?.metadata || {}) as Record<string, unknown>)
+  return (j.matches || [])
+    .map((m: Record<string, unknown>) =>
+      ((m.metadata as Record<string, unknown>)?.metadata || {}) as Record<string, unknown>)
+    // O nome que voltou tem de conter o termo procurado — ver nomeConfirma.
+    .filter((md: Record<string, unknown>) =>
+      nomeConfirma(String(md.name || String(md.path_display || md.path_lower || '').split('/').pop() || ''), query))
 }
 
 // ── DE ONDE O ARQUIVO ESTÁ SE LÊ DE QUEM ELE É ─────────────────────────────
@@ -164,6 +212,7 @@ export async function termosDeBusca(vendor: string): Promise<string[]> {
         //
         // Frase inteira o Dropbox aceita e é específica. Palavra solta só entra
         // com 6+ caracteres: abaixo disso não distingue nada.
+        if (!palavrasDoTermo(limpo).length) continue   // "3% a 16", "7%)" — bloco de notas, não apelido
         if (limpo.includes(' ') || limpo.length >= 6) termos.add(limpo)
       }
     }

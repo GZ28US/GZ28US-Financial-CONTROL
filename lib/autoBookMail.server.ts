@@ -52,7 +52,21 @@ import { cacaNaPasta, respostaUnica, type PastaHit } from './dropboxHunt.server'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
 export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
-export type AbCand = { table: string; ref: string; label: string; n: number; last: string }
+// `n` é UM CONTADOR: quantas compras anteriores deste fornecedor foram parar
+// neste destino. `via` diz de onde o candidato veio, porque as duas origens
+// medem coisas diferentes e não se comparam:
+//   HISTORICO — estatística. `n` é o número de verdade.
+//   PASTA     — o papel desta compra guardado por gente. Não conta nada, e por
+//               isso `n` é 0. A ordem já vem certa (ORDEM antes de RECENTE) e a
+//               etiqueta está no `label`.
+//
+// ── POR QUE ISSO VIROU CAMPO (09/set/2026) ────────────────────────────────
+// Os achados de pasta entravam com n=999 (ORDEM) e n=998 (RECENTE) só para se
+// ordenarem na frente. Quem lê a fila não vê um posto, vê um contador: a
+// sugestão saiu na tela como "998x", que se lê como 998 lançamentos naquele
+// destino — e não existe nenhum. Número inventado numa tela de dinheiro é a
+// mesma doença de sempre; posto é posto, contagem é contagem.
+export type AbCand = { table: string; ref: string; label: string; n: number; last: string; via?: "PASTA" | "HISTORICO" }
 export type AutoBookMailResult = {
   janela: string
   caixas: string[]
@@ -305,7 +319,7 @@ export async function candidatosPara(db: SupabaseClient, vendor: string): Promis
   const out = new Map<string, AbCand>()
   const add = (table: string, ref: string, label: string, date: string) => {
     const k = `${table}:${ref}`
-    const c = out.get(k) || { table, ref, label, n: 0, last: date }
+    const c = out.get(k) || { table, ref, label, n: 0, last: date, via: 'HISTORICO' as const }
     c.n++; if (date > c.last) c.last = date
     out.set(k, c)
   }
@@ -372,7 +386,10 @@ export async function candidatosDaPasta(db: SupabaseClient, hits: PastaHit[]): P
     out.push({
       table: 'invoice_expenses', ref: id,
       label: `PASTA ${h.forca}: ${h.invoiceCode} — ${h.rideCode} ${h.rideName} (${porque}: "${h.file}")`,
-      n: h.forca === 'ORDEM' ? 999 : h.forca === 'RECENTE' ? 998 : 1,
+      // Zero, e é a verdade: a pasta não contou lançamento nenhum. A ordem vem
+      // de `cacaNaPasta`, que já devolve ORDEM antes de RECENTE antes de
+      // FORNECEDOR, e a força está escrita no próprio label.
+      n: 0, via: 'PASTA',
       last: String(h.modified || '').slice(0, 10),
     })
   }
