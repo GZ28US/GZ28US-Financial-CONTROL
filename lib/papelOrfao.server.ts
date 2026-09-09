@@ -39,11 +39,15 @@
 //                      papel não é recibo (lista de peças, orçamento) ou é
 //                      COMPRA QUE NUNCA VIROU LINHA. É aqui que mora dinheiro
 //                      fora do app.
-//   FORA DESTE BANCO — a pasta é de um carro do BR, e o banco deste app é o do
-//                      US. Não é veredito, é a confissão de que a pergunta não
-//                      foi feita no lugar certo — a primeira medição marcou 29
-//                      invoices BR como suspeita só por isso, o que sozinho
-//                      invalidaria a lista ([[nao-achei-onde-procurou]]).
+//   FORA DESTE BANCO — ninguém conhece esta invoice. Não é veredito, é a
+//                      confissão de que a pergunta não foi respondida — a
+//                      primeira medição marcou 29 invoices BR como suspeita só
+//                      porque o app do US não enxergava o banco do BR, o que
+//                      sozinho invalidaria a lista ([[nao-achei-onde-procurou]]).
+//                      Hoje a varredura pergunta nos DOIS bancos quando a chave
+//                      do BR está no ambiente (lib/supabaseBR.server.ts); sem
+//                      ela, as invoices do BR caem aqui de novo — e `bancos` na
+//                      resposta diz quais foram perguntados.
 //
 // Nenhuma das duas abre arquivo: `list_folder` já traz nome, data e
 // `content_hash`. Ver [[fornecedor-sem-email-nao-tem-gatilho]].
@@ -51,6 +55,8 @@
 import { token } from './dropboxRead.server'
 import { leCaminho } from './dropboxHunt.server'
 import { streamDb } from './stream.server'
+import { supabaseBRService } from './supabaseBR.server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const ROOTS = ['/001 - GZ28US/GZ28US Rides', '/000 - GZ28BR/GZ28BR Rides']
 
@@ -83,6 +89,12 @@ export type InvoiceComSobra = {
   // deixa a pessoa procurar no Dropbox — e quem vai conferir precisa saber O QUE
   // conferir, não quantos.
   arquivos: string[]
+  // DE QUAL BANCO SAIU ESTE VEREDITO. Enquanto o BR estava fora do alcance, o
+  // próprio veredito "INVOICE FORA DESTE BANCO" contava essa história — foi ele
+  // que impediu 29 acusações falsas. Ligado o BR, esse veredito some e a
+  // pergunta "onde você olhou?" ficaria sem resposta. Por isso vira campo:
+  // ninguém devia ter de deduzir a fonte pelo prefixo do código.
+  banco: 'US' | 'BR' | null
   veredito: 'RECIBO A COLAR' | 'SUSPEITA DE COMPRA NAO LANCADA' | 'INVOICE FORA DESTE BANCO'
 }
 
@@ -92,8 +104,46 @@ export type VarreduraPapel = {
   foraDoPadrao: PapelSuspeito[]     // régua 1 — o nome não é o que o app escreve
   comSobra: InvoiceComSobra[]       // régua 2 — sobra papel para o que o banco conhece
   totais: { sobra: number; aColar: number; suspeitas: number; foraDesteBanco: number }
+  // Quais bancos a varredura conseguiu perguntar nesta rodada. Sem a chave do
+  // BR no ambiente, 'BR' fica de fora e as invoices de lá ficam sem veredito —
+  // e é isso que a resposta tem de dizer, em vez de parecer completa.
+  bancos: ('US' | 'BR')[]
   paginas: number
   truncou: boolean
+}
+
+type Conhecidas = {
+  ids: Map<string, string>
+  recibos: Map<string, Set<string>>
+  semRecibo: Map<string, number>
+  despesas: Map<string, number>
+}
+
+/** O que UM banco sabe das invoices cujos códigos vieram das pastas. */
+async function oQueOBancoSabe(db: SupabaseClient, codigos: string[]): Promise<Conhecidas> {
+  const r: Conhecidas = { ids: new Map(), recibos: new Map(), semRecibo: new Map(), despesas: new Map() }
+  const codigoPorId = new Map<string, string>()
+  for (let i = 0; i < codigos.length; i += 200) {
+    const { data } = await db.from('invoices').select('id, invoice_code').in('invoice_code', codigos.slice(i, i + 200))
+    for (const x of (data || []) as Record<string, unknown>[]) {
+      r.ids.set(String(x.invoice_code), String(x.id))
+      codigoPorId.set(String(x.id), String(x.invoice_code))
+    }
+  }
+  const ids = [...r.ids.values()]
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await db.from('invoice_expenses').select('invoice_id, receipt_url').in('invoice_id', ids.slice(i, i + 100))
+    for (const x of (data || []) as Record<string, unknown>[]) {
+      const cod = codigoPorId.get(String(x.invoice_id))
+      if (!cod) continue
+      const us = urlsDoRecibo(x.receipt_url)
+      if (!r.recibos.has(cod)) r.recibos.set(cod, new Set())
+      r.despesas.set(cod, (r.despesas.get(cod) || 0) + 1)
+      if (!us.length) r.semRecibo.set(cod, (r.semRecibo.get(cod) || 0) + 1)
+      for (const u of us) r.recibos.get(cod)!.add(u)
+    }
+  }
+  return r
 }
 
 async function lista(tk: string, body: unknown, cont = false): Promise<{ entries: Record<string, unknown>[]; cursor: string; more: boolean }> {
@@ -131,7 +181,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
   const tk = await token()
   const out: VarreduraPapel = {
     vistos: 0, comNome: 0, foraDoPadrao: [], comSobra: [],
-    totais: { sobra: 0, aColar: 0, suspeitas: 0, foraDesteBanco: 0 }, paginas: 0, truncou: false,
+    totais: { sobra: 0, aColar: 0, suspeitas: 0, foraDesteBanco: 0 }, bancos: ['US'], paginas: 0, truncou: false,
   }
   // Papéis agrupados pela pasta da invoice — a régua de contagem precisa do total.
   const porInvoice = new Map<string, { rideCode: string; rideName: string; papeis: number; arquivos: string[] }>()
@@ -179,50 +229,34 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
   out.foraDoPadrao.sort((a, b) => (a.modified < b.modified ? 1 : -1))
   if (!porInvoice.size) return out
 
-  // ── A SEGUNDA RÉGUA: O QUE O BANCO CONHECE DAQUELA INVOICE ────────────────
-  const db = streamDb()
+  // ── A SEGUNDA RÉGUA: O QUE OS BANCOS CONHECEM DAQUELA INVOICE ────────────
+  // Primeiro o do US. O que ele não conhece vai para o do BR — sem adivinhar
+  // pelo prefixo do código: quem responde é quem TEM a invoice. (GM.003.1, por
+  // exemplo, mora no BR e não parece.)
   const codigos = [...porInvoice.keys()]
-  const idPorCodigo = new Map<string, string>()
-  const codigoPorId = new Map<string, string>()
-  for (let i = 0; i < codigos.length; i += 200) {
-    const { data } = await db.from('invoices').select('id, invoice_code').in('invoice_code', codigos.slice(i, i + 200))
-    for (const r of (data || []) as Record<string, unknown>[]) {
-      idPorCodigo.set(String(r.invoice_code), String(r.id))
-      codigoPorId.set(String(r.id), String(r.invoice_code))
-    }
-  }
-  const ids = [...idPorCodigo.values()]
-  const recibos = new Map<string, Set<string>>()   // código → URLs distintas
-  const semRecibo = new Map<string, number>()      // código → despesas sem recibo
-  const despesas = new Map<string, number>()       // código → linhas de despesa
-  for (let i = 0; i < ids.length; i += 100) {
-    const { data } = await db.from('invoice_expenses').select('invoice_id, receipt_url').in('invoice_id', ids.slice(i, i + 100))
-    for (const r of (data || []) as Record<string, unknown>[]) {
-      const cod = codigoPorId.get(String(r.invoice_id))
-      if (!cod) continue
-      const us = urlsDoRecibo(r.receipt_url)
-      if (!recibos.has(cod)) recibos.set(cod, new Set())
-      despesas.set(cod, (despesas.get(cod) || 0) + 1)
-      if (!us.length) semRecibo.set(cod, (semRecibo.get(cod) || 0) + 1)
-      for (const u of us) recibos.get(cod)!.add(u)
-    }
-  }
-
+  const us = await oQueOBancoSabe(streamDb(), codigos)
+  const faltam = codigos.filter((c) => !us.ids.has(c))
+  const dbBR = supabaseBRService()
+  if (dbBR) out.bancos.push("BR")
+  const br = dbBR && faltam.length ? await oQueOBancoSabe(dbBR, faltam) : null
+  const fonte = (cod: string): { banco: "US" | "BR" | null; c: Conhecidas | null } =>
+    us.ids.has(cod) ? { banco: "US", c: us } : br?.ids.has(cod) ? { banco: "BR", c: br } : { banco: null, c: null }
   for (const [cod, g] of porInvoice) {
-    const nRec = recibos.get(cod)?.size || 0
-    const nSem = semRecibo.get(cod) || 0
-    const nDesp = despesas.get(cod) || 0
+    const { banco, c } = fonte(cod)
+    const nRec = c?.recibos.get(cod)?.size || 0
+    const nSem = c?.semRecibo.get(cod) || 0
+    const nDesp = c?.despesas.get(cod) || 0
     const sobra = g.papeis - nRec
     if (sobra <= 0) continue
-    // ── PRIMEIRO: EU CONHEÇO ESTA INVOICE? ──────────────────────────────────
-    // A varredura lê as pastas dos DOIS cofres (Rides US e BR), mas o banco
-    // deste app é só o do US. Invoice do BR não está aqui — e chamar isso de
-    // "compra não lançada" seria transformar "não procurei no banco certo" em
-    // acusação. Na primeira medição foram 29 invoices BR marcadas como suspeita
-    // por esse motivo, o que sozinho invalidaria a lista.
-    // O negativo tem de dizer ONDE se procurou ([[nao-achei-onde-procurou]]).
-    if (!idPorCodigo.has(cod)) {
-      out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: 0, despesas: 0, despesasSemRecibo: 0, sobra, arquivos: g.arquivos, veredito: 'INVOICE FORA DESTE BANCO' })
+    // ── PRIMEIRO: ALGUÉM CONHECE ESTA INVOICE? ──────────────────────────────
+    // A varredura lê as pastas dos DOIS cofres (Rides US e BR). Enquanto só o
+    // banco do US era alcançável, TODA invoice do BR caía aqui — e chamar isso
+    // de "compra não lançada" seria transformar "não procurei no banco certo"
+    // em acusação. Foram 29 assim na primeira medição, o que sozinho
+    // invalidaria a lista. O negativo tem de dizer ONDE se procurou
+    // ([[nao-achei-onde-procurou]]): daí este veredito, e daí o campo banco.
+    if (!banco) {
+      out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: 0, despesas: 0, despesasSemRecibo: 0, sobra, arquivos: g.arquivos, banco: null, veredito: 'INVOICE FORA DESTE BANCO' })
       out.totais.foraDesteBanco += sobra
       continue
     }
@@ -230,7 +264,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
     // falta, não uma compra perdida. Sem nenhuma, o papel não tem linha para
     // onde ir — e isso é dinheiro possivelmente fora do app.
     const veredito = nSem > 0 ? 'RECIBO A COLAR' as const : 'SUSPEITA DE COMPRA NAO LANCADA' as const
-    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesas: nDesp, despesasSemRecibo: nSem, sobra, arquivos: g.arquivos, veredito })
+    out.comSobra.push({ invoiceCode: cod, rideCode: g.rideCode, rideName: g.rideName, papeis: g.papeis, recibos: nRec, despesas: nDesp, despesasSemRecibo: nSem, sobra, arquivos: g.arquivos, banco, veredito })
     out.totais.sobra += sobra
     if (veredito === 'RECIBO A COLAR') out.totais.aColar += sobra; else out.totais.suspeitas += sobra
   }
