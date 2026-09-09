@@ -22,27 +22,46 @@ import { NextRequest, NextResponse } from 'next/server'
 // 09/set/2026. Para atualizar, rode o mesmo grep e compare — o que o código lê
 // e não está aqui é justamente o próximo buraco silencioso.
 
+
+// ── O QUE ESTA ROTA NÃO SABE, E É O PONTO MAIS IMPORTANTE DELA ─────────────
+// Ela mede PUBLICAÇÃO, não TRABALHO. Variável presente não prova que o robô
+// fez alguma coisa; variável ausente não prova que deixou de fazer.
+//
+// O caso que ensinou isso, no mesmo dia em que a rota nasceu: faltando
+// `CRON_SECRET` no BR, três crons de lá respondem 401. Escrevi que eram "três
+// robôs mortos" — e um deles, o `whatsapp-sync`, não custa NADA. O espelho do
+// WhatsApp é centralizado no banco do US, com uma coluna `app` separando as
+// duas instâncias: 74.375 mensagens lá (26.524 US + 47.851 BR) contra ZERO nas
+// tabelas do banco do BR, que nasceram com o schema e nunca receberam nada.
+// A rota de lá devolve 401 há meses e não se perdeu uma mensagem.
+//
+// Por isso o texto de cada variável abaixo diz QUEM A LÊ, e não o que quebra.
+// Consequência é conclusão, e conclusão se mede no dado — não se declara numa
+// tabela de configuração. Uma rota de saúde que declara estrago que não
+// mediu vira a próxima geradora de alarme falso, que é justamente o que ela
+// nasceu para matar.
+
 export const dynamic = 'force-dynamic'
 
 // SEM ESTAS, ALGUMA COISA DEIXA DE ACONTECER — e sem barulho.
 const ESSENCIAIS: Record<string, string> = {
-  NEXT_PUBLIC_SUPABASE_URL: 'o banco deste app',
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: 'leitura do navegador',
-  SUPABASE_SERVICE_ROLE_KEY: 'tudo que roda no servidor (RLS não se aplica)',
-  CRON_SECRET: 'autoriza as rotas de cron — sem ela elas recusam e o robô para',
-  DROPBOX_APP_KEY: 'pastas de carro e de invoice',
+  NEXT_PUBLIC_SUPABASE_URL: 'lida por todo o app — é o banco deste projeto',
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: 'lida pelo navegador',
+  SUPABASE_SERVICE_ROLE_KEY: 'lida por tudo que roda no servidor (RLS não se aplica)',
+  CRON_SECRET: 'lida pelas rotas de cron para autorizar a chamada da Vercel',
+  DROPBOX_APP_KEY: 'lida pelas rotas de pasta (carro e invoice)',
   DROPBOX_APP_SECRET: 'idem',
   DROPBOX_REFRESH_TOKEN: 'idem — é o que renova o acesso',
-  TRACK17_API_KEY: 'rastreio de entrega dos itens (17TRACK)',
-  ANTHROPIC_API_KEY: 'leitura de recibo, de e-mail e de nota',
-  WHATSAPP_READ_KEY: 'as portas de leitura do assistente',
-  ULTRAMSG_INSTANCE: 'envio de WhatsApp',
+  TRACK17_API_KEY: 'lida pelo rastreio de entrega dos itens (17TRACK)',
+  ANTHROPIC_API_KEY: 'lida pela leitura de recibo, de e-mail e de nota',
+  WHATSAPP_READ_KEY: 'lida pelas portas de leitura do assistente',
+  ULTRAMSG_INSTANCE: 'lida pelo envio de WhatsApp',
   ULTRAMSG_TOKEN: 'idem',
-  ULTRAMSG_GROUP_ID: 'grupo REPORTS',
-  PLAID_CLIENT_ID: 'feed do banco',
+  ULTRAMSG_GROUP_ID: 'lida pelo envio ao grupo REPORTS',
+  PLAID_CLIENT_ID: 'lida pelo feed do banco',
   PLAID_SECRET: 'idem',
   PLAID_ENV: 'idem',
-  FINANCEIRO_KEY: 'webhook do financeiro 24/7',
+  FINANCEIRO_KEY: 'lida pelo webhook do financeiro 24/7',
 }
 
 // A falta destas TIRA UM PEDAÇO, mas o resto do app segue de pé.
@@ -91,5 +110,6 @@ export async function GET(req: NextRequest) {
     ok: status === 200,
     essenciais: { faltando: ess.faltando, vazias: ess.vazias, presentes: ess.presentes.length },
     opcionais: { faltando: opc.faltando.map(f => f.nome), vazias: opc.vazias, presentes: opc.presentes.length },
+    limite: 'esta rota mede PUBLICAÇÃO, não TRABALHO: presente não prova que o robô fez algo, ausente não prova que deixou de fazer',
   }, { status })
 }
