@@ -56,8 +56,25 @@ export type EnrollItem = {
 // leading brand/supplier token. This makes "DOD 53021585AD" == "MOPAR 53021585AD"
 // and "gatK100579HD" == "K100579HD" so the same part can't enroll twice.
 export function normPN(pn?: string | null): string {
+  // ── SKU DA LOJA x NÚMERO DO FABRICANTE (09/set/2026) ────────────────────
+  // A HHP imprime o código DELA na coluna Code/SKU: um prefixo de marca em
+  // minúsculas grudado no número do fabricante — appATI918485, cca5761CPG,
+  // gatK100610HD, jltCAI-DH05, eibE10-27-004-01-22, cgsC15642-090. São 12
+  // linhas do catálogo carregando o SKU da loja no lugar do PN, e com isso a
+  // mesma peça comprada em outra loja nasce como peça nova.
+  //
+  // A régua é do FORMATO, não da loja: número de fabricante não começa com
+  // letras minúsculas coladas numa maiúscula ou dígito. O que sobra tem de
+  // continuar sendo um PN (6+ alfanuméricos), senão o corte foi estrago e o
+  // número original fica.
+  //
+  // Medido contra as 738 peças do catálogo: 12 chaves mudam, todas casam com
+  // a PRÓPRIA linha, nenhuma passa a casar com peça diferente.
+  const cru = String(pn || '').trim()
+  const semLoja = cru.replace(/^[a-z]{2,4}(?=[A-Z0-9])/, '')
+  const base = semLoja.replace(/[^A-Za-z0-9]/g, '').length >= 6 ? semLoja : cru
   // A trailing quantity marker (" x 2", " X 4") is packaging, not part of the PN.
-  let x = String(pn || '').toUpperCase().replace(/\s+X\s*\d+\s*$/, '').replace(/[^A-Z0-9]/g, '')
+  let x = base.toUpperCase().replace(/\s+X\s*\d+\s*$/, '').replace(/[^A-Z0-9]/g, '')
   x = x.replace(/^(GATES|GAT|DODGE|DOD|MOPAR|NGK|ADO|IND)(?=[A-Z0-9])/, '')
   return x
 }
@@ -97,10 +114,17 @@ export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'u
   // A nota da HHP #384734 imprimiu o desconto como UMA linha ("Desconto
   // -$161,77") em vez de abater peça por peça. Sem saber de quem é o desconto,
   // o leitor rateia proporcional para fechar o total — e a loja tinha dado
-  // 16% / 6% / 8% / 10%. Resultado medido: erro de até US$ 20,82 no custo
-  // unitário de uma peça, COM O TOTAL FECHANDO AO CENTAVO. Nenhuma conferência
-  // de soma acha isso, e daqui iria direto para o catálogo — que desde hoje
-  // atualiza preço até de peça TRAVADA quando a compra é real.
+  // 8% / 16% / 6% / 10%. Medido no PDF: o rateio uniforme (11,197%) põe +33,33
+  // a mais no Litens e 30,92 a menos no ATI, 66,66 de erro somado e ZERO de
+  // erro no total. Nenhuma conferência de soma acha isso, e daqui iria direto
+  // para o catálogo — que desde ontem atualiza preço até de peça TRAVADA
+  // quando a compra é real.
+  //
+  // (Esta compra foi lançada CERTA, e vale entender por quê: a tela de revisão
+  // pré-preenche o Disc% de cada peça com o desconto que o catálogo já
+  // conhecia daquele fornecedor, e os quatro fecharam exatamente nos 161,77
+  // impressos. Quem NÃO tem essa muleta é o robô, que lê o PDF e lança
+  // sozinho — é para ele que este guarda existe.)
   //
   // Então o custo rateado não vale como custo. A expense continua certa (o
   // total é verdade); o que não acontece é o número derivado virar "o que esta

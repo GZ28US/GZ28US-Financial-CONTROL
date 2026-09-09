@@ -55,6 +55,7 @@ Rules:
 1. items: list ONLY physical product/part line items. No shipping, insurance, handling, tax, fees, discounts, or coupons. A standalone "Dsc"/"Discount"/"Coupon" line (often printed right below the item it applies to) is NOT its own item — fold that amount into the line_total of the item directly above it and never emit it as a separate item. NEVER merge or deduplicate printed lines: two lines with similar or even identical descriptions are SEPARATE items — output one entry per printed product line, each with ITS OWN part number exactly as printed (e.g. two injector sets that differ only in part number are two items, never one).
 2. quantity: read exactly from the Qty column. If there is no Qty column, look for a quantity multiplier printed for the item — usually on the line DIRECTLY BELOW the description, in the form "N x" / "N @" / "N X" (e.g. ALDI and other grocery receipts print "20 x" with the unit price beneath the item). That N is the quantity. Default to 1 only when no such multiplier is shown for that item.
 3. line_total: the item line total AFTER its associated discount is subtracted. Example: item $6375.60 minus discount $1912.68 = line_total $4462.92. When the receipt has separate "List" and "Cost" (or "Price"/"Your Price") columns, use the COST/actual-paid column for line_total — never the List/retail column. On receipts that STACK the quantity (a "N x  unit_price" line below the item), the line_total is the EXTENDED amount printed on the item's OWN line (= N times unit_price — e.g. "Dog Entree ... 13.20" with "20 x 0.66" beneath it has line_total 13.20), NOT the small per-unit price on the sub-line. Never report the per-unit price as the line_total when a quantity multiplier is present.
+3b. part_number — PREFER THE MANUFACTURER'S NUMBER. Many stores print their OWN sku in the code column, built by gluing a lowercase brand code onto the real number: HHP prints "appATI918485" for ATI 918485, "cca5761CPG" for COMP Cams 5761CPG, "gatK100610HD" for Gates K100610HD, "jltCAI-DH05" for JLT CAI-DH05. When the product NAME spells out the manufacturer number, return THAT number, not the store sku — the store code is meaningless anywhere else, and the same part bought elsewhere would enroll as a different part. Return the store sku only when the document gives no manufacturer number at all.
 4. list_price: ONLY when the receipt shows a per-unit retail/list/MSRP price that is HIGHER than the actual unit price paid (e.g. an AutoZone-style "List" column next to a "Cost" column). Report that higher per-unit price here. If the receipt shows only one price, set this to 0.
 4b. weight_lbs: ONLY when the document prints a weight for that line (common on dealer/wholesale invoices and packing slips). Per UNIT, in POUNDS — if the document prints kg, convert (1 kg = 2.2046) and round to 2 decimals. Use 0 when no weight is printed; never estimate.
 5. tax: the SALES TAX total only, as a single number string. Sum all tax lines into this one value. Use 0 if there is no tax. Do NOT put tax in "extras".
@@ -331,10 +332,11 @@ Rules:
           // peça por peça: sem saber de quem é o desconto, o único jeito de
           // fechar no total é espalhar proporcional.
           //
-          // Só que loja não dá desconto uniforme. Na HHP #384734 o desconto real
-          // foi 16% / 6% / 8% / 10%, e o rateio proporcional errou o custo
-          // unitário em até US$ 20,82 numa peça — COM O TOTAL FECHANDO AO
-          // CENTAVO. Erro que some no total não é achável conferindo soma.
+          // Só que loja não dá desconto uniforme. Medido no próprio PDF da HHP
+          // #384734: os descontos reais foram 8% / 16% / 6% / 10%, e o rateio
+          // uniforme (11,197%) erraria o custo em +33,33 numa linha e −30,92 na
+          // seguinte — 66,66 de erro somado, e ZERO de erro no total. Erro que
+          // some no total não é achável conferindo soma.
           //
           // Por isso o número sai etiquetado: custo rateado é DERIVADO, não
           // impresso. Quem grava custo no Parts DB tem de recusar derivado —

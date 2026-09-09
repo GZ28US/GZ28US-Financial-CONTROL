@@ -471,8 +471,8 @@ export default function PartsPage() {
                 // ── O AVISO QUE FALTAVA (09/set/2026) ──────────────────────
                 // A nota trouxe o desconto numa linha so, entao o leitor teve
                 // de ratear para fechar o total. Rateio nao e o preco da peca:
-                // na HHP #384734 errou ate US$ 20,82 numa linha COM O TOTAL
-                // FECHANDO AO CENTAVO. O catalogo recusa custo rateado; a peca
+                // na HHP #384734 erraria +33,33 numa linha e -30,92 na outra,
+                // COM ZERO de erro no total. O catalogo recusa custo rateado; a peca
                 // entra sem custo, a menos que ele digite o valor certo aqui.
                 <div className="rounded-lg border border-amber-500 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                   <b>DESCONTO EM BLOCO — custo rateado.</b> Esta nota deu o desconto numa linha só, então o preço por item foi <u>calculado</u>, não lido.

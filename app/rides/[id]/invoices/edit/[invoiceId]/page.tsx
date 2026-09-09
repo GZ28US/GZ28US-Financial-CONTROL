@@ -3136,8 +3136,8 @@ export default function EditInvoicePage() {
                 // ── DESCONTO EM BLOCO (09/set/2026) ────────────────────────
                 // A EXPENSE continua certa: o total da nota e verdade. O que
                 // nao e verdade e o preco POR PECA, que teve de ser rateado —
-                // e loja nao da desconto uniforme (HHP #384734: 16/6/8/10%,
-                // erro de ate US$ 20,82 numa linha, total fechando ao centavo).
+                // e loja nao da desconto uniforme (HHP #384734: 8/16/6/10%,
+                // erro de +33,33 e -30,92 em duas linhas, ZERO no total).
                 // Por isso a linha ambar nao leva custo para o Parts DB.
                 <div className="rounded-lg border border-amber-500 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                   <b>DESCONTO EM BLOCO — custo rateado.</b> A nota deu o desconto numa linha só; o preço por item foi <u>calculado</u> para fechar o total.
