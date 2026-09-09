@@ -16,7 +16,8 @@
 
 const CONTENT = 'https://content.dropboxapi.com/2/files/download'
 
-async function token(): Promise<string> {
+/** O token do Dropbox, num lugar só para quem LÊ (a caça e a varredura usam este). */
+export async function token(): Promise<string> {
   const res = await fetch('https://api.dropbox.com/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

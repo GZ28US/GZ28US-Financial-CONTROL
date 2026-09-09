@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { lancar } from '@/lib/autoBookMail.server'
 import { cacaNaPasta, respostaUnica } from '@/lib/dropboxHunt.server'
+import { papeisOrfaos } from '@/lib/papelOrfao.server'
 
 // AUTO-BOOK — A MESA DA DÚVIDA.
 //
@@ -38,6 +39,22 @@ export async function GET(req: NextRequest) {
     try {
       const hits = await cacaNaPasta({ vendor: p.get('pasta'), order: p.get('pedido'), quando: p.get('quando') })
       return NextResponse.json({ ok: true, n: hits.length, unica: respostaUnica(hits), hits })  // hits trazem o relogio usado (client_modified)
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: String((e as Error)?.message || e) }, { status: 500 })
+    }
+  }
+
+  // ── ?orfaos=1 — PAPEL QUE NINGUÉM LANÇOU ─────────────────────────────────
+  // O outro lado da caça: em vez de e-mail procurando invoice, papel procurando
+  // lançamento. Existe porque fornecedor que não manda e-mail (AutoZone, balcão,
+  // loja física, serviço por telefone) NUNCA dispara o robô — e o único sinal que
+  // sobra é o arquivo na pasta com o nome que veio da loja, porque o app só
+  // renomeia o que tem linha no banco. Ver lib/papelOrfao.server.ts.
+  // Somente LEITURA: nada é lançado, nada é apagado, nada é renomeado.
+  if (p.get('orfaos')) {
+    try {
+      const v = await papeisOrfaos(Math.min(120, parseInt(p.get('paginas') || '40') || 40))
+      return NextResponse.json({ ok: true, ...v })
     } catch (e) {
       return NextResponse.json({ ok: false, error: String((e as Error)?.message || e) }, { status: 500 })
     }
