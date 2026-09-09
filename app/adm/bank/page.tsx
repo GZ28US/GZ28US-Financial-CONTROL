@@ -62,14 +62,20 @@ export default function BankPage() {
   // entrou. Ninguém viu porque o diagnóstico do Plaid (`/item/get`) só existia
   // numa rota que ninguém chamava, e chamar exige o header que só o app monta.
   // Então quem chama é o app, na abertura desta tela, que é onde se conserta.
-  type Saude = { conta: string; dias_em_silencio?: number; veredito_do_dado?: string; item_error?: { code: string; msg: string } | null; ultima_transacao?: string | null; ultima_atualizacao_plaid?: string | null; diagnostico?: string }
+  type Sonda = { added?: number; modified?: number; removed?: number; has_more?: boolean; cursor_mudou?: boolean; amostra?: string[]; veredito?: string; erro?: string }
+  type Saude = { conta: string; dias_em_silencio?: number; veredito_do_dado?: string; item_error?: { code: string; msg: string } | null; ultima_transacao?: string | null; ultima_atualizacao_plaid?: string | null; diagnostico?: string; sonda?: Sonda }
   const [saude, setSaude] = useState<Saude[] | null>(null)
-  async function loadSaude() {
+  const [sondando, setSondando] = useState(false)
+  // A sonda gasta uma chamada ao Plaid e não grava nada — por isso é botão, não
+  // carregamento automático. Só faz sentido quando o aviso já apareceu.
+  async function loadSaude(probe = false) {
+    if (probe) setSondando(true)
     try {
-      const r = await fetch(`${BASE_PATH}/api/bank/health`, { headers: await sessionHeaders() })
+      const r = await fetch(`${BASE_PATH}/api/bank/health${probe ? '?probe=1' : ''}`, { headers: await sessionHeaders() })
       const d = await r.json().catch(() => ({}))
       if (r.ok) setSaude(d.contas || [])
     } catch { /* diagnóstico é melhor esforço: não derruba a tela */ }
+    finally { setSondando(false) }
   }
 
   useEffect(() => { void load(); void loadLive(); void loadSaude() }, [])
@@ -179,6 +185,17 @@ export default function BankPage() {
               {s.item_error ? ` · ${s.item_error.code}: ${s.item_error.msg}` : ''}
             </p>
             {grave && <p className="text-base text-gray-300 mt-2">Se o Plaid acusa erro de conexão, o conserto é <strong>+ CONNECT BANK</strong> aqui em cima — reconectar é login do banco, só você faz.</p>}
+            {s.sonda ? (
+              <p className="text-base mt-3 border-t border-gray-700 pt-3">
+                <strong>{s.sonda.veredito || s.sonda.erro}</strong>
+                {typeof s.sonda.added === 'number' ? <span className="text-gray-400"> · o Plaid devolveu {s.sonda.added} nova(s), {s.sonda.modified} alterada(s){s.sonda.has_more ? ', e diz que há mais' : ''}</span> : null}
+                {(s.sonda.amostra || []).map((a, j) => <span key={j} className="block text-gray-400 font-mono text-sm mt-1">{a}</span>)}
+              </p>
+            ) : (
+              <button onClick={() => void loadSaude(true)} disabled={sondando} className="mt-3 bg-gray-800 hover:bg-gray-700 border border-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold">
+                {sondando ? 'PERGUNTANDO AO PLAID…' : 'POR QUE PAROU?'}
+              </button>
+            )}
           </div>
         )
       })}

@@ -66,6 +66,39 @@ export async function GET(req: NextRequest) {
       linha.item_error = { code: 'CHAMADA_FALHOU', msg: String((e as Error).message || e).slice(0, 200) }
     }
 
+    // ── ?probe=1 — A SONDA QUE SEPARA AS DUAS ÚLTIMAS HIPÓTESES ─────────────
+    // Com o item são (08/set: `last_successful_update` de hoje 04h46, sem erro
+    // nenhum), sobraram duas explicações para o feed mudo, e elas pedem consertos
+    // opostos:
+    //   (a) o Plaid não TEM o que mandar — o Regions é que não postou; ou
+    //   (b) o Plaid tem e a nossa ingestão perde — cursor parado, escrita falhando.
+    // Uma chamada de `/transactions/sync` com o cursor ATUAL responde: se vier
+    // vazio com `has_more:false`, é (a); se vier com linhas, é (b) e o defeito
+    // está no nosso laço.
+    //
+    // NÃO GRAVA NADA — nem transação, nem cursor. O cursor do Plaid só avança
+    // quando a gente SALVA o `next_cursor`, e aqui ele é descartado de propósito:
+    // sonda que muda o estado que está medindo não é sonda ([[nao-achei-onde-procurou]]).
+    if (req.nextUrl.searchParams.get('probe') === '1' && !linha.item_error) {
+      try {
+        const s = await plaid('/transactions/sync', { access_token: c.plaid_access_token, cursor: c.sync_cursor || undefined, count: 250 })
+        const novas = (s.added || []).length
+        linha.sonda = {
+          added: novas, modified: (s.modified || []).length, removed: (s.removed || []).length,
+          has_more: !!s.has_more,
+          cursor_mudou: !!s.next_cursor && s.next_cursor !== c.sync_cursor,
+          amostra: (s.added || []).slice(0, 3).map((t: any) => `${t.date} ${t.amount} ${String(t.name || '').slice(0, 40)}`),
+          veredito: novas > 0
+            ? 'O PLAID TEM E NÓS PERDEMOS — o defeito está na nossa ingestão, não na conexão'
+            : s.has_more
+              ? 'sem linhas nesta página mas o Plaid diz que há mais — paginação'
+              : 'o Plaid não tem nada novo desde o cursor — o buraco é ANTES de nós (o banco não postou ao Plaid)',
+        }
+      } catch (e) {
+        linha.sonda = { erro: String((e as Error).message || e).slice(0, 200) }
+      }
+    }
+
     // ── o veredito, em uma frase ────────────────────────────────────────────
     linha.diagnostico = linha.item_error
       ? `Plaid acusa ${linha.item_error.code} — a conexão precisa de conserto, e re-autenticar é ação do dono da conta`
