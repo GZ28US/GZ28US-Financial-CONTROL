@@ -27,7 +27,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mailProvider, maySweep } from '@/lib/streamMail.server'
-import { mayDelete } from './mailProtected'
+import { barrado } from './mailProtected.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 
@@ -110,7 +110,7 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
           if (m.hasAttachments || HARD_STOP.test(subj)) { await block(a.account, addr, subj); continue }
           // Este robô só toca em remetente AUDITADO, mas auditoria é humana e
           // humano erra: a trava única responde antes de qualquer move.
-          if (!mayDelete(addr, subj)) { await block(a.account, addr, subj); continue }
+          if (await barrado(db, 'marketing-kill', a.id ?? null, a.account, { id: m.id, subject: subj, from: addr, folder })) { await block(a.account, addr, subj); continue }
           const hd = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders,bodyPreview`, { headers: H }).then(x => x.json()).catch(() => null)
           const heads: { name?: string }[] = hd?.internetMessageHeaders || []
           const inReply = heads.some(x => /^(in-reply-to|references)$/i.test(String(x.name)))

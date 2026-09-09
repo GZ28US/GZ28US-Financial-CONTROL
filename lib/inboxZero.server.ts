@@ -7,7 +7,7 @@
 // Cobre slot 1 (gz28us@hotmail), slot 2 (galpaoz28@hotmail) e slot 4 (Gmail).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { protectedSender } from './mailProtected'
+import { barrado } from './mailProtected.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
@@ -161,7 +161,7 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
       // Cinto E suspensório: as regras por slot já devolvem KEEP para estes
       // remetentes, mas a regra é por SLOT e um slot novo nasce sem ela. A trava
       // colada no DELETE vale para todos.
-      const prot = protectedSender(String(m.from?.emailAddress?.address || ''), String(m.subject || ''))
+      const prot = await barrado(db, 'inbox-zero', null, account, { id: m.id, subject: String(m.subject || ''), from: String(m.from?.emailAddress?.address || ''), folder: 'inbox' })
       if (prot) { out.push(`${account}: PROTEGIDO (${prot}) ${String(m.subject).slice(0, 40)}`); continue }
       await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}`, { method: 'DELETE', headers: gh(token) })
       out.push(`${account}: DELETE ${String(m.subject).slice(0, 40)}`)
