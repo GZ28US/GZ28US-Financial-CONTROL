@@ -44,6 +44,11 @@ export type EnrollItem = {
   // MONEY, ou null/ausente quando ninguém disse. Só PEÇA entra no catálogo como
   // peça; ENCARGO entra como is_extra; serviço, digital e dinheiro NÃO entram.
   nature?: string | null
+  // O CUSTO DESTA LINHA FOI LIDO OU CALCULADO? (09/set/2026)
+  // true quando o leitor de recibo teve de RATEAR um desconto em bloco para
+  // fechar no total — o unit_price é uma média, não o que a loja cobrou por
+  // esta peça. Custo derivado NUNCA entra no catálogo; ver enrollOne.
+  cost_derived?: boolean
 }
 
 // Part-number normalization for dedupe: uppercase, strip every non-alphanumeric
@@ -87,7 +92,28 @@ function withDerived(row: any, map: number | null, cost: number): any {
 //   two scans the NEWER purchase date wins; hunt/manual never beats a scan.
 //   Extras (shipping/tax rows) keep the CHEAPEST ever seen; hunt-vs-hunt keeps
 //   the lowest cost. The kept alias is preserved; a known weight is never erased.
-export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
+export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'updated' | 'kept'; error: any }> {
+  // ── CUSTO DERIVADO NÃO ENTRA (09/set/2026) ────────────────────────────────
+  // A nota da HHP #384734 imprimiu o desconto como UMA linha ("Desconto
+  // -$161,77") em vez de abater peça por peça. Sem saber de quem é o desconto,
+  // o leitor rateia proporcional para fechar o total — e a loja tinha dado
+  // 16% / 6% / 8% / 10%. Resultado medido: erro de até US$ 20,82 no custo
+  // unitário de uma peça, COM O TOTAL FECHANDO AO CENTAVO. Nenhuma conferência
+  // de soma acha isso, e daqui iria direto para o catálogo — que desde hoje
+  // atualiza preço até de peça TRAVADA quando a compra é real.
+  //
+  // Então o custo rateado não vale como custo. A expense continua certa (o
+  // total é verdade); o que não acontece é o número derivado virar "o que esta
+  // peça custa". A peça entra — com PN, nome, fornecedor, data, recibo e o MAP
+  // impresso, que são fatos do papel — só que com o campo de custo VAZIO, que
+  // é a resposta honesta. Vazio se vê na tela; errado não.
+  const custoDerivado = !!entrada?.cost_derived
+  // O cost_derived é BILHETE DE VIAGEM, não coluna: sai antes de qualquer
+  // escrita, senão o insert quebra com "column does not exist".
+  const row: any = { ...entrada }
+  delete row.cost_derived
+  if (custoDerivado) { row.unit_price = null; row.part_discount = null }
+
   const { data } = await supabase.from('parts_database')
     // `locked_at` e `supplier` VÊM JUNTO, e não é enfeite: sem `locked_at` a
     // função que decide o cadeado (`isLockedPart`) recebe sempre undefined e
@@ -140,14 +166,18 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
 
   // A SCAN from an OFFICIAL SUPPLIER (dealer contract → dealer_supplier set) is
   // REAL LIFE at its most trusted: it re-validates any row and LOCKS the result.
-  const officialScan = row.source_type === 'SCAN' && !!row.dealer_supplier
+  // ...menos quando o custo é rateado: travar linha sem custo congelaria para
+  // sempre uma peça que nunca teve preço.
+  const officialScan = row.source_type === 'SCAN' && !!row.dealer_supplier && !custoDerivado
 
   if (!existing) {
     // A scanned MAP gets THE discount (MAP→OUR COST) computed on insert.
     // An official-supplier purchase enters already validated: status LOCKED.
     const base = officialScan ? { ...row, source_type: 'LOCKED' } : row
     const toInsert = base.map_price != null && Number(base.map_price) > 0
-      ? withDerived(base, Number(base.map_price), ourCostOf(base))
+      // cost 0 quando derivado: sem custo não há desconto a calcular — e
+      // ourCostOf cairia no próprio MAP, gravando um falso "0% de desconto".
+      ? withDerived(base, Number(base.map_price), custoDerivado ? 0 : ourCostOf(base))
       : base
     const { error } = await supabase.from('parts_database').insert([toInsert])
     return { status: 'inserted', error }
@@ -185,9 +215,14 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   //
   // E ela mexe no CUSTO, nunca no ESTADO: `locked_at` fica onde está. Travar e
   // destravar continua sendo a mão dele.
+  //   4. custo IMPRESSO — rateio não é compra provada. Esta é a mais nova das
+  //      quatro e a que mais pesa: sem ela, a exceção que acabamos de abrir no
+  //      cadeado seria justamente por onde o número derivado entraria — e peça
+  //      travada é a que ele mais confere.
   const compraReal = row.source_type === 'SCAN'
     && /^\d{4}-\d{2}-\d{2}$/.test(String(row.purchase_date || ''))
     && Number(row.unit_price) > 0
+    && !custoDerivado
   const mesmoFornecedor = !!row.supplier && !!existing.supplier
     && normSup(String(row.supplier)) === normSup(String(existing.supplier))
 
@@ -216,7 +251,11 @@ export async function enrollOne(row: any): Promise<{ status: 'inserted' | 'updat
   const dateOf = (r: any) => { const t = Date.parse(String(r?.purchase_date || '')); return Number.isFinite(t) ? t : 0 }
   const isExtra = !!(row.is_extra || existing.is_extra)
   let replace: boolean
-  if (isExtra) replace = ourCostOf(row) < ourCostOf(existing)                 // extras: cheapest ever
+  // Quem não tem custo não entra em concurso de preço: a linha derivada nunca
+  // toma a linha existente. Ela ainda passa pelo remendo lá embaixo, que
+  // preenche o que FALTA e o papel prova — MAP impresso, peso, apelido.
+  if (custoDerivado) replace = false
+  else if (isExtra) replace = ourCostOf(row) < ourCostOf(existing)                 // extras: cheapest ever
   else if (row.source_type === 'SCAN') replace = existing.source_type !== 'SCAN' || dateOf(row) >= dateOf(existing) // real life prevails; newest scan wins
   else if (existing.source_type === 'SCAN') replace = false                   // hunt/manual never beats a real invoice
   else replace = ourCostOf(row) < ourCostOf(existing)                         // hunt vs hunt: lowest cost
@@ -340,6 +379,9 @@ export async function enrollParts(items: EnrollItem[], sourceType: string = 'SCA
       // The document's own currency, stored with its numbers untouched.
       currency: String(raw.currency || 'USD').toUpperCase().trim() || 'USD',
       alias: (typeof raw.alias === 'string' ? raw.alias.trim() : '') || null,
+      // A etiqueta do rateio viaja com a linha; quem decide o que fazer com
+      // ela é o enrollOne, num lugar só.
+      cost_derived: !!raw.cost_derived,
       updated_at: new Date().toISOString(),
     }
     // Official-supplier extras: printed List/Retail price = the MAP; printed weight.

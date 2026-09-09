@@ -376,7 +376,7 @@ export default function EditInvoicePage() {
   // ship_to / tracking_number / carrier: o que o DOCUMENTO diz sobre a entrega
   // (a regra do Walmart). ship_to NÃO é coluna — alimenta o picked_up de cada
   // linha na hora do confirm (30/ago/2026).
-  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; order_number?: string; ship_to?: string; tracking_number?: string; carrier?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }[]; receiptUrl: string; paid: boolean } | null>(null)
+  const [scannedPurchase, setScannedPurchase] = useState<{ supplier: string; date: string; source?: string; order_number?: string; ship_to?: string; tracking_number?: string; carrier?: string; items: { description: string; part_number?: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string; cost_derived?: boolean }[]; receiptUrl: string; paid: boolean } | null>(null)
   // NÃO EXISTE MAIS "FOLLOW ON STREAM?": a pergunta e a inscrição em
   // part_streams morreram na virada de chave de 29/ago/2026 ("esqueca o stream,
   // refaremos ele do zero depois. NAO USE NADA DO STREAM, nada"). O scan já
@@ -963,7 +963,7 @@ export default function EditInvoicePage() {
       // decide se o item é peça (SERVICE/DIGITAL/MONEY não entram no parts DB) e o
       // apelido guarda o SKU da loja. Sem a natureza, o enrollParts cai no regex,
       // que é o fallback — foi assim que "Dodge PCM Services" virou peça.
-      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: money(i.amount), quantity: String(i.quantity || '1'), tax: money(i.tax), extra: money(i.extra), item_discount: String(i.item_discount || '0'), list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0', weight_lbs: String(i.weight_lbs || '0'), nature: String(i.nature || '') }))
+      const items = (parsed.items || []).map((i: any) => ({ description: String(i.description || ''), part_number: String(i.part_number || ''), amount: money(i.amount), quantity: String(i.quantity || '1'), tax: money(i.tax), extra: money(i.extra), item_discount: String(i.item_discount || '0'), list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0', weight_lbs: String(i.weight_lbs || '0'), nature: String(i.nature || ''), cost_derived: !!i.cost_derived }))
       const total = items.reduce((s: number, it: any) => s + (parseFloat(it.amount) || 0) * (parseFloat(it.quantity) || 1), 0)
 
       const openReview = () => setScannedPurchase({ supplier, date, source: matchSource(scannedSource), order_number: String(parsed.order_number || '').trim(), ship_to: String(parsed.ship_to || '').trim(), tracking_number: String(parsed.tracking_number || '').trim(), carrier: String(parsed.carrier || '').trim(), items, receiptUrl, paid })
@@ -1198,6 +1198,8 @@ export default function EditInvoicePage() {
       extra: it.extra,
       quantity: it.quantity,
       item_discount: it.item_discount,
+      // Custo rateado nao vira custo de peca — o enrollOne recusa (lib/partsDb.ts).
+      cost_derived: it.cost_derived,
       purchase_date: /^\d{4}-\d{2}-\d{2}$/.test(scannedPurchase.date) ? scannedPurchase.date : null,
       // MAP (printed List/Retail) + weight when the official-supplier invoice shows them.
       // Na AutoZone o MAP vem impresso como "List Price" — não precisa pesquisar na web.
@@ -3130,6 +3132,18 @@ export default function EditInvoicePage() {
               <SourceSelect value={scannedPurchase.source || DEFAULT_SOURCE} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
+              {scannedPurchase.items.some(it => it.cost_derived) && (
+                // ── DESCONTO EM BLOCO (09/set/2026) ────────────────────────
+                // A EXPENSE continua certa: o total da nota e verdade. O que
+                // nao e verdade e o preco POR PECA, que teve de ser rateado —
+                // e loja nao da desconto uniforme (HHP #384734: 16/6/8/10%,
+                // erro de ate US$ 20,82 numa linha, total fechando ao centavo).
+                // Por isso a linha ambar nao leva custo para o Parts DB.
+                <div className="rounded-lg border border-amber-500 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <b>DESCONTO EM BLOCO — custo rateado.</b> A nota deu o desconto numa linha só; o preço por item foi <u>calculado</u> para fechar o total.
+                  A despesa está certa, mas as linhas em âmbar <b>não gravam OUR COST no Parts DB</b>. Corrija o preço de cada uma para que valha.
+                </div>
+              )}
               {scannedPurchase.items.map((item, i) => (
                 <div key={i} className="border border-gray-700 rounded-2xl p-2 space-y-2">
                   <div className="flex gap-2 items-center">
@@ -3142,7 +3156,7 @@ export default function EditInvoicePage() {
                     </div>
                     <div className="relative w-28">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                      <input type="text" value={item.amount} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], amount: e.target.value }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} w-full pl-8`} placeholder="0.00" />
+                      <input type="text" value={item.amount} onChange={(e) => { const items = [...scannedPurchase.items]; items[i] = { ...items[i], amount: e.target.value, cost_derived: false }; setScannedPurchase({ ...scannedPurchase, items }) }} className={`${smallInputClass} w-full pl-8 ${item.cost_derived ? 'border-amber-500 text-amber-300' : ''}`} placeholder="0.00" title={item.cost_derived ? 'Rateado — custo calculado, não impresso. Não entra no Parts DB até você corrigir.' : undefined} />
                     </div>
                     <div className="relative w-28">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Tax $</span>

@@ -235,7 +235,7 @@ Rules:
     // resposta legítima ("ninguém disse ainda"), nunca chute. Quem grava carimba
     // o que vier; regra automática pode PÔR badge, nunca TIRAR (lib/itemNature.ts).
     const natureOf = (i: any): string | null => normNature(i?.nature)
-    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string; nature: string | null }[] = []
+    const processedItems: { description: string; part_number: string; quantity: string; amount: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string; nature: string | null; cost_derived: boolean }[] = []
 
     if (separateExtras) {
       // Tax AND extra costs (shipping, handling, insurance, ...) are each split
@@ -283,6 +283,8 @@ Rules:
           list_price: listPrice > 0 ? String(listPrice) : '0',
           weight_lbs: String(num(item.weight_lbs) || 0),
           nature: natureOf(item),
+          // Rateio de desconto em bloco: este custo foi CALCULADO, nao lido.
+          cost_derived: itemScale !== 1,
         })
       })
     } else {
@@ -307,6 +309,8 @@ Rules:
           list_price: listPrice > 0 ? String(listPrice) : '0',
           weight_lbs: String(num(item.weight_lbs) || 0),
           nature: natureOf(item),
+          // Rateio de desconto em bloco: este custo foi CALCULADO, nao lido.
+          cost_derived: itemScale !== 1,
         })
       })
     }
@@ -321,6 +325,24 @@ Rules:
           source: parsed.source || '',
           // Store order/confirmation number.
           order_number: String(parsed.order_number || '').trim(),
+          // ── O CUSTO DA LINHA FOI LIDO OU FOI CALCULADO? (09/set/2026) ────
+          // O `itemScale` acima é um RATEIO. Ele entra quando a nota imprime o
+          // desconto como uma linha só ("Desconto -$161,77") em vez de abater
+          // peça por peça: sem saber de quem é o desconto, o único jeito de
+          // fechar no total é espalhar proporcional.
+          //
+          // Só que loja não dá desconto uniforme. Na HHP #384734 o desconto real
+          // foi 16% / 6% / 8% / 10%, e o rateio proporcional errou o custo
+          // unitário em até US$ 20,82 numa peça — COM O TOTAL FECHANDO AO
+          // CENTAVO. Erro que some no total não é achável conferindo soma.
+          //
+          // Por isso o número sai etiquetado: custo rateado é DERIVADO, não
+          // impresso. Quem grava custo no Parts DB tem de recusar derivado —
+          // ainda mais agora que compra real atravessa o cadeado da peça
+          // (lib/partsDb.ts). Melhor uma dúvida visível que quatro peças
+          // envenenadas caladas.
+          cost_derived: itemScale !== 1,
+          prorate_factor: Math.round(itemScale * 1e6) / 1e6,
           // ── O QUE O DOCUMENTO DIZ SOBRE A ENTREGA (Márcio, 30/ago/2026) ──
           // "Se teve endereco de entrega no escaneamento da compra, e Bought; se
           //  nao teve, e PickUp."

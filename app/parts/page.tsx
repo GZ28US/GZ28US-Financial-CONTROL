@@ -53,7 +53,9 @@ export default function PartsPage() {
   const [scannedItems, setScannedItems] = useState<{
     supplier: string
     date: string
-    items: { item: string; part_number: string; alias: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string }[]
+    // cost_derived: o preco desta linha saiu de RATEIO, nao do papel. Some no
+    // instante em que ele digita o valor certo — corrigido a mao passa a valer.
+    items: { item: string; part_number: string; alias: string; unit_price: string; quantity: string; tax: string; extra: string; item_discount: string; list_price: string; weight_lbs: string; cost_derived?: boolean }[]
   } | null>(null)
   const [enrolling, setEnrolling] = useState(false)
   const [search, setSearch] = useState('')
@@ -370,6 +372,7 @@ export default function PartsPage() {
         item_discount: String(i.item_discount || '0'),
         list_price: (parseFloat(i.list_price) || 0) > 0 ? money(i.list_price) : '0',
         weight_lbs: String(i.weight_lbs || '0'),
+        cost_derived: !!i.cost_derived,
       }))
       if (items.length === 0) { alert('No items found on that document.'); setScanning(false); return }
       // Open the review popup — nothing is enrolled until CONFIRM.
@@ -464,6 +467,18 @@ export default function PartsPage() {
                   <DatePicker label="PURCHASE DATE" value={scannedItems.date} onChange={(v) => setScannedItems({ ...scannedItems, date: v })} compact />
                 </div>
               </div>
+              {scannedItems.items.some(i => i.cost_derived) && (
+                // ── O AVISO QUE FALTAVA (09/set/2026) ──────────────────────
+                // A nota trouxe o desconto numa linha so, entao o leitor teve
+                // de ratear para fechar o total. Rateio nao e o preco da peca:
+                // na HHP #384734 errou ate US$ 20,82 numa linha COM O TOTAL
+                // FECHANDO AO CENTAVO. O catalogo recusa custo rateado; a peca
+                // entra sem custo, a menos que ele digite o valor certo aqui.
+                <div className="rounded-lg border border-amber-500 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <b>DESCONTO EM BLOCO — custo rateado.</b> Esta nota deu o desconto numa linha só, então o preço por item foi <u>calculado</u>, não lido.
+                  As linhas em âmbar entram no catálogo <b>sem OUR COST</b>. Digite o preço real de cada uma para que valha.
+                </div>
+              )}
               <div className="hidden md:flex gap-1.5 text-[10px] font-bold text-gray-500 uppercase px-1">
                 <span className="flex-1">Item</span>
                 <span className="w-28">Part #</span>
@@ -484,7 +499,7 @@ export default function PartsPage() {
                   <input type="text" inputMode="decimal" value={it.quantity} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], quantity: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-10`} placeholder="1" />
                   <div className="relative w-20">
                     <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
-                    <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4`} placeholder="0.00" />
+                    <input type="text" inputMode="decimal" value={it.unit_price} onChange={(e) => { const items = [...scannedItems.items]; items[i] = { ...items[i], unit_price: e.target.value, cost_derived: false }; setScannedItems({ ...scannedItems, items }) }} className={`${scanInput} w-full pl-4 ${it.cost_derived ? 'border-amber-500 text-amber-300' : ''}`} placeholder="0.00" title={it.cost_derived ? 'Rateado — este custo foi calculado, não impresso. Corrija para que ele entre no catálogo.' : undefined} />
                   </div>
                   <div className="relative w-16">
                     <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
