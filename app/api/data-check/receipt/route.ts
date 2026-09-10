@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
   const dry = !!b.dry
   const max = Math.min(40, Math.max(1, Number(b.max) || 12))
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
-  const res = { candidates: 0, read: 0, applied: 0, supplier_written: 0, supplier_suggested: 0, date_written: 0, date_fixed: 0, payer_written: 0, payer_suggested: 0, skipped: 0, errors: [] as string[], dry }
+  const res = { candidates: 0, read: 0, reused: 0, applied: 0, supplier_written: 0, supplier_suggested: 0, date_written: 0, date_fixed: 0, payer_written: 0, payer_suggested: 0, skipped: 0, errors: [] as string[], dry }
   try {
     const rows: any[] = []
     for (let from = 0; ; from += 1000) {
@@ -185,17 +185,25 @@ export async function POST(req: NextRequest) {
     fresh.sort((x, y) => score(y) - score(x))
     res.candidates = fresh.length
     const remember = async (r: any, reading: Reading) => { if (dry) return; await db.from('data_fixes').insert({ check_key: CHECK, table_name: 'invoice_expenses', row_id: r.id, field: 'RECEIPT', old_value: null, new_value: JSON.stringify(reading), label: (reading.error ? 'RECIBO · ' + reading.error : 'RECIBO LIDO · «' + (reading.supplier || '?') + '»' + (reading.registry ? ' = ' + reading.registry : '') + (reading.date ? ' · ' + reading.date : '') + (reading.payer ? ' · pagou ' + reading.payer : '')).slice(0, 160) + ' · ' + String(r.item || '').slice(0, 36) }).then(() => undefined, () => undefined) }
+    // MESMA FOTO, UMA LEITURA (DC 1.48.1): pedido com várias linhas anexa o mesmo recibo em cada uma — a irmã já lida responde de graça
+    // (7 linhas da AutoZone leram o mesmo recibo 7 vezes na primeira rodada). Reaproveitar não conta no teto de leituras.
+    const byFile = new Map<string, Reading>()
+    for (const rd of done.values()) if (!rd.error && rd.file && !byFile.has(rd.file)) byFile.set(rd.file, rd)
     let attempted = 0
     for (const r of fresh) {
-      if (attempted >= max || Date.now() - t0 > TIME_BUDGET_MS) break
-      attempted++
+      if (Date.now() - t0 > TIME_BUDGET_MS) break
       const file = parseUrls(r.receipt_url).find(u => READABLE.test(u))
       const base = { supplier: '', registry: null, date: '', payer: '', bill_to: '', method: '', currency: '', paid_from: null, paid_from_hint: null, file: file || '', at: new Date().toISOString() }
       if (!file) { res.skipped++; await remember(r, { ...base, error: 'sem arquivo legível (html?)' }); continue }
+      const sib = byFile.get(file)
+      if (sib) { const reading: Reading = { ...sib, at: base.at, model: String(sib.model || '') + ' · mesmo recibo da irmã' }; res.reused++; await remember(r, reading); res.applied += await apply(r, reading); continue }
+      if (attempted >= max) continue   // teto de leituras por chamada; segue varrendo por irmãs de graça
+      attempted++
       let reading: Reading
       try { const got = await readReceipt(file, today); const pv = payerVerdict(got); reading = { ...base, supplier: got.supplier, registry: resolveName(registry, got.supplier), date: got.date, payer: got.payer, bill_to: got.bill_to, method: got.method, currency: got.currency, paid_from: pv.paid_from, paid_from_hint: pv.hint, model: got.model } }
       catch (e) { const msg = String((e as Error).message || e).slice(0, 100); res.errors.push(String(r.item || '').slice(0, 30) + ': ' + msg); await remember(r, { ...base, error: msg }); continue }
       res.read++
+      byFile.set(file, reading)
       await remember(r, reading)
       res.applied += await apply(r, reading)
     }
