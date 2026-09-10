@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { waSelfBlockReason } from '@/lib/waSelfGuard.server'
+import { mencoesDoTexto } from '@/lib/waMentions'
 
 // WA SEND LOG (31/ago/2026, caso Gui): o aviso de duty morreu calado e ninguém
 // soube. TODA tentativa de envio — sucesso e falha — fica em wa_send_log; o
@@ -182,6 +183,13 @@ export async function POST(req: NextRequest) {
 
     const base = `https://api.ultramsg.com/${instance}`
 
+    // MARCAR É NOTIFICAR (10/set/2026, ordem dele: "sempre que for falar algo pra
+    // alguém, marque"). O `@numero` no corpo é só TEXTO; quem faz o WhatsApp
+    // notificar é o campo `mentions`, derivado do próprio corpo em lib/waMentions.
+    // Só em GRUPO, e só no /messages/chat: menção em legenda de imagem ou documento
+    // não é documentada pela UltraMsg, e campo onde não cabe é risco sem ganho.
+    const mentions = mencoesDoTexto(body, to)
+
     // Decide which UltraMsg endpoint to use based on what was passed.
     // chat -> text in `body`; image/document -> text in `caption`.
     let endpoint: string
@@ -195,24 +203,41 @@ export async function POST(req: NextRequest) {
       fields = { token, to, document: documentUrl, filename, caption: body, body }
     } else {
       endpoint = `${base}/messages/chat`
-      fields = { token, to, body }
+      fields = { token, to, body, ...(mentions ? { mentions } : {}) }
     }
 
-    const form = new URLSearchParams()
-    Object.entries(fields).forEach(([k, v]) => form.append(k, v ?? ''))
+    // A MENÇÃO É BÔNUS; ENTREGAR É OBRIGAÇÃO (10/set/2026). O campo `mentions` está
+    // no guia da UltraMsg, não na referência da API — então, se um envio COM o campo
+    // for recusado, o MESMO texto vai de novo sem ele. Nenhuma mensagem se perde por
+    // causa de uma marcação, e o log diz quando isso aconteceu.
+    const disparar = async (f: Record<string, string>) => {
+      const form = new URLSearchParams()
+      Object.entries(f).forEach(([k, v]) => form.append(k, v ?? ''))
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      })
+      // Capture raw text first so we can log it even when it isn't valid JSON.
+      const rawText = await res.text()
+      let data: any = {}
+      try { data = JSON.parse(rawText) } catch { /* not JSON */ }
+      // UltraMsg returns { sent: "true", id: ... } on a real send. Require that
+      // explicitly — a 200 with { sent: "false" } (instance offline, bad number,
+      // unreachable document URL, etc.) is NOT a success even without an `error`.
+      const sentOk = data.sent === 'true' || data.sent === true
+      return { res, rawText, data, ok: res.ok && (sentOk || (!!data.id && !data.error)) }
+    }
 
-    console.log('[whatsapp] -> ultramsg', { endpoint, to })
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form.toString(),
-    })
-
-    // Capture raw text first so we can log it even when it isn't valid JSON.
-    const rawText = await res.text()
-    let data: any = {}
-    try { data = JSON.parse(rawText) } catch { /* not JSON */ }
+    console.log('[whatsapp] -> ultramsg', { endpoint, to, mentions: mentions || undefined })
+    let envio = await disparar(fields)
+    if (!envio.ok && mentions) {
+      console.error('[whatsapp] recusado COM mentions — repetindo sem o campo', { rawPreview: envio.rawText.slice(0, 300) })
+      const semMencao = { ...fields }
+      delete semMencao.mentions
+      envio = await disparar(semMencao)
+    }
+    const { res, rawText, data, ok } = envio
 
     console.log('[whatsapp] <- ultramsg', {
       status: res.status,
@@ -225,11 +250,6 @@ export async function POST(req: NextRequest) {
       elapsedMs: Date.now() - t0,
     })
 
-    // UltraMsg returns { sent: "true", id: ... } on a real send. Require that
-    // explicitly — a 200 with { sent: "false" } (instance offline, bad number,
-    // unreachable document URL, etc.) is NOT a success even without an `error`.
-    const sentOk = data.sent === 'true' || data.sent === true
-    const ok = res.ok && (sentOk || (!!data.id && !data.error))
     if (!ok) {
       console.error('[whatsapp] send failed', { status: res.status, rawPreview: rawText.slice(0, 500) })
       await logSend({ ...logCtx, ok: false, error: ('ultramsg: ' + rawText).slice(0, 400), http_status: res.status, ultra_id: null })
