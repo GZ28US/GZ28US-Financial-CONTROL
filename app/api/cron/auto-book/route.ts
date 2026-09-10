@@ -26,6 +26,19 @@ export const maxDuration = 300
 // custo de varrer é o do provedor, mas o custo de uma janela larga sem querer é
 // encher a fila de dúvida com coisa velha já resolvida na mão.
 export async function GET(req: NextRequest) {
+  // QUEM PODE ACORDAR O ROBÔ (10/set/2026, Livro 1.4). Até hoje a rota estava
+  // aberta: qualquer um com a URL disparava uma varredura de até 168 horas que lê
+  // as seis caixas, arquiva e-mail e lança linha (achado da sessão do João).
+  // Passam só o cron da Vercel (Authorization: Bearer CRON_SECRET) e quem tem a
+  // chave de leitura — é a chave que mantém possível a rodada humana de `?horas=N`
+  // (header `x-read-key`, ou `?key=` para quem já chama assim). O `!!` impede que
+  // um CRON_SECRET ausente vire a senha "Bearer undefined".
+  const auth = req.headers.get('authorization') || ''
+  const key = req.headers.get('x-read-key') || req.nextUrl.searchParams.get('key') || ''
+  const cronOk = !!process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`
+  const keyOk = !!process.env.WHATSAPP_READ_KEY && key === process.env.WHATSAPP_READ_KEY
+  if (!cronOk && !keyOk) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
   const db = streamDb()
   const h = Math.min(168, Math.max(1, parseInt(req.nextUrl.searchParams.get('horas') || '3') || 3))
   try {
