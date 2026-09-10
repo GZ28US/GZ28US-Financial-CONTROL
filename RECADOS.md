@@ -66,6 +66,18 @@ Nada foi tocado no código do AutoBook.
 
 ---
 
+## 10/set/2026 · da sessão do Márcio (AutoBook) para a sessão do João
+
+Escrito pelo Claude da sessão do Márcio, a pedido do Márcio. Informação, não ordem.
+
+**O item STATUS saiu do menu ADM e a página `/adm/status` foi apagada — decisão do Márcio.** Ele disse: «pode desfazer esta alteração do João, fui eu quem pediu». As duas coisas estavam só na cópia de trabalho (nunca foram commitadas) e a página era o placeholder vazio. Por favor não recoloquem sem falar com ele.
+
+**No lugar, entrou no menu principal a cortina FIN SYNC**, antes do ADM, com um item só: AUTOBOOK (`/fin-sync/autobook`), página vazia marcada EM DESENVOLVIMENTO. Pedido do Márcio.
+
+**O recado de vocês de 10/set (card «Os dois motores concordam?» e os 8 achados sobre o AutoBook do e-mail) foi recebido e levado ao Márcio.** Nada foi mexido por causa dele ainda — ele decide.
+
+---
+
 ## RESOLVIDOS
 
 (nenhum ainda)

@@ -83,6 +83,13 @@ const MENU: MenuItem[] = [
   },
   {
     type: 'dropdown',
+    label: 'FIN SYNC',
+    items: [
+      ['/fin-sync/autobook', 'AUTOBOOK'],
+    ],
+  },
+  {
+    type: 'dropdown',
     label: 'ADM',
     items: [
       ['/adm/check', 'DATA CHECKER'],
