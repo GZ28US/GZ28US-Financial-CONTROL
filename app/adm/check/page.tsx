@@ -27,6 +27,7 @@ import { DC_CHANGELOG } from '@/lib/dcVersion'
 import { NATURES, NATURE_LABEL, NATURE_HINT, type Nature } from '@/lib/itemNature'
 import { classifyInput } from '@/lib/inputsCategory'
 import { brAccount } from '@/lib/financials'
+import type { EnginesAudit } from '@/lib/enginesAudit.server'   // só o tipo: o sinal vem pela rota
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 // Relógio do app = Orlando (regra de 20/08): depois das 20h o UTC já é amanhã.
@@ -113,6 +114,7 @@ type BankSignal = { matched: Set<string>; matchedName: Map<string, string>; grou
 // O APP PREENCHEU SOZINHO + DISPENSAS (DC 1.44.0): trilha «AUTO ·» dos últimos 7 dias (com DESFAZER genérico) e «visto, está certo».
 type AutoRow = { id: string; check_key: string; table_name: string; row_id: string; field: string; old_value: string | null; new_value: string | null; label: string; fixed_at: string }
 type AutoSignal = { state: 'loading' | 'error' | 'ok'; rows: AutoRow[]; dismissed: Record<string, string>; total?: number }
+type EnginesSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; data: EnginesAudit | null }   // os dois motores concordam? (DC 1.49.0)
 // Sugestões da fila A ATRIBUIR (?bucket=1) e as invoices com o estado FECHADA — o card do balde fala por fornecedor.
 type BucketSig = { state: 'loading' | 'error' | 'ok'; sug: Map<string, { invoice_id: string; code: string; car: string; why: string; score: number }>; invoices: { id: string; code: string; ride_code: string; ride_name: string; closed: boolean }[] }
 const REGIONS_OPENED = '2025-11-10'
@@ -177,7 +179,7 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
     return { ...c, items }
   })
 }
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal, engines: EnginesSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -1194,7 +1196,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
           fix: { kind: 'purge' as const, table: o.table, rowId: o.id, field: 'DELETED', confirmText: `Apagar o lançamento ÓRFÃO do motor "${o.label}" (${usd(o.amount)})? Nenhuma linha do banco aponta pra ele — é sobra de um DESFAZER ou de uma rodada que falhou. Fica na trilha.` },
         })
       }
-      for (const x of ab.dups) items.push({
+      // Par entre MOTORES (o banco criou o que a fila do e-mail já tinha) mora no card «Os dois motores concordam?» (DC 1.49.0).
+      const engDup = new Set((engines.data?.dups || []).map(x => x.bank_id + '|' + x.twin_id))
+      for (const x of ab.dups.filter(x => !engDup.has(String(x.bank_id) + '|' + String(x.twin_id)))) items.push({
         href: x.auto_table === 'inputs' ? '/supplies' : x.auto_table === 'invoice_expenses' ? '/adm/bank' : '/costs/fixed', code: 'DUPLA', label: `${x.auto_label || ''} ⇄ ${x.twin_label || ''}`, extra: `o motor criou e um humano lançou o mesmo (${usd(x.amount)}, ${x.days} dia(s) de diferença) — TROCAR desfaz o do motor e casa a linha com o registro humano`, amount: x.amount,
         fix: { kind: 'rematch' as const, table: x.twin_table, rowId: x.twin_id, field: 'match', bankId: x.bank_id, confirmText: `DESFAZ o lançamento do motor "${x.auto_label}" e casa a linha do banco com o registro humano "${x.twin_label}" (${usd(x.amount)})?` },
       })
@@ -1214,11 +1218,55 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })
       const b24 = Object.values(ab.booked_24h || {}).reduce((s, v) => s + v, 0), b7 = Object.values(ab.booked_7d || {}).reduce((s, v) => s + v, 0)
       checks.push({
-        group: 'BANK', key: 'auto-book', title: 'AutoBook Engine — rodou? errou? deixou sobras?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
+        group: 'BANK', key: 'auto-book', title: 'Motor do banco (Bank Link) — rodou? errou? deixou sobras?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
         why: `Desde ${ab.floor} cada linha nova do banco é REGISTRADA pelo motor depois do sync (cron 6/6h + webhook), uma rodada por vez. Registradas: ${b24} nas últimas 24 h · ${b7} em 7 dias · ${ab.remaining} NEW restantes desde o piso. RULE/LEARN esperam 7 dias de maturidade (o humano ainda lança atrasado) — daí a DUPLA: quando o humano lança depois do banco, TROCAR desfaz o do motor e casa o humano. ÓRFÃO = lançamento do motor sem linha casada (sobra de DESFAZER ou falha): PURGAR. Tudo desfazível no Bank Link (A CONFERIR · DESFAZER LOTE).`,
         items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
       })
     }
+  }
+  // ── OS DOIS MOTORES CONCORDAM? (DC 1.49.0 — João, 10/set: o Data Checker audita os dois robôs; nenhum lê o outro) ──
+  // AUTO-BOOK (e-mail, de hora em hora — lib/autoBookMail.server.ts) lança a compra; o motor do Bank Link liga a linha do banco
+  // ao registro e só lança por falta. Este card é SÓ LEITURA das tabelas dos dois (lib/enginesAudit.server.ts) e pergunta a gente
+  // quando as duas histórias não batem. As ações são as de sempre (TROCAR pela rota do Bank Link, VISTO com memória).
+  {
+    const items: Item[] = []
+    const E = engines.data
+    const NY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+    const when = (iso: string) => NY.format(new Date(iso)).replace(',', '') + ' (Orlando)'
+    if (engines.state === 'loading') items.push({ href: '/adm/check', code: 'SINAL', label: 'lendo os dois motores… a conferência ainda não rodou', extra: 'se persistir, o sinal de /api/data-check/engines não chegou — recarregue' })
+    else if (engines.state === 'error') items.push(engines.needsMigration
+      ? { href: '/adm/check', code: 'MIGRATION', label: 'as tabelas do AUTO-BOOK (auto_book_mail*) não existem neste banco — rode as migrations MIGRATION_auto_book_mail*.sql', extra: 'sem elas o card não enxerga o robô de e-mail' }
+      : { href: '/adm/check', code: 'SINAL', label: 'sinal de /api/data-check/engines indisponível — a conferência dos dois motores NÃO rodou', extra: 'recarregue' })
+    if (E) {
+      const m = E.mail
+      if (!m.last) items.push({ href: '/adm/check', code: 'MOTOR', label: 'o AUTO-BOOK (e-mail) nunca registrou uma rodada', extra: 'o cron de hora em hora (/api/cron/auto-book) não rodou ou não grava em auto_book_mail_runs' })
+      else if (m.running_minutes != null && m.running_minutes > 10) items.push({ href: '/adm/check', code: 'MOTOR', label: `rodada do AUTO-BOOK presa há ${m.running_minutes} min (começou ${when(m.last.started_at)})`, extra: 'estourou o tempo da Vercel? a rodada não fecha sozinha — o robô não sabe que parou' })
+      else if (m.hours_since_last != null && m.hours_since_last > 3) items.push({ href: '/adm/check', code: 'MOTOR', label: `AUTO-BOOK (e-mail) calado há ${m.hours_since_last} h — última rodada ${when(m.last.started_at)} (${m.last.status})`, extra: 'a rodada é de hora em hora com janela de 3 h; três batidas perdidas = e-mail com dinheiro sem ninguém lendo' })
+      else if (['ERROR', 'ABORTED'].includes(m.last.status)) items.push({ href: '/adm/check', code: 'ERRO', label: `última rodada do AUTO-BOOK em ${m.last.status} (${when(m.last.started_at)})`, extra: (m.last.errors[0] ? String(m.last.errors[0]).slice(0, 160) : 'sem texto de erro') + ' · a pergunta pode ter sido registrada mesmo assim' })
+      for (const b of m.boxes_failing) items.push({ href: '/adm/check', code: 'MOTOR', label: `caixa ${b.box}: ${b.reason} na última rodada`, extra: 'o robô lê essa caixa como vazia e fecha a rodada como DONE — token vencido ou erro do provedor; reconecte a caixa' })
+      if (m.zero_read_streak >= 6) items.push({ href: '/adm/check', code: 'MOTOR', label: `${m.zero_read_streak} rodadas seguidas do AUTO-BOOK sem ler nenhum e-mail`, extra: 'seis horas sem um e-mail nas seis caixas é improvável — filtro, token ou provedor' })
+      if (m.doubts.older_48h > 0) items.push({ href: '/adm/check', code: 'DÚVIDA', label: 'dúvidas do AUTO-BOOK sem resposta há mais de 48 h', extra: `${m.doubts.older_48h} dúvida(s) paradas (a mais velha: ${m.doubts.oldest_days} d) — dúvida respondida vira regra; parada, cada e-mail igual pergunta de novo. Responda no PVT do robô` })
+      // Ausência no banco só é prova com o feed enxergando (a mesma régua dos outros cards «não consta no banco»).
+      if (feedBlind && E.booked_no_bank.length) items.push({ href: '/adm/bank', code: 'FEED', label: `feed da Regions cego — a prova «o banco não cobrou» fica suspensa (${E.booked_no_bank.length} linha(s) da fila do e-mail esperando)`, extra: 'quando o feed voltar, o card confere de novo' })
+      for (const x of feedBlind ? [] : E.booked_no_bank) items.push(x.bank_line
+        ? { href: x.href, code: 'NÃO CASOU', label: `${x.label} · ${x.date}`, amount: x.amount, when: x.date, extra: `lançada pela fila do AUTO-BOOK (regra ou resposta) e a Regions TEM uma cobrança igual em ${x.bank_line.date}${x.bank_line.pending ? ' (ainda pendente — casa sozinha ao postar)' : ' que não casou (dúvida ou mais de 3 dias)'} — decida no Bank Link, não em «Quem pagou?»`, link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }
+        : { href: x.href, code: 'SEM BANCO', label: `${x.label} · ${x.date}`, amount: x.amount, when: x.date, extra: `lançada pela fila do AUTO-BOOK (regra ou resposta) e a Regions não mostra cobrança nenhuma em ${x.days} dias${x.days >= 15 ? ' — o dinheiro nunca saiu daqui? cartão de outro bolso (sócio, BR, cliente)? diga em «Quem pagou esta conta?» (a resposta tira a linha daqui)' : ' — o banco costuma postar em 1–5 dias; PayPal e pré-venda demoram mais'}`, link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
+      for (const x of E.dups) items.push({
+        href: '/adm/bank', code: 'DUPLA', label: `${x.auto_label} ⇄ ${x.twin_label}`, amount: x.amount, when: x.bank_date,
+        extra: `o motor do banco criou (${usd(x.amount)}, ${x.bank_date}) o que a fila do AUTO-BOOK já tinha lançado (${usd(x.twin_amount)}, ${x.days} dia(s) de diferença)` + (x.assigned ? ' — a linha do balde já foi atribuída por gente: DESATRIBUIR no Bank Link e depois TROCAR' : x.exact ? ' — TROCAR desfaz o do banco e casa a linha com o registro do e-mail' : ` — os valores diferem (${usd(Math.abs(x.twin_amount - x.amount))}: imposto ou frete?); ajuste a linha do e-mail no editor e case no Bank Link`),
+        fix: x.exact && !x.assigned ? { kind: 'rematch' as const, table: x.twin_table, rowId: x.twin_id, field: 'match', bankId: x.bank_id, confirmText: `DESFAZ o lançamento do motor do banco «${x.auto_label}» e casa a linha da Regions com o registro do AUTO-BOOK «${x.twin_label}» (${usd(x.twin_amount)})?` } : undefined,
+        link: x.assigned ? { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'DESATRIBUIR no Bank Link ↗' } : !x.exact ? { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } : undefined,
+      })
+      for (const x of E.no_mail) items.push({ href: '/adm/bank', code: 'SEM E-MAIL', label: `${x.name} · ${x.date} · ${x.row_label}`, amount: x.amount, when: x.date, extra: `compra online (${x.supplier}) que o banco pôs no balde e a fila do AUTO-BOOK não tem pergunta nem lançamento em ±15 dias — o robô pode ter lido e resolvido calado (ele não grava o que resolve), ou o e-mail não chegou; confira o balde e a caixa`, link: { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'BALDE ↗' } })
+      for (const x of E.doubt_dup) items.push({ href: '/adm/bank', code: 'RESPOSTA DUPLICA', label: `dúvida «${x.vendor} ${usd(x.amount)}» (${String(x.received_at).slice(0, 10)}) ⇄ balde «${x.bucket_label}» (${x.bucket_date})`, amount: x.amount, when: x.bucket_date, extra: 'o banco já pôs esta compra no balde A ATRIBUIR; responder a dúvida do AUTO-BOOK lançaria a compra em dobro — atribua a linha do balde e ignore a dúvida', link: { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'BALDE ↗' } })
+    }
+    const mm = E?.mail
+    const status = mm && mm.last ? `AUTO-BOOK (e-mail): última rodada ${when(mm.last.started_at)} (${mm.last.status}) · ${mm.runs_7d.done} rodadas OK e ${mm.runs_7d.error} com erro em 7 dias · ${mm.booked} compra(s) lançadas pela fila do e-mail (regra ou resposta) · ${mm.rules} regra(s) · ${mm.doubts.open} dúvida(s) aberta(s). Regions vista até ${E?.feed_until || '?'}.` : 'sem sinal do AUTO-BOOK.'
+    checks.push({
+      group: 'BANK', key: 'engines-agree', title: 'Os dois motores concordam? (AUTO-BOOK × motor do banco)', blocks: 'um robô lança o que o outro já lançou, ou nenhum lança — e ninguém percebe até o DRE',
+      why: `Dois robôs registram compra: o AUTO-BOOK lê o E-MAIL de hora em hora e lança a compra (item, pedido, fornecedor); o motor do Bank Link lê a REGIONS a cada 6 h, liga cada linha do banco ao registro que já existe e só lança por falta (tarifa, combustível, compra no balcão — o que nunca manda e-mail). Nenhum lê o outro: este card é só leitura dos dois e confere se contam a mesma história — robô calado, caixa sem token, dúvida parada, compra do e-mail que o banco nunca cobrou, DUPLA entre motores, compra online sem pergunta nem lançamento no e-mail, dúvida cuja compra já está no balde. Hoje: ${status}`,
+      items, impact: items.filter(i => i.code === 'SEM BANCO' || i.code === 'DUPLA').reduce((s, i) => s + (i.amount || 0), 0),
+    })
   }
   // BANK · A ATRIBUIR (fase B): compra sem dono há mais de 7 dias. O balde é conta
   // de suspensão — caixa e DRE certos no dia, mas a margem do carro mente até o
@@ -1316,7 +1364,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     if (ab2 && !ab2.needs_migration) {
       // Sinal que FALHOU não é sinal verde: os três cards mostram SINAL em vez de «nada pendente».
       const sigErr = ab2.silence_error || (ab2.questions === null ? 'o bloco do silêncio não respondeu' : null)
-      const sinal: Item[] = sigErr ? [{ href: '/adm/bank', code: 'SINAL', label: 'o sinal do motor falhou — ' + sigErr, extra: 'sem sinal não há promessa: este card não sabe se está tudo certo; recarregue ou veja o card AUTO-BOOK', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : []
+      const sinal: Item[] = sigErr ? [{ href: '/adm/bank', code: 'SINAL', label: 'o sinal do motor falhou — ' + sigErr, extra: 'sem sinal não há promessa: este card não sabe se está tudo certo; recarregue ou veja o card «Motor do banco»', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : []
       // PAGA NO BANCO, ABERTA NO APP — deriva das três datas (X vencimento, Y banco, Z registro).
       const dr = ab2.drift || []
       const di: Item[] = dr.map(x => ({
@@ -1355,7 +1403,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     // (sem origem é o card de paid_from); 3 dias de maturidade (a linha do banco posta em 1–3 dias).
     // Até onde o feed enxerga (feedUntil), menos 3 dias de postagem; feed cego = este card não julga ausência.
     const cutoff3 = feedBlind ? '0000-00-00' : new Date(Date.parse(feedUntil) - 3 * 864e5).toISOString().slice(0, 10)
-    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card AUTO-BOOK' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AutoBook', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
+    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card «Motor do banco»' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AutoBook', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
       .sort((a: any, b: any) => String(b.payment_date).localeCompare(String(a.payment_date)))
       .map((e: any) => {
         // PROVA (DC 1.44.0): UMA linha NEW da Regions com o valor exato, o nome do prestador e ±10 d — o casamento faltou, não o pagador.
@@ -1632,6 +1680,7 @@ export default function DataCheckPage() {
   const [open, setOpen] = useState<string | null>(null)
   const [fixing, setFixing] = useState<string | null>(null)   // `${check}|${rowId}`
   const [auto, setAuto] = useState<AutoSignal>({ state: 'loading', rows: [], dismissed: {} })   // o que o app fez sozinho + dispensas
+  const [engines, setEngines] = useState<EnginesSignal>({ state: 'loading', needsMigration: false, data: null })   // AUTO-BOOK (e-mail) × motor do banco, só leitura (DC 1.49.0)
   const [bucketSig, setBucketSig] = useState<BucketSig>({ state: 'loading', sug: new Map(), invoices: [] })   // sugestões da fila A ATRIBUIR
   const [fixValue, setFixValue] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1737,6 +1786,8 @@ export default function DataCheckPage() {
         else setDuty(prev => ({ ...prev, state: 'error' }))
         // LINKER: identidade de peças (pré-P1 do Crew Chief) — inventory/stream → catálogo.
         // O que o app fez sozinho + dispensas; e as sugestões da fila A ATRIBUIR (balde por fornecedor).
+        // OS DOIS MOTORES CONCORDAM? (DC 1.49.0): o robô de e-mail e o motor do banco, lado a lado — só leitura das tabelas dos dois.
+        sessionHeaders().then(h => fetch(`${BASE_PATH}/api/data-check/engines`, { headers: h })).then(async re => { const je = await re.json().catch(() => ({})); setEngines(re.ok && je.ok ? { state: 'ok', needsMigration: false, data: je } : { state: 'error', needsMigration: !!je.needs_migration, data: null }) }).catch(() => setEngines({ state: 'error', needsMigration: false, data: null }))   // em paralelo: lê cinco tabelas, não segura os outros sinais
         try { const ra = await fetch(`${BASE_PATH}/api/data-check/auto`, { headers: await sessionHeaders() }); const ja = await ra.json().catch(() => ({})); setAuto(ra.ok ? { state: 'ok', rows: ja.auto || [], dismissed: ja.dismissed || {}, total: typeof ja.total === 'number' ? ja.total : undefined } : { state: 'error', rows: [], dismissed: {} }) } catch { setAuto({ state: 'error', rows: [], dismissed: {} }) }
         try {
           const rb = await fetch(`${BASE_PATH}/api/bank/reconcile?bucket=1`, { headers: await sessionHeaders() }); const jb = await rb.json().catch(() => ({}))
@@ -1761,7 +1812,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt])
+  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
   // O chip BANK conta o que PERGUNTA a gente: linhas com dúvida menos as que só esperam maturidade (o motor cuida).
   const q0 = bank.autobook && !bank.autobook.needs_migration ? bank.autobook.questions : null
@@ -1798,7 +1849,7 @@ export default function DataCheckPage() {
     const cash = checks.find(c => c.key === 'cash-match')
     if (cash && cash.items.length > 0) out.push({ title: 'O caixa não bate — conserte a régua primeiro', sub: 'enquanto ela estiver vermelha, nenhum outro número vale', group: 'BANK', open: 'cash-match' })
     const ab = checks.find(c => c.key === 'auto-book')
-    if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'AUTO-BOOK parou ou errou — veja o card', sub: 'o motor deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
+    if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'Motor do banco parou ou errou — veja o card', sub: 'o motor deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
     const bk = checks.find(c => c.key === 'bucket-aging')
     if (bk && bk.items.length) out.push({ title: `${bk.items.length} compra(s) sem dono há 7+ dias — diga o carro`, sub: `${usd(bk.impact || 0)} parados no balde · CARRO / ESTOQUE / SUPPLIES / FIXO na fila A ATRIBUIR`, group: 'BANK', open: 'bucket-aging' })
     // Silêncio (DC 1.40.0): casamento do motor é prova, não pendência — a missão «conferir» morreu; nasceram as perguntas e a deriva.
