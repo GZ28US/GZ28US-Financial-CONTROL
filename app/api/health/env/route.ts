@@ -97,7 +97,10 @@ const olhar = (nomes: Record<string, string>) => {
 
 export async function GET(req: NextRequest) {
   const need = process.env.WHATSAPP_READ_KEY
-  if (!need || req.nextUrl.searchParams.get('key') !== need) {
+  // A chave também vale no header `x-read-key`: na query string ela fica gravada
+  // em todo log de acesso. Quem já chama com `?key=` continua funcionando.
+  const veio = req.headers.get('x-read-key') || req.nextUrl.searchParams.get('key')
+  if (!need || veio !== need) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const ess = olhar(ESSENCIAIS)
