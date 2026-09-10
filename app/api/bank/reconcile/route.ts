@@ -538,6 +538,51 @@ export async function POST(req: NextRequest) {
     // ── CASAR COM AJUSTE (BL 1.1.0): a linha do banco casa com a(s) passagem(ns) da folha ──
     // O banco é o fato: valor ao centavo, pagador GZ28US, elo na coluna. Cada mudança vira
     // backfill (DESFAZER em A CONFERIR devolve tudo); linha vai pra A CONFERIR como ADJUST.
+    // WIRE + TAXA (BL 1.4.1 — João, 9/set): a linha da invoice traz a taxa do wire dentro ($100.023) e o banco mostra o
+    // wire limpo ($100.000) — o casamento exato falhava por $23 e o card chamava de «ausente». Casa por ADJUST: a linha
+    // vai ao valor do banco (a taxa é tarifa bancária, não custo do carro — o FEE cuida da linha da taxa), data e pagador
+    // vêm do banco, tudo no backfill (DESFAZER devolve). Só invoice_expenses, só WIRE, só taxa ≤ $60, só linha única.
+    if (action === 'match_wire') {
+      const bankId2 = String(body.bank_id || ''), rowId = String(body.row_id || '')
+      if (!bankId2 || !rowId) return NextResponse.json({ error: 'bank_id/row_id required' }, { status: 400 })
+      const { data: lineW } = await db.from('bank_transactions').select(BSEL + ', doubt_answered').eq('id', bankId2).maybeSingle()
+      const line: any = lineW   // select composto: o tipo do supabase-js não resolve a string concatenada (mesmo truque do match_adjust)
+      if (!line || !['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
+      if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar' }, { status: 409 })
+      if (!(num(line.amount) > 0) || !/WIRE/i.test(String(line.merchant || line.name || ''))) return NextResponse.json({ error: 'só saída de WIRE casa com taxa' }, { status: 409 })
+      const { data: e } = await db.from('invoice_expenses').select('id, item, price, quantity, tax, extra, payment_date, paid_from, source, expense_date').eq('id', rowId).maybeSingle()
+      if (!e) return NextResponse.json({ error: 'linha da invoice não existe mais' }, { status: 409 })
+      const { data: taken } = await db.from('bank_transactions').select('id').eq('matched_table', 'invoice_expenses').eq('matched_id', rowId).eq('match_status', 'MATCHED').limit(1)
+      if (taken && taken.length) return NextResponse.json({ error: 'linha da invoice já casada com outra linha do banco' }, { status: 409 })
+      const auto = body.engine === 'AUTO'
+      // Par já recusado por gente (NÃO É ESSE) não volta sozinho (revisão de 9/set).
+      if (auto && rejectedOf(line).has('invoice_expenses:' + rowId)) return NextResponse.json({ error: 'par já recusado por gente (NÃO É ESSE) — o app não insiste' }, { status: 409 })
+      const bank = Math.round(Math.abs(num(line.amount)) * 100) / 100
+      const lineAmt = Math.round((num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra)) * 100) / 100
+      const fee = Math.round((lineAmt - bank) * 100) / 100
+      if (fee <= 0 || fee > 60) return NextResponse.json({ error: 'a diferença não é taxa de wire (' + fee.toFixed(2) + ')' }, { status: 409 })
+      // A taxa sai de onde estava: de extra quando cabe, senão do preço (quantidade 1).
+      const patch: any = {}
+      const backfill: any[] = []
+      if (num(e.extra) >= fee) { patch.extra = Math.round((num(e.extra) - fee) * 100) / 100; backfill.push({ t: 'invoice_expenses', id: e.id, f: 'extra', v: String(patch.extra), o: String(num(e.extra)) }) }
+      else if ((num(e.quantity) || 1) === 1) { patch.price = Math.round((num(e.price) - fee) * 100) / 100; backfill.push({ t: 'invoice_expenses', id: e.id, f: 'price', v: String(patch.price), o: String(num(e.price)) }) }
+      else return NextResponse.json({ error: 'linha com quantidade > 1 e sem extra — ajuste a taxa à mão' }, { status: 409 })
+      if (!e.payment_date) { patch.payment_date = line.date; backfill.push({ t: 'invoice_expenses', id: e.id, f: 'payment_date', v: String(line.date), o: null }) }
+      if (!e.paid_from) { patch.paid_from = 'GZ28US'; backfill.push({ t: 'invoice_expenses', id: e.id, f: 'paid_from', v: 'GZ28US', o: null }) }
+      const { data: claimed, error: cErr } = await db.from('invoice_expenses').update(patch).eq('id', e.id).eq('price', e.price).select('id')
+      if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
+      if (!claimed || !claimed.length) return NextResponse.json({ error: 'linha da invoice mudou — recarregue' }, { status: 409 })
+      // AUTO nasce visto (prova do Data Checker: wire limpo + taxa, linha única); fora do AUTO cai em A CONFERIR.
+      try { await writeMatch(db, line, { table: 'invoice_expenses', id: e.id }, { matched_note: ((auto ? 'AUTO · ' : '') + 'ADJUST · wire + taxa $' + fee.toFixed(2) + ' · ' + String(e.item || '')).slice(0, 150), match_engine: 'ADJUST', match_batch: null, match_rule: null, reviewed_at: auto ? new Date().toISOString() : null }, backfill) }
+      catch (err) {
+        // Revisão de 9/set: se o casamento já gravou e só o passo seguinte falhou (ledger, diário), o banco aponta pra linha — mantém; senão devolve o backfill.
+        const { data: now } = await db.from('bank_transactions').select('match_status, matched_table, matched_id').eq('id', line.id).maybeSingle()
+        const landed = !!now && now.match_status === 'MATCHED' && now.matched_table === 'invoice_expenses' && String(now.matched_id) === String(e.id)
+        if (!landed) { for (const x of backfill) await (db.from('invoice_expenses') as any).update({ [x.f]: x.o == null ? null : (x.f === 'price' || x.f === 'extra' ? Number(x.o) : x.o) }).eq('id', x.id); return NextResponse.json({ error: String((err as Error).message || err).slice(0, 200) }, { status: 409 }) }
+      }
+      await db.from('data_fixes').insert({ check_key: 'paid-from', table_name: 'bank_transactions', row_id: line.id, field: 'match_status', old_value: String(line.match_status), new_value: 'MATCHED', label: ((auto ? 'AUTO · ' : '') + 'wire + taxa: ' + line.date + ' $' + bank.toFixed(2) + ' ⇄ «' + String(e.item || '').slice(0, 50) + '» $' + lineAmt.toFixed(2) + ' (taxa $' + fee.toFixed(2) + ' vira tarifa; pagou GZ28US)').slice(0, 200) }).then(() => undefined, () => undefined)
+      return NextResponse.json({ ok: true, fee, bank, line_amount: lineAmt })
+    }
     if (action === 'match_adjust') {
       if (await probeExpenseLink(db)) return NextResponse.json({ error: 'rode MIGRATION_expenses_bank_link.sql antes (coluna expenses.bank_transaction_id)', needs_link_migration: true }, { status: 409 })
       const bankId2 = String(body.bank_id || '')

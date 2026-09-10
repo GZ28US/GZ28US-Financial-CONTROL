@@ -72,6 +72,9 @@ export async function POST(req: NextRequest) {
       const { data: ok, error } = await q.select('id')
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       if (!ok || !ok.length) return NextResponse.json({ error: 'o campo já mudou depois — nada desfeito' }, { status: 409 })
+      // Revisão de 9/set: desfazer um «quem pagou» com o SOURCE legado dizendo o mesmo pagador não desfaria nada (whoPaid cai no
+      // SOURCE e DFC/Balanço seguiriam contando) — limpa o SOURCE junto, com trilha própria.
+      if (field === 'paid_from' && fx.new_value) { const { data: cleared } = await (db.from(table) as any).update({ source: null }).eq('id', rowId).eq('source', fx.new_value).select('id'); if (cleared && cleared.length) await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field: 'source', old_value: fx.new_value, new_value: null, label: ('DESFEITO · o SOURCE antigo dizia o mesmo pagador (' + fx.new_value + ') — limpo junto, senão DFC e Balanço seguiriam contando').slice(0, 200) }).then(() => undefined, () => undefined) }
     }
     // DESFAZER é a pessoa discordando da prova: a máquina não refaz esta linha (DESFEITO na memória; o card ainda pergunta).
     if (table !== 'bank_transactions') await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field: 'DISMISSED', old_value: null, new_value: 'DESFEITO', label: ('DESFEITO · o app não refaz sozinho · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)

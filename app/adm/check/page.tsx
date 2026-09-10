@@ -26,6 +26,7 @@ import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyL
 import { DC_CHANGELOG } from '@/lib/dcVersion'
 import { NATURES, NATURE_LABEL, NATURE_HINT, type Nature } from '@/lib/itemNature'
 import { classifyInput } from '@/lib/inputsCategory'
+import { brAccount } from '@/lib/financials'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 // Relógio do app = Orlando (regra de 20/08): depois das 20h o UTC já é amanhã.
@@ -56,7 +57,7 @@ type Fix =
   // DC 1.44.0: DESFAZER genérico do que o app preencheu sozinho; VISTO (dispensa com memória); CASAR por prova (paga no app, sem banco).
   | { kind: 'undo_auto'; table: string; rowId: string; field: string; fixId: string; confirmText: string }
   | { kind: 'dismiss'; table: string; rowId: string; field: string; checkKey: string; confirmText: string }
-  | { kind: 'match'; table: string; rowId: string; field: string; bankId: string; confirmText: string }
+  | { kind: 'match'; table: string; rowId: string; field: string; bankId: string; confirmText: string; wire?: number }   // wire: taxa do wire (casa por ADJUST)
   | { kind: 'received'; table: string; rowId: string }
   | { kind: 'trim'; table: 'invoice_duties'; rowId: string; field: 'time_seconds'; dutyId: string; segStart: string; segEnd: string; bankedStart: number | null; bankedEnd: number | null }
 // certain: a sugestão é prova, não palpite (ex.: a Regions já casou a linha) — entra no bulk PREENCHER CERTOS.
@@ -65,7 +66,7 @@ type Item = { href: string; code: string; label: string; extra?: string; amount?
 // A prova de cada PREENCHER CERTOS, na língua do card (achado do João, 25/ago:
 // a legenda da Regions aparecia até nos cards de peças).
 const CERTAIN_PROOF: Record<string, string> = {
-  'paid-from': 'linhas já casadas com a Regions → GZ28US, ou a irmã do mesmo pedido já diz quem pagou (prova, não palpite)',
+  'paid-from': 'linhas já casadas com a Regions → GZ28US, o wire do banco com a taxa dentro da linha, a irmã do mesmo pedido ou o recibo dizendo quem pagou (prova, não palpite)',
   'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
   'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
   'inputs-category': 'identidade da loja (mercado/lanchonete → TEAM, pet → CATS, ferragem → oficina) ou loja e texto concordando',
@@ -117,6 +118,11 @@ type BucketSig = { state: 'loading' | 'error' | 'ok'; sug: Map<string, { invoice
 const REGIONS_OPENED = '2025-11-10'
 let AUTO_CAT_RAN = false   // categoria sozinha: uma leitura da IA por abertura da página
 let AUTO_NATURE_RAN = false   // natureza sozinha (carro → dinheiro, PN → peça, hábito): uma rodada por abertura
+let AUTO_RECEIPT_RAN = false  // o recibo responde o que falta (DC 1.47.0): uma leitura por abertura, teto por chamada
+type ReceiptReading = { supplier: string; registry: string | null; date: string; payer?: string; method?: string; currency?: string; paid_from?: string | null; paid_from_hint?: string | null; file: string; at: string; error?: string }
+type ReceiptSignal = { state: 'loading' | 'error' | 'ok'; readings: Record<string, ReceiptReading> }
+// PREENCHER CERTOS só escreve item certo com fix select (revisão de 9/set): certos de CASAR/WIRE entram pela rota no AUTO-RUN, não no bulk.
+const isBulkCertain = (i: Item) => !!(i.certain && i.suggest && i.fix && i.fix.kind === 'select')
 let AUTO_RAN = false          // níveis CERTOS dos cards: uma rodada por abertura
 // Cards cujos itens CERTOS o app resolve sozinho (com trilha «AUTO ·» e DESFAZER no card SOZINHO).
 const AUTO_KEYS = new Set(['paid-from', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled', 'inputs-category', 'inv-no-supplier', 'undated-inv'])
@@ -171,7 +177,7 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
     return { ...c, items }
   })
 }
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -443,17 +449,23 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const byBank = resolveBank(bnRaw)
       const sibs = e.purchase_group ? sibSup.get(e.purchase_group) : undefined
       const bySib = sibs && sibs.size === 1 ? [...sibs][0] : null
+      // 3b · o RECIBO (DC 1.47.0): vendedor lido que resolve no cadastro é prova; que não resolve é sugestão com o nome impresso.
+      const rc = receipt.readings[String(e.id)]
+      const byReceipt = rc && rc.registry ? rc.registry : null
+      const receiptRaw = rc && rc.supplier && !rc.registry ? rc.supplier : null
       // 4 · palavra de marca solta (token distintivo de UM cadastro) — só sugestão
       const brand = (() => { const hits = new Set<string>(); for (const t of nameTok(text)) { const s = registryTok.get(t); if (s && s.size === 1) hits.add([...s][0]) } return hits.size === 1 ? [...hits][0] : null })()
-      const proofs = [...new Set([byText, byHist, byBank, bySib].filter((x): x is string => !!x))]
+      const proofs = [...new Set([byText, byHist, byBank, bySib, byReceipt].filter((x): x is string => !!x))]
       const conflict = proofs.length > 1
       const sug = conflict ? null : (proofs[0] || null)
-      const soft = !sug && !conflict ? (histWeak || brand) : null
+      const soft = !sug && !conflict ? (receiptRaw || histWeak || brand) : null
       const why = conflict ? 'as provas discordam: ' + proofs.map(p => '«' + p + '»').join(' × ') + ' — decida'
         : byText ? 'o texto nomeia «' + byText + '» (cadastro)' + (byHist || bySib || byBank ? ' — e o histórico/pedido/banco concordam' : '')
         : byHist ? 'o mesmo item já veio ' + hist![1] + '× de «' + byHist + '»'
         : byBank ? 'o banco é a testemunha: a linha casou com «' + bnRaw + '» = ' + byBank
         : bySib ? 'a irmã do mesmo pedido diz «' + bySib + '»'
+        : byReceipt ? 'o recibo diz «' + rc!.supplier + '» = ' + byReceipt + ' no cadastro'
+        : receiptRaw ? 'o recibo diz «' + receiptRaw + '», que ainda não está no cadastro — confirme e o app aprende'
         : histWeak ? 'o mesmo item veio 1× de «' + histWeak + '» — confirme'
         : brand ? 'o texto cita a marca «' + brand + '» — é ela quem vendeu?'
         : bnRaw ? 'a linha casou com «' + bnRaw + '», que não resolve num cadastro — quem vendeu?'
@@ -466,11 +478,57 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
           : { kind: 'dismiss' as const, table: 'data_check', rowId: e.id, field: 'DISMISSED', checkKey: 'inv-no-supplier', confirmText: `Marcar «visto, está certo» em «${text.slice(0, 60)}» (sem fornecedor de propósito)? O card para de perguntar esta linha (fica na trilha; dá pra voltar).` },
       })
     }
+    if (receipt.state === 'error') items.push({ href: '/adm/check', code: 'SINAL', label: 'sinal do leitor de recibos indisponível — o app não leu recibos nesta abertura', extra: 'recarregue; as linhas seguem aqui pra resposta de gente' })
     checks.push({
       group: 'FINANCIAL', key: 'inv-no-supplier', title: 'Linha de invoice sem fornecedor', blocks: 'o 1099, o hábito de natureza e a busca de gêmeos ficam cegos pra esta linha',
-      why: 'O editor aceita item + valor sem fornecedor; o motor sempre grava um. Provas, da mais forte à mais fraca: o TEXTO da linha nomeia um fornecedor do cadastro (nome ou apelido inteiro — «HP Tuners ECU Unlock» é HP Tuners), o mesmo item já veio 2+ vezes do mesmo vendedor, a linha casou com a Regions e o comerciante resolve no cadastro, a irmã do pedido já diz. Isso entra sozinho. Marca solta e histórico de 1× são palpite pré-carregado. Lavagem, combustível, pedágio, frete, guincho e bagagem não são compra de vendedor e não entram. Compra de carro e «cc Beto» são decisão de gente: VISTO com motivo.',
+      why: 'O editor aceita item + valor sem fornecedor; o motor sempre grava um. Linha com RECIBO anexado: o app lê o recibo (a mesma leitura por IA do scanner) e o vendedor impresso que resolve no cadastro entra sozinho; o que não resolve vem pré-carregado. Provas, da mais forte à mais fraca: o TEXTO da linha nomeia um fornecedor do cadastro (nome ou apelido inteiro — «HP Tuners ECU Unlock» é HP Tuners), o mesmo item já veio 2+ vezes do mesmo vendedor, a linha casou com a Regions e o comerciante resolve no cadastro, a irmã do pedido já diz. Isso entra sozinho. Marca solta e histórico de 1× são palpite pré-carregado. Lavagem, combustível, pedágio, frete, guincho e bagagem não são compra de vendedor e não entram. Compra de carro e «cc Beto» são decisão de gente: VISTO com motivo.',
       items, impact: items.reduce((s, x) => s + (x.amount || 0), 0),
     })
+  }
+
+  // ── DATA IMPOSSÍVEL (DC 1.48.0 — estudo de 9/set: dez linhas de 2026 datadas 2023/2024 pareciam «antes da Regions») ──
+  // Linha datada antes da invoice existir (30 dias antes da contratação) é erro de digitação, não história. Com recibo,
+  // o app corrige sozinho pela data do documento; sem recibo, pergunta a data certa.
+  {
+    const items: Item[] = []
+    for (const e of d.invExpenses) {
+      const inv = d.invoiceById.get(e.invoice_id); const b0 = String((inv as any)?.hiring_date || (inv as any)?.entry_date || '').slice(0, 10)
+      if (!b0) continue
+      // 90 dias de folga (medido em 9/set): peça comprada meses antes da contratação existe (Texas Speed dez/25 pra invoice de jun/26, HHP abr/26).
+      const floor = new Date(Date.parse(b0) - 90 * 864e5).toISOString().slice(0, 10)
+      const ed = String(e.expense_date || '').slice(0, 10), pd = String(e.payment_date || '').slice(0, 10)
+      const bad = (ed && ed < floor) ? 'expense_date' : (pd && pd < floor) ? 'payment_date' : null
+      if (!bad) continue
+      const m = invoiceMeta(d, e.invoice_id)
+      const rc = receipt.readings[String(e.id)]
+      if (rc && rc.date && rc.date === (bad === 'expense_date' ? ed : pd)) continue   // o recibo confirma a data: compra antecipada legítima, não erro de digitação
+      items.push({
+        href: m.href, code: bad === 'expense_date' ? 'DATA' : 'PAGTO', label: (e.item || '(sem descrição)') + ' · ' + (bad === 'expense_date' ? ed : pd) + ' numa invoice de ' + b0, extra: [whoFor(e.invoice_id), e.receipt_url ? (rc ? (rc.date ? 'o recibo diz ' + rc.date + (rc.date >= floor ? ' — o app corrige sozinho na próxima abertura' : ' — também antes da invoice: confira') : 'o recibo não trouxe data') : 'tem recibo: o app vai ler e corrigir sozinho') : 'sem recibo — qual é a data certa?'].filter(Boolean).join(' · '), amount: expLine(e), when: ed || pd || undefined,
+        fix: { kind: 'date' as const, table: 'invoice_expenses', rowId: e.id, field: bad },
+      })
+    }
+    if (receipt.state === 'error') items.push({ href: '/adm/check', code: 'SINAL', label: 'sinal do leitor de recibos indisponível — o app não leu recibos nesta abertura', extra: 'recarregue; as linhas seguem aqui pra resposta de gente' })
+    checks.push({
+      group: 'FINANCIAL', key: 'inv-date-impossible', title: 'Linha datada antes da invoice existir', blocks: 'a linha cai no ano errado: DRE e DFC do ano errado, e o «quem pagou» acha que é de antes da Regions',
+      why: 'Estudo de 9/set: dez linhas de invoices de 2026 estavam datadas 2023 e 2024 (erro de ano ao digitar) e apareciam como «antes da Regions abrir». Linha datada 90+ dias antes da contratação da invoice é suspeita (compra antecipada legítima existe — peça comprada meses antes do contrato — por isso a folga). Com recibo anexado o app lê o documento: data do recibo dentro do prazo corrige a linha sozinho (trilha «AUTO ·», DESFAZER no card verde); recibo que CONFIRMA a data antiga cala o card (era compra antecipada); sem recibo, você diz a data ou dá VISTO.',
+      items, impact: items.reduce((s, x) => s + (x.amount || 0), 0),
+    })
+  }
+
+  // ── CONTA CORRENTE GZ28BR (DC 1.48.0 — João, 9/set: «BR nos deve o lucro das operações processadas lá; aconteceu depois também, e ao contrário») ──
+  // Card BOM (notícia, não pendência): a MESMA conta do Balanço (lib/financials brAccount — uma régua, whoPaid; GZ-FLOW na mesma régua):
+  // o que a BR recebeu por nós, o que ela pagou por nós, o que nós pagamos por ela, o saldo. E o que o fluxo NÃO enxerga:
+  // linha paga sem pagador nenhum (o DFC assume Regions até alguém dizer).
+  {
+    const acc = brAccount(d)
+    const items: Item[] = [
+      { href: '/gz-flow', code: 'RECEBEU', label: 'a BR recebeu por nós ' + usd(acc.gotIncome) + ' (receita nossa que entrou lá)', amount: acc.gotIncome, link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } },
+      { href: '/gz-flow', code: 'PAGOU', label: 'a BR pagou contas nossas: ' + usd(acc.paid), amount: acc.paid },
+      { href: '/gz-flow', code: 'NÓS', label: 'nós pagamos contas da BR: ' + usd(acc.usPaidBr), amount: acc.usPaidBr },
+      { href: '/adm/financials/balance', code: 'SALDO', label: (acc.net >= 0 ? 'a BR nos deve ' : 'nós devemos à BR ') + usd(Math.abs(acc.net)), amount: Math.abs(acc.net), extra: 'saldo = recebeu por nós + contas da BR que pagamos − contas nossas que ela pagou · o mesmo número da linha «Conta corrente GZ28BR» do Balanço', link: { href: BASE_PATH + '/adm/financials/balance', label: 'BALANÇO ↗' } },
+      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions e este saldo não as vê — cada uma decidida no card «Quem pagou esta conta?» corrige o saldo', link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
+    ]
+    checks.push({ group: 'FINANCIAL', key: 'br-account', good: true, title: 'Conta corrente GZ28BR', blocks: 'o saldo entre as duas empresas — notícia, não pendência; a pendência mora em «Quem pagou esta conta?»', why: 'João, 9/set: antes da Regions a BR recebia e pagava tudo, e o lucro é da GZ28US — a BR nos deve esse lucro; depois aconteceu também, e ao contrário (nós pagando conta da BR). A conta é UMA (lib/financials brAccount): o Balanço e este card leem a mesma função, na régua do GZ-FLOW (paid_to GZ28BR = ela recebeu por nós; paid_from GZ28BR = ela pagou por nós; nós pagando conta paid_to GZ28BR = ela nos deve mais; sócio sai do saldo e vira empréstimo de sócio). O que este card mostra de novo é o CEGO: linha paga sem pagador nenhum não entra no saldo e o DFC a conta como Regions.', items })
   }
 
   // 5 · Custos fixos e folha sem payment_date.
@@ -689,6 +747,11 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const groupPaid = new Map<string, Set<string>>()
     const addP = (rows: any[]) => { for (const r of rows) if (r.purchase_group && r.paid_from) { const s = groupPaid.get(r.purchase_group) || new Set<string>(); s.add(String(r.paid_from)); groupPaid.set(r.purchase_group, s) } }
     addP(d.invExpenses); addP(d.goods); addP(d.inputs); addP(d.inventory)
+    // WIRE + TAXA (DC 1.48.0): a linha da invoice traz a taxa do wire dentro; o banco mostra o wire limpo no mesmo dia (±1).
+    // Cada wire do banco só pode ser de UMA linha — se duas linhas pagas sem pagador cabem no mesmo wire, nenhuma casa sozinha (revisão de 9/set).
+    const wireOf = (r: any, amount: number) => { if (!r.payment_date || amount < 500) return null; const pd = String(r.payment_date).slice(0, 10); const w = bank.lines.filter(x => x.s === 'NEW' && /WIRE/i.test(x.n) && dayDiff(x.d, pd) <= 1 && x.a < amount - 0.009 && x.a >= amount - 60); return w.length === 1 ? w[0] : null }
+    const wireClaims = new Map<string, number>()
+    for (const e of d.invExpenses) { if (e.paid_from || !e.payment_date) continue; const w = wireOf(e, expLine(e)); if (w) wireClaims.set(String(w.id), (wireClaims.get(String(w.id)) || 0) + 1) }
     const mk = (table: string, r: any, code: string, href: string, label: string, amount: number): Item => {
       const date: string | null = r.payment_date || r.expense_date || r.purchase_date || null
       const gid: string | null = r.purchase_group || null
@@ -703,6 +766,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const srcMapped = /^regions$/i.test(srcRaw) ? 'GZ28US' : ((PAID_FROM_OPTIONS as readonly string[]).find(o => o.toLowerCase() === srcRaw.toLowerCase()) || null)
       let certain = bankCertain
       let suggest: string | undefined, extra: string | undefined, signal = 'source'
+      // O RECIBO (DC 1.48.0): só palpite aqui (o que o recibo PROVA — documento brasileiro da GZ28BR — a rota já gravou); GZ28US nunca sai do recibo, quem prova o dólar é o banco.
+      const rcp = table === 'invoice_expenses' ? receipt.readings[String(r.id)] : undefined
+      const rcpHint = rcp && !rcp.paid_from && rcp.paid_from_hint ? rcp.paid_from_hint : null
       if (bankCertain && srcMapped && srcMapped !== 'GZ28US') { certain = false; extra = `banco provou GZ28US, mas o SOURCE antigo diz ${srcMapped} — conferir`; signal = 'conflict' }
       else if (bankCertain) { suggest = 'GZ28US'; extra = groupCertain ? 'pedido casado com a Regions' : 'casada com a Regions'; signal = 'matched' }
       else if (gid && groupPaid.get(gid)?.size === 1 && srcMapped && srcMapped !== [...groupPaid.get(gid)!][0]) { extra = 'a irmã do pedido diz ' + [...groupPaid.get(gid)!][0] + ', mas o SOURCE antigo diz ' + srcMapped + ' — conferir'; signal = 'conflict' }
@@ -713,6 +779,14 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       else if (gid && gBank !== undefined) { suggest = 'GZ28US'; extra = 'pedido casado com a Regions (total do pedido mudou — conferir)'; signal = 'present' }
       // Antes da conta abrir NÃO foi GZ28US — mas GZ28BR × BETO é decisão de gente:
       // sem palpite pré-carregado (revisão #5).
+      // WIRE + TAXA (DC 1.48.0): a linha traz a taxa do wire dentro; o banco mostra o wire limpo no mesmo dia. Linha única = prova.
+      else if (table === 'invoice_expenses' && (() => { const w = wireOf(r, amount); return !!w && wireClaims.get(String(w.id)) === 1 })()) {
+        const w = wireOf(r, amount)!
+        const fee = Math.round((amount - w.a) * 100) / 100
+        return { href, code: 'WIRE', label, amount, certain: true, suggest: 'GZ28US', signal: 'matched', when: date || undefined, extra: `o banco tem o wire de ${usd(w.a)} em ${w.d}; a linha traz a taxa de $${fee.toFixed(2)} dentro — casa por ajuste (a taxa vira tarifa), pagou GZ28US`, fix: { kind: 'match' as const, table, rowId: r.id, field: 'paid_from', bankId: w.id, wire: fee, confirmText: `Casar «${label.slice(0, 60)}» com o wire da Regions ${w.d} ${usd(w.a)}? A linha vai a ${usd(w.a)} (a taxa de $${fee.toFixed(2)} vira tarifa), data e pagador vêm do banco; DESFAZER devolve tudo.` } }
+      }
+      // O RECIBO (DC 1.48.0): documento brasileiro provado entra pela rota (AUTO); sócio, gente ou palpite vem pré-carregado — depois de toda prova dura, antes do pré-Regions.
+      else if (rcpHint) { suggest = rcpHint; extra = 'o recibo mostra ' + (rcp!.payer ? 'o pagador «' + rcp!.payer + '»' : 'um documento ' + (rcp!.currency || rcp!.method || '')) + ' — ' + rcpHint + '?'; signal = 'source' }
       else if (date && date < (bank.opened || REGIONS_OPENED)) { extra = 'antes da Regions abrir — GZ28BR ou BETO?'; signal = 'pre-open' }
       else {
         const hitItem = inRegions(amount, date)
@@ -1198,7 +1272,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   }
   // ── O APP PREENCHEU SOZINHO (DC 1.44.0): tudo que entrou sem clique nos últimos 7 dias, com DESFAZER ──
   {
-    const KEY_LABEL: Record<string, string> = { 'paid-from': 'QUEM PAGOU', 'parts-suppliers': 'FORNECEDOR', 'parts-category': 'CATEGORIA', 'item-nature': 'NATUREZA', 'admission-mileage': 'MILHAGEM', 'sub-ended-scheduled': 'ASSINATURA', 'bank-drift': 'ADOTADA', 'paid-no-bank': 'CASADA', 'bank-auto': 'BANCO', 'sub-reopen': 'REABERTO', 'inputs-category': 'INSUMO' }
+    const KEY_LABEL: Record<string, string> = { 'paid-from': 'QUEM PAGOU', 'parts-suppliers': 'FORNECEDOR', 'parts-category': 'CATEGORIA', 'item-nature': 'NATUREZA', 'admission-mileage': 'MILHAGEM', 'sub-ended-scheduled': 'ASSINATURA', 'bank-drift': 'ADOTADA', 'paid-no-bank': 'CASADA', 'bank-auto': 'BANCO', 'sub-reopen': 'REABERTO', 'inputs-category': 'INSUMO', 'inv-no-supplier': 'FORNECEDOR', 'undated-inv': 'DATA', 'inv-date-impossible': 'DATA' }
     const items: Item[] = auto.state === 'error' ? [{ href: '/adm/check', code: 'SINAL', label: 'sinal de /api/data-check/auto indisponível — a lista do que o app fez sozinho NÃO carregou', extra: 'recarregue' }]
       : auto.rows.map(a => ({
         href: a.table_name === 'bank_transactions' ? '/adm/bank' : a.table_name === 'parts_database' ? '/parts' : a.table_name === 'rides' ? '/rides/edit/' + a.row_id : a.table_name === 'fixed_cost_expenses' ? '/costs/fixed' : a.table_name === 'invoice_expenses' ? '/invoices' : '/adm/check',
@@ -1578,6 +1652,7 @@ export default function DataCheckPage() {
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
   const [wa, setWa] = useState<WaSignal>({ state: 'loading', fails: [] })  // falhas de envio do WhatsApp (wa_send_log)
   const [nature, setNature] = useState<NatureSignal>({ state: 'loading', needsMigration: false, totals: null, groups: [] })   // "o que é esta linha?" agrupado por fornecedor
+  const [receipt, setReceipt] = useState<ReceiptSignal>({ state: 'loading', readings: {} })   // o que os recibos disseram (DC 1.47.0)
 
   useEffect(() => {
     setD(null); setError('')
@@ -1602,6 +1677,9 @@ export default function DataCheckPage() {
     ;(async () => {
       try {
         // NATUREZA SOZINHA (DC 1.44.0): carro → dinheiro, PN → peça, hábito unânime — uma rodada por abertura, antes de ler o sinal.
+        // O RECIBO RESPONDE O QUE FALTA (DC 1.47.0): lê até 12 recibos por abertura (linhas com recibo e fornecedor/data faltando), depois carrega as leituras.
+        if (!AUTO_RECEIPT_RAN) { AUTO_RECEIPT_RAN = true; sessionHeaders().then(h => fetch(`${BASE_PATH}/api/data-check/receipt`, { method: 'POST', headers: h, body: JSON.stringify({ max: 8 }) })).catch(() => undefined) }   // em segundo plano: a página não espera a IA; as leituras aparecem na próxima abertura
+        try { const rr = await fetch(`${BASE_PATH}/api/data-check/receipt`, { headers: await sessionHeaders() }); const jr = await rr.json().catch(() => ({})); setReceipt(rr.ok && jr.readings ? { state: 'ok', readings: jr.readings } : { state: 'error', readings: {} }) } catch { setReceipt({ state: 'error', readings: {} }) }
         if (!AUTO_NATURE_RAN) { AUTO_NATURE_RAN = true; try { await fetch(`${BASE_PATH}/api/item-nature/auto`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ max: 800 }) }) } catch { /* sem rota/coluna: o card segue perguntando */ } }
         const r = await fetch(`${BASE_PATH}/api/item-nature`, { headers: await sessionHeaders() })
         const j = await r.json().catch(() => ({}))
@@ -1681,7 +1759,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig])
+  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
   // O chip BANK conta o que PERGUNTA a gente: linhas com dúvida menos as que só esperam maturidade (o motor cuida).
   const q0 = bank.autobook && !bank.autobook.needs_migration ? bank.autobook.questions : null
@@ -1726,10 +1804,10 @@ export default function DataCheckPage() {
     if (dq && dq.items.length) out.push({ title: `${dq.items.reduce((t, i) => t + (parseInt(i.label, 10) || 0), 0)} perguntas do motor — responda por fornecedor`, sub: 'nada fica parado calado: FIXO / SUPPLIES / BALDE / PESSOAL / IGNORAR — uma resposta lança todas as linhas', group: 'BANK', open: 'engine-questions' })
     const dd = checks.find(c => c.key === 'bank-drift')
     if (dd && dd.items.length) out.push({ title: `${dd.items.length} conta(s) pagas no banco e abertas no app — ADOTAR`, sub: `${usd(dd.impact || 0)} em atrasos e multas falsos; um clique por conta`, group: 'BANK', open: 'bank-drift' })
-    const certoChecks = checks.filter(c => c.items.some(i => i.certain))
-    const certos = certoChecks.reduce((s, c) => s + c.items.filter(i => i.certain).length, 0)
+    const certoChecks = checks.filter(c => c.items.some(isBulkCertain))
+    const certos = certoChecks.reduce((s, c) => s + c.items.filter(isBulkCertain).length, 0)
     if (certos > 0) {
-      const best = [...certoChecks].sort((a, b) => b.items.filter(i => i.certain).length - a.items.filter(i => i.certain).length)[0]
+      const best = [...certoChecks].sort((a, b) => b.items.filter(isBulkCertain).length - a.items.filter(isBulkCertain).length)[0]
       out.push({ title: `${certos} respostas prontas — um clique por card`, sub: `PREENCHER CERTOS onde há prova; comece por "${best.title}"`, group: best.group, open: best.key })
     }
     if (bankCount > 50) out.push({ title: `Triagem por família: ${bankCount.toLocaleString('en-US')} linhas sem casamento`, sub: 'os chips (AMAZON, COMBUSTÍVEL…) explicam centenas de uma vez', group: 'BANK', open: null })
@@ -1780,11 +1858,11 @@ export default function DataCheckPage() {
             n++
           } else if (fix.kind === 'adopt' || fix.kind === 'match') {
             // Direto pela rota (sem alert na carga); a trilha AUTO aponta pra linha do banco (DESFAZER em A CONFERIR).
-            const body = fix.kind === 'match' ? { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' } : { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' }
+            const body = fix.kind === 'match' ? (fix.wire != null ? { action: 'match_wire', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' } : { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' }) : { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' }
             const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
             if (!r.ok) continue
             // ADOTAR: a rota (adoptScheduled) já grava a trilha AUTO na linha do banco; aqui só o CASAR.
-            if (fix.kind === 'match') await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'bank_transactions', row_id: fix.bankId, field: 'match_status', old_value: 'NEW', new_value: 'MATCHED', label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
+            if (fix.kind === 'match' && fix.wire == null) await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'bank_transactions', row_id: fix.bankId, field: 'match_status', old_value: 'NEW', new_value: 'MATCHED', label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
             setDone(prev => new Set(prev).add(fix.rowId + '|' + fixField(fix)))
             n++
           }
@@ -1935,7 +2013,7 @@ export default function DataCheckPage() {
       setSaving(true)
       try {
         const url = fix.kind === 'match' ? `${BASE_PATH}/api/bank/reconcile` : `${BASE_PATH}/api/data-check/auto`
-        const body = fix.kind === 'match' ? { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' }
+        const body = fix.kind === 'match' ? (fix.wire != null ? { action: 'match_wire', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' } : { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' })
           : fix.kind === 'dismiss' ? { action: 'dismiss', check_key: fix.checkKey, row_id: fix.rowId, table: check.key, label: item.label.slice(0, 120), reason: value || 'visto, está certo' }
           : { action: 'undo', fix_id: fix.fixId }
         const r = await fetch(url, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
@@ -2045,7 +2123,7 @@ export default function DataCheckPage() {
     if (errors.length) alert(`${n} preenchidas; ${errors.length} com erro:\n` + errors.slice(0, 8).join('\n'))
   }
   async function applyCertain(check: Check) {
-    const items = check.items.filter(i => i.certain && i.suggest && i.fix && i.fix.kind === 'select')
+    const items = check.items.filter(isBulkCertain)
     if (!items.length) return
     // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
     if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category' || check.key === 'inputs-category' || check.key === 'inv-no-supplier') {
@@ -2274,10 +2352,10 @@ export default function DataCheckPage() {
                   )}
                 </div>
                 {whyOpen === c.key && <p className="text-sm text-gray-400 -mt-1 mb-3 max-w-2xl">{c.why}</p>}
-                {c.items.some(i => i.certain) && (
+                {c.items.some(isBulkCertain) && (
                   <div className="flex items-center gap-3 mb-3">
                     <button disabled={saving} onClick={() => applyCertain(c)} className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 rounded-xl font-bold text-sm">
-                      {bulk ? `PREENCHENDO ${bulk}…` : `PREENCHER CERTOS (${c.items.filter(i => i.certain).length})`}
+                      {bulk ? `PREENCHENDO ${bulk}…` : `PREENCHER CERTOS (${c.items.filter(isBulkCertain).length})`}
                     </button>
                     <span className="text-xs text-gray-500">{CERTAIN_PROOF[c.key] || 'itens com prova, não palpite'}</span>
                   </div>

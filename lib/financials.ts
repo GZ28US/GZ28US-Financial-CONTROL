@@ -93,7 +93,7 @@ export async function loadFinancials(): Promise<FinData> {
     // mirror_expense_id diz que a renda e ESPELHO de despesa paga pelo cliente:
     // conta na invoice, NUNCA no caixa — nenhum dinheiro nosso se moveu.
     fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
-    fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at'),
+    fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at, receipt_url'),
     // base_tributavel e paid_from vem JUNTO: e a base do imposto e do desconto
     // que a linha do cliente zera (coluna GERADA, o Postgres calcula).
     fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity, paid_from, base_tributavel, mirror_expense_id'),
@@ -143,6 +143,42 @@ export async function loadFinancials(): Promise<FinData> {
     capitalEvents, financing: financingRows, financingEvents, cashBalances,
     ledgersReady: !!(capitalEvents && financingRows && financingEvents && cashBalances),
   }
+}
+
+// ── QUEM PAGOU, uma régua só (FIN 0.14.2 — levantamento de 9/set: DFC lia só paid_from, Balanço e GZ-FLOW
+// liam paid_from || source, e os três discordavam nas mesmas linhas). paid_from manda; o SOURCE legado vale
+// quando é um pagador do vocabulário (Regions = GZ28US); RAFA é a conta corrente GZ28BR (decisão de 22/ago);
+// vazio = ninguém sabe (o DFC segue tratando como GZ28US e o card «Quem pagou?» encolhe isso todo dia). ──
+export const PAYERS = ['GZ28US', 'GZ28BR', 'BETO', 'HERALDO', 'CLIENT'] as const
+export function whoPaid(r: { paid_from?: string | null; source?: string | null }): string | null {
+  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; if (s === 'RAFA') return 'GZ28BR'; return (PAYERS as readonly string[]).includes(s) ? s : null }
+  return norm(r.paid_from) || norm(r.source)
+}
+
+// ── CONTA CORRENTE GZ28BR — UMA conta só (FIN 0.14.2): o Balanço e o card «Conta corrente GZ28BR» do Data Checker leem
+// daqui; o GZ-FLOW usa a mesma régua (whoPaid). GOT = receita nossa que entrou lá (invoice_payments paid_to GZ28BR, recebidos)
+// + conta da BR que nós pagamos; PAID = conta nossa que a BR pagou. Sócio (BETO/HERALDO, pela mesma régua) sai do saldo e vira
+// empréstimo de sócio. Só linha PAGA (payment_date); TODAS as tabelas, inclusive PESSOAL e estoque doado — a varredura do Balanço.
+// BLIND = linha paga sem pagador nenhum (nem paid_from nem SOURCE): o DFC assume Regions até alguém dizer. ──
+export function brAccount(d: FinData) {
+  const GZ = 'GZ28BR'
+  const gotIncome = d.payments.filter(p => p.paid_to === GZ && p.paid_at).reduce((s, p) => s + num(p.amount), 0)
+  let got = gotIncome, paid = 0, usPaidBr = 0, beto = 0, heraldo = 0, blind = 0, blindN = 0
+  const scan = (rows: any[], amt: (r: any) => number) => {
+    for (const r of rows) {
+      if (!r.payment_date) continue
+      const by = whoPaid(r) || '', bill = String(r.paid_to || ''); const a = amt(r)
+      if (by === 'BETO') { beto += a; continue }
+      if (by === 'HERALDO') { heraldo += a; continue }
+      if (bill === GZ && by !== GZ) { got += a; usPaidBr += a }
+      else if (by === GZ && bill !== GZ) paid += a
+      if (!by) { blind += a; blindN++ }
+    }
+  }
+  scan(d.invExpenses, expLine); scan(d.goods, qtyLine); scan(d.goodExpenses, r => num(r.amount))
+  scan(d.inputs, qtyLine); scan(d.inventory, qtyLine)
+  scan(d.fixedExpenses, r => num(r.amount)); scan(d.expenses, r => num(r.amount))
+  return { gotIncome, usPaidBr, got, paid, net: got - paid, beto, heraldo, blind, blindN }
 }
 
 // ── Totais por invoice (mesmas fórmulas da tela de invoices) ────────────────
@@ -281,8 +317,8 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     BETO: { line: 'FUND_BETO', who: 'Beto (empréstimo de sócio)' },
     HERALDO: { line: 'FUND_HERALDO', who: 'Heraldo (empréstimo de sócio)' },
   }
-  const fund = (row: { paid_from?: string | null }, date: string | null | undefined, amount: number, label: string) => {
-    const f = FUNDERS[String(row.paid_from || '').trim().toUpperCase()]
+  const fund = (row: { paid_from?: string | null; source?: string | null }, date: string | null | undefined, amount: number, label: string) => {
+    const f = FUNDERS[String(whoPaid(row) || '').trim().toUpperCase()]   // FIN 0.14.2: a mesma régua do Balanço e do GZ-FLOW (SOURCE legado conta; RAFA = BR)
     if (f && amount) push(date, 'FIN', f.line, amount, 'FUNDED', f.who + ' · ' + label, '/adm/check')
   }
 

@@ -13,11 +13,10 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData, brAccount } from '@/lib/financials'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
-const GZ = 'GZ28BR'
 
 // Barra de composição: cada fatia proporcional ao peso na soma, com legenda.
 const COMP_COLORS = ['bg-emerald-600', 'bg-sky-600', 'bg-amber-500', 'bg-purple-500', 'bg-rose-500', 'bg-teal-500', 'bg-orange-600', 'bg-indigo-500']
@@ -84,27 +83,13 @@ export default function BalancePage() {
     fleetOwn = Math.max(0, fleetOwn - depOwn)
     fleetTool = Math.max(0, fleetTool - depTool)
 
-    // Conta corrente GZ28BR — mesmo algoritmo do GZ-FLOW, condensado:
-    // GOT = receita nossa que entrou na conta deles; PAID = conta nossa que eles pagaram.
-    const side = (r: { paid_from?: string | null; source?: string | null; paid_to?: string | null }) => {
-      const by = r.paid_from || r.source || ''; const bill = r.paid_to || ''
-      if (bill === GZ && by !== GZ) return 'GOT'
-      if (by === GZ && bill !== GZ) return 'PAID'
-      return null
-    }
-    let got = d.payments.filter(p => p.paid_to === GZ && p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-    let paid = 0
-    // Sócio (Beto) pagou conta da LLC do bolso: a LLC deve a ele — Empréstimo de
-    // sócio no passivo. RAFA era sócio da GZ28BR (assunto do lado de lá), fica fora.
-    let beto = 0, heraldo = 0
-    const scan = (rows: any[], amt: (r: any) => number) => {          // eslint-disable-line @typescript-eslint/no-explicit-any
-      // Sem payment_date ainda não foi pago — está em Fornecedores a Pagar;
-      // contar aqui também seria o mesmo passivo duas vezes.
-      for (const r of rows) { if (!r.payment_date) continue; if (r.paid_from === 'BETO') { beto += amt(r); continue } if (r.paid_from === 'HERALDO') { heraldo += amt(r); continue } const sd = side(r); if (sd === 'PAID') paid += amt(r); else if (sd === 'GOT') got += amt(r) }
-    }
-    scan(d.invExpenses, expLine); scan(d.goods, qtyLine); scan(d.goodExpenses, r => parseFloat(r.amount) || 0)
-    scan(d.inputs, qtyLine); scan(d.inventory, qtyLine)
-    scan(d.fixedExpenses, r => parseFloat(r.amount) || 0); scan(d.expenses, r => parseFloat(r.amount) || 0)
+    // Conta corrente GZ28BR + sócios: UMA conta só (lib/financials brAccount, FIN 0.14.2) — a mesma do card «Conta corrente
+    // GZ28BR» do Data Checker, na régua do GZ-FLOW (whoPaid: paid_from manda, SOURCE legado conta, RAFA = BR). GOT = receita
+    // nossa que entrou lá (+ conta da BR que nós pagamos); PAID = conta nossa que ela pagou. Sócio (Beto/Heraldo) pagou conta
+    // da LLC do bolso: a LLC deve a ele — Empréstimo de sócio no passivo. Só linha PAGA (sem payment_date está em Fornecedores
+    // a Pagar; contar aqui também seria o mesmo passivo duas vezes).
+    const acc = brAccount(d)
+    const got = acc.got, paid = acc.paid, beto = acc.beto, heraldo = acc.heraldo
 
     const stockPurch = d.inventory.filter(s => s.source_type === 'PURCHASED').reduce((s, r) => s + qtyLine(r), 0)
     const stockDon = d.inventory.filter(s => s.source_type === 'DONATED').reduce((s, r) => s + qtyLine(r), 0)
