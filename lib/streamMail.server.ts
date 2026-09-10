@@ -242,6 +242,43 @@ export async function fetchRecentMessages(accessToken: string, sinceIso: string)
 export const GMAIL_Q_DESPACHO = '(shipped OR shipping OR tracking OR delivered OR "on its way" OR "a caminho" OR "foi enviado")'
 export const GMAIL_Q_COMPRA = '(order OR orders OR receipt OR invoice OR purchase OR refund OR refunded OR charged OR pedido OR recibo OR fatura OR reembolso OR "nota fiscal")'
 
+// ── LISTA DO GMAIL, PÁGINA POR PÁGINA (10/set/2026) ────────────────────────
+// O Gmail devolve página CURTA mesmo quando há mais resultado: `messages.list`
+// com maxResults=50 pode voltar 12 mensagens e um `nextPageToken`. Quem lia só
+// a primeira página tratava "veio menos que o limite" como "a janela acabou" e
+// perdia mensagem CALADO. Medido pela sessão do email round na caixa 5: a busca
+// por janela larga achou 122 mensagens; a mesma janela dia a dia achou 349 de
+// 349 — 227 sumidas, concentradas nos meses cheios.
+//
+// Toda listagem de Gmail do app passa por aqui. Segue o `nextPageToken` até
+// juntar `max` ou acabar a lista, com teto de páginas para não estourar o tempo
+// de função de ninguém. Devolve o token que sobrou — `nextPageToken` não nulo
+// quer dizer "tem mais" — e o erro, em vez de fingir caixa vazia.
+export type GmailStub = { id: string; threadId?: string }
+export async function listGmailIds(
+  accessToken: string,
+  opts: { q?: string; labelIds?: string; max: number; pageToken?: string; maxPages?: number },
+): Promise<{ ids: GmailStub[]; nextPageToken: string | null; error: string | null }> {
+  const H = { Authorization: `Bearer ${accessToken}` }
+  const ids: GmailStub[] = []
+  let pageToken = opts.pageToken || ''
+  for (let pagina = 0; pagina < (opts.maxPages ?? 5) && ids.length < opts.max; pagina++) {
+    const qs = new URLSearchParams({ maxResults: String(Math.min(500, opts.max - ids.length)) })
+    if (opts.q) qs.set('q', opts.q)
+    if (opts.labelIds) qs.set('labelIds', opts.labelIds)
+    if (pageToken) qs.set('pageToken', pageToken)
+    const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${qs}`, { headers: H }).catch(() => null)
+    const j = r ? await r.json().catch(() => null) : null
+    if (!r?.ok || !j || j.error) {
+      return { ids, nextPageToken: pageToken || null, error: String(j?.error?.message || `HTTP ${r?.status ?? 'sem resposta'}`) }
+    }
+    ids.push(...((j.messages || []) as GmailStub[]))
+    pageToken = j.nextPageToken || ''
+    if (!pageToken) break
+  }
+  return { ids, nextPageToken: pageToken || null, error: null }
+}
+
 export async function fetchRecentGmail(accessToken: string, sinceIso: string, opts?: { q?: string; max?: number }): Promise<MailMsg[]> {
   const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
   const H = { Authorization: `Bearer ${accessToken}` }
@@ -252,8 +289,10 @@ export async function fetchRecentGmail(accessToken: string, sinceIso: string, op
   // baixava o corpo de tudo e estourou os 60s da função no 1º deploy (26/ago).
   const q = `after:${afterSec} -in:chats ${opts?.q || GMAIL_Q_DESPACHO}`
   const max = Math.min(100, Math.max(1, opts?.max || 25))
-  const list = await fetch(`${GM}/messages?maxResults=${max}&q=${encodeURIComponent(q)}`, { headers: H }).then(r => r.json()).catch(() => null)
-  const stubs = list?.messages || []
+  // Página por página (10/set/2026) — ver listGmailIds acima.
+  const lista = await listGmailIds(accessToken, { q, max })
+  if (lista.error) console.error('[gmail] lista incompleta:', lista.error)
+  const stubs = lista.ids
   const out: MailMsg[] = []
   for (let i = 0; i < stubs.length; i += 8) {
     const batch = await Promise.all(stubs.slice(i, i + 8).map((s: any) =>

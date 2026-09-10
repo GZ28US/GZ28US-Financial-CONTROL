@@ -16,7 +16,7 @@
 // Dedup por internetMessageId + por order_number. Roda no mail-poll (5min).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getMailAuth, freshAccessToken } from './streamMail.server'
+import { getMailAuth, freshAccessToken, listGmailIds } from './streamMail.server'
 import { gmailAccessToken } from './appsMail.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
@@ -246,9 +246,9 @@ async function scanGmail(db: SupabaseClient, seenSet: Set<string>, out: string[]
   // decide se é compra é o ORDER_SUBJECT, a MESMA regra do Hotmail.
   // Pra isso não custar caro: lê primeiro só os CABEÇALHOS e só baixa o corpo
   // do que passou no filtro.
-  const q = encodeURIComponent('newer_than:5d -in:chats')
-  const list = await fetch(`${GM}/messages?q=${q}&maxResults=60`, { headers: gh(token) }).then((r) => r.json()).catch(() => null)
-  const stubs = (list?.messages || []).filter((s: any) => !seenSet.has(`pc:gm:${s.id}`))
+  // Página por página (10/set/2026) — ver listGmailIds: página curta não é fim de lista.
+  const list = await listGmailIds(token, { q: 'newer_than:5d -in:chats', max: 60 })
+  const stubs = list.ids.filter((s: any) => !seenSet.has(`pc:gm:${s.id}`))
   // Cabeçalhos EM PARALELO (blocos de 8): o mail-poll roda ~15 tarefas dentro
   // de 60s e uma varredura sequencial de dezenas de mensagens estoura o tempo
   // da função — foi o que aconteceu no primeiro teste desta mudança (25/ago).

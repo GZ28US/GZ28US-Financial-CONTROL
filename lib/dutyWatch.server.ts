@@ -20,7 +20,7 @@
 // Roda a cada 5 min dentro do mail-poll: funciona com o PC desligado.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getMailAuth, freshAccessToken, listMailAuths } from './streamMail.server'
+import { getMailAuth, freshAccessToken, listMailAuths, listGmailIds } from './streamMail.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -136,9 +136,10 @@ async function gmailMessages(db: SupabaseClient): Promise<MailMsg[]> {
 }
 async function gmailBox(token: string): Promise<MailMsg[]> {
   const q = 'in:anywhere newer_than:7d (dhl OR fedex OR ups OR duty OR customs OR brokerage)'
-  const list = await fetch(`${GM}/messages?${new URLSearchParams({ maxResults: '50', q })}`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+  // Página por página (10/set/2026) — ver listGmailIds: página curta não é fim de lista.
+  const list = await listGmailIds(token, { q, max: 50 })
   const out: MailMsg[] = []
-  for (const { id } of list?.messages || []) {
+  for (const { id } of list.ids) {
     const m = await fetch(`${GM}/messages/${id}?format=full`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
     if (!m?.id) continue
     const hdr = (n: string) => (m.payload?.headers || []).find((h: any) => String(h.name).toLowerCase() === n)?.value || ''

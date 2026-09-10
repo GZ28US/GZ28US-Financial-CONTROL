@@ -24,9 +24,19 @@
 //               registra em `marketing_kills`.
 // Travou      → NÃO apaga: incrementa `blocked` e deixa o e-mail onde está, pro humano.
 //               Remetente que bloqueia demais é sinal de que não devia estar na lista.
+//
+// EXCEÇÃO POR REMETENTE — `hard_stop_waived_at` (10/set/2026). Ordem do Márcio:
+// "apague a HPVida sempre". contato@pagoufacil.com.br manda "Sua fatura Hapvida está
+// pendente!" sem contrato, valor nem vencimento — cobrança suspeita; os boletos de
+// verdade vêm de @hapvida.com.br, que NÃO está na lista. Como "fatura" e "boleto" são
+// marcadores transacionais, o remetente vivia travado (8.296 bloqueios em 10/set) e o
+// e-mail ficava parado na caixa. Com a coluna preenchida, SÓ a trava de PALAVRA deixa
+// de valer para aquele endereço exato; anexo, conversa (In-Reply-To/References) e
+// remetente protegido continuam barrando. Preencher é decisão dele, linha a linha —
+// nunca por volume.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { mailProvider, maySweep } from '@/lib/streamMail.server'
+import { mailProvider, maySweep, listGmailIds } from '@/lib/streamMail.server'
 import { barrado } from './mailProtected.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
@@ -50,7 +60,7 @@ const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|\b\d{3}-\d{7
 // por uma lista de colunas e esquecer dele, o tsc quebra em vez de o robô voltar
 // a varrer caixa proibida em silêncio.
 type Auth = { id: number; account: string; client_id: string; refresh_token: string; auto_sweep: boolean | null }
-type Row = { email: string; hits?: number; blocked?: number }
+type Row = { email: string; hits?: number; blocked?: number; hard_stop_waived_at?: string | null }
 
 async function msToken(db: SupabaseClient, a: Auth): Promise<string | null> {
   const tk = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
@@ -77,6 +87,10 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
   const { data: senders } = await db.from('marketing_senders').select('*').eq('active', true)
   if (!senders?.length) return { killed, blocked }
   const listed = new Map<string, Row>((senders as Row[]).map(s => [String(s.email).toLowerCase(), s]))
+  // A trava de PALAVRA, com a exceção por remetente do topo do arquivo: para quem tem
+  // `hard_stop_waived_at`, e só para aquele endereço, palavra transacional não trava.
+  const palavraTrava = (addr: string, ...textos: string[]) =>
+    !listed.get(addr)?.hard_stop_waived_at && textos.some(t => HARD_STOP.test(t))
 
   const kill = async (account: string, addr: string, subj: string, folder: string) => {
     const row = listed.get(addr)!
@@ -107,14 +121,14 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
           const addr = String(m.from?.emailAddress?.address || '').toLowerCase()
           if (!listed.has(addr)) continue
           const subj = String(m.subject || '')
-          if (m.hasAttachments || HARD_STOP.test(subj)) { await block(a.account, addr, subj); continue }
+          if (m.hasAttachments || palavraTrava(addr, subj)) { await block(a.account, addr, subj); continue }
           // Este robô só toca em remetente AUDITADO, mas auditoria é humana e
           // humano erra: a trava única responde antes de qualquer move.
           if (await barrado(db, 'marketing-kill', a.id ?? null, a.account, { id: m.id, subject: subj, from: addr, folder })) { await block(a.account, addr, subj); continue }
           const hd = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders,bodyPreview`, { headers: H }).then(x => x.json()).catch(() => null)
           const heads: { name?: string }[] = hd?.internetMessageHeaders || []
           const inReply = heads.some(x => /^(in-reply-to|references)$/i.test(String(x.name)))
-          if (inReply || HARD_STOP.test(String(hd?.bodyPreview || ''))) { await block(a.account, addr, subj); continue }
+          if (inReply || palavraTrava(addr, String(hd?.bodyPreview || ''))) { await block(a.account, addr, subj); continue }
           const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'deleteditems' }) })
           if (mv.ok) await kill(a.account, addr, subj, folder)
           else await block(a.account, addr, subj)
@@ -128,8 +142,9 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
       if (!token) continue
       const H = { Authorization: `Bearer ${token}` }
       const q = 'in:inbox (' + [...listed.keys()].map(e => 'from:' + e).join(' OR ') + ')'
-      const list = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&q=${encodeURIComponent(q)}`, { headers: H }).then(x => x.json()).catch(() => null)
-      for (const it of list?.messages || []) {
+      // Página por página (10/set/2026) — ver listGmailIds: página curta não é fim de lista.
+      const list = await listGmailIds(token, { q, max: 50 })
+      for (const it of list.ids) {
         const msg = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=In-Reply-To`, { headers: H }).then(x => x.json()).catch(() => null)
         const heads: { name: string; value: string }[] = msg?.payload?.headers || []
         const hv = (n: string) => String((heads.find(h => h.name.toLowerCase() === n) || { value: '' }).value || '')
@@ -137,7 +152,7 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
         if (!listed.has(addr)) continue
         const subj = hv('subject')
         const hasAtt = /"filename":"[^"]+"/.test(JSON.stringify(msg?.payload?.parts || []))
-        if (hv('in-reply-to') || hasAtt || HARD_STOP.test(subj) || HARD_STOP.test(String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
+        if (hv('in-reply-to') || hasAtt || palavraTrava(addr, subj, String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
         const t = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}/trash`, { method: 'POST', headers: H })
         if (t.ok) await kill(a.account, addr, subj, 'INBOX')
         else await block(a.account, addr, subj)

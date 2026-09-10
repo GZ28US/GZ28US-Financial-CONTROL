@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, freshAccessToken, mailProvider } from '@/lib/streamMail.server'
+import { getMailAuth, freshAccessToken, mailProvider, listGmailIds } from '@/lib/streamMail.server'
 
 // Read-only mailbox queries for the assistant's daily sweeps — the service key
 // and Graph tokens stay server-side; callers authenticate with the same read
@@ -66,13 +66,26 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
   }
   if (op === 'list' || op === 'search') {
     const top = Math.min(50, parseInt(p.get('limit') || '25') || 25)
-    const qs = new URLSearchParams({ maxResults: String(top) })
-    if (op === 'list') qs.set('labelIds', (p.get('folder') || 'INBOX').toUpperCase() === 'INBOX' ? 'INBOX' : (p.get('folder') || 'INBOX'))
-    if (op === 'search') { const q = p.get('q'); if (!q) return NextResponse.json({ error: 'missing q' }, { status: 400 }); qs.set('q', q) }
-    const data = await (await fetch(`${API}/messages?${qs}`, { headers: GH })).json()
+    const folder = p.get('folder') || 'INBOX'
+    const q = p.get('q')
+    if (op === 'search' && !q) return NextResponse.json({ error: 'missing q' }, { status: 400 })
+    // Página por página (10/set/2026): o Gmail devolve página curta com mais
+    // resultado atrás, e "veio menos que o limite" NÃO quer dizer janela completa
+    // (caixa 5: 122 achadas por janela larga contra 349 dia a dia). `nextPageToken`
+    // na resposta = tem mais; mande de volta em `pageToken` para continuar.
+    const lista = await listGmailIds(tk.access_token, {
+      max: top,
+      pageToken: p.get('pageToken') || undefined,
+      ...(op === 'list' ? { labelIds: folder.toUpperCase() === 'INBOX' ? 'INBOX' : folder } : { q: q as string }),
+    })
+    if (lista.error && !lista.ids.length) return NextResponse.json({ error: 'gmail list failed: ' + lista.error }, { status: 502 })
     const out = []
-    for (const m of (data.messages || []).slice(0, top)) out.push(await meta(m.id))
-    return NextResponse.json({ account: auth.account, provider: 'gmail', messages: out })
+    for (const m of lista.ids.slice(0, top)) out.push(await meta(m.id))
+    return NextResponse.json({
+      account: auth.account, provider: 'gmail', messages: out,
+      nextPageToken: lista.nextPageToken, more: !!lista.nextPageToken,
+      ...(lista.error ? { partial: true, error: lista.error } : {}),
+    })
   }
   if (op === 'msg') {
     const id = p.get('id')
@@ -178,7 +191,9 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
   const need = process.env.WHATSAPP_READ_KEY
-  if (!need || p.get('key') !== need) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // A chave também vale no header `x-read-key` (10/set/2026): na query string ela
+  // fica gravada em todo log de acesso. Quem já chama com `?key=` continua igual.
+  if (!need || (req.headers.get('x-read-key') || p.get('key')) !== need) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const slot = Math.max(1, parseInt(p.get('slot') || '1') || 1)
   const db = streamDb()
