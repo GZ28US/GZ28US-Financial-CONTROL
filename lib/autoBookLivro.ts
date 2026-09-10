@@ -283,6 +283,10 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'Ele loga, a Claudinha opera: senha, CPF, cadastro e captcha só o Márcio digita.' },
       { id: '7.6', estado: 'À MÃO', desde: '31/08/2026',
         texto: 'No site o valor é o total do pedido: o «saved $X» da Temu não é valor, e pedidos em sequência do mesmo vendedor no eBay são UM pedido — somar os números triplica.' },
+      { id: '7.7', estado: 'NO AR', desde: '10/09/2026',
+        texto: 'Desconto dado no TOTAL da nota entra RATEADO no preço de cada linha; o percentual fica só em item_discount, que existe para reconstruir o MAP. Preço de lista na linha, com o desconto só no campo, infla o custo do carro.',
+        onde: 'app/api/scan-receipt (itemScale · cost_derived) · lib/financials.ts · expLine',
+        nota: 'Caso O&J Woo199927 (US.022.2, compra de 04/09): as duas linhas entraram com preço de lista e o custo ficou US$ 17,16 acima do que saiu do cartão — e a cobrança do banco ficou sem casar por isso. Corrigido em 10/09 pela sessão App development, com trilha em data_fixes. Das outras 116 linhas com desconto do banco do US, nenhuma estava bruta.' },
     ],
   },
   {
