@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { BASE_PATH } from '@/lib/utils'
 import BlBadge from '@/components/BlBadge'
-import { sessionHeaders } from '@/components/BankReconcileCard'
+import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCard'
 import BucketQueue from '@/components/BucketQueue'
 
 // ADM ▸ BANK — o UNIVERSO bancário (ordem do Márcio, 18/ago/2026): a Regions entra
@@ -265,7 +265,11 @@ export default function BankPage() {
       )}
 
 
-      {/* A ATRIBUIR (AUTO-BOOK fase B): a fila do balde — o motor lançou, o humano diz o dono. */}
+      {/* AUTO-LINK (BL 1.5.0, 10/set/2026): o motor do Bank Link — rodada, PLANEJAR/APLICAR, casadas a conferir, lotes, regras e
+          apelidos. Saiu do Data Checker, que ficou só com as PERGUNTAS (card «Conciliação bancária»). */}
+      <div className="mb-8"><BankReconcileCard mode="engine" /></div>
+
+      {/* A ATRIBUIR (AUTO-LINK fase B): a fila do balde — o motor lançou, o humano diz o dono. */}
       <BucketQueue />
 
       {/* Conexões */}

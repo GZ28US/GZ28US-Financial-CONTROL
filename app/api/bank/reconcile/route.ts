@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled } from '@/lib/bankReconcile.server'
+import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled } from '@/lib/bankReconcile.server'
+import { lineState, askCount } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
 
@@ -13,6 +14,17 @@ export const maxDuration = 300
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_|klass|priority|invoices_bucket|bank_merchant_rules_key|doubt_answered/
 const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+// TO BOOK conta a idade desde a MARCAÇÃO (revisão BL 1.5.0): o diário guarda o QUEUE; sem diário, fica a data do banco.
+async function markQueuedAt(db: any, lines: any[]): Promise<void> {
+  const ids = lines.filter((l: any) => l.match_status === 'QUEUED').map((l: any) => String(l.id))
+  if (!ids.length) return
+  try {
+    const rows = await fetchAll(db, 'bank_match_log', 'bank_id, at, action', (q: any) => q.eq('action', 'QUEUE').in('bank_id', ids.slice(0, 900)))
+    const last = new Map<string, string>()
+    for (const r of rows) { const k = String(r.bank_id), at = String(r.at || ''); if (!last.has(k) || at > String(last.get(k))) last.set(k, at) }
+    for (const l of lines) { const at = last.get(String(l.id)); if (at) l.queued_at = at }
+  } catch { /* sem diário: idade pela data do banco */ }
+}
 // Valor de uma linha de despesa de invoice (mesma conta do lib/financials).
 // item_discount é PERCENTUAL (régua em invoices/edit:1384: amount / (1 - d/100)),
 // e `price` já é o custo LÍQUIDO. Subtrair o percentual daqui tirava reais do custo:
@@ -229,13 +241,19 @@ export async function GET(req: NextRequest) {
         anomalies = spendAnomalies(fxAll, supsAll)
         const diary = await fetchAll(db, 'bank_match_log', 'bank_id, at, action', (q: any) => q.gte('at', new Date(Date.now() - 14 * 864e5).toISOString()))
         bounce = bounceLines(diary)
-        const p = buildPlan(live, pool, await loadRules(db), { itemTwins: await itemTwinKeys(db), minCreateAge: RULE_AGE_DAYS })
+        // BL 1.5.0: o mesmo plano do cron (pendentes fora; irmã pendente trava) — o chip BANK conta o que o cron deixaria perguntando.
+        const p = buildPlan(live.filter((l: any) => !l.pending), pool, await loadRules(db), { itemTwins: await itemTwinKeys(db), minCreateAge: RULE_AGE_DAYS, pendingKeys: new Set<string>(live.filter((l: any) => l.pending).map(setKeyOf)) })
         const byId = new Map<string, any>(live.map((l: any) => [String(l.id), l]))
         const dirQ = supplierDirectoryFrom(await fetchAll(db, 'suppliers', 'id, name, aliases, is_dealership'))
-        const supLines = Object.entries(p.doubts).filter(([, d]: any) => d.kind === 'SUPPLIER').map(([id]) => byId.get(id)).filter(Boolean)
+        const supLines = Object.entries(p.doubts).filter(([, d]: any) => d.kind === 'SUPPLIER').map(([id]) => byId.get(id)).filter((l: any) => l && l.match_status !== 'QUEUED')
         const sq = groupSupplierDoubts(supLines, supsAll, dirQ)
         const cnt = (k: string) => Object.values(p.doubts).filter((d: any) => d.kind === k).length
-        questions = { suppliers: sq.length, supplier_total: Math.round(sq.reduce((a: number, x: any) => a + x.total, 0) * 100) / 100, money: cnt('MONEY'), twins: cnt('TWIN'), caps: cnt('CAP'), maturity: cnt('MATURITY'), other: cnt('OTHER'), lines: Object.keys(p.doubts).length }
+        await markQueuedAt(db, live)
+        // ESTADO POR LINHA (BL 1.5.0): pergunta linha a linha + UMA por fornecedor; pendente, «vai casar», maturando e teto esperam e não contam.
+        const itemOfQ = new Map<string, any>(p.items.map((it: any) => [String(it.line.id), it]))
+        const todayQ = todayNY()
+        const statesQ = live.map((l: any) => lineState(l, rank(l, pool), p.doubts[String(l.id)] || null, itemOfQ.get(String(l.id)) || null, null, todayQ))
+        questions = { suppliers: sq.length, supplier_total: Math.round(sq.reduce((a: number, x: any) => a + x.total, 0) * 100) / 100, money: cnt('MONEY'), twins: cnt('TWIN'), caps: cnt('CAP'), maturity: cnt('MATURITY'), other: cnt('OTHER'), lines: Object.keys(p.doubts).length, ask: askCount(statesQ, sq.length), waiting: statesQ.filter(s => !s.ask).length }
       } catch (e) { silenceError = String((e as Error).message || e).slice(0, 200); questions = null; errors.push('silêncio: ' + silenceError) }
       return NextResponse.json({ ok: true, floor: AUTO_BOOK_FLOOR, runs: runs.slice(0, 10), booked_24h: by(since1), booked_7d: by(since7), remaining: remaining || 0, errors, orphans, dups, bucket: bucketSig, dead_pointers: deadPointers, amount_drift: amountDrift, seed: { skipped: seedSkipped }, drift, anomalies, bounce, questions, silence_error: silenceError, runs_7d: { n: runs.filter((r: any) => r.started_at >= since7).length, errors: runs.filter((r: any) => r.started_at >= since7 && (['ERROR', 'ABORTED'].includes(r.status) || (Array.isArray(r.errors) && r.errors.length))).length } })
     }
@@ -344,7 +362,8 @@ export async function GET(req: NextRequest) {
     if (req.nextUrl.searchParams.get('questions') === '1') {
       await loadDbAliases(db)
       const [lines, pool, rules, twins] = await Promise.all([newLines(db, 5000), candidatePool(db), loadRules(db), itemTwinKeys(db)])
-      const plan = buildPlan(lines, pool, rules, { itemTwins: twins, minCreateAge: RULE_AGE_DAYS })
+      // BL 1.5.0: o plano da pergunta é o plano do cron — pendente fora, irmã pendente trava a série.
+      const plan = buildPlan(lines.filter((l: any) => !l.pending), pool, rules, { itemTwins: twins, minCreateAge: RULE_AGE_DAYS, pendingKeys: new Set<string>(lines.filter((l: any) => l.pending).map(setKeyOf)) })
       const byId = new Map<string, any>(lines.map((l: any) => [String(l.id), l]))
       const of = (kind: string) => Object.entries(plan.doubts).filter(([, d]: any) => d.kind === kind).map(([id]) => byId.get(id)).filter(Boolean)
       const [sups, dirRows, seasons] = await Promise.all([
@@ -353,7 +372,7 @@ export async function GET(req: NextRequest) {
         activeSeasons(db),
       ])
       const dir = supplierDirectoryFrom(dirRows)
-      const suppliers: any[] = groupSupplierDoubts(of('SUPPLIER'), sups, dir)
+      const suppliers: any[] = groupSupplierDoubts(of('SUPPLIER').filter((l: any) => l.match_status !== 'QUEUED'), sups, dir)   // TO BOOK fica fora do grupo (revisão BL 1.5.0)
       // CASAR COM AJUSTE: o que a folha JÁ tem deste fornecedor e, por linha do banco, a
       // passagem com deriva que casa (nome, ±10 d, tolerância) — a resposta certa pra Copa
       // não é uma regra, é o casamento.
@@ -380,14 +399,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, queued: rows.map((r: any) => ({ id: r.id, date: r.date, amount: num(r.amount), name: r.merchant || r.name || '', note: r.matched_note || '' })) })
     }
     const limit = Math.min(5000, Math.max(1, parseInt(req.nextUrl.searchParams.get('limit') || '3000', 10) || 3000))
+    // PAINEL DO AUTO-LINK (Bank Link, revisão BL 1.5.0): só rodada e casadas a conferir — sem pool, plano e estados por linha.
+    const engineOnly = req.nextUrl.searchParams.get('engine') === '1'
     await loadDbAliases(db)
-    const [lines, pool] = await Promise.all([newLines(db, limit), candidatePool(db)])
+    const [lines, pool]: [any[], any] = engineOnly ? [[], null] : await Promise.all([newLines(db, limit), candidatePool(db)])
     const { count: totalNew } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).in('match_status', ['NEW', 'QUEUED'])
     // SILÊNCIO (BL 0.10.0): o plano roda SEMPRE — cada linha parada leva a dúvida do
     // motor (tipo, motivo, candidato) e a tela pergunta em vez de calar. QUEUED (TO BOOK)
     // voltou a ser linha viva: o motor pode lançar, o humano pode casar.
-    const rulesNow = await loadRules(db), twinsNow = await itemTwinKeys(db)
-    const planNow = buildPlan(lines, pool, rulesNow, { itemTwins: twinsNow, minCreateAge: RULE_AGE_DAYS })   // o que o CRON faria — a dúvida mostrada é a dúvida real
+    const rulesNow = engineOnly ? [] : await loadRules(db), twinsNow = engineOnly ? new Set<string>() : await itemTwinKeys(db)
+    // o que o CRON faria — a dúvida mostrada é a dúvida real. BL 1.5.0: como o cron, pendentes ficam FORA do plano e a irmã
+    // pendente trava a série (antes a tela contava «pendente» como dúvida e nunca via «irmã pendente»).
+    const planNow = engineOnly ? ({ items: [], skipped: {}, doubts: {} } as any) : buildPlan(lines.filter((l: any) => !l.pending), pool, rulesNow, { itemTwins: twinsNow, minCreateAge: RULE_AGE_DAYS, pendingKeys: new Set<string>(lines.filter((l: any) => l.pending).map(setKeyOf)) })
     // CASAR COM AJUSTE: pra cada linha parada, a passagem da folha que casa com deriva.
     const nearOf = new Map<string, NearCand[]>()
     try {
@@ -398,11 +421,20 @@ export async function GET(req: NextRequest) {
         for (const l of lines) { if (!planNow.doubts[String(l.id)] || !(num(l.amount) > 0)) continue; const c = nearExpenseMatches(l, expFree, staffOf, rejectedOf(l)); if (c.length) nearOf.set(String(l.id), c) }
       }
     } catch { /* sem folha/elo: a linha fica sem near; o card segue */ }
-    const enriched = lines.map((l: any) => ({
-      id: l.id, date: l.date, amount: num(l.amount), name: l.merchant || l.name || '', raw_name: l.name || '', pending: !!l.pending,
-      source: String(l.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID', fee: isFee(l), candidates: rank(l, pool),
-      queued: l.match_status === 'QUEUED', doubt: planNow.doubts[String(l.id)] || null, near: nearOf.get(String(l.id)) || null,
-    }))
+    await markQueuedAt(db, lines)
+    // ESTADO DA LINHA (BL 1.5.0 · DC 1.50.0): uma frase por linha, do mesmo plano do cron — PERGUNTA, FORNECEDOR ou ESPERANDO.
+    const itemOfNow = new Map<string, any>(planNow.items.map((it: any) => [String(it.line.id), it]))
+    const todayNow = todayNY()
+    const enriched = lines.map((l: any) => {
+      const candidates = rank(l, pool)
+      const doubt = planNow.doubts[String(l.id)] || null, near = nearOf.get(String(l.id)) || null
+      return {
+        id: l.id, date: l.date, amount: num(l.amount), name: l.merchant || l.name || '', raw_name: l.name || '', pending: !!l.pending,
+        source: String(l.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID', fee: isFee(l), candidates,
+        queued: l.match_status === 'QUEUED', doubt, near,
+        state: lineState(l, candidates, doubt, itemOfNow.get(String(l.id)) || null, near, todayNow),
+      }
+    })
     // A CONFERIR: o que o motor casou e o Márcio ainda não viu. Sem a migration
     // (colunas match_engine/match_batch/reviewed_at/backfill) o card avisa e segue vivo.
     let auto: any = null, needsMigration = false
@@ -662,7 +694,7 @@ export async function POST(req: NextRequest) {
       const target = String(body.target || '')
       const name = String(body.name || '').trim().slice(0, 80)
       if (!ids.length || !name) return NextResponse.json({ error: 'line_ids/name required' }, { status: 400 })
-      const lines0 = await fetchAll(db, 'bank_transactions', BSEL + ', doubt_answered', (q: any) => q.in('id', ids).in('match_status', ['NEW', 'QUEUED']))
+      const lines0 = await fetchAll(db, 'bank_transactions', BSEL + ', doubt_answered', (q: any) => q.in('id', ids).in('match_status', ['NEW']))   // TO BOOK não entra: alguém prometeu lançar (revisão BL 1.5.0)
       if (!lines0.length) return NextResponse.json({ error: 'nenhuma linha ainda em aberto — recarregue' }, { status: 409 })
       const errors: string[] = []
       let booked = 0, rule: string | null = null
@@ -706,7 +738,7 @@ export async function POST(req: NextRequest) {
         supplierId = String(body.supplier_id || '') || null
         if (!supplierId && body.new_supplier && body.new_supplier.company) {
           const ns = body.new_supplier
-          const { data: created, error } = await db.from('fixed_cost_suppliers').insert({ company: String(ns.company).slice(0, 120), cost_type: String(ns.cost_type || 'FIXED'), description: 'criado pela pergunta do AutoBook Engine (' + todayNY() + ')' }).select('id').single()
+          const { data: created, error } = await db.from('fixed_cost_suppliers').insert({ company: String(ns.company).slice(0, 120), cost_type: String(ns.cost_type || 'FIXED'), description: 'criado pela pergunta do AUTO-LINK (' + todayNY() + ')' }).select('id').single()
           if (error || !created) return NextResponse.json({ error: 'fixed_cost_suppliers: ' + (error?.message || 'insert falhou') }, { status: 500 })
           supplierId = String((created as any).id)
         }
@@ -721,7 +753,7 @@ export async function POST(req: NextRequest) {
         // VIAGEM A TRABALHO: um prestador da casa («Viagens a trabalho», FIXED) — achado ou criado uma vez.
         const { data: trip } = await db.from('fixed_cost_suppliers').select('id').ilike('company', 'Viagens a trabalho%').limit(1).maybeSingle()
         if (trip?.id) supplierId = String(trip.id)
-        else { const { data: created, error } = await db.from('fixed_cost_suppliers').insert({ company: 'Viagens a trabalho', cost_type: 'FIXED', description: 'viagens da equipe a trabalho (hotel, passagem, transporte) — criado pela pergunta do AutoBook Engine (' + todayNY() + ')' }).select('id').single(); if (error || !created) return NextResponse.json({ error: 'fixed_cost_suppliers: ' + (error?.message || 'insert falhou') }, { status: 500 }); supplierId = String(created.id) }
+        else { const { data: created, error } = await db.from('fixed_cost_suppliers').insert({ company: 'Viagens a trabalho', cost_type: 'FIXED', description: 'viagens da equipe a trabalho (hotel, passagem, transporte) — criado pela pergunta do AUTO-LINK (' + todayNY() + ')' }).select('id').single(); if (error || !created) return NextResponse.json({ error: 'fixed_cost_suppliers: ' + (error?.message || 'insert falhou') }, { status: 500 }); supplierId = String(created.id) }
         ruleTarget = 'FIXED_EXPENSE'
       }
       else return NextResponse.json({ error: 'target inválido' }, { status: 400 })
@@ -760,7 +792,15 @@ export async function POST(req: NextRequest) {
       // recente espera os 7 dias e mostra a dúvida MATURITY; o cron pega).
       await loadDbAliases(db)
       const [pool, rules, twins] = await Promise.all([candidatePool(db), loadRules(db), itemTwinKeys(db)])
-      const plan = buildPlan(lines0Free, pool, rules, { itemTwins: twins })
+      // Revisão BL 1.5.0: a resposta respeita a maturidade do cron (o recente espera os 7 dias) e planeja com TODAS as linhas
+      // vivas (a unicidade do banco vê o conjunto), aplicando só as do grupo. Linha com registro de MESMO nome e valor longe no
+      // tempo fica de fora agora e é dita — confira na lista do grupo antes que a regra a lance.
+      const longeHeld = lines0Free.filter((l: any) => rank(l, pool).some((c: any) => c.tier === 'LONGE'))
+      if (longeHeld.length) errors.push(longeHeld.length + ' linha(s) têm registro de mesmo nome e valor longe no tempo — ficaram de fora agora; confira na lista do grupo (a regra lança na próxima rodada se ninguém casar)')
+      const allLive = await newLines(db, 5000)
+      const groupIds = new Set<string>(lines0Free.filter((l: any) => !longeHeld.includes(l)).map((l: any) => String(l.id)))
+      const planAll = buildPlan(allLive.filter((l: any) => !l.pending), pool, rules, { itemTwins: twins, minCreateAge: RULE_AGE_DAYS, pendingKeys: new Set<string>(allLive.filter((l: any) => l.pending).map(setKeyOf)) })
+      const plan = { items: planAll.items.filter((i: any) => groupIds.has(String(i.line.id))), skipped: planAll.skipped, doubts: Object.fromEntries(Object.entries(planAll.doubts).filter(([id]) => groupIds.has(id))) }
       let run: string | null = null
       try { run = await acquireRun(db, 'human') } catch { run = null }
       if (run) {
@@ -1152,8 +1192,8 @@ export async function POST(req: NextRequest) {
         await cnt('fixed_cost_expenses', (q, c) => q.in('bank_transaction_id', c).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%'))
         await cnt('inputs', (q, c) => q.in('order_number', c.map((i: string) => ('bank:' + i).slice(0, 120))))
         try { const bId = await bucketInvoiceId(db); await cnt('invoice_expenses', (q, c) => q.in('purchase_group', c).eq('invoice_id', bId)); await cnt('inputs', (q, c) => q.in('purchase_group', c).ilike('description', '%Bank Link)%')); await cnt('inventory', (q, c) => q.in('purchase_group', c).ilike('description', '%Bank Link)%')) } catch { /* sem balde */ }
-        if (left) errors.push(`sobrou lançamento criado pelo motor: ${left} linha(s) — veja o card AUTO-BOOK no Data Checker`)
-        if (probeErr) errors.push(`afirmação de sobras falhou em ${probeErr} consulta(s) — confira o card AUTO-BOOK`)
+        if (left) errors.push(`sobrou lançamento criado pelo motor: ${left} linha(s) — veja o card «AUTO-LINK» no Data Checker`)
+        if (probeErr) errors.push(`afirmação de sobras falhou em ${probeErr} consulta(s) — confira o card «AUTO-LINK» no Data Checker`)
       }
       for (let i = 0; i < fixes.length; i += 100) await db.from('data_fixes').insert(fixes.slice(i, i + 100)).then(() => undefined, () => undefined)
       const remaining = Math.max(0, (totalInBatch || 0) - n)

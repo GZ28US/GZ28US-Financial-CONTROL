@@ -63,7 +63,7 @@ export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[] }
 export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference'; v: string; o?: string | null }
 export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'invoice_parts'])
 
-// AUTO-BOOK — constantes de doutrina (3/set/2026; donos podem mover):
+// AUTO-LINK (o motor do Bank Link; até 10/set/2026 chamado «AUTO-BOOK», nome que hoje é só do robô de e-mail do Márcio) — constantes de doutrina (3/set/2026; donos podem mover):
 export const RULE_AGE_DAYS = 7            // maturidade: RULE/LEARN só criam depois de 7 dias (o humano ainda lança atrasado)
 export const AUTO_BOOK_FLOOR = '2025-11-10' // fase B (4/set): piso levantado até a abertura da conta — a rodada automática varre o backlog inteiro
 export const ADOPT_WINDOW_DAYS = 20       // agendada do mês: ±20 dias da cobrança
@@ -122,7 +122,7 @@ export async function probeExpenseLink(db: any): Promise<boolean> {
 }
 
 export async function candidatePool(db: any): Promise<Pool> {
-  const [invExp, fixed, suppliers, expenses, goods, goodExp, inputs, inventory, payments, invParts, invoices, rides, clients, capital, finEv, financing, matched] = await Promise.all([
+  const [invExp, fixed, suppliers, expenses, goods, goodExp, inputs, inventory, payments, invoices, rides, clients, capital, finEv, financing, matched] = await Promise.all([
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, purchase_group, paid_from'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from, bank_transaction_id'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type'),
@@ -132,7 +132,6 @@ export async function candidatePool(db: any): Promise<Pool> {
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from, category'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
     fetchAll(db, 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, description, paid_to, mirror_expense_id'),
-    fetchAll(db, 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, payment_date, kit_group, kit_name'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'rides', 'id, project_name, client_id'),
     fetchAll(db, 'clients', '*').catch(() => []),
@@ -222,29 +221,10 @@ const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].inclu
   // depósito real do cliente e QUEIMAR o par certo.
   for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p) || p.mirror_expense_id) continue
     push(inn, { table: 'invoice_payments', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at, href: invHref(p.invoice_id), detail: `RECEBIMENTO da invoice ${invLabel(p.invoice_id)} · cliente ${invClient(p.invoice_id) || '—'} · ${p.paid_at ? 'baixado ' + String(p.paid_at).slice(0, 10) : 'previsto ' + (p.payment_date || '—') + ' · SEM baixa'}${p.source ? ' · via ' + p.source : ''}` }) }
-  // CUSTO dos parts vendidos (ponto cego da 1ª rodada, João+Márcio 24/ago): o
-  // invoice_part tem preço de VENDA (unit_price) e CUSTO (base_cost) — o banco
-  // cobra o CUSTO. Kits (kit_group) viram UMA cobrança somada, como pedidos.
-  const takenKits = new Set([...taken].filter(k => k.startsWith('kit_group:')).map(k => k.slice('kit_group:'.length)))
-  const brokenKits = new Set<string>()
-  for (const p of invParts) if (p.kit_group && taken.has('invoice_parts:' + p.id)) brokenKits.add(p.kit_group)
-  const kits = new Map<string, { amount: number; date: string | null; label: string; n: number; undated: boolean; members: Member[] }>()
-  for (const p of invParts) {
-    if (!realInvoice(p.invoice_id)) continue
-    const cost = (num(p.base_cost)) * (num(p.quantity) || 1)
-    if (cost < 0.005) continue
-    const inKit = !!p.kit_group && !brokenKits.has(p.kit_group) && !takenKits.has(p.kit_group)
-    if (!(p.kit_group && takenKits.has(p.kit_group)))
-      push(out, { table: 'invoice_parts', id: p.id, group: null, label: `PART CUSTO · ${invLabel(p.invoice_id)} · ${p.description || ''}`, date: p.payment_date || null, amount: cost, undated: !okDate(p.payment_date), href: invHref(p.invoice_id), detail: `CUSTO do part vendido na ${invLabel(p.invoice_id)} · venda ${num(p.unit_price)} × custo ${num(p.base_cost)}${(num(p.quantity) || 1) > 1 ? ' ×' + num(p.quantity) : ''}${p.kit_name ? ' · kit ' + p.kit_name : ''} · ${p.payment_date ? 'pago ' + p.payment_date : 'SEM data de pagamento'}` })
-    if (inKit) {
-      const g = kits.get(p.kit_group) || { amount: 0, date: null, label: `KIT CUSTO · ${p.kit_name || p.kit_group} · ${invLabel(p.invoice_id)}`, n: 0, undated: false, members: [] }
-      g.amount += cost; g.n++; g.members.push({ table: 'invoice_parts', id: p.id })
-      if (p.payment_date && (!g.date || p.payment_date < g.date)) g.date = p.payment_date
-      if (!okDate(p.payment_date)) g.undated = true
-      kits.set(p.kit_group, g)
-    }
-  }
-  kits.forEach((g, id) => { if (g.n > 1) push(out, { table: 'kit_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members, detail: `KIT: soma do CUSTO de ${g.n} parts do mesmo kit — o banco cobra o kit inteiro de uma vez` }) })
+  // PART CUSTO / KIT CUSTO SAÍRAM DO POOL (BL 1.5.0, 10/set/2026). invoice_parts.base_cost é campo de EXIBIÇÃO (lib/financials:
+  // «fonte de custo é SEMPRE invoice_expenses»): o banco paga a despesa, nunca a peça vendida. Como candidato, o custo da peça
+  // sem data empatava com qualquer cobrança do mesmo valor — a Wawa de $19,47 virava «filtro de óleo da GoldenEye» e segurava a
+  // regra do combustível. Medido antes de sair: nenhum casamento vivo apontava para invoice_parts ou kit_group.
   // Grupos de compra: um pedido com vários itens vira UMA cobrança no banco.
   // Só entram os MESMOS itens que contam (PURCHASED, livres, não-BR, invoice
   // real); grupo com item já casado não é oferecido. O grupo carrega seus
@@ -324,7 +304,86 @@ export function nameHit(line: any, c: Cand): boolean {
   return false
 }
 
-export function rank(line: any, pool: Pool): Cand[] {
+// CANDIDATO POR NÍVEL (BL 1.5.0, 10/set/2026 — João × Márcio: «uma Wawa pra GoldenEye com filtro de óleo?»). Valor igual ao
+// centavo é só a PORTA. PAR = valor + perto (≤30 d ou sem data) + o nome bate OU a família da loja combina com a tabela (posto ⇄
+// custo fixo/folha, mercado ⇄ insumo, autopeça ⇄ despesa de invoice…); LONGE = valor + nome, mas a mais de 30 dias; COINCIDÊNCIA
+// = só o valor. Só PAR segura o motor e aparece como sugestão; LONGE e COINCIDÊNCIA ficam recolhidas na tela, nunca pré-marcadas.
+// Família larga é o lado seguro (revisão de 10/set): candidato que só combina pela família SEGURA o motor e vira pergunta —
+// casar sozinho continua exigindo o nome. Família estreita demais é que lança em dobro. Medidos no ensaio: compra PESSOAL
+// sai da Amazon/Temu (scanner OTOFIX), loja de departamento vende casa e brinde (Ross, PBR Shop), processador e serviço
+// pagam qualquer coisa, e classe DESCONHECIDA não sabe nada — então todas as tabelas de compra.
+const T_PURCHASE = ['invoice_expenses', 'purchase_group', 'inventory', 'goods', 'good_expenses', 'inputs', 'expenses']
+const T_CONSUMABLE = ['inputs', 'purchase_group', 'expenses', 'goods', 'good_expenses', 'invoice_expenses', 'inventory']
+const T_SERVICE = ['fixed_cost_expenses', 'invoice_expenses', 'goods', 'good_expenses', 'expenses', 'inputs']
+const T_TEAM = ['expenses', 'fixed_cost_expenses', 'inputs']
+const T_STORE = ['expenses', 'fixed_cost_expenses', 'inputs', 'purchase_group', 'goods', 'good_expenses', 'invoice_expenses', 'inventory']
+// Dinheiro-movimento nunca casa nem lança sozinho — o candidato só serve de sugestão, então toda tabela vale.
+const T_MONEY = ['expenses', 'capital_events', 'financing_events', 'invoice_expenses', 'fixed_cost_expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'purchase_group', 'invoice_payments']
+const AFFINITY: Record<string, string[]> = {
+  FUEL: ['fixed_cost_expenses', 'expenses'], TOLLS: ['fixed_cost_expenses', 'expenses'],
+  CONVENIENCE: [...T_CONSUMABLE, 'fixed_cost_expenses'],
+  GROCERY: T_CONSUMABLE, SUPERSTORE: T_CONSUMABLE, WHOLESALE_CLUB: T_CONSUMABLE, DISCOUNT_VARIETY: T_CONSUMABLE, DRUGSTORE: T_CONSUMABLE,
+  HARDWARE: T_PURCHASE, HOME_SUPPLY: T_PURCHASE, AUTO_PARTS: T_PURCHASE, MARKETPLACE: T_PURCHASE, TEMU: T_PURCHASE, MISC_RETAIL: T_PURCHASE,
+  AUTO_SERVICE: T_STORE, PAYPAL: T_STORE, SQUARE: T_STORE, POSTAGE: T_STORE, SERVICES: T_STORE, UNKNOWN: T_STORE, CLOTHING: T_STORE, DEPT_STORE: T_STORE,
+  SAAS: T_SERVICE, TELECOM: T_SERVICE, UTILITY: T_SERVICE, RENT: T_SERVICE, INSURANCE: T_SERVICE, GOVERNMENT: T_SERVICE, ACCOUNTING: T_SERVICE, ADVERTISING: T_SERVICE,
+  RESTAURANT: T_TEAM, LODGING: T_TEAM, TRAVEL: T_TEAM, ENTERTAINMENT: T_TEAM,
+  TRANSFER: T_MONEY,
+  INCOME: ['invoice_payments', 'capital_events', 'financing_events'],
+  BANK_FEE: ['fixed_cost_expenses'],
+}
+// Posto vende gelo e cerveja: insumo ou pedido do MESMO período (≤3 dias) combina com combustível; longe, é outra compra.
+const AFFINITY_NEAR: Record<string, Record<string, number>> = { FUEL: { inputs: 3, purchase_group: 3 } }
+// O TIPO DE COMPRA ESCRITO NA LINHA (ensaio de 10/set): combustível de entrega de carro vive como «Fuel» na invoice do carro
+// (US.021.1 GoldenEagle · Fuel · 7-Eleven) — o posto «Rebel» de $97,65 não bate o nome, mas É aquela linha.
+const FUEL_WORDS = /\b(fuel|gas|gasoline|gasolina|combust\w*|unld|super|premium|diesel|posto|full tank|tanque|octan\w*)\b/i
+const KLASS_WORDS: Record<string, RegExp> = {
+  FUEL: FUEL_WORDS,
+  CONVENIENCE: new RegExp(FUEL_WORDS.source + '|\\b(ice|gelo|water|[aá]gua|beer|cerveja|snack\\w*|food|comida)\\b', 'i'),
+  TOLLS: /\b(toll|tolls|sunpass|ped[aá]gio)\b/i,
+  TRAVEL: /\b(flight|voo|passagem|airline|uber|lyft|taxi|rental car|car rental|aluguel de carro|parking|estacionamento)\b/i,
+  LODGING: /\b(hotel|motel|airbnb|hospedagem|lodging|inn)\b/i,
+  RESTAURANT: /\b(food|lunch|dinner|breakfast|meal|almo[cç]o|jantar|comida|lanche|pizza|restaurant\w*)\b/i,
+  GROCERY: /\b(food|groceries|grocery|mercado|comida|water|[aá]gua|snack\w*)\b/i,
+}
+// Peça com «fuel/gas/super» no nome não é abastecimento (revisão: «Fuel filter», «Gas cap», «Super Duty mirror»).
+const FUEL_VETO = /(filter|filtro|pump|bomba|\brail\b|regulator|module|hose|sensor|\bline\b|\bcell\b|\bcap\b|tampa|injector|\bbico\b|super ?duty|super ?charg\w*|gasket|junta|shock|strut)/i
+const KLASS_VETO: Record<string, RegExp> = { FUEL: FUEL_VETO, CONVENIENCE: FUEL_VETO }
+export function affinityOk(klass: string, table: string, label?: string, dd?: number | null): boolean {
+  const lab = String(label || '')
+  if (/ · ESTORNO$/.test(lab)) return true   // estorno: a entrada é o par da compra que voltou (revisão)
+  const t = AFFINITY[String(klass)]
+  if (t && t.includes(table)) return true
+  const near = AFFINITY_NEAR[String(klass)]
+  if (near && near[table] != null && (dd == null || dd <= near[table])) return true
+  const w = KLASS_WORDS[String(klass)], v = KLASS_VETO[String(klass)]
+  const text = lab.replace(/^[A-Z ]+ · /, '')   // o selo (EXPENSE · …) não conta como palavra
+  return !!w && w.test(text) && !(v && v.test(text))
+}
+// NOME CURTO (ensaio de 10/set): words() ignora palavra de menos de 4 letras, então o posto «BP» nunca batia pelo nome — mas o insumo
+// «Corona 12oz · BP 9999 S Hwy 441» do mesmo dia É aquela compra. Nome curto SEGURA o candidato (vira pergunta); casar sozinho
+// continua exigindo nameHit — sem isto a regra do combustível lançaria de novo cerveja e gelo já lançados como insumo.
+export function shortNameHit(line: any, c: Cand): boolean {
+  const m = String(line.merchant || '').trim() || String(stmtMerchant(line.name) || '').trim().split(/[\s#*]+/)[0] || ''
+  if (!m || m.length > 3 || !/^[A-Za-z0-9&]+$/.test(m)) return false
+  return new RegExp('(^|[^A-Za-z0-9])' + m.replace(/&/g, '\\&') + '([^A-Za-z0-9]|$)', 'i').test(String(c.label || '').replace(/^[A-Z ]+ · /, ''))
+}
+export type CandTier = 'PAR' | 'LONGE' | 'COINCIDENCIA'
+export type RankedCand = Cand & { tier: CandTier }
+const TIER_ORDER: Record<CandTier, number> = { PAR: 0, LONGE: 1, COINCIDENCIA: 2 }
+export function candTier(line: any, c: Cand, cls?: Classified): CandTier {
+  const klass = (cls || classify(line)).klass
+  const named = nameHit(line, c) || shortNameHit(line, c)
+  const close = !c.date || daysBetween(c.date, String(line.date)) <= 30
+  const dd = c.date ? daysBetween(c.date, String(line.date)) : null
+  if (close && (named || affinityOk(klass, c.table, c.label, dd))) return 'PAR'
+  if (named) return 'LONGE'
+  return 'COINCIDENCIA'
+}
+
+export function rank(line: any, pool: Pool): RankedCand[] {
+  const cls = classify(line)
+  const da = line && line.doubt_answered && typeof line.doubt_answered === 'object' ? line.doubt_answered : {}
+  const refused = new Set<string>([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : [])].map(String))   // NÃO É ESSE nunca volta como sugestão
   const amt = Math.abs(num(line.amount))
   const arr = num(line.amount) > 0 ? pool.out : pool.inn
   const bw = words((line.merchant || '') + ' ' + (line.name || ''))
@@ -342,8 +401,8 @@ export function rank(line: any, pool: Pool): Cand[] {
     score += Math.min(15, hit * 5)
     if (nameHit(line, c)) score += 10
     const { members, ...rest } = c; void members
-    return { ...rest, score, dd }
-  }).filter(c => (c.score || 0) > 20).sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 5)
+    return { ...rest, score, dd, tier: (refused.has(c.table + ':' + c.id) ? 'COINCIDENCIA' : candTier(line, c, cls)) as CandTier }
+  }).filter(c => (c.score || 0) > 20).sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || (b.score || 0) - (a.score || 0)).slice(0, 5)
 }
 
 /* ─────────────── MOTORES ─────────────── */
@@ -746,10 +805,11 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     if (l.pending) { skip('pendente'); continue }
     const arr = num(l.amount) > 0 ? pool.out : pool.inn
     const same = arr.filter(x => free(x) && notRejected(x) && Math.abs(x.amount - amt) < 0.011)
-    if (cur) cur.cands = same
-    // Mesmo valor a mais de 30 dias não é a mesma compra (dry run da fase B: 168
-    // linhas presas por coincidência de valor) — sem candidato PERTO, a regra decide.
-    const near = same.filter(x => !x.date || daysBetween(x.date, l.date) <= 30)
+    // Mesmo valor a mais de 30 dias não é a mesma compra (dry run da fase B: 168 linhas presas por coincidência de valor) — e
+    // mesmo valor PERTO também não, se nem o nome nem a família da loja combinam (BL 1.5.0: só candidato PAR segura o motor;
+    // a Wawa de $3,29 não é a tampa de radiador da AutoZone). Sem PAR, a regra decide.
+    const near = same.filter(x => (!x.date || daysBetween(x.date, l.date) <= 30) && (nameHit(l, x) || shortNameHit(l, x) || affinityOk(cls.klass, x.table, x.label, x.date ? daysBetween(x.date, l.date) : null)))
+    if (cur) cur.cands = near.length ? near : same.filter(x => nameHit(l, x) || shortNameHit(l, x))
     if (!near.length) { const ft = folhaTwin(); if (ft) { if (cur) cur.cands = ft; skip('a folha tem esta compra (deriva de câmbio, par de passagens ou pagador errado no papel) — CASAR COM AJUSTE ou NÃO'); continue } }
     if (!near.length) {
       // Sem candidato: a REGRA decide (BL 0.7.0 → 0.8.0). TRANSFER = status sem
@@ -766,12 +826,12 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
           const why = 'acima do teto da regra ' + (capped.r.key || capped.r.label || '?') + ' ($' + num(capped.r.amount_max).toFixed(0) + ')'
           const age = Math.max(opts.minCreateAge || 0, RULE_AGE_DAYS)
           const tail0 = Math.max(0.30, 0.005 * amt)
-          const twin0 = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail0 && x.date && daysBetween(x.date, l.date) <= 10 && nameHit(l, x))
+          const twin0 = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail0 && x.date && daysBetween(x.date, l.date) <= 10 && (nameHit(l, x) || shortNameHit(l, x)))
           if (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && capped.r.target !== 'IGNORE' && signedDays(l.date, today) >= age && !twin0.length) { plan.items.push({ line: l, cand: null, engine: 'BUCKET', create: true, rule: capped.r, cls, reason: why }); continue }
           if (twin0.length) { if (cur) cur.cands = twin0; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
-          skip(why); continue
+          skip(why + (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && capped.r.target !== 'IGNORE' ? '' : ' — não vai pro balde')); continue
         }
-        skip((same.length ? 'tem gêmeo no app — candidato longe' : 'sem candidato') + (HUMAN_TIER.has(cls.klass) ? ' (classe humana: ' + cls.klass + ')' : '')); continue
+        skip((same.some(x => nameHit(l, x) || shortNameHit(l, x)) ? 'tem gêmeo no app — candidato longe' : 'sem candidato') + (HUMAN_TIER.has(cls.klass) ? ' (classe humana: ' + cls.klass + ')' : '')); continue   // coincidência não é gêmeo
       }
       // IGNORAR que ensina (BL 1.2.0): regra HUMANA alvo IGNORE — a linha nasce IGNORED, com trilha.
       if (rule.r.target === 'IGNORE') { plan.items.push({ line: l, cand: null, engine: 'RULE', create: false, ignore: true, rule: rule.r }); continue }
@@ -784,7 +844,7 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
       // app (consumir cegava a linha exata que vinha depois — reproduzido na revisão).
       {
         const tail = Math.max(0.30, 0.005 * amt)
-        const nearTwin = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail && x.date && daysBetween(x.date, l.date) <= 10 && nameHit(l, x))
+        const nearTwin = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail && x.date && daysBetween(x.date, l.date) <= 10 && (nameHit(l, x) || shortNameHit(l, x)))
         if (nearTwin.length) { if (cur) cur.cands = nearTwin; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
       }
       if (rule.r.target === 'BUCKET') {
@@ -1523,7 +1583,7 @@ export async function ensureFleetSupplier(db: any): Promise<string> {
   if (data?.id) return data.id
   const { data: ins, error } = await db.from('fixed_cost_suppliers').insert({
     company: 'Frota — combustível & rodagem',
-    description: 'Combustível E pedágio dos carros da casa (BP, Wawa, Shell, RaceTrac, Sams, SunPass) — criado pelo AUTO-BOOK do Bank Link, fase B. Cada abastecimento entra como despesa SINGLE paga, ligada à linha do banco.',
+    description: 'Combustível E pedágio dos carros da casa (BP, Wawa, Shell, RaceTrac, Sams, SunPass) — criado pelo AUTO-LINK do Bank Link, fase B. Cada abastecimento entra como despesa SINGLE paga, ligada à linha do banco.',
     cost_type: 'FLEET', periodicity: 'SINGLE', date_entry: todayNY(), payment_day_1: null, amount_1: null, payment_day_2: null, amount_2: null,
   }).select('id').single()
   if (error || !ins) {

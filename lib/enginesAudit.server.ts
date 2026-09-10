@@ -145,6 +145,7 @@ export async function enginesAudit(db: any): Promise<EnginesAudit> {
     if (!s.date || !feed_until || s.date > new Date(Date.parse(feed_until) - 5 * 864e5).toISOString().slice(0, 10)) continue
     // A cobrança pode EXISTIR e não ter casado (pendente, >3 dias, dúvida): aí o caminho é o Bank Link, não «Quem pagou?».
     const loose = bank.find((b: any) => b.match_status !== 'MATCHED' && num(b.amount) > 0 && Math.abs(num(b.amount) - s.amount) < 0.011 && dayDiff(b.date, s.date) <= 15) || null
+    if (loose) continue   // a cobrança existe e não casou: essa pergunta é da linha do banco (card Conciliação bancária) — aqui seria a mesma pendência duas vezes (revisão BL 1.5.0)
     booked_no_bank.push({ table, id: String(r.id), label: s.label, vendor: String(m.vendor || s.vendor), amount: s.amount, date: s.date, days: dayDiff(feed_until, s.date), href: s.href, bank_line: loose ? { date: day(loose.date), pending: !!loose.pending, status: String(loose.match_status || 'NEW') } : null })
   }
 

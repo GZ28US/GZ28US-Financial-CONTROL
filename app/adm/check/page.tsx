@@ -106,7 +106,7 @@ type SupRow = { id: string; text: string; part: string; candidates: { id: string
 type LinkerSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsSupplierMigration: boolean; totals: { parts: number; locked: number; inv_unlinked: number; inv_total: number; ps_unlinked: number; ps_total: number; no_pn: number; dup_pn: number; sup_unlinked?: number; map_bad?: number } | null; inventory: LinkerRow[]; streams: LinkerRow[]; no_pn: { id: string; item: string }[]; dup_pn: { pn: string; items: string[] }[]; suppliers_unlinked: SupRow[]; suppliers_all: { id: string; name: string; aliases?: string }[]; map_bad: { id: string; item: string; cost: number; map: number }[]; no_source: string[]; kit_mismatch: { item: string; st: string | null; kit: boolean }[]; ebay_pn: { id: string; item: string; listing: string; suggest: string | null; supplier: string }[]; categories: CatRow[]; category_vocab: string[]; category_ai_pending?: number; needs_category_ai_migration?: boolean; auto_fill_enabled?: boolean; certain_ready?: number; auto_categories?: { fix_id: string; id: string; item: string; category: string; old: string | null; at: string }[] }
 type TaxPayee = { key: string; name: string; total: number; classification: string | null; w9_on_file: boolean }
 type TaxSignal = { state: 'loading' | 'error' | 'ok'; needsMigration: boolean; needsAliasMigration?: boolean; years: { year: string; payees: TaxPayee[] }[] }
-type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean; name_ok?: boolean; unique?: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number } | null; silence_error?: string | null; runs_7d?: { n: number; errors: number } }
+type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: string; trigger: string; status: string; started_at: string; finished_at: string | null; counts: Record<string, number> | null; errors: string[] | null; remaining: number | null }[]; booked_24h: Record<string, number>; booked_7d: Record<string, number>; remaining: number; errors: string[]; orphans: { table: string; id: string; label: string; amount: number; bank_id: string; code?: string }[]; dups: { auto_table: string; auto_id: string; auto_label: string; bank_id: string; twin_table: string; twin_id: string; twin_label: string; amount: number; days: number }[]; bucket?: { total: number; balance: number; older_7d: number }; dead_pointers?: { bank_id: string; table: string; id: string; label: string; amount: number }[]; amount_drift?: { bank_id: string; row_id: string; bank_amount: number; row_amount: number; label: string }[]; seed?: { skipped: string[] }; drift?: { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean; name_ok?: boolean; unique?: boolean }[]; anomalies?: { supplier_id: string; supplier: string; month: string; current: number; avg3: number; ratio: number }[]; bounce?: { bank_id: string; n: number }[]; questions?: { suppliers: number; supplier_total: number; money: number; twins: number; caps: number; maturity: number; other: number; lines: number; ask?: number; waiting?: number } | null; silence_error?: string | null; runs_7d?: { n: number; errors: number } }
 // As saídas da Regions com id, nome e status (DC 1.44.0): «paga no app, sem banco» casa por prova e o imposto FL acha o recolhimento pelo nome.
 type BankLine = { d: string; a: number; id: string; n: string; s: string }
 type HealthRow = { conta: string; status: string; ultima_transacao: string | null; dias_em_silencio?: number; veredito_do_dado?: string; item_error: { code: string; msg: string } | null; ultima_atualizacao_plaid: string | null; diagnostico?: string }
@@ -606,7 +606,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
     if (items.length) checks.push({
       group: 'FINANCIAL', key: 'fixed-dup-month', title: 'Fornecedor MONTHLY com 2+ contas no mesmo mês', blocks: 'a mesma conta pesa duas vezes: no DRE e em "a pagar"',
-      why: 'Duplicata é identidade dura: mesmo fornecedor, mesmo mês e MESMO VALOR (ou mesma descrição) — aluguel e garagem no mesmo dia NÃO são duplicata (Luma, 8/set). Quando o banco cria ou adota a conta do mês (AUTO-BOOK) ou alguém lança a mesma conta à mão, sobra uma agendada em aberto ao lado da paga. APP fica fora (assinaturas com recibo do Gmail cobram várias vezes no mês por natureza). Apague a sobra em aberto — a paga/ligada ao banco é a verdadeira.',
+      why: 'Duplicata é identidade dura: mesmo fornecedor, mesmo mês e MESMO VALOR (ou mesma descrição) — aluguel e garagem no mesmo dia NÃO são duplicata (Luma, 8/set). Quando o banco cria ou adota a conta do mês (AUTO-LINK) ou alguém lança a mesma conta à mão, sobra uma agendada em aberto ao lado da paga. APP fica fora (assinaturas com recibo do Gmail cobram várias vezes no mês por natureza). Apague a sobra em aberto — a paga/ligada ao banco é a verdadeira.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -1205,10 +1205,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       // BALDE (fase B): ponteiro morto (linha do banco apontando pra registro apagado),
       // valor mudado pelo Plaid depois do lançamento, e PADRÃO que não pôde ser semeado.
       for (const x of ab.dead_pointers || []) items.push({
-        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: (x.table === 'expenses' || x.table === 'expense_group') ? `a linha do banco aponta pra passagem da folha que não existe mais — DESFAZER em A CONFERIR e refaça CASAR COM AJUSTE (o motor não recria folha) · ${usd(x.amount)}` : `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco e o motor recria · ${usd(x.amount)}`, amount: x.amount,
+        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: (x.table === 'expenses' || x.table === 'expense_group') ? `a linha do banco aponta pra passagem da folha que não existe mais — DESFAZER no AUTO-LINK (Bank Link → casadas a conferir) e refaça CASAR COM AJUSTE (o motor não recria folha) · ${usd(x.amount)}` : `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco e o motor recria · ${usd(x.amount)}`, amount: x.amount,
         fix: { kind: 'unmatch' as const, table: x.table, rowId: x.id, field: 'match_status', bankId: x.bank_id, confirmText: `Devolver a linha do banco «${x.label}» (${usd(x.amount)}) a SEM CASAMENTO? O registro apontado já não existe; o motor recria na próxima rodada.` },
       })
-      for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: /folha ×/.test(String(x.label || '')) ? `as passagens da folha somam ${usd(x.row_amount)} e o banco cobrou ${usd(x.bank_amount)} (alguém editou depois do casamento) — DESFAZER em A CONFERIR e refaça CASAR COM AJUSTE` : `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila e deixe o motor recriar`, amount: Math.abs(x.bank_amount - x.row_amount) })
+      for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: /folha ×/.test(String(x.label || '')) ? `as passagens da folha somam ${usd(x.row_amount)} e o banco cobrou ${usd(x.bank_amount)} (alguém editou depois do casamento) — DESFAZER no AUTO-LINK (Bank Link → casadas a conferir) e refaça CASAR COM AJUSTE` : `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila e deixe o motor recriar`, amount: Math.abs(x.bank_amount - x.row_amount) })
       for (const k of (ab.seed && ab.seed.skipped) || []) items.push({ href: '/adm/bank', code: 'PADRÃO', label: k, extra: 'regra padrão não semeada — fornecedor ambíguo ou ausente; nomeie o fornecedor certo no ⚙ do Bank Link (regra humana)' })
       // FEED (9/set): a rodada dizia DONE com o feed mudo há 4 dias — «não deu erro» não é «trouxe o dia».
       if (bank.healthState === 'error' || (bank.healthState === 'ok' && feedRows.length === 0)) items.push({ href: '/adm/bank', code: 'SINAL', label: 'a saúde do feed (/api/bank/health) não respondeu — o card não sabe se o feed está vivo', extra: 'toda prova «não consta no banco» fica suspensa até o sinal voltar; recarregue, e se persistir veja o Bank Link', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
@@ -1218,8 +1218,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       })
       const b24 = Object.values(ab.booked_24h || {}).reduce((s, v) => s + v, 0), b7 = Object.values(ab.booked_7d || {}).reduce((s, v) => s + v, 0)
       checks.push({
-        group: 'BANK', key: 'auto-book', title: 'Motor do banco (Bank Link) — rodou? errou? deixou sobras?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
-        why: `Desde ${ab.floor} cada linha nova do banco é REGISTRADA pelo motor depois do sync (cron 6/6h + webhook), uma rodada por vez. Registradas: ${b24} nas últimas 24 h · ${b7} em 7 dias · ${ab.remaining} NEW restantes desde o piso. RULE/LEARN esperam 7 dias de maturidade (o humano ainda lança atrasado) — daí a DUPLA: quando o humano lança depois do banco, TROCAR desfaz o do motor e casa o humano. ÓRFÃO = lançamento do motor sem linha casada (sobra de DESFAZER ou falha): PURGAR. Tudo desfazível no Bank Link (A CONFERIR · DESFAZER LOTE).`,
+        group: 'BANK', key: 'auto-book', title: 'AUTO-LINK — rodou? errou? deixou sobras?', blocks: 'linhas novas do banco ficam sem dono e o DRE atrasa',
+        why: `Desde ${ab.floor} cada linha nova do banco é REGISTRADA pelo motor depois do sync (cron 6/6h + webhook), uma rodada por vez. Registradas: ${b24} nas últimas 24 h · ${b7} em 7 dias · ${ab.remaining} NEW restantes desde o piso. RULE/LEARN esperam 7 dias de maturidade (o humano ainda lança atrasado) — daí a DUPLA: quando o humano lança depois do banco, TROCAR desfaz o do motor e casa o humano. ÓRFÃO = lançamento do motor sem linha casada (sobra de DESFAZER ou falha): PURGAR. Tudo desfazível no Bank Link (AUTO-LINK · casadas a conferir · DESFAZER LOTE).`,
         items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
       })
     }
@@ -1253,8 +1253,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         : { href: x.href, code: 'SEM BANCO', label: `${x.label} · ${x.date}`, amount: x.amount, when: x.date, extra: `lançada pela fila do AUTO-BOOK (regra ou resposta) e a Regions não mostra cobrança nenhuma em ${x.days} dias${x.days >= 15 ? ' — o dinheiro nunca saiu daqui? cartão de outro bolso (sócio, BR, cliente)? diga em «Quem pagou esta conta?» (a resposta tira a linha daqui)' : ' — o banco costuma postar em 1–5 dias; PayPal e pré-venda demoram mais'}`, link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
       for (const x of E.dups) items.push({
         href: '/adm/bank', code: 'DUPLA', label: `${x.auto_label} ⇄ ${x.twin_label}`, amount: x.amount, when: x.bank_date,
-        extra: `o motor do banco criou (${usd(x.amount)}, ${x.bank_date}) o que a fila do AUTO-BOOK já tinha lançado (${usd(x.twin_amount)}, ${x.days} dia(s) de diferença)` + (x.assigned ? ' — a linha do balde já foi atribuída por gente: DESATRIBUIR no Bank Link e depois TROCAR' : x.exact ? ' — TROCAR desfaz o do banco e casa a linha com o registro do e-mail' : ` — os valores diferem (${usd(Math.abs(x.twin_amount - x.amount))}: imposto ou frete?); ajuste a linha do e-mail no editor e case no Bank Link`),
-        fix: x.exact && !x.assigned ? { kind: 'rematch' as const, table: x.twin_table, rowId: x.twin_id, field: 'match', bankId: x.bank_id, confirmText: `DESFAZ o lançamento do motor do banco «${x.auto_label}» e casa a linha da Regions com o registro do AUTO-BOOK «${x.twin_label}» (${usd(x.twin_amount)})?` } : undefined,
+        extra: `o AUTO-LINK criou (${usd(x.amount)}, ${x.bank_date}) o que a fila do AUTO-BOOK já tinha lançado (${usd(x.twin_amount)}, ${x.days} dia(s) de diferença)` + (x.assigned ? ' — a linha do balde já foi atribuída por gente: DESATRIBUIR no Bank Link e depois TROCAR' : x.exact ? ' — TROCAR desfaz o do banco e casa a linha com o registro do e-mail' : ` — os valores diferem (${usd(Math.abs(x.twin_amount - x.amount))}: imposto ou frete?); ajuste a linha do e-mail no editor e case no Bank Link`),
+        fix: x.exact && !x.assigned ? { kind: 'rematch' as const, table: x.twin_table, rowId: x.twin_id, field: 'match', bankId: x.bank_id, confirmText: `DESFAZ o lançamento do AUTO-LINK «${x.auto_label}» e casa a linha da Regions com o registro do AUTO-BOOK «${x.twin_label}» (${usd(x.twin_amount)})?` } : undefined,
         link: x.assigned ? { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'DESATRIBUIR no Bank Link ↗' } : !x.exact ? { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } : undefined,
       })
       for (const x of E.no_mail) items.push({ href: '/adm/bank', code: 'SEM E-MAIL', label: `${x.name} · ${x.date} · ${x.row_label}`, amount: x.amount, when: x.date, extra: `compra online (${x.supplier}) que o banco pôs no balde e a fila do AUTO-BOOK não tem pergunta nem lançamento em ±15 dias — o robô pode ter lido e resolvido calado (ele não grava o que resolve), ou o e-mail não chegou; confira o balde e a caixa`, link: { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'BALDE ↗' } })
@@ -1263,8 +1263,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const mm = E?.mail
     const status = mm && mm.last ? `AUTO-BOOK (e-mail): última rodada ${when(mm.last.started_at)} (${mm.last.status}) · ${mm.runs_7d.done} rodadas OK e ${mm.runs_7d.error} com erro em 7 dias · ${mm.booked} compra(s) lançadas pela fila do e-mail (regra ou resposta) · ${mm.rules} regra(s) · ${mm.doubts.open} dúvida(s) aberta(s). Regions vista até ${E?.feed_until || '?'}.` : 'sem sinal do AUTO-BOOK.'
     checks.push({
-      group: 'BANK', key: 'engines-agree', title: 'Os dois motores concordam? (AUTO-BOOK × motor do banco)', blocks: 'um robô lança o que o outro já lançou, ou nenhum lança — e ninguém percebe até o DRE',
-      why: `Dois robôs registram compra: o AUTO-BOOK lê o E-MAIL de hora em hora e lança a compra (item, pedido, fornecedor); o motor do Bank Link lê a REGIONS a cada 6 h, liga cada linha do banco ao registro que já existe e só lança por falta (tarifa, combustível, compra no balcão — o que nunca manda e-mail). Nenhum lê o outro: este card é só leitura dos dois e confere se contam a mesma história — robô calado, caixa sem token, dúvida parada, compra do e-mail que o banco nunca cobrou, DUPLA entre motores, compra online sem pergunta nem lançamento no e-mail, dúvida cuja compra já está no balde. Hoje: ${status}`,
+      group: 'BANK', key: 'engines-agree', title: 'Os dois motores concordam? (AUTO-BOOK × AUTO-LINK)', blocks: 'um robô lança o que o outro já lançou, ou nenhum lança — e ninguém percebe até o DRE',
+      why: `Dois robôs registram compra: o AUTO-BOOK lê o E-MAIL de hora em hora e lança a compra (item, pedido, fornecedor); o AUTO-LINK (o motor do Bank Link) lê a REGIONS a cada 6 h, liga cada linha do banco ao registro que já existe e só lança por falta (tarifa, combustível, compra no balcão — o que nunca manda e-mail). Nenhum lê o outro: este card é só leitura dos dois e confere se contam a mesma história — robô calado, caixa sem token, dúvida parada, compra do e-mail que o banco nunca cobrou, DUPLA entre motores, compra online sem pergunta nem lançamento no e-mail, dúvida cuja compra já está no balde. Hoje: ${status}`,
       items, impact: items.filter(i => i.code === 'SEM BANCO' || i.code === 'DUPLA').reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -1332,7 +1332,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         link: a.table_name === 'bank_transactions' ? { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } : undefined,
       }))
     const cut = auto.state === 'ok' && auto.total != null && auto.total > auto.rows.length ? ` · mostrando as ${auto.rows.length.toLocaleString('en-US')} mais recentes de ${auto.total.toLocaleString('en-US')}` : ''
-    checks.push({ group: 'FINANCIAL', key: 'auto-fills', good: true, title: 'O app preencheu sozinho (7 dias)', blocks: 'notícia boa, não pendência: cada linha tem a prova e DESFAZER por 7 dias — confira quando quiser' + cut, why: 'Lei de 8/set (João): o app age sozinho onde há PROVA — dois leitores concordando, identidade dura, hábito unânime, o banco como testemunha — e só pergunta o que é decisão de gente. Cada escrita sem clique aparece aqui por 7 dias com DESFAZER; casamentos do banco se desfazem em A CONFERIR.', items })
+    checks.push({ group: 'FINANCIAL', key: 'auto-fills', good: true, title: 'O app preencheu sozinho (7 dias)', blocks: 'notícia boa, não pendência: cada linha tem a prova e DESFAZER por 7 dias — confira quando quiser' + cut, why: 'Lei de 8/set (João): o app age sozinho onde há PROVA — dois leitores concordando, identidade dura, hábito unânime, o banco como testemunha — e só pergunta o que é decisão de gente. Cada escrita sem clique aparece aqui por 7 dias com DESFAZER; casamentos do banco também (o DESFAZER deles é aqui).', items })
   }
   // ── TAX · IMPOSTO FL COBRADO, RECOLHIMENTO NÃO LANÇADO (DC 1.44.0, levantamento de 8/set) ──
   {
@@ -1364,7 +1364,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     if (ab2 && !ab2.needs_migration) {
       // Sinal que FALHOU não é sinal verde: os três cards mostram SINAL em vez de «nada pendente».
       const sigErr = ab2.silence_error || (ab2.questions === null ? 'o bloco do silêncio não respondeu' : null)
-      const sinal: Item[] = sigErr ? [{ href: '/adm/bank', code: 'SINAL', label: 'o sinal do motor falhou — ' + sigErr, extra: 'sem sinal não há promessa: este card não sabe se está tudo certo; recarregue ou veja o card «Motor do banco»', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : []
+      const sinal: Item[] = sigErr ? [{ href: '/adm/bank', code: 'SINAL', label: 'o sinal do motor falhou — ' + sigErr, extra: 'sem sinal não há promessa: este card não sabe se está tudo certo; recarregue ou veja o card «AUTO-LINK»', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : []
       // PAGA NO BANCO, ABERTA NO APP — deriva das três datas (X vencimento, Y banco, Z registro).
       const dr = ab2.drift || []
       const di: Item[] = dr.map(x => ({
@@ -1376,17 +1376,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         fix: x.ambiguous ? undefined : { kind: 'adopt' as const, table: 'fixed_cost_expenses', rowId: x.row_id, field: 'payment_date', bankId: x.bank_id, confirmText: 'Adotar: a agendada de ' + x.supplier + ' (' + x.due + ', ' + usd(x.amount) + ') foi paga no banco em ' + x.bank_date + '? A linha do banco casa com ela; payment_date = ' + x.bank_date + '; DESFAZER no Bank Link volta tudo.' },
       }))
       checks.push({ group: 'BANK', key: 'bank-drift', title: 'Paga no banco, aberta no app (deriva das três datas)', blocks: 'multa e juros falsos no card de vencidas; DRE do mês errado; a conta parece atrasada quando o dinheiro já saiu', why: 'Toda conta tem três datas: X (vencimento, a promessa), Y (banco, o fato) e Z (registro no app). O motor iguala Z a Y — mas a agendada aberta ninguém adota sozinho. Aqui o banco já pagou (mesmo valor, no vencimento ou até 40 d depois) e o app ainda diz «a pagar». ADOTAR fecha; AMBÍGUA pergunta qual das duas.', items: sigErr ? sinal : di, impact: [...new Map(dr.map(x => [x.bank_id, x.amount])).values()].reduce((t, a) => t + a, 0) })   // impacto por LINHA do banco (a AMBÍGUA tem duas contas e um pagamento)
-      // PERGUNTAS DO MOTOR — o que está parado NÃO está certo: está perguntando.
-      const q = ab2.questions || { suppliers: 0, supplier_total: 0, money: 0, twins: 0, caps: 0, maturity: 0, other: 0, lines: 0 }
-      {
-        const qi: Item[] = []
-        if (q.suppliers) qi.push({ href: '/adm/bank', code: 'FORNECEDOR', label: q.suppliers + ' fornecedor(es) sem regra · ' + usd(q.supplier_total), extra: 'quem é X pra nós? — FIXO (prestador), SUPPLIES, BALDE, PESSOAL (season) ou IGNORAR; uma resposta lança todas as linhas do fornecedor, hoje e sempre', amount: q.supplier_total, link: { href: BASE_PATH + '/adm/check#perguntas', label: 'RESPONDER ↗' } })
-        if (q.money) qi.push({ href: '/adm/bank', code: 'DINHEIRO', label: q.money + ' linha(s) de dinheiro andando (transferência, wire, Zelle, entrada)', extra: 'o motor nunca chuta dinheiro-movimento: qual invoice, sócio ou conta? — escolha o candidato no Bank Link', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
-        if (q.twins) qi.push({ href: '/adm/bank', code: 'GÊMEO', label: q.twins + ' linha(s) com gêmeo provável no app', extra: 'o motor achou um registro parecido (nome + valor na faixa) e parou: «é este?» — SIM casa, NÃO libera o motor pra lançar', link: { href: BASE_PATH + '/adm/bank', label: 'DECIDIR ↗' } })
-        if (q.caps) qi.push({ href: '/adm/bank#a-atribuir', code: 'TETO', label: q.caps + ' linha(s) acima do teto da regra', extra: 'a regra entendeu o fornecedor mas o valor passou do teto; a linha vai pro balde com o motivo assim que madura — FIXO/CARRO na fila', link: { href: BASE_PATH + '/adm/bank#a-atribuir', label: 'FILA ↗' } })
-        if (q.other) qi.push({ href: '/adm/bank', code: 'OUTRO', label: q.other + ' linha(s) paradas por outro motivo (feed duplicado, sem regra, sem classe)', extra: 'veja o chip de dúvida em cada linha no Bank Link', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } })
-        checks.push({ group: 'BANK', key: 'engine-questions', title: 'Perguntas do motor (nada fica parado calado)', blocks: 'cada linha parada é um custo fora do DRE e uma promessa falsa de que está tudo certo', why: 'Lei da casa (4/set/2026): silêncio significa que está TUDO certo. O que o motor não resolve vira pergunta com motivo e resposta de um clique — por fornecedor, não por categoria.' + (q.maturity ? ' ' + q.maturity + ' linha(s) só esperam a maturidade de 7 dias (o humano ainda lança atrasado) — não contam aqui.' : ''), items: sigErr ? sinal : qi, impact: q.supplier_total || 0 })
-      }
+      // PERGUNTAS DO AUTO-LINK (BL 1.5.0 · DC 1.50.0): as perguntas moram no card CONCILIAÇÃO BANCÁRIA, uma frase por linha, e o chip
+      // BANK as conta de lá (rota ?autobook=1 → questions.ask). Este card só nasce quando o SINAL falha — contar aqui de novo seria a
+      // mesma pergunta duas vezes no total (FORNECEDOR/DINHEIRO/GÊMEO repetiam as pilhas do card).
+      if (sinal.length) checks.push({ group: 'BANK', key: 'engine-questions', title: 'Perguntas do AUTO-LINK — o sinal não chegou', blocks: 'sem o sinal, o Data Checker não sabe quantas linhas do banco estão perguntando', why: 'O plano do AUTO-LINK (o motor do Bank Link) diz, linha a linha, o que ele não resolve sozinho, e o chip BANK conta essas perguntas no card «Conciliação bancária». Quando a rota falha, este card aparece no lugar da promessa: sem sinal não há «está tudo certo».', items: sinal })
       // FORA DO PADRÃO (FINANCIAL): gasto do mês muito acima da média + linha quicando entre decisões.
       const an = ab2.anomalies || [], bo = ab2.bounce || []
       const fi: Item[] = [
@@ -1403,7 +1396,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     // (sem origem é o card de paid_from); 3 dias de maturidade (a linha do banco posta em 1–3 dias).
     // Até onde o feed enxerga (feedUntil), menos 3 dias de postagem; feed cego = este card não julga ausência.
     const cutoff3 = feedBlind ? '0000-00-00' : new Date(Date.parse(feedUntil) - 3 * 864e5).toISOString().slice(0, 10)
-    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card «Motor do banco»' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AutoBook', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
+    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card «AUTO-LINK»' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AUTO-LINK', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
       .sort((a: any, b: any) => String(b.payment_date).localeCompare(String(a.payment_date)))
       .map((e: any) => {
         // PROVA (DC 1.44.0): UMA linha NEW da Regions com o valor exato, o nome do prestador e ±10 d — o casamento faltou, não o pagador.
@@ -1413,7 +1406,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         const cands = toks.length ? bank.lines.filter(x => { if (x.s !== 'NEW' || Math.abs(x.a - amt) >= 0.011 || dayDiff(x.d, pd) > 10) return false; const lt = new Set(nameTok(x.n)); return toks.some(t => lt.has(t)) }) : []
         const one = cands.length === 1 ? cands[0] : null
         return { href: '/costs/fixed/' + (e.supplier_id || ''), code: one ? 'CASAR' : e.paid_from ? 'GZ28US' : 'SEM ORIGEM', label: (supName.get(e.supplier_id) || '?') + ' · ' + pd + ' · ' + String(e.description || '').slice(0, 60), extra: one ? `a Regions tem exatamente uma linha ${one.d} ${usd(one.a)} «${one.n}» — o casamento faltou` : cands.length > 1 ? `${cands.length} linhas da Regions batem — escolha no Bank Link` : 'pago «pela GZ28US» mas nenhuma linha da Regions casa — pagou de outra conta (sócio? BR?) ou o casamento não foi feito', amount: amt, certain: !!one, signal: one ? 'matched' : undefined, suggest: one ? one.id : undefined, link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' },
-          fix: one ? { kind: 'match' as const, table: 'fixed_cost_expenses', rowId: e.id, field: 'bank_transaction_id', bankId: one.id, confirmText: `Casar «${String(e.description || '').slice(0, 60)}» com a linha da Regions ${one.d} ${usd(one.a)} «${one.n}»? Fica em A CONFERIR com DESFAZER.` } : undefined }
+          fix: one ? { kind: 'match' as const, table: 'fixed_cost_expenses', rowId: e.id, field: 'bank_transaction_id', bankId: one.id, confirmText: `Casar «${String(e.description || '').slice(0, 60)}» com a linha da Regions ${one.d} ${usd(one.a)} «${one.n}»? Fica no card verde «O app preencheu sozinho», com DESFAZER.` } : undefined }
       })
     checks.push({ group: 'BANK', key: 'paid-no-bank', title: 'Paga no app, sem linha no banco', blocks: 'o caixa da Regions e o DRE contam dinheiro que talvez saiu de outro bolso (sócio = empréstimo, BR = intercompany)', why: 'Desde 2025-11-10 tudo que a GZ28US paga sai da Regions. Um custo fixo pago «pela GZ28US» sem linha casada é um de dois erros: paid_from errado (foi um sócio ou a BR) ou casamento faltando. Sem correção automática — a prova mora no extrato.', items: pn, impact: pn.reduce((t, i) => t + (i.amount || 0), 0) })
   }
@@ -1680,7 +1673,7 @@ export default function DataCheckPage() {
   const [open, setOpen] = useState<string | null>(null)
   const [fixing, setFixing] = useState<string | null>(null)   // `${check}|${rowId}`
   const [auto, setAuto] = useState<AutoSignal>({ state: 'loading', rows: [], dismissed: {} })   // o que o app fez sozinho + dispensas
-  const [engines, setEngines] = useState<EnginesSignal>({ state: 'loading', needsMigration: false, data: null })   // AUTO-BOOK (e-mail) × motor do banco, só leitura (DC 1.49.0)
+  const [engines, setEngines] = useState<EnginesSignal>({ state: 'loading', needsMigration: false, data: null })   // AUTO-BOOK (e-mail) × AUTO-LINK, só leitura (DC 1.49.0)
   const [bucketSig, setBucketSig] = useState<BucketSig>({ state: 'loading', sug: new Map(), invoices: [] })   // sugestões da fila A ATRIBUIR
   const [fixValue, setFixValue] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1814,10 +1807,12 @@ export default function DataCheckPage() {
 
   const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
-  // O chip BANK conta o que PERGUNTA a gente: linhas com dúvida menos as que só esperam maturidade (o motor cuida).
+  // O chip BANK conta o que PERGUNTA a gente (BL 1.5.0 · DC 1.50.0): pergunta linha a linha + UMA por fornecedor, do mesmo plano do
+  // cron (lib/bankLineState.server) — pendente, «vai casar», maturando e teto esperam o AUTO-LINK e não contam.
   const q0 = bank.autobook && !bank.autobook.needs_migration ? bank.autobook.questions : null
   const bankMaturity = q0 ? Number(q0.maturity || 0) : 0
-  const bankAsk = q0 ? Math.max(0, Number(q0.lines || 0) - bankMaturity) : bankCount
+  const bankWaiting = q0 ? Number(q0.waiting != null ? q0.waiting : q0.maturity || 0) : 0   // esperando o AUTO-LINK (pendente, vai casar, maturando) — não conta
+  const bankAsk = q0 ? (q0.ask != null ? Number(q0.ask) : Math.max(0, Number(q0.lines || 0) - bankMaturity)) : bankCount
   // FEED? (feed quieto há 3–6 dias, normal em feriado) é informação no painel, não pendência.
   const pend = (c: Check) => c.good ? 0 : c.items.filter(i => i.code !== 'FEED?').length
   const totalIssues = checks.reduce((s, c) => s + pend(c), 0) + bankAsk
@@ -1849,12 +1844,11 @@ export default function DataCheckPage() {
     const cash = checks.find(c => c.key === 'cash-match')
     if (cash && cash.items.length > 0) out.push({ title: 'O caixa não bate — conserte a régua primeiro', sub: 'enquanto ela estiver vermelha, nenhum outro número vale', group: 'BANK', open: 'cash-match' })
     const ab = checks.find(c => c.key === 'auto-book')
-    if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'Motor do banco parou ou errou — veja o card', sub: 'o motor deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
+    if (ab && ab.items.some(i => i.code === 'MOTOR' || i.code === 'ERRO')) out.push({ title: 'AUTO-LINK parou ou errou — veja o card', sub: 'o AUTO-LINK deixou de registrar as linhas novas do banco; até voltar, o DRE atrasa', group: 'BANK', open: 'auto-book' })
     const bk = checks.find(c => c.key === 'bucket-aging')
     if (bk && bk.items.length) out.push({ title: `${bk.items.length} compra(s) sem dono há 7+ dias — diga o carro`, sub: `${usd(bk.impact || 0)} parados no balde · CARRO / ESTOQUE / SUPPLIES / FIXO na fila A ATRIBUIR`, group: 'BANK', open: 'bucket-aging' })
     // Silêncio (DC 1.40.0): casamento do motor é prova, não pendência — a missão «conferir» morreu; nasceram as perguntas e a deriva.
-    const dq = checks.find(c => c.key === 'engine-questions')
-    if (dq && dq.items.length) out.push({ title: `${dq.items.reduce((t, i) => t + (parseInt(i.label, 10) || 0), 0)} perguntas do motor — responda por fornecedor`, sub: 'nada fica parado calado: FIXO / SUPPLIES / BALDE / PESSOAL / IGNORAR — uma resposta lança todas as linhas', group: 'BANK', open: 'engine-questions' })
+    if (bankAsk > 0) out.push({ title: `${bankAsk.toLocaleString('en-US')} pergunta(s) do banco — responda na Conciliação bancária`, sub: 'por fornecedor (uma resposta vira regra) e linha a linha — a triagem por família explica centenas de uma vez; o que o AUTO-LINK espera não conta', group: 'BANK', open: null })
     const dd = checks.find(c => c.key === 'bank-drift')
     if (dd && dd.items.length) out.push({ title: `${dd.items.length} conta(s) pagas no banco e abertas no app — ADOTAR`, sub: `${usd(dd.impact || 0)} em atrasos e multas falsos; um clique por conta`, group: 'BANK', open: 'bank-drift' })
     const certoChecks = checks.filter(c => c.items.some(isBulkCertain))
@@ -1863,11 +1857,10 @@ export default function DataCheckPage() {
       const best = [...certoChecks].sort((a, b) => b.items.filter(isBulkCertain).length - a.items.filter(isBulkCertain).length)[0]
       out.push({ title: `${certos} respostas prontas — um clique por card`, sub: `PREENCHER CERTOS onde há prova; comece por "${best.title}"`, group: best.group, open: best.key })
     }
-    if (bankCount > 50) out.push({ title: `Triagem por família: ${bankCount.toLocaleString('en-US')} linhas sem casamento`, sub: 'os chips (AMAZON, COMBUSTÍVEL…) explicam centenas de uma vez', group: 'BANK', open: null })
     const heavy = [...checks].filter(c => !c.good && c.items.length > 0 && c.key !== 'cash-match' && (c.impact || 0) > 0).sort((a, b) => (b.impact || 0) - (a.impact || 0))[0]
     if (heavy) out.push({ title: `Maior valor parado: ${heavy.title}`, sub: `${heavy.items.length} itens · ${usd(heavy.impact || 0)} — se ignorar: ${heavy.blocks}`, group: heavy.group, open: heavy.key })
     return out.slice(0, 3)
-  }, [checks, bankCount, bankAConferir])
+  }, [checks, bankAsk])
   // AUTO-RUN (DC 1.44.0): os itens CERTOS dos cards em AUTO_KEYS entram sozinhos, uma rodada por abertura,
   // depois que todos os sinais chegaram. select/number escrevem guardados por «campo ainda vazio» com
   // trilha «AUTO · <prova>»; casar/adotar vão pela rota (A CONFERIR com DESFAZER); apagar leva a foto
@@ -1910,7 +1903,7 @@ export default function DataCheckPage() {
             setDone(prev => new Set(prev).add(fix.rowId + '|' + fixField(fix)))
             n++
           } else if (fix.kind === 'adopt' || fix.kind === 'match') {
-            // Direto pela rota (sem alert na carga); a trilha AUTO aponta pra linha do banco (DESFAZER em A CONFERIR).
+            // Direto pela rota (sem alert na carga); a trilha AUTO aponta pra linha do banco (DESFAZER no AUTO-LINK (Bank Link → casadas a conferir)).
             const body = fix.kind === 'match' ? (fix.wire != null ? { action: 'match_wire', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' } : { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' }) : { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' }
             const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
             if (!r.ok) continue
@@ -2302,11 +2295,11 @@ export default function DataCheckPage() {
           <section key={g}>
             <div className="flex items-baseline gap-3 mb-2">
               <h2 className="text-lg font-bold tracking-widest text-gray-300">{g}</h2>
-              <span className={`text-xs font-bold ${groupCount(g) === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>{groupCount(g) === 0 ? '✓ limpo' : groupCount(g).toLocaleString('en-US') + ' pendências' + (g === 'BANK' && bankMaturity > 0 ? ' · ' + bankMaturity + ' em maturidade (o motor cuida)' : '')}</span>
+              <span className={`text-xs font-bold ${groupCount(g) === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>{groupCount(g) === 0 ? '✓ limpo' : groupCount(g).toLocaleString('en-US') + ' pendências' + (g === 'BANK' && bankWaiting > 0 ? ' · ' + bankWaiting + ' esperando o AUTO-LINK (não conta)' : '')}</span>
             </div>
             <div className="space-y-4">
               {/* Conciliação bancária mora na categoria BANK — lê/escreve por /api/bank/reconcile. */}
-              {g === 'BANK' && <BankReconcileCard onCount={(n, ac) => { setBankCount(n); setBankAConferir(ac || 0) }} />}   {/* fase B: o balde tem card próprio (bucket-aging); o 3º argumento fica por conta da fila */}
+              {g === 'BANK' && <BankReconcileCard mode="questions" onCount={(n, ac) => { setBankCount(n); setBankAConferir(ac || 0) }} />}   {/* fase B: o balde tem card próprio (bucket-aging); o 3º argumento fica por conta da fila */}
               {checks.filter(c => c.group === g).map(c => (
           <div key={c.key} className={`border rounded-2xl overflow-hidden ${c.good ? 'border-emerald-800 bg-emerald-950/20' : c.items.length === 0 ? 'border-emerald-900/60' : 'border-gray-700'}`}>
             <button onClick={() => setOpen(open === c.key ? null : c.key)} className={`w-full text-left px-5 py-4 flex items-center gap-4 ${c.good ? 'bg-emerald-950/40 hover:bg-emerald-950/70' : 'bg-gray-900 hover:bg-gray-800'}`}>
