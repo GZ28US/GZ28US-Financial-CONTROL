@@ -253,6 +253,11 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'Falha do Dropbox é erro da caça, não da rodada.',
         onde: 'runAutoBookMail',
         nota: 'Hoje uma falha de autenticação do Dropbox fecha a rodada como ERROR mesmo com a pergunta registrada certa (achado 5 do João; foi o único ERROR da semana).' },
+      { id: '6.11', estado: 'À MÃO', desde: '10/09/2026',
+        texto: 'Toda caça a um gasto COMEÇA pelos dois grupos do time nos EUA — «GZ28US Time» e «GZ28US - STAFF». É lá que a foto do recibo aparece, no mesmo dia da compra, com o carro na legenda.',
+        fala: 'sempre que quiser pesquisar sobre um gasto, inicie buscando neste 2 grupos',
+        onde: 'espelho whatsapp_messages (banco US), só a linha canônica (duplicate_of nulo)',
+        nota: 'Foi assim que as 4 compras de 10/09 do WorkTruck apareceram: quatro fotos às 15h26, com Discount Tire, AutoZone, Harbor Freight e Detail Ground. E foi assim que se provou que a AutoZone de US$ 201,44 do mesmo dia NÃO tem recibo postado. Para o robô, ler grupo ainda só existe no BR (boca C).' },
     ],
   },
   {
