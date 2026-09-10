@@ -80,8 +80,19 @@ export async function GET(req: NextRequest) {
     // A ATIVIDADE REAL vem das mensagens, nunca de whatsapp_chats.last_at: o
     // sync grava null ali quando a UltraMsg não manda a hora e apaga o que o
     // webhook tinha posto (1.325 de 1.340 chats estavam com o campo nulo).
+    // ── A MESMA MENSAGEM VISTA POR DUAS LINHAS (09/set/2026) ───────────────
+    // Os dois números estão dentro de alguns grupos (o FINANCEIRO é um), e cada
+    // instância espelha o que enxerga: 2.610 linhas do espelho são segunda visão
+    // de uma mensagem que já existe. `duplicate_of` aponta para a canônica e é
+    // NULL nela — quem lê pergunta a esse campo em vez de reconstruir a regra.
+    //
+    // ⚠️ SÓ AQUI, e a razão importa: esta consulta NÃO filtra por `app`. Onde a
+    // consulta é presa a uma instância (`.eq('app', …)`), a unicidade de
+    // (app, message_id) já basta — e filtrar as duas coisas juntas SUMIRIA com a
+    // mensagem quando a canônica for a linha da OUTRA instância.
     const recent = await pageAll<any>(() => db.from('whatsapp_messages')
       .select('app, chat_id, sent_at, from_me')
+      .is('duplicate_of', null)
       .gte('sent_at', since)
       .order('sent_at', { ascending: false })
       .order('id', { ascending: false }))
@@ -124,8 +135,10 @@ export async function GET(req: NextRequest) {
     const eligible: any[] = []
     for (const c of ordered) {
       if (c.policy !== 'MENTION_ONLY') { eligible.push(c); continue }
+      // Sem filtro de `app` aqui — então a segunda visão sai fora (ver acima).
       const { data: hits } = await db.from('whatsapp_messages')
         .select('mentioned_ids')
+        .is('duplicate_of', null)
         .eq('chat_id', c.chat_id)
         .gt('sent_at', c.processed_through || since)
         .not('mentioned_ids', 'is', null)

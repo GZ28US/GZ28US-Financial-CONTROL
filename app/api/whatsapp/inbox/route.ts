@@ -41,8 +41,10 @@ export async function POST(req: NextRequest) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true, chatId, processed_through: null })
     }
+    // Sem filtro de `app`: a segunda visão da mesma mensagem sai fora, senão o
+    // "processado até" pode encostar numa linha repetida (lib/waStore.server.ts).
     const { data: last } = await db.from('whatsapp_messages')
-      .select('sent_at').eq('chat_id', chatId).order('sent_at', { ascending: false }).limit(1)
+      .select('sent_at').is('duplicate_of', null).eq('chat_id', chatId).order('sent_at', { ascending: false }).limit(1)
     const through = last?.[0]?.sent_at || new Date().toISOString()
     const { error } = await db.from('whatsapp_chats').update({
       processed_through: through,
@@ -164,7 +166,10 @@ export async function GET(req: NextRequest) {
         .select('app, chat_id, from_me, pushname, type, body, media_url, sent_at')
         .ilike('body', `%${q}%`)
         .order('sent_at', { ascending: false }).limit(limit)
+      // Preso a uma instância, (app, message_id) já é único; solto, a busca
+      // mostraria o mesmo recado duas vezes.
       if (app === 'US' || app === 'BR') sel = sel.eq('app', app)
+      else sel = sel.is('duplicate_of', null)
       const { data, error } = await sel
       if (error) throw error
       // Nome do chat pra rotular o hit.
