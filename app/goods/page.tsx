@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
@@ -709,7 +710,7 @@ export default function GoodsPage() {
       try {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify(payload),
         })
         const data = await res.json()

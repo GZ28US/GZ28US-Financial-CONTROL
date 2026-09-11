@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, fmtDutyEst } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 type Duty = {
   id: string
@@ -201,7 +202,7 @@ export default function StaffDutiesPage() {
   async function waPost(payload: Record<string, string>): Promise<string | null> {
     const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await sessionHeaders(),
       body: JSON.stringify(payload),
     })
     const data = await res.json().catch(() => ({}))

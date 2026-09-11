@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 
@@ -151,10 +152,10 @@ export default function ViewRidePage() {
       : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nWe'd love your favorite picture of your car for your record at *_GZ28 V8 SpeedShop_*. Just open the link, choose the photo and tap *SEND PHOTO*:\n\n${link}\n\nThank you! 📸`
     const plain = waBody.replace(/[*_]/g, '')
     const flashSent = () => { setPicSent(true); setTimeout(() => setPicSent(false), 3000) }
-    const notifyGroup = () => { void fetch(`${BASE_PATH}/api/whatsapp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const notifyGroup = () => { void (async () => { await fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: await sessionHeaders(),
       body: JSON.stringify({ body: `📸 *CAR PHOTO — LINK SENT TO CLIENT*\n${client.name || '—'}\nThe system asked the client for their favorite car photo (via ${method}). Awaiting the upload.` }),
-    }).catch(() => {}) }
+    }) })().catch(() => {}) }
 
     if (method === 'SMS') {
       if (!client.phone) { alert('This client has no phone on file.\nAdd a number first (client EDIT).'); return }
@@ -204,7 +205,7 @@ export default function ViewRidePage() {
     setSendingPic(true)
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await sessionHeaders(),
         body: JSON.stringify({ to, body: waBody }),
       })
       const data = await res.json().catch(() => ({}))

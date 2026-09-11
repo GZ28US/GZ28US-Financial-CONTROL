@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, toWaNumber, formatPhone } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 type Client = {
   id: string
@@ -81,10 +82,10 @@ export default function ViewClientPage() {
       : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo speed up your service at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
     const plain = waBody.replace(/[*_]/g, '')
     const flashSent = () => { setJustSent(true); setTimeout(() => setJustSent(false), 3000) }
-    const notifyGroup = () => { void fetch(`${BASE_PATH}/api/whatsapp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const notifyGroup = () => { void (async () => { await fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: await sessionHeaders(),
       body: JSON.stringify({ body: `📤 *CLIENT FORM — LINK SENT*\n${client.name || '—'}\nThe system sent the registration link to the client (via ${method}). Awaiting them to fill in their details.` }),
-    }).catch(() => {}) }
+    }) })().catch(() => {}) }
 
     if (method === 'SMS') {
       if (!client.phone) { alert('This client has no phone on file.\nAdd a number first (EDIT).'); return }
@@ -134,7 +135,7 @@ export default function ViewClientPage() {
     setSending(true)
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await sessionHeaders(),
         body: JSON.stringify({ to, body: waBody }),
       })
       const data = await res.json().catch(() => ({}))

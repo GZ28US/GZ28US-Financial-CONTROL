@@ -8,6 +8,7 @@ import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import PaymentFields, { defaultPayment, paymentFromRow, type PaymentInfo } from '@/components/PaymentFields'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
 import { usdBrlSpot, usdBrlOnDate, usdOf } from '@/lib/fx'
 
@@ -386,7 +387,7 @@ export default function ExpensesPage() {
       try {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify(payload),
         })
         const data = await res.json()

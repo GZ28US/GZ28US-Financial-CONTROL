@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 
@@ -343,7 +344,7 @@ export default function ViewInvoicePage() {
       if (target === 'REPORTS' || target === 'BOTH') {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify({ body: groupCaption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
         })
         const data = await res.json()
@@ -420,7 +421,7 @@ export default function ViewInvoicePage() {
       }
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         body: JSON.stringify({ to, body: clientCaption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
       })
       const data = await res.json()

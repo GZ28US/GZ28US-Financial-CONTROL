@@ -9,6 +9,7 @@ import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 // One app's payment history — every charge since the subscription, grouped by
 // month, always showing the NEXT upcoming month too (the scheduled charge).
@@ -133,7 +134,7 @@ export default function AppViewPage() {
       r.receipt_url ? `📧 Receipt: ${r.receipt_url}` : null,
     ].filter(Boolean).join('\n')
     try {
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ body }) })
       const d = await res.json().catch(() => ({}))
       setSendStatus(d.ok ? '✓ Sent to the report group.' : 'Could not send.')
     } catch { setSendStatus('Could not send.') } finally { setSendingId(null) }
