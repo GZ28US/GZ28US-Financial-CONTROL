@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAllBankItems, bankDb } from '@/lib/plaid.server'
 import { autoBook } from '@/lib/bankReconcile.server'
+import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
 
 // REDE DE SEGURANÇA (cron 6/6h): mesmo que um webhook do Plaid se perca, o sync
 // por cursor pega tudo que ficou pra trás. Idempotente — rodar em cima do webhook
@@ -10,10 +11,11 @@ import { autoBook } from '@/lib/bankReconcile.server'
 export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
-  // Só o cron da Vercel (Authorization: Bearer CRON_SECRET) — a rota estava aberta
+  // Só o cron da Vercel (Authorization: Bearer CRON_SECRET) ou a chave de leitura — a rota estava aberta
   // e devolvia saldo e contas (revisão #6). Resposta enxuta: contagens, sem saldo.
-  const auth = req.headers.get('authorization') || ''
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // PORTÃO (11/set/2026): a comparação antiga (`auth !== 'Bearer ' + CRON_SECRET`) deixava entrar quem
+  // mandasse "Bearer undefined" se a variável sumisse do ambiente. cronOk/readKeyOk falham fechados.
+  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const t0 = Date.now()
   const results = await syncAllBankItems()
   // Orçamento do motor conta a partir do INÍCIO do request (o sync já gastou):

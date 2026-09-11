@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
 
 // ── DUTIES DO DIA — report automático (Márcio, 01/ago/2026) ──────────────────
 // "às 4am de cada dia, este report automático." Todo dia às 4am de Orlando
@@ -87,7 +88,10 @@ async function sendToGroup(body: string) {
   return r.ok ? null : `ultramsg ${r.status}`
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
+  // PORTÃO (11/set/2026): cada chamada manda o resumo de novo no grupo STAFF — e a rota atendia
+  // qualquer anônimo. Só entra o cron da Vercel (Bearer CRON_SECRET) ou a chave de leitura.
+  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) return NextResponse.json({ error: 'no service key' }, { status: 500 })
