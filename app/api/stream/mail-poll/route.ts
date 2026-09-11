@@ -18,8 +18,9 @@ import type { StreamRow } from '@/lib/stream'
 // STREAM mail watcher — scans gz28us@hotmail.com for supplier shipping emails
 // and auto-fills tracking numbers on open STREAM rows. Matched rows get the
 // tracking registered with 17TRACK and flip to SHIPPED (WhatsApp report fires
-// inside applyTrackInfo). Called fire-and-forget by the /stream page and daily
-// by the Vercel cron; a 10-minute server-side throttle keeps it cheap.
+// inside applyTrackInfo). Called by the Vercel cron (GET, every 5 min — see
+// vercel.json) and by hand with the read key; POST keeps the 10-minute
+// server-side throttle. No page of the app calls it any more (checked 11/set/2026).
 
 export const dynamic = 'force-dynamic'
 // 300s, não 60 (04/set/2026). Esta rota carrega 15 trabalhos em série e batia no
@@ -164,7 +165,7 @@ export async function POST(req: NextRequest) {
   if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   return run(false)
 }
-// Vercel cron calls GET daily as the backstop; force past the throttle.
+// Vercel cron calls GET every 5 min (vercel.json); force past the throttle.
 export async function GET(req: NextRequest) {
   if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   return run(true)
