@@ -15,13 +15,15 @@ import { sendKeyValue } from '@/lib/apiAuth.server'
 //   2. só avisa mudança de verdade e recente: o updated_at que as RPCs
 //      *_self_update / ride_self_set_photo carimbam, nos últimos 10 min; no duty,
 //      a linha do duty_events da mesma ação, nos últimos 3 min. Fora disso, 409;
-//   3. no máximo um aviso por (kind, id[, ação]) a cada 2 min, na MEMÓRIA desta
-//      lambda. Nenhuma tabela serve: wa_send_log é o log do envio e data_fixes é
-//      a trilha de consertos do Data Checker. Outra instância da função não vê
-//      esta memória, então um repetido pode escapar por lá;
+//   3. no máximo um aviso por (kind, id[, ação]) a cada 2 min, e UM aviso por
+//      mudança (o mesmo updated_at / o mesmo duty_events.at não avisa de novo
+//      dentro da janela), na MEMÓRIA desta lambda. Nenhuma tabela serve:
+//      wa_send_log é o log do envio e data_fixes é a trilha de consertos do Data
+//      Checker. Outra instância da função não vê esta memória, então um repetido
+//      pode escapar por lá;
 //   4. manda pela rota do próprio app, servidor com servidor (x-send-key): a
 //      assinatura, o wa_send_log, as menções e a trava do "nunca pra mim mesmo"
-//      continuam num lugar só.
+//      continuam num lugar só. A chave só sai para o host do próprio app.
 // Texto, telefone, chat id e nome de grupo NUNCA vêm do pedido: campo fora da
 // lista é 400.
 
@@ -31,6 +33,9 @@ const JANELA_EVENTO_MS = 3 * 60 * 1000
 // As pausas automáticas são gravadas no mesmo toque do START: segundos de distância.
 const JANELA_AUTOPAUSA_MS = 60 * 1000
 const DEDUPE_MS = 2 * 60 * 1000
+// Carimbo no FUTURO não é mudança recente: o duty_events aceita `at` do pedido e as
+// telas de edição gravam updated_at com o relógio do navegador. Só a folga do relógio.
+const FOLGA_RELOGIO_MS = 60 * 1000
 
 // Espelho de app/duties/self/[staffId]/page.tsx.
 const STAFF_GROUP_NAME = 'GZ28US - STAFF'
@@ -48,7 +53,8 @@ const CAMPOS: Record<Kind, Set<string>> = {
 const DUTY_ACTIONS = { STARTED: 'STARTED', RESUMED: 'RESUMED', PAUSED: 'PAUSED', FINISHED: 'DONE' } as const
 type DutyAction = keyof typeof DUTY_ACTIONS
 
-type Montagem = { ok: true; body: string; toGroupName?: string } | { ok: false; status: number; error: string }
+// `marca` = o carimbo da mudança avisada (updated_at da linha ou `at` do evento).
+type Montagem = { ok: true; body: string; marca: string; toGroupName?: string } | { ok: false; status: number; error: string }
 
 function falha(status: number, error: string): Montagem {
   return { ok: false, status, error }
@@ -59,16 +65,35 @@ function erroDb(onde: string, e: { message?: string } | null): Montagem {
 }
 
 // ── dedupe: memória desta lambda ─────────────────────────────────────────────
+// chave → até quando ela segura (ms). (kind, id[, ação]) segura 2 min; a mudança
+// em si (chave@carimbo) segura a janela inteira, senão o MESMO salvamento podia
+// ser reavisado a cada 2 min enquanto o updated_at ainda é "recente".
 const avisados = new Map<string, number>()
 function jaAvisado(chave: string): boolean {
   const agora = Date.now()
-  for (const [k, t] of avisados) if (agora - t >= DEDUPE_MS) avisados.delete(k)
+  for (const [k, ate] of avisados) if (agora >= ate) avisados.delete(k)
   return avisados.has(chave)
 }
-function reservar(chave: string): boolean {
-  if (jaAvisado(chave)) return false
-  avisados.set(chave, Date.now())
+function reservar(chaves: [string, number][]): boolean {
+  if (chaves.some(([k]) => jaAvisado(k))) return false
+  const agora = Date.now()
+  for (const [k, ms] of chaves) avisados.set(k, agora + ms)
   return true
+}
+
+// A chave de envio só sai para o PRÓPRIO app. nextUrl.origin nasce do Host do
+// pedido; atrás de um Host forjado (fora da Vercel, proxy mal configurado) o
+// x-send-key iria para o servidor de outro. Vale o domínio do app, as URLs desta
+// implantação que a Vercel informa e o localhost do dev.
+function origemDoApp(req: NextRequest): string | null {
+  const origem = req.nextUrl.origin
+  let host = ''
+  try { host = new URL(origem).hostname.toLowerCase() } catch { return null }
+  const aceitos = new Set(['www.gz28us.com', 'gz28us.com', 'localhost', '127.0.0.1'])
+  for (const v of [process.env.VERCEL_URL, process.env.VERCEL_BRANCH_URL, process.env.VERCEL_PROJECT_PRODUCTION_URL]) {
+    if (v) aceitos.add(v.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0])
+  }
+  return aceitos.has(host) ? origem : null
 }
 
 // ── relógio ──────────────────────────────────────────────────────────────────
@@ -80,7 +105,9 @@ function instante(s: unknown): number {
 }
 function recente(s: unknown, janelaMs: number): boolean {
   const t = instante(s)
-  return Number.isFinite(t) && Date.now() - t <= janelaMs
+  if (!Number.isFinite(t)) return false
+  const idade = Date.now() - t
+  return idade <= janelaMs && idade >= -FOLGA_RELOGIO_MS
 }
 // A página formatava no relógio do celular do staff, em Orlando. No servidor
 // (UTC) o fuso é explícito, senão a hora do aviso sai 4h adiantada.
@@ -141,7 +168,7 @@ async function avisoClient(db: SupabaseClient, id: string): Promise<Montagem> {
   if (form.zip.trim()) rows.push(`${zipLabel}: ${form.zip.trim()}`)
   if (form.preferred_message_method.trim()) rows.push(`Messages: ${form.preferred_message_method.trim()}`)
   const body = `✅ *FORM FILLED BY THE CLIENT*\n${form.name || '—'}\nThe client filled in and saved their own details:${rows.length ? '\n\n' + rows.join('\n') : ''}`
-  return { ok: true, body }
+  return { ok: true, body, marca: txt(c.updated_at) }
 }
 
 // ── /rides/self/[id] (foto do carro) ─────────────────────────────────────────
@@ -166,7 +193,7 @@ async function avisoRide(db: SupabaseClient, id: string): Promise<Montagem> {
     || r.project_code
   // Confirm to the internal REPORTS group that the client uploaded their car photo.
   const body = `📸 *CAR PHOTO — UPLOADED BY CLIENT*\n${carName || '—'}${clientName ? `\nClient: ${clientName}` : ''}\nThe client sent their favorite car photo. It's on the vehicle's record now.`
-  return { ok: true, body }
+  return { ok: true, body, marca: txt(r.updated_at) }
 }
 
 // ── /costs/fixed/self/[id] ───────────────────────────────────────────────────
@@ -189,7 +216,7 @@ async function avisoFixedSupplier(db: SupabaseClient, id: string): Promise<Monta
   if (form.email.trim()) rows.push(`Email: ${form.email.trim()}`)
   rows.push(`Preferred: ${form.preferred_contact}`)
   const body = `✅ *FIXED COST SUPPLIER — FORM FILLED*\n${txt(s.description) || form.company || '—'}\nThe supplier filled in and saved their own details:\n\n${rows.join('\n')}`
-  return { ok: true, body }
+  return { ok: true, body, marca: txt(s.updated_at) }
 }
 
 // ── /staff/self/[id] ─────────────────────────────────────────────────────────
@@ -221,7 +248,7 @@ async function avisoStaff(db: SupabaseClient, id: string): Promise<Montagem> {
   if (form.state.trim()) rows.push(`State: ${form.state.trim()}`)
   if (form.preferred_message_method.trim()) rows.push(`Messages: ${form.preferred_message_method.trim()}`)
   const body = `✅ *STAFF FORM — FILLED BY THE MEMBER*\n${form.name || '—'}\nThe staff member filled in and saved their own details:${rows.length ? '\n\n' + rows.join('\n') : ''}`
-  return { ok: true, body }
+  return { ok: true, body, marca: txt(m.updated_at) }
 }
 
 // ── /duties/self/[staffId] ───────────────────────────────────────────────────
@@ -268,6 +295,7 @@ async function avisoDuty(db: SupabaseClient, staffId: string, dutyId: string, ac
   let evQ = db.from('duty_events').select('at, seconds_banked')
     .eq('staff_id', staffId).eq('action', DUTY_ACTIONS[action])
     .gte('at', new Date(Date.now() - JANELA_EVENTO_MS).toISOString())
+    .lte('at', new Date(Date.now() + FOLGA_RELOGIO_MS).toISOString())
   evQ = manobras ? evQ.is('duty_id', null) : evQ.eq('duty_id', dutyId)
   const { data: evs, error: eErr } = await evQ.order('at', { ascending: false }).limit(1)
   if (eErr) return erroDb('duty_events', eErr)
@@ -335,7 +363,7 @@ async function avisoDuty(db: SupabaseClient, staffId: string, dutyId: string, ac
     if (workStartedAt) lines.push(`${fmtDT(workStartedAt)} → ${fmtDT(ev.at)}`)
   }
   if (extra) lines.push(extra)
-  return { ok: true, body: lines.join('\n'), toGroupName: STAFF_GROUP_NAME }
+  return { ok: true, body: lines.join('\n'), marca: txt(ev.at), toGroupName: STAFF_GROUP_NAME }
 }
 
 export async function POST(req: NextRequest) {
@@ -387,16 +415,27 @@ export async function POST(req: NextRequest) {
   }
   if (!m.ok) return NextResponse.json({ error: m.error }, { status: m.status })
 
-  // Dois pedidos iguais ao mesmo tempo: só um reserva a vaga.
-  if (!reservar(chave)) return NextResponse.json({ ok: true, deduped: true })
+  // Dois pedidos iguais ao mesmo tempo: só um reserva a vaga. A mesma mudança já
+  // avisada (mesmo carimbo) também não sai de novo.
+  const chaveMudanca = `${chave}@${m.marca}`
+  if (!reservar([[chave, DEDUPE_MS], [chaveMudanca, JANELA_LINHA_MS + FOLGA_RELOGIO_MS]])) {
+    return NextResponse.json({ ok: true, deduped: true })
+  }
+  const liberar = () => { avisados.delete(chave); avisados.delete(chaveMudanca) }
   const sendKey = sendKeyValue()
   if (!sendKey) {
-    avisados.delete(chave)
+    liberar()
     console.error('[self-notify] sem WHATSAPP_SEND_KEY/WHATSAPP_READ_KEY no ambiente')
     return NextResponse.json({ error: 'send not configured' }, { status: 500 })
   }
+  const origem = origemDoApp(req)
+  if (!origem) {
+    liberar()
+    console.error('[self-notify] host fora do app — chave não sai', req.nextUrl.hostname)
+    return NextResponse.json({ error: 'send not configured' }, { status: 500 })
+  }
   try {
-    const r = await fetch(`${req.nextUrl.origin}/ca/api/whatsapp`, {
+    const r = await fetch(`${origem}/ca/api/whatsapp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-send-key': sendKey },
       // Sem `to`: a rota cai no grupo REPORTS. O duty vai pro grupo do staff.
@@ -406,13 +445,13 @@ export async function POST(req: NextRequest) {
     const data = await r.json().catch(() => ({}))
     if (!r.ok || data?.error) {
       // Falhou: libera a vaga, senão o próximo toque ficaria calado por 2 min.
-      avisados.delete(chave)
+      liberar()
       console.error('[self-notify] envio recusado', { kind, status: r.status, error: String(data?.error || '').slice(0, 200) })
       return NextResponse.json({ error: 'WhatsApp send failed' }, { status: 502 })
     }
     return NextResponse.json({ ok: true })
   } catch (e) {
-    avisados.delete(chave)
+    liberar()
     console.error('[self-notify] envio exceção', kind, e)
     return NextResponse.json({ error: 'WhatsApp send failed' }, { status: 502 })
   }
