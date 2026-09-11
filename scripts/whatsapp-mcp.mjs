@@ -181,6 +181,10 @@ async function callTool(name, a = {}) {
       body: JSON.stringify({ to: a.to, body: a.body, personal: a.personal !== false }),
     })
     const data = await r.json().catch(() => null)
+    // 401 = a rota não reconheceu a chave. As chaves de LEITURA do US e do BR são
+    // DIFERENTES: a whatsapp-read-key.txt (a do US) não abre o envio do BR. Só a
+    // whatsapp-send-key.txt (WHATSAPP_SEND_KEY, o mesmo valor nos dois projetos) abre os dois.
+    if (r.status === 401) throw new Error(`send refused 401 by ${a.app}: key not accepted — ${a.app === 'BR' ? 'the US read key does not open BR; ' : ''}needs ${KEY_DIR}/whatsapp-send-key.txt matching WHATSAPP_SEND_KEY on that app`)
     if (!r.ok) throw new Error(`send failed ${r.status}: ${JSON.stringify(data).slice(0, 300)}`)
     return { ok: true, app: a.app, to: a.to, upstream: data }
   }

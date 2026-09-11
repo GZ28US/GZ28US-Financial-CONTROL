@@ -127,10 +127,13 @@ export async function notify(row: StreamRow, body: string): Promise<void> {
     // header x-send-key (audit of 11/set/2026) — never in the body or the URL.
     const sendKey = brSendKeyValue()
     try {
-      await fetch('https://www.gz28br.com/ca/api/whatsapp', {
+      const r = await fetch('https://www.gz28br.com/ca/api/whatsapp', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...(sendKey ? { 'x-send-key': sendKey } : {}) },
         body: JSON.stringify({ body }),
       })
+      // A 401 here means the BR app does not recognise this key (the US and BR read
+      // keys differ): say so in the log instead of losing the notice in silence.
+      if (!r.ok) console.error('[stream] BR notify rejected', { status: r.status, hasKey: !!sendKey })
     } catch { /* best-effort */ }
     return
   }
