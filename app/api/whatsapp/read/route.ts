@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 
 // Marca um chat como LIDO na instância UltraMsg (?key=&chatId=) — usado pela
 // Claudinha nas rondas: thread tratada e dada como DONE pelo Márcio → some o
@@ -7,9 +8,10 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
   const body = await req.json().catch(() => ({}))
-  if (need && body.key !== need && req.nextUrl.searchParams.get('key') !== need) {
+  // Chave no corpo, em ?key= ou no header x-read-key — falha fechada: sem
+  // WHATSAPP_READ_KEY no ambiente, ninguém marca nada (11/set/2026).
+  if (!readKeyOk(req, { allowQuery: true, bodyKey: body.key })) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const instance = process.env.ULTRAMSG_INSTANCE

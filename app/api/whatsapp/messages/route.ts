@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 
 // Messages of ONE chat on the US UltraMsg instance (?chatId=&limit=&key=) —
 // text/metadata only, for the assistant to consult a history when Márcio asks.
-// Read access requires WHATSAPP_READ_KEY. Mirror of the BR route.
+// Read access requires WHATSAPP_READ_KEY (header x-read-key or ?key=), failing
+// closed when the env var is missing. Mirror of the BR route.
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
-  if (need && req.nextUrl.searchParams.get('key') !== need) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const instance = process.env.ULTRAMSG_INSTANCE
   const token = process.env.ULTRAMSG_TOKEN
   if (!instance || !token) return NextResponse.json({ error: 'UltraMsg not configured' }, { status: 503 })

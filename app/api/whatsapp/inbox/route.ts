@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/auth.server'
+import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 import { waDb } from '@/lib/waStore.server'
 
 // WHATSAPP HUB — a janela da tela /whatsapp sobre o espelho (whatsapp_messages
@@ -22,10 +22,10 @@ const POLICIES = new Set(['ALL', 'MENTION_ONLY', 'IGNORE'])
 
 export async function POST(req: NextRequest) {
   // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente fechando a
-  // conversa no round) — mesma porta que as outras rotas de WhatsApp usam.
-  const need = process.env.WHATSAPP_READ_KEY
-  const keyOk = !!need && (req.nextUrl.searchParams.get('key') === need || req.headers.get('x-wa-key') === need)
-  if (!keyOk && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // conversa no round) — mesma porta que as outras rotas de WhatsApp usam. A
+  // chave vale em ?key= ou no header (x-read-key, ou o antigo x-wa-key), pela
+  // comparação única de lib/apiAuth.server.ts.
+  if (!readKeyOk(req, { allowQuery: true }) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const chatId = String(b.chatId || '').trim()
   if (!chatId.includes('@')) return NextResponse.json({ error: 'chatId required' }, { status: 400 })
@@ -61,8 +61,11 @@ export async function POST(req: NextRequest) {
     const kk = process.env.WHATSAPP_READ_KEY || ''
     for (const [side, host] of [['US', 'https://www.gz28us.com'], ['BR', 'https://www.gz28br.com']] as const) {
       try {
+        // A chave vai no header x-read-key E no corpo: o header é o caminho do
+        // portão novo (11/set/2026); o corpo segue enquanto a rota /read do outro
+        // app ainda não tiver o portão novo no ar.
         const rr = await fetch(`${host}/ca/api/whatsapp/read`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-read-key': kk },
           body: JSON.stringify({ key: kk, chatId }),
         })
         read[side] = rr.ok

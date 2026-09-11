@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sttTranscribe } from '@/lib/waTranscribe.server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 
 // Transcrição de um áudio SOLTO, que não passou pelo espelho.
 //
@@ -17,8 +18,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function POST(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
-  if (need && req.nextUrl.searchParams.get('key') !== need) {
+  // Chave em ?key= ou no header x-read-key — falha fechada: sem
+  // WHATSAPP_READ_KEY no ambiente, nada entra (11/set/2026).
+  if (!readKeyOk(req, { allowQuery: true })) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
