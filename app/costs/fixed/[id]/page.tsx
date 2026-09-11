@@ -10,6 +10,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow } from 
 import SendToDialog, { type SendTarget } from '@/components/SendToDialog'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { hasLateFee, lateFeeFor } from '@/lib/lateFee'
 
@@ -268,7 +269,7 @@ export default function FixedCostSupplierViewPage() {
     }
     const to = (s.phone || '').replace(/\D/g, '')
     if (!to) { setSendRowStatus('No WhatsApp / phone on file (EDIT).'); return false }
-    const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: report, ...(receiptUrl ? { documentUrl: receiptUrl, filename } : {}) }) })
+    const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ to, body: report, ...(receiptUrl ? { documentUrl: receiptUrl, filename } : {}) }) })
     const d = await res.json().catch(() => ({}))
     return !!d.ok
   }
@@ -283,7 +284,7 @@ export default function FixedCostSupplierViewPage() {
     try {
       let okGroup = true, okSup = true
       if (target === 'group' || target === 'both') {
-        const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: report, ...(receiptUrl ? { documentUrl: receiptUrl, filename } : {}) }) })
+        const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ body: report, ...(receiptUrl ? { documentUrl: receiptUrl, filename } : {}) }) })
         const d = await res.json().catch(() => ({})); okGroup = !!d.ok
       }
       if (target === 'supplier' || target === 'both') {
@@ -316,10 +317,10 @@ export default function FixedCostSupplierViewPage() {
       : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nPlease fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
     const plain = waBody.replace(/[*_]/g, '')
     const label = s.company || s.contact_name || s.description || '—'
-    const notifyGroup = () => { void fetch(`${BASE_PATH}/api/whatsapp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const notifyGroup = () => { void (async () => { await fetch(`${BASE_PATH}/api/whatsapp`, {
+      method: 'POST', headers: await sessionHeaders(),
       body: JSON.stringify({ body: `📤 *FIXED COST SUPPLIER FORM — LINK SENT*\n${label}\nThe system sent the registration link to the supplier (via ${method}). Awaiting them to fill in their details.` }),
-    }).catch(() => {}) }
+    }) })().catch(() => {}) }
 
     if (method === 'Email') {
       if (!s.email) { setSendStatus('No email on file. Add one first (EDIT).'); return }
@@ -336,7 +337,7 @@ export default function FixedCostSupplierViewPage() {
     if (!to) { setSendStatus('No WhatsApp / phone on file. Add one first (EDIT).'); return }
     setSending(true); setSendStatus('Sending…')
     try {
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: waBody }) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ to, body: waBody }) })
       const data = await res.json().catch(() => ({}))
       if (data.ok) { notifyGroup(); setSendStatus('✓ Link sent to the supplier on WhatsApp.') }
       else setSendStatus('Could not send: ' + (data?.error || `HTTP ${res.status}`))
@@ -351,7 +352,7 @@ export default function FixedCostSupplierViewPage() {
     const body = `📋 *FIXED COST SUPPLIER*\n${s.description || s.company || '—'}\n\nCompany: ${s.company || '—'}\nContact: ${s.contact_name || '—'}\nPhone: ${s.phone || '—'}\nEmail: ${s.email || '—'}\nPreferred: ${s.preferred_contact || 'WhatsApp'}`
     setSending(true); setSendStatus('Sending…')
     try {
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ body }) })
       const data = await res.json().catch(() => ({}))
       setSendStatus(data.ok ? '✓ Sent to the report group.' : 'Could not send: ' + (data?.error || `HTTP ${res.status}`))
     } catch (e) {

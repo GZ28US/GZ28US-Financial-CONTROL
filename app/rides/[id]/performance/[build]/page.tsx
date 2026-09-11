@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
 
 // DYNO primeiro e por padrão (ordem do usuário, 17/ago/2026): dentro de um pack é a
@@ -657,7 +658,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     const payload: { toGroupName: string; body: string; documentUrl?: string; filename?: string } = { toGroupName: REPORTS_GROUP, body: pullReport(p, 'group') }
     if (p.document_url) { payload.documentUrl = p.document_url; payload.filename = docFilename(p) }
     try {
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(payload) })
       const data = await res.json().catch(() => ({}))
       if (!data.ok) { alert('WhatsApp report failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return false }
       return true
@@ -695,7 +696,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
         }
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify(payload),
         })
         const data = await res.json().catch(() => ({}))
@@ -900,7 +901,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       const caption = [...captionBase, ...targetLines(latest?.whp ?? null, 'group')].join('\n') + footer
       const captionClient = [...captionBase, ...targetLines(latest?.whp ?? null, 'client')].join('\n') + footer
 
-      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: caption, documentUrl: url, filename }) })
+      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: caption, documentUrl: url, filename }) })
       const gd = await group.json().catch(() => ({}))
       if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${group.status}`))); return }
 
@@ -913,7 +914,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
           const to = toWaNumber(client.phone, client.country)
           if (!to) { alert('Sent to the group. The client has no WhatsApp number on file, so the receipt was not sent to them.') }
           else {
-            const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: captionClient, documentUrl: url, filename }) })
+            const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ to, body: captionClient, documentUrl: url, filename }) })
             const cd = await cli.json().catch(() => ({}))
             if (!cd.ok) { alert('Sent to the group, but the client WhatsApp send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`))); return }
           }
@@ -1757,7 +1758,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         }),
         ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${p}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
       ]
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
       const data = await res.json().catch(() => ({}))
       if (!data.ok) { alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return }
       // Optionally send the client their own copy of the DataSheet.
@@ -1765,7 +1766,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         const to = client && (client.preferred_message_method || 'WhatsApp') === 'WhatsApp' ? toWaNumber(client.phone, client.country) : null
         if (!to) alert('Sent to the group. The client has no WhatsApp number on file, so the DataSheet was not sent to them.')
         else {
-          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body: `🔧 *Your GZ28 Build Sheet*${rideTitle ? `\n${rideTitle}` : ''}`, documentUrl: urlData.publicUrl, filename }) })
+          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ to, body: `🔧 *Your GZ28 Build Sheet*${rideTitle ? `\n${rideTitle}` : ''}`, documentUrl: urlData.publicUrl, filename }) })
           const cd = await cli.json().catch(() => ({}))
           if (!cd.ok) alert('Sent to the group, but the client send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`)))
         }

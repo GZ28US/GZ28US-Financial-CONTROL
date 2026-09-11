@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD, toWaNumber } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 type StaffMember = {
   id: string
@@ -43,7 +44,7 @@ export default function StaffPage() {
     try {
       if (target === 'REPORTS' || target === 'BOTH') {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ body: groupBody }),
         })
         const data = await res.json().catch(() => ({}))
@@ -53,7 +54,7 @@ export default function StaffPage() {
       const to = toWaNumber(member.phone)
       if (!to) { alert('This staff member has no phone / WhatsApp on file.\nAdd a number first (EDIT).'); setSendingId(null); return }
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await sessionHeaders(),
         body: JSON.stringify({ to, body: memberBody }),
       })
       const data = await res.json().catch(() => ({}))

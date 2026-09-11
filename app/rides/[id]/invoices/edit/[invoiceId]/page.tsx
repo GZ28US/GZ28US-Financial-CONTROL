@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } from '@/lib/laborCost'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
@@ -1975,7 +1976,7 @@ export default function EditInvoicePage() {
     setRemindingIndex(index)
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await sessionHeaders(),
         body: JSON.stringify({ to, body: waBody }),
       })
       const data = await res.json().catch(() => ({}))
@@ -2816,7 +2817,7 @@ export default function EditInvoicePage() {
       try {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify(payload),
         })
         const data = await res.json()
@@ -2854,7 +2855,7 @@ export default function EditInvoicePage() {
       try {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify(payload),
         })
         const data = await res.json()

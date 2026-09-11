@@ -16,6 +16,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
@@ -353,7 +354,7 @@ export default function InventoryPage() {
       }
       try {
         const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(payload),
         })
         if (!(await res.json()).ok) failures++
       } catch { failures++ }
