@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { supabaseBR } from '@/lib/supabaseBR'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { BASE_PATH, isBaselineName } from '@/lib/utils'
 
 // O placar da casa: quem é o carro mais forte que já passou por aqui, US e BR na
@@ -97,6 +97,24 @@ function fmtDate(d: string | null) {
 // o ride do carro BR mora no banco do BR e não tem página neste app (ver load()).
 type Entry = { code: string; name: string; rideId: string | null; pull: DynoPull }
 
+type RideName = { id: string; project_code: string; project_name: string | null }
+
+// OS APELIDOS DOS CARROS BR VÊM DO SERVIDOR (11/set/2026). A tela lia o banco do BR
+// pelo cliente `supabaseBR` anon — a ponte nunca subiu e o RLS devolvia [] mudo,
+// então todo carro BR aparecia só com o código. A rota /api/br-mirror/br-rides lê
+// com a chave de serviço do BR; aqui a resposta tem o mesmo formato { data, error }
+// de uma query, e a falha chega com a causa (sessão, chave, rede, banco).
+async function readBrRides(codes: string[]): Promise<{ data: RideName[]; error: { message: string } | null }> {
+  try {
+    const res = await fetch(`${BASE_PATH}/api/br-mirror/br-rides?codes=${encodeURIComponent(codes.join(','))}`, { headers: await sessionHeaders() })
+    const j = await res.json().catch(() => null)
+    if (!res.ok || !j?.ok) return { data: [], error: { message: j?.error || `HTTP ${res.status}` } }
+    return { data: (j.rides || []) as RideName[], error: null }
+  } catch (e) {
+    return { data: [], error: { message: 'no answer from the app server: ' + (e instanceof Error ? e.message : String(e)) } }
+  }
+}
+
 export default function PerformancePage() {
   const [tab, setTab] = useState<Tab>('DYNO')
   // ABRE NA CASA (Márcio, 28/ago/2026: "a exibição padrão no US é só US e no BR só BR,
@@ -110,7 +128,9 @@ export default function PerformancePage() {
   // RLS, sessão-ponte caída ou rede ruim devolvem { data: null, error }, e sem
   // isto a tela afirmaria "nenhuma passada registrada" — mentira com cara de fato.
   const [err, setErr] = useState<string | null>(null)
-  const [namesWarn, setNamesWarn] = useState(false)
+  // O AVISO DOS APELIDOS BR CARREGA A CAUSA (11/set/2026): "a ponte caiu" dito para
+  // tudo escondia se era sessão, chave, rede ou código que não existe no BR.
+  const [namesWarn, setNamesWarn] = useState<string | null>(null)
   const [totalPulls, setTotalPulls] = useState(0)
   // CARRO NÃO SOME CALADO. No dialeto do US o bhp de uma passada BR vira null quando a
   // perda não está gravada (ou é >= 100%) — e num placar ordenado por bhp isso apagaria
@@ -121,7 +141,7 @@ export default function PerformancePage() {
   async function load() {
     try {
       setErr(null)
-      setNamesWarn(false)
+      setNamesWarn(null)
       setUnranked([])
       // dyno_pulls mora SÓ no banco do US — as passadas dos carros BR estão aqui também.
       // loss_pct e correction_factor continuam no select mesmo sem coluna de fator na
@@ -143,24 +163,30 @@ export default function PerformancePage() {
       const usCodes = codes.filter((c) => c.startsWith('US.'))
       const brCodes = codes.filter((c) => c.startsWith('BR.'))
 
-      // O apelido do carro exige os DOIS bancos: o app US só guarda rides US. Se a
-      // ponte BR falhar (RLS devolve [] mudo), a linha ainda existe — mostra o código
-      // sozinho, que é o que se sabe de verdade.
-      const empty = { data: [] as { id: string; project_code: string; project_name: string | null }[], error: null as { message: string } | null }
+      // O apelido do carro exige os DOIS bancos: o app US só guarda rides US. Os do BR
+      // vêm pela rota do servidor (chave de serviço do BR). Se a leitura falhar, a
+      // linha ainda existe — mostra o código sozinho, que é o que se sabe de verdade.
+      const empty = { data: [] as RideName[], error: null as { message: string } | null }
       const [us, br] = await Promise.all([
         usCodes.length
           ? supabase.from('rides').select('id, project_code, project_name').in('project_code', usCodes)
           : Promise.resolve(empty),
-        brCodes.length
-          ? supabaseBR.from('rides').select('id, project_code, project_name').in('project_code', brCodes)
-          : Promise.resolve(empty),
+        brCodes.length ? readBrRides(brCodes) : Promise.resolve(empty),
       ])
       if (us.error) throw new Error(us.error.message)
-      // A ponte BR só traz APELIDO: se cair, o placar continua de pé com o código do
-      // carro — mas a tela avisa, para ninguém achar que o carro perdeu o nome.
+      // O BR só traz APELIDO: se cair, o placar continua de pé com o código do carro
+      // — mas a tela avisa COM A CAUSA, para ninguém achar que o carro perdeu o nome.
+      // Com a chave de serviço, código ausente na resposta é código que não existe no
+      // BR (não é mais RLS escondendo) — e isso também se diz.
       const usRides = us.data
       const brRides = br.data
-      if (br.error || (brCodes.length && !(br.data || []).length)) setNamesWarn(true)
+      if (br.error) {
+        setNamesWarn(`BR car names couldn't be read — ${br.error.message}. Those rows show the code only; the figures are unaffected.`)
+      } else {
+        const found = new Set((brRides || []).map((r) => r.project_code))
+        const missing = brCodes.filter((c) => !found.has(c))
+        if (missing.length) setNamesWarn(`${missing.length} BR ${missing.length === 1 ? 'code has' : 'codes have'} no ride in the BR app (${missing.join(', ')}) — shown by code only. The figures are unaffected.`)
+      }
 
       const names = new Map<string, string>()
       const usIds = new Map<string, string>()
@@ -430,8 +456,8 @@ export default function PerformancePage() {
                 </p>
               )}
               {namesWarn && (
-                <p className="text-xs text-amber-400/80 mt-1">
-                  BR car names couldn&apos;t be read (cross-bank bridge) — those rows show the code only. The figures are unaffected.
+                <p className="text-xs text-amber-400/80 mt-1 break-all">
+                  {namesWarn}
                 </p>
               )}
             </div>
