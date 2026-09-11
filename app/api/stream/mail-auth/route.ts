@@ -25,6 +25,9 @@ import { requireUser } from '@/lib/apiAuth.server'
 // EXPLÍCITA do admin de trocar a conta que já está no slot. O callback só troca
 // quando ela vem, e ninguém de fora forja o `replace`: o state só é gravado por
 // este POST, e o callback exige que o recebido seja igual ao da linha.
+// Quarto pedaço, `.<hora em base 36>`: a hora em que o POST cunhou. O callback
+// recusa state com mais de 30 min — link de conexão abandonado não fica vivo
+// para sempre na linha esperando alguém consentir com a conta errada.
 
 export const dynamic = 'force-dynamic'
 
@@ -63,7 +66,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `slot ${slot} is a Google mailbox (${existing.account || '?'}) — choose Gmail for this slot or pick another slot` }, { status: 409 })
   }
   const { verifier, challenge } = pkcePair()
-  const state = `${slot}.${pkcePair().verifier.slice(0, 24)}.${replace ? 'replace' : 'keep'}`
+  const state = `${slot}.${pkcePair().verifier.slice(0, 24)}.${replace ? 'replace' : 'keep'}.${Date.now().toString(36)}`
   await setMailAuth(db, { client_id: base.client_id, pkce_verifier: verifier, oauth_state: state }, slot)
   return NextResponse.json({ url: authUrl(base.client_id, challenge, state) })
 }

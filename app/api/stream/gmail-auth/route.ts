@@ -19,9 +19,9 @@ import { requireUser } from '@/lib/apiAuth.server'
 //
 // PORTÃO (11/set/2026) — mesma lei do mail-auth: começar exige admin logado
 // (POST + requireUser, resposta { url }), o GET só aponta a tela, e o state leva
-// `N.<uuid>.replace|keep`. Sem o `replace`, o gmail-callback nunca grava por cima
-// de outra conta: conta diferente vai para a própria linha ou para um slot novo,
-// como já ia.
+// `N.<uuid>.replace|keep.<hora base 36>`. Sem o `replace`, o gmail-callback nunca
+// grava por cima de outra conta: conta diferente vai para a própria linha ou para
+// um slot novo, como já ia. A hora faz o callback recusar state com mais de 30 min.
 
 export const dynamic = 'force-dynamic'
 
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   if (existing?.refresh_token && mailProvider(existing) !== 'gmail') {
     return NextResponse.json({ error: `slot ${slot} is a Microsoft mailbox (${existing.account || '?'}) — pick another slot` }, { status: 409 })
   }
-  const state = `${slot}.${crypto.randomUUID()}.${replace ? 'replace' : 'keep'}`
+  const state = `${slot}.${crypto.randomUUID()}.${replace ? 'replace' : 'keep'}.${Date.now().toString(36)}`
   await setMailAuth(db, { client_id: clientId, oauth_state: state, pkce_verifier: null }, slot)
   const redirect = `${req.nextUrl.origin}/ca/api/stream/gmail-callback`
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, setMailAuth } from '@/lib/streamMail.server'
+import { getMailAuth, setMailAuth, mailProvider } from '@/lib/streamMail.server'
 
 // Gmail hookup, step 2 — Google redirects here after consent. The code is
 // exchanged (client_id + client_secret, server-side only) and the refresh token
@@ -22,6 +22,7 @@ const page = (title: string, body: string, ok: boolean) => new NextResponse(
 )
 
 const CONNECT = '/ca/stream/connect'
+const STATE_TTL_MS = 30 * 60 * 1000
 const conta = (s: string | null | undefined) => String(s || '').toLowerCase()
 
 export async function GET(req: NextRequest) {
@@ -45,6 +46,14 @@ export async function GET(req: NextRequest) {
   if (intent !== 'replace' && intent !== 'keep') {
     await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
     return page('Gmail hookup failed', `This link came from the old, unauthenticated flow — start again at ${CONNECT}`, false)
+  }
+  // Quarto pedaço = hora em que o POST logado cunhou (base 36). O Google não usa
+  // PKCE aqui, então o state é a única amarra: conexão abandonada não pode ficar
+  // viva na linha — passou de 30 min, morre (11/set/2026).
+  const cunhadoEm = parseInt(parts[3] || '', 36)
+  if (!Number.isFinite(cunhadoEm) || Date.now() - cunhadoEm > STATE_TTL_MS) {
+    await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
+    return page('Gmail hookup failed', `This connection link expired (older than 30 minutes) — start again at ${CONNECT}`, false)
   }
 
   const redirect = `${req.nextUrl.origin}/ca/api/stream/gmail-callback`
@@ -80,6 +89,17 @@ export async function GET(req: NextRequest) {
   if (target === null) {
     await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
     return page('Gmail NOT connected', `Slot ${slot} already holds ${auth?.account || 'a mailbox we could not identify'}, and ${account ? `${account} could not be placed in a slot of its own (the slot list did not load — try again)` : 'the Google account you signed in with could not be identified'}. Nothing was saved. To put it in slot ${slot} anyway, start again at ${CONNECT} and tick "Replace existing account".`, false)
+  }
+  // A "própria linha" achada pelo e-mail pode ser uma caixa MICROSOFT viva: conta
+  // Microsoft pessoal pode ter login @gmail.com (ver mailProvider). Gravar ali o
+  // client_id do Google mataria aquela caixa muda — e esse caminho não passa pelo
+  // `replace`. Recusa e não grava nada (11/set/2026).
+  if (target !== slot) {
+    const alvo = await getMailAuth(db, target)
+    if (alvo?.refresh_token && mailProvider(alvo) !== 'gmail') {
+      await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
+      return page('Gmail NOT connected', `${account} already lives in slot ${target}, and that slot is a connected Microsoft mailbox. Nothing was saved.`, false)
+    }
   }
   if (target !== slot) await setMailAuth(db, { oauth_state: null, pkce_verifier: null }, slot)
   // Caixa nova não nasce varrida — mesma lei do mail-callback (04/set/2026).

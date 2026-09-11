@@ -24,6 +24,7 @@ const page = (title: string, body: string, ok: boolean) => new NextResponse(
 )
 
 const CONNECT = '/ca/stream/connect'
+const STATE_TTL_MS = 30 * 60 * 1000
 const conta = (s: string | null | undefined) => String(s || '').toLowerCase()
 
 export async function GET(req: NextRequest) {
@@ -44,6 +45,13 @@ export async function GET(req: NextRequest) {
   if (intent !== 'replace' && intent !== 'keep') {
     await setMailAuth(db, { pkce_verifier: null, oauth_state: null }, slot)
     return page('Mail hookup failed', `This link came from the old, unauthenticated flow — start again at ${CONNECT}`, false)
+  }
+  // Quarto pedaço = hora em que o POST logado cunhou (base 36). Conexão
+  // abandonada não fica viva na linha: passou de 30 min, morre (11/set/2026).
+  const cunhadoEm = parseInt(parts[3] || '', 36)
+  if (!Number.isFinite(cunhadoEm) || Date.now() - cunhadoEm > STATE_TTL_MS) {
+    await setMailAuth(db, { pkce_verifier: null, oauth_state: null }, slot)
+    return page('Mail hookup failed', `This connection link expired (older than 30 minutes) — start again at ${CONNECT}`, false)
   }
 
   const res = await exchangeCode(auth.client_id, code, auth.pkce_verifier)
