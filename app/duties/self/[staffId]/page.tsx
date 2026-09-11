@@ -9,8 +9,6 @@ import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 
-const STAFF_GROUP_NAME = 'GZ28US - STAFF'
-
 // ── MANOBRAS — the permanent yard duty (Márcio, 02/ago/2026) ────────────────
 // Cars go OUT every morning and back IN every evening, done by WHOEVER is
 // available. The card is PINNED on top of EVERY member's page and never goes
@@ -32,12 +30,6 @@ type Duty = {
   time_started_at: string | null
   work_started_at: string | null
   work_ended_at: string | null
-  // Invoice DELIVERY DATE with no CONCLUSION DATE = the PROMISED TO date —
-  // carried on every update report.
-  promised: string | null
-}
-function fmtPromised(d: string): string {
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, 'STANDBY': 5 }
@@ -64,11 +56,6 @@ function fmtDur(totalSec: number): string {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60
   return h > 0 ? `${h}h ${m}m ${ss}s` : m > 0 ? `${m}m ${ss}s` : `${ss}s`
 }
-function fmtDT(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
 export default function StaffDutySelfPage() {
   const params = useParams()
   const staffId = String(params.staffId)
@@ -96,7 +83,7 @@ export default function StaffDutySelfPage() {
     try { localStorage.setItem(manobrasKey, JSON.stringify(next)) } catch {}
   }
   // The synthetic Duty shape lets MANOBRAS ride the same report/log pipeline.
-  const manobrasDuty = (s: ManobrasState): Duty => ({ id: 'MANOBRAS', description: MANOBRAS_DESC, done: false, priority: '1', invoiceCode: '—', carLabel: '', time_seconds: s.seconds, time_started_at: s.startedAt, work_started_at: s.workStartedAt, work_ended_at: null, promised: null })
+  const manobrasDuty = (s: ManobrasState): Duty => ({ id: 'MANOBRAS', description: MANOBRAS_DESC, done: false, priority: '1', invoiceCode: '—', carLabel: '', time_seconds: s.seconds, time_started_at: s.startedAt, work_started_at: s.workStartedAt, work_ended_at: null })
 
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get('max')
@@ -123,7 +110,6 @@ export default function StaffDutySelfPage() {
       time_started_at: d.time_started_at || null,
       work_started_at: d.work_started_at || null,
       work_ended_at: d.work_ended_at || null,
-      promised: d.delivery_date && !d.conclusion_date ? d.delivery_date : null,
     })))
     setLoading(false)
   }
@@ -133,33 +119,18 @@ export default function StaffDutySelfPage() {
     const digits = (staff?.phone || '').replace(/\D/g, '')
     return digits ? `@+${digits}` : `@${staff?.name || ''}`
   }
-  function eventBody(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'FINISHED', d: Duty, secs: number, extra?: string): string {
-    const icon = action === 'PAUSED' ? '⏸' : action === 'FINISHED' ? '✅' : '▶'
-    // Formato do Márcio (01/ago/2026): nome em negrito sem @menção, e uma linha
-    // "Carro - Tarefa" (só o nome do carro, sem códigos, sem badge [P1]/numeração).
-    const carName = d.carLabel ? (d.carLabel.split(' — ').pop() || '') : ''
-    const desc = d.description.replace(/^\s*\d+[.)]\s*/, '')
-    const lines = [
-      `${icon} DUTY ${action}`,
-      `👤 *${staff?.name || ''}*`,
-      `${carName ? `${carName} - ` : ''}${desc}`,
-    ]
-    if (d.promised) lines.push(`🗓 PROMISED TO: ${fmtPromised(d.promised)}`)
-    if (action === 'STARTED' || action === 'RESUMED') lines.push(`At: ${fmtDT(new Date().toISOString())}`)
-    if (action === 'PAUSED') lines.push(`⏱ ${fmtDur(secs)} so far`)
-    if (action === 'FINISHED') {
-      lines.push(`⏱ Total time: ${fmtDur(secs)}`)
-      if (d.work_started_at) lines.push(`${fmtDT(d.work_started_at)} → ${fmtDT(new Date().toISOString())}`)
-    }
-    if (extra) lines.push(extra)
-    return lines.join('\n')
-  }
-  async function report(body: string) {
+  // O TEXTO DO AVISO NASCE NO SERVIDOR (11/set/2026, auditoria de segurança).
+  // Esta página é pública, então ela só diz O QUE aconteceu: staff, duty, ação e
+  // os ids que o START pausou sozinho. /api/self-notify remonta a mensagem de
+  // sempre (formato do Márcio, 01/ago/2026) com os dados salvos e manda pro grupo
+  // GZ28US - STAFF — mas só avisa o toque que achar no duty_events, por isso cada
+  // aviso sai DEPOIS do seu log gravado.
+  async function report(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'FINISHED', dutyId: string, autoPaused: string[] = []) {
     try {
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
+      const res = await fetch(`${BASE_PATH}/api/self-notify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toGroupName: STAFF_GROUP_NAME, body }),
+        body: JSON.stringify({ kind: 'duty', staffId, dutyId, action, ...(autoPaused.length ? { autoPaused } : {}) }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || data.error) setToast('⚠ Report to GZ28 failed — tell the shop.')
@@ -171,12 +142,13 @@ export default function StaffDutySelfPage() {
   }
 
   // duty_events: o sistema guarda TODO evento por conta própria (Márcio,
-  // 01/ago/2026) — o grupo é aviso, o banco é a memória. Fire-and-forget.
-  function logDutyEvent(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'DONE', d: Duty, secs: number | null) {
-    void fetch(`${BASE_PATH}/api/duty-events`, {
+  // 01/ago/2026) — o grupo é aviso, o banco é a memória. Fire-and-forget: a
+  // promessa nunca falha e só serve pra encadear o aviso depois do log.
+  function logDutyEvent(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'DONE', d: Duty, secs: number | null): Promise<void> {
+    return fetch(`${BASE_PATH}/api/duty-events`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ duty_id: d.id === 'MANOBRAS' ? null : d.id, staff_id: staffId, staff_name: staff?.name || '', action, seconds_banked: secs, description: d.description, car_label: d.carLabel, invoice_code: d.invoiceCode }),
-    }).catch(() => {})
+    }).then(() => undefined, () => undefined)
   }
 
   // ── timer actions (same rules as the shop's DUTIES page) ───────────────────
@@ -201,19 +173,20 @@ export default function StaffDutySelfPage() {
         return x
       }))
       // A running MANOBRAS timer also auto-pauses — one thing at a time.
+      const logs: Promise<void>[] = []
       let manobrasPaused = false
       if (manobras.startedAt) {
         const msecs = manobras.seconds + segSeconds(manobras.startedAt)
         const paused = { ...manobras, seconds: msecs, startedAt: null }
         saveManobras(paused)
-        logDutyEvent('PAUSED', manobrasDuty(paused), msecs)
+        logs.push(logDutyEvent('PAUSED', manobrasDuty(paused), msecs))
         manobrasPaused = true
       }
-      const autoPaused = [...othersRunning.map(r => r.description), ...(manobrasPaused ? ['MANOBRAS'] : [])]
-      const extra = autoPaused.length ? `⏸ auto-paused: ${autoPaused.join(', ')}` : undefined
-      void report(eventBody(resumed ? 'RESUMED' : 'STARTED', d, 0, extra))
-      for (const r of othersRunning) logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string))
-      logDutyEvent(resumed ? 'RESUMED' : 'STARTED', d, null)
+      for (const r of othersRunning) logs.push(logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string)))
+      logs.push(logDutyEvent(resumed ? 'RESUMED' : 'STARTED', d, null))
+      // "⏸ auto-paused": só os ids — o servidor escreve as descrições salvas.
+      const autoPaused = [...othersRunning.map(r => r.id), ...(manobrasPaused ? ['MANOBRAS'] : [])]
+      void Promise.all(logs).then(() => report(resumed ? 'RESUMED' : 'STARTED', d.id, autoPaused))
     } finally { busyRef.current = false }
   }
 
@@ -232,10 +205,9 @@ export default function StaffDutySelfPage() {
       setDuties(duties.map(x => x.time_started_at ? { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null } : x))
       const next = { seconds: manobras.seconds, startedAt: nowIso, workStartedAt: manobras.workStartedAt || nowIso }
       saveManobras(next)
-      const extra = othersRunning.length ? `⏸ auto-paused: ${othersRunning.map(r => r.description).join(', ')}` : undefined
-      void report(eventBody(resumed ? 'RESUMED' : 'STARTED', manobrasDuty(next), 0, extra))
-      for (const r of othersRunning) logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string))
-      logDutyEvent(resumed ? 'RESUMED' : 'STARTED', manobrasDuty(next), null)
+      const logs = othersRunning.map(r => logDutyEvent('PAUSED', r, (Number(r.time_seconds) || 0) + segSeconds(r.time_started_at as string)))
+      logs.push(logDutyEvent(resumed ? 'RESUMED' : 'STARTED', manobrasDuty(next), null))
+      void Promise.all(logs).then(() => report(resumed ? 'RESUMED' : 'STARTED', 'MANOBRAS', othersRunning.map(r => r.id)))
     } finally { busyRef.current = false }
   }
 
@@ -244,8 +216,7 @@ export default function StaffDutySelfPage() {
     const secs = manobras.seconds + segSeconds(manobras.startedAt)
     const next = { ...manobras, seconds: secs, startedAt: null }
     saveManobras(next)
-    void report(eventBody('PAUSED', manobrasDuty(next), secs))
-    logDutyEvent('PAUSED', manobrasDuty(next), secs)
+    void logDutyEvent('PAUSED', manobrasDuty(next), secs).then(() => report('PAUSED', 'MANOBRAS'))
   }
 
   function finishManobras() {
@@ -253,8 +224,7 @@ export default function StaffDutySelfPage() {
     if (!manobras.workStartedAt && !manobras.startedAt) return // never started this round
     const secs = manobras.seconds + (manobras.startedAt ? segSeconds(manobras.startedAt) : 0)
     const finished = manobrasDuty({ seconds: secs, startedAt: null, workStartedAt: manobras.workStartedAt })
-    void report(eventBody('FINISHED', finished, secs))
-    logDutyEvent('DONE', finished, secs)
+    void logDutyEvent('DONE', finished, secs).then(() => report('FINISHED', 'MANOBRAS'))
     // Reset for the next round — the card NEVER goes away.
     saveManobras({ seconds: 0, startedAt: null, workStartedAt: null })
   }
@@ -266,8 +236,7 @@ export default function StaffDutySelfPage() {
       const { error } = await supabase.rpc('duty_self_update', { p_id: d.id, p_time_seconds: secs, p_time_started_at: null, p_work_started_at: d.work_started_at, p_work_ended_at: d.work_ended_at, p_done: d.done })
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null } : x))
-      void report(eventBody('PAUSED', d, secs))
-      logDutyEvent('PAUSED', d, secs)
+      void logDutyEvent('PAUSED', d, secs).then(() => report('PAUSED', d.id))
     } finally { busyRef.current = false }
   }
 
@@ -279,8 +248,7 @@ export default function StaffDutySelfPage() {
       const { error } = await supabase.rpc('duty_self_update', { p_id: d.id, p_time_seconds: secs, p_time_started_at: null, p_work_started_at: d.work_started_at, p_work_ended_at: nowIso, p_done: true })
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => x.id === d.id ? { ...x, time_seconds: secs, time_started_at: null, work_ended_at: nowIso, done: true } : x))
-      void report(eventBody('FINISHED', d, secs))
-      logDutyEvent('DONE', d, secs)
+      void logDutyEvent('DONE', d, secs).then(() => report('FINISHED', d.id))
     } finally { busyRef.current = false }
   }
 

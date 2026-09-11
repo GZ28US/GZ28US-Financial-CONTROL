@@ -111,10 +111,11 @@ export default function RideSelfPhotoPage() {
     if (sendError) { setError(sendError); return }
     setSaved(true)
     // Confirm to the internal REPORTS group that the client uploaded their car photo.
-    // No `to` -> the route defaults to the group.
-    fetch(`${BASE_PATH}/api/whatsapp`, {
+    // This public page only says WHICH ride: the server (app/api/self-notify)
+    // rebuilds the message from the saved ride. Fire-and-forget.
+    fetch(`${BASE_PATH}/api/self-notify`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: `📸 *CAR PHOTO — UPLOADED BY CLIENT*\n${carName || '—'}${clientName ? `\nClient: ${clientName}` : ''}\nThe client sent their favorite car photo. It's on the vehicle's record now.` }),
+      body: JSON.stringify({ kind: 'ride', id }),
     }).catch(() => {})
   }
 

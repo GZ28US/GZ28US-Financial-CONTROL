@@ -80,15 +80,10 @@ export default function FixedCostSupplierSelfForm() {
     setSaving(false)
     if (e) { setError(String(e.message || e)); return }
     setSaved(true)
-    // Confirm to the internal REPORTS group (team language: English).
-    const rows: string[] = []
-    if (form.company.trim()) rows.push(`Company: ${form.company.trim()}`)
-    if (form.contact_name.trim()) rows.push(`Contact: ${form.contact_name.trim()}`)
-    if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
-    if (form.email.trim()) rows.push(`Email: ${form.email.trim()}`)
-    rows.push(`Preferred: ${form.preferred_contact}`)
-    const body = `✅ *FIXED COST SUPPLIER — FORM FILLED*\n${description || form.company || '—'}\nThe supplier filled in and saved their own details:\n\n${rows.join('\n')}`
-    fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) }).catch(() => {})
+    // Confirm to the internal REPORTS group (team language: English). This public
+    // page only says WHICH supplier saved: the server (app/api/self-notify) rebuilds
+    // the message from the saved row. Fire-and-forget.
+    fetch(`${BASE_PATH}/api/self-notify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'fixed_supplier', id }) }).catch(() => {})
   }
 
   if (loading) return <main className="min-h-screen bg-black text-white flex items-center justify-center p-6"><p className="text-xl text-gray-400">{L.loading}</p></main>

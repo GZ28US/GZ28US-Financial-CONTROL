@@ -254,25 +254,13 @@ export default function ClientSelfFormPage() {
     if (saveError) { setError(saveError); return }
     setSaved(true)
     // Confirm to the internal REPORTS group (team language: English) that the client
-    // filled in their own data, listing every field they filled (blanks skipped).
-    // No `to` -> the route defaults to the group. Fire-and-forget.
-    const rows: string[] = []
-    if (form.email.trim()) rows.push(`Email: ${form.email.trim()}`)
-    if (form.instagram.trim()) rows.push(`Instagram: ${form.instagram.trim()}`)
-    if (form.facebook.trim()) rows.push(`Facebook: ${form.facebook.trim()}`)
-    if (form.country.trim()) rows.push(`Country: ${form.country.trim()}`)
-    if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
-    if (form.country === 'BRAZIL' && form.cpf.trim()) rows.push(`CPF: ${form.cpf.trim()}`)
-    if (form.address.trim()) rows.push(`Address: ${form.address.trim()}`)
-    if (form.city.trim()) rows.push(`City: ${form.city.trim()}`)
-    if (form.state.trim()) rows.push(`State: ${form.state.trim()}`)
-    if (form.zip.trim()) rows.push(`${zipLabel}: ${form.zip.trim()}`)
-    if (form.preferred_message_method.trim()) rows.push(`Messages: ${form.preferred_message_method.trim()}`)
-    const body = `✅ *FORM FILLED BY THE CLIENT*\n${form.name || '—'}\nThe client filled in and saved their own details:${rows.length ? '\n\n' + rows.join('\n') : ''}`
-    fetch(`${BASE_PATH}/api/whatsapp`, {
+    // filled in their own data. This public page only says WHICH client saved: the
+    // server (app/api/self-notify) rebuilds the message from the saved row, so no
+    // text ever leaves the browser. Fire-and-forget.
+    fetch(`${BASE_PATH}/api/self-notify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ kind: 'client', id }),
     }).catch(() => {})
   }
 

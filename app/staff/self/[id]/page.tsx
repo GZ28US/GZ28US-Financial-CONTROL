@@ -29,14 +29,6 @@ const messageMethods = ['WhatsApp', 'SMS', 'E-Mail', 'Instagram', 'Facebook']
 const inputClass = 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 const labelClass = 'block mb-2 text-sm font-bold text-gray-400'
 
-// 'yyyy-mm-dd' -> 'MMM d, yyyy' without new Date() (avoids the UTC day-shift).
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-function formatBirthDateUS(iso: string): string {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!m) return iso
-  return `${MONTHS_SHORT[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}, ${m[1]}`
-}
-
 const L = {
   en: {
     intro: 'Fill in your details and tap', save: 'SAVE', saving: 'SAVING…', requiredNote: 'are required.',
@@ -166,24 +158,12 @@ export default function StaffSelfFormPage() {
     setSaved(true)
 
     // Confirm to the internal REPORTS group that the member filled their own data.
-    const rows: string[] = []
-    if (form.email.trim()) rows.push(`E-mail: ${form.email.trim()}`)
-    if (form.instagram.trim()) rows.push(`Instagram: ${form.instagram.trim()}`)
-    if (form.phone.replace(/\D/g, '').length > 3) rows.push(`Phone: ${form.phone.trim()}`)
-    if (form.cpf.trim()) rows.push(`Document: ${form.cpf.trim()}`)
-    if (form.birth_date) rows.push(`Birth date: ${formatBirthDateUS(form.birth_date)}`)
-    if (form.passport.trim()) rows.push(`Passport: ${form.passport.trim()}`)
-    if (form.passport_expiry) rows.push(`Passport expiry: ${formatBirthDateUS(form.passport_expiry)}`)
-    if (form.zip.trim()) rows.push(`ZIP: ${form.zip.trim()}`)
-    if (form.address.trim()) rows.push(`Address: ${form.address.trim()}`)
-    if (form.city.trim()) rows.push(`City: ${form.city.trim()}`)
-    if (form.state.trim()) rows.push(`State: ${form.state.trim()}`)
-    if (form.preferred_message_method.trim()) rows.push(`Messages: ${form.preferred_message_method.trim()}`)
-    const body = `✅ *STAFF FORM — FILLED BY THE MEMBER*\n${form.name || '—'}\nThe staff member filled in and saved their own details:${rows.length ? '\n\n' + rows.join('\n') : ''}`
-    fetch(`${BASE_PATH}/api/whatsapp`, {
+    // This public page only says WHICH member saved: the server
+    // (app/api/self-notify) rebuilds the message from the saved row. Fire-and-forget.
+    fetch(`${BASE_PATH}/api/self-notify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ kind: 'staff', id }),
     }).catch(() => {})
   }
 
