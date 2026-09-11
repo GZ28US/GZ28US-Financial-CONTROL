@@ -181,10 +181,11 @@ async function callTool(name, a = {}) {
       body: JSON.stringify({ to: a.to, body: a.body, personal: a.personal !== false }),
     })
     const data = await r.json().catch(() => null)
-    // 401 = a rota não reconheceu a chave. As chaves de LEITURA do US e do BR são
-    // DIFERENTES: a whatsapp-read-key.txt (a do US) não abre o envio do BR. Só a
-    // whatsapp-send-key.txt (WHATSAPP_SEND_KEY, o mesmo valor nos dois projetos) abre os dois.
-    if (r.status === 401) throw new Error(`send refused 401 by ${a.app}: key not accepted — ${a.app === 'BR' ? 'the US read key does not open BR; ' : ''}needs ${KEY_DIR}/whatsapp-send-key.txt matching WHATSAPP_SEND_KEY on that app`)
+    // 401 = a rota não reconheceu a chave. Enquanto WHATSAPP_SEND_KEY não existir na Vercel, os
+    // dois apps aceitam a chave de LEITURA — que é a MESMA no US e no BR (medido em 11/set/2026: o
+    // /api/health/env dos dois abre com a whatsapp-read-key.txt). Quando a de envio entrar nos dois
+    // projetos, a whatsapp-send-key.txt tem de existir aqui com o mesmo valor.
+    if (r.status === 401) throw new Error(`send refused 401 by ${a.app}: key not accepted — needs ${KEY_DIR}/whatsapp-send-key.txt matching WHATSAPP_SEND_KEY on that app (or the read key while WHATSAPP_SEND_KEY is unset)`)
     if (!r.ok) throw new Error(`send failed ${r.status}: ${JSON.stringify(data).slice(0, 300)}`)
     return { ok: true, app: a.app, to: a.to, upstream: data }
   }
