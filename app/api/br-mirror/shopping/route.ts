@@ -81,12 +81,20 @@ const num = (x: unknown) => parseFloat(String(x ?? '')) || 0
 // Dólar comercial do dia + R$ 0,20. Busca a cotação HISTÓRICA daquele dia; se a
 // data não vier (fim de semana, feriado, API fora), cai na cotação atual — e se
 // nem isso, devolve 0 e o espelho aborta em vez de gravar um número inventado.
+//
+// O CACHE SÓ GUARDA DIA FECHADO (11/set/2026). No navegador o cache morria com a
+// tela; no servidor ele vive enquanto a função estiver quente — horas. Guardar a
+// cotação de HOJE congelaria o dólar da manhã para todo save do dia, e guardar o
+// fallback da cotação atual para um dia PASSADO (histórico fora do ar por um
+// instante) prenderia o dólar errado àquela data. Só entra no cache o fechamento
+// histórico de um dia que já acabou.
 const rateCache = new Map<string, number>()
 async function rateFor(ymd: string | null): Promise<number> {
   const day = ymd && YMD.test(ymd) ? ymd : todayUTC()
   const hit = rateCache.get(day)
   if (hit != null) return hit
   let spot = 0
+  let historico = false
   // Sábado, domingo e feriado não têm pregão: pede uma janela de 6 dias e usa a última
   // cotação ATÉ o dia do pagamento (nunca uma posterior).
   const back = (ymd: string, n: number) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10) }
@@ -99,6 +107,7 @@ async function rateFor(ymd: string | null): Promise<number> {
       .filter((x: any) => x.d <= day && x.bid > 0)
       .sort((a: any, b: any) => b.d.localeCompare(a.d))
     spot = rows[0]?.bid || 0
+    historico = spot > 0
   } catch { /* sem histórico */ }
   if (!spot) {
     try {
@@ -108,7 +117,7 @@ async function rateFor(ymd: string | null): Promise<number> {
     } catch { /* sem cotação */ }
   }
   const rate = spot > 0 ? r2(spot + SPREAD) : 0
-  if (rate > 0) rateCache.set(day, rate)
+  if (rate > 0 && historico && day < todayUTC()) rateCache.set(day, rate)
   return rate
 }
 

@@ -327,6 +327,10 @@ export default function EditRidePage() {
     // do BR. O cliente `supabaseBR` anon daqui lia null pelo RLS — o carro "não era
     // comum", nada era renomeado no BR e ninguém ficava sabendo. Agora a falha fala.
     let isCommonCar = false
+    // A PASTA BR DO DROPBOX SEGUE O RIDE DO BR, não a existência dele: se o ride do
+    // BR não foi renomeado (código duplicado lá, UPDATE recusado), renomear a pasta
+    // deixaria pasta e ride com códigos diferentes.
+    let brRideRenamed = false
     try {
       const res = await fetch(`${BASE_PATH}/api/br-mirror/ride-rename`, {
         method: 'POST', headers: await sessionHeaders(),
@@ -334,6 +338,7 @@ export default function EditRidePage() {
       })
       const data = await res.json().catch(() => null)
       isCommonCar = !!data?.common
+      brRideRenamed = data?.ok ? isCommonCar : !!data?.rideRenamed
       if (!res.ok || !data?.ok) {
         alert((isCommonCar
           ? 'Warning: this car also exists in the BR app but the rename could not be fully synced there — check it in the BR app.\n'
@@ -348,7 +353,7 @@ export default function EditRidePage() {
     // renumber ("OLDCODE - x" -> "NEWCODE - NewName"). Common cars also update
     // their folder in the BR archive. Non-blocking.
     const folderFails: string[] = []
-    for (const zone of isCommonCar ? ['US', 'BR'] : ['US']) {
+    for (const zone of brRideRenamed ? ['US', 'BR'] : ['US']) {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST',

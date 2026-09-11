@@ -15,9 +15,11 @@ import { supabaseBRService } from '@/lib/supabaseBR.server'
 // antes de chamar, e a rota confere o que ficou gravado. Do navegador só vem o id do
 // ride e o código ANTIGO (que o banco do US já não tem mais).
 //
-// Corpo: { usRideId, oldCode }  →  { ok, common, brRideId?, renamedInvoices? }
-// `common` vai também na resposta de erro quando já se sabe, para a tela decidir a
-// pasta BR do Dropbox mesmo num rename parcial.
+// Corpo: { usRideId, oldCode }  →  { ok, common, rideRenamed?, brRideId?, renamedInvoices? }
+// `common` (o carro existe no BR) e `rideRenamed` (o ride do BR recebeu o código
+// novo) vão também na resposta de erro quando já se sabe. A tela renomeia a pasta
+// BR do Dropbox só com `rideRenamed`: código duplicado no BR ou UPDATE recusado
+// deixam o ride com o código velho, e a pasta não pode andar sozinha.
 
 export const dynamic = 'force-dynamic'
 
@@ -47,16 +49,16 @@ export async function POST(req: NextRequest) {
   const { data: brRides, error: eBr } = await br.from('rides').select('id').eq('project_code', oldCode).limit(2)
   if (eBr) return falha(502, 'db', `Falha ao procurar ${oldCode} no banco do BR: ${eBr.message}`)
   if (!brRides?.length) return NextResponse.json({ ok: true, common: false })
-  if (brRides.length > 1) return falha(409, 'conflict', `Há mais de um ride com o código ${oldCode} no BR — nada foi renomeado lá.`, { common: true })
+  if (brRides.length > 1) return falha(409, 'conflict', `Há mais de um ride com o código ${oldCode} no BR — nada foi renomeado lá.`, { common: true, rideRenamed: false })
 
   const brRideId = String(brRides[0].id)
   const { error: eUpd } = await br.from('rides').update({ project_code: newCode, project_name: ride.project_name || null }).eq('id', brRideId)
-  if (eUpd) return falha(502, 'db', `Falha ao renomear ${oldCode} no BR: ${eUpd.message}`, { common: true })
+  if (eUpd) return falha(502, 'db', `Falha ao renomear ${oldCode} no BR: ${eUpd.message}`, { common: true, rideRenamed: false })
 
   let renamedInvoices = 0
   if (oldCode !== newCode) {
     const { data: binvs, error: eInv } = await br.from('invoices').select('id, invoice_code').eq('ride_id', brRideId)
-    if (eInv) return falha(502, 'db', `Ride renomeado no BR, mas as invoices dele não puderam ser lidas: ${eInv.message}`, { common: true })
+    if (eInv) return falha(502, 'db', `Ride renomeado no BR, mas as invoices dele não puderam ser lidas: ${eInv.message}`, { common: true, rideRenamed: true })
     const fails: string[] = []
     for (const inv of binvs || []) {
       if (inv.invoice_code?.startsWith(oldCode + '.')) {
@@ -66,8 +68,8 @@ export async function POST(req: NextRequest) {
       }
     }
     if (fails.length) {
-      return falha(502, 'db', `Ride renomeado no BR, mas ${fails.length} invoice(s) não mudaram de código: ${fails.join(' | ')}`, { common: true, renamedInvoices })
+      return falha(502, 'db', `Ride renomeado no BR, mas ${fails.length} invoice(s) não mudaram de código: ${fails.join(' | ')}`, { common: true, rideRenamed: true, renamedInvoices })
     }
   }
-  return NextResponse.json({ ok: true, common: true, brRideId, renamedInvoices })
+  return NextResponse.json({ ok: true, common: true, rideRenamed: true, brRideId, renamedInvoices })
 }
