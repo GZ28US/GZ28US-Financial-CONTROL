@@ -84,6 +84,8 @@ export function moneyDoubts(lines: any[]): { id: string; date: string; amount: n
 // Duas contas iguais pra uma linha (dois aluguéis de $7.006,69) = AMBÍGUA: pergunta,
 // nunca chute.
 export type DriftRow = { row_id: string; supplier_id: string | null; supplier: string; amount: number; due: string; bank_id: string; bank_date: string; bank_status: string; days: number; overdue_days: number; ambiguous: boolean; late_fee: boolean; name_ok: boolean; unique: boolean }
+// Pares recusados da linha do banco (doubt_answered: cands + o antigo cand) — a mesma leitura do rejectedOf da rota.
+const refusedOf = (b: any): Set<string> => { const da = b && b.doubt_answered && typeof b.doubt_answered === 'object' ? b.doubt_answered : {}; return new Set<string>([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : [])].map(String)) }
 export function driftRows(openFixed: any[], bankLines: any[], sups: FixedSupplier[], today = todayNY()): DriftRow[] {
   const byId = new Map(sups.map(s => [s.id, s]))
   const outs = bankLines.filter(b => num(b.amount) > 0 && ['NEW', 'QUEUED'].includes(String(b.match_status)))
@@ -101,15 +103,19 @@ export function driftRows(openFixed: any[], bankLines: any[], sups: FixedSupplie
     // «Progressive Insurance» × «Progressive Express Ins Company»: prefixo comum de 8+ letras já é o nome.
     const prefix = (a: string, b: string) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i }
     const nameOk = (b: any) => { const n = normSup(String(b.merchant || b.name || '')); return n.length >= 5 && keys.some(k => k.length >= 5 && (n.includes(k) || k.includes(n) || prefix(n, k) >= 8)) }
-    const cands = outs.filter(b => Math.abs(num(b.amount) - amt) < 0.011 && dayDiff(b.date, x.expense_date) >= -5 && dayDiff(b.date, x.expense_date) <= 40)
+    const all = outs.filter(b => Math.abs(num(b.amount) - amt) < 0.011 && dayDiff(b.date, x.expense_date) >= -5 && dayDiff(b.date, x.expense_date) <= 40)
       .sort((a, b) => (Number(nameOk(b)) - Number(nameOk(a))) || (Math.abs(dayDiff(a.date, x.expense_date)) - Math.abs(dayDiff(b.date, x.expense_date))))
-    if (!cands.length) continue
+    // Par recusado (DESFAZER / NÃO É ESSE) não volta como deriva: o AUTO-RUN do Data Checker adotaria de novo. Mas o NÃO nunca cria
+    // certeza (revisão da BL 1.5.1): o par recusado segue segurando a linha dele na conta da ambiguidade e conta no «único».
+    const cands = all.filter(b => !refusedOf(b).has('fixed_cost_expenses:' + x.id))
     // Sem nome batendo e mais de 25 dias = coincidência de valor, não deriva.
-    if (!nameOk(cands[0]) && dayDiff(cands[0].date, x.expense_date) > 25) continue
+    const drifts = (b: any) => nameOk(b) || dayDiff(b.date, x.expense_date) <= 25
+    if (all.length && all[0] !== cands[0] && drifts(all[0])) usedBank.set(String(all[0].id), (usedBank.get(String(all[0].id)) || 0) + 1)
+    if (!cands.length || !drifts(cands[0])) continue
     const b = cands[0]
     usedBank.set(String(b.id), (usedBank.get(String(b.id)) || 0) + 1)
     const s: any = byId.get(x.supplier_id) || {}
-    out.push({ row_id: x.id, supplier_id: x.supplier_id || null, supplier: s.company || String(x.description || '').slice(0, 40), amount: amt, due: String(x.expense_date).slice(0, 10), bank_id: String(b.id), bank_date: String(b.date).slice(0, 10), bank_status: String(b.match_status), days: dayDiff(b.date, x.expense_date), overdue_days: dayDiff(today, x.expense_date), ambiguous: false, late_fee: !!(s.late_fee_fixed || s.late_fee_percent || s.late_fee_daily), name_ok: nameOk(b), unique: cands.length === 1 })
+    out.push({ row_id: x.id, supplier_id: x.supplier_id || null, supplier: s.company || String(x.description || '').slice(0, 40), amount: amt, due: String(x.expense_date).slice(0, 10), bank_id: String(b.id), bank_date: String(b.date).slice(0, 10), bank_status: String(b.match_status), days: dayDiff(b.date, x.expense_date), overdue_days: dayDiff(today, x.expense_date), ambiguous: false, late_fee: !!(s.late_fee_fixed || s.late_fee_percent || s.late_fee_daily), name_ok: nameOk(b), unique: all.length === 1 })
   }
   for (const r of out) if ((usedBank.get(r.bank_id) || 0) > 1) r.ambiguous = true   // uma linha do banco, duas contas iguais
   return out.sort((a, b) => b.amount - a.amount)

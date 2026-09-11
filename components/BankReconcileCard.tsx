@@ -6,7 +6,8 @@
 //   mode="questions" (Data Checker): só o que o AUTO-LINK NÃO resolve sozinho. Cada linha chega da rota com UM estado e UMA
 //     frase (lib/bankLineState.server.ts): PERGUNTA (conta), FORNECEDOR (conta uma vez por grupo) ou ESPERANDO (aparece
 //     recolhido, não conta). Só candidato PAR (valor + nome, ou valor + tipo de compra) vira sugestão; coincidência de
-//     centavos fica recolhida e pede confirmação para casar.
+//     centavos fica recolhida e pede confirmação para casar. Linha de DINHEIRO (wire, Zelle, depósito — DC 1.51.0): só o
+//     NOME libera SIM/É ESTA e a pré-seleção; sem nome, a lista aparece sem nada marcado.
 //   mode="engine" (Bank Link, /adm/bank): o AUTO-LINK — última rodada, PLANEJAR/APLICAR, RESTAURAR DIÁRIO, casadas a conferir
 //     (sem as do balde, que têm a fila própria na mesma tela), lotes com DESFAZER, regras e apelidos.
 // Lê e escreve por /api/bank/reconcile com o JWT da sessão (tabelas do banco são só-service-key). Depois de um MATCH recarrega:
@@ -20,13 +21,13 @@ import { BL_STAGE, BL_VERSION } from '@/lib/blVersion'
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // Nível do candidato (BL 1.5.0): PAR = valor + perto + nome ou tipo de compra; LONGE = valor + nome, longe; COINCIDENCIA = só valor.
 type Tier = 'PAR' | 'LONGE' | 'COINCIDENCIA'
-type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; href?: string; detail?: string; score: number; dd: number | null; tier?: Tier }
+type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; href?: string; detail?: string; score: number; dd: number | null; tier?: Tier; named?: boolean }   // named (DC 1.51.0): o nome da linha do banco bate no registro
 // A DÚVIDA DO MOTOR, dita (BL 0.10.0): por que esta linha NÃO foi resolvida sozinha, com o candidato que ele viu.
-type Doubt = { kind: string; reason: string; klass?: string; supplier?: string; cands?: { table: string; id: string; label: string; date: string | null; amount: number; href?: string; days?: number | null; exact?: boolean }[] }
+type Doubt = { kind: string; reason: string; klass?: string; supplier?: string; cands?: { table: string; id: string; label: string; date: string | null; amount: number; href?: string; days?: number | null; exact?: boolean; named?: boolean }[] }
 // CASAR COM AJUSTE (BL 1.1.0): a passagem da folha que casa com deriva (câmbio, par de passagens, pagador errado no papel).
 type NearCand = { ids: string[]; amount: number; delta: number; pct: number; date: string; label: string; staff: string[]; paid_from: string[]; paid_from_mismatch: boolean; name_ok: boolean; exact: boolean; brl: number | null }
 type LineState = { code: string; pile: 'PERGUNTA' | 'FORNECEDOR' | 'ESPERANDO'; ask: boolean; sentence: string; target?: { table: string; id: string; label: string } | null }
-type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; candidates: Cand[]; doubt?: Doubt | null; queued?: boolean; near?: NearCand[] | null; state?: LineState | null }
+type Line = { id: string; date: string; amount: number; name: string; raw_name: string; pending: boolean; source: string; fee: boolean; money?: boolean; candidates: Cand[]; doubt?: Doubt | null; queued?: boolean; near?: NearCand[] | null; state?: LineState | null }
 // PERGUNTAS POR FORNECEDOR: uma resposta = uma regra humana = todas as linhas do grupo, pra sempre.
 type QGroup = { key: string; name: string; klass: string; n: number; total: number; sample: string[]; oldest: string; newest: string; line_ids: string[]; suggested: { supplier_id: string | null; company: string | null; cost_type: string | null; ambiguous: { id: string; company: string | null; cost_type: string | null }[] }; app_rows?: { id: string; date: string; amount: number; paid_from: string | null; staff: string; desc: string; linked: boolean }[]; near?: { line_id: string; date: string; amount: number; cands: NearCand[] }[]; near_error?: string }
 type Questions = { suppliers: QGroup[]; money: { id: string; date: string; amount: number; name: string; klass: string; reason: string }[]; twins?: number; seasons?: { id: string; staff: string; label: string }[]; fixed_suppliers?: { id: string; company: string; cost_type: string }[]; link_migration?: boolean }
@@ -75,6 +76,9 @@ const STATE_CHIP: Record<string, string> = {
   TETO: 'bg-gray-900 text-gray-400 border-gray-700', 'IRMÃ PENDENTE': 'bg-gray-900 text-gray-400 border-gray-700', DUPLICADA: 'bg-gray-900 text-gray-400 border-gray-700',
 }
 const isPar = (c: Cand) => !c.tier || c.tier === 'PAR'   // rota antiga sem nível: trata como antes
+// DINHEIRO SEM NOME (DC 1.51.0): em wire, Zelle e depósito toda tabela «combina» — só o NOME libera SIM/É ESTA e a pré-seleção.
+// Sem candidato com nome, a lista continua lá, mas nada vem marcado e o MATCH espera a escolha de gente.
+const sayable = (l: Line, c: { named?: boolean }) => !l.money || c.named === true
 
 export default function BankReconcileCard({ mode = 'questions', onCount }: { mode?: 'questions' | 'engine'; onCount?: (n: number, aConferir?: number, bucket?: number) => void }) {
   const engine = mode === 'engine'
@@ -173,8 +177,8 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
       setPick(prev => {
         const p: Record<string, string> = {}
         for (const l of d.lines as Line[]) {
-          const keep = prev[l.id] && l.candidates.some(c => c.table + ':' + c.id === prev[l.id] && isPar(c)) ? prev[l.id] : null
-          const first = l.candidates.find(isPar)
+          const keep = prev[l.id] && l.candidates.some(c => c.table + ':' + c.id === prev[l.id] && isPar(c) && sayable(l, c)) ? prev[l.id] : null
+          const first = l.candidates.find(c => isPar(c) && sayable(l, c))
           if (keep) p[l.id] = keep; else if (first) p[l.id] = first.table + ':' + first.id
         }
         return p
@@ -198,7 +202,7 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
   // pagador vira GZ28US (o banco prova), elo na coluna. DESFAZER devolve tudo.
   const dlt = (c: NearCand) => (c.delta < 0 ? '−' : '+') + usd(Math.abs(c.delta))
   function adjustText(bankDate: string, bankAmt: number, c: NearCand): string {
-    return 'CASAR COM AJUSTE: a linha do banco ' + formatShortDate(bankDate) + ' ' + usd(bankAmt) + ' casa com «' + c.label + '» (' + c.staff.join(', ') + ', ' + formatShortDate(c.date) + ', ' + usd(c.amount) + ').\n\nO app grava: valor → ' + usd(bankAmt) + ' (Δ ' + dlt(c) + (c.exact ? '' : ', ' + c.pct + '%') + ')' + (c.paid_from.some(p => p !== 'GZ28US') ? '; quem pagou ' + c.paid_from.join('/') + ' → GZ28US (o banco prova' + (c.paid_from_mismatch ? ' — sai da conta corrente/empréstimo' : '') + ')' : '') + (c.name_ok ? '' : '; NOME NÃO CONFIRMADO — só data e valor batem') + '.\nDESFAZER no AUTO-LINK (Bank Link → casadas a conferir) devolve tudo.'
+    return 'CASAR COM AJUSTE: a linha do banco ' + formatShortDate(bankDate) + ' ' + usd(bankAmt) + ' casa com «' + c.label + '» (' + c.staff.join(', ') + ', ' + formatShortDate(c.date) + ', ' + usd(c.amount) + ').\n\nO app grava: valor → ' + usd(bankAmt) + ' (Δ ' + dlt(c) + (c.exact ? '' : ', ' + c.pct + '%') + ')' + (c.paid_from.some(p => p !== 'GZ28US') ? '; quem pagou ' + c.paid_from.join('/') + ' → GZ28US (o banco prova' + (c.paid_from_mismatch ? ' — sai da conta corrente/empréstimo' : '') + ')' : '') + (c.name_ok ? '' : '; NOME NÃO CONFIRMADO — só data e valor batem') + '.\nDESFAZER no Bank Link (AUTO-LINK → casadas a conferir, enquanto não tiver OK) devolve o que foi gravado: valor, pagador e elo.'
   }
   async function adjustMatch(bankId: string, bankDate: string, bankAmt: number, c: NearCand, ask = true) {
     if (anyBusy || qBusy) return
@@ -213,7 +217,7 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
   const adjustPlan = (g: QGroup) => { const used = new Set<string>(); const go: { line_id: string; date: string; amount: number; c: NearCand }[] = []; let dup = 0; for (const t of (g.near || []).filter(n => n.cands.length === 1)) { const c = t.cands[0]; if (c.ids.some(i => used.has(i))) { dup++; continue } c.ids.forEach(i => used.add(i)); go.push({ line_id: t.line_id, date: t.date, amount: t.amount, c }) } return { go, dup } }
   async function adjustAll(g: QGroup) {
     const { go, dup } = adjustPlan(g)
-    if (!go.length || !confirm('Casar ' + go.length + ' linha(s) de ' + g.name + ' com as passagens da folha, uma a uma (valor do banco, pagador GZ28US onde o banco prova)?' + (dup ? ' ' + dup + ' ficam de fora (mesmo registro da folha).' : '') + ' Cada uma pode ser desfeita no AUTO-LINK.')) return
+    if (!go.length || !confirm('Casar ' + go.length + ' linha(s) de ' + g.name + ' com as passagens da folha, uma a uma (valor do banco, pagador GZ28US onde o banco prova)?' + (dup ? ' ' + dup + ' ficam de fora (mesmo registro da folha).' : '') + ' Cada uma pode ser desfeita no Bank Link (casadas a conferir) enquanto não tiver OK.')) return
     let n = 0, stop = ''
     lock('adjust_all'); setQBusy(g.key)
     try {
@@ -287,7 +291,7 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
   }
   async function applyRun() {
     if (anyBusy || !plan) return
-    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.set || 0} em série (SET), ${plan.ignore || 0} ignorados por regra, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA, ${plan.rule_adopt || 0} agendadas ADOTADAS (valor ajustado, não duplicadas), ${plan.learn || 0} por regra aprendida, ${plan.transfer || 0} transferências, ${plan.bucket || 0} caem no balde A ATRIBUIR (despesa real, sem dono ainda). Tudo pode ser desfeito (DESFAZER LOTE).`)) return
+    if (!confirm(`Aplicar agora? ${plan.total} linhas: ${plan.fee_create} tarifas criadas, ${plan.fee_match} tarifas casadas, ${plan.exact} exatos, ${plan.set || 0} em série (SET), ${plan.ignore || 0} ignorados por regra, ${plan.name} por nome/apelido, ${plan.rule_create} criados por REGRA, ${plan.rule_adopt || 0} agendadas ADOTADAS (valor ajustado, não duplicadas), ${plan.learn || 0} por regra aprendida, ${plan.transfer || 0} transferências, ${plan.bucket || 0} caem no balde A ATRIBUIR (despesa real, sem dono ainda). DESFAZER LOTE devolve as linhas ao banco e apaga o que a rodada criou — é desfazer, não recusa: a rodada seguinte refaz o que tiver prova e relança o que uma regra ligada cobrir.`)) return
     lock('apply')
     const acc: Applied = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0, errors: [] }
     try {
@@ -324,7 +328,7 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
     catch (e) { fail(e) } finally { unlock('review_all') }
   }
   async function undoBatch(b: Batch) {
-    if (anyBusy || !confirm(`Desfazer a rodada inteira? ${b.n} linhas voltam a ficar sem dono (o AUTO-LINK refaz o que tiver prova na próxima rodada; o resto vira pergunta no Data Checker). Tarifas, lançamentos criados por regra e compras do balde A ATRIBUIR são APAGADOS; agendadas adotadas voltam ao valor original.`)) return
+    if (anyBusy || !confirm(`Desfazer a rodada inteira? ${b.n} linhas voltam a ficar sem dono (o AUTO-LINK refaz o que tiver prova na próxima rodada; o resto vira pergunta no Data Checker). Tarifas (voltam sempre na próxima rodada), lançamentos criados por regra e compras do balde A ATRIBUIR (voltam enquanto a regra estiver ligada) são APAGADOS; agendadas adotadas voltam ao valor original; em registro que já existia, volta só o que a rodada escreveu.`)) return
     lock('undo_' + b.batch)
     try {
       // Em fatias de 200 (rodadas da fase B têm centenas de linhas): repete enquanto sobrar.
@@ -355,7 +359,8 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
     const others = l.candidates.filter(c => !isPar(c))
     const sel = pick[l.id] || ''
     // Sem escolha explícita o <select> MOSTRA o primeiro PAR — cand acompanha o que o olho vê.
-    const cand = par.find(c => c.table + ':' + c.id === sel) || par[0]
+    // Dinheiro sem candidato com nome: nada pré-selecionado — o <select> mostra o convite vazio e o MATCH espera a escolha.
+    const cand = par.find(c => c.table + ':' + c.id === sel) || (par[0] && sayable(l, par[0]) ? par[0] : undefined)
     const dis = anyBusy
     const st = l.state
     const twins = l.doubt && l.doubt.kind === 'TWIN' && l.doubt.cands ? l.doubt.cands : []
@@ -372,8 +377,8 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
           <span className="flex-1 truncate text-sm min-w-[10rem]" title={l.raw_name}>{l.name}{l.fee && <span className="ml-2 text-[10px] font-bold text-teal-300">TARIFA</span>}{l.source === 'STATEMENT' && <span className="ml-2 text-xs text-gray-600">extrato</span>}</span>
           <span className={`tabular-nums font-bold text-sm shrink-0 ${l.amount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{l.amount > 0 ? '−' : '+'}{usd(l.amount)}</span>
           {st && <span title={l.doubt?.reason || ''} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${STATE_CHIP[st.code] || 'border-gray-700 text-gray-400'}`}>{st.code}</span>}
-          {canSay && twins.length === 1 && twin && twin.exact !== false && <button disabled={dis} onClick={() => act(l, 'match', { table: twin.table, row_id: twin.id })} className="bg-amber-800 hover:bg-amber-700 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title={`casa com: ${twin.label}`}>SIM, É ESSA</button>}
-          {canSay && twins.length > 1 && twins.slice(0, 3).filter(c => c.exact !== false).map(c => <button key={c.table + c.id} disabled={dis} onClick={() => act(l, 'match', { table: c.table, row_id: c.id })} className="bg-amber-800 hover:bg-amber-700 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0 max-w-[16rem] truncate" title={`casa com: ${c.label}`}>É ESTA: {c.label.replace(/^[A-ZÇÃÉÍÓ ]+ · /, '').slice(0, 40)}</button>)}
+          {canSay && twins.length === 1 && twin && twin.exact !== false && sayable(l, twin) && <button disabled={dis} onClick={() => act(l, 'match', { table: twin.table, row_id: twin.id })} className="bg-amber-800 hover:bg-amber-700 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title={`casa com: ${twin.label}`}>SIM, É ESSA</button>}
+          {canSay && twins.length > 1 && twins.slice(0, 3).filter(c => c.exact !== false && sayable(l, c)).map(c => <button key={c.table + c.id} disabled={dis} onClick={() => act(l, 'match', { table: c.table, row_id: c.id })} className="bg-amber-800 hover:bg-amber-700 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0 max-w-[16rem] truncate" title={`casa com: ${c.label}`}>É ESTA: {c.label.replace(/^[A-ZÇÃÉÍÓ ]+ · /, '').slice(0, 40)}</button>)}
           {twins.length > 1 ? <button disabled={dis} onClick={() => { if (confirm(`NENHUM destes ${twins.length} registros? A linha guarda a recusa de todos e o AUTO-LINK decide na hora sem eles (regra ou balde) — ou mostra a próxima dúvida.`)) act(l, 'reject_twin', { cands: twins.map(c => c.table + ':' + c.id) }) }} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title="nenhum destes — o AUTO-LINK segue sem eles">NENHUMA</button>
             : twin && <button disabled={dis} onClick={() => { if (confirm('NÃO é esse registro? A linha guarda a recusa e o AUTO-LINK decide na hora sem ele (regra ou balde) — ou mostra a próxima dúvida.')) act(l, 'reject_twin', { cand: twin.table + ':' + twin.id }) }} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title="não é esse — o AUTO-LINK segue sem ele">NÃO</button>}
           {tg && <button disabled={dis} onClick={() => { if (confirm(`NÃO é «${tg.label}»? A linha guarda a recusa: o AUTO-LINK não casa com esse registro e decide na hora sem ele (regra ou balde) — ou vira pergunta.`)) act(l, 'reject_twin', { cand: tg.table + ':' + tg.id }) }} className="bg-gray-800 hover:bg-gray-700 border border-gray-600 disabled:opacity-40 px-2 py-0.5 rounded-xl text-[10px] font-bold shrink-0" title={`o AUTO-LINK vai casar com: ${tg.label}`}>NÃO É ESSA</button>}
@@ -390,20 +395,21 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
               <p className="text-gray-500 mt-1">{formatShortDate(l.date)} · {l.amount > 0 ? 'saiu' : 'entrou'} {usd(l.amount)} · {l.source === 'STATEMENT' ? 'importada do extrato em PDF' : 'feed do Plaid'}</p>
             </div>
             <div>
-              <p className="font-bold text-gray-400 mb-1">📒 O QUE O APP TEM {cand ? '' : '(nenhum registro com nome ou tipo de compra batendo)'}</p>
+              <p className="font-bold text-gray-400 mb-1">📒 O QUE O APP TEM {cand ? '' : l.money && par.length ? '(dinheiro: nenhum registro com o nome da linha do banco — nada vem marcado)' : '(nenhum registro com nome ou tipo de compra batendo)'}</p>
               {cand ? (
                 <>
                   <p className="text-gray-300">{cand.detail || cand.label}</p>
                   <p className="text-gray-500 mt-1">{cand.date ? 'data ' + formatShortDate(cand.date) : 'sem data'}{cand.dd != null ? ` · ${cand.dd} dia(s) do banco` : ''} · {usd(cand.amount)}</p>
                   {cand.href && <a href={`${BASE_PATH}${cand.href}`} target="_blank" rel="noreferrer" className="inline-block mt-1 bg-gray-800 hover:bg-gray-700 border border-gray-600 px-3 py-1 rounded-xl font-bold">ABRIR REGISTRO ↗</a>}
                 </>
-              ) : <p className="text-gray-500">{others.length ? 'só outros com o mesmo valor, sem nome nem tipo de compra perto (abaixo, recolhidos)' : 'nada com esse valor no app'} — TRANSFER, IGNORE ou EXPLAIN</p>}
+              ) : <p className="text-gray-500">{l.money && par.length ? 'os registros de mesmo valor estão na lista abaixo, sem marca — escolha se for um deles' : others.length ? 'só outros com o mesmo valor, sem nome nem tipo de compra perto (abaixo, recolhidos)' : 'nada com esse valor no app'} — TRANSFER, IGNORE ou EXPLAIN</p>}
             </div>
           </div>
         )}
         <div className="mt-2 ml-7 flex gap-2 flex-wrap items-center">
           {par.length > 0 ? (
             <select value={sel} onChange={e => setPick({ ...pick, [l.id]: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && cand && !dis && !l.pending) { e.preventDefault(); act(l, 'match', { table: cand.table, row_id: cand.id }) } }} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1.5 text-xs max-w-xl">
+              {l.money && !par.some(c => sayable(l, c)) && <option value="">— dinheiro: nenhum registro tem o nome da linha do banco — escolha se for um deles —</option>}
               {par.map(c => <option key={c.table + c.id} value={c.table + ':' + c.id}>{c.label} — {c.date ? formatShortDate(c.date) : 'sem data'}{c.dd != null ? ` (${c.dd}d)` : ''}{c.undated ? ' · sem data de pagamento' : ''}</option>)}
             </select>
           ) : <span className="text-xs text-gray-600">nenhum registro do app bate com o nome ou o tipo de compra</span>}
@@ -517,7 +523,7 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
               {auto && (aConferir > 0 || auto.batches.length > 0) && (
                 <div className="border border-gray-800 rounded-2xl p-4">
                   <div className="flex items-center gap-3 flex-wrap mb-3">
-                    <p className="font-bold flex-1">CASADAS A CONFERIR <span className="text-amber-300">{aConferir}</span> <span className="text-xs text-gray-500 font-normal">· {auto.reviewed} já conferidas · casamento do motor nasce visto (o DESFAZER dele fica 7 dias no card verde do Data Checker); aqui fica o casado com ajuste (ADJUST) e o antigo ainda sem OK</span></p>
+                    <p className="font-bold flex-1">CASADAS A CONFERIR <span className="text-amber-300">{aConferir}</span> <span className="text-xs text-gray-500 font-normal">· {auto.reviewed} já conferidas · casamento do motor nasce visto (o da rodada automática tem DESFAZER por 7 dias no card verde do Data Checker; o de APLICAR, da resposta em QUEM É? e do NÃO É ESSE, e o de mais de 7 dias, só DESFAZER LOTE); aqui fica o casado com ajuste (ADJUST) e o antigo ainda sem OK — casamento feito à mão (MATCH) nasce visto e não aparece aqui</span></p>
                     <div className="flex gap-1">
                       {(['ALL', 'FEE', 'EXACT', 'NAME', 'RULE', 'LEARN', 'ADJUST', 'SET'] as const).map(k => <button key={k} onClick={() => setEngineFilter(k)} className={`px-3 py-1 rounded-xl text-xs font-bold border ${engineFilter === k ? 'bg-gray-700 border-gray-500' : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}`}>{k === 'ALL' ? 'TODAS' : k}</button>)}
                     </div>
@@ -721,7 +727,7 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
 
               {/* ── PERGUNTAS LINHA A LINHA: um estado e uma frase por linha; só candidato PAR vira sugestão ── */}
               <div>
-                <p className="font-bold text-sm mb-2">PERGUNTAS LINHA A LINHA <span className="text-amber-300">{asked.length}</span> <span className="text-xs text-gray-500 font-normal">· cada uma diz por que o AUTO-LINK parou; sugestão só quando o nome ou o tipo de compra batem — coincidência de valor fica recolhida</span></p>
+                <p className="font-bold text-sm mb-2">PERGUNTAS LINHA A LINHA <span className="text-amber-300">{asked.length}</span> <span className="text-xs text-gray-500 font-normal">· cada uma diz por que o AUTO-LINK parou; sugestão só quando o nome ou o tipo de compra batem (dinheiro — wire, Zelle, depósito: só o nome) — coincidência de valor fica recolhida</span></p>
                 <div className="flex gap-2 flex-wrap items-center mb-3">
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="filtrar por nome, valor ou data" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-64" />
                   {pileCounts.map(([k, v]) => <button key={k} onClick={() => setPileFilter(pileFilter === k ? null : k)} className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${pileFilter === k ? 'bg-white text-black border-white' : (STATE_CHIP[k] || 'bg-gray-900 border-gray-700 text-gray-300')}`}>{k} ×{v}</button>)}

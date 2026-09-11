@@ -10,7 +10,7 @@
 //   ESPERANDO  o AUTO-LINK cuida: PENDENTE, VAI CASAR, MATURANDO, TETO (vai pro balde), IRMÃ PENDENTE, TO BOOK recente
 // Só PERGUNTA e FORNECEDOR contam no Data Checker. Esperar não é pendência — mas aparece, com a frase (silêncio é promessa).
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { nameHit, num, signedDays, RULE_AGE_DAYS, type Cand, type PlanDoubt, type PlanItem } from './bankReconcile.server'
+import { nameHit, shortNameHit, classify, num, signedDays, RULE_AGE_DAYS, type Cand, type PlanDoubt, type PlanItem } from './bankReconcile.server'
 
 export type LineStateCode = 'PENDENTE' | 'VAI CASAR' | 'É ESTA?' | 'DISPUTA' | 'QUASE' | 'NA FOLHA' | 'DINHEIRO' | 'QUEM É?' | 'SEM REGRA' | 'AGENDADA≠' | 'MATURANDO' | 'TETO' | 'IRMÃ PENDENTE' | 'TO BOOK' | 'DUPLICADA' | 'PARADA'
 export type LinePile = 'PERGUNTA' | 'FORNECEDOR' | 'ESPERANDO'
@@ -24,6 +24,9 @@ const addDays = (iso: string, d: number) => new Date(Date.parse(String(iso).slic
 const lab = (c: { label?: string } | null | undefined) => '«' + String((c && c.label) || '?').replace(/^(EXPENSE|FIXO|TARIFA|SUPPLY|STOCK|GOODS|FOLHA|PESSOAL|INCOME|PEDIDO|EMPRÉSTIMO|CAPITAL) · /, '').slice(0, 90) + '»'
 const ask = (code: LineStateCode, sentence: string): LineState => ({ code, pile: 'PERGUNTA', ask: true, sentence })
 const wait = (code: LineStateCode, sentence: string): LineState => ({ code, pile: 'ESPERANDO', ask: false, sentence })
+// DINHEIRO (DC 1.51.0): wire, Zelle, depósito, cheque — classify TRANSFER ou INCOME. Nessas linhas toda tabela «combina» (AFFINITY
+// TRANSFER = T_MONEY), então o tipo de compra não prova nada: só o NOME liga dinheiro a um registro. A rota manda `money` pra tela.
+export const isMoneyLine = (l: any) => { const k = classify(l).klass; return k === 'TRANSFER' || k === 'INCOME' }
 
 function itemSentence(it: PlanItem): string {
   const rule = it.rule ? '«' + String((it.rule as any).label || (it.rule as any).key || it.rule.pattern || 'regra').slice(0, 60) + '»' : 'a regra'
@@ -69,6 +72,13 @@ export function lineState(l: any, cands: (Cand & { tier?: string })[], doubt: Pl
   const named0 = c0 ? nameHit(l, c0 as any) : false
   const moneyIn = `Entrou ${usd(amt)} de «${merchant}» — recebimento de qual invoice, ou aporte de sócio? O AUTO-LINK nunca chuta dinheiro.`
   const moneyOut = `Saiu ${usd(amt)} para «${merchant}» — qual invoice, sócio, folha ou conta? O AUTO-LINK nunca chuta dinheiro.`
+  // DINHEIRO SEM NOME (DC 1.51.0 — o wire de $20,000 da PARK PLACE MOT aparecia como «É ESTA?» do saldo em aberto US.050.1 da Surf City,
+  // com «SIM preenche a data com a do banco»): registro que só bate no valor não vira pergunta de sim/não em linha de dinheiro.
+  // Nada vem marcado e nenhum SIM é oferecido; a lista continua na tela pra gente escolher, se for mesmo um deles.
+  if (doubt.kind === 'TWIN' && isMoneyLine(l) && (doubt.cands || []).length && !(doubt.cands || []).some(c => nameHit(l, c as any) || shortNameHit(l, c as any))) {
+    const cs = doubt.cands || []
+    return ask('DINHEIRO', pre + (out ? `Saiu ${usd(amt)} para «${merchant}»` : `Entrou ${usd(amt)} de «${merchant}»`) + ` e o app tem ${cs.length > 1 ? cs.length + ' registros' : lab(c0)} com o mesmo valor, mas o nome da linha do banco não bate com ${cs.length > 1 ? 'nenhum deles' : 'ele'} — valor igual não diz de quem é o dinheiro. Nada vem marcado: se for ${cs.length > 1 ? 'um deles' : 'esse'}, escolha na lista e case (MATCH); se não, diga o que foi — qual invoice, sócio, folha ou conta.`)
+  }
   switch (doubt.kind) {
     case 'FOLHA': {
       const n = near && near[0]

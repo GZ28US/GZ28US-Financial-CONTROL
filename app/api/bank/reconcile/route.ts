@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
 import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled } from '@/lib/bankReconcile.server'
-import { lineState, askCount } from '@/lib/bankLineState.server'
+import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
 
@@ -430,7 +430,7 @@ export async function GET(req: NextRequest) {
       const doubt = planNow.doubts[String(l.id)] || null, near = nearOf.get(String(l.id)) || null
       return {
         id: l.id, date: l.date, amount: num(l.amount), name: l.merchant || l.name || '', raw_name: l.name || '', pending: !!l.pending,
-        source: String(l.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID', fee: isFee(l), candidates,
+        source: String(l.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID', fee: isFee(l), money: isMoneyLine(l), candidates,
         queued: l.match_status === 'QUEUED', doubt, near,
         state: lineState(l, candidates, doubt, itemOfNow.get(String(l.id)) || null, near, todayNow),
       }
@@ -665,8 +665,9 @@ export async function POST(req: NextRequest) {
       catch (e) {
         // Se a linha já aponta pra nós, o casamento venceu (falhou depois do claim): não desfaz.
         const { data: now0 } = await db.from('bank_transactions').select('matched_table, matched_id').eq('id', line.id).maybeSingle()
+        // Casou (falhou depois do claim): nada a regravar — o claim já gravou o backfill da rota (writeMatch grava `pre` no claim)
+        // e as datas que preencheu antes de relançar; sobrescrever aqui perderia essas datas do registro.
         if (!(now0 && now0.matched_table === cnd.table && String(now0.matched_id) === cnd.id)) await rollback()
-        else await db.from('bank_transactions').update({ backfill }).eq('id', line.id).is('backfill', null)   // casou mas o backfill não gravou: grava agora, DESFAZER precisa dele
         return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 })
       }
       fixes.push({ check_key: 'engine-questions', table_name: 'bank_transactions', row_id: line.id, field: 'match_status', old_value: line.match_status, new_value: 'MATCHED', label: (note + ' · ' + line.date + ' · ' + (line.merchant || line.name || '')).slice(0, 200) })
@@ -845,16 +846,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, booked, errors, doubt: l2 ? plan.doubts[String((l2 as any).id)] || null : null })
     }
     // ADOTAR (deriva das três datas, Data Checker): a agendada aberta que o banco já
-    // pagou recebe a linha — payment_date = data do banco, elo, valor; DESFAZER volta tudo.
+    // pagou recebe a linha — payment_date = data do banco, elo, valor; DESFAZER volta tudo
+    // (AUTO: card verde do Data Checker; gente: CASADAS A CONFERIR no Bank Link).
     if (action === 'adopt_scheduled') {
       const bankId2 = String(body.bank_id || ''), rowId = String(body.row_id || '')
       if (!bankId2 || !rowId) return NextResponse.json({ error: 'bank_id/row_id required' }, { status: 400 })
-      const { data: line } = await db.from('bank_transactions').select(BSEL).eq('id', bankId2).maybeSingle()
+      const { data: line0 } = await db.from('bank_transactions').select(BSEL + ', doubt_answered').eq('id', bankId2).maybeSingle()
+      const line: any = line0   // select composto: o tipo do supabase-js não resolve a string concatenada (mesmo truque do match_wire)
       if (!line || !['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' }, { status: 409 })
       if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar' }, { status: 409 })
       if (!(num(line.amount) > 0)) return NextResponse.json({ error: 'linha de entrada não paga conta' }, { status: 409 })
-      const { data: a } = await db.from('fixed_cost_expenses').select('id, supplier_id, expense_date, amount, description, paid_from, payment_date, bank_transaction_id').eq('id', rowId).maybeSingle()
+      const { data: a } = await db.from('fixed_cost_expenses').select('id, supplier_id, expense_date, amount, description, paid_from, payment_method, payment_date, bank_transaction_id').eq('id', rowId).maybeSingle()
       if (!a || a.payment_date || a.bank_transaction_id) return NextResponse.json({ error: 'agendada já paga ou já ligada — recarregue' }, { status: 409 })
+      // A máquina respeita o NÃO (DESFAZER / NÃO É ESSE): par recusado não é adotado sozinho — gente ainda pode ADOTAR à mão.
+      if (body.engine === 'AUTO' && rejectedOf(line).has('fixed_cost_expenses:' + rowId)) return NextResponse.json({ error: 'par recusado antes (DESFAZER / NÃO É ESSE) — o app não adota sozinho' }, { status: 409 })
       // BL 1.3.0: a adoção mora no motor (adoptScheduled) — a rota só valida a linha e chama.
       let days = 0
       try { days = (await adoptScheduled(db, line, a, { engine: body.engine === 'AUTO' ? 'AUTO' : null, via: 'Data Checker' })).days }
@@ -1177,7 +1182,7 @@ export async function POST(req: NextRequest) {
       let n = 0; const errors: string[] = []; const fixes: any[] = []; const undone: string[] = []
       for (const r of rows || []) {
         try {
-          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false }); n++; undone.push(String(r.id))
+          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false, refuse: false }); n++; undone.push(String(r.id))   // DESFAZER LOTE é rollback, não juízo: sem memória de recusa
           await logMatchEvent(db, r, 'UNMATCH', { batch })
           fixes.push({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id: r.id, field: 'match_status', old_value: r.match_status, new_value: 'NEW', label: (`DESFAZER LOTE · ${r.date} · ${r.merchant || r.name || ''} · ${num(r.amount)}` + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) })
         } catch (e) { errors.push(`${r.date} ${r.merchant || r.name}: ` + String((e as Error).message || e)) }
@@ -1268,7 +1273,7 @@ export async function POST(req: NextRequest) {
       if (!autoMatch) learned = await learnFromMatch(db, cur, cand)   // máquina não ensina regra: aprender é decisão de gente
     }
     if (action === 'unmatch') {
-      await writeUnmatch(db, line, changed, { unlearn: true }); status = 'NEW'
+      await writeUnmatch(db, line, changed, { unlearn: true, refuse: true }); status = 'NEW'
       await logMatchEvent(db, line, 'UNMATCH', {})
     } else if (action === 'rematch') {
       // TROCAR (Data Checker · DUPLA): desfaz o lançamento do motor e casa a linha
@@ -1284,7 +1289,7 @@ export async function POST(req: NextRequest) {
         const c0 = arr0.find(c => c.table === table && c.id === rowId)
         if (!c0 || Math.abs(c0.amount - Math.abs(num(line.amount))) >= 0.011) return NextResponse.json({ error: 'registro humano não vale mais (já casado, valor mudou ou direção errada) — recarregue' }, { status: 409 })
       }
-      await writeUnmatch(db, line, changed, { unlearn: false })
+      await writeUnmatch(db, line, changed, { unlearn: false, refuse: true })   // o lançamento do motor não era esse: a máquina não o refaz
       await logMatchEvent(db, line, 'UNMATCH', { note: 'REMATCH · troca por registro humano' })
       const { data: fresh } = await db.from('bank_transactions').select(LINE_SEL).eq('id', bankId).maybeSingle()
       await humanMatch(fresh || { ...line, match_status: 'NEW' })
@@ -1309,6 +1314,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, status, changed, learned })
   } catch (e) {
     const msg = String((e as Error).message || e)
-    return NextResponse.json({ error: msg.slice(0, 300), needs_migration: MIGRATION_RE.test(msg) }, { status: /já decidida|mudou|recarregue|editada por gente|fechada|inválid|somar exatamente|pede de 2|parte só pode|não é órfão/.test(msg) ? 409 : 500 })
+    return NextResponse.json({ error: msg.slice(0, 300), needs_migration: MIGRATION_RE.test(msg) }, { status: /já decidida|mudou|recarregue|editada por gente|fechada|inválid|somar exatamente|pede de 2|parte só pode|não é órfão|recusado/.test(msg) ? 409 : 500 })
   }
 }

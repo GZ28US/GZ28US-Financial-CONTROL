@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
     const { data: fx } = await db.from('data_fixes').select('*').eq('id', String(b.fix_id || '')).maybeSingle()
     if (!fx || !/^AUTO ·/.test(String(fx.label || ''))) return NextResponse.json({ error: 'não foi o app que fez isto' }, { status: 409 })
     const table = String(fx.table_name), rowId = String(fx.row_id), field = String(fx.field)
+    const changed: string[] = []   // o que o DESFAZER do casamento disse (inclusive «não revertido — confira») vai pra trilha
     if (field === 'DELETED') {
       let snap: any = null
       try { snap = JSON.parse(String(fx.old_value || '')) } catch { snap = null }
@@ -61,10 +62,17 @@ export async function POST(req: NextRequest) {
       // Só desfaz o que ainda é o MESMO casamento (MATCHED, nota «AUTO ·»); writeUnmatch devolve o backfill e vira NÃO É ESSE.
       const { data: line } = await db.from('bank_transactions').select('*').eq('id', rowId).maybeSingle()
       if (!line || line.match_status !== 'MATCHED') return NextResponse.json({ error: 'a linha já não está casada — nada a desfazer' }, { status: 409 })
-      if (!/^AUTO ·/.test(String(line.matched_note || ''))) return NextResponse.json({ error: 'este casamento é de gente, não do app — desfaça no Bank Link' }, { status: 409 })
-      const changed: string[] = []
-      try { await writeUnmatch(db, line, changed, { unlearn: false }); await logMatchEvent(db, line, 'UNMATCH', { note: 'DESFAZER · Data Checker (card verde)' }) }
+      if (!/^AUTO ·/.test(String(line.matched_note || ''))) return NextResponse.json({ error: 'este casamento foi feito por gente, não pelo app — o card verde só desfaz o que o app fez (adoção feita por gente: DESFAZER em «casadas a conferir» no Bank Link; MATCH à mão nasce visto e não tem DESFAZER na tela)' }, { status: 409 })
+      try { await writeUnmatch(db, line, changed, { unlearn: false, refuse: true }); await logMatchEvent(db, line, 'UNMATCH', { note: 'DESFAZER · Data Checker (card verde)' }) }
       catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
+      // ADOÇÃO desfeita: a memória do Data Checker também diz NÃO — o AUTO-RUN pula 'bank-drift|<id da agendada>' (a mesma chave
+      // da dispensa). DESFEITO não esconde o item; só impede a máquina de adotar de novo. A deriva não mostra mais o par recusado: gente casa à mão pela Conciliação.
+      if (line.matched_table === 'fixed_cost_expenses' && line.matched_id && (fx.check_key === 'bank-drift' || /ADOTOU agendada/.test(String(line.matched_note || '')) || (Array.isArray(line.backfill) && line.backfill.some((x: any) => x && x.t === 'fixed_cost_expenses' && x.f === 'bank_transaction_id'))))
+        await db.from('data_fixes').insert({ check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: String(line.matched_id), field: 'DISMISSED', old_value: null, new_value: 'DESFEITO', label: ('DESFEITO · o app não adota sozinho · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)
+      // CASAR do Data Checker desfeito («Despesa venceu…» / «Paga no app, sem linha no banco»): a mesma memória, na chave do card — o card
+      // não oferece de novo o par como certo e o AUTO-RUN não insiste (a rota recusaria: par recusado). Revisão da BL 1.5.1.
+      if (['undated-inv', 'paid-no-bank'].includes(String(fx.check_key)) && line.matched_table && line.matched_id)
+        await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: String(line.matched_table), row_id: String(line.matched_id), field: 'DISMISSED', old_value: null, new_value: 'DESFEITO', label: ('DESFEITO · o app não casa sozinho de novo · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)
     } else {
       const prev = fx.old_value === undefined ? null : fx.old_value
       let q: any = (db.from(table) as any).update({ [field]: prev === '' ? null : prev }).eq('id', rowId)
@@ -78,8 +86,8 @@ export async function POST(req: NextRequest) {
     }
     // DESFAZER é a pessoa discordando da prova: a máquina não refaz esta linha (DESFEITO na memória; o card ainda pergunta).
     if (table !== 'bank_transactions') await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field: 'DISMISSED', old_value: null, new_value: 'DESFEITO', label: ('DESFEITO · o app não refaz sozinho · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)
-    await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field, old_value: fx.new_value ?? null, new_value: field === 'DELETED' ? 'RESTORED' : (fx.old_value ?? null), label: ('DESFEITO · ' + String(fx.label || '').replace(/^AUTO · /, '')).slice(0, 200) }).then(() => undefined, () => undefined)
-    return NextResponse.json({ ok: true })
+    await db.from('data_fixes').insert({ check_key: fx.check_key, table_name: table, row_id: rowId, field, old_value: fx.new_value ?? null, new_value: field === 'DELETED' ? 'RESTORED' : (fx.old_value ?? null), label: ('DESFEITO · ' + String(fx.label || '').replace(/^AUTO · /, '') + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) }).then(() => undefined, () => undefined)
+    return NextResponse.json({ ok: true, changed })
   }
   // DISPENSA: «visto, está certo» com motivo — o card para de perguntar até alguém desdispensar.
   if (action === 'dismiss' || action === 'undismiss') {

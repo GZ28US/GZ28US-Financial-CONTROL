@@ -60,7 +60,10 @@ export type Sched = { id: string; supplier_id: string; expense_date: string; amo
 // shadow: registros da FOLHA pagos por outra conta (brPaid) — não casam, mas guardam contra gêmeo (CASAR COM AJUSTE).
 export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[] }
 // `o` = valor ANTERIOR do campo (undefined nos registros antigos = volta pra null).
-export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference'; v: string; o?: string | null }
+// Integridade do DESFAZER (10/set/2026): linha casada guarda SEMPRE o array ([] = o casamento não escreveu nada no app);
+// NULL numa linha casada = casamento antigo, sem registro — o DESFAZER não reverte data nenhuma por palpite, só avisa.
+// price/extra: o WIRE + TAXA (match_wire) já gravava esses campos.
+export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference' | 'price' | 'extra'; v: string; o?: string | null }
 export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'invoice_parts'])
 
 // AUTO-LINK (o motor do Bank Link; até 10/set/2026 chamado «AUTO-BOOK», nome que hoje é só do robô de e-mail do Márcio) — constantes de doutrina (3/set/2026; donos podem mover):
@@ -368,7 +371,7 @@ export function shortNameHit(line: any, c: Cand): boolean {
   return new RegExp('(^|[^A-Za-z0-9])' + m.replace(/&/g, '\\&') + '([^A-Za-z0-9]|$)', 'i').test(String(c.label || '').replace(/^[A-Z ]+ · /, ''))
 }
 export type CandTier = 'PAR' | 'LONGE' | 'COINCIDENCIA'
-export type RankedCand = Cand & { tier: CandTier }
+export type RankedCand = Cand & { tier: CandTier; named: boolean }   // named (DC 1.51.0): o nome (ou o nome curto) da linha do banco bate no registro — em linha de dinheiro só isso libera SIM/É ESTA e a pré-seleção
 const TIER_ORDER: Record<CandTier, number> = { PAR: 0, LONGE: 1, COINCIDENCIA: 2 }
 export function candTier(line: any, c: Cand, cls?: Classified): CandTier {
   const klass = (cls || classify(line)).klass
@@ -401,7 +404,7 @@ export function rank(line: any, pool: Pool): RankedCand[] {
     score += Math.min(15, hit * 5)
     if (nameHit(line, c)) score += 10
     const { members, ...rest } = c; void members
-    return { ...rest, score, dd, tier: (refused.has(c.table + ':' + c.id) ? 'COINCIDENCIA' : candTier(line, c, cls)) as CandTier }
+    return { ...rest, score, dd, named: nameHit(line, c) || shortNameHit(line, c), tier: (refused.has(c.table + ':' + c.id) ? 'COINCIDENCIA' : candTier(line, c, cls)) as CandTier }
   }).filter(c => (c.score || 0) > 20).sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || (b.score || 0) - (a.score || 0)).slice(0, 5)
 }
 
@@ -425,7 +428,7 @@ export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' |
 // A DÚVIDA DO MOTOR (BL 0.10.0, lei do João de 4/set: «silêncio é promessa de que está tudo
 // certo»). Toda linha que o plano NÃO resolve leva o motivo e o candidato que o motor viu —
 // a tela mostra o par e pergunta; nada fica parado calado.
-export type PlanDoubt = { kind: 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY' | 'FOLHA' | 'OTHER'; reason: string; klass: Klass; cands?: (Cand & { exact?: boolean })[] }
+export type PlanDoubt = { kind: 'TWIN' | 'SUPPLIER' | 'MONEY' | 'CAP' | 'MATURITY' | 'FOLHA' | 'OTHER'; reason: string; klass: Klass; cands?: (Cand & { exact?: boolean; named?: boolean })[] }
 export type Plan = { items: PlanItem[]; skipped: Record<string, number>; doubts: Record<string, PlanDoubt> }
 export type BuildOpts = { today?: string; minCreateAge?: number; itemTwins?: Set<string>; pendingKeys?: Set<string> }
 
@@ -709,7 +712,7 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     plan.skipped[k] = (plan.skipped[k] || 0) + 1
     const c0 = cur; if (!c0) return
     const amt0 = Math.abs(num(c0.l.amount))
-    plan.doubts[String(c0.l.id)] = { kind: kindOf(k, c0.cls.klass, num(c0.l.amount)), reason: k, klass: c0.cls.klass, cands: c0.cands.length ? c0.cands.slice(0, 3).map(c => { const { members, ...rest } = c; void members; return { ...rest, exact: Math.abs(c.amount - amt0) < 0.011 } }) : undefined }
+    plan.doubts[String(c0.l.id)] = { kind: kindOf(k, c0.cls.klass, num(c0.l.amount)), reason: k, klass: c0.cls.klass, cands: c0.cands.length ? c0.cands.slice(0, 3).map(c => { const { members, ...rest } = c; void members; return { ...rest, exact: Math.abs(c.amount - amt0) < 0.011, named: nameHit(c0.l, c) || shortNameHit(c0.l, c) } }) : undefined }
   }
   const used = new Set<string>()
   // Grupo consumido ⇒ membros fora; membro consumido ⇒ grupo fora (revisão #15).
@@ -858,6 +861,9 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
       const engine: 'RULE' | 'LEARN' = rule.r.origin === 'LEARNED' ? 'LEARN' : 'RULE'
       if (rule.r.target === 'FIXED_EXPENSE') {
         const near = pool.sched.filter(s => s.supplier_id === rule.r.supplier_id && !used.has('sched:' + s.id) && !used.has('fixed_cost_expenses:' + s.id) && daysBetween(s.expense_date, l.date) <= ADOPT_WINDOW_DAYS)
+        // Agendada que gente recusou pra ESTA linha (DESFAZER / NÃO É ESSE em doubt_answered) não é adotada de novo — e o NÃO nunca
+        // vira lançamento novo nem adoção de outra agendada por eliminação (revisão da BL 1.5.1): a linha vira pergunta.
+        if (near.some(s => rejected.has('fixed_cost_expenses:' + s.id))) { skip('agendada do mês recusada pra esta linha (DESFAZER / NÃO É ESSE) — diga o que foi'); continue }
         // Tolerância de valor (revisão do diff): agendada só é adotada se o valor
         // real ficar a ±50% (ou ≤ $100) do previsto — fora disso é OUTRA conta e
         // a linha fica pro humano (nunca sobrescreve o previsto às cegas).
@@ -966,8 +972,11 @@ export async function logMatchEvent(db: any, line: any, action: string, fields: 
 // `pre` (BL 0.8.0) = escritas que o chamador JÁ fez no app antes de trancar a
 // linha (adoção da agendada: valor/paid_from/elo) — entram no `backfill` pra
 // DESFAZER devolver cada campo ao valor anterior.
+// Integridade do DESFAZER (10/set/2026): o claim grava `backfill: pre` (casamento sempre com registro, [] quando nada
+// foi escrito antes); as datas preenchidas entram depois, e se um passo falhar o que já foi escrito é gravado antes de relançar.
 // ADOTAR a agendada (BL 1.3.0 — antes vivia só na rota): a conta em aberto do prestador vira paga com a data e o
-// valor do banco, elo + backfill reversível, trilha. AUTO (Data Checker ou motor) fica em A CONFERIR com DESFAZER.
+// valor do banco, elo + backfill reversível, trilha. AUTO (Data Checker) nasce visto com nota «AUTO ·» — o DESFAZER
+// mora no card verde; ADOTAR de gente cai em CASADAS A CONFERIR (ADJUST, sem visto) com DESFAZER.
 export async function adoptScheduled(db: any, line: any, a: any, opts: { engine: 'AUTO' | null; batch?: string | null; via: string }): Promise<{ days: number }> {
   const amt = Math.abs(num(line.amount))
   // Conta marcada como paga por sócio, GZ28BR ou cliente nunca passou na Regions: não se adota, não se sobrescreve o pagador.
@@ -976,16 +985,27 @@ export async function adoptScheduled(db: any, line: any, a: any, opts: { engine:
   const newDesc = (String(a.description || '') + ' ' + MARKER_ADOPTED).slice(0, 200)
   const { data: claimed } = await db.from('fixed_cost_expenses').update({ amount: amt, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id, description: newDesc, payment_date: line.date }).eq('id', a.id).is('payment_date', null).is('bank_transaction_id', null).select('id')
   if (!claimed || !claimed.length) throw new Error('agendada mudou — recarregue')
+  // `o` fiel ao que havia: valor nulo volta nulo (String(null) = 'null' quebraria o DESFAZER inteiro); a forma de pagamento prevista volta.
   const backfill: any[] = [
-    { t: 'fixed_cost_expenses', id: a.id, f: 'amount', v: String(amt), o: String(a.amount) }, { t: 'fixed_cost_expenses', id: a.id, f: 'paid_from', v: 'GZ28US', o: a.paid_from ?? null },
-    { t: 'fixed_cost_expenses', id: a.id, f: 'payment_method', v: 'BANK ACCOUNT', o: null }, { t: 'fixed_cost_expenses', id: a.id, f: 'bank_transaction_id', v: String(line.id), o: null },
+    { t: 'fixed_cost_expenses', id: a.id, f: 'amount', v: String(amt), o: a.amount == null ? null : String(a.amount) }, { t: 'fixed_cost_expenses', id: a.id, f: 'paid_from', v: 'GZ28US', o: a.paid_from ?? null },
+    { t: 'fixed_cost_expenses', id: a.id, f: 'payment_method', v: 'BANK ACCOUNT', o: a.payment_method ?? null }, { t: 'fixed_cost_expenses', id: a.id, f: 'bank_transaction_id', v: String(line.id), o: null },
     { t: 'fixed_cost_expenses', id: a.id, f: 'description', v: newDesc, o: a.description ?? null }, { t: 'fixed_cost_expenses', id: a.id, f: 'payment_date', v: String(line.date), o: null },
   ]
   const days = signedDays(String(line.date), String(a.expense_date))
   const auto = opts.engine === 'AUTO'
-  try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ('ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · ' + opts.via).slice(0, 150), match_engine: auto ? 'NAME' : null, match_batch: opts.batch || null, match_rule: null, reviewed_at: new Date().toISOString() }, backfill) }   // BL 1.4.0: casamento do motor nasce visto; o DESFAZER mora no card verde
-  catch (e) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id); throw e }
-  // AUTO: a trilha aponta pra LINHA DO BANCO — o DESFAZER genérico (um campo só) deixaria a conta ligada e re-valorada; o certo é A CONFERIR → DESFAZER (writeUnmatch devolve os seis campos).
+  // AUTO: nota «AUTO ·», nasce visto (BL 1.4.0) — o card verde desfaz e o par vira NÃO É ESSE.
+  // Gente: ADJUST sem visto — cai em CASADAS A CONFERIR, onde o DESFAZER devolve os seis campos.
+  try { await writeMatch(db, line, { table: 'fixed_cost_expenses', id: a.id }, { matched_note: ((auto ? 'AUTO · ' : '') + 'ADOTOU agendada de ' + a.expense_date + ' (' + (days >= 0 ? '+' : '') + days + ' d) · ' + opts.via).slice(0, 150), match_engine: auto ? 'NAME' : 'ADJUST', match_batch: opts.batch || null, match_rule: null, reviewed_at: auto ? new Date().toISOString() : null }, backfill) }
+  catch (e) {
+    // Só devolve a conta se o casamento NÃO pegou (relê a linha). Se a linha já aponta pra ela, o claim gravou o backfill
+    // (writeMatch grava `pre` no claim) e o DESFAZER devolve tudo — reverter aqui deixaria a linha casada com a conta reaberta.
+    const { data: now, error: rErr } = await db.from('bank_transactions').select('match_status, matched_table, matched_id').eq('id', line.id).maybeSingle()
+    // Releitura que falhou não prova que o casamento não pegou: nada é revertido às cegas (revisão da BL 1.5.1).
+    if (rErr) throw new Error('confira no Bank Link: a adoção falhou no meio e a linha não pôde ser relida (' + String(rErr.message || rErr).slice(0, 60) + ') — ' + String((e as Error)?.message || e).slice(0, 80))
+    const landed = !!now && now.match_status === 'MATCHED' && now.matched_table === 'fixed_cost_expenses' && String(now.matched_id) === String(a.id)
+    if (!landed) { for (const x of backfill) await (db.from('fixed_cost_expenses') as any).update({ [x.f]: x.o ?? null }).eq('id', x.id).eq(x.f, x.v); throw e }
+  }
+  // AUTO: a trilha aponta pra LINHA DO BANCO — o DESFAZER genérico (um campo só) deixaria a conta ligada e re-valorada; o card verde chama writeUnmatch (devolve os seis campos). Gente: trilha na conta; DESFAZER em CASADAS A CONFERIR.
   await db.from('data_fixes').insert(auto
     ? { check_key: 'bank-drift', table_name: 'bank_transactions', row_id: line.id, field: 'match_status', old_value: String(line.match_status || 'NEW'), new_value: 'MATCHED', label: ('AUTO · deriva: nome do prestador + linha única · agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }
     : { check_key: 'bank-drift', table_name: 'fixed_cost_expenses', row_id: a.id, field: 'payment_date', old_value: null, new_value: String(line.date), label: ('ADOTAR · agendada ' + a.expense_date + ' paga no banco em ' + line.date + ' · $' + amt).slice(0, 200) }).then(() => undefined, () => undefined)
@@ -994,7 +1014,7 @@ export async function adoptScheduled(db: any, line: any, a: any, opts: { engine:
 
 export async function writeMatch(db: any, line: any, cand: Cand | { table: string; id: string; members?: Member[] }, extra: Record<string, unknown>, pre: Backfill[] = []): Promise<{ backfill: Backfill[] }> {
   const { data: claimed, error: claimErr } = await db.from('bank_transactions')
-    .update({ match_status: 'MATCHED', matched_table: cand.table, matched_id: cand.id, backfill: null, ...extra })
+    .update({ match_status: 'MATCHED', matched_table: cand.table, matched_id: cand.id, backfill: pre, ...extra })
     .eq('id', line.id).in('match_status', ['NEW', 'QUEUED']).select('id')
   if (claimErr) throw new Error(claimErr.message)
   if (!claimed || !claimed.length) throw new Error('linha do banco já decidida (outra aba ou sync) — recarregue')
@@ -1026,18 +1046,26 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
     if (error) throw new Error(`${table}: ${error.message}`)
     for (const r of data || []) backfill.push({ t: table, id: r.id, f: field, v: value })
   }
-  if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
-  else if (cand.table === 'invoice_payments') await fill('invoice_payments', [cand.id], 'paid_at', paidAtFor(line.date))
-  else if (cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group') {
-    // Só os MEMBROS que formaram o total do grupo (revisão #18), nunca "todo mundo do grupo".
-    const byTable = new Map<string, string[]>()
-    for (const m of cand.members || []) byTable.set(m.table, [...(byTable.get(m.table) || []), m.id])
-    for (const [t, ids] of byTable) await fill(t, ids, 'payment_date', line.date)
-  }
-  if (backfill.length) {
-    const { error } = await db.from('bank_transactions').update({ backfill }).eq('id', line.id)
+  // Grava o backfill acumulado na linha, guardado pelo casamento (matched_table/matched_id): nunca escreve em linha que mudou de dono.
+  const save = async () => {
+    const { error } = await db.from('bank_transactions').update({ backfill }).eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id)
     if (error) throw new Error('backfill registrado no app mas não na linha do banco: ' + error.message)
   }
+  try {
+    if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
+    else if (cand.table === 'invoice_payments') await fill('invoice_payments', [cand.id], 'paid_at', paidAtFor(line.date))
+    else if (cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group') {
+      // Só os MEMBROS que formaram o total do grupo (revisão #18), nunca "todo mundo do grupo".
+      const byTable = new Map<string, string[]>()
+      for (const m of cand.members || []) byTable.set(m.table, [...(byTable.get(m.table) || []), m.id])
+      for (const [t, ids] of byTable) await fill(t, ids, 'payment_date', line.date)
+    }
+  } catch (e) {
+    // Falhou no meio: o que JÁ foi preenchido entra no backfill da linha antes de relançar — senão o DESFAZER não o acha.
+    if (backfill.length > pre.length) await save().catch(() => undefined)
+    throw e
+  }
+  if (backfill.length > pre.length) await save()   // o claim já gravou o `pre`
   return { backfill }
 }
 
@@ -1062,15 +1090,19 @@ async function wireInvoiceFor(db: any, l: any): Promise<{ invoice_id: string; co
 }
 
 // DESFAZER: reverte só o que `backfill` diz que escrevemos (valor igual ⇒ ninguém
-// mexeu depois); linha sem registro (casada antes da v0.3.0) usa a regra antiga
-// de igualdade com a data do banco. Tarifa criada pelo motor é apagada. Cada
+// mexeu depois). Linha casada SEM registro (backfill NULL) não reverte data nenhuma:
+// a regra antiga de igualdade com a data do banco apagava a data que GENTE digitou (e
+// no purchase_group, a do grupo inteiro) — agora só conta e AVISA «não revertido —
+// confira» (integridade do DESFAZER, 10/set/2026). Tarifa criada pelo motor é apagada. Cada
 // passo checa erro; a linha do banco é a ÚLTIMA escrita. (revisões #6 #10)
 // BL 0.8.0 (revisão): a ordem importa — PRIMEIRO reverte o backfill (a agendada
 // adotada volta ao valor/paid_from original e SOLTA o elo bank_transaction_id),
 // DEPOIS apaga o que o motor CRIOU (marcador no texto + elo com a linha — nunca
 // pelo engine sozinho, nunca linha de gente). RULE/LEARN entram na deleção:
 // antes, DESFAZER deixava a despesa criada por regra viva no DRE (risco #2).
-export async function writeUnmatch(db: any, line: any, changed: string[], opts: { unlearn?: boolean } = {}) {
+// opts.refuse é OBRIGATÓRIO (sem padrão): cada chamador decide se o DESFAZER é juízo («não é esse» — o par vira
+// memória de recusa que a máquina respeita) ou só rollback (DESFAZER LOTE).
+export async function writeUnmatch(db: any, line: any, changed: string[], opts: { unlearn?: boolean; refuse: boolean }) {
   let bucketHandled = false
   if (line.match_status === 'MATCHED' && line.matched_table && line.matched_id) {
     const t = line.matched_table as string, id = line.matched_id as string
@@ -1149,32 +1181,27 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     }
     // PESSOAL da PERGUNTA (engine nulo, sem backfill): a despesa da season que o motor criou
     // morre com o DESFAZER — marcador + elo + origem, nunca linha de gente (revisão 4/set).
-    // CASAR COM AJUSTE sem backfill gravado (restore/reset): solta o elo da folha pela coluna.
-    if ((t === 'expense_group' || (t === 'expenses' && String(line.match_engine) === 'ADJUST')) && !recorded && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
+    // CASAR COM AJUSTE sem o elo no backfill (restore/reset — o claim grava [] quando nada foi escrito): solta o elo da folha pela coluna.
+    if ((t === 'expense_group' || (t === 'expenses' && String(line.match_engine) === 'ADJUST')) && !(recorded || []).some((b: any) => b && b.t === 'expenses' && b.f === 'bank_transaction_id') && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
     let personalHandled = false
     if (t === 'expenses' && !bucketHandled) {
       const { data: r, error } = await db.from('expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id')
       if (error) throw new Error('expenses: ' + error.message)
       if (r && r.length) { changed.push('despesa pessoal apagada'); personalHandled = true }
     }
-    if (recorded || bucketHandled || personalHandled) { /* já revertido acima / balde já tratado */ } else if (DATE_TABLES.has(t)) {
-      const { data: r, error } = await db.from(t).update({ payment_date: null }).eq('id', id).eq('payment_date', line.date).select('id')
-      if (error) throw new Error(`${t}: ${error.message}`)
-      if (r && r.length) changed.push(`${t}.payment_date→null`)
-    } else if (t === 'invoice_payments') {
-      const { data: r, error } = await db.from('invoice_payments').update({ paid_at: null }).eq('id', id).eq('paid_at', paidAtFor(line.date)).select('id')
-      if (error) throw new Error('invoice_payments: ' + error.message)
-      if (r && r.length) changed.push('invoice_payments.paid_at→null')
-    } else if (t === 'purchase_group') {
-      for (const g of ['goods', 'inputs', 'inventory', 'invoice_expenses']) {
-        const { data: r, error } = await db.from(g).update({ payment_date: null }).eq('purchase_group', id).eq('payment_date', line.date).select('id')
-        if (error) throw new Error(`${g}: ${error.message}`)
-        if (r && r.length) changed.push(`${g}×${r.length}.payment_date→null`)
+    // Sem registro do que o casamento escreveu (backfill NULL): NUNCA reverte data por igualdade com a data do banco — a data
+    // igual pode ser de gente (e no purchase_group a regra antiga zerava o grupo inteiro). Só CONTA e avisa; nenhuma escrita.
+    if (recorded || bucketHandled || personalHandled) { /* já revertido acima / balde já tratado */ } else if (line.date) {
+      const bankDay = String(line.date).slice(0, 10)
+      const report = async (table: string, what: string, q: (b: any) => any) => {
+        const { count, error } = await q(db.from(table).select('id', { count: 'exact', head: true }))
+        if (error) changed.push(`${what}: conferência da data falhou (${error.message}) — confira`)
+        else if (count) changed.push(`${what}${count > 1 ? '×' + count : ''} = ${bankDay} (data do banco) não revertido — casamento sem registro do que escreveu; confira`)
       }
-    } else if (t === 'kit_group') {
-      const { data: r, error } = await db.from('invoice_parts').update({ payment_date: null }).eq('kit_group', id).eq('payment_date', line.date).select('id')
-      if (error) throw new Error('invoice_parts: ' + error.message)
-      if (r && r.length) changed.push(`invoice_parts×${r.length}.payment_date→null`)
+      if (DATE_TABLES.has(t)) await report(t, `${t}.payment_date`, b => b.eq('id', id).eq('payment_date', bankDay))
+      else if (t === 'invoice_payments') await report('invoice_payments', 'invoice_payments.paid_at', b => b.eq('id', id).eq('paid_at', paidAtFor(bankDay)))
+      else if (t === 'purchase_group') { for (const g of ['goods', 'inputs', 'inventory', 'invoice_expenses']) await report(g, `${g}.payment_date`, b => b.eq('purchase_group', id).eq('payment_date', bankDay)) }
+      else if (t === 'kit_group') await report('invoice_parts', 'invoice_parts.payment_date', b => b.eq('kit_group', id).eq('payment_date', bankDay))
     }
   }
   // PAID FROM cravado por causa DESTE casamento (bulk CERTO do Data Checker,
@@ -1202,16 +1229,21 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     const { data: r } = await db.from('bank_merchant_rules').update({ active: false, paused_reason: 'pausada por DESFAZER em ' + todayNY() }).eq('id', line.match_rule).eq('origin', 'LEARNED').select('id')
     if (r && r.length) changed.push('regra aprendida pausada')
   }
-  // DESFAZER de um casamento que a máquina fez (nota «AUTO ·», sem revisão) é a pessoa dizendo NÃO É ESSE:
-  // o par recusado entra em doubt_answered e nem o motor nem o Data Checker o refazem (BL 1.3.0, revisão).
+  // DESFAZER com juízo (opts.refuse) é a pessoa dizendo NÃO É ESSE — vale pro casamento que a máquina fez (nota «AUTO ·»,
+  // visto ou não: desde a BL 1.4.0 o casamento do motor nasce visto), pro WIRE + TAXA (ADJUST em invoice_expenses) e pro ADOTAR de gente (ADJUST em fixed_cost_expenses), de qualquer autor:
+  // o par recusado entra em doubt_answered e a máquina (motor, Data Checker) não o refaz; gente ainda casa à mão.
+  // Não vale pra CASAR COM AJUSTE da folha: a rota humana relê a recusa e travaria a própria pessoa.
+  // DESFAZER LOTE passa refuse:false — rollback não é juízo.
   const update: any = { match_status: 'NEW', matched_table: null, matched_id: null, matched_note: null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }
-  if (line.matched_table && line.matched_id && !line.reviewed_at && /^AUTO ·/.test(String(line.matched_note || ''))) {
+  if (opts.refuse && line.matched_table && line.matched_id && (/^AUTO ·/.test(String(line.matched_note || '')) || (String(line.match_engine) === 'ADJUST' && (line.matched_table === 'invoice_expenses' || line.matched_table === 'fixed_cost_expenses')))) {
     // Lê o doubt_answered ATUAL do banco (a linha recebida pode vir sem a coluna): nunca apagar os NÃO anteriores.
     const { data: cur0 } = await db.from('bank_transactions').select('doubt_answered').eq('id', line.id).maybeSingle()
     const src = (cur0 && cur0.doubt_answered && typeof cur0.doubt_answered === 'object') ? cur0.doubt_answered : ((line.doubt_answered && typeof line.doubt_answered === 'object') ? line.doubt_answered : {})
-    const da = src
-    const cands = [...new Set([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : []), String(line.matched_table) + ':' + String(line.matched_id)].map(String))]
-    update.doubt_answered = { cands, at: new Date().toISOString() }
+    const key = String(line.matched_table) + ':' + String(line.matched_id)
+    // Guarda as outras chaves; a recusa nova vai pro fim e a lista fica com as 20 mais recentes (o teto do NÃO É ESSE).
+    const prevC = [...(Array.isArray(src.cands) ? src.cands : []), ...(src.cand ? [src.cand] : [])].map(String).filter((x: string) => x !== key)
+    const cands = [...new Set([...prevC, key])].slice(-20)
+    update.doubt_answered = { ...src, cands, at: new Date().toISOString() }
   }
   const { data, error } = await db.from('bank_transactions').update(update).eq('id', line.id).eq('match_status', line.match_status).select('id')
   if (error) throw new Error(error.message)

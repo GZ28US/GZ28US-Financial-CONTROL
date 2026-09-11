@@ -1,7 +1,7 @@
 'use client'
 
 // A FILA «A ATRIBUIR» (AUTO-BOOK fase B, BL 0.9.0, João + Márcio, 4/set/2026).
-// O motor já lançou a compra no dia do banco (caixa e DRE certos) numa
+// O AUTO-LINK lançou a compra com a data POSTADA do banco (caixa certo; DRE em dobro se ela já estava lançada à mão) numa
 // pseudo-invoice A ATRIBUIR — o balde, conta de suspensão. Aqui o humano só diz
 // o DONO, um clique: CARRO move a despesa pra invoice (mesmo id, sem duplicar),
 // ESTOQUE vira inventário, SUPPLIES vira insumo, FIXO vira custo fixo do
@@ -115,7 +115,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
     } catch (e) { fail(e); await load() } finally { unlock(row.row_id) }
   }
   async function undo(row: Row) {
-    if (anyBusy || !row.bank_id || !confirm('DESFAZER: a linha volta pro banco SEM lançamento (o motor recria na próxima rodada se a regra ainda valer). Continuar?')) return
+    if (anyBusy || !row.bank_id || !confirm('DESFAZER: apaga esta compra do balde e a linha volta pro banco sem dono. Se a regra do balde ainda cobrir a linha, a próxima rodada do AUTO-LINK (até 6 h) lança de novo — pra não voltar, decida a linha na Conciliação do Data Checker antes da rodada: MATCH com o registro certo (pedido digitado linha a linha só vira candidato se for um grupo de compra) ou IGNORE — EXPLAIN (TO BOOK) não segura: a rodada lança a linha marcada também. Continuar?')) return
     lock(row.row_id)
     try { await post({ action: 'unmatch', bank_id: row.bank_id }); await load() } catch (e) { fail(e); await load() } finally { unlock(row.row_id) }
   }
@@ -185,7 +185,7 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
       {err && <p className="text-red-400">{err} <button onClick={load} className="underline ml-2">tentar de novo</button></p>}
       {d?.needs_migration && <p className="text-amber-300">Rode <b>MIGRATION_auto_book_phase_b.sql</b> no SQL Editor — o balde precisa da invoice A ATRIBUIR{d.error ? ' · ' + d.error : ''}.</p>}
       {msg && <p className="text-xs text-fuchsia-300 font-bold">{msg}</p>}
-      <p className="text-xs text-gray-500 max-w-4xl">O motor já lançou a compra no dia do banco (caixa e DRE certos). Aqui você só diz o DONO: CARRO move a despesa pra invoice, ESTOQUE vira inventário, SUPPLIES vira insumo, FIXO vira custo fixo do fornecedor; DIVIDIR reparte um PayPal em várias. SUPPLIES e FIXO ensinam uma regra. DESFAZER devolve a linha ao banco sem lançamento.</p>
+      <p className="text-xs text-gray-500 max-w-4xl">O AUTO-LINK lançou esta cobrança no balde com a data POSTADA do banco (o dia em que a Regions registrou, não o da compra). O caixa conta certo; o DRE também, a menos que a compra já estivesse lançada à mão — aí ela conta duas vezes (card «Balde em dobro» do Data Checker). Aqui você diz o DONO: CARRO move a despesa pra invoice, ESTOQUE vira inventário, SUPPLIES vira insumo, FIXO vira custo fixo do fornecedor; DIVIDIR reparte um PayPal em várias. SUPPLIES e FIXO ensinam uma regra. DESFAZER apaga o lançamento do balde e devolve a linha ao banco — a próxima rodada lança de novo se a regra ainda cobrir a linha.</p>
       {tab === 'ATRIBUIDAS' ? (
         <div className="divide-y divide-gray-800">
           {(d?.attributed || []).length === 0 && <p className="text-gray-500">nenhuma atribuição nos últimos 60 dias.</p>}
