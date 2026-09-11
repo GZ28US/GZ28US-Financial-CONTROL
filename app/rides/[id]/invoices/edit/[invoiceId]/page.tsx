@@ -12,7 +12,7 @@ import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } f
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
-import { mirrorBrShoppingInvoice, type BrMirrorItem } from '@/lib/brShoppingMirror'
+import { mirrorBrShoppingInvoice, brMirrorFailureCause, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, methodsFor } from '@/components/PaymentFields'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, type DeliverChipRow } from '@/components/DeliverChip'
@@ -2661,6 +2661,8 @@ export default function EditInvoicePage() {
             }
           })
         const res = await mirrorBrShoppingInvoice({
+          // O servidor lê a invoice, o elo e as despesas do banco do US por este id.
+          usInvoiceId: invoiceId,
           usInvoiceCode: invoiceCode,
           rideName: projectCode + (projectName ? ` — ${projectName}` : ''),
           usService: service,
@@ -2671,8 +2673,11 @@ export default function EditInvoicePage() {
           setBrInvoiceId(res.brInvoiceId)
           await supabase.from('invoices').update({ br_invoice_id: res.brInvoiceId }).eq('id', invoiceId)
         }
+        if (res.keptPaid) {
+          alert(`A invoice do GZ28US foi salva. Nenhuma despesa está mais PAID FROM GZ28BR, mas a SHOPPING INVOICE ${res.code || ''} do BR (cliente BR.085) NAO foi apagada: o GZ28US já pagou parte dela, e dinheiro que se moveu só o app BR desfaz.`)
+        }
       } catch (err) {
-        alert('A invoice do GZ28US foi salva, mas a SHOPPING INVOICE do BR (cliente BR.085) NAO foi gravada:\n' + String(err) + '\n\nAbra e salve de novo para tentar outra vez.')
+        alert('A invoice do GZ28US foi salva, mas a SHOPPING INVOICE do BR (cliente BR.085) NAO foi gravada.\n\nCausa — ' + brMirrorFailureCause(err) + '\n\nAbra e salve de novo para tentar outra vez.')
       }
     }
 

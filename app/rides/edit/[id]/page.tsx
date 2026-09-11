@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { supabaseBR } from '@/lib/supabaseBR'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { BASE_PATH, CAR_DESTINY, insuresCar, isOurCar } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
 import { plateStatus } from '@/lib/plateExpiry'
@@ -323,30 +323,37 @@ export default function EditRidePage() {
     // COMMON cars live in BOTH apps under the SAME code (e.g. US.038). A rename
     // here renames the BR system too: code, name and the BR invoices that carry
     // the code. Self-gating — if BR has no ride with this code, nothing happens.
+    // NO SERVIDOR (11/set/2026): /api/br-mirror/ride-rename, com a chave de serviço
+    // do BR. O cliente `supabaseBR` anon daqui lia null pelo RLS — o carro "não era
+    // comum", nada era renomeado no BR e ninguém ficava sabendo. Agora a falha fala.
     let isCommonCar = false
+    // A PASTA BR DO DROPBOX SEGUE O RIDE DO BR, não a existência dele: se o ride do
+    // BR não foi renomeado (código duplicado lá, UPDATE recusado), renomear a pasta
+    // deixaria pasta e ride com códigos diferentes.
+    let brRideRenamed = false
     try {
-      const { data: brRide } = await supabaseBR.from('rides').select('id').eq('project_code', oldCode).maybeSingle()
-      if (brRide) {
-        isCommonCar = true
-        await supabaseBR.from('rides').update({ project_code: newCode, project_name: projectName || null }).eq('id', brRide.id)
-        if (oldCode !== newCode) {
-          const { data: binvs } = await supabaseBR.from('invoices').select('id, invoice_code').eq('ride_id', brRide.id)
-          for (const inv of (binvs || [])) {
-            if (inv.invoice_code?.startsWith(oldCode + '.')) {
-              await supabaseBR.from('invoices').update({ invoice_code: newCode + inv.invoice_code.slice(oldCode.length) }).eq('id', inv.id)
-            }
-          }
-        }
+      const res = await fetch(`${BASE_PATH}/api/br-mirror/ride-rename`, {
+        method: 'POST', headers: await sessionHeaders(),
+        body: JSON.stringify({ usRideId: rideId, oldCode }),
+      })
+      const data = await res.json().catch(() => null)
+      isCommonCar = !!data?.common
+      brRideRenamed = data?.ok ? isCommonCar : !!data?.rideRenamed
+      if (!res.ok || !data?.ok) {
+        alert((isCommonCar
+          ? 'Warning: this car also exists in the BR app but the rename could not be fully synced there — check it in the BR app.\n'
+          : 'Warning: the BR app could not be checked for this car, so if it also exists there it was NOT renamed — check the BR app.\n')
+          + (data?.error || `HTTP ${res.status}`))
       }
     } catch (e) {
-      alert('Warning: this car also exists in the BR app but the rename could not be synced there — rename it in the BR app manually.\n' + String(e))
+      alert('Warning: the BR app could not be reached (no answer from the app server) — if this car also exists in the BR app, rename it there manually.\n' + String(e))
     }
 
     // Dropbox folder sync: the physical ride folder follows every rename /
     // renumber ("OLDCODE - x" -> "NEWCODE - NewName"). Common cars also update
     // their folder in the BR archive. Non-blocking.
     const folderFails: string[] = []
-    for (const zone of isCommonCar ? ['US', 'BR'] : ['US']) {
+    for (const zone of brRideRenamed ? ['US', 'BR'] : ['US']) {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST',

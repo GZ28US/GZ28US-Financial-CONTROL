@@ -1,4 +1,5 @@
-import { supabaseBR } from '@/lib/supabaseBR'
+import { BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 // ── US shopping-invoice income PAID  ->  the BR invoice's GZ28US bills go PAID ──
 // A GZ28BR ride expense paid by GZ28US is a re-sale: GZ28US bills GZ28BR for the
@@ -23,18 +24,24 @@ import { supabaseBR } from '@/lib/supabaseBR'
 //   • the Florida tax row .. supplier = 'GZ28US' (its source stays 'GZ28BR')
 // The US invoice's grand total is cost x1.10 x1.065 — it INCLUDES that Florida tax
 // — so paying it clears the BR-side tax line too.
+//
+// A ESCRITA MORA NO SERVIDOR (11/set/2026): /api/br-mirror/paid, com a chave de
+// serviço do BR. Até aqui isto escrevia pelo cliente `supabaseBR` anon do
+// navegador — a ponte respondia 503 e o RLS do BR devolvia [] mudo, então nenhum
+// PAID chegou ao BR. "Não é espelho" continua sendo no-op; FALHA vai para o console.
 
 // Mark (or, with paidDate = null, un-mark) every GZ28US-owed expense of the BR
 // invoice mirrored from this US invoice. `paidDate` is a YYYY-MM-DD string.
 export async function mirrorUsInvoicePaidToBR(usInvoiceId: string, paidDate: string | null) {
+  if (!usInvoiceId) return
   try {
-    if (!usInvoiceId) return
-    const { data } = await supabaseBR.from('invoices').select('id').eq('us_invoice_id', usInvoiceId).limit(1)
-    const brInvoiceId = data?.[0]?.id
-    if (!brInvoiceId) return // not a BR-mirrored invoice — nothing to do
-    const value = /^\d{4}-\d{2}-\d{2}$/.test(String(paidDate || '')) ? paidDate : null
-    // Merchandise GZ28US paid for, then the Florida tax owed to the US unit.
-    await supabaseBR.from('invoice_expenses').update({ payment_date: value }).eq('invoice_id', brInvoiceId).eq('source', 'GZ28US')
-    await supabaseBR.from('invoice_expenses').update({ payment_date: value }).eq('invoice_id', brInvoiceId).eq('supplier', 'GZ28US')
-  } catch { /* best-effort mirror */ }
+    const res = await fetch(`${BASE_PATH}/api/br-mirror/paid`, {
+      method: 'POST', headers: await sessionHeaders(),
+      body: JSON.stringify({ usInvoiceId, paidDate: paidDate ?? null }),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok || !data?.ok) console.error('[espelho PAID → BR] falhou:', data?.error || `HTTP ${res.status}`)
+  } catch (e) {
+    console.error('[espelho PAID → BR] sem resposta do servidor do app:', e)
+  }
 }

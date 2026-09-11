@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { ensureBRBridgeSession, clearBRBridgeSession } from '@/lib/supabaseBR'
 
 // Routes that are PUBLIC by design — no login. The client self-service form
 // (/clients/self/[id]) is sent to clients so they fill in their own info;
@@ -24,17 +23,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true
-    // The cross-project BR client (supabaseBR) must be authenticated before any
-    // BR-backed write (suppliers/PAID mirrors, common-ride rename) — the BR
-    // tables are behind RLS. Mint/attach the bridge session on login; drop it
-    // on logout. Best-effort with a timeout so a bridge hiccup never blocks
-    // the US app itself. (Mirror of the BR AuthGate's US-bridge wiring.)
-    const onSession = async (session: unknown) => {
-      if (session) {
-        await Promise.race([ensureBRBridgeSession(), new Promise((r) => setTimeout(r, 8000))])
-      } else {
-        void clearBRBridgeSession()
-      }
+    // SEM PONTE PARA O BR (11/set/2026). Aqui o login pendurava uma sessão do banco
+    // do BR no navegador (ensureBRBridgeSession) — que nunca subiu: a rota da ponte
+    // respondia 503 e os espelhos US→BR morriam calados. Decisão do dono: escrita
+    // entre projetos é do SERVIDOR (/api/br-mirror/*, chave de serviço do BR), e
+    // nenhuma sessão do BR chega à tela. O portão só cuida da sessão do US.
+    const onSession = (session: unknown) => {
       if (mounted) setStatus(session ? 'in' : 'out')
     }
     // SESSÃO QUE PARECE VIVA E NÃO ESTÁ (08/set/2026). `getSession()` devolve o
@@ -73,7 +67,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       onSession(data.session)
     })
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      void onSession(session)
+      onSession(session)
     })
     return () => { mounted = false; sub.subscription.unsubscribe() }
   }, [])

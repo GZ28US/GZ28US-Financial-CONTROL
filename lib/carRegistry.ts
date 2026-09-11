@@ -44,6 +44,15 @@ export function primeCarRegistry(db: CarQueryable): Promise<void> {
 /**
  * Mesma coisa para um SEGUNDO banco (o espelho US→BR escreve em suppliers do BR,
  * e um carro do BR também não pode virar fornecedor). Cache próprio.
+ *
+ * NA TELA NÃO EXISTE MAIS BANCO DO BR PARA ENTREGAR AQUI (11/set/2026). Quem
+ * chamava era o espelho de fornecedores com o cliente `supabaseBR` do navegador —
+ * anon puro, porque a ponte respondia 503 — e o RLS do BR devolvia [] mudo: esta
+ * leitura "rodava" e a guarda nunca soube de um carro do BR. O espelho foi para o
+ * servidor (/api/br-mirror/suppliers), que lê os rides dos DOIS bancos com chave
+ * de serviço a cada chamada e CONFERE o erro antes de gravar (lá "não consegui ler
+ * os carros" vira resposta de erro, não guarda enfraquecida em silêncio). Quem usar
+ * esta função daqui em diante é ROTA, com `supabaseBRService()` nas mãos.
  */
 let pendingMirror: Promise<void> | null = null
 export function primeMirrorCarRegistry(db: CarQueryable): Promise<void> {
