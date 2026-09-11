@@ -53,7 +53,7 @@ export type Regra = {
 
 export type Etapa = { id: string; titulo: string; resumo: string; regras: Regra[] }
 
-export const LIVRO_ATUALIZADO = '2026-09-10'
+export const LIVRO_ATUALIZADO = '2026-09-11'
 
 // ═══ A SEQUÊNCIA — O CAMINHO DO E-MAIL DE COMPRA ATÉ A LINHA NO APP ═══════════
 export const SEQUENCIA: Etapa[] = [
@@ -143,6 +143,18 @@ export const SEQUENCIA: Etapa[] = [
       { id: '3.5', estado: 'À MÃO', desde: '05/09/2026',
         texto: 'Não é gasto até pagar: orçamento, cotação, link de pagamento em aberto, backorder, contrato e e-sign não entram.',
         nota: 'O robô não separa cotação de compra quando as duas trazem total e número; quem responde a dúvida aplica a regra e ignora.' },
+      { id: '3.6', estado: 'FURO', desde: '11/09/2026',
+        texto: 'Aviso de ENVIO do PayPal («order is on its way») não é cobrança: no máximo vira fato de rastreio da compra já lançada. Em qualquer e-mail do PayPal, o fornecedor é o comerciante escrito no corpo, nunca «PayPal».',
+        onde: 'lib/autoBookMail.server.ts · classify · paypalReceipt · vendorOf',
+        nota: 'Caso de 10/09 14:23: o aviso de envio da compra HHP 384734, lançada em 09/09, abriu a dúvida 6bab19c6 como cobrança nova de US$ 1.290,93 do fornecedor «PayPal». Fechada à mão como IGNORED. Conserto pedido ao App development em 11/09.' },
+      { id: '3.7', estado: 'FURO', desde: '11/09/2026',
+        texto: 'Recibo de loja Shopify («Receipt for order #13150») chega à fila mesmo com pedido de 5 dígitos: remetente @t.shopifyemail.com é recibo de loja por definição.',
+        onde: 'lib/mailToItem.server.ts · PEDIDO_NOVO · COMPRA_ASSUNTO',
+        nota: 'Caso Detail Ground 13150 (10/09 13:39, US$ 77,67): nenhuma linha em auto_book_mail. O e-mail morreu calado e a compra só foi achada pela foto no grupo do time. Conserto pedido ao App development em 11/09.' },
+      { id: '3.8', estado: 'À MÃO', desde: '11/09/2026',
+        texto: 'Hapvida / NotreDame Intermédica é o plano de saúde do BR, pago pela Chris por lá, e não se registra ainda. Todo e-mail dela — boleto, aviso de cancelamento ou cobrança de terceiro — vai para Itens Excluídos na rodada, sem pergunta.',
+        fala: 'HP Vida é coisa do BR, a Chris paga por lá, não estamos registrando isso ainda, apague sempre os emails.',
+        nota: 'Apagar é mover para Itens Excluídos, nunca exclusão definitiva. Em 11/09 foram 7 e-mails da caixa 2.' },
     ],
   },
   {
@@ -212,6 +224,10 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'Compra já lançada no app do BR não vira pergunta.',
         onde: 'pedidosConhecidos',
         nota: 'Hoje o robô só consulta o banco do US, e a pergunta sai com o aviso «CONFERIR NO APP DO BR». Falta a chave de serviço do BR no Vercel do US (SUPABASE_BR_SERVICE_ROLE_KEY).' },
+      { id: '5.9', estado: 'FURO', desde: '11/09/2026',
+        texto: 'Pedido com letra («Order A13706») é pedido. Dois e-mails da mesma compra — mesmo fornecedor, mesmo valor ao centavo, dúvida aberta nas últimas 24 horas — viram UMA pergunta só.',
+        onde: 'lib/mailToItem.server.ts · PEDIDO_NOVO · auto_book_mail.message_key',
+        nota: 'Caso Aeromotive A13706 (10/09 22:37 e 22:38): a confirmação e o e-mail de boas-vindas abriram as dúvidas 07142a50 e 3ccf912c, as duas «sem número de pedido». Lançado à mão na US.019.3. Conserto pedido ao App development em 11/09.' },
     ],
   },
   {
@@ -495,6 +511,11 @@ export const SEQUENCIA: Etapa[] = [
       { id: '13.6', estado: 'NO AR', desde: '10/09/2026',
         texto: 'O Data Checker confere os dois robôs lado a lado e pergunta a gente quando eles discordam.',
         onde: 'lib/enginesAudit.server.ts · card «Os dois motores concordam?»' },
+      { id: '13.7', estado: 'À MÃO', desde: '11/09/2026',
+        texto: 'Gasto real que ainda não saiu no grupo e que a rede de 5 minutos não vai mandar — compra de poucos dias achada só agora, goods, inputs, custo fixo, estorno — sai no grupo REPORTS à mão, no formato do balão da rede. A marca de enviado (stream_mail_moves · ern:<tipo>:<id>) é gravada na mesma passada; sem ela, a rede manda de novo.',
+        fala: 'não esqueça de mandar os gastos reais no grupo de report. E tem que ficar marcados como enviados, pra não enviar duplicado depois.',
+        onde: 'lib/expenseReportNet.server.ts · markReported',
+        nota: 'A rede cobre só invoice_expenses, receitas e folha, e só com a data do dinheiro nos últimos 3 dias (13.1). Na mesma ordem ele disse: «Não esqueça de reportar qualquer saída ou entrada de $ nos grupos de report». Estorno reporta quando o dinheiro CAI; até lá a linha fica CANCELLED.' },
     ],
   },
 ]
@@ -581,6 +602,11 @@ export const OUTRAS_BOCAS: Etapa[] = [
         texto: 'Só lança sozinho com o CARRO identificado e o VALOR lido; sem os dois, a mensagem espera gente.',
         onde: 'app BR /api/cron/financeiro',
         nota: 'Medido em 10/09, últimos 14 dias: 128 posts — 1 lançado (29/08), 65 esperando gente, 62 descartados.' },
+      { id: 'C.7', estado: 'À MÃO', desde: '11/09/2026',
+        texto: 'Compra do BR que chega por e-mail (Mercado Livre, Uber) acha o carro e o pagamento nos grupos: o pedido e o *carro* no COMPRAS, a foto do Pix no FINANCEIRO.',
+        fala: 'As compras do BR vc vai encontrar nos grupos COMPRAS e FINANCEIRO',
+        onde: 'espelho whatsapp_messages (banco US): «GZ28 Tpec - COMPRAS» e «GZ28 Tad - FINANCEIRO», só a linha canônica (duplicate_of nulo) · financeiro_inbox',
+        nota: 'O e-mail da NF-e do Mercado Livre não traz o valor; o valor sai do Pix no FINANCEIRO. O recibo da Uber traz o trajeto, e é o trajeto que casa com a legenda no COMPRAS.' },
     ],
   },
 ]
