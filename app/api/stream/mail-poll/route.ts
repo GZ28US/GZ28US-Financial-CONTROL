@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
+import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { getMailAuth, setMailAuth, freshAccessToken, organizeInbox, sweepSpam, sweepMarketing } from '@/lib/streamMail.server'
 import { runAppsSweep } from '@/lib/appsMail.server'
 import { runStaffTravelSweep } from '@/lib/staffTravel.server'
@@ -155,6 +156,16 @@ async function run(force: boolean): Promise<NextResponse> {
   return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, trackAsked, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, mailToItem, streamAnswers, financeiro, payroll })
 }
 
-export async function POST() { return run(false) }
+// PORTÃO (11/set/2026): esta batida mexe nas caixas de e-mail, lança dinheiro, manda WhatsApp e acorda
+// o robô financeiro do BR — e respondia a qualquer pedido anônimo. Só entra o cron da Vercel (Bearer
+// CRON_SECRET) ou a chave de leitura (header x-read-key; `?key=` ainda vale na transição). Nenhuma
+// tela do app chama esta rota (procurado no repositório em 11/set).
+export async function POST(req: NextRequest) {
+  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  return run(false)
+}
 // Vercel cron calls GET daily as the backstop; force past the throttle.
-export async function GET() { return run(true) }
+export async function GET(req: NextRequest) {
+  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  return run(true)
+}
