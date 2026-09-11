@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { waSelfBlockReason } from '@/lib/waSelfGuard.server'
 import { mencoesDoTexto } from '@/lib/waMentions'
+import { requireUser, sendKeyOk } from '@/lib/apiAuth.server'
 
 // WA SEND LOG (31/ago/2026, caso Gui): o aviso de duty morreu calado e ninguém
 // soube. TODA tentativa de envio — sucesso e falha — fica em wa_send_log; o
@@ -118,6 +119,28 @@ export async function POST(req: NextRequest) {
   // Hoisted pro catch conseguir logar a exceção com contexto.
   let logCtx = { destination: null as string | null, group_name: null as string | null, kind: 'chat', body_head: '' }
   try {
+    const payload = await req.json().catch(() => ({}))
+
+    // PORTÃO DO ENVIO (auditoria de 11/set/2026): esta rota mandava WhatsApp em
+    // nome do app — pra cliente, pra grupo, com a assinatura registrada — a
+    // QUALQUER pedido anônimo que achasse a URL. Agora só passa tela logada (JWT
+    // do Supabase, requireUser) ou servidor/script com a chave de envio no header
+    // x-send-key (lib/apiAuth.server.ts), e a checagem falha fechada. A recusa
+    // vai pro wa_send_log como toda tentativa — destino e começo do texto, NUNCA
+    // a credencial — e nada sai.
+    if (!sendKeyOk(req) && !(await requireUser(req))) {
+      const p = payload && typeof payload === 'object' ? payload : {}
+      const recusa = {
+        destination: normalizeTo(p.to).slice(0, 200) || null,
+        group_name: typeof p.toGroupName === 'string' ? (p.toGroupName.trim().slice(0, 200) || null) : null,
+        kind: p.imageUrl ? 'image' : p.documentUrl ? 'document' : 'chat',
+        body_head: typeof p.body === 'string' ? p.body.slice(0, 160) : '',
+      }
+      console.error('[whatsapp] unauthorized — no session or x-send-key', { to: recusa.destination, group: recusa.group_name })
+      await logSend({ ...recusa, ok: false, error: 'unauthorized: no session or x-send-key', http_status: 401, ultra_id: null })
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
+
     const instance = process.env.ULTRAMSG_INSTANCE
     const token = process.env.ULTRAMSG_TOKEN
     const defaultTo = process.env.ULTRAMSG_GROUP_ID
@@ -136,7 +159,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'WhatsApp not configured (missing instance or token).' }, { status: 500 })
     }
 
-    const payload = await req.json().catch(() => ({}))
     let to = normalizeTo(payload.to || defaultTo)
     // toGroupName targets a group by its NAME (resolved to its chat id).
     const toGroupName = typeof payload.toGroupName === 'string' ? payload.toGroupName.trim() : ''

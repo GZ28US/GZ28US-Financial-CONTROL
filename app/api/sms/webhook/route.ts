@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { readKeyOk } from '@/lib/apiAuth.server'
 
 // ── SMS DO iPHONE US → SISTEMA (Márcio, 02/ago/2026) ─────────────────────────
 // "Muitos americanos não usam WhatsApp, é tudo por msg de texto. É importante
@@ -32,8 +33,9 @@ async function save(sender: string, body: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
-  if (need && req.nextUrl.searchParams.get('key') !== need) {
+  // O Atalhos do iPhone manda a chave em ?key=; o header x-read-key também vale.
+  // Falha fechada: sem WHATSAPP_READ_KEY no ambiente, nada entra (11/set/2026).
+  if (!readKeyOk(req, { allowQuery: true })) {
     return NextResponse.json({ error: 'bad key' }, { status: 401 })
   }
   const b = await req.json().catch(() => null) as { sender?: string; body?: string } | null
@@ -44,8 +46,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
-  const need = process.env.WHATSAPP_READ_KEY
-  if (need && p.get('key') !== need) return NextResponse.json({ error: 'bad key' }, { status: 401 })
+  if (!readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'bad key' }, { status: 401 })
   // Sem sender/body é só um ping de teste.
   if (!p.get('body')) return NextResponse.json({ ok: true, ping: true })
   const r = await save(String(p.get('sender') || ''), String(p.get('body') || ''))

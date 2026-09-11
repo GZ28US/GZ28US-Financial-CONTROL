@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/auth.server'
+import { brSendKeyValue, requireUser } from '@/lib/apiAuth.server'
 
 // WHATSAPP HUB — resposta a um chat do número BR a partir da tela /whatsapp do
 // app US. O navegador não pode falar com gz28br.com direto (CORS), então este
@@ -17,9 +17,12 @@ export async function POST(req: NextRequest) {
   const body = String(payload.body || '')
   if (!to.includes('@') || !body.trim()) return NextResponse.json({ error: 'to (chat id) + body required' }, { status: 400 })
   try {
+    // A rota de envio do BR só aceita a tela logada DELA ou a chave de envio no
+    // header x-send-key (11/set/2026) — nunca no corpo nem na URL.
+    const sendKey = brSendKeyValue()
     const r = await fetch(BR_SEND_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(sendKey ? { 'x-send-key': sendKey } : {}) },
       body: JSON.stringify({ to, body, personal: payload.personal === true }),
     })
     const data = await r.json().catch(() => null)

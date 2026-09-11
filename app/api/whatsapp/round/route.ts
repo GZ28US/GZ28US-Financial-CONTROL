@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/auth.server'
+import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 import { waDb } from '@/lib/waStore.server'
 
 // WHATSAPP HUB — O ROUND, no app (ordem do Márcio, 24/ago/2026: "Você aqui tem
@@ -58,10 +58,10 @@ async function pageAll<T>(build: () => any, size = 1000, max = 120000): Promise<
 export async function GET(req: NextRequest) {
   // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente), igual às
   // demais rotas de leitura do WhatsApp — é a mesma informação que elas servem.
+  // A chave em ?key= ou no header x-read-key, pela comparação única de
+  // lib/apiAuth.server.ts.
   const p = req.nextUrl.searchParams
-  const key = process.env.WHATSAPP_READ_KEY
-  const keyOk = !!key && p.get('key') === key
-  if (!keyOk && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!readKeyOk(req, { allowQuery: true }) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const db = waDb()
   const listOnly = p.get('view') === 'list'
   // Janela do round. Padrão 3 dias: é o que o round trata de fato — conversa

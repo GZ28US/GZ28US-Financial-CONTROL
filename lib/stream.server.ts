@@ -5,6 +5,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { guessCarrier, statusFrom17Track, type StreamRow, type StreamStatus } from './stream'
+import { brSendKeyValue } from './apiAuth.server'
 
 export function streamDb(): SupabaseClient {
   return createClient(
@@ -122,9 +123,12 @@ export async function whereLabel(db: SupabaseClient, row: StreamRow): Promise<st
 // US rows keep the UltraMsg env of this app.
 export async function notify(row: StreamRow, body: string): Promise<void> {
   if (row.app === 'BR') {
+    // The BR send route only lets in its own logged-in screen or the send key in
+    // header x-send-key (audit of 11/set/2026) — never in the body or the URL.
+    const sendKey = brSendKeyValue()
     try {
       await fetch('https://www.gz28br.com/ca/api/whatsapp', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(sendKey ? { 'x-send-key': sendKey } : {}) },
         body: JSON.stringify({ body }),
       })
     } catch { /* best-effort */ }

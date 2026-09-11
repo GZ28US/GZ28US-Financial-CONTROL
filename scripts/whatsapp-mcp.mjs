@@ -25,6 +25,20 @@ try { SERVICE_KEY = readFileSync(`${KEY_DIR}/us-service-key.txt`, 'utf8').trim()
 
 const HDRS = () => ({ apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` })
 
+// CHAVE DE ENVIO (11/set/2026): a rota de envio dos dois apps só aceita tela logada
+// ou o header x-send-key. Lida a cada envio (troca de chave não pede reiniciar o
+// servidor): whatsapp-send-key.txt quando existir, senão a de leitura — que segue
+// valendo para mandar enquanto WHATSAPP_SEND_KEY não entrar no ambiente. Nunca impressa.
+function sendKey() {
+  for (const file of ['whatsapp-send-key.txt', 'whatsapp-read-key.txt']) {
+    try {
+      const k = readFileSync(`${KEY_DIR}/${file}`, 'utf8').trim().split(/\s+/).pop()
+      if (k) return k
+    } catch { /* tenta o próximo arquivo */ }
+  }
+  return ''
+}
+
 async function rest(path) {
   if (!SERVICE_KEY) throw new Error(`service key not found at ${KEY_DIR}/us-service-key.txt`)
   const r = await fetch(`${US_URL}/rest/v1/${path}`, { headers: HDRS() })
@@ -160,8 +174,10 @@ async function callTool(name, a = {}) {
   }
 
   if (name === 'wa_send') {
+    const key = sendKey()
+    if (!key) throw new Error(`send key not found at ${KEY_DIR}/whatsapp-send-key.txt or whatsapp-read-key.txt`)
     const r = await fetch(SEND_URL[a.app], {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-send-key': key },
       body: JSON.stringify({ to: a.to, body: a.body, personal: a.personal !== false }),
     })
     const data = await r.json().catch(() => null)

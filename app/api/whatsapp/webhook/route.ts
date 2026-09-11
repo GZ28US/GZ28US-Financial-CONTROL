@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 import { createClient } from '@supabase/supabase-js'
 import { waNormalize, waStore, waTouchChat, waDb } from '@/lib/waStore.server'
 
@@ -28,8 +29,10 @@ function db() {
 }
 
 export async function POST(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
-  if (need && req.nextUrl.searchParams.get('key') !== need) {
+  // A UltraMsg não manda header: a chave vem em ?key= (a URL cadastrada acima);
+  // x-read-key também vale. Falha fechada — sem WHATSAPP_READ_KEY no ambiente,
+  // nada entra (11/set/2026).
+  if (!readKeyOk(req, { allowQuery: true })) {
     return NextResponse.json({ error: 'bad key' }, { status: 401 })
   }
   const payload = await req.json().catch(() => null)
