@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, inboxRules } from '@/lib/streamMail.server'
+import { requireUser, readKeyOk } from '@/lib/apiAuth.server'
 
 // AS REGRAS DA CAIXA, PELA TELA — o último suspeito do caso do despachante.
 //
@@ -16,9 +17,17 @@ import { getMailAuth, inboxRules } from '@/lib/streamMail.server'
 //
 // Caixa que ainda não reconsentiu responde 409 com o link do reconsentimento —
 // nunca 500, porque não ter a permissão é um estado normal, não um defeito.
+//
+// PORTÃO (11/set/2026): até aqui respondia a qualquer um — todas as regras da
+// caixa e, de brinde, um refresh do token (que rotaciona). Agora só entra admin
+// logado (Authorization: Bearer <sessão>) ou quem tem a chave de leitura (header
+// x-read-key; ?key= ainda vale na transição). Nada de token sem prova.
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  if (!(await requireUser(req)) && !readKeyOk(req, { allowQuery: true })) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const slot = Math.max(1, parseInt(req.nextUrl.searchParams.get('slot') || '1') || 1)
   const db = streamDb()
   const auth = await getMailAuth(db, slot)
