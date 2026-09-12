@@ -48,9 +48,9 @@ export default function ViewGoodPage() {
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
-    const { data } = await supabase.from('goods').select('*').eq('id', goodId).single()
+    const { data } = await supabase.from('assets').select('*').eq('id', goodId).single()
     if (data) setGood(data)
-    const { data: expensesData } = await supabase.from('good_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
+    const { data: expensesData } = await supabase.from('assets_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData)
     setLoading(false)
   }

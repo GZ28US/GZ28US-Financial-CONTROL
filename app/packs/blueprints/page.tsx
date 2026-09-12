@@ -57,7 +57,7 @@ export default function BlueprintsPage() {
     try {
       const [invoices, invParts, invServices, invDuties, dutyEvents, packs] = await Promise.all([
         all('invoices', 'id, invoice_code, ride_id, service'),
-        all('invoice_parts', 'invoice_id, description, quantity, base_cost, kit_group, kit_name'),
+        all('invoice_items', 'invoice_id, description, quantity, base_cost, kit_group, kit_name'),
         all('invoice_services', 'invoice_id, description'),
         all('invoice_duties', 'id, invoice_id, description, priority, done, time_seconds'),
         all('duty_events', 'duty_id, action, at'),

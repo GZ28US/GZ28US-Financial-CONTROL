@@ -15,7 +15,7 @@
 // NÃO se corrige aplicando o % no expLine: isso desconta DUAS vezes toda linha que segue a régua (RECADOS.md, 10/set).
 // A correção é de DADO, linha a linha, com aval do Márcio. Por isso aqui é SÓ LEITURA: mostra a prova e pergunta.
 //
-// Onde o campo existe: só em invoice_expenses. inputs, goods, good_expenses e inventory não têm a coluna (conferido no
+// Onde o campo existe: só em invoice_expenses. inputs, assets, assets_expenses e inventory não têm a coluna (conferido no
 // banco em 10/set); packs.expenses é modelo, não compra. Linha de ORÇAMENTO (is_quote) não entra no DRE: é classificada
 // e contada no resumo, mas não vira item.
 //
@@ -32,7 +32,7 @@
 //                   para separar as duas contas, banco casado com valor que não é nenhuma das duas).
 // Prova de pagamento vence o MAP (MAP muda com o tempo); MAP dizendo BRUTA vence a assinatura do recibo (quem cala promete).
 // Item só para BRUTA e BRUTA_PROVAVEL, com amount = gravado − com desconto (o custo a mais). A evidência diz também como o
-// preço de ITEMS daquela peça foi montado (invoice_parts.base_cost × as contas do IMPORT); cobrança acima do MAP vai à
+// preço de ITEMS daquela peça foi montado (invoice_items.base_cost × as contas do IMPORT); cobrança acima do MAP vai à
 // parte no resumo.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { fetchAll, num, nameHit, loadDbAliases, stmtMerchant, type Cand } from './bankReconcile.server'
@@ -109,15 +109,15 @@ export async function loadDiscountData(db: any): Promise<DiscountData> {
     fetchAll(db, 'rides', 'id, project_name'),
     fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, authorized_date:raw->>authorized_date'),
     fetchAll(db, 'parts_database', 'id, item, part_number, map_price, shipping, handling, unit_price, part_discount, currency'),
-    fetchAll(db, 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, source_item'),
+    fetchAll(db, 'invoice_items', 'id, invoice_id, description, unit_price, quantity, base_cost, source_item'),
     fetchAll(db, 'supplier_orders', 'id, supplier_id, supplier_name, order_number, order_date, total, paid_total'),
     fetchAll(db, 'suppliers', 'id, name, aliases, is_dealership'),
-    // Membros de pedido nas outras tabelas: o banco cobra o pedido inteiro (candidatePool soma goods/inputs/inventory no grupo).
-    fetchAll(db, 'goods', 'id, purchase_group, unit_price, quantity, paid_from, paid_to', pgOnly),
+    // Membros de pedido nas outras tabelas: o banco cobra o pedido inteiro (candidatePool soma assets/inputs/inventory no grupo).
+    fetchAll(db, 'assets', 'id, purchase_group, unit_price, quantity, paid_from, paid_to', pgOnly),
     fetchAll(db, 'inputs', 'id, purchase_group, unit_price, quantity, paid_from, paid_to', pgOnly),
     fetchAll(db, 'inventory', 'id, purchase_group, unit_price, quantity, paid_from, paid_to, source_type', pgOnly),
   ])
-  const groupOthers = [...goods.map((r: any) => ({ ...r, table: 'goods' })), ...inputs.map((r: any) => ({ ...r, table: 'inputs' })), ...inventory.map((r: any) => ({ ...r, table: 'inventory' }))]
+  const groupOthers = [...goods.map((r: any) => ({ ...r, table: 'assets' })), ...inputs.map((r: any) => ({ ...r, table: 'inputs' })), ...inventory.map((r: any) => ({ ...r, table: 'inventory' }))]
   return { expenses, groupOthers, invoices, rides, bank, parts, invParts, orders, suppliers }
 }
 
@@ -382,7 +382,7 @@ export function auditDiscountFrom(d: DiscountData): DiscountAudit & { verdicts: 
     if (n('SEM_ITEM')) parts.push(`${one ? 'peça ainda não importada' : n('SEM_ITEM') + ' ainda não importada(s)'}`)
     return 'ITENS: ' + parts.join('; ') + '.'
   }
-  const itemRefs = (rows: any[]) => rows.map(r => itemsOf(r)).filter(x => x.build === 'BRUTO_DIV' && x.part).map(x => ({ table: 'invoice_parts', id: String(x.part.id), label: `ITEM · ${invLabel(x.part.invoice_id)} · ${short(x.part.description)}`, href: invHref(x.part.invoice_id) }))
+  const itemRefs = (rows: any[]) => rows.map(r => itemsOf(r)).filter(x => x.build === 'BRUTO_DIV' && x.part).map(x => ({ table: 'invoice_items', id: String(x.part.id), label: `ITEM · ${invLabel(x.part.invoice_id)} · ${short(x.part.description)}`, href: invHref(x.part.invoice_id) }))
   const items: AuditItem[] = []
   const doneLevels = new Set<string>()
   for (const v of verdicts) {

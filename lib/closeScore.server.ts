@@ -187,7 +187,7 @@ export type CloseData = {
 export type CloseOpts = {
   findings?: AuditItem[]                 // itens das outras auditorias (duplicatas, wires, pagador, desconto) — somam por mês, sem contar duas vezes o que o placar já conta
   liveProofUntil?: string | null         // o card cash-match está verde até esta data (Plaid ao vivo × extrato + linhas): prova os meses sem extrato
-  dismissed?: Set<string>                // chaves de item (paid_no_bank|tabela:id, received_no_bank|invoice_payments:id) marcadas VISTO no card do dinheiro sem linha: saem do placar
+  dismissed?: Set<string>                // chaves de item (paid_no_bank|tabela:id, received_no_bank|invoice_incomes:id) marcadas VISTO no card do dinheiro sem linha: saem do placar
   // Item por registro que uma linha ABERTA explica (paid_line_open / received_line_open). Desligado por padrão, a doutrina do
   // enginesAudit (booked_no_bank): a pergunta é da linha do banco, no card Conciliação bancária — listar aqui seria a mesma
   // pendência duas vezes. Os meses e o summary contam de qualquer jeito.
@@ -267,7 +267,7 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
 
   // ── elos: quem aponta pra quem, e o elo morto (casada com registro que não existe mais) ──
   const idSet = (rows: any[] | null) => rows ? new Set(rows.map(r => String(r.id))) : null
-  const exists: Record<string, Set<string> | null> = { invoice_expenses: idSet(d.invoiceExpenses), fixed_cost_expenses: idSet(d.fixedExpenses), expenses: idSet(d.expenses), goods: idSet(d.goods), good_expenses: idSet(d.goodExpenses), inputs: idSet(d.inputs), inventory: idSet(d.inventory), invoice_payments: idSet(d.payments), financing_events: idSet(d.financingEvents), capital_events: idSet(d.capitalEvents) }
+  const exists: Record<string, Set<string> | null> = { invoice_expenses: idSet(d.invoiceExpenses), fixed_cost_expenses: idSet(d.fixedExpenses), staff_expenses: idSet(d.expenses), assets: idSet(d.goods), assets_expenses: idSet(d.goodExpenses), inputs: idSet(d.inputs), inventory: idSet(d.inventory), invoice_incomes: idSet(d.payments), financing_events: idSet(d.financingEvents), capital_events: idSet(d.capitalEvents) }
   const groups = new Set<string>()
   for (const rows of [d.invoiceExpenses, d.goods, d.inputs, d.inventory]) for (const r of rows) if (r.purchase_group) groups.add(String(r.purchase_group))
   const deadWhy = (b: any): string | null => {
@@ -363,9 +363,9 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
   const P = (table: string, r: any, amount: number, label: string, href: string, group: unknown) => paidRows.push({ key: table + ':' + r.id, table, r, amount, date: day(r.payment_date), label, href, group: normKey(group) })
   for (const r of d.invoiceExpenses) if (realInv(r.invoice_id)) P('invoice_expenses', r, expLine(r), ['EXPENSE', invCode(r.invoice_id), cut(r.item, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), invHref(r.invoice_id), r.supplier)
   for (const r of d.fixedExpenses) { const s = supById.get(String(r.supplier_id)); const tarifa = s?.cost_type === 'BANK'; P('fixed_cost_expenses', r, num(r.amount), [tarifa ? 'TARIFA' : 'FIXO', cut(s?.company, 30), cut(r.description, 60)].filter(Boolean).join(' · '), tarifa ? '/costs/bank' : r.supplier_id ? '/costs/fixed/' + r.supplier_id : '/costs/fixed', s?.company) }
-  for (const r of d.expenses) P('expenses', r, num(r.amount), [r.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', cut(r.description || r.type, 60)].filter(Boolean).join(' · '), '/staff', '')
-  for (const r of d.goods) P('goods', r, qtyLine(r), ['GOODS', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/goods', r.supplier)
-  for (const r of d.goodExpenses) P('good_expenses', r, num(r.amount), ['GOODS', cut(r.description, 60)].filter(Boolean).join(' · '), '/goods', '')
+  for (const r of d.expenses) P('staff_expenses', r, num(r.amount), [r.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', cut(r.description || r.type, 60)].filter(Boolean).join(' · '), '/staff', '')
+  for (const r of d.goods) P('assets', r, qtyLine(r), ['GOODS', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/goods', r.supplier)
+  for (const r of d.goodExpenses) P('assets_expenses', r, num(r.amount), ['GOODS', cut(r.description, 60)].filter(Boolean).join(' · '), '/goods', '')
   for (const r of d.inputs) P('inputs', r, qtyLine(r), ['SUPPLY', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/supplies', r.supplier)
   for (const r of d.inventory) if (r.source_type === 'PURCHASED') P('inventory', r, qtyLine(r), ['STOCK', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/inventory', r.supplier)
   const paidOpen: Paid[] = []
@@ -417,9 +417,9 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
     if (!okDay(date)) continue
     if (amount <= 0.005) { if (amount < -0.005) skip('refund_received', -amount); continue }
     if (date < R.REGIONS_OPENED) { skip('pre_open_received', amount); continue }
-    if (!judgeUntil || date > judgeUntil) { if (!pointed.has('invoice_payments:' + p.id)) skip('fresh_received', amount); continue }
-    if (pointed.has('invoice_payments:' + p.id) || !acc.has(date.slice(0, 7))) continue
-    recOpen.push({ key: 'invoice_payments:' + p.id, p, amount, date, group: '' })
+    if (!judgeUntil || date > judgeUntil) { if (!pointed.has('invoice_incomes:' + p.id)) skip('fresh_received', amount); continue }
+    if (pointed.has('invoice_incomes:' + p.id) || !acc.has(date.slice(0, 7))) continue
+    recOpen.push({ key: 'invoice_incomes:' + p.id, p, amount, date, group: '' })
   }
   const recPair = pairOpenLines(recOpen, openIn)
   for (const x of recOpen) {
@@ -431,7 +431,7 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
     if (pr) { a.recOpen += amount; a.recOpenN++ }
     counted.add(x.key)
     const label = ['INCOME', invCode(p.invoice_id), cut(p.description, 50), cut(p.source, 20)].filter(Boolean).join(' · ')
-    const refs: AuditRef[] = [{ table: 'invoice_payments', id: String(p.id), label, href: invHref(p.invoice_id) }]
+    const refs: AuditRef[] = [{ table: 'invoice_incomes', id: String(p.id), label, href: invHref(p.invoice_id) }]
     const src = String(p.source || '')
     const base = `Baixado (paid_at ${day(p.paid_at)}) para a GZ28US (paid_to «${p.paid_to || '—'}», via «${src || '—'}»${src.toUpperCase() === 'CASH' ? ' — dinheiro vivo só aparece no banco se foi depositado' : ''}). Nenhuma linha viva da Regions aponta para este recebimento.`
     if (pr) {
@@ -582,11 +582,11 @@ export async function closeScore(db: any, opts: CloseOpts = {}): Promise<CloseSc
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method, bank_transaction_id'),
     expensesRows(db, 'id, description, type, amount, expense_date, payment_date, origin, paid_from, paid_to, source, payment_method, payment_reference'),   // + bank_transaction_id quando a migration rodou
-    fetchAll(db, 'goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group'),
-    fetchAll(db, 'good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method'),
+    fetchAll(db, 'assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group'),
+    fetchAll(db, 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method'),
     fetchAll(db, 'inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group'),
-    fetchAll(db, 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, paid_from, description, mirror_expense_id'),
+    fetchAll(db, 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, paid_from, description, mirror_expense_id'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, cost_type'),
     opt(fetchAll(db, 'cash_balances', 'id, account, balance_date, balance, source')),

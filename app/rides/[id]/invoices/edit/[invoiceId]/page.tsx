@@ -393,8 +393,8 @@ export default function EditInvoicePage() {
   const [editingGroupItem, setEditingGroupItem] = useState<{ description: string; amount: string; quantity: string; tax: string; extra: string; item_discount: string }>({ description: '', amount: '', quantity: '1', tax: '0', extra: '0', item_discount: '0' })
   // sendToConfirm: the SEND TO button on an expense row opens this modal. The user
   // enters a quantity and chooses STOCK or GOODS as the destination. STOCK applies
-  // the DONATED/PURCHASED lineage rules; GOODS inserts a fresh row into the goods
-  // table without lineage tracking (goods are always purchased).
+  // the DONATED/PURCHASED lineage rules; GOODS inserts a fresh row into the assets
+  // table without lineage tracking (assets are always purchased).
   const [sendToConfirm, setSendToConfirm] = useState<{ index: number; expense: Expense; qtyToSend: string } | null>(null)
   // Confirmation gates for expense removal. confirmRemoveExpenseIndex covers both
   // standalone expense rows and individual items inside an expanded group;
@@ -527,13 +527,13 @@ export default function EditInvoicePage() {
     // changing MARGIN scales all items — even manually-entered/edited ones.
     const savedMargin = parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0
     const savedFactor = 1 + savedMargin / 100
-    const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+    const { data: partsData } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
     if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price), payment_date: s.payment_date ?? null })))
 
-    const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    const { data: paymentsData } = await supabase.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({
       id: p.id,
       amount: String(p.amount),
@@ -1057,7 +1057,7 @@ export default function EditInvoicePage() {
         const amount = parseFloat(p.amount) || 0
         if (amount <= 0 || !p.date) continue
         const { data: existing } = await supabase
-          .from('invoice_payments')
+          .from('invoice_incomes')
           .select('amount, payment_date, source')
           .eq('payment_date', p.date)
         const match = (existing || []).find(e =>
@@ -1298,8 +1298,8 @@ export default function EditInvoicePage() {
   //    the expense carried stock_source_type='DONATED' (i.e. it was pulled from
   //    stock as DONATED via FROM STOCK), we restore DONATED and the original
   //    stock_donor. Otherwise the item is recorded as PURCHASED.
-  //  - GOODS: insert into the goods table (goods are always purchased, no
-  //    lineage to track). Fields mirror what a manual goods entry looks like.
+  //  - GOODS: insert into the assets table (assets are always purchased, no
+  //    lineage to track). Fields mirror what a manual GOODS entry looks like.
   // The original expense row is then reduced by qtyToSend (or removed if zero).
   async function confirmSendTo(item: { index: number; expense: Expense; qtyToSend: string }, target: 'STOCK' | 'GOODS') {
     const exp = item.expense
@@ -1340,7 +1340,7 @@ export default function EditInvoicePage() {
       }])
       if (error) { alert(error.message); return }
     } else {
-      const { error } = await supabase.from('goods').insert([{
+      const { error } = await supabase.from('assets').insert([{
         description: exp.item,
         quantity: qtyToSend,
         unit_price: parseFloat(exp.amount) || 0,
@@ -1825,7 +1825,7 @@ export default function EditInvoicePage() {
     const f = 1 + (parseFloat(importMargin) || 0) / 100
     const base = f !== 0 ? ((parseFloat(editingPart.unit_price) || 0) / f).toFixed(2) : editingPart.unit_price
     if (part.id) {
-      const { error } = await supabase.from('invoice_parts').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0 }).eq('id', part.id)
+      const { error } = await supabase.from('invoice_items').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0 }).eq('id', part.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id, base_cost: base }; setParts(updated)
@@ -1837,7 +1837,7 @@ export default function EditInvoicePage() {
     const p = parts[index]
     const next = isValidDate(p.payment_date || '') ? null : todayStr()
     if (p.id) {
-      const { error } = await supabase.from('invoice_parts').update({ payment_date: next }).eq('id', p.id)
+      const { error } = await supabase.from('invoice_items').update({ payment_date: next }).eq('id', p.id)
       if (error) { alert(error.message); return }
     }
     setParts(prev => prev.map((x, i) => i === index ? { ...x, payment_date: next } : x))
@@ -1898,7 +1898,7 @@ export default function EditInvoicePage() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
     if (payment.id) {
-      const { error } = await supabase.from('invoice_payments').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_incomes').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
@@ -1999,7 +1999,7 @@ export default function EditInvoicePage() {
     if (p.paid_at) {
       // Unmark — clear paid_at, no box.
       if (p.id) {
-        const { error } = await supabase.from('invoice_payments').update({ paid_at: null }).eq('id', p.id)
+        const { error } = await supabase.from('invoice_incomes').update({ paid_at: null }).eq('id', p.id)
         if (error) { alert(error.message); return }
         // On a GZ28BR shopping invoice (US.006), the bill is owed again in BR — unless
         // what's still marked paid covers the grand total on its own.
@@ -2062,7 +2062,7 @@ export default function EditInvoicePage() {
       ? new Date(date + 'T12:00:00Z').toISOString()
       : new Date().toISOString()
     if (p.id) {
-      const { error } = await supabase.from('invoice_payments').update({ paid_at: paidAt }).eq('id', p.id)
+      const { error } = await supabase.from('invoice_incomes').update({ paid_at: paidAt }).eq('id', p.id)
       if (error) { alert(error.message); return }
       // GZ28BR shopping invoice (US.006): its BR expense lines only go PAID once GZ28BR
       // has settled the WHOLE bill — a PARTIAL payment leaves them owed, since an expense
@@ -2302,9 +2302,9 @@ export default function EditInvoicePage() {
   async function backupQuoteBeforeConversion() {
     const [invRes, partsRes, servicesRes, paymentsRes, notesRes, expensesRes] = await Promise.all([
       supabase.from('invoices').select('*').eq('id', invoiceId).single(),
-      supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
       supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
-      supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+      supabase.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
       supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
       supabase.from('invoice_expenses').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
     ])
@@ -2488,11 +2488,11 @@ export default function EditInvoicePage() {
           upd.unit_price = parseFloat(p.unit_price) || 0
           upd.base_cost = parseFloat(p.base_cost) || 0
         }
-        partUpdates.push(supabase.from('invoice_parts').update(upd).eq('id', p.id))
+        partUpdates.push(supabase.from('invoice_items').update(upd).eq('id', p.id))
       }
     }
     if (partInserts.length > 0) {
-      const { error: e } = await supabase.from('invoice_parts').insert(partInserts)
+      const { error: e } = await supabase.from('invoice_items').insert(partInserts)
       if (e) { alert(e.message); return }
     }
     if (partUpdates.length > 0) {
@@ -2515,7 +2515,7 @@ export default function EditInvoicePage() {
     if (newPayments.length > 0) {
       // .select('id') devolve as linhas na ordem do insert — os ids alimentam o
       // mute da report-net no diálogo de reports (o NÃO do usuário vale no cron).
-      const { data: insPay, error: e } = await supabase.from('invoice_payments').insert(newPayments.map(p => ({
+      const { data: insPay, error: e } = await supabase.from('invoice_incomes').insert(newPayments.map(p => ({
         invoice_id: invoiceId,
         amount: parseFloat(p.amount),
         payment_date: isValidDate(p.payment_date) ? p.payment_date : null,
@@ -2628,9 +2628,9 @@ export default function EditInvoicePage() {
     // Commit staged REMOVEs now (not at click time) so CANCEL leaves them intact.
     // Batch each table's removals into one .in() delete, all run concurrently.
     await Promise.all([
-      removedPartIds.length ? supabase.from('invoice_parts').delete().in('id', removedPartIds) : null,
+      removedPartIds.length ? supabase.from('invoice_items').delete().in('id', removedPartIds) : null,
       removedServiceIds.length ? supabase.from('invoice_services').delete().in('id', removedServiceIds) : null,
-      removedPaymentIds.length ? supabase.from('invoice_payments').delete().in('id', removedPaymentIds) : null,
+      removedPaymentIds.length ? supabase.from('invoice_incomes').delete().in('id', removedPaymentIds) : null,
       removedNoteIds.length ? supabase.from('invoice_notes').delete().in('id', removedNoteIds) : null,
       removedExpenseIds.length ? supabase.from('invoice_expenses').delete().in('id', removedExpenseIds) : null,
     ].filter(Boolean))

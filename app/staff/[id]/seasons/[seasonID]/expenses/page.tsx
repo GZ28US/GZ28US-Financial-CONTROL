@@ -164,7 +164,7 @@ export default function ExpensesPage() {
       }
       usd = Number((brl / taxa).toFixed(2))
     }
-    const { error } = await supabase.from('expenses').update({
+    const { error } = await supabase.from('staff_expenses').update({
       amount: usd,
       amount_brl: brl,
       payment_date: payDate,
@@ -201,7 +201,7 @@ export default function ExpensesPage() {
   }
 
   async function loadExpenses() {
-    const { data } = await supabase.from('expenses').select('*').eq('season_id', seasonID)
+    const { data } = await supabase.from('staff_expenses').select('*').eq('season_id', seasonID)
 
     // SEMPRE do mais recente pro mais antigo (ordem do Márcio, 28/jul/2026) —
     // recorrente e avulso na mesma lista, porque agora todos são pagamentos com
@@ -220,7 +220,7 @@ export default function ExpensesPage() {
   }
 
   async function removeExpense(id: string) {
-    const { error } = await supabase.from('expenses').delete().eq('id', id)
+    const { error } = await supabase.from('staff_expenses').delete().eq('id', id)
     if (error) { alert(error.message); return }
     setConfirmId(null)
     loadExpenses()
@@ -288,7 +288,7 @@ export default function ExpensesPage() {
       // Duplicate check: same source + date + total amount already in expenses.
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
-          .from('expenses')
+          .from('staff_expenses')
           .select('id, source, expense_date, amount')
           .ilike('source', supplier)
           .eq('expense_date', date)
@@ -317,7 +317,7 @@ export default function ExpensesPage() {
     if (!scannedPurchase) return
     const total = scannedPurchase.items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0)
 
-    const { error } = await supabase.from('expenses').insert([{
+    const { error } = await supabase.from('staff_expenses').insert([{
       season_id: seasonID,
       type: scannedPurchase.type || 'SINGLE',
       description: scannedPurchase.description || null,

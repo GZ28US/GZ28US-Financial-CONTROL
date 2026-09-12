@@ -93,7 +93,7 @@ export default function StaffPage() {
     let expensesData: any[] = []
     if (allSeasonIds.length > 0) {
       const { data } = await supabase
-        .from('expenses')
+        .from('staff_expenses')
         .select('id, season_id, type, amount, expense_date')
         .in('season_id', allSeasonIds)
       expensesData = data || []

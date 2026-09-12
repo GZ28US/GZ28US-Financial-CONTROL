@@ -3,6 +3,7 @@ import { streamDb } from '@/lib/stream.server'
 import { lancar } from '@/lib/autoBookMail.server'
 import { cacaNaPasta, respostaUnica } from '@/lib/dropboxHunt.server'
 import { papeisOrfaos } from '@/lib/papelOrfao.server'
+import { tabelaAtual } from '@/lib/tableRenames'
 
 // AUTO-BOOK — A MESA DA DÚVIDA.
 //
@@ -66,7 +67,16 @@ export async function GET(req: NextRequest) {
   const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   const { data: rules } = await db.from('auto_book_mail_rules').select('id,label,action,match_from,match_subject,match_vendor,hits,last_hit_at,active').order('hits', { ascending: false })
-  return NextResponse.json({ ok: true, n: (data || []).length, fila: data || [], regras: rules || [] })
+  // `cands` é JSON com NOME DE TABELA dentro (`[{table,ref,…}]`), gravado quando a
+  // pergunta nasceu — e a migration da onda 2 só reescreve a coluna de TEXTO
+  // booked_table. Medido na noite de 11/set/2026: 6 das 20 linhas da fila têm 'expenses' aí
+  // dentro. Traduzido na SAÍDA para que a sugestão que a pessoa lê (e devolve no
+  // `target` do POST) já venha com o nome de hoje; o `lancar` traduz de novo, porque
+  // o POST pode vir com um target escrito à mão. Idempotente nas duas pontas.
+  const fila = (data || []).map((r: Record<string, unknown>) => Array.isArray(r.cands)
+    ? { ...r, cands: (r.cands as Record<string, unknown>[]).map(c => ({ ...c, table: tabelaAtual(String(c?.table ?? '')) })) }
+    : r)
+  return NextResponse.json({ ok: true, n: fila.length, fila, regras: rules || [] })
 }
 
 export async function POST(req: NextRequest) {

@@ -162,8 +162,8 @@ export function nearExpenseMatches(line: any, rows: any[], staffOf: Map<string, 
   const rowDate = (r: any) => String(r.payment_date || r.expense_date || '').slice(0, 10)
   const labelOf = (r: any) => [r.description, r.source && !/auto-captura/i.test(String(r.source)) ? r.source : '', r.type].filter(Boolean).join(' · ')
   const travelish = (r: any) => /passagem|flight|ticket|voo|airfare|fare|hotel|hospedagem|uber|lyft/i.test(String(r.description || ''))
-  const elig = rows.filter(r => !r.bank_transaction_id && !String(r.payment_reference || '').startsWith('bank:') && !rejected.has('expenses:' + r.id) && rowDate(r) && dd(rowDate(r), line.date) <= 10 && num(r.amount) > 0)
-    .map(r => ({ r, hit: nameHit(line, { table: 'expenses', id: r.id, label: labelOf(r), date: rowDate(r), amount: num(r.amount), undated: false } as any) }))
+  const elig = rows.filter(r => !r.bank_transaction_id && !String(r.payment_reference || '').startsWith('bank:') && !rejected.has('staff_expenses:' + r.id) && rowDate(r) && dd(rowDate(r), line.date) <= 10 && num(r.amount) > 0)
+    .map(r => ({ r, hit: nameHit(line, { table: 'staff_expenses', id: r.id, label: labelOf(r), date: rowDate(r), amount: num(r.amount), undated: false } as any) }))
   const strong = elig.filter(x => x.hit)
   // Sem nome só em linha de VIAGEM/HOSPEDAGEM (passagem auto-capturada não traz a companhia): medido em 8/set,
   // fora disso o «sem nome» casava compensação de carbono com Aldi e Uber com Anthropic.

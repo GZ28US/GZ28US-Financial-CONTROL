@@ -205,7 +205,7 @@ export default function SeasonsPage() {
     if (seasonData && seasonData.length > 0) {
       const seasonIds = seasonData.map(s => s.id)
       const { data: expenseData } = await supabase
-        .from('expenses')
+        .from('staff_expenses')
         .select('id, season_id, type, amount, expense_date, payment_date, amount_brl, created_at')
         .in('season_id', seasonIds)
 

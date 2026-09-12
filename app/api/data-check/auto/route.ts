@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
 import { writeUnmatch, logMatchEvent } from '@/lib/bankReconcile.server'
+import { tabelaAtual } from '@/lib/tableRenames'
 
 // O APP PREENCHEU SOZINHO — a memória do Data Checker autossuficiente (DC 1.44.0, João, 8/set/2026:
 // «só chamar a gente quando for REALMENTE necessário»). Tudo que o app escreve sem clique deixa
@@ -23,7 +24,11 @@ export async function GET(req: NextRequest) {
   for (let from = 0; from < AUTO_CAP; from += 1000) {
     const { data, error } = await db.from('data_fixes').select('id, check_key, table_name, row_id, field, old_value, new_value, label, fixed_at').like('label', 'AUTO ·%').gte('fixed_at', since).order('fixed_at', { ascending: false }).range(from, from + 999)
     if (error) { e1 = error; break }
-    auto.push(...(data || []))
+    // data_fixes.table_name é LOG HISTÓRICO: guarda o nome que a tabela tinha na hora
+    // do conserto, e a onda 2 (11/set/2026) NÃO reescreve o log. Quem recebe esta lista
+    // monta o DESFAZER (db.from) e o rótulo/link por nome de tabela — então o nome sai
+    // daqui já traduzido pelo mapa. Prefixo US./BR. é outra convenção e passa intacto.
+    auto.push(...(data || []).map((r: any) => ({ ...r, table_name: tabelaAtual(r.table_name) })))
     if (!data || data.length < 1000) break
   }
   const [{ data: dis, error: e2 }, { count: total }] = await Promise.all([
@@ -49,7 +54,10 @@ export async function POST(req: NextRequest) {
   if (action === 'undo') {
     const { data: fx } = await db.from('data_fixes').select('*').eq('id', String(b.fix_id || '')).maybeSingle()
     if (!fx || !/^AUTO ·/.test(String(fx.label || ''))) return NextResponse.json({ error: 'não foi o app que fez isto' }, { status: 409 })
-    const table = String(fx.table_name), rowId = String(fx.row_id), field = String(fx.field)
+    // O nome vem do log com a grafia da época: o mapa dos cinco renames o traz pra hoje,
+    // senão o db.from(table) daqui pra baixo aponta pra tabela que não existe mais (as
+    // views-ponte caem na onda 5). 91 linhas antigas têm nome velho — medido em 11/set.
+    const table = tabelaAtual(fx.table_name), rowId = String(fx.row_id), field = String(fx.field)
     const changed: string[] = []   // o que o DESFAZER do casamento disse (inclusive «não revertido — confira») vai pra trilha
     if (field === 'DELETED') {
       let snap: any = null

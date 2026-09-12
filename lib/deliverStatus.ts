@@ -44,20 +44,20 @@
 // forma de garantir isso é ninguém mais calcular status em lugar nenhum.
 
 // ── AS 6 TABELAS DE ITEM COMPRADO ───────────────────────────────────────────
-// invoice_expenses, inputs, inventory, goods, good_expenses — e, desde
-// 03/set/2026, expenses. Todas têm picked_up, tracking_number, carrier, eta,
+// invoice_expenses, inputs, inventory, assets, assets_expenses — e, desde
+// 03/set/2026, staff_expenses. Todas têm picked_up, tracking_number, carrier, eta,
 // shipped_at, delivered_at, last_event, last_event_at — e todas têm
 // payment_date, que é o degrau "pagou?". E, desde 30/ago/2026, todas têm
 // cancel_status (null | CANCELLED | REFUNDED).
 //
-// expenses entrou por lei do dono (Márcio, 03/set/2026): "compra pessoal esta
-// no lugar certo (expenses, origin='PERSONAL'), mas TEM que estar no STREAM
-// tambem, e tem que ter rastreio". Só que expenses é, na maior parte, FOLHA —
+// staff_expenses entrou por lei do dono (Márcio, 03/set/2026): "compra pessoal esta
+// no lugar certo (staff_expenses, origin='PERSONAL'), mas TEM que estar no STREAM
+// tambem, e tem que ter rastreio". Só que staff_expenses é, na maior parte, FOLHA —
 // uma linha dela só é ITEM quando tem order_number OU tracking_number. Esse
 // gate mora AQUI (módulo puro, importável por server e browser) para os três
 // enumeradores (STREAM, robô do 17TRACK, ponte de e-mail) usarem o MESMO
 // predicado NA QUERY do PostgREST — folha nunca sai do banco. A cascata abaixo
-// continua agnóstica de tabela: não sabe o que é expenses.
+// continua agnóstica de tabela: não sabe o que é staff_expenses.
 // 04/set/2026: o gate anda SEMPRE com origin = 'PERSONAL' nos 3 consumidores. Sem isso,
 // passagem/compensacao de staff (PNR gravado em order_number: BLNKJJ, LA0457622ODMO,
 // BUSA-...) nascia BOUGHT no STREAM para sempre e entrava no dicionario da ponte de

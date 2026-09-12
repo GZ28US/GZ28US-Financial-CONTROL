@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/apiAuth.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
 
+// ── ESTE ARQUIVO ESCREVE NO BANCO DO BR, QUE NÃO FOI RENOMEADO (onda 2, 11/set/2026) ─
+// Os cinco renames (invoice_payments→invoice_incomes, invoice_parts→invoice_items,
+// goods→assets, good_expenses→assets_expenses, expenses→staff_expenses) valeram SÓ no
+// banco do US. Aqui todo `br.from(...)` fala com o projeto Supabase do GZ28BR, onde os
+// nomes velhos seguem vivos — e as duas tabelas que este arquivo toca (`invoices` e
+// `invoice_expenses`) não mudam de nome em lugar nenhum. Nada a trocar neste arquivo.
+//
 // ── US shopping-invoice income PAID  ->  the BR invoice's GZ28US bills go PAID ──
 // O servidor do espelho de lib/brPaidMirror.ts (a regra e o porquê moram lá).
 // Linked by BR invoices.us_invoice_id -> US invoices.id: invoice que não é espelho

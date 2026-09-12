@@ -873,7 +873,7 @@ export function decideBoxes(a: {
 // linhas BR moram no banco BR). LEGADO sem consumidor vivo: a enumeração que
 // vale é ITEM_TABLES (lib/itemTracking.server.ts), que desde 03/set/2026 inclui
 // expenses por lei do dono — este índice NÃO foi atualizado de propósito.
-// Na lei antiga ficavam FORA: expenses (staff),
+// Na lei antiga ficavam FORA: staff_expenses,
 // fixed_cost_expenses (jamais rastreadas), inventory DONATED (o order_number
 // dela é código de invoice interna) e QUALQUER order com cara de código
 // interno (US.016.1). BLINDAGEM dutyWatch: o lançamento de imposto grava em
@@ -899,10 +899,10 @@ export async function loadMoneyIndex(db: SupabaseClient): Promise<Map<string, Mo
   const { data: inv } = await db.from('inventory').select('id, description, quantity, supplier, order_number, source_type').not('order_number', 'is', null)
   push('inventory', (inv || []).filter(r => String(r.source_type || '').toUpperCase() !== 'DONATED'),
     r => String(r.description || ''), r => Number(r.quantity) || 1)
-  const { data: gd } = await db.from('goods').select('id, description, quantity, supplier, order_number').not('order_number', 'is', null)
-  push('goods', gd || [], r => String(r.description || ''), r => Number(r.quantity) || 1)
-  const { data: ge } = await db.from('good_expenses').select('id, description, supplier, order_number').not('order_number', 'is', null)
-  push('good_expenses', ge || [], r => String(r.description || ''), () => 1)
+  const { data: gd } = await db.from('assets').select('id, description, quantity, supplier, order_number').not('order_number', 'is', null)
+  push('assets', gd || [], r => String(r.description || ''), r => Number(r.quantity) || 1)
+  const { data: ge } = await db.from('assets_expenses').select('id, description, supplier, order_number').not('order_number', 'is', null)
+  push('assets_expenses', ge || [], r => String(r.description || ''), () => 1)
   return idx
 }
 

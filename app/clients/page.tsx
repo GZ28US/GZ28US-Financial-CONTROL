@@ -79,9 +79,9 @@ export default function ClientsPage() {
 
       if (invoiceIds.length > 0) {
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-          supabase.from('invoice_payments').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
+          supabase.from('invoice_incomes').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
           supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', invoiceIds),
-          supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
+          supabase.from('invoice_items').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
           supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
         ])
 

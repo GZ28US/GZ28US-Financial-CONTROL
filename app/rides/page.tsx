@@ -166,7 +166,7 @@ export default function RidesPage() {
       let sumExpensesGlobal = 0
 
       if (invoiceIds.length > 0) {
-        const tables = ['invoice_payments', 'invoice_expenses', 'invoice_parts', 'invoice_services', 'invoice_notes']
+        const tables = ['invoice_incomes', 'invoice_expenses', 'invoice_items', 'invoice_services', 'invoice_notes']
         for (const table of tables) {
           const { data: rows } = await supabase
             .from(table)
@@ -178,9 +178,9 @@ export default function RidesPage() {
         }
 
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-          supabase.from('invoice_payments').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
+          supabase.from('invoice_incomes').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
           supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', invoiceIds),
-          supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
+          supabase.from('invoice_items').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
           supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
         ])
 

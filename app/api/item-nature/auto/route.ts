@@ -13,7 +13,7 @@ import { normNature, type Nature } from '@/lib/itemNature'
 //      salvo palavra-chave contradizendo (aí é a exceção: HHP vende tune e vela) — 536 linhas.
 // Cada escrita deixa «AUTO · <prova>» em data_fixes (card SOZINHO, DESFAZER genérico). Esta
 // rota não toca a do Márcio (/api/item-nature): só lê o mesmo dado e escreve pela mesma trava
-// (nature IS NULL). `expenses` fica fora (portão da folha).
+// (nature IS NULL). `staff_expenses` fica fora (portão da folha).
 export const maxDuration = 120
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -39,12 +39,12 @@ const HINT: [RegExp, Nature][] = [
 ]
 const hintFor = (t: string): Nature | null => { const h = String(t || '').slice(0, 80); const m = HINT.find(([re]) => re.test(h)); return m ? m[1] : null }
 
-const SPECS: Record<Exclude<ItemTable, 'expenses'>, { select: string; desc: (r: any) => string; amount: (r: any) => number; partId?: boolean; inv?: boolean }> = {
+const SPECS: Record<Exclude<ItemTable, 'staff_expenses'>, { select: string; desc: (r: any) => string; amount: (r: any) => number; partId?: boolean; inv?: boolean }> = {
   invoice_expenses: { select: 'id, item, supplier, price, quantity, tax, extra, invoice_id, nature', desc: r => r.item, amount: r => num(r.price) * (num(r.quantity) || 1) + num(r.tax) + num(r.extra), partId: true, inv: true },
   inputs: { select: 'id, description, supplier, unit_price, quantity, nature', desc: r => r.description, amount: r => num(r.unit_price) * (num(r.quantity) || 1) },
   inventory: { select: 'id, description, supplier, unit_price, quantity, nature', desc: r => r.description, amount: r => num(r.unit_price) * (num(r.quantity) || 1), partId: true },
-  goods: { select: 'id, description, supplier, unit_price, quantity, nature', desc: r => r.description, amount: r => num(r.unit_price) * (num(r.quantity) || 1) },
-  good_expenses: { select: 'id, description, supplier, amount, nature', desc: r => r.description, amount: r => num(r.amount) },
+  assets: { select: 'id, description, supplier, unit_price, quantity, nature', desc: r => r.description, amount: r => num(r.unit_price) * (num(r.quantity) || 1) },
+  assets_expenses: { select: 'id, description, supplier, amount, nature', desc: r => r.description, amount: r => num(r.amount) },
 }
 
 async function fetchAll(db: any, table: string, select: string, filter?: (q: any) => any): Promise<any[]> {
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     const habit = new Map<string, Record<string, number>>()
     const all: { table: string; r: any; text: string; amount: number; key: string }[] = []
     for (const table of ITEM_TABLES) {
-      if (table === 'expenses') continue
+      if (table === 'staff_expenses') continue
       const spec = SPECS[table]
       for (const r of await fetchRows(db, table, spec)) {
         const text = String(spec.desc(r) || '').trim()

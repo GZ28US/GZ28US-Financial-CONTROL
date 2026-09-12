@@ -56,6 +56,7 @@ import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
 import { matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
 import { cacaNaPasta, respostaUnica, type PastaHit } from './dropboxHunt.server'
+import { tabelaAtual } from './tableRenames'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
 export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
@@ -457,12 +458,12 @@ export async function candidatosPara(db: SupabaseClient, vendor: string): Promis
     if (!r.invoice_id) continue
     add('invoice_expenses', String(r.invoice_id), rotulo.get(String(r.invoice_id)) || `invoice ${String(r.invoice_id).slice(0, 8)}`, String(r.expense_date || '').slice(0, 10))
   }
-  const { data: ex } = await db.from('expenses')
+  const { data: ex } = await db.from('staff_expenses')
     .select('season_id, expense_date, origin').ilike('supplier', like)
     .order('expense_date', { ascending: false }).limit(40)
   for (const r of (ex || []) as Record<string, unknown>[]) {
     if (!r.season_id) continue
-    add('expenses', String(r.season_id), `expenses ${String(r.origin || '')} (season ${String(r.season_id).slice(0, 8)})`, String(r.expense_date || '').slice(0, 10))
+    add('staff_expenses', String(r.season_id), `staff_expenses ${String(r.origin || '')} (season ${String(r.season_id).slice(0, 8)})`, String(r.expense_date || '').slice(0, 10))
   }
   return [...out.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1)).slice(0, 5)
 }
@@ -554,10 +555,10 @@ async function assinaturaLancada(db: SupabaseClient, supplierId: string, data: s
 const TABELAS_VALOR = [
   ['invoice_expenses', 'price', 'expense_date', 'supplier', 'item'],
   ['inputs', 'unit_price', 'purchase_date', 'supplier', 'description'],
-  ['expenses', 'amount', 'expense_date', 'supplier', 'description'],
-  ['goods', 'unit_price', 'purchase_date', 'supplier', 'description'],
+  ['staff_expenses', 'amount', 'expense_date', 'supplier', 'description'],
+  ['assets', 'unit_price', 'purchase_date', 'supplier', 'description'],
   ['inventory', 'unit_price', 'purchase_date', 'supplier', 'description'],
-  ['good_expenses', 'amount', 'expense_date', '', 'description'],
+  ['assets_expenses', 'amount', 'expense_date', '', 'description'],
   ['fixed_cost_expenses', 'amount', 'expense_date', '', 'description'],
 ] as const
 
@@ -567,7 +568,7 @@ export async function achaNoApp(db: SupabaseClient, vendor: string, amount: numb
   const like = `%${vendor.slice(0, 12)}%`
   for (const [t, col, dt, sup, txt] of TABELAS_VALOR) {
     // `select('*')`: o select montado por template confunde o parser de tipos do
-    // supabase-js, e as tabelas nao tem as mesmas colunas (good_expenses e
+    // supabase-js, e as tabelas nao tem as mesmas colunas (assets_expenses e
     // fixed_cost_expenses nao tem quantity/tax/extra). Ler tudo e somar o que
     // existir e mais simples e nao mente.
     let q = db.from(t).select('*').gte(dt, de).lte(dt, ate)
@@ -669,7 +670,7 @@ async function temLinhaPorPerto(db: SupabaseClient, dir: SupplierEntry[], vendor
   // existe" para toda assinatura da casa.
   for (const [t, col, campo] of [
     ['invoice_expenses', 'expense_date', 'supplier'],
-    ['expenses', 'expense_date', 'supplier'],
+    ['staff_expenses', 'expense_date', 'supplier'],
     ['inputs', 'purchase_date', 'supplier'],
     ['fixed_cost_expenses', 'expense_date', 'description'],
   ] as const) {
@@ -703,7 +704,16 @@ export async function lancar(
   target: Record<string, unknown>,
   dados: { vendor: string; order: string | null; amount: number; date: string; desc: string },
 ): Promise<{ table: string; id: string } | { erro: string }> {
-  const t = String(target.table || '')
+  // O ALVO CHEGA DE DENTRO DE UM JSON GRAVADO NO BANCO, e com NOME DE TABELA nele:
+  // ou de `auto_book_mail.cands[].table` (a sugestão que a pessoa clicou ao responder
+  // a dúvida), ou de `auto_book_mail_rules.target.table` (a regra aprendida). A
+  // migration da onda 2 reescreve `auto_book_mail.booked_table` — a coluna de TEXTO —
+  // e não entra em JSON nenhum. Medido pela REST na noite de 11/set/2026, antes dos renames:
+  // 6 das 20 linhas da fila guardam 'expenses' dentro de `cands` (9 entradas); regras
+  // aprendidas, zero. Sem traduzir, a peneira de destino abaixo recusa a própria
+  // sugestão que o robô ofereceu («tabela "expenses" nao e destino de compra») e o
+  // lançamento morre na mão de quem respondeu. tabelaAtual() é idempotente.
+  const t = tabelaAtual(String(target.table || ''))
   // O NOME DO FORNECEDOR ENTRA CURADO (ordem dele, 07/set/2026: *"normalize
   // sempre os nomes dos fornecedores, ensine todos os robôs de escaneamento a
   // fazer isso, assim os dados já entram certos"*). O e-mail escreve o remetente
@@ -723,7 +733,7 @@ export async function lancar(
   const base: Record<string, unknown> = { supplier: casado?.name || dados.vendor, order_number: dados.order, source: 'GZ28US' }
   for (const [k, v] of Object.entries(target)) if (k !== 'table') base[k] = v
   if (t === 'invoice_expenses') Object.assign(base, { item: dados.desc, price: dados.amount, quantity: 1, expense_date: dados.date })
-  else if (t === 'expenses') Object.assign(base, { description: dados.desc, amount: dados.amount, expense_date: dados.date, type: base.type || 'SINGLE' })
+  else if (t === 'staff_expenses') Object.assign(base, { description: dados.desc, amount: dados.amount, expense_date: dados.date, type: base.type || 'SINGLE' })
   else if (t === 'inputs') Object.assign(base, { description: dados.desc, unit_price: dados.amount, quantity: 1, purchase_date: dados.date })
   else return { erro: `tabela "${t}" nao e destino de compra` }
   const { data, error } = await db.from(t).insert(base).select('id').single()

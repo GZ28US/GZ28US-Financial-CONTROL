@@ -55,7 +55,7 @@ export default function ReportsPage() {
 
     // TO INCOME — scheduled/pending client payments (not yet received).
     const { data: pays } = await supabase
-      .from('invoice_payments')
+      .from('invoice_incomes')
       .select('invoice_id, amount, payment_date, source, description, paid_at')
       .is('paid_at', null)
     const inc: Row[] = (pays || []).filter((p: any) => invMap.has(p.invoice_id)).map((p: any) => {

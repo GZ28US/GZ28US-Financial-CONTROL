@@ -96,7 +96,7 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
     }
     if (!periodo) continue
 
-    const { data: dup } = await db.from('expenses').select('id')
+    const { data: dup } = await db.from('staff_expenses').select('id')
       .eq('season_id', s.id).eq('type', s.pay_type).eq('expense_date', periodo).limit(1)
     if (dup?.length) continue
 
@@ -120,7 +120,7 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
       usd = Number((rate / spot).toFixed(2))
       nota = ` · R$ ${rate.toFixed(2)} a ${spot.toFixed(4)}`
     }
-    const { error } = await db.from('expenses').insert({
+    const { error } = await db.from('staff_expenses').insert({
       season_id: s.id, type: s.pay_type, amount: usd, amount_brl: brl,
       expense_date: periodo, payment_date: null,
       description: `${label}${nota} — gerado pelo app, aguardando pagamento`,

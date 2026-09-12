@@ -148,16 +148,16 @@ export default function NewInvoicePage() {
       // Quote não ganha pasta (o ride dela também não tem) — só invoice de verdade.
       if (!inv.is_quote && inv.ride_id) await syncInvoiceFolder(inv.ride_id, inv.invoice_code, inv.service)
 
-      // Copy children with EXPLICIT, insertable columns only. invoice_parts.total is
+      // Copy children with EXPLICIT, insertable columns only. invoice_items.total is
       // a generated column and updated_at is server-managed — copying them verbatim
       // makes PostgREST reject the whole insert (which is why items went missing).
-      const { data: parts } = await supabase.from('invoice_parts').select('*').eq('invoice_id', sourceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+      const { data: parts } = await supabase.from('invoice_items').select('*').eq('invoice_id', sourceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
       const partRows = (parts || []).map((p: any) => ({
         invoice_id: inv.id, description: p.description, unit_price: p.unit_price, quantity: p.quantity,
         base_cost: p.base_cost, position: p.position, kit_group: p.kit_group, kit_name: p.kit_name,
         source_item: p.source_item, payment_date: p.payment_date,
       }))
-      if (partRows.length) { const { error: pe } = await supabase.from('invoice_parts').insert(partRows); if (pe) throw new Error('items: ' + pe.message) }
+      if (partRows.length) { const { error: pe } = await supabase.from('invoice_items').insert(partRows); if (pe) throw new Error('items: ' + pe.message) }
 
       const { data: svcs } = await supabase.from('invoice_services').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
       let svcRows = (svcs || []).map((s: any) => ({ invoice_id: inv.id, description: s.description, price: s.price }))
@@ -184,13 +184,13 @@ export default function NewInvoicePage() {
       if (noteRows.length) { const { error: ne } = await supabase.from('invoice_notes').insert(noteRows); if (ne) throw new Error('notes: ' + ne.message) }
 
       // INCOMES (payments) — carried so the duplicate is a true clone, not a quote shell.
-      const { data: pays } = await supabase.from('invoice_payments').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
+      const { data: pays } = await supabase.from('invoice_incomes').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
       const payRows = (pays || []).map((p: any) => ({
         invoice_id: inv.id, amount: p.amount, amount_brl: p.amount_brl, payment_date: p.payment_date,
         source: p.source, paid_from: p.paid_from, paid_to: p.paid_to, receipt_url: p.receipt_url,
         description: p.description, paid_at: p.paid_at,
       }))
-      if (payRows.length) { const { error: pae } = await supabase.from('invoice_payments').insert(payRows); if (pae) throw new Error('incomes: ' + pae.message) }
+      if (payRows.length) { const { error: pae } = await supabase.from('invoice_incomes').insert(payRows); if (pae) throw new Error('incomes: ' + pae.message) }
 
       // O clone é cópia fiel: os recibos da origem viraram linhas aqui, então a
       // pasta desta invoice recebe os mesmos papéis com o nome dela.
@@ -370,7 +370,7 @@ export default function NewInvoicePage() {
         source_item: p.source_item || null,
       }
     })
-    if (partRows.length > 0) await supabase.from('invoice_parts').insert(partRows)
+    if (partRows.length > 0) await supabase.from('invoice_items').insert(partRows)
 
     let serviceRows = (pack.services || []).map((s: any) => ({ invoice_id: invoiceId, description: s.description, price: (s.price_usd != null ? Number(s.price_usd) : Number(s.price)) || 0 }))
     // Always keep a Full Project Labor row so EDIT's auto-CALCULATE has its anchor.

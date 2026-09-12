@@ -1,4 +1,5 @@
 import { classifyInput } from './inputsCategory'
+import { tabelaAtual, nomesHistoricos } from './tableRenames'
 // lib/bankReconcile.server.ts — pool, ranking e motores da conciliação bancária.
 // Só servidor (service key). A rota app/api/bank/reconcile/route.ts é fina e usa isto.
 //
@@ -64,7 +65,7 @@ export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[] }
 // NULL numa linha casada = casamento antigo, sem registro — o DESFAZER não reverte data nenhuma por palpite, só avisa.
 // price/extra: o WIRE + TAXA (match_wire) já gravava esses campos.
 export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference' | 'price' | 'extra'; v: string; o?: string | null }
-export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'invoice_parts'])
+export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'staff_expenses', 'assets', 'assets_expenses', 'inputs', 'inventory', 'invoice_items'])
 
 // AUTO-LINK (o motor do Bank Link; até 10/set/2026 chamado «AUTO-BOOK», nome que hoje é só do robô de e-mail do Márcio) — constantes de doutrina (3/set/2026; donos podem mover):
 export const RULE_AGE_DAYS = 7            // maturidade: RULE/LEARN só criam depois de 7 dias (o humano ainda lança atrasado)
@@ -112,14 +113,14 @@ export const expenseLinkColumnMissing = () => EXP_LINK_COL_MISSING
 export const EXP_SEL = 'id, description, type, amount, amount_brl, payment_date, expense_date, origin, paid_from, paid_to, source, season_id, payment_reference'
 export async function expensesRows(db: any, sel: string = EXP_SEL, filter?: (q: any) => any): Promise<any[]> {
   if (!EXP_LINK_COL_MISSING || Date.now() - EXP_LINK_MISSING_AT > 60000) {
-    try { const rows = await fetchAll(db, 'expenses', sel + ', bank_transaction_id', filter); EXP_LINK_COL_MISSING = false; return rows }
+    try { const rows = await fetchAll(db, 'staff_expenses', sel + ', bank_transaction_id', filter); EXP_LINK_COL_MISSING = false; return rows }
     catch (e) { if (/bank_transaction_id/.test(String((e as Error).message || e))) { EXP_LINK_COL_MISSING = true; EXP_LINK_MISSING_AT = Date.now() } else throw e }
   }
-  return fetchAll(db, 'expenses', sel, filter)
+  return fetchAll(db, 'staff_expenses', sel, filter)
 }
 // Sonda direta (antes de escrever): a coluna existe? Atualiza a bandeira nos dois sentidos.
 export async function probeExpenseLink(db: any): Promise<boolean> {
-  const { error } = await db.from('expenses').select('bank_transaction_id').limit(1)
+  const { error } = await db.from('staff_expenses').select('bank_transaction_id').limit(1)
   EXP_LINK_COL_MISSING = !!(error && /bank_transaction_id/.test(error.message)); if (EXP_LINK_COL_MISSING) EXP_LINK_MISSING_AT = Date.now()
   return EXP_LINK_COL_MISSING
 }
@@ -130,11 +131,11 @@ export async function candidatePool(db: any): Promise<Pool> {
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from, bank_transaction_id'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, description, cost_type'),
     expensesRows(db),
-    fetchAll(db, 'goods', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
-    fetchAll(db, 'good_expenses', 'id, good_id, description, supplier, amount, payment_date, expense_date, paid_from'),
+    fetchAll(db, 'assets', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
+    fetchAll(db, 'assets_expenses', 'id, good_id, description, supplier, amount, payment_date, expense_date, paid_from'),
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from, category'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, payment_date, purchase_date, purchase_group, paid_from'),
-    fetchAll(db, 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, description, paid_to, mirror_expense_id'),
+    fetchAll(db, 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, description, paid_to, mirror_expense_id'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'rides', 'id, project_name, client_id'),
     fetchAll(db, 'clients', '*').catch(() => []),
@@ -151,7 +152,7 @@ export async function candidatePool(db: any): Promise<Pool> {
   // Grupo casado ⇒ seus itens saem; item casado ⇒ seu grupo sai.
   const takenGroups = new Set([...taken].filter(k => k.startsWith('purchase_group:')).map(k => k.slice('purchase_group:'.length)))
   const brokenGroups = new Set<string>()
-  for (const [tbl, rows] of [['goods', goods], ['inputs', inputs], ['inventory', inventory], ['invoice_expenses', invExp]] as const)
+  for (const [tbl, rows] of [['assets', goods], ['inputs', inputs], ['inventory', inventory], ['invoice_expenses', invExp]] as const)
     for (const r of rows) if (r.purchase_group && taken.has(tbl + ':' + r.id)) brokenGroups.add(r.purchase_group)
 
   const invById = new Map(invoices.map((i: any) => [i.id, i]))
@@ -204,11 +205,11 @@ const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to =
   const expLinked = (x: any) => (x.bank_transaction_id && linkedLines.has(String(x.bank_transaction_id))) || (String(x.payment_reference || '').startsWith('bank:') && linkedLines.has(String(x.payment_reference).slice(5)))
   for (const x of expenses) {
     if (expLinked(x)) continue
-    const c: Cand = { table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}${x.source && !/auto-captura/i.test(String(x.source)) ? ' · ' + x.source : ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date), href: '/staff', detail: `${x.origin === 'PERSONAL' ? 'DESPESA PESSOAL' : 'FOLHA/STAFF'} · ${dts(x.payment_date, x.expense_date, 'lançada')}` }
-    if (brPaid(x)) { if (!taken.has('expenses:' + x.id) && c.amount > 0.005 && !future(c.date)) shadow.push(c) } else push(out, c)
+    const c: Cand = { table: 'staff_expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${x.description || x.type || ''}${x.source && !/auto-captura/i.test(String(x.source)) ? ' · ' + x.source : ''}`, date: x.payment_date || x.expense_date || null, amount: num(x.amount), undated: !okDate(x.payment_date), href: '/staff', detail: `${x.origin === 'PERSONAL' ? 'DESPESA PESSOAL' : 'FOLHA/STAFF'} · ${dts(x.payment_date, x.expense_date, 'lançada')}` }
+    if (brPaid(x)) { if (!taken.has('staff_expenses:' + x.id) && c.amount > 0.005 && !future(c.date)) shadow.push(c) } else push(out, c)
   }
-  for (const g of goods) if (!brPaid(g) && memberFree(g)) push(out, { table: 'goods', id: g.id, group: grp(g), label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.purchase_date || null, amount: num(g.unit_price) * (num(g.quantity) || 1), undated: !okDate(g.payment_date), href: '/goods', detail: `BEM/EQUIPAMENTO (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.purchase_date, 'comprado')}` })
-  for (const g of goodExp) if (!brPaid(g)) push(out, { table: 'good_expenses', id: g.id, label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.expense_date || null, amount: num(g.amount), undated: !okDate(g.payment_date), href: '/goods', detail: `DESPESA de bem/equipamento (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.expense_date, 'lançada')}` })
+  for (const g of goods) if (!brPaid(g) && memberFree(g)) push(out, { table: 'assets', id: g.id, group: grp(g), label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.purchase_date || null, amount: num(g.unit_price) * (num(g.quantity) || 1), undated: !okDate(g.payment_date), href: '/goods', detail: `BEM/EQUIPAMENTO (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.purchase_date, 'comprado')}` })
+  for (const g of goodExp) if (!brPaid(g)) push(out, { table: 'assets_expenses', id: g.id, label: `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, date: g.payment_date || g.expense_date || null, amount: num(g.amount), undated: !okDate(g.payment_date), href: '/goods', detail: `DESPESA de bem/equipamento (GOODS) · ${g.supplier || 'sem fornecedor'} · ${dts(g.payment_date, g.expense_date, 'lançada')}` })
   for (const x of inputs) if (!brPaid(x) && memberFree(x)) push(out, { table: 'inputs', id: x.id, group: grp(x), label: `SUPPLY · ${x.category ? x.category + ' · ' : ''}${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date), href: '/supplies', detail: `INSUMO (SUPPLIES${x.category ? ' · ' + x.category : ''}) · ${x.supplier || 'sem fornecedor'} · ${num(x.unit_price)}×${num(x.quantity) || 1} · ${dts(x.payment_date, x.purchase_date, 'comprado')}` })
   for (const x of inventory) if (x.source_type === 'PURCHASED' && !brPaid(x) && memberFree(x)) push(out, { table: 'inventory', id: x.id, group: grp(x), label: `STOCK · ${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, date: x.payment_date || x.purchase_date || null, amount: num(x.unit_price) * (num(x.quantity) || 1), undated: !okDate(x.payment_date), href: '/inventory', detail: `ESTOQUE comprado · ${x.supplier || 'sem fornecedor'} · ${num(x.unit_price)}×${num(x.quantity) || 1} · ${dts(x.payment_date, x.purchase_date, 'comprado')}` })
   for (const e of finEv) {
@@ -220,17 +221,17 @@ const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to =
   // nunca teve depósito correspondente. Deixá-la na fila fazia ela casar com um
   // depósito real do cliente e QUEIMAR o par certo.
   for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p) || p.mirror_expense_id) continue
-    push(inn, { table: 'invoice_payments', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at, href: invHref(p.invoice_id), detail: `RECEBIMENTO da invoice ${invLabel(p.invoice_id)} · cliente ${invClient(p.invoice_id) || '—'} · ${p.paid_at ? 'baixado ' + String(p.paid_at).slice(0, 10) : 'previsto ' + (p.payment_date || '—') + ' · SEM baixa'}${p.source ? ' · via ' + p.source : ''}` }) }
-  // PART CUSTO / KIT CUSTO SAÍRAM DO POOL (BL 1.5.0, 10/set/2026). invoice_parts.base_cost é campo de EXIBIÇÃO (lib/financials:
+    push(inn, { table: 'invoice_incomes', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at, href: invHref(p.invoice_id), detail: `RECEBIMENTO da invoice ${invLabel(p.invoice_id)} · cliente ${invClient(p.invoice_id) || '—'} · ${p.paid_at ? 'baixado ' + String(p.paid_at).slice(0, 10) : 'previsto ' + (p.payment_date || '—') + ' · SEM baixa'}${p.source ? ' · via ' + p.source : ''}` }) }
+  // PART CUSTO / KIT CUSTO SAÍRAM DO POOL (BL 1.5.0, 10/set/2026). invoice_items.base_cost é campo de EXIBIÇÃO (lib/financials:
   // «fonte de custo é SEMPRE invoice_expenses»): o banco paga a despesa, nunca a peça vendida. Como candidato, o custo da peça
   // sem data empatava com qualquer cobrança do mesmo valor — a Wawa de $19,47 virava «filtro de óleo da GoldenEye» e segurava a
-  // regra do combustível. Medido antes de sair: nenhum casamento vivo apontava para invoice_parts ou kit_group.
+  // regra do combustível. Medido antes de sair: nenhum casamento vivo apontava para invoice_items ou kit_group.
   // Grupos de compra: um pedido com vários itens vira UMA cobrança no banco.
   // Só entram os MESMOS itens que contam (PURCHASED, livres, não-BR, invoice
   // real); grupo com item já casado não é oferecido. O grupo carrega seus
   // MEMBROS: o backfill e o DESFAZER mexem só neles (v0.3.0 revisão #18).
   const groups = new Map<string, { amount: number; date: string | null; label: string; n: number; undated: boolean; members: Member[] }>()
-  for (const [tbl, rows] of [['goods', goods], ['inputs', inputs], ['inventory', inventory], ['invoice_expenses', invExp]] as const) {
+  for (const [tbl, rows] of [['assets', goods], ['inputs', inputs], ['inventory', inventory], ['invoice_expenses', invExp]] as const) {
     for (const r of rows) {
       if (!r.purchase_group || brokenGroups.has(r.purchase_group) || takenGroups.has(r.purchase_group) || brPaid(r)) continue
       if (tbl === 'inventory' && r.source_type !== 'PURCHASED') continue
@@ -312,15 +313,15 @@ export function nameHit(line: any, c: Cand): boolean {
 // casar sozinho continua exigindo o nome. Família estreita demais é que lança em dobro. Medidos no ensaio: compra PESSOAL
 // sai da Amazon/Temu (scanner OTOFIX), loja de departamento vende casa e brinde (Ross, PBR Shop), processador e serviço
 // pagam qualquer coisa, e classe DESCONHECIDA não sabe nada — então todas as tabelas de compra.
-const T_PURCHASE = ['invoice_expenses', 'purchase_group', 'inventory', 'goods', 'good_expenses', 'inputs', 'expenses']
-const T_CONSUMABLE = ['inputs', 'purchase_group', 'expenses', 'goods', 'good_expenses', 'invoice_expenses', 'inventory']
-const T_SERVICE = ['fixed_cost_expenses', 'invoice_expenses', 'goods', 'good_expenses', 'expenses', 'inputs']
-const T_TEAM = ['expenses', 'fixed_cost_expenses', 'inputs']
-const T_STORE = ['expenses', 'fixed_cost_expenses', 'inputs', 'purchase_group', 'goods', 'good_expenses', 'invoice_expenses', 'inventory']
+const T_PURCHASE = ['invoice_expenses', 'purchase_group', 'inventory', 'assets', 'assets_expenses', 'inputs', 'staff_expenses']
+const T_CONSUMABLE = ['inputs', 'purchase_group', 'staff_expenses', 'assets', 'assets_expenses', 'invoice_expenses', 'inventory']
+const T_SERVICE = ['fixed_cost_expenses', 'invoice_expenses', 'assets', 'assets_expenses', 'staff_expenses', 'inputs']
+const T_TEAM = ['staff_expenses', 'fixed_cost_expenses', 'inputs']
+const T_STORE = ['staff_expenses', 'fixed_cost_expenses', 'inputs', 'purchase_group', 'assets', 'assets_expenses', 'invoice_expenses', 'inventory']
 // Dinheiro-movimento nunca casa nem lança sozinho — o candidato só serve de sugestão, então toda tabela vale.
-const T_MONEY = ['expenses', 'capital_events', 'financing_events', 'invoice_expenses', 'fixed_cost_expenses', 'goods', 'good_expenses', 'inputs', 'inventory', 'purchase_group', 'invoice_payments']
+const T_MONEY = ['staff_expenses', 'capital_events', 'financing_events', 'invoice_expenses', 'fixed_cost_expenses', 'assets', 'assets_expenses', 'inputs', 'inventory', 'purchase_group', 'invoice_incomes']
 const AFFINITY: Record<string, string[]> = {
-  FUEL: ['fixed_cost_expenses', 'expenses'], TOLLS: ['fixed_cost_expenses', 'expenses'],
+  FUEL: ['fixed_cost_expenses', 'staff_expenses'], TOLLS: ['fixed_cost_expenses', 'staff_expenses'],
   CONVENIENCE: [...T_CONSUMABLE, 'fixed_cost_expenses'],
   GROCERY: T_CONSUMABLE, SUPERSTORE: T_CONSUMABLE, WHOLESALE_CLUB: T_CONSUMABLE, DISCOUNT_VARIETY: T_CONSUMABLE, DRUGSTORE: T_CONSUMABLE,
   HARDWARE: T_PURCHASE, HOME_SUPPLY: T_PURCHASE, AUTO_PARTS: T_PURCHASE, MARKETPLACE: T_PURCHASE, TEMU: T_PURCHASE, MISC_RETAIL: T_PURCHASE,
@@ -328,7 +329,7 @@ const AFFINITY: Record<string, string[]> = {
   SAAS: T_SERVICE, TELECOM: T_SERVICE, UTILITY: T_SERVICE, RENT: T_SERVICE, INSURANCE: T_SERVICE, GOVERNMENT: T_SERVICE, ACCOUNTING: T_SERVICE, ADVERTISING: T_SERVICE,
   RESTAURANT: T_TEAM, LODGING: T_TEAM, TRAVEL: T_TEAM, ENTERTAINMENT: T_TEAM,
   TRANSFER: T_MONEY,
-  INCOME: ['invoice_payments', 'capital_events', 'financing_events'],
+  INCOME: ['invoice_incomes', 'capital_events', 'financing_events'],
   BANK_FEE: ['fixed_cost_expenses'],
 }
 // Posto vende gelo e cerveja: insumo ou pedido do MESMO período (≤3 dias) combina com combustível; longe, é outra compra.
@@ -775,7 +776,7 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     const folhaTwin = (): Cand[] | null => {
       if (MONEY_K.has(cls.klass) || !(num(l.amount) > 0)) return null
       const tol = Math.min(50, Math.max(3, 0.03 * amt))
-      const list = [...arr, ...(pool.shadow || [])].filter(x => x.table === 'expenses' && free(x) && notRejected(x) && x.date && daysBetween(x.date, l.date) <= 10)
+      const list = [...arr, ...(pool.shadow || [])].filter(x => x.table === 'staff_expenses' && free(x) && notRejected(x) && x.date && daysBetween(x.date, l.date) <= 10)
       const strong = list.filter(x => nameHit(l, x))
       const cand = strong.length ? strong : (cls.klass === 'TRAVEL' || cls.klass === 'LODGING') ? list.filter(x => /passagem|flight|ticket|voo|airfare|fare|hotel|hospedagem|uber|lyft/i.test(x.label) && daysBetween(x.date!, l.date) <= 3) : []
       if (!cand.length) return null
@@ -1019,19 +1020,19 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
   // (a outra linha ainda aponta) = conflito: solta o casamento em vez de contar duas vezes (corrida
   // com o cron, pool carregado antes). Elo MORTO (linha REMOVED/resetada) = limpa e segue — é a
   // substituta do Plaid casando a mesma passagem. Antes do diário, pra não registrar MATCH fantasma.
-  if (!EXP_LINK_COL_MISSING && (cand.table === 'expenses' || cand.table === 'expense_group')) {
-    const ids = cand.table === 'expenses' ? [cand.id] : (cand.members || []).map(m => m.id)
+  if (!EXP_LINK_COL_MISSING && (cand.table === 'staff_expenses' || cand.table === 'expense_group')) {
+    const ids = cand.table === 'staff_expenses' ? [cand.id] : (cand.members || []).map(m => m.id)
     if (ids.length) {
-      const { data: rows, error } = await db.from('expenses').select('id, bank_transaction_id').in('id', ids)
+      const { data: rows, error } = await db.from('staff_expenses').select('id, bank_transaction_id').in('id', ids)
       if (error && /bank_transaction_id/.test(error.message)) { EXP_LINK_COL_MISSING = true; EXP_LINK_MISSING_AT = Date.now() }
       for (const o of (rows || []).filter((r: any) => r.bank_transaction_id && String(r.bank_transaction_id) !== String(line.id))) {
         const { data: ol } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').eq('id', o.bank_transaction_id).maybeSingle()
-        const live = !!ol && ol.match_status === 'MATCHED' && ((ol.matched_table === 'expenses' && String(ol.matched_id) === String(o.id)) || (ol.matched_table === 'expense_group' && String(ol.matched_id) === String(ol.id)))
+        const live = !!ol && ol.match_status === 'MATCHED' && ((ol.matched_table === 'staff_expenses' && String(ol.matched_id) === String(o.id)) || (ol.matched_table === 'expense_group' && String(ol.matched_id) === String(ol.id)))
         if (live) {
           await db.from('bank_transactions').update({ match_status: line.match_status || 'NEW', matched_table: null, matched_id: null, matched_note: line.matched_note ?? null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }).eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id)
           throw new Error('registro da folha já ligado a outra linha do banco — recarregue')
         }
-        await db.from('expenses').update({ bank_transaction_id: null }).eq('id', o.id).eq('bank_transaction_id', o.bank_transaction_id)
+        await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('id', o.id).eq('bank_transaction_id', o.bank_transaction_id)
       }
     }
   }
@@ -1050,11 +1051,17 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
   }
   try {
     if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
-    else if (cand.table === 'invoice_payments') await fill('invoice_payments', [cand.id], 'paid_at', paidAtFor(line.date))
+    else if (cand.table === 'invoice_incomes') await fill('invoice_incomes', [cand.id], 'paid_at', paidAtFor(line.date))
     else if (cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group') {
       // Só os MEMBROS que formaram o total do grupo (revisão #18), nunca "todo mundo do grupo".
+      // AQUI é onde o nome de tabela vindo de dentro do JSON vira db.from(): quando o
+      // RESTAURAR DIÁRIO reencena um MATCH, os membros saem de bank_match_log.members,
+      // que a migration da onda 2 não reescreve. A tradução já é feita na leitura (rota
+      // restore_log), e repetida aqui de propósito: writeMatch é o funil único do
+      // casamento, então nenhum futuro chamador que traga members do banco escapa.
+      // tabelaAtual() é idempotente — membro montado em memória (nome de hoje) passa igual.
       const byTable = new Map<string, string[]>()
-      for (const m of cand.members || []) byTable.set(m.table, [...(byTable.get(m.table) || []), m.id])
+      for (const m of cand.members || []) { const t = tabelaAtual(m.table); byTable.set(t, [...(byTable.get(t) || []), m.id]) }
       for (const [t, ids] of byTable) await fill(t, ids, 'payment_date', line.date)
     }
   } catch (e) {
@@ -1077,7 +1084,7 @@ async function wireInvoiceFor(db: any, l: any): Promise<{ invoice_id: string; co
   const { data } = await db.from('bank_transactions').select('name, amount, matched_table, matched_id')
     .gte('date', d0).lte('date', d1).ilike('name', '%WIRE%').eq('match_status', 'MATCHED')
   const wantIn = /INCOMING/i.test(String(l.name || ''))
-  const wires = (data || []).filter((w: any) => !FEE_RE.test(String(w.name || '')) && (wantIn ? num(w.amount) < 0 : num(w.amount) > 0) && ['invoice_payments', 'invoice_expenses', 'invoice_parts'].includes(String(w.matched_table)))
+  const wires = (data || []).filter((w: any) => !FEE_RE.test(String(w.name || '')) && (wantIn ? num(w.amount) < 0 : num(w.amount) > 0) && ['invoice_incomes', 'invoice_expenses', 'invoice_items'].includes(String(w.matched_table)))
   if (wires.length !== 1) return null
   const w = wires[0]
   const { data: src } = await db.from(w.matched_table).select('invoice_id').eq('id', w.matched_id).maybeSingle()
@@ -1103,7 +1110,12 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
   let bucketHandled = false
   if (line.match_status === 'MATCHED' && line.matched_table && line.matched_id) {
     const t = line.matched_table as string, id = line.matched_id as string
-    const recorded: Backfill[] | null = Array.isArray(line.backfill) ? line.backfill : null
+    // O backfill é JSON GRAVADO na linha do banco, e `b.t` é nome de tabela — a migration da
+    // onda 2 (11/set/2026) renomeia as tabelas mas NÃO reescreve esse JSON. Medido em 11/set:
+    // 74 entradas em 62 linhas, 11 delas com nome velho (goods 8, invoice_payments 3). Sem
+    // traduzir, o db.from(b.t) lá embaixo estoura quando a onda 5 derrubar as views-ponte e o
+    // DESFAZER inteiro morre. Idempotente: nome novo entra e sai igual.
+    const recorded: Backfill[] | null = Array.isArray(line.backfill) ? (line.backfill as Backfill[]).map(b => ({ ...b, t: tabelaAtual(b.t) })) : null
     if (String(line.match_engine) === ENGINE_BUCKET) {
       // BALDE (fase B): antes de escrever qualquer coisa, TUDO que o motor criou ou
       // moveu por esta linha ainda tem o marcador «Bank Link»? Linha editada por
@@ -1157,7 +1169,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       // Elo com o STREAM (PESCA fundida) morre junto com a linha apagada.
       { const { data: ids } = await db.from('invoice_expenses').select('id').eq('purchase_group', line.id).ilike('item', '%Bank Link)%'); const list = (ids || []).map((x: any) => x.id); if (list.length) await db.from('part_stream_items').delete().eq('source_table', 'invoice_expenses').in('source_id', list).then(() => undefined, () => undefined) }
       await del('invoice_expenses', q => q.eq('invoice_id', bucketId), 'item', 'compra do balde apagada')
-      { const { data: r, error } = await db.from('expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id'); if (error) throw new Error('expenses: ' + error.message); if (r && r.length) changed.push('despesa pessoal atribuída apagada') }
+      { const { data: r, error } = await db.from('staff_expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id'); if (error) throw new Error('staff_expenses: ' + error.message); if (r && r.length) changed.push('despesa pessoal atribuída apagada') }
       await del('inputs', q => q, 'description', 'insumo atribuído apagado')
       await del('inventory', q => q, 'description', 'estoque atribuído apagado')
       {
@@ -1179,11 +1191,11 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     // PESSOAL da PERGUNTA (engine nulo, sem backfill): a despesa da season que o motor criou
     // morre com o DESFAZER — marcador + elo + origem, nunca linha de gente (revisão 4/set).
     // CASAR COM AJUSTE sem o elo no backfill (restore/reset — o claim grava [] quando nada foi escrito): solta o elo da folha pela coluna.
-    if ((t === 'expense_group' || (t === 'expenses' && String(line.match_engine) === 'ADJUST')) && !(recorded || []).some((b: any) => b && b.t === 'expenses' && b.f === 'bank_transaction_id') && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
+    if ((t === 'expense_group' || (t === 'staff_expenses' && String(line.match_engine) === 'ADJUST')) && !(recorded || []).some((b: any) => b && b.t === 'staff_expenses' && b.f === 'bank_transaction_id') && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
     let personalHandled = false
-    if (t === 'expenses' && !bucketHandled) {
-      const { data: r, error } = await db.from('expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id')
-      if (error) throw new Error('expenses: ' + error.message)
+    if (t === 'staff_expenses' && !bucketHandled) {
+      const { data: r, error } = await db.from('staff_expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id')
+      if (error) throw new Error('staff_expenses: ' + error.message)
       if (r && r.length) { changed.push('despesa pessoal apagada'); personalHandled = true }
     }
     // Sem registro do que o casamento escreveu (backfill NULL): NUNCA reverte data por igualdade com a data do banco — a data
@@ -1196,24 +1208,28 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
         else if (count) changed.push(`${what}${count > 1 ? '×' + count : ''} = ${bankDay} (data do banco) não revertido — casamento sem registro do que escreveu; confira`)
       }
       if (DATE_TABLES.has(t)) await report(t, `${t}.payment_date`, b => b.eq('id', id).eq('payment_date', bankDay))
-      else if (t === 'invoice_payments') await report('invoice_payments', 'invoice_payments.paid_at', b => b.eq('id', id).eq('paid_at', paidAtFor(bankDay)))
-      else if (t === 'purchase_group') { for (const g of ['goods', 'inputs', 'inventory', 'invoice_expenses']) await report(g, `${g}.payment_date`, b => b.eq('purchase_group', id).eq('payment_date', bankDay)) }
-      else if (t === 'kit_group') await report('invoice_parts', 'invoice_parts.payment_date', b => b.eq('kit_group', id).eq('payment_date', bankDay))
+      else if (t === 'invoice_incomes') await report('invoice_incomes', 'invoice_incomes.paid_at', b => b.eq('id', id).eq('paid_at', paidAtFor(bankDay)))
+      else if (t === 'purchase_group') { for (const g of ['assets', 'inputs', 'inventory', 'invoice_expenses']) await report(g, `${g}.payment_date`, b => b.eq('purchase_group', id).eq('payment_date', bankDay)) }
+      else if (t === 'kit_group') await report('invoice_items', 'invoice_items.payment_date', b => b.eq('kit_group', id).eq('payment_date', bankDay))
     }
   }
   // PAID FROM cravado por causa DESTE casamento (bulk CERTO do Data Checker,
+  // trilha check_key 'paid-from'). A busca é por NOME DE TABELA na trilha, e a trilha é
+  // LOG HISTÓRICO: linha de antes da onda 2 guarda 'goods'/'expenses'. nomesHistoricos()
+  // procura o nome de hoje E os que a tabela já teve — 21 linhas dependiam disso (medido
+  // em 11/set/2026: goods 11, expenses 10); só pelo nome novo, o PAID FROM não voltaria.
   // trilha check_key 'paid-from' + label 'CERTO (Regions)') volta a vazio —
   // desfazer o casamento desfaz a prova (revisão #20).
   if (line.match_status === 'MATCHED' && line.matched_table && line.matched_id) {
     const targets: { t: string; id: string }[] = line.matched_table === 'purchase_group' ? [] : [{ t: line.matched_table, id: line.matched_id }]
-    if (line.matched_table === 'purchase_group') for (const g of ['goods', 'inputs', 'inventory', 'invoice_expenses']) {
+    if (line.matched_table === 'purchase_group') for (const g of ['assets', 'inputs', 'inventory', 'invoice_expenses']) {
       const { data: ms } = await db.from(g).select('id').eq('purchase_group', line.matched_id)
       for (const m of ms || []) targets.push({ t: g, id: m.id })
     }
     for (const tg of targets) {
-      const { data: fx } = await db.from('data_fixes').select('id').eq('check_key', 'paid-from').eq('table_name', tg.t).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'CERTO (Regions)%').limit(1)
+      const { data: fx } = await db.from('data_fixes').select('id').eq('check_key', 'paid-from').in('table_name', nomesHistoricos(tg.t)).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'CERTO (Regions)%').limit(1)
       // O preenchimento automático (AUTO · linhas já casadas…) é a mesma prova do casamento: também volta.
-      const { data: fx2 } = fx && fx.length ? { data: fx } : await db.from('data_fixes').select('id').eq('check_key', 'paid-from').eq('table_name', tg.t).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'AUTO ·%').limit(1)
+      const { data: fx2 } = fx && fx.length ? { data: fx } : await db.from('data_fixes').select('id').eq('check_key', 'paid-from').in('table_name', nomesHistoricos(tg.t)).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'AUTO ·%').limit(1)
       if (fx2 && fx2.length) {
         const { data: r } = await db.from(tg.t).update({ paid_from: null }).eq('id', tg.id).eq('paid_from', 'GZ28US').select('id')
         if (r && r.length) changed.push(tg.t + '.paid_from→null (era prova do casamento)')
@@ -1558,10 +1574,10 @@ export async function bucketReach(db: any, line: any, bucketId: string): Promise
     db.from('inputs').select('id, description').eq('purchase_group', line.id),
     db.from('inventory').select('id, description').eq('purchase_group', line.id),
     db.from('fixed_cost_expenses').select('id, description').eq('bank_transaction_id', line.id),
-    db.from('expenses').select('id, description').eq('payment_reference', 'bank:' + line.id),   // PESSOAL (season) — sem purchase_group nessa tabela
+    db.from('staff_expenses').select('id, description').eq('payment_reference', 'bank:' + line.id),   // PESSOAL (season) — sem purchase_group nessa tabela
   ])
   for (const r of [ie, inp, inv, fx, ex]) if (r.error) throw new Error(r.error.message)
-  add('invoice_expenses', ie.data, 'item'); add('inputs', inp.data, 'description'); add('inventory', inv.data, 'description'); add('fixed_cost_expenses', fx.data, 'description'); add('expenses', ex.data, 'description')
+  add('invoice_expenses', ie.data, 'item'); add('inputs', inp.data, 'description'); add('inventory', inv.data, 'description'); add('fixed_cost_expenses', fx.data, 'description'); add('staff_expenses', ex.data, 'description')
   const t = String(line.matched_table || ''), id = String(line.matched_id || '')
   if (id && ['invoice_expenses', 'inputs', 'inventory', 'fixed_cost_expenses'].includes(t) && !seen.has(t + ':' + id)) {
     const col = t === 'invoice_expenses' ? 'item' : 'description'
@@ -1571,6 +1587,8 @@ export async function bucketReach(db: any, line: any, bucketId: string): Promise
   return out
 }
 // Quantas partes a última divisão desta linha registrou no diário (members).
+// O terceiro leitor de `members` — e o único que NÃO precisa de tabelaAtual(): aqui
+// só o TAMANHO da lista é usado, o nome de tabela de dentro não vira db.from() nenhum.
 export async function lastMatchMembersCount(db: any, bankId: string): Promise<number | null> {
   try {
     const { data } = await db.from('bank_match_log').select('members').eq('bank_id', bankId).eq('action', 'MATCH').order('at', { ascending: false }).limit(1).maybeSingle()

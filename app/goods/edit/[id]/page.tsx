@@ -22,7 +22,7 @@ type Expense = {
   source: string
   receipt_urls: string[]
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
-  // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
+  // loja) — assets_expenses.order_number existe desde a migration de 29/ago/2026.
   order_number: string
   // O status não é campo desde 30/ago/2026 — é interpretação. O único fato que
   // se guarda é este: peguei no balcão?
@@ -139,7 +139,7 @@ export default function EditGoodPage() {
   }
 
   async function loadGood() {
-    const { data, error } = await supabase.from('goods').select('*').eq('id', goodId).single()
+    const { data, error } = await supabase.from('assets').select('*').eq('id', goodId).single()
     if (error || !data) { alert('Good not found'); router.push('/goods'); return }
     setDescription(data.description || '')
     setQuantity(String(data.quantity || 1))
@@ -164,7 +164,7 @@ export default function EditGoodPage() {
     setPayment(paymentFromRow({ ...data, paid_from: data.paid_from || data.source }))
     setGoodReceiptUrls(parseReceiptUrls(data.receipt_url))
 
-    const { data: expensesData } = await supabase.from('good_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
+    const { data: expensesData } = await supabase.from('assets_expenses').select('*').eq('good_id', goodId).order('created_at', { ascending: true })
     if (expensesData) setExpenses(expensesData.map(e => ({
       id: e.id, description: e.description, amount: String(e.amount),
       expense_date: e.expense_date || '', supplier: e.supplier || '',
@@ -216,14 +216,14 @@ export default function EditGoodPage() {
       urls.push(urlData.publicUrl)
     }
     setGoodReceiptUrls(urls)
-    await supabase.from('goods').update({ receipt_url: urls.length > 0 ? JSON.stringify(urls) : null }).eq('id', goodId)
+    await supabase.from('assets').update({ receipt_url: urls.length > 0 ? JSON.stringify(urls) : null }).eq('id', goodId)
     setUploadingGood(false)
   }
 
   async function removeGoodReceiptUrl(index: number) {
     const updated = goodReceiptUrls.filter((_, i) => i !== index)
     setGoodReceiptUrls(updated)
-    await supabase.from('goods').update({ receipt_url: updated.length > 0 ? JSON.stringify(updated) : null }).eq('id', goodId)
+    await supabase.from('assets').update({ receipt_url: updated.length > 0 ? JSON.stringify(updated) : null }).eq('id', goodId)
   }
 
   async function uploadExpenseReceipts(files: FileList, index: number) {
@@ -239,7 +239,7 @@ export default function EditGoodPage() {
     }
     const updated = [...expenses]; updated[index] = { ...updated[index], receipt_urls: urls }; setExpenses(updated)
     const exp = updated[index]
-    if (exp.id) await supabase.from('good_expenses').update({ receipt_url: JSON.stringify(urls) }).eq('id', exp.id)
+    if (exp.id) await supabase.from('assets_expenses').update({ receipt_url: JSON.stringify(urls) }).eq('id', exp.id)
     setUploadingExpenseIndex(null)
   }
 
@@ -264,7 +264,7 @@ export default function EditGoodPage() {
 
   async function removeExpense(index: number) {
     const exp = expenses[index]
-    if (exp.id) await supabase.from('good_expenses').delete().eq('id', exp.id)
+    if (exp.id) await supabase.from('assets_expenses').delete().eq('id', exp.id)
     setExpenses(expenses.filter((_, i) => i !== index))
   }
 
@@ -275,7 +275,7 @@ export default function EditGoodPage() {
     await ensureSupplier(editingExpense.supplier)
     const exp = expenses[editingExpenseIndex!]
     if (exp.id) {
-      const { error } = await supabase.from('good_expenses').update({
+      const { error } = await supabase.from('assets_expenses').update({
         description: editingExpense.description, amount: parseFloat(editingExpense.amount),
         expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
         payment_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null, // espelho
@@ -302,7 +302,7 @@ export default function EditGoodPage() {
     await ensureSupplier(supplier)
     for (const exp of expenses) { await ensureSupplier(exp.supplier) }
 
-    const { error } = await supabase.from('goods').update({
+    const { error } = await supabase.from('assets').update({
       description, quantity: qty || 1, unit_price: unitPrice,
       purchase_date: isValidDate(purchaseDate) ? purchaseDate : null,
       supplier: supplier.trim() || null,
@@ -331,7 +331,7 @@ export default function EditGoodPage() {
 
     const newExpenses = expenses.filter(e => !e.id)
     if (newExpenses.length > 0) {
-      const { error: e } = await supabase.from('good_expenses').insert(newExpenses.map(ex => ({
+      const { error: e } = await supabase.from('assets_expenses').insert(newExpenses.map(ex => ({
         good_id: goodId, description: ex.description, amount: parseFloat(ex.amount) || 0,
         expense_date: isValidDate(ex.expense_date) ? ex.expense_date : null,
         payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho

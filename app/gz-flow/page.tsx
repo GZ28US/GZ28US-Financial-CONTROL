@@ -2,9 +2,12 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
 // GZ28US vs GZ28BR Flow — the inter-company ledger. Reads GZ28US data (USD):
-//   GZ28BR GOT  = incomes PAID TO GZ28BR   (invoice_payments.paid_to = 'GZ28BR')  → money GZ28BR holds for us
-//   GZ28BR PAID = every expense PAID FROM GZ28BR (source = 'GZ28BR' across invoice
-//                 expenses, goods, good-expenses, inputs, inventory, fixed costs, staff)
+//   GZ28BR GOT  = incomes PAID TO GZ28BR   (invoice_incomes.paid_to = 'GZ28BR')  → money GZ28BR holds for us
+//   GZ28BR PAID = every expense PAID FROM GZ28BR (source = 'GZ28BR' across the seven
+//                 spend tables this page reads: invoice_expenses, assets,
+//                 assets_expenses, inputs, inventory, fixed_cost_expenses and
+//                 staff_expenses — assets / assets_expenses / staff_expenses being
+//                 wave 2's new names for goods / good_expenses / expenses)
 // This page is identical in both apps; BR reads the same GZ28US project via supabaseUS.
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
@@ -38,14 +41,14 @@ export default function GzFlowPage() {
       { data: pays }, { data: invExps }, { data: goods }, { data: goodExps },
       { data: inputs }, { data: inventory }, { data: fixed }, { data: staff },
     ] = await Promise.all([
-      supabase.from('invoice_payments').select('id, invoice_id, amount, payment_date, paid_at, description').eq('paid_to', GZ),
+      supabase.from('invoice_incomes').select('id, invoice_id, amount, payment_date, paid_at, description').eq('paid_to', GZ),
       supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, payment_date, expense_date, item, paid_from, paid_to, source').or(FLOW),
-      supabase.from('goods').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('good_expenses').select('id, good_id, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('assets').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('assets_expenses').select('id, good_id, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
       supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
       supabase.from('inventory').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date, expense_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('expenses').select('id, type, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
+      supabase.from('staff_expenses').select('id, type, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
     ])
     // Classify one expense row: 'PAID' (BR paid a non-BR bill), 'GOT' (someone
     // else paid a BR bill — BR owes us more), or null (BR internal / unrelated).

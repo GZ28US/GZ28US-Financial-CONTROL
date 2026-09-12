@@ -8,7 +8,7 @@
 // sem folder), não só a inbox — pasta nenhuma esconde dinheiro. Roda a cada 5 min
 // no mail-poll.
 //
-//   ENTRADA ($ recebido)  → lança em invoice_payments quando o remetente já tem
+//   ENTRADA ($ recebido)  → lança em invoice_incomes quando o remetente já tem
 //                           histórico (mesma invoice do último pagamento dele) e
 //                           reporta no WhatsApp; sem histórico → PENDING + alerta.
 //   SAÍDA ($ enviado)     → nunca lança sozinho (falta o carro/invoice) — alerta
@@ -92,7 +92,7 @@ export function parseZelle(subject: string, body: string): Hit | null {
 // ou na linha de despesa (saída) — é a impressão digital do Zelle.
 async function alreadyBooked(db: SupabaseClient, hit: Hit): Promise<boolean> {
   if (hit.direction === 'IN') {
-    const { data } = await db.from('invoice_payments').select('id').ilike('description', `%${hit.conf}%`).limit(1)
+    const { data } = await db.from('invoice_incomes').select('id').ilike('description', `%${hit.conf}%`).limit(1)
     return !!data?.length
   }
   const { data } = await db.from('invoice_expenses').select('id').ilike('item', `%${hit.conf}%`).limit(1)
@@ -145,7 +145,7 @@ async function destinoPorValor(db: SupabaseClient, clientId: string, amount: num
 
   // A linha de income NÃO PAGA é a dívida: `payment_date` vazio é o interruptor
   // de caixa do app, e o editor cria essa linha como "Pending balance".
-  const { data: abertas } = await db.from('invoice_payments')
+  const { data: abertas } = await db.from('invoice_incomes')
     .select('id, invoice_id, amount, payment_date, description')
     .in('invoice_id', ids).is('payment_date', null)
   const cands = (abertas || []) as Array<Record<string, unknown>>
@@ -190,7 +190,7 @@ async function targetInvoice(db: SupabaseClient, party: string, amount: number):
     if (invs?.[0]) return { invoice_id: invs[0].id, code: invs[0].invoice_code || '?', via: 'PALPITE: invoice aberta mais nova' }
   }
 
-  const { data } = await db.from('invoice_payments').select('invoice_id, payment_date').ilike('description', `%${words[0]}%`).not('invoice_id', 'is', null).order('payment_date', { ascending: false }).limit(1)
+  const { data } = await db.from('invoice_incomes').select('invoice_id, payment_date').ilike('description', `%${words[0]}%`).not('invoice_id', 'is', null).order('payment_date', { ascending: false }).limit(1)
   const invoice_id = data?.[0]?.invoice_id
   if (!invoice_id) return null
   const { data: inv } = await db.from('invoices').select('invoice_code').eq('id', invoice_id).limit(1)
@@ -242,7 +242,7 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
       const target = await targetInvoice(db, hit.party, hit.amount)
       if (target) {
         const recibo = await guardaComprovante(db, target.invoice_id, hit, String(m.body?.content || ''))
-        await db.from('invoice_payments').insert({
+        await db.from('invoice_incomes').insert({
           invoice_id: target.invoice_id, amount: hit.amount, payment_date: hit.when, source: 'ZELLE', paid_to: 'GZ28US',
           description: `Zelle from ${hit.party} — conf ${hit.conf} (Regions •9336)`,
           receipt_url: recibo,
@@ -263,7 +263,7 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
         // A PENDENTE QUE ESTE DINHEIRO QUITA MORRE AQUI — e só quando bate ao
         // centavo. Deixar as duas faz a invoice mostrar o dobro recebido; apagar
         // por aproximação apagaria recebível de verdade.
-        if (target.quita) await db.from('invoice_payments').delete().eq('id', target.quita.id)
+        if (target.quita) await db.from('invoice_incomes').delete().eq('id', target.quita.id)
         const nota = target.via === 'VALOR EXATO' ? `✅ quitou a pendência de $${target.quita?.amount.toFixed(2)} (linha antiga apagada)`
           : target.via === 'VALOR PROXIMO' ? `⚠️ pendência de $${(hit.amount + (target.diferenca || 0)).toFixed(2)} — ${target.diferenca && target.diferenca > 0 ? `ainda faltam $${target.diferenca.toFixed(2)}` : `sobraram $${Math.abs(target.diferenca || 0).toFixed(2)}`}; a linha pendente FICOU`
           : `⚠️ ${target.via} — nenhuma pendência bateu com este valor, confira`

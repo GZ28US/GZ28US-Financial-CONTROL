@@ -49,17 +49,17 @@ export default function PaymentsPage() {
 
     const [{ data: pays }, exps, { data: staffExps }, { data: inputsD }, { data: goodsD }] = await Promise.all([
       // PAID by CLIENTS — income received (paid_at in window).
-      supabase.from('invoice_payments').select('id, invoice_id, amount, paid_at, source').not('paid_at', 'is', null).gte('paid_at', cutoffISO),
+      supabase.from('invoice_incomes').select('id, invoice_id, amount, paid_at, source').not('paid_at', 'is', null).gte('paid_at', cutoffISO),
       // PAID by GZ28US — invoice expenses paid (payment_date in window). Paginado (ver pageAll).
       pageAll(() => supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group').not('payment_date', 'is', null).gte('payment_date', cutoffDate)),
       // PAGO pela GZ28 — pagamento de staff. Desde 28/jul/2026 cada linha é um
       // pagamento com data própria e `payment_date` só existe quando o dinheiro
       // saiu — então o PAST lista pelo PAGAMENTO, nunca pela previsão (antes
       // qualquer linha contava como gasta, e a semana futura entraria aqui).
-      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date, payment_date, paid_via').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
+      supabase.from('staff_expenses').select('id, season_id, type, description, amount, expense_date, payment_date, paid_via').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
       // PAID by GZ28US — inputs & goods are always paid; use purchase_date.
       supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
-      supabase.from('goods').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
+      supabase.from('assets').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
     ])
     // PAID by GZ28 — fixed-cost supplier payments (payment_date in window).
     const { data: fixedCostD } = await supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date').not('payment_date', 'is', null).gte('payment_date', cutoffDate)

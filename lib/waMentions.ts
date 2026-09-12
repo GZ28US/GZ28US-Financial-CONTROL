@@ -53,7 +53,7 @@ export function mencoesDoTexto(texto: string, destino: string): string {
 // print e assombra depois.
 //
 // Medido em 11/set/2026 (só leitura): 0 de 1.000 pares assunto+remetente em
-// stream_mail_moves e 0 de 220 descrições de invoice_payments (é lá que o memo do
+// stream_mail_moves e 0 de 220 descrições de invoice_incomes (é lá que o memo do
 // Zelle é gravado) casariam com o padrão. Risco real, frequência medida ZERO — a
 // peneira existe para que continue assim quando o volume mudar.
 export function semMarcacao(texto: unknown): string {

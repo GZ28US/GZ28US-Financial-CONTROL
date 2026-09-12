@@ -5,7 +5,7 @@
 // PostgREST corta em 1.000 por request). As três telas leem o MESMO dataset para
 // os números baterem entre si — a regra de cada linha mora aqui, não nas telas.
 //
-// Fonte de custo é SEMPRE invoice_expenses — invoice_parts.base_cost é campo de
+// Fonte de custo é SEMPRE invoice_expenses — invoice_items.base_cost é campo de
 // exibição (espelha o preço de venda nos car deals) e não entra em conta nenhuma.
 import { supabase } from '@/lib/supabase'
 
@@ -20,7 +20,7 @@ export const expLine = (e: { price?: unknown; quantity?: unknown; tax?: unknown;
 // CLIENT_PAID e clientPaid() — decidia três coisas: o item do cliente saía da base
 // do imposto, a despesa dele não virava caixa no DFC e não entrava em Fornecedores
 // a Pagar. Nenhuma linha do banco de dados usava: ZERO em paid_from de todas as
-// tabelas de dinheiro e ZERO nos 804 invoice_parts (medido em 11/set). No app do BR
+// tabelas de dinheiro e ZERO nos 804 invoice_items (medido em 11/set). No app do BR
 // a regra continua viva — lá o cliente paga o fornecedor direto de verdade.
 
 export const qtyLine = (r: { unit_price?: unknown; quantity?: unknown }) =>
@@ -92,20 +92,20 @@ export async function loadFinancials(): Promise<FinData> {
     // 11/set: a máquina que criava essas linhas morreu, a COLUNA fica até a onda que
     // a derruba no banco. Está preenchida em 0 de 220 linhas (medido) — o corte
     // abaixo continua de pé só pra nenhuma linha teimosa virar caixa.
-    fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
+    fetchAll('invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
     fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at, receipt_url'),
     // base_tributavel é a base do imposto e do desconto (coluna GERADA, o Postgres
     // calcula). O paid_from do ITEM sai do select: ele só existia pra zerar a linha
     // do cliente, e sem CLIENT no app US a coluna é vazia nas 804 linhas (medido) —
     // com isso base_tributavel = unit_price × quantity em todas elas. A coluna
     // continua no banco, porque a GERADA depende dela; derrubar é outra onda.
-    fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_tributavel, mirror_expense_id'),
+    fetchAll('invoice_items', 'id, invoice_id, description, unit_price, quantity, base_tributavel, mirror_expense_id'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
-    fetchAll('expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
+    fetchAll('staff_expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
     fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, bank_transaction_id'),
     fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion, periodicity, payment_day_1, payment_day_2'),
-    fetchAll('goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
-    fetchAll('good_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
+    fetchAll('assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
+    fetchAll('assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
     // order_number entra no select (29/ago/2026): o MOVE pra estoque do Data
     // Checker leva o pedido junto — ORDER NUMBER é sagrado e não se perde.
     fetchAll('inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, order_number'),
@@ -163,7 +163,7 @@ export function whoPaid(r: { paid_from?: string | null; source?: string | null }
 }
 
 // ── CONTA CORRENTE GZ28BR — UMA conta só (FIN 0.15.0): o Balanço e o card «Conta corrente GZ28BR» do Data Checker leem
-// daqui; o GZ-FLOW usa a mesma régua (whoPaid). GOT = receita nossa que entrou lá (invoice_payments paid_to GZ28BR, recebidos)
+// daqui; o GZ-FLOW usa a mesma régua (whoPaid). GOT = receita nossa que entrou lá (invoice_incomes paid_to GZ28BR, recebidos)
 // + conta da BR que nós pagamos; PAID = conta nossa que a BR pagou.
 // Só linha PAGA (payment_date); TODAS as tabelas, inclusive PESSOAL e estoque doado — a varredura do Balanço.
 // BLIND = linha paga sem pagador nenhum (nem paid_from nem SOURCE): o DFC assume Regions até alguém dizer.

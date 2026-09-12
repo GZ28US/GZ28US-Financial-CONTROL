@@ -134,10 +134,10 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
   }
   for (const r of d.expenses) {
     const tag = r.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'
-    rows.push({ table: 'expenses', r, amount: num(r.amount), date: day(r.payment_date) || day(r.expense_date), label: [tag, r.description || r.type, r.supplier].filter(Boolean).join(' · '), matchLabel: `${tag} · ${r.description || r.type || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/staff', inv: null })
+    rows.push({ table: 'staff_expenses', r, amount: num(r.amount), date: day(r.payment_date) || day(r.expense_date), label: [tag, r.description || r.type, r.supplier].filter(Boolean).join(' · '), matchLabel: `${tag} · ${r.description || r.type || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/staff', inv: null })
   }
-  for (const r of d.goods) rows.push({ table: 'goods', r, amount: qtyLine(r), date: day(r.payment_date) || day(r.purchase_date), label: ['GOODS', r.description, r.supplier].filter(Boolean).join(' · '), matchLabel: `GOODS · ${r.description || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/goods', inv: null })
-  for (const r of d.goodExpenses) rows.push({ table: 'good_expenses', r, amount: num(r.amount), date: day(r.payment_date) || day(r.expense_date), label: ['GOODS', r.description, r.supplier].filter(Boolean).join(' · '), matchLabel: `GOODS · ${r.description || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/goods', inv: null })
+  for (const r of d.goods) rows.push({ table: 'assets', r, amount: qtyLine(r), date: day(r.payment_date) || day(r.purchase_date), label: ['GOODS', r.description, r.supplier].filter(Boolean).join(' · '), matchLabel: `GOODS · ${r.description || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/goods', inv: null })
+  for (const r of d.goodExpenses) rows.push({ table: 'assets_expenses', r, amount: num(r.amount), date: day(r.payment_date) || day(r.expense_date), label: ['GOODS', r.description, r.supplier].filter(Boolean).join(' · '), matchLabel: `GOODS · ${r.description || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/goods', inv: null })
   for (const r of d.inputs) rows.push({ table: 'inputs', r, amount: qtyLine(r), date: day(r.payment_date) || day(r.purchase_date), label: ['SUPPLY', r.description, r.supplier].filter(Boolean).join(' · '), matchLabel: `SUPPLY · ${r.description || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/supplies', inv: null })
   for (const r of d.inventory) rows.push({ table: 'inventory', r, amount: qtyLine(r), date: day(r.payment_date) || day(r.purchase_date), label: ['STOCK', r.description, r.supplier].filter(Boolean).join(' · '), matchLabel: `STOCK · ${r.description || ''}${r.supplier ? ' · ' + r.supplier : ''}`, vendor: String(r.supplier || ''), href: '/inventory', inv: null })
   const rowByKey = new Map<string, AppRow>(rows.map(x => [x.table + ':' + x.r.id, x]))
@@ -159,8 +159,8 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
   const byLineId = new Map<string, any>(bank.map((b: any) => [String(b.id), b]))
   // A linha do banco que JÁ aponta pra este registro (a mesma régua do enginesAudit lineOf).
   const ownLine = (x: AppRow): any => pointed.get(x.table + ':' + x.r.id) || (x.r.purchase_group ? pointed.get('purchase_group:' + x.r.purchase_group) : null)
-    || ((x.table === 'fixed_cost_expenses' || x.table === 'expenses') && x.r.bank_transaction_id ? byLineId.get(String(x.r.bank_transaction_id)) : null)
-    || (x.table === 'expenses' && String(x.r.payment_reference || '').startsWith('bank:') ? byLineId.get(String(x.r.payment_reference).slice(5)) : null)
+    || ((x.table === 'fixed_cost_expenses' || x.table === 'staff_expenses') && x.r.bank_transaction_id ? byLineId.get(String(x.r.bank_transaction_id)) : null)
+    || (x.table === 'staff_expenses' && String(x.r.payment_reference || '').startsWith('bank:') ? byLineId.get(String(x.r.payment_reference).slice(5)) : null)
     || (x.table === 'inputs' && String(x.r.order_number || '').startsWith('bank:') ? byLineId.get(String(x.r.order_number).slice(5)) : null) || null
 
   // ═══ 1 · PAGO_REGIONS ═══
@@ -337,12 +337,12 @@ export async function auditPayer(db: any): Promise<PayerAudit> {
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, description'),
     // expenses.bank_transaction_id vem da MIGRATION_expenses_bank_link — expensesRows lê sem a coluna se ela faltar.
     expensesRows(db, 'id, description, type, supplier, amount, expense_date, payment_date, origin, paid_from, paid_to, source, payment_reference, created_at'),
-    fetchAll(db, 'goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, created_at'),
-    fetchAll(db, 'good_expenses', 'id, description, supplier, amount, expense_date, payment_date, paid_from, paid_to, source, created_at'),
+    fetchAll(db, 'assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, created_at'),
+    fetchAll(db, 'assets_expenses', 'id, description, supplier, amount, expense_date, payment_date, paid_from, paid_to, source, created_at'),
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, order_number, purchase_group, created_at'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, created_at'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, client_id, is_quote, origin, service'),
-    fetchAll(db, 'invoice_parts', 'id, invoice_id, unit_price, quantity, base_cost'),
+    fetchAll(db, 'invoice_items', 'id, invoice_id, unit_price, quantity, base_cost'),
     fetchAll(db, 'rides', 'id, project_name, client_id'),
     fetchAll(db, 'clients', 'id, name, client_number, is_quote, country'),
     // authorized_date = data da autorização do cartão (raw do Plaid; nula nas linhas de extrato). date = data POSTADA.

@@ -115,7 +115,7 @@ export default function NewExpensePage() {
     const paymentCols = paymentToRow(payment, type === 'SINGLE' ? expenseDate : null)
     if (type !== 'SINGLE') paymentCols.payment_date = null
 
-    const { error } = await supabase.from('expenses').insert([{
+    const { error } = await supabase.from('staff_expenses').insert([{
       season_id: seasonID,
       type,
       description: description || null,

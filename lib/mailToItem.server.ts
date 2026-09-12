@@ -59,7 +59,7 @@ import {
 import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from './itemTracking.server'
 
 // A lista de tabelas NÃO mora aqui: vem de ITEM_TABLES. Desde 03/set/2026 ela
-// inclui expenses (lei do dono: compra pessoal entra no STREAM e tem rastreio),
+// inclui staff_expenses (lei do dono: compra pessoal entra no STREAM e tem rastreio),
 // e a ponte passou a ler/escrever nela sem código próprio — só o gate de
 // "é ITEM?" (order_number OU tracking_number), igual ao do robô e do STREAM.
 
@@ -168,10 +168,10 @@ async function carregarLinhas(db: SupabaseClient): Promise<Map<string, Linha[]>>
     let q = db.from(tabela)
       .select('id, order_number, tracking_number, carrier, delivered_at, cancel_status, picked_up')
       .not('order_number', 'is', null)
-    // expenses: folha (WEEKLY/Zelle/mensal) nunca sai do banco — mesmo gate dos
+    // staff_expenses: folha (WEEKLY/Zelle/mensal) nunca sai do banco — mesmo gate dos
     // três consumidores (03/set/2026). O order_number acima já basta, mas o
     // predicado é UM só, de propósito.
-    if (tabela === 'expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
+    if (tabela === 'staff_expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
     const { data } = await q
     for (const r of (data || []) as any[]) {
       if (r.picked_up) continue

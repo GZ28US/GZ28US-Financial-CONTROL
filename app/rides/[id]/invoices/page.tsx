@@ -161,9 +161,9 @@ export default function InvoicesPage() {
     const statsMap: Record<string, InvoiceStats> = {}
     await Promise.all(invoiceList.map(async (invoice) => {
       const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-        supabase.from('invoice_payments').select('amount, payment_date, paid_at').eq('invoice_id', invoice.id),
+        supabase.from('invoice_incomes').select('amount, payment_date, paid_at').eq('invoice_id', invoice.id),
         supabase.from('invoice_expenses').select('price, quantity, payment_date, tax, extra').eq('invoice_id', invoice.id),
-        supabase.from('invoice_parts').select('unit_price, quantity').eq('invoice_id', invoice.id),
+        supabase.from('invoice_items').select('unit_price, quantity').eq('invoice_id', invoice.id),
         supabase.from('invoice_services').select('price').eq('invoice_id', invoice.id),
       ])
 
