@@ -72,6 +72,10 @@
 //       para os 3 balões da rede e para o balão da atribuição do Bank Link
 //     • IMPOSTO DE IMPORTAÇÃO (dutyWatch) — o fornecedor da remessa
 //     • REPORTS RECORRENTES (cron) — `description` e `source` das duas listas
+//     • DAILY MEGA-REPORT (cron/daily-report, 4h, grupo REPORTS, pelo
+//       sendStreamWhatsApp) — o `item` da despesa, escrito pelo AutoBook a partir
+//       do e-mail da loja, e a `description` do duty, digitada pelo funcionário na
+//       página pública
 //   NÃO PENEIRADOS, E POR QUÊ (não é esquecimento; é que "@numero" não cabe ali)
 //     • campos de forma fixa: chave do ERRADO e da resposta ([\w.-]), waybill
 //       (1Z+16 ou 10/12 dígitos), nº de fatura do carrier e nº de pedido da
@@ -89,7 +93,9 @@
 // "@" e a peneira deixa os seis byte a byte iguais ("Peniel at penielusa@msn.com",
 // "…0.45 kg @ USD 50/kg", "…(R$ 42.307,25 @ 5,0052)"). ZERO virariam menção hoje,
 // e ZERO mudam de forma com a peneira — ou seja: o campo `mentions` não sai destes
-// 15 remetentes hoje, e a peneira não estraga uma linha sequer do que já sai.
+// 16 remetentes hoje, e a peneira não estraga uma linha sequer do que já sai.
+// (Dezesseis, não quinze: o DAILY MEGA-REPORT entra pelo sendStreamWhatsApp, que é
+// outro caminho até o mesmo `enviaUltra` — foi o que o terceiro cético achou.)
 import { mencoesDoTexto } from '@/lib/waMentions'
 import { waSelfBlockReason } from '@/lib/waSelfGuard.server'
 

@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb, sendStreamWhatsApp } from '@/lib/stream.server'
 import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
+import { semMarcacao } from '@/lib/waMentions'
+
+// TEXTO DE FORA NESTE RELATÓRIO (11/set/2026). Este cron manda pro GRUPO REPORTS
+// pelo sendStreamWhatsApp → enviaUltra, que monta o campo `mentions` a partir do
+// corpo. Dois campos aqui não são escritos na tela do app: `invoice_expenses.item`
+// (o AutoBook o escreve a partir do e-mail da loja) e `invoice_duties.description`
+// (quem digita é o funcionário, na página pública do duty). Os dois passam por
+// `semMarcacao` — SEMPRE depois do corte, porque o corte pode criar um "@numero"
+// que o texto inteiro não tinha. O resto (invoice_code, project_code, nome de
+// staff, nome de fornecedor fixo) é rótulo que ele mesmo digitou na tela.
 
 // DAILY MEGA-REPORT — every day at 4am Orlando (Vercel cron, runs with the PC
 // off) the REPORTS WhatsApp group gets the company's whole day: development
@@ -73,7 +83,7 @@ export async function GET(req: NextRequest) {
     .gte('created_at', since)
   if (dutyDone?.length || dutyNew?.length) {
     lines.push('👷 *STAFF DUTIES*')
-    for (const d of (dutyDone || []).slice(0, 6) as any[]) lines.push(`  ✅ ${(d.staff?.name || '—')} — ${(d.description || '').slice(0, 55)} (${d.invoices?.invoice_code || '—'})`)
+    for (const d of (dutyDone || []).slice(0, 6) as any[]) lines.push(`  ✅ ${(d.staff?.name || '—')} — ${semMarcacao(String(d.description || '').slice(0, 55))} (${d.invoices?.invoice_code || '—'})`)
     if ((dutyDone || []).length > 6) lines.push(`  ✅ …and ${(dutyDone || []).length - 6} more done`)
     if (dutyNew?.length) lines.push(`  🆕 ${dutyNew.length} new duties opened`)
     lines.push('')
@@ -90,7 +100,7 @@ export async function GET(req: NextRequest) {
   if (expHuman.length || expBucket.length) {
     const total = expHuman.reduce((s, e: any) => s + (Number(e.price) || 0), 0)
     lines.push(`🧾 *${expHuman.length} expenses registered* (${usd(total)})`)
-    for (const e of expHuman.slice(0, 5)) lines.push(`  • ${(e.invoices?.invoice_code || '—')} — ${(e.item || '').slice(0, 45)} — ${usd(e.price)}`)
+    for (const e of expHuman.slice(0, 5)) lines.push(`  • ${(e.invoices?.invoice_code || '—')} — ${semMarcacao(String(e.item || '').slice(0, 45))} — ${usd(e.price)}`)
     if (expHuman.length > 5) lines.push(`  • …and ${expHuman.length - 5} more`)
     if (expBucket.length) lines.push(`  • compras a atribuir: ${expBucket.length} (${usd(expBucket.reduce((s, e: any) => s + (Number(e.price) || 0), 0))})`)
     lines.push('')
