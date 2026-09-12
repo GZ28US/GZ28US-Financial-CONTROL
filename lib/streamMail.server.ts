@@ -957,8 +957,84 @@ const SPAM_SENDERS: RegExp[] = [
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
 
-export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[] }> {
+// ── O RASTRO DE QUEM MOVE — UM LUGAR SÓ (11/set/2026) ──────────────────────
+// Ordem do Márcio no pacote de 10–11/set: sweepSpam e sweepMarketing têm de
+// REGISTRAR o que movem. Até aqui só o marketing kill anotava (398 linhas em
+// `marketing_kills`, medidas em 11/set às 21:28 de Orlando, TODAS dele); estes
+// dois moviam pros Itens Excluídos calados. Quando uma mensagem aparecia no
+// lixo não havia como dizer quem a pôs lá — e "não tem registro" não distingue
+// "nenhum robô fez" de "o robô fez e não anotou", que é a mesma lição de
+// `lib/mailProtected.server.ts`.
+//
+// O QUE ESTA TABELA NÃO RESPONDE — e o comentário tem de dizer, senão o rastro
+// engana. Escrevem aqui TRÊS robôs, e os três MOVEM (Itens Excluídos ou
+// Lixeira, recuperável): marketing-kill, spam-sweep e marketing-sweep. O
+// inbox-zero NÃO escreve: a regra 'DELETE' dele manda um DELETE de verdade no
+// Graph (`lib/inboxZero.server.ts`), e o que ele fez só aparece quando a trava
+// barra, como linha PROTECTED em `mail_processed`. Logo: linha AQUI prova quem
+// moveu; a AUSÊNCIA de linha NÃO prova que robô nenhum encostou.
+//
+// Tabela é a `marketing_kills`, a que o matador já usa: ela já guarda de,
+// assunto, pasta de origem, quando e qual caixa; a migration só acrescentou
+// QUAL ROBÔ (`robot`) e PARA ONDE (`moved_to`). Tabela nova seria campo
+// repetido, e a lei proíbe.
+//
+// LOG NUNCA DERRUBA O ROBÔ — mesma regra do `wa_send_log` e da marca d'água: a
+// mensagem JÁ foi movida quando esta função roda, e rastro que quebra a faxina
+// é pior que rastro nenhum. Mas o robô FICA SABENDO: devolve `false` quando não
+// gravou, e quem chama soma no `logFalhou`, que sai na resposta do mail-poll —
+// console.error sozinho é aviso que ninguém abre.
+export async function registrarFaxina(
+  db: SupabaseClient, robo: string, account: string | null,
+  msg: { sender: string; subject: string; folder: string; movedTo: string },
+): Promise<boolean> {
+  // A mensagem entra como OBJETO, não como quatro strings em fila (11/set): em
+  // fila, trocar `folder` com `movedTo` compila limpo e grava destino na coluna
+  // da pasta para sempre, sem erro em lugar nenhum. É o mesmo motivo pelo qual o
+  // vizinho `barrado()` de mailProtected.server.ts recebe a mensagem inteira.
+  //
+  // REMETENTE SEMPRE EM MINÚSCULAS: o matador já baixava, mas os sweeps passam o
+  // que o Graph devolveu — e o Graph devolve o endereço como veio no cabeçalho.
+  // As 398 linhas de hoje são 100% minúsculas (medido); sem isto,
+  // 'Info@MM.SimpleTire.com' e 'info@mm.simpletire.com' virariam dois
+  // remetentes diferentes em qualquer contagem por sender.
+  const base = {
+    account,
+    sender: String(msg.sender || '').trim().toLowerCase(),
+    subject: String(msg.subject || '').slice(0, 200),
+    folder: msg.folder,
+  }
+  try {
+    const { error } = await db.from('marketing_kills').insert({ ...base, robot: robo, moved_to: msg.movedTo })
+    if (!error) return true
+    // O supabase-js NÃO lança: erro vem no campo, não no catch (bug de 03/set na
+    // marca d'água, que respondeu ok sem gravar linha nenhuma).
+    const faltaColuna = /robot|moved_to/i.test(error.message || '')
+    // REDE PRO INTERVALO ENTRE O DEPLOY E A MIGRATION, com DUAS cercas:
+    //   · só quando o erro CITA as colunas novas. Repetir um insert recusado por
+    //     RLS ou por valor inválido é escrita perdida duas vezes, e repetir um
+    //     insert que DEU certo e cuja resposta se perdeu na rede duplicaria a
+    //     linha;
+    //   · só para o marketing-kill, o único que já gravava antes da migration.
+    //     O backfill lê linha sem `robot` como marketing-kill; se um sweep
+    //     gravasse no formato antigo, o log passaria a MENTIR sobre quem moveu —
+    //     e quem moveu é a única pergunta que esta tabela existe para responder.
+    //     Sweep no intervalo perde a linha (que nunca teve) e grita no `logFalhou`.
+    if (faltaColuna && robo === 'marketing-kill') {
+      const { error: eVelho } = await db.from('marketing_kills').insert(base)
+      console.error('[faxina-log]', robo, error.message, eVelho ? `· nem no formato antigo: ${eVelho.message}` : '· gravado SEM robot/moved_to — falta rodar MIGRATION_sweep_kill_log.sql')
+      return !eVelho
+    }
+    console.error('[faxina-log]', robo, error.message, faltaColuna ? '· falta rodar MIGRATION_sweep_kill_log.sql' : '')
+    return false
+  } catch (e) { console.error('[faxina-log]', robo, e); return false }
+}
+
+export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]; logFalhou: number }> {
   const deleted: string[] = []
+  // E-mail movido cuja linha de rastro NÃO entrou no banco. Sobe na resposta do
+  // mail-poll: dizer "movi 12" sem dizer "e não anotei 12" é mentira calada.
+  let logFalhou = 0
   // Só caixas Microsoft: as chamadas abaixo são Graph. Vem da tabela, não de
   // lista fixa (04/set/2026). E só as liberadas para faxina — ver maySweep.
   for (const auth of await listMailAuths(db, 'graph')) {
@@ -983,12 +1059,18 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
             method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
             body: JSON.stringify({ destinationId: 'deleteditems' }),
           })
-          if (mv.ok) deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+          if (mv.ok) {
+            deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+            // Registra DEPOIS do move e só quando ele deu certo: a linha diz o
+            // que aconteceu de verdade na caixa, nunca o que se tentou.
+            const anotou = await registrarFaxina(db, 'spam-sweep', auth.account || null, { sender: addr, subject: subj, folder, movedTo: 'deleteditems' })
+            if (!anotou) logFalhou++
+          }
         }
       }
     } catch (e) { console.error('[spam-sweep]', slot, e) }
   }
-  return { deleted }
+  return { deleted, logFalhou }
 }
 
 // MARKETING SWEEP — kills promotional mail from senders we've never listed:
@@ -998,8 +1080,9 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
 const SAFE_SENDER = /rockauto\.com|titanmotorsports|hptuners|texas-speed|summitracing|paypal|ups\.com|fedex|usps|dhl|17track|shop\.app|shopify|anthropic|supabase|vercel|regions|c6bank|sunpass|progressive|dukeenergy|speedpay|docusign|echosign|adobesign|hellosign|pandadoc|d4sign|e-notariado|registrocivil|autotagsandtitle|bssparts|vstar|kooksheaders|halltech|modernmuscle|tirerack|discounttire|graph|microsoft\.com|google\.com|apple\.com|sema\.org|classic\.com/i
 const SAFE_SUBJECT = /order|track|invoice|receipt|payment|paid|ship|deliver|cart|carrinho|quote|or[çc]amento|confirm|refund|return|rma|appointment|statement|security|verify|c[óo]digo|code|password|sign|assinatura|contrato|nf-?e|boleto|fatura|ipva|guia/i
 
-export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: string[] }> {
+export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: string[]; logFalhou: number }> {
   const deleted: string[] = []
+  let logFalhou = 0 // e-mail movido sem linha de rastro — ver sweepSpam
   for (const auth of await listMailAuths(db, 'graph')) {
     if (!maySweep(auth)) continue
     const slot = auth.id
@@ -1022,11 +1105,15 @@ export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: str
           method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
           body: JSON.stringify({ destinationId: 'deleteditems' }),
         })
-        if (mv.ok) deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+        if (mv.ok) {
+          deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+          const anotou = await registrarFaxina(db, 'marketing-sweep', auth.account || null, { sender: addr, subject: subj, folder: 'inbox', movedTo: 'deleteditems' })
+          if (!anotou) logFalhou++
+        }
       }
     } catch (e) { console.error('[marketing-sweep]', slot, e) }
   }
-  return { deleted }
+  return { deleted, logFalhou }
 }
 
 export { guessCarrier }

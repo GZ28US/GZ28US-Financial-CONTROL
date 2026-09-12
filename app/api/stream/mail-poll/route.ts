@@ -81,9 +81,15 @@ async function run(force: boolean): Promise<NextResponse> {
 
   // ── spam auto-clean — toda passada varre as 3 caixas e apaga o marketing
   // conhecido na hora (regra 2026-07-24: "apague logo que chegar").
-  let spam: { deleted: string[] } = { deleted: [] }
+  //
+  // `logFalhou` (11/set/2026) — e-mail que o robô MOVEU e cuja linha de rastro
+  // não entrou no banco (migration não rodou, RLS recusou, chave sumiu). Vem na
+  // resposta de propósito: até aqui a falha só aparecia num console.error da
+  // Vercel, e a resposta seguia dizendo quantos e-mails saíram da caixa como se
+  // tudo tivesse ficado registrado — a mesma mentira calada do bug de 03/set.
+  let spam: { deleted: string[]; logFalhou: number } = { deleted: [], logFalhou: 0 }
   try { spam = await sweepSpam(db) } catch (e) { console.error('[spam-sweep]', e) }
-  let marketing: { deleted: string[] } = { deleted: [] }
+  let marketing: { deleted: string[]; logFalhou: number } = { deleted: [], logFalhou: 0 }
   try { marketing = await sweepMarketing(db) } catch (e) { console.error('[marketing-sweep]', e) }
 
   // ── APPS watcher — recibos de assinatura no Gmail viram pagamentos no módulo
@@ -154,7 +160,7 @@ async function run(force: boolean): Promise<NextResponse> {
     }).then(r => r.json())
   } catch (e) { console.error('[financeiro-ping]', e) }
 
-  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, trackAsked, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, marketingDeleted: marketing.deleted, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, mailToItem, streamAnswers, financeiro, payroll })
+  return NextResponse.json({ ok: true, scanned: msgs.length, boxes, updated, trackAsked, details, refunded, trackRefresh, moved: organizer.moved, doubts: organizer.doubts, spamDeleted: spam.deleted, spamLogFalhou: spam.logFalhou, marketingDeleted: marketing.deleted, marketingLogFalhou: marketing.logFalhou, appsPayments, staffTravel, receiptPaid, reportNet, purchases, inboxZero, vipMail, zelle, duty, mailWatch, mailToItem, streamAnswers, financeiro, payroll })
 }
 
 // PORTÃO (11/set/2026): esta batida mexe nas caixas de e-mail, lança dinheiro, manda WhatsApp e acorda
