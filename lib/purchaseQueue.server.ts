@@ -67,9 +67,15 @@ const methodOf = (r: StreamRow): string => /temu/i.test(r.supplier || '') ? 'PAY
 // trava não marca — o WhatsApp já notifica). Ver lib/waMentions.
 //
 // DOIS PEDAÇOS DAQUI NÃO SÃO NOSSOS: o que veio do e-mail da loja (fornecedor,
-// título do item) e o que uma pessoa DIGITOU no grupo e é ecoado de volta (a
-// chave e o destino do "ERRADO ..."). Os dois passam por `semMarcacao` antes de
-// entrar no corpo — eco de texto alheio não escolhe quem o app marca.
+// número do pedido, título do item e o ENDEREÇO DE ENTREGA do sino) e o que uma
+// pessoa DIGITOU no grupo e é ecoado de volta (o destino do "ERRADO ..." e o
+// destino da regra aprendida). Os dois passam por `semMarcacao` antes de entrar
+// no corpo — eco de texto alheio não escolhe quem o app marca.
+//
+// TODO envio deste arquivo vai pra GRUPO: `PVT` é o grupo REPORTS
+// (120363425950692194@g.us) e `chat` é ele ou o ULTRAMSG_GROUP_ID — ou seja, é
+// exatamente onde `mencoesDoTexto` está ligado. Não existe aqui envio "pra chat
+// de pessoa" onde a peneira fosse dispensável.
 async function wa(to: string, body: string): Promise<boolean> {
   if (!to) return false
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
@@ -491,8 +497,13 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         open.splice(open.indexOf(row), 1)
         answered++
         if (/\bSEMPRE\b/i.test(body) && r_supplier(row)) {
+          // A REGRA GRAVADA usa o fornecedor CRU — é dado, e é com ele que o
+          // `includes` do passo 1 vai comparar; peneirar aqui quebraria o casamento.
+          // Só o ECO no grupo é peneirado: o fornecedor veio do e-mail da loja e o
+          // `refLabel(dest)` é "RIDE:<o que a pessoa digitou>" (parseDestination
+          // aceita até 60 caracteres livres). Ver semMarcacao em lib/waMentions.
           await db.from('placement_rules').insert({ store: r_supplier(row), destination: dest, note: `aprendida da resposta: "${body.slice(0, 60)}"` })
-          await wa(chat, `🧠 Regra aprendida: *${r_supplier(row)} → ${refLabel(dest)}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
+          await wa(chat, `🧠 Regra aprendida: *${semMarcacao(r_supplier(row))} → ${semMarcacao(refLabel(dest))}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
         } else {
           await wa(chat, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
         }
@@ -522,11 +533,20 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
     const all = [...needPlace, ...needItems]
     const newest = all.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
     if (all.length && hourSince(newest)) {
+      // CADA LINHA DO SINO É TEXTO DA LOJA, NÃO NOSSO: pedido, fornecedor, título
+      // e endereço de entrega saem todos do e-mail que a loja mandou, e este sino
+      // toca de hora em hora PRA GRUPO — é o envio mais frequente do arquivo.
+      // Por isso os quatro passam por `semMarcacao` (lib/waMentions) antes de
+      // virar corpo. A DECISÃO de destacar o endereço continua olhando o valor
+      // CRU (`r.ship_to`): peneirar só o que é impresso, nunca o que é comparado.
+      // O `titleOf(r)` é peneirado DEPOIS do corte em 34 — a peneira é que tem de
+      // ver o texto exato que sai, e não um pedaço maior que foi descartado.
+      // (`r.id` é uuid e `usd()` é número do app: não cabe "@" neles.)
       const line = (r: StreamRow) => {
         const amt = amountOf(r.item)
         // Alarme herdado da captura: entrega fora do galpão merece destaque.
-        const addr = r.ship_to && !/11320|space\s*blvd/i.test(r.ship_to) ? ' 🚨 ' + r.ship_to : ''
-        return `• ${r.order_number || r.id} — ${r.supplier || '?'} ${titleOf(r).slice(0, 34)}${amt != null ? ' — ' + usd(amt) : ''}${addr}`
+        const addr = r.ship_to && !/11320|space\s*blvd/i.test(r.ship_to) ? ' 🚨 ' + semMarcacao(r.ship_to) : ''
+        return `• ${semMarcacao(r.order_number || r.id)} — ${semMarcacao(r.supplier || '?')} ${semMarcacao(titleOf(r).slice(0, 34))}${amt != null ? ' — ' + usd(amt) : ''}${addr}`
       }
       const blk = (label: string, rows: StreamRow[]) => rows.length ? `\n\n*${label} (${rows.length})*\n${rows.map(line).join('\n')}` : ''
       // Cada loja tem seu comando na thread da PESCA (ordem dele, 25/ago): a

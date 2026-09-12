@@ -51,22 +51,45 @@
 //
 // ── DE ONDE VEM O `@numero`: CUIDADO COM TEXTO DE FORA ─────────────────────
 // A menção sai do corpo, e vários destes avisos CARREGAM texto de terceiro —
-// assunto e remetente crus de e-mail, memo de quem manda o Zelle, resposta
-// digitada no grupo. Sem cuidado, um e-mail de fora escolheria quem o app marca
-// num grupo interno. Por isso o texto de fora passa por `semMarcacao()`
-// (lib/waMentions) ANTES de entrar no corpo, no arquivo de cada aviso: VIP MAIL
-// (inboxZero), MAIL WATCH (os 15 vigias mandam pra GRUPO — medido), ZELLE
-// (nome de quem mandou e memo), FILA DE COMPRAS (fornecedor e título vindos do
-// e-mail da loja, e o eco do que a pessoa digitou no grupo) e os avisos de APPS
-// (assunto e nome de app lidos do e-mail).
-// Ficaram DE FORA de propósito os campos que não têm como carregar um "@": chave
-// do ERRADO e da resposta (casam só com [\w.-]), waybill (1Z+16 ou 10/12 dígitos),
-// número de fatura do carrier ([A-Z0-9-]) e os rótulos que o próprio app escreve.
-// Medido em 11/set/2026: nenhum arquivo de lib/ ou app/ escreve `@numero` literal;
-// 0 de 1.000 pares assunto+remetente de stream_mail_moves, 0 de 220 descrições de
-// pagamento (é lá que o memo do Zelle é gravado), 0 de 209 linhas de part_streams
-// e 0 de 1.000 itens de invoice_expenses casariam hoje — ou seja: hoje o campo
-// `mentions` simplesmente não sai destes 15 remetentes.
+// assunto e remetente crus de e-mail, fornecedor e título escritos pela loja,
+// endereço de entrega, memo de quem manda o Zelle, resposta digitada no grupo.
+// Sem cuidado, um e-mail de fora escolheria quem o app marca num grupo interno.
+// Por isso TODO campo de fora passa por `semMarcacao()` (lib/waMentions) ANTES de
+// entrar no corpo, no arquivo de cada aviso. A conta, remetente por remetente,
+// para que ninguém precise acreditar na frase:
+//   PENEIRADOS (carregam texto livre de fora)
+//     • VIP MAIL / INBOX ZERO — remetente e assunto do e-mail
+//     • MAIL WATCH — os 3 pedaços (os 15 vigias mandam pra GRUPO, medido)
+//     • ZELLE — nome de quem mandou e memo (3 avisos)
+//     • APPS / SUBSCRIPTIONS — assunto e nome de app lidos do e-mail (4 avisos)
+//     • FILA DE COMPRAS — fornecedor, nº do pedido, título e ENDEREÇO DE ENTREGA
+//       no sino de hora em hora; o eco do destino digitado no grupo ("ERRADO ...",
+//       resposta com chave) e o fornecedor ecoado na "Regra aprendida"
+//     • STREAM (SHIPPED/DELIVERED) — item e fornecedor do e-mail da loja, e o nome
+//       da transportadora que veio do 17TRACK
+//     • REDE DE REPORTS (expenseReportNet) — item, fornecedor, nº do pedido e a
+//       `description` do pagamento, que é onde o memo do Zelle é gravado; vale
+//       para os 3 balões da rede e para o balão da atribuição do Bank Link
+//     • IMPOSTO DE IMPORTAÇÃO (dutyWatch) — o fornecedor da remessa
+//     • REPORTS RECORRENTES (cron) — `description` e `source` das duas listas
+//   NÃO PENEIRADOS, E POR QUÊ (não é esquecimento; é que "@numero" não cabe ali)
+//     • campos de forma fixa: chave do ERRADO e da resposta ([\w.-]), waybill
+//       (1Z+16 ou 10/12 dígitos), nº de fatura do carrier e nº de pedido da
+//       captura ([A-Z0-9-]), nome do carrier (4 literais), e TODO o staff travel
+//       (PNR [A-Z][A-Z0-9]{5}, nomes [A-Z]{2,}, aeroportos [A-Z]{3} de lista fixa,
+//       voos sigla+dígitos), datas e valores formatados pelo app
+//     • rótulos que o PRÓPRIO APP escreve: invoice_code, season_code, nome do
+//       carro e do cliente, nome do staff, rótulo de duty, destino fixo
+//       (INPUTS/…, IGNORED) — não vêm de fora, vêm da tela dele
+//     • BOAS-VINDAS DE VOO e as DMs do staff duty: destino `@c.us`, e menção em
+//       conversa de um pra um nem é montada (`mencoesDoTexto` exige `@g.us`)
+// Medido em 11/set/2026 no banco do US (só leitura): 3.110 valores reais desses
+// campos (209 linhas de part_streams — item, supplier, ship_to, order_number —,
+// 1.000 de invoice_expenses e 220 descrições de invoice_payments). SEIS contêm
+// "@" e a peneira deixa os seis byte a byte iguais ("Peniel at penielusa@msn.com",
+// "…0.45 kg @ USD 50/kg", "…(R$ 42.307,25 @ 5,0052)"). ZERO virariam menção hoje,
+// e ZERO mudam de forma com a peneira — ou seja: o campo `mentions` não sai destes
+// 15 remetentes hoje, e a peneira não estraga uma linha sequer do que já sai.
 import { mencoesDoTexto } from '@/lib/waMentions'
 import { waSelfBlockReason } from '@/lib/waSelfGuard.server'
 
@@ -189,10 +212,16 @@ export async function enviaUltra(to: string, body: string, opts: { json?: boolea
   //     quebrada, não foi o campo que incomodou, e insistir na hora só dobra a
   //     chamada. Isto importa mais aqui do que na rota: lá é um clique humano por
   //     vez, aqui são watchers em cron de 5 em 5 minutos e dentro de laços.
-  // Medido no wa_send_log em 11/set/2026 (200 envios desde 31/ago): ZERO 429,
-  // ZERO 5xx e ZERO HTTP 200 com `sent:"false"` — o reenvio já era raro de fato;
-  // agora é raro por regra.
-  const recusaPodeSerDoCampo = (s: number | null) => s !== null && s !== 429 && s < 500
+  //   • 401 e 404 também não: 401 é token recusado e 404 é instância/rota que não
+  //     existe — nenhum dos dois olha o corpo, então a segunda chamada falha
+  //     igual, com certeza. Medido no wa_send_log em 11/set/2026: em 200 envios
+  //     desde 31/ago houve 1×401 e 6×404, ou seja sete chamadas que teriam saído
+  //     à toa. O que SOBRA repetindo (400, 403, 422 e afins) é onde um campo do
+  //     corpo pode mesmo ser a causa — e aí a segunda tentativa é o que cumpre o
+  //     "entregar é obrigação".
+  // Medido no mesmo log: ZERO 429, ZERO 5xx e ZERO HTTP 200 com `sent:"false"` —
+  // o reenvio já era raro de fato; agora é raro por regra.
+  const recusaPodeSerDoCampo = (s: number | null) => s !== null && s !== 429 && s !== 401 && s !== 404 && s < 500
   const primeiro = await disparar(mentions ? { ...base, mentions } : base)
   if (primeiro.ok || !mentions || !recusaPodeSerDoCampo(primeiro.status)) return { ...primeiro, mentions }
 

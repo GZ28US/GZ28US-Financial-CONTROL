@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 
 // This cron runs server-side with NO user session. Under RLS the bare anon key
 // is blocked, so it talks to Supabase with the SERVICE-ROLE key (bypasses RLS).
@@ -145,9 +146,13 @@ export async function GET(req: NextRequest) {
         `${season.season_code}${staffName ? ` — ${staffName}` : ''}`,
         `${periodLabel} — ${formatDate(today)} — *${formatUSD(amount)}*`,
       ]
-      if (exp.description) lines.push(exp.description)
+      // `description` e `source` são texto livre gravado por gente (e, no caso do
+      // staff travel, montado a partir do e-mail da companhia aérea). O destino
+      // deste report é GRUPO, então passam por `semMarcacao` antes de virar corpo:
+      // texto de fora não escolhe quem o app marca. Ver lib/waMentions.
+      if (exp.description) lines.push(semMarcacao(exp.description))
       if (exp.origin === 'PERSONAL') lines.push('PERSONAL')
-      if (exp.source) lines.push(exp.source)
+      if (exp.source) lines.push(semMarcacao(exp.source))
       lines.push('')
       lines.push(`Running total: ${formatUSD(runningTotal)}`)
 
@@ -245,8 +250,11 @@ export async function GET(req: NextRequest) {
         `${invoice.invoice_code || '—'}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
         `Due: ${formatDate(p.payment_date)} — *${formatUSD(amount)}*`,
       ]
-      if (p.description) lines.push(p.description)
-      if (p.source) lines.push(p.source)
+      // Mesma peneira do report de staff acima — e aqui ela pesa mais: a
+      // `description` de invoice_payments é onde o MEMO de quem mandou o dinheiro
+      // (Zelle) é gravado, texto que um terceiro escreveu. Ver lib/waMentions.
+      if (p.description) lines.push(semMarcacao(p.description))
+      if (p.source) lines.push(semMarcacao(p.source))
 
       const caption = lines.join('\n')
 
