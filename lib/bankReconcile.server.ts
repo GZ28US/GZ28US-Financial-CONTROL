@@ -220,7 +220,10 @@ const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to =
   // ESPELHO NÃO É CANDIDATO: renda gerada por despesa que o CLIENTE pagou direto
   // nunca teve depósito correspondente. Deixá-la na fila fazia ela casar com um
   // depósito real do cliente e QUEIMAR o par certo.
-  for (const p of payments) { if (!realInvoice(p.invoice_id) || brPaid(p) || p.mirror_expense_id) continue
+  // Renda sai da fila só pelo PAID TO (caiu na GZ28BR): renda não tem PAID FROM, e a coluna sai do banco na onda 9.
+  // Era brPaid(p), que olha paid_from também — mas o select acima nunca trouxe paid_from de renda, então a leitura
+  // já era só do paid_to; agora o código diz o que faz.
+  for (const p of payments) { if (!realInvoice(p.invoice_id) || p.paid_to === 'GZ28BR' || p.mirror_expense_id) continue
     push(inn, { table: 'invoice_incomes', id: p.id, label: `INCOME · ${invLabel(p.invoice_id)}${invClient(p.invoice_id) ? ' · ' + invClient(p.invoice_id) : ''}${p.description ? ' · ' + p.description : ''}${p.source ? ' · ' + p.source : ''}`, date: p.paid_at ? String(p.paid_at).slice(0, 10) : (p.payment_date || null), amount: num(p.amount), undated: !p.paid_at, href: invHref(p.invoice_id), detail: `RECEBIMENTO da invoice ${invLabel(p.invoice_id)} · cliente ${invClient(p.invoice_id) || '—'} · ${p.paid_at ? 'baixado ' + String(p.paid_at).slice(0, 10) : 'previsto ' + (p.payment_date || '—') + ' · SEM baixa'}${p.source ? ' · via ' + p.source : ''}` }) }
   // PART CUSTO / KIT CUSTO SAÍRAM DO POOL (BL 1.5.0, 10/set/2026). invoice_items.base_cost é campo de EXIBIÇÃO (lib/financials:
   // «fonte de custo é SEMPRE invoice_expenses»): o banco paga a despesa, nunca a peça vendida. Como candidato, o custo da peça

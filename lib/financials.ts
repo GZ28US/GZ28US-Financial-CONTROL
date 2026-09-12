@@ -97,8 +97,12 @@ export async function loadFinancials(): Promise<FinData> {
     // base_tributavel é a base do imposto e do desconto (coluna GERADA, o Postgres
     // calcula). O paid_from do ITEM sai do select: ele só existia pra zerar a linha
     // do cliente, e sem CLIENT no app US a coluna é vazia nas 804 linhas (medido) —
-    // com isso base_tributavel = unit_price × quantity em todas elas. A coluna
-    // continua no banco, porque a GERADA depende dela; derrubar é outra onda.
+    // com isso base_tributavel = unit_price × quantity em todas elas. Quem derruba a
+    // coluna é a onda 9 (MIGRATION_pacote_onda9_regra_dos_campos.sql), e na ordem
+    // certa: recria a GERADA sem a perna do CLIENT ANTES do drop, nunca por CASCADE —
+    // o cascade levaria a GERADA junto (e a view-ponte), e este select, que pede
+    // base_tributavel pelo nome, faria o fetchAll estourar: Balanço, DFC, DRE e Data
+    // Checker fora do ar.
     fetchAll('invoice_items', 'id, invoice_id, description, unit_price, quantity, base_tributavel, mirror_expense_id'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
     fetchAll('staff_expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
@@ -196,7 +200,8 @@ export function invoiceTotals(d: FinData, inv: any) {
   // A BASE é a coluna GERADA (o Postgres calcula): unit_price × quantity, a não ser
   // que a linha fosse do cliente — e essa hipótese acabou no app US em 11/set. Sem
   // CLIENT, base_tributavel = unit_price × quantity nas 804 linhas (conferido ao
-  // centavo). Continua sendo a coluna do banco que se lê, e não uma conta feita aqui.
+  // centavo), e a onda 9 tira a perna do CLIENT da própria expressão. Continua sendo
+  // a coluna do banco que se lê, e não uma conta feita aqui.
   const base = minhas.reduce((s, p) => s + num(p.base_tributavel), 0)
   const parts = base
   const services = d.invServices.filter(s2 => s2.invoice_id === inv.id).reduce((s, x) => s + num(x.price), 0)
