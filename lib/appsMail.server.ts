@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken, listMailAuths, mailProvider, maySweep } from '@/lib/streamMail.server'
 import { sendStreamWhatsApp } from '@/lib/stream.server'
+// 11/set/2026: `sendStreamWhatsApp` passou a mandar o report pelo caminho único
+// (lib/waSend.server.ts), onde `@numero` no texto vira marcação de verdade no
+// grupo. Estes avisos ecoam ASSUNTO, FORNECEDOR e NOME DE APP lidos do e-mail —
+// texto de fora. `semMarcacao` quebra o `@numero` desses pedaços para que um
+// e-mail de cobrança não escolha quem o app marca no grupo. Ver lib/waMentions.
+import { semMarcacao } from '@/lib/waMentions'
 
 // APPS watcher — TODAS as caixas do Márcio são fonte das assinaturas de apps
 // (regra 2026-07-25: "caça em todos os emails, todas as pastas, inclusive junk,
@@ -271,7 +277,7 @@ async function registerReceipt(
     row = created as AppRow
     apps.push(row)
     out.newApps.push(appName)
-    if (notifyEach) await sendStreamWhatsApp(`🆕 *NEW APP DETECTED — ${appName}*\n${info.vendor || ''}\nFirst charge: *${fmtUSD(info.amount ?? 0)}* — ${fmtDate(info.payDate)}\nRegistered under COSTS → APPS.`)
+    if (notifyEach) await sendStreamWhatsApp(`🆕 *NEW APP DETECTED — ${semMarcacao(appName)}*\n${semMarcacao(info.vendor || '')}\nFirst charge: *${fmtUSD(info.amount ?? 0)}* — ${fmtDate(info.payDate)}\nRegistered under COSTS → APPS.`)
   } else {
     // O preço acompanha a cobrança mais recente POR DATA; recibo mais antigo
     // que o cadastro puxa o date_entry pra trás.
@@ -303,9 +309,9 @@ async function registerReceipt(
   out.payments.push({ app: row.description || appName, amount: info.amount ?? 0, date: info.payDate, box: info.box })
   if (notifyEach) {
     await sendStreamWhatsApp([
-      `💵 *APP EXPENSE — ${row.description || appName}*`,
-      info.vendor && info.vendor !== row.description ? info.vendor : null,
-      info.receiptNo ? `Receipt #${info.receiptNo}` : null,
+      `💵 *APP EXPENSE — ${semMarcacao(row.description || appName)}*`,
+      info.vendor && info.vendor !== row.description ? semMarcacao(info.vendor) : null,
+      info.receiptNo ? `Receipt #${semMarcacao(info.receiptNo)}` : null,
       `Amount: *${fmtUSD(info.amount ?? 0)}*`,
       `Paid: ${fmtDate(info.payDate)}`,
       info.amount == null ? '⚠️ Could not read the amount — fix it on the APPS page.' : null,
@@ -344,7 +350,7 @@ async function handleFailure(
       })
     }
   }
-  if (notifyEach) await sendStreamWhatsApp(`⚠️ *APP PAYMENT FAILED — ${appName}*\n${subject}\nCheck the card on file.`)
+  if (notifyEach) await sendStreamWhatsApp(`⚠️ *APP PAYMENT FAILED — ${semMarcacao(appName)}*\n${semMarcacao(subject)}\nCheck the card on file.`)
 }
 
 // Encerra o app na página: `date_conclusion` é o que vira o selo ENDED e tira o
@@ -359,7 +365,7 @@ async function handleCancel(db: SupabaseClient, row: AppRow | null, appName: str
   await db.from('fixed_cost_expenses').delete().eq('supplier_id', row.id).is('payment_date', null)
   out.cancelled.push(`${row.description || appName} (${date})`)
   if (notifyEach) {
-    await sendStreamWhatsApp(`🛑 *APP CANCELLED — ${row.description || appName}*\n${subject}\nEnded on ${fmtDate(date)} — it stops counting in the monthly cost.`)
+    await sendStreamWhatsApp(`🛑 *APP CANCELLED — ${semMarcacao(row.description || appName)}*\n${semMarcacao(subject)}\nEnded on ${fmtDate(date)} — it stops counting in the monthly cost.`)
   }
 }
 

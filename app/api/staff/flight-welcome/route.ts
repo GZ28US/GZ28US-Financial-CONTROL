@@ -138,9 +138,16 @@ export async function POST(req: NextRequest) {
   const body = buildWelcome(r.f, r.st.name)
   // Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026). Aqui o destino é
   // SEMPRE o celular da pessoa (`@c.us`), e a trava de lib/waMentions não marca em
-  // conversa de um pra um — o WhatsApp já notifica. Ou seja: boas-vindas continua
-  // saindo byte por byte como antes; entra no caminho único só pra não sobrar
-  // nenhum `fetch` solto pra UltraMsg.
+  // conversa de um pra um — o WhatsApp já notifica. Ou seja: o texto das
+  // boas-vindas continua saindo byte por byte como antes.
+  //
+  // O QUE MUDA DE VERDADE AQUI: o destino sai do CADASTRO do staff, sem passar
+  // pelo waSafeTarget — e o telefone do US.002 (Márcio) no cadastro É o número da
+  // própria instância (medido em 11/set/2026). Nesse caso a UltraMsg aceitava,
+  // respondia `sent: true`, jogava fora, e este endpoint gravava `welcome_sent_at`
+  // de uma mensagem que ninguém recebeu. Agora o helper RECUSA o self-send (a
+  // mesma trava da rota, lib/waSelfGuard) e a resposta é 502 com o motivo escrito
+  // — sem carimbo falso de "avisado".
   const envio = await enviaUltra(`${fone}@c.us`, body)
   // 'sent: true' da UltraMsg não prova entrega — por isso devolvemos a resposta crua.
   if (!envio.httpOk || String(envio.data?.sent) !== 'true') {

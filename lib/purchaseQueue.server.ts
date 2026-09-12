@@ -24,6 +24,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
 import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 import { bucketInvoiceId, logMatchEvent, MARKER_BUCKET, MARKER_ASSIGNED, ENGINE_BUCKET } from '@/lib/bankReconcile.server'
 import { normSup } from '@/lib/supplierMatch'
 import { normNature } from '@/lib/itemNature'
@@ -64,6 +65,11 @@ const methodOf = (r: StreamRow): string => /temu/i.test(r.supplier || '') ? 'PAY
 // o relatório de ERRADO chamam gente pelo nome, e com `@numero` no texto a
 // pessoa passa a ser MARCADA de verdade quando o destino é grupo (no PVT dele a
 // trava não marca — o WhatsApp já notifica). Ver lib/waMentions.
+//
+// DOIS PEDAÇOS DAQUI NÃO SÃO NOSSOS: o que veio do e-mail da loja (fornecedor,
+// título do item) e o que uma pessoa DIGITOU no grupo e é ecoado de volta (a
+// chave e o destino do "ERRADO ..."). Os dois passam por `semMarcacao` antes de
+// entrar no corpo — eco de texto alheio não escolhe quem o app marca.
 async function wa(to: string, body: string): Promise<boolean> {
   if (!to) return false
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
@@ -393,7 +399,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       if (ref && ref !== 'NEEDS_VALUE') {
         await db.from('placement_rules').update({ hits: (rule.hits || 0) + 1 }).eq('id', rule.id)
         const amt = amountOf(r.item)
-        await wa(PVT, `🛒 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
+        await wa(PVT, `🛒 *COMPRA REGISTRADA — ${semMarcacao(r.supplier || 'Loja')}*\n\nPedido: ${semMarcacao(r.order_number || '—')}\n${semMarcacao(titleOf(r))}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
       }
     }
 
@@ -410,7 +416,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       const ref = await place(db, r, 'INPUTS/APARTMENT', placed, natureOf.get(r.id) ?? null)
       if (!ref || ref === 'NEEDS_VALUE') { await db.from('part_streams').update({ asked_count: 1 }).eq('id', r.id); continue }
       const amt = amountOf(r.item)
-      await wa(PVT, `🏠 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Só item de casa — registrada em *${refLabel(ref)}*\nSe estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
+      await wa(PVT, `🏠 *COMPRA REGISTRADA — ${semMarcacao(r.supplier || 'Loja')}*\n\nPedido: ${semMarcacao(r.order_number || '—')}\n${semMarcacao(titleOf(r))}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Só item de casa — registrada em *${refLabel(ref)}*\nSe estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
     }
   }
 
@@ -445,7 +451,10 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         const row = matches[0]
         const dest = parseDestination(err[2] || '', true)
         if (!dest) { await wa(chat, `⚠️ ERRADO ${err[1]}: me diz o destino certo — *ERRADO ${err[1]}: <APARTMENT | CATS | OFICINA | carro | IGNORA>*`); await markSeen(mid, body, 'ERRADO-NO-DEST'); answered++; continue }
-        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${dest.slice(5)}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
+        // O destino é o que a pessoa digitou; ecoar cru deixaria a resposta dela
+        // escolher quem o app marca no grupo — ver semMarcacao em lib/waMentions.
+        // (A CHAVE, `err[1]`, casa só com [\w.-]: não cabe "@" nela.)
+        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${semMarcacao(dest.slice(5))}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
         const [refDest, refId] = String(row.placed_ref || '').split('#')
         if (!refId) { await wa(chat, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
         // A ponte item↔remessa morre junto com a linha de dinheiro desfeita —
@@ -478,7 +487,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         if (!dest) continue
         const ref = await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
         if (ref === 'NEEDS_VALUE') { await wa(chat, `⚠️ ${keyOf(row)} ainda não tem valor (PESCA TEMU pendente) — repete a resposta depois da pesca.`); await markSeen(mid, body, 'NEEDS-VALUE'); answered++; continue }
-        if (!ref) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${kv[2].trim()}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
+        if (!ref) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${semMarcacao(kv[2].trim())}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
         open.splice(open.indexOf(row), 1)
         answered++
         if (/\bSEMPRE\b/i.test(body) && r_supplier(row)) {

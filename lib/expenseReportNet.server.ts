@@ -51,10 +51,19 @@ const ownerOf = (inv: any) => inv?.rides?.project_name || inv?.rides?.project_co
 
 // Report no grupo pelo caminho único (lib/waSend.server.ts, 11/set/2026):
 // `@numero` no texto vira marcação de verdade. Ver lib/waMentions.
+//
+// O `true` daqui é o critério da rota — HTTP ok E a UltraMsg confirmando que
+// mandou —, não só o HTTP. HTTP 200 com `sent: "false"` (instância fora do ar,
+// número inválido) é recusa, e dizer "reportado" nesse caso seria mentira dita
+// pro Bank Link. ATENÇÃO ao que isto NÃO muda: a marca de "já reportada" continua
+// sendo gravada mesmo quando o envio falha (ver reportAttributedExpense, e a
+// mesma escolha na rede acima) — é decisão antiga e deliberada, de 04/set: a
+// marca registra que a linha FOI TRATADA, e sem ela o balão voltaria a cada 5
+// minutos. Quem devolve "false" aqui só está dizendo a verdade sobre o balão.
 async function sendReport(body: string): Promise<boolean> {
   const groupId = process.env.ULTRAMSG_GROUP_ID
   if (!groupId) return false
-  return (await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)).httpOk
+  return (await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)).ok
 }
 
 // Últimas mensagens ENVIADAS pela instância (dedup contra o report da própria UI).

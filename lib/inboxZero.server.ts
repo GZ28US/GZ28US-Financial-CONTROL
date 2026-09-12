@@ -9,15 +9,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { barrado } from './mailProtected.server'
 import { enviaUltra } from './waSend.server'
+import { semMarcacao } from './waMentions'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
 const SIGNATURE = 'Sent by GZ28US Control App®'
 const GRACE_MIN = 15
 
-// Report no grupo pelo caminho único (lib/waSend.server.ts, 11/set/2026): o
-// pedido de destino chama gente pelo nome, e com `@numero` no texto a pessoa
-// agora é MARCADA de verdade. Ver lib/waMentions.
+// CUIDADO AO RESSUSCITAR: esta função NÃO É CHAMADA POR NINGUÉM hoje (conferido
+// por grep em 11/set/2026; já era assim antes desta mudança). O "report no grupo
+// pedindo o destino" do cabeçalho lá em cima é o plano, não o que roda — o que
+// roda é a pasta TRIAGEM. Ficou aqui como gancho pro dia em que o pedido voltar.
+// Quando voltar: o envio já passa pelo caminho único (lib/waSend.server.ts) e o
+// `@numero` do texto vira marcação de verdade (lib/waMentions) — e o corpo, se
+// carregar assunto ou remetente de e-mail, tem de passar por `semMarcacao()`,
+// como faz o alertOne logo abaixo.
 async function report(body: string): Promise<void> {
   const groupId = process.env.ULTRAMSG_GROUP_ID
   if (!groupId) return
@@ -49,8 +55,14 @@ const VIP_FROM = /celinak|@sema\.org|performanceracing\.com|kooksheaders|guerra\
 // recusa mensagem pro próprio número e o envio morre calado. Ver zelleWatch.
 const MARCIO_US = '120363425950692194@g.us'
 
+// O destino aqui é GRUPO (REPORTS), e remetente e assunto são texto CRU de um
+// e-mail que qualquer um de fora manda. Desde 11/set/2026 o corpo vira menção de
+// verdade (lib/waMentions), então sem a peneira um remetente
+// `no-reply@123456789.mailer.com` decidiria quem o app marca no grupo interno.
+// `semMarcacao` só quebra o `@numero` do pedaço que veio de fora — o molde
+// continua livre pra marcar quem tiver de marcar.
 async function alertOne(from: string, subject: string, account: string): Promise<void> {
-  const body = `📨 *VIP MAIL*\nDe: ${from}\nAssunto: ${subject}\nCaixa: ${account}\n\n${SIGNATURE}`
+  const body = `📨 *VIP MAIL*\nDe: ${semMarcacao(from)}\nAssunto: ${semMarcacao(subject)}\nCaixa: ${account}\n\n${SIGNATURE}`
   await enviaUltra(MARCIO_US, body)
 }
 

@@ -45,8 +45,14 @@ async function sendWhatsApp(body: string): Promise<{ ok: boolean; detail?: any }
   const signed = body.trimEnd().endsWith(SIGNATURE) ? body : `${body}\n\n${SIGNATURE}`
   const r = await enviaUltra(groupId, signed, { json: true, extra: { priority: 10 } })
   const sent = r.data?.sent === 'true' || r.data?.sent === true
-  // Sem status HTTP = a chamada nem saiu (rede caiu): aí o detalhe é o erro cru.
-  return { ok: sent, detail: r.status === null ? r.error : r.data }
+  // O DETALHE TEM DE SOBRAR ALGUMA COISA PRA DEPURAR (11/set/2026). Três casos:
+  // sem status HTTP = a chamada nem saiu (rede caiu, ou a trava de self-send
+  // recusou) → vai o erro cru; resposta que não é JSON (a UltraMsg devolvendo
+  // página de erro com HTTP 200 é o caso clássico) → o `data` vira `{}` e sem isto
+  // o cron respondia `detail: {}`, que não diz nada → vai o texto cru; resto → o
+  // JSON mesmo. Robô que roda sozinho só tem o que ele mesmo contar.
+  const corpoVazio = !r.data || Object.keys(r.data).length === 0
+  return { ok: sent, detail: r.status === null ? r.error : (corpoVazio ? (r.raw.slice(0, 400) || `ultramsg ${r.status}`) : r.data) }
 }
 
 export async function GET(req: NextRequest) {

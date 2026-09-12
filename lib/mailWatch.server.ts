@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { listMailAuths, freshAccessToken, type MailAuth } from '@/lib/streamMail.server'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
 import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -76,8 +77,13 @@ async function saveCursor(db: SupabaseClient, slot: number, until: string): Prom
   await db.from('whatsapp_polling_state').upsert({ id: `mail-watch-${slot}`, last_message_id: until, updated_at: new Date().toISOString() })
 }
 // Um achado vira aviso — igual nas duas pernas, para o alerta não depender do provedor.
+// REMETENTE, ASSUNTO E PRÉVIA SÃO TEXTO DE FORA: vêm inteiros do e-mail que
+// chegou, e o `notify_to` costuma ser GRUPO. Desde 11/set/2026 o corpo vira
+// menção de verdade (lib/waMentions) — sem `semMarcacao` nos três pedaços, quem
+// escreve o e-mail escolheria quem o app marca no grupo. O molde (`w.label`, os
+// emojis) continua livre.
 async function fire(db: SupabaseClient, w: MailWatch, fromAddr: string, subject: string, preview: string, when: string, alerts: string[]): Promise<void> {
-  await wa(w.notify_to, `📬 *RESPOSTA — ${w.label}*\nDe: ${fromAddr}\nAssunto: ${subject}\n\n${preview}${preview.length >= 400 ? '…' : ''}`)
+  await wa(w.notify_to, `📬 *RESPOSTA — ${w.label}*\nDe: ${semMarcacao(fromAddr)}\nAssunto: ${semMarcacao(subject)}\n\n${semMarcacao(preview)}${preview.length >= 400 ? '…' : ''}`)
   await db.from('mail_watches').update({ hits: (w.hits || 0) + 1, last_hit_at: when }).eq('id', w.id)
   w.hits = (w.hits || 0) + 1
   alerts.push(`${w.label} ← ${fromAddr}`)
