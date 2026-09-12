@@ -28,12 +28,14 @@ const token = fs.readFileSync(TOKEN, 'utf8').trim()
 if (!token) morre('o arquivo do token está vazio')
 
 const env = { ...process.env, VERCEL_TOKEN: token }
-// SEM `shell: true`. O Node avisa com razão: com shell ligado os argumentos são
-// CONCATENADOS numa linha de comando, não escapados — e esta pasta tem espaço no
-// caminho. No Windows o executável é `npx.cmd`; chamando ele direto, cada argumento
-// vai inteiro e ninguém precisa confiar em aspas.
-const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-const roda = (args, opts = {}) => spawnSync(NPX, ['--yes', 'vercel', ...args], { cwd: LOJA, env, encoding: 'utf8', ...opts })
+// COM shell, mas o comando vai como UMA STRING — que é a forma suportada e a que não
+// dispara o aviso DEP0190 do Node (o aviso é sobre passar ARRAY de argumentos junto
+// com shell: true, porque aí eles são concatenados sem escape). Chamar `npx.cmd`
+// direto, sem shell, não é opção: desde o conserto do CVE-2024-27980 o Node recusa
+// executar .cmd/.bat sem shell. O que entra aqui são literais fixos (`whoami`,
+// `--prod`, `--yes`) — nada de fora, nada com espaço; o caminho com espaço vai no
+// `cwd`, que não passa pelo shell.
+const roda = (args, opts = {}) => spawnSync(`npx --yes vercel ${args.join(' ')}`, { cwd: LOJA, env, encoding: 'utf8', shell: true, ...opts })
 
 // A saída do CLI pode ecoar o token em mensagem de erro; nunca deixo passar cru.
 const limpa = s => String(s || '').split(token).join('<TOKEN>')
