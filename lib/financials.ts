@@ -15,15 +15,13 @@ const okDate = (d: string | null | undefined) => !!d && /^\d{4}-\d{2}-\d{2}/.tes
 // Uma linha de invoice_expenses: preço × qtd + tax + extra (mesma conta do app inteiro).
 export const expLine = (e: { price?: unknown; quantity?: unknown; tax?: unknown; extra?: unknown }) =>
   num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra)
-// PAGO PELO CLIENTE: ele pôs no cartão dele e pagou o fornecedor direto. O custo é
-// nosso (a peça está no carro do cliente), mas NENHUM dinheiro nosso se moveu, e a
-// dívida dele já nasce quitada no mesmo valor — margem zero na linha.
-// Não confundir com os FUNDERS (L~245): lá alguém BANCOU uma conta nossa e vira
-// passivo; aqui o cliente só está quitando o que ele deve. Por isso esta linha não
-// entra no caixa, não entra em Fornecedores a Pagar, e não vira financiamento.
-export const CLIENT_PAID = 'CLIENT'
-export const clientPaid = (r: { paid_from?: string | null }) =>
-  String(r?.paid_from || '').trim().toUpperCase() === CLIENT_PAID
+// PAGO PELO CLIENTE SAIU DO APP US (Márcio, 11/set/2026: «isto é só no app do BR,
+// no app do US não é pra ter a opção do CLIENT, tire»). O que morava aqui —
+// CLIENT_PAID e clientPaid() — decidia três coisas: o item do cliente saía da base
+// do imposto, a despesa dele não virava caixa no DFC e não entrava em Fornecedores
+// a Pagar. Nenhuma linha do banco de dados usava: ZERO em paid_from de todas as
+// tabelas de dinheiro e ZERO nos 804 invoice_parts (medido em 11/set). No app do BR
+// a regra continua viva — lá o cliente paga o fornecedor direto de verdade.
 
 export const qtyLine = (r: { unit_price?: unknown; quantity?: unknown }) =>
   num(r.unit_price) * (num(r.quantity) || 1)
@@ -90,13 +88,18 @@ export async function loadFinancials(): Promise<FinData> {
   const [invoices, payments, invExpenses, invParts, invServices, expenses,
     fixedExpenses, fixedSuppliers, goods, goodExpenses, inputs, inventory, rides, clients] = await Promise.all([
     fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
-    // mirror_expense_id diz que a renda e ESPELHO de despesa paga pelo cliente:
-    // conta na invoice, NUNCA no caixa — nenhum dinheiro nosso se moveu.
+    // mirror_expense_id é a cicatriz do espelho do cliente, que saiu do app US em
+    // 11/set: a máquina que criava essas linhas morreu, a COLUNA fica até a onda que
+    // a derruba no banco. Está preenchida em 0 de 220 linhas (medido) — o corte
+    // abaixo continua de pé só pra nenhuma linha teimosa virar caixa.
     fetchAll('invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
     fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at, receipt_url'),
-    // base_tributavel e paid_from vem JUNTO: e a base do imposto e do desconto
-    // que a linha do cliente zera (coluna GERADA, o Postgres calcula).
-    fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity, paid_from, base_tributavel, mirror_expense_id'),
+    // base_tributavel é a base do imposto e do desconto (coluna GERADA, o Postgres
+    // calcula). O paid_from do ITEM sai do select: ele só existia pra zerar a linha
+    // do cliente, e sem CLIENT no app US a coluna é vazia nas 804 linhas (medido) —
+    // com isso base_tributavel = unit_price × quantity em todas elas. A coluna
+    // continua no banco, porque a GERADA depende dela; derrubar é outra onda.
+    fetchAll('invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_tributavel, mirror_expense_id'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
     fetchAll('expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
     fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, bank_transaction_id'),
@@ -147,29 +150,35 @@ export async function loadFinancials(): Promise<FinData> {
 
 // ── QUEM PAGOU, uma régua só (FIN 0.14.2 — levantamento de 9/set: DFC lia só paid_from, Balanço e GZ-FLOW
 // liam paid_from || source, e os três discordavam nas mesmas linhas). paid_from manda; o SOURCE legado vale
-// quando é um pagador do vocabulário (Regions = GZ28US); RAFA é a conta corrente GZ28BR (decisão de 22/ago);
-// vazio = ninguém sabe (o DFC segue tratando como GZ28US e o card «Quem pagou?» encolhe isso todo dia). ──
-export const PAYERS = ['GZ28US', 'GZ28BR', 'BETO', 'HERALDO', 'CLIENT'] as const
+// quando é um pagador do vocabulário (Regions = GZ28US); vazio = ninguém sabe (o DFC segue tratando como
+// GZ28US e o card «Quem pagou?» encolhe isso todo dia). ──
+// SÃO DOIS PAGADORES, e só (Márcio, 11/set): a GZ28US e a GZ28BR. Saíram CLIENT (é regra do app do BR) e
+// RAFA/BETO/HERALDO — sócio que banca conta da LLC vai morar em outra área do app, quando existir; hoje não
+// existe. Nenhuma linha se perdeu: ZERO em paid_from, paid_to e source de TODAS as tabelas de dinheiro, e
+// ZERO com source GZ28BR/RAFA e paid_from vazio (medido pela REST em 11/set) — o apelido RAFA nunca foi usado.
+export const PAYERS = ['GZ28US', 'GZ28BR'] as const
 export function whoPaid(r: { paid_from?: string | null; source?: string | null }): string | null {
-  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; if (s === 'RAFA') return 'GZ28BR'; return (PAYERS as readonly string[]).includes(s) ? s : null }
+  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; return (PAYERS as readonly string[]).includes(s) ? s : null }
   return norm(r.paid_from) || norm(r.source)
 }
 
-// ── CONTA CORRENTE GZ28BR — UMA conta só (FIN 0.14.2): o Balanço e o card «Conta corrente GZ28BR» do Data Checker leem
+// ── CONTA CORRENTE GZ28BR — UMA conta só (FIN 0.15.0): o Balanço e o card «Conta corrente GZ28BR» do Data Checker leem
 // daqui; o GZ-FLOW usa a mesma régua (whoPaid). GOT = receita nossa que entrou lá (invoice_payments paid_to GZ28BR, recebidos)
-// + conta da BR que nós pagamos; PAID = conta nossa que a BR pagou. Sócio (BETO/HERALDO, pela mesma régua) sai do saldo e vira
-// empréstimo de sócio. Só linha PAGA (payment_date); TODAS as tabelas, inclusive PESSOAL e estoque doado — a varredura do Balanço.
-// BLIND = linha paga sem pagador nenhum (nem paid_from nem SOURCE): o DFC assume Regions até alguém dizer. ──
+// + conta da BR que nós pagamos; PAID = conta nossa que a BR pagou.
+// Só linha PAGA (payment_date); TODAS as tabelas, inclusive PESSOAL e estoque doado — a varredura do Balanço.
+// BLIND = linha paga sem pagador nenhum (nem paid_from nem SOURCE): o DFC assume Regions até alguém dizer.
+// SÓCIO SAIU (11/set): a conta paga do bolso do Beto ou do Heraldo era desviada daqui pra virar «empréstimo de
+// sócio» no passivo do Balanço. Nunca houve uma — as duas somas deram US$ 0,00 em todas as leituras — e o
+// Márcio decidiu que, quando houver, mora em outra área do app. Empréstimo de sócio de verdade continua no
+// LEDGERS (financing: os dois desembolsos do Heraldo estão lá), que este cálculo nunca tocou. ──
 export function brAccount(d: FinData) {
   const GZ = 'GZ28BR'
   const gotIncome = d.payments.filter(p => p.paid_to === GZ && p.paid_at).reduce((s, p) => s + num(p.amount), 0)
-  let got = gotIncome, paid = 0, usPaidBr = 0, beto = 0, heraldo = 0, blind = 0, blindN = 0
+  let got = gotIncome, paid = 0, usPaidBr = 0, blind = 0, blindN = 0
   const scan = (rows: any[], amt: (r: any) => number) => {
     for (const r of rows) {
       if (!r.payment_date) continue
       const by = whoPaid(r) || '', bill = String(r.paid_to || ''); const a = amt(r)
-      if (by === 'BETO') { beto += a; continue }
-      if (by === 'HERALDO') { heraldo += a; continue }
       if (bill === GZ && by !== GZ) { got += a; usPaidBr += a }
       else if (by === GZ && bill !== GZ) paid += a
       if (!by) { blind += a; blindN++ }
@@ -178,39 +187,31 @@ export function brAccount(d: FinData) {
   scan(d.invExpenses, expLine); scan(d.goods, qtyLine); scan(d.goodExpenses, r => num(r.amount))
   scan(d.inputs, qtyLine); scan(d.inventory, qtyLine)
   scan(d.fixedExpenses, r => num(r.amount)); scan(d.expenses, r => num(r.amount))
-  return { gotIncome, usPaidBr, got, paid, net: got - paid, beto, heraldo, blind, blindN }
+  return { gotIncome, usPaidBr, got, paid, net: got - paid, blind, blindN }
 }
 
 // ── Totais por invoice (mesmas fórmulas da tela de invoices) ────────────────
 export function invoiceTotals(d: FinData, inv: any) {
   const minhas = d.invParts.filter(p => p.invoice_id === inv.id)
-  // A BASE é a coluna GERADA: linha paga pelo cliente vale ZERO nela. Antes isto
-  // era uma subtração que cada leitor precisava lembrar de fazer; agora o banco
-  // já entrega o número certo, e somar unit_price × quantity para calcular
-  // imposto passou a parecer errado a olho — que era o objetivo.
+  // A BASE é a coluna GERADA (o Postgres calcula): unit_price × quantity, a não ser
+  // que a linha fosse do cliente — e essa hipótese acabou no app US em 11/set. Sem
+  // CLIENT, base_tributavel = unit_price × quantity nas 804 linhas (conferido ao
+  // centavo). Continua sendo a coluna do banco que se lê, e não uma conta feita aqui.
   const base = minhas.reduce((s, p) => s + num(p.base_tributavel), 0)
-  const doCliente = minhas.filter(p => clientPaid(p)).reduce((s, p) => s + num(p.unit_price) * num(p.quantity), 0)
-  const parts = base + doCliente
+  const parts = base
   const services = d.invServices.filter(s2 => s2.invoice_id === inv.id).reduce((s, x) => s + num(x.price), 0)
   const flTax = base * (num(inv.florida_taxes) / 100)
   const pAndS = base + flTax + services
   const discount = pAndS * (num(inv.global_discount) / 100)
   const grand = pAndS - discount
   const cost = d.invExpenses.filter(e => e.invoice_id === inv.id).reduce((s, e) => s + expLine(e), 0)
-  // O que o CLIENTE pagou direto ao fornecedor vira receita no MESMO valor (margem
-  // zero) e já nasce recebido. Entra DEPOIS do imposto e DEPOIS do desconto, de
-  // propósito (decisão dele, 06/set): dentro da base, a GZ28US passaria a dever FL
-  // tax sobre uma venda sem margem, e o desconto global jogaria a linha pra prejuízo.
-  // Desde 09/set quem garante esse "depois" é a coluna GERADA base_tributavel, não
-  // uma subtração que o leitor precisa lembrar.
-  // O que o cliente pagou já é LINHA: item e renda existem no banco, com o mesmo
-  // valor da despesa (ordem dele de 09/set — "tem que ser tudo preenchido"). Por
-  // isso não se soma mais nada por fora: a renda espelho já tem baixa e entra em
-  // `received` sozinha. Somar de novo era a contagem dupla que este trabalho
-  // existiu para evitar.
-  const clientCost = doCliente
+  // O GRAND TOTAL era `grand + o que o cliente pagou direto`: a compra no cartão dele
+  // virava venda de margem zero, somada DEPOIS do imposto e DEPOIS do desconto pra não
+  // gerar FL tax nem prejuízo. Como o app US não tem mais CLIENT, essa parcela é
+  // sempre zero — e uma soma que só pode somar zero é mentira esperando acontecer.
+  // `clientCost` sai do retorno junto: ninguém lia (conferido por grep).
   const received = d.payments.filter(p => p.invoice_id === inv.id && p.paid_at).reduce((s, p) => s + num(p.amount), 0)
-  return { parts, services, flTax, discount, grand: grand + doCliente, cost, received, clientCost }
+  return { parts, services, flTax, discount, grand, cost, received }
 }
 
 // Dono do carro (CAR DESTINY): OWN/TOOL são NOSSOS — o custo deles é frota/
@@ -306,19 +307,17 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   }
 
   // FIN 0.9.8 (João decidiu, 25/ago — pendência #21): despesa paga por OUTRO
-  // caixa (GZ28BR; RAFA entra pela conta corrente BR, decisão de 22/ago; BETO)
-  // não saiu do caixa GZ28US — mas o custo é nosso. A saída operacional fica e
-  // nasce a entrada de FINANCIAMENTO espelhada (quem bancou): efeito zero no
-  // caixa, igual ao passivo que o Balanço já declara. paid_from vazio segue
-  // valendo GZ28US (o card "Quem pagou?" encolhe essa incerteza todo dia).
+  // caixa (a GZ28BR) não saiu do caixa GZ28US — mas o custo é nosso. A saída
+  // operacional fica e nasce a entrada de FINANCIAMENTO espelhada (quem bancou):
+  // efeito zero no caixa, igual ao passivo que o Balanço já declara. paid_from
+  // vazio segue valendo GZ28US (o card "Quem pagou?" encolhe essa incerteza todo dia).
+  // Restou UM financiador: os espelhos de sócio (FUND_BETO, FUND_HERALDO) e o apelido
+  // RAFA saíram em 11/set com o resto do vocabulário — zero eventos nos dois, sempre.
   const FUNDERS: Record<string, { line: string; who: string }> = {
     GZ28BR: { line: 'FUND_BR', who: 'GZ28BR (conta corrente)' },
-    RAFA: { line: 'FUND_BR', who: 'GZ28BR (conta corrente — via Rafa)' },
-    BETO: { line: 'FUND_BETO', who: 'Beto (empréstimo de sócio)' },
-    HERALDO: { line: 'FUND_HERALDO', who: 'Heraldo (empréstimo de sócio)' },
   }
   const fund = (row: { paid_from?: string | null; source?: string | null }, date: string | null | undefined, amount: number, label: string) => {
-    const f = FUNDERS[String(whoPaid(row) || '').trim().toUpperCase()]   // FIN 0.14.2: a mesma régua do Balanço e do GZ-FLOW (SOURCE legado conta; RAFA = BR)
+    const f = FUNDERS[String(whoPaid(row) || '').trim().toUpperCase()]   // FIN 0.15.0: a mesma régua do Balanço e do GZ-FLOW (SOURCE legado conta)
     if (f && amount) push(date, 'FIN', f.line, amount, 'FUNDED', f.who + ' · ' + label, '/adm/check')
   }
 
@@ -333,11 +332,11 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   // pela GZ28BR (2025) é linha própria: é receita nossa que virou saldo lá.
   for (const p of d.payments) {
     if (!p.paid_at) continue
-    // ESPELHO NÃO É CAIXA. O cliente pagou o fornecedor direto: a dívida dele
-    // nasceu quitada e nenhum dinheiro nosso entrou. A marca é o ELO com a
-    // despesa, nunca `paid_from` — a renda não tem paid_from por decisão de
-    // 26/ago ("é sempre o cliente"), e usar esse campo faria o caixa inteiro
-    // sumir no dia em que alguém o preenchesse por essa outra razão.
+    // ESPELHO NÃO É CAIXA. Renda nascida de despesa paga pelo cliente não era
+    // dinheiro entrando. A máquina que criava essas linhas saiu do app US em
+    // 11/set e nunca gravou nenhuma (0 de 220 com o elo, medido); o corte fica
+    // enquanto a coluna existir no banco, porque uma linha teimosa virando caixa
+    // seria receita inventada. A marca sempre foi o ELO, nunca `paid_from`.
     if (p.mirror_expense_id) continue
     const m = invoiceMeta(d, p.invoice_id)
     // Data do caixa é o RECEBIMENTO (paid_at); payment_date é só o agendado.
@@ -358,10 +357,6 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   }
   // Fornecedores de projeto (inclui compra de carro — separação é papo do DRE/D3).
   for (const e of d.invExpenses) {
-    // Pago pelo cliente: nenhum caixa nosso se moveu — nem saída, nem entrada.
-    // Sem este corte, a compra do cartão do cliente drenaria o caixa da LLC no DFC
-    // e abriria a régua contra o saldo do banco por um valor que nunca passou lá.
-    if (clientPaid(e)) continue
     const m = invoiceMeta(d, e.invoice_id)
     const car = isCarLine(e.item, expLine(e), invNickname(d, e.invoice_id))
     push(e.payment_date, 'OPER', car ? 'CAR_BUY' : 'JOB_COST', -expLine(e), m.code,
@@ -468,13 +463,12 @@ export function recognitionDate(d: FinData, inv: any): string | null {
 
 // Sem data de pagamento = ainda devido (vira Fornecedores a Pagar no Balanço).
 export function unpaidTotals(d: FinData) {
-  // Linha paga pelo cliente nunca é "Fornecedores a Pagar": a conta não é nossa.
-  // Conta AGENDADA do futuro também não é dívida de hoje (FIN 0.14.1 — a régua do DRE 0.13.1, medido em 9/set:
+  // Conta AGENDADA do futuro não é dívida de hoje (FIN 0.14.1 — a régua do DRE 0.13.1, medido em 9/set:
   // 105 contas futuras, $84,8k, entravam no passivo; só 8 venciam): entra o que venceu ou não tem data prevista;
   // o resto é compromisso, devolvido à parte em `scheduled` pra quem quiser mostrar como memorando.
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const due = (e: any) => !okDate(e.payment_date) && (!e.expense_date || String(e.expense_date).slice(0, 10) <= today)
-  const inv = d.invExpenses.filter(e => !okDate(e.payment_date) && !clientPaid(e)).reduce((s, e) => s + expLine(e), 0)
+  const inv = d.invExpenses.filter(e => !okDate(e.payment_date)).reduce((s, e) => s + expLine(e), 0)
   const fixed = d.fixedExpenses.filter(due).reduce((s, e) => s + num(e.amount), 0)
   const staff = d.expenses.filter(due).reduce((s, e) => s + num(e.amount), 0)   // pessoal incluso (decisão 26/ago)
   const scheduled = d.fixedExpenses.filter(e => !okDate(e.payment_date) && !due(e)).reduce((s, e) => s + num(e.amount), 0) + d.expenses.filter(e => !okDate(e.payment_date) && !due(e)).reduce((s, e) => s + num(e.amount), 0)

@@ -47,7 +47,7 @@ export type PayerAuditData = {
 export const PAYER_WINDOW_DAYS = 3        // registro × linha do banco (postada ou autorizada)
 export const UNIQUE_WINDOW_DAYS = 45      // «valor distinto»: única saída desse valor nesta janela
 export const SPLIT_WINDOW_DAYS = 5        // pedido de N unidades: a cobrança somada a ±5 dias
-const OTHER_PAYERS = new Set(['GZ28BR', 'BETO', 'HERALDO'])
+const OTHER_PAYERS = new Set(['GZ28BR'])   // só a BR paga conta nossa por fora desde 11/set: sócio saiu do vocabulário
 const CREATOR_ENGINES = new Set(['RULE', 'LEARN', 'FEE', 'BUCKET'])   // a mesma lista do enginesAudit (MAIL_ENGINES): o motor que CRIA registro
 const UNDECIDED = new Set(['NEW', 'QUEUED', ''])
 const INTERCOMPANY_CLIENT_NUMBER = 6      // US.006 — lib/brPaidMirror.ts: «client US.006 — GZ28 V8 SpeedShop BR Ltda»
@@ -58,12 +58,13 @@ const RATIOS: { k: number; text: string }[] = [
   { k: 1.1715, text: 'a maior é a menor + 10% + 6,5% — a convenção antiga inteira' },
 ]
 
-// QUEM PAGOU — cópia FIEL de whoPaid (lib/financials.ts:152-156). Não se importa de lá: financials.ts é 'use client' (L1)
+// QUEM PAGOU — cópia FIEL de whoPaid (lib/financials.ts). Não se importa de lá: financials.ts é 'use client' (L1)
 // e importa o cliente do browser; numa rota do App Router (camada RSC) o import vira referência de cliente e a chamada
 // explode («Attempted to call whoPaid() from the server»). O teste compara as duas, linha a linha, nas 7 tabelas.
-const PAYERS = ['GZ28US', 'GZ28BR', 'BETO', 'HERALDO', 'CLIENT']
+// São dois pagadores desde 11/set (CLIENT, RAFA, BETO e HERALDO saíram do app US; nenhuma linha os usava).
+const PAYERS = ['GZ28US', 'GZ28BR']
 export function whoPaidOf(r: { paid_from?: string | null; source?: string | null }): string | null {
-  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; if (s === 'RAFA') return 'GZ28BR'; return PAYERS.includes(s) ? s : null }
+  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; return PAYERS.includes(s) ? s : null }
   return norm(r.paid_from) || norm(r.source)
 }
 
@@ -163,7 +164,7 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
     || (x.table === 'inputs' && String(x.r.order_number || '').startsWith('bank:') ? byLineId.get(String(x.r.order_number).slice(5)) : null) || null
 
   // ═══ 1 · PAGO_REGIONS ═══
-  const payerName: Record<string, string> = { GZ28BR: 'a GZ28BR', BETO: 'o Beto', HERALDO: 'o Heraldo' }
+  const payerName: Record<string, string> = { GZ28BR: 'a GZ28BR' }   // o único pagador de fora desde 11/set
   const other = rows.filter(x => OTHER_PAYERS.has(String(whoPaidOf(x.r))))
   const drop = { casada_com_outro: 0, fraca: 0, decidida: 0, pendente: 0 }
   let pagoN = 0, pagoV = 0

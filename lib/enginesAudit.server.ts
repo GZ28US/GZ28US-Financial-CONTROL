@@ -38,7 +38,7 @@ const num = (v: any) => { const n = typeof v === 'number' ? v : parseFloat(Strin
 const day = (s: any) => String(s || '').slice(0, 10)
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(day(a)) - Date.parse(day(b))) / 864e5))
 const hoursAgo = (iso: string) => (Date.now() - Date.parse(iso)) / 3600e3
-const BR_PAID = new Set(['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'])   // a mesma régua do candidatePool (brPaid): pagou por fora da Regions
+const BR_PAID = new Set(['GZ28BR'])   // a mesma régua do candidatePool (brPaid): pagou por fora da Regions — sócio e cliente saíram do vocabulário em 11/set
 const MAIL_ENGINES = new Set(['RULE', 'LEARN', 'FEE', 'BUCKET'])          // o que o motor do banco CRIA (o rematch da rota só aceita estes)
 // Vendedores que MANDAM e-mail de compra — a lista de domínios do AUTO-BOOK (lib/autoBookMail.server.ts DOM_VENDOR) em nomes
 // normalizados. Copiada, não importada: o auditor não pode depender do auditado. Fora da lista de propósito: Titan e Wurth

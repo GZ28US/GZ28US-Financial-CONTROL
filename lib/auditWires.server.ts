@@ -57,7 +57,7 @@ export const WIRE_GENERIC = new Set(['AUTO', 'AUTOS', 'SALES', 'MOTOR', 'MOTORS'
 const OUT_F_RE = /WIRE TRANSFER DOMESTIC OUT F/i
 const CHARGE_RE = /ANALYSIS CHARGE\s*(\d{2})-(\d{2})/i
 const OTHER_CHANNEL_RE = /\b(zelle|paypal|venmo|cash ?app|cash|cart[aã]o|card|cheque|check)\b/i   // registro que diz outro meio de pagamento
-const BR_PAID = new Set(['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'])   // a régua do candidatePool (brPaid): pagou por fora da Regions
+const BR_PAID = new Set(['GZ28BR'])   // a régua do candidatePool (brPaid): pagou por fora da Regions — sócio e cliente saíram do vocabulário em 11/set
 const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
 
 const r2 = (n: number) => Math.round(n * 100) / 100

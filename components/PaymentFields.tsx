@@ -17,8 +17,6 @@ import DatePicker from '@/components/DatePicker'
 // forma de pagamento própria, SEM número — o final do cartão muda quando o banco
 // reemite; o nome não. 'CARD' fica para cartões que não são o débito da Regions.
 export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'GZ28US Regions DebitCard', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL'] as const
-// Os 3 sócios da GZ28US (João, 26/ago): Marcio/Dema, Beto e HERALDO — conta
-// paga do bolso de sócio vira empréstimo dele pra LLC (passivo no Balanço).
 // Dinheiro que cai numa conta BRASILEIRA se move por meios brasileiros — não
 // existe ACH nem Zelle no Brasil, nem PIX nos EUA. Quando PAID TO = GZ28BR, o
 // formulário troca a lista (Márcio, 26/ago/2026). São os métodos que de fato
@@ -27,11 +25,14 @@ export const PAYMENT_METHODS_BR = ['PIX', 'TED', 'CASH', 'CHEQUE', 'CARD'] as co
 export const methodsFor = (paidTo: string | null | undefined): readonly string[] =>
   paidTo === 'GZ28BR' ? PAYMENT_METHODS_BR : PAYMENT_METHODS
 
-// CLIENT = o cliente pagou o fornecedor direto, do bolso dele (Márcio, 06/set/2026).
-// É o único valor que NÃO é passivo: os outros significam "alguém bancou uma conta
-// nossa" e viram financiamento; o cliente só está quitando o que ele já devia. Ver
-// clientPaid() em lib/financials.ts.
-export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'RAFA', 'BETO', 'HERALDO', 'CLIENT'] as const
+// DOIS PAGADORES NO APP US, e só (Márcio, 11/set/2026: «no app do US não é pra ter a
+// opção do CLIENT, tire»). Saíram CLIENT — o cliente pagando o fornecedor direto é
+// regra do app do BR —, RAFA (apelido da conta corrente da BR, nunca usado) e os
+// sócios BETO e HERALDO: conta paga do bolso de sócio *"não teve, e quando tiver, vão
+// ficar em outra área do app"*. Nenhuma linha do banco usava nenhum dos quatro.
+// Valor legado fora desta lista continua aparecendo no seletor como opção-fantasma
+// (logo abaixo, no <select>) — a tela nunca esconde o que está gravado.
+export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
 export type PaymentInfo = {

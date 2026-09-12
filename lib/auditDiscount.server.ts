@@ -60,7 +60,7 @@ export type DiscountVerdict = {
 }
 export type DiscountData = { expenses: any[]; groupOthers: any[]; invoices: any[]; rides: any[]; bank: any[]; parts: any[]; invParts: any[]; orders: any[]; suppliers: any[] }
 
-const BR_PAID = new Set(['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'])   // a régua do candidatePool (bankReconcile.server.ts:176): pagou por fora da Regions
+const BR_PAID = new Set(['GZ28BR'])   // a régua do candidatePool (bankReconcile.server.ts:176): pagou por fora da Regions — sócio e cliente saíram do vocabulário em 11/set
 const brPaid = (r: any) => BR_PAID.has(String(r.paid_from || '')) || String(r.paid_to || '') === 'GZ28BR'
 const NOT_LOOSE = new Set(['MATCHED', 'IGNORED', 'TRANSFER', 'REMOVED'])   // linha «solta» = ninguém decidiu o que ela é
 const DAYS = 10          // janela da linha solta (data postada OU autorização do cartão × data da compra)

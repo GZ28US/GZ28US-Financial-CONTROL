@@ -83,13 +83,15 @@ export default function BalancePage() {
     fleetOwn = Math.max(0, fleetOwn - depOwn)
     fleetTool = Math.max(0, fleetTool - depTool)
 
-    // Conta corrente GZ28BR + sócios: UMA conta só (lib/financials brAccount, FIN 0.14.2) — a mesma do card «Conta corrente
-    // GZ28BR» do Data Checker, na régua do GZ-FLOW (whoPaid: paid_from manda, SOURCE legado conta, RAFA = BR). GOT = receita
-    // nossa que entrou lá (+ conta da BR que nós pagamos); PAID = conta nossa que ela pagou. Sócio (Beto/Heraldo) pagou conta
-    // da LLC do bolso: a LLC deve a ele — Empréstimo de sócio no passivo. Só linha PAGA (sem payment_date está em Fornecedores
-    // a Pagar; contar aqui também seria o mesmo passivo duas vezes).
+    // Conta corrente GZ28BR: UMA conta só (lib/financials brAccount, FIN 0.15.0) — a mesma do card «Conta corrente
+    // GZ28BR» do Data Checker, na régua do GZ-FLOW (whoPaid: paid_from manda, SOURCE legado conta). GOT = receita
+    // nossa que entrou lá (+ conta da BR que nós pagamos); PAID = conta nossa que ela pagou. Só linha PAGA (sem
+    // payment_date está em Fornecedores a Pagar; contar aqui também seria o mesmo passivo duas vezes).
+    // «Empréstimo de sócio — Beto» e «— Heraldo» saíram do passivo em 11/set: as duas linhas nasciam de paid_from
+    // BETO/HERALDO, que o Márcio tirou do app US, e as duas sempre valeram US$ 0,00 (medido). Empréstimo de sócio
+    // de verdade continua em «Empréstimos e financiamentos», pelo LEDGERS — é lá que moram os do Heraldo.
     const acc = brAccount(d)
-    const got = acc.got, paid = acc.paid, beto = acc.beto, heraldo = acc.heraldo
+    const got = acc.got, paid = acc.paid
 
     const stockPurch = d.inventory.filter(s => s.source_type === 'PURCHASED').reduce((s, r) => s + qtyLine(r), 0)
     const stockDon = d.inventory.filter(s => s.source_type === 'DONATED').reduce((s, r) => s + qtyLine(r), 0)
@@ -104,12 +106,12 @@ export default function BalancePage() {
     const cash = lt ? lt.cashTotal : 0
     const loans = lt ? lt.loanBalance : 0
     const totalAtivo = cash + ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn + donorCost
-    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0) + beto + heraldo
+    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0)
     // Residual = ativo − passivo − capital líquido. É o resultado acumulado
     // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
     // livros e o DATA CHECK zeram. Só existe com os livros vivos.
     const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
-    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, depOwn, depTool, donorCost, flPayable, brNet, beto, heraldo, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
+    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, depOwn, depTool, donorCost, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
   }, [d])
 
   async function downloadPdf() {
@@ -146,8 +148,6 @@ export default function BalancePage() {
             { cells: ['Adiantamentos de clientes', usd(m.advances)] },
             { cells: ['FL sales tax a recolher', usd(m.flPayable)] },
             ...(m.brNet < 0 ? [{ cells: ['Devido à GZ28BR', usd(-m.brNet)] }] : []),
-            ...(m.beto > 0 ? [{ cells: ['Empréstimo de sócio — Beto', usd(m.beto)] }] : []),
-            ...(m.heraldo > 0 ? [{ cells: ['Empréstimo de sócio — Heraldo', usd(m.heraldo)] }] : []),
             { cells: ['Empréstimos e financiamentos', m.lt ? usd(m.lt.loanBalance) : `? (${na} — G3)`] },
             { cells: ['TOTAL DO PASSIVO (conhecido)', usd(m.totalPassivo)], bold: true },
           ],
@@ -243,8 +243,6 @@ export default function BalancePage() {
             ['Adiantamentos de clientes', m.advances],
             ['FL sales tax a recolher', m.flPayable],
             ['Devido à GZ28BR', Math.max(-m.brNet, 0)],
-            ['Empréstimo de sócio — Beto', m.beto],
-            ['Empréstimo de sócio — Heraldo', m.heraldo],
           ]} />
         </div>
       </div>
@@ -275,8 +273,6 @@ export default function BalancePage() {
             <Row label="Adiantamentos de clientes" value={m.advances} chip={<Chip kind="dec" label="D9" />} note="recebido > faturado — inclui os jobs legados sem linhas" />
             <Row label="FL sales tax a recolher" value={m.flPayable} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado com fl_tax_expense_date vazio" />
             {m.brNet < 0 && <Row label="Devido à GZ28BR" value={-m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} />}
-            {m.beto > 0 && <Row label="Empréstimo de sócio — Beto" value={m.beto} chip={<Chip kind="ok" label="PAID FROM" />} note="contas da LLC que o Beto pagou do bolso (paid_from = BETO) — a LLC deve a ele" />}
-            {m.heraldo > 0 && <Row label="Empréstimo de sócio — Heraldo" value={m.heraldo} chip={<Chip kind="ok" label="PAID FROM" />} note="contas da LLC que o Heraldo pagou do bolso (paid_from = HERALDO) — a LLC deve a ele; depósitos dele entram pelo livro de empréstimos (LEDGERS)" />}
             {m.lt
               ? <Row label="Empréstimos e financiamentos" value={m.lt.loanBalance} chip={<Chip kind="ok" label="LEDGERS" />} note="saldo devedor: recebido − amortizado, por contrato" />
               : <Row label="Empréstimos e financiamentos" value={null} chip={<Chip kind="gap" label="G3" />} note="rode a migration e lance os contratos em LEDGERS" />}
