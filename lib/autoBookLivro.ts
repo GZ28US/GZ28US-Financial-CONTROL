@@ -53,7 +53,7 @@ export type Regra = {
 
 export type Etapa = { id: string; titulo: string; resumo: string; regras: Regra[] }
 
-export const LIVRO_ATUALIZADO = '2026-09-11'
+export const LIVRO_ATUALIZADO = '2026-09-12'
 
 // ═══ A SEQUÊNCIA — O CAMINHO DO E-MAIL DE COMPRA ATÉ A LINHA NO APP ═══════════
 export const SEQUENCIA: Etapa[] = [
@@ -513,6 +513,10 @@ export const SEQUENCIA: Etapa[] = [
         fala: 'não esqueça de mandar os gastos reais no grupo de report. E tem que ficar marcados como enviados, pra não enviar duplicado depois.',
         onde: 'lib/expenseReportNet.server.ts · markReported',
         nota: 'A rede cobre só invoice_expenses, receitas e folha, e só com a data do dinheiro nos últimos 3 dias (13.1). Na mesma ordem ele disse: «Não esqueça de reportar qualquer saída ou entrada de $ nos grupos de report». Estorno reporta quando o dinheiro CAI; até lá a linha fica CANCELLED.' },
+      { id: '13.8', estado: 'FURO', desde: '12/09/2026',
+        texto: 'Compra real escrita POR CIMA de um placeholder antigo some da rede de report: a rede só lê linha com updated_at depois do EPOCH (26/07/2026), e escrever por fora do app não encosta nesse campo. Quem escreve por cima tem de gravar updated_at junto — senão o balão sai com uma parte da compra e ninguém percebe, porque a parte que falta nunca é perguntada.',
+        onde: 'lib/expenseReportNet.server.ts:15 (EPOCH) · :200 (.gte(updated_at, EPOCH))',
+        nota: 'Medido na HHP #384917 (12/09/2026, US.022.2 Apocalypse, US$ 4.112,27): das 5 linhas, 3 entraram por cima de placeholders de 12/07 e ficaram invisíveis — o grupo recebeu US$ 2.821,12 de 2 itens às 01h06 Orlando. Destravado encostando no updated_at; o complemento de US$ 1.291,15 saiu na passada seguinte, por ordem dele («Rede manda o complemento»). O mesmo alçapão pega qualquer escrita por fora do app.' },
     ],
   },
 ]
