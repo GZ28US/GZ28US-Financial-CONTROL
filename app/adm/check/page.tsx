@@ -18,6 +18,7 @@ import Header from '@/components/Header'
 import DcBadge from '@/components/DcBadge'
 import DatePicker from '@/components/DatePicker'
 import PartPicker from '@/components/PartPicker'
+import { tabelaAtual } from '@/lib/tableRenames'
 import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCard'
 import { PAID_FROM_OPTIONS } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
@@ -185,8 +186,8 @@ const NATURE_TAG: Record<Nature, string> = {
 // AUDITORIA SÓ LEITURA (DC 1.51.0): um item de módulo (lib/audit*.server.ts) vira um Item de card. Linha do banco citada que ainda está
 // sem dono (NEW/QUEUED) = a pergunta dela já conta na Conciliação bancária: o item mostra a prova e NÃO conta de novo (info, sem VISTO).
 // O resto conta e aceita VISTO com memória, pela chave estável do módulo. Sinal que não veio é SINAL, nunca verde.
-const AUDIT_TAG: Record<string, string> = { bank_transactions: 'BANCO', invoice_expenses: 'LINHA', fixed_cost_expenses: 'FIXO', inputs: 'SUPPLY', inventory: 'ESTOQUE', goods: 'GOODS', good_expenses: 'GOODS', expenses: 'FOLHA', invoice_payments: 'INCOME', cash_balances: 'EXTRATO', invoices: 'INVOICE', parts_database: 'PEÇA' }
-const AUDIT_HREF: Record<string, string> = { bank_transactions: '/adm/bank', invoice_expenses: '/invoices', fixed_cost_expenses: '/costs/fixed', inputs: '/supplies', inventory: '/inventory', goods: '/goods', good_expenses: '/goods', expenses: '/staff', invoice_payments: '/invoices', cash_balances: '/adm/financials/ledgers', parts_database: '/parts' }
+const AUDIT_TAG: Record<string, string> = { bank_transactions: 'BANCO', invoice_expenses: 'LINHA', fixed_cost_expenses: 'FIXO', inputs: 'SUPPLY', inventory: 'ESTOQUE', assets: 'GOODS', assets_expenses: 'GOODS', staff_expenses: 'FOLHA', invoice_incomes: 'INCOME', cash_balances: 'EXTRATO', invoices: 'INVOICE', parts_database: 'PEÇA' }
+const AUDIT_HREF: Record<string, string> = { bank_transactions: '/adm/bank', invoice_expenses: '/invoices', fixed_cost_expenses: '/costs/fixed', inputs: '/supplies', inventory: '/inventory', assets: '/goods', assets_expenses: '/goods', staff_expenses: '/staff', invoice_incomes: '/invoices', cash_balances: '/adm/financials/ledgers', parts_database: '/parts' }
 function auditItems(sig: AuditSignal, mod: 'wires' | 'bucketOrders' | 'payer' | 'discount' | 'noBank', cardKey: string, codes: Record<string, string>): Item[] {
   if (sig.state === 'loading') return [{ href: '/adm/check', code: 'SINAL', label: 'lendo a auditoria… esta conferência ainda não rodou', extra: 'se persistir, o sinal de /api/data-check/audit não chegou — recarregue' }]
   const part = sig.data ? sig.data[mod] : null
@@ -656,7 +657,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }),
       ...st.map((e: any) => ({
         href: '/staff', code: 'FOLHA', label: e.description || e.type || '', extra: tag(e), amount: parseFloat(e.amount) || 0,
-        fix: { kind: 'date' as const, table: 'expenses', rowId: e.id, field: 'payment_date' },
+        fix: { kind: 'date' as const, table: 'staff_expenses', rowId: e.id, field: 'payment_date' },
       })),
     ].sort((a, b) => (b.amount || 0) - (a.amount || 0))
     checks.push({
@@ -794,7 +795,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         href: m.href, code: m.code,
         label: whoFor(p.invoice_id) + ' — income «' + (p.description || p.source || 'agendado') + '»',
         extra: 'vencido ' + formatShortDate(p.payment_date), amount: parseFloat(p.amount) || 0,
-        fix: { kind: 'received' as const, table: 'invoice_payments', rowId: p.id },
+        fix: { kind: 'received' as const, table: 'invoice_incomes', rowId: p.id },
       }
     }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
     checks.push({
@@ -914,9 +915,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       // ninguém ainda. O paid_from nasce na hora do pagamento; só linha PAGA entra.
       ...d.invExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => { const m = invoiceMeta(d, e.invoice_id); return mk('invoice_expenses', e, 'PROJ', m.href, [m.code, m.car, e.item, e.supplier].filter(Boolean).join(' · '), expLine(e)) }),
       ...d.fixedExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0)),
-      ...d.expenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('expenses', e, e.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', '/staff', e.description || e.type || '', parseFloat(e.amount) || 0)),
-      ...d.goods.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('goods', g, 'GOODS', '/goods', [g.description, g.supplier].filter(Boolean).join(' · '), qtyLine(g))),
-      ...d.goodExpenses.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('good_expenses', g, 'GOODS', '/goods', g.description || '', parseFloat(g.amount) || 0)),
+      ...d.expenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('staff_expenses', e, e.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', '/staff', e.description || e.type || '', parseFloat(e.amount) || 0)),
+      ...d.goods.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('assets', g, 'GOODS', '/goods', [g.description, g.supplier].filter(Boolean).join(' · '), qtyLine(g))),
+      ...d.goodExpenses.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('assets_expenses', g, 'GOODS', '/goods', g.description || '', parseFloat(g.amount) || 0)),
       ...d.inputs.filter((x: any) => !x.paid_from && x.payment_date).map((x: any) => mk('inputs', x, 'INPUT', '/supplies', [x.description, x.category].filter(Boolean).join(' · '), qtyLine(x))),
       ...d.inventory.filter((x: any) => x.source_type === 'PURCHASED' && !x.paid_from && x.payment_date).map((x: any) => mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x))),
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
@@ -1299,10 +1300,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       else if (['ERROR', 'ABORTED'].includes(last.status)) items.push({ href: '/adm/check', code: 'MOTOR', label: `última rodada ${last.status} (${last.trigger}, ${when(last.started_at)})`, extra: (last.errors || [])[0] ? String(last.errors![0]).slice(0, 140) : `${last.remaining ?? 0} linhas ficaram pra próxima` })
       for (const e of ab.errors) items.push({ href: '/adm/check', code: 'ERRO', label: String(e).slice(0, 160), extra: 'erro do motor nos últimos 7 dias' })
       for (const o of ab.orphans) {
-        if (o.table === 'expenses') {
+        if (o.table === 'staff_expenses') {
           // ELO SOLTO: passagem da folha ligada (CASAR COM AJUSTE) a uma linha do banco que não a aponta mais.
           items.push({ href: '/staff', code: o.code === 'SUBSTITUÍDA' ? 'SUBSTITUÍDA' : 'ELO SOLTO', label: o.label || '', extra: o.code === 'SUBSTITUÍDA' ? 'a linha do banco foi trocada pelo Plaid; a nova casa esta passagem e limpa o elo velho sozinha na próxima rodada — não solte' : 'a passagem diz que foi casada com uma linha do banco, mas a linha não a aponta mais (DESFAZER, reset ou linha trocada) — SOLTAR limpa o elo e a passagem volta a poder casar; nada é apagado', amount: o.amount,
-            fix: o.code === 'SUBSTITUÍDA' ? undefined : { kind: 'unlink' as const, table: 'expenses', rowId: o.id, field: 'bank_transaction_id', confirmText: `Soltar o elo da passagem «${o.label}» (${usd(o.amount)})? A linha do banco não aponta mais pra ela. Nada é apagado; a passagem volta ao pool.` } })
+            fix: o.code === 'SUBSTITUÍDA' ? undefined : { kind: 'unlink' as const, table: 'staff_expenses', rowId: o.id, field: 'bank_transaction_id', confirmText: `Soltar o elo da passagem «${o.label}» (${usd(o.amount)})? A linha do banco não aponta mais pra ela. Nada é apagado; a passagem volta ao pool.` } })
           continue
         }
         const oHref = o.table === 'inputs' ? '/supplies' : o.table === 'inventory' ? '/inventory' : o.table === 'invoice_expenses' ? '/adm/bank' : '/costs/fixed'
@@ -1321,7 +1322,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       // BALDE (fase B): ponteiro morto (linha do banco apontando pra registro apagado),
       // valor mudado pelo Plaid depois do lançamento, e PADRÃO que não pôde ser semeado.
       for (const x of ab.dead_pointers || []) items.push({
-        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: (x.table === 'expenses' || x.table === 'expense_group') ? `a linha do banco aponta pra passagem da folha que não existe mais — DESFAZER no AUTO-LINK (Bank Link → casadas a conferir) e refaça CASAR COM AJUSTE (o motor não recria folha) · ${usd(x.amount)}` : `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco; na próxima rodada do AUTO-LINK a tarifa volta sempre, o que veio de regra ou do balde volta enquanto a regra estiver ligada (se veio de regra aprendida, este DESFAZER pausa a regra); sem regra, a linha vira pergunta na Conciliação · ${usd(x.amount)}`, amount: x.amount,
+        href: '/adm/bank', code: 'PONTEIRO MORTO', label: x.label || '', extra: (x.table === 'staff_expenses' || x.table === 'expense_group') ? `a linha do banco aponta pra passagem da folha que não existe mais — DESFAZER no AUTO-LINK (Bank Link → casadas a conferir) e refaça CASAR COM AJUSTE (o motor não recria folha) · ${usd(x.amount)}` : `a linha do banco aponta pra ${x.table} que não existe mais (alguém apagou no editor) — DESFAZER devolve a linha ao banco; na próxima rodada do AUTO-LINK a tarifa volta sempre, o que veio de regra ou do balde volta enquanto a regra estiver ligada (se veio de regra aprendida, este DESFAZER pausa a regra); sem regra, a linha vira pergunta na Conciliação · ${usd(x.amount)}`, amount: x.amount,
         fix: { kind: 'unmatch' as const, table: x.table, rowId: x.id, field: 'match_status', bankId: x.bank_id, confirmText: `Devolver a linha do banco «${x.label}» (${usd(x.amount)}) a SEM CASAMENTO? O registro apontado já não existe. Na próxima rodada do AUTO-LINK: tarifa volta sempre; o que veio de regra ou do balde volta enquanto a regra estiver ligada; se veio de regra aprendida, este DESFAZER pausa a regra. Sem regra, a linha vira pergunta na Conciliação.` },
       })
       for (const x of ab.amount_drift || []) items.push({ href: '/adm/bank', code: 'VALOR MUDOU', label: x.label || '', extra: /folha ×/.test(String(x.label || '')) ? `as passagens da folha somam ${usd(x.row_amount)} e o banco cobrou ${usd(x.bank_amount)} (alguém editou depois do casamento) — DESFAZER no Bank Link (casadas a conferir, enquanto não tiver OK) e refaça CASAR COM AJUSTE` : `o Plaid corrigiu a linha pra ${usd(x.bank_amount)} depois do lançamento de ${usd(x.row_amount)} — DESFAZER na fila A ATRIBUIR apaga o lançamento; a próxima rodada relança com o valor novo só se a regra do balde ainda cobrir a linha`, amount: Math.abs(x.bank_amount - x.row_amount) })
@@ -1464,9 +1465,13 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         href: a.table_name === 'bank_transactions' ? '/adm/bank' : a.table_name === 'parts_database' ? '/parts' : a.table_name === 'rides' ? '/rides/edit/' + a.row_id : a.table_name === 'fixed_cost_expenses' ? '/costs/fixed' : a.table_name === 'invoice_expenses' ? '/invoices' : '/adm/check',
         code: KEY_LABEL[a.check_key] || a.check_key.toUpperCase(), when: String(a.fixed_at).slice(0, 10),
         label: String(a.label || '').replace(/^AUTO · /, ''), extra: (a.field === 'DELETED' ? 'linha apagada (com foto — DESFAZER recria)' : bankMark(a) ? 'linha marcada ' + a.new_value + ' por regra — este DESFAZER não vale aqui: DESFAZER LOTE no Bank Link, ou desligue a regra no ⚙' : a.table_name === 'bank_transactions' ? 'casamento do motor — DESFAZER devolve a linha ao banco e volta só o que o casamento escreveu; casamento ou adoção vira NÃO É ESSE (a máquina não casa mais com esse registro, mas a próxima rodada decide a linha sem ele: outro registro, regra, tarifa ou balde — ou pergunta); lançamento criado pelo motor é apagado e volta enquanto a regra estiver ligada' : `${a.field}: ${a.old_value ?? 'vazio'} → ${a.new_value ?? 'vazio'}`) + ' · ' + String(a.fixed_at).slice(0, 16).replace('T', ' '),
+        // O nome da tabela vem de data_fixes.table_name, que é LOG HISTÓRICO e guarda a grafia
+        // da época (a onda 2 não reescreve log): tabelaAtual() traz os cinco renames pra hoje, senão
+        // o DESFAZER escreveria em tabela que não existe mais. A rota já traduz — aqui é cinto e
+        // suspensório, e é idempotente (nome novo entra e sai igual).
         // BL 1.4.0 / DC 1.48.1: o casamento do motor nasce visto e não passa por A CONFERIR — o DESFAZER dele mora AQUI
         // (a rota undo chama writeUnmatch: a linha volta ao banco, o backfill é devolvido e o par vira NÃO É ESSE).
-        fix: bankMark(a) ? undefined : { kind: 'undo_auto' as const, table: a.table_name, rowId: a.row_id, field: a.field, fixId: a.id, confirmText: a.table_name === 'bank_transactions' ? `Desfazer o casamento «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? A linha volta ao banco sem dono e o que o casamento escreveu volta ao que era (data, pagador, valor ajustado) — data que o registro já tinha antes fica; o que não foi revertido fica escrito só na trilha. Casamento ou adoção: o par vira NÃO É ESSE — a máquina não casa mais esta linha com este registro, mas a próxima rodada do AUTO-LINK decide a linha de novo sem ele: outro registro, a regra, a tarifa ou o balde lançam (agendada recusada na janela vira pergunta); só pergunta quando nada disso cobre. Lançamento que o motor CRIOU (tarifa, regra, balde): é apagado e volta enquanto a regra estiver ligada. Fica na trilha.` : `Desfazer «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? ${a.field}: volta a ${a.old_value ?? 'vazio'}. Fica na trilha.` },
+        fix: bankMark(a) ? undefined : { kind: 'undo_auto' as const, table: tabelaAtual(a.table_name), rowId: a.row_id, field: a.field, fixId: a.id, confirmText: a.table_name === 'bank_transactions' ? `Desfazer o casamento «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? A linha volta ao banco sem dono e o que o casamento escreveu volta ao que era (data, pagador, valor ajustado) — data que o registro já tinha antes fica; o que não foi revertido fica escrito só na trilha. Casamento ou adoção: o par vira NÃO É ESSE — a máquina não casa mais esta linha com este registro, mas a próxima rodada do AUTO-LINK decide a linha de novo sem ele: outro registro, a regra, a tarifa ou o balde lançam (agendada recusada na janela vira pergunta); só pergunta quando nada disso cobre. Lançamento que o motor CRIOU (tarifa, regra, balde): é apagado e volta enquanto a regra estiver ligada. Fica na trilha.` : `Desfazer «${String(a.label || '').replace(/^AUTO · /, '').slice(0, 90)}»? ${a.field}: volta a ${a.old_value ?? 'vazio'}. Fica na trilha.` },
         link: a.table_name === 'bank_transactions' ? { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } : undefined,
       }))
     const cut = auto.state === 'ok' && auto.total != null && auto.total > auto.rows.length ? ` · mostrando as ${auto.rows.length.toLocaleString('en-US')} mais recentes de ${auto.total.toLocaleString('en-US')}` : ''

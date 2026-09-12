@@ -313,9 +313,9 @@ export default function ViewRidePage() {
       const stats: Record<string, Stats> = {}
       await Promise.all(invoicesData.map(async (inv) => {
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
-          supabase.from('invoice_payments').select('amount, payment_date, paid_at').eq('invoice_id', inv.id),
+          supabase.from('invoice_incomes').select('amount, payment_date, paid_at').eq('invoice_id', inv.id),
           supabase.from('invoice_expenses').select('price, quantity, payment_date, tax, extra').eq('invoice_id', inv.id),
-          supabase.from('invoice_parts').select('unit_price, quantity').eq('invoice_id', inv.id),
+          supabase.from('invoice_items').select('unit_price, quantity').eq('invoice_id', inv.id),
           supabase.from('invoice_services').select('price').eq('invoice_id', inv.id),
         ])
 

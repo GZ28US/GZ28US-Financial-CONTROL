@@ -58,7 +58,7 @@ export default function DrePage() {
       if (!ours) { parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount }
       cost += t.cost
       // CARROS × OFICINA (João, 25/ago): a linha do carro sai da visão OFICINA —
-      // venda (invoice_parts) e custo (invoice_expenses) detectados por linha.
+      // venda (invoice_items) e custo (invoice_expenses) detectados por linha.
       const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
       if (!ours) {
         const cp = d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick))

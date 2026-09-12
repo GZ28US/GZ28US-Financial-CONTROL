@@ -89,7 +89,7 @@
 //       conversa de um pra um nem é montada (`mencoesDoTexto` exige `@g.us`)
 // Medido em 11/set/2026 no banco do US (só leitura): 3.110 valores reais desses
 // campos (209 linhas de part_streams — item, supplier, ship_to, order_number —,
-// 1.000 de invoice_expenses e 220 descrições de invoice_payments). SEIS contêm
+// 1.000 de invoice_expenses e 220 descrições de invoice_incomes). SEIS contêm
 // "@" e a peneira deixa os seis byte a byte iguais ("Peniel at penielusa@msn.com",
 // "…0.45 kg @ USD 50/kg", "…(R$ 42.307,25 @ 5,0052)"). ZERO virariam menção hoje,
 // e ZERO mudam de forma com a peneira — ou seja: o campo `mentions` não sai destes

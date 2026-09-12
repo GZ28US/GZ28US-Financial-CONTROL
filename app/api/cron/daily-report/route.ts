@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   } catch { /* table may not exist yet */ }
 
   // ── MONEY IN — payments received.
-  const { data: pay } = await db.from('invoice_payments')
+  const { data: pay } = await db.from('invoice_incomes')
     .select('amount, invoices(invoice_code)')
     .gte('created_at', since)
   const inTotal = (pay || []).reduce((s, p: any) => s + (Number(p.amount) || 0), 0)
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
   const { data: paidFix } = await db.from('fixed_cost_expenses')
     .select('amount, fixed_cost_suppliers(description, cost_type)')
     .gte('payment_date', sinceDay)
-  const { data: paidStaff } = await db.from('expenses')
+  const { data: paidStaff } = await db.from('staff_expenses')
     .select('amount, description')
     .gte('payment_date', sinceDay)
   const outExp = (paidExp || []).filter((e: any) => !isBucket(e)).reduce((s, e: any) => s + (Number(e.price) || 0), 0)

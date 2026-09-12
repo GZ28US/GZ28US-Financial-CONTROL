@@ -1,6 +1,6 @@
 // SERVER-ONLY — EXPENSE REPORT SAFETY NET (ordem do Márcio, 26/jul/2026):
 // "NUNCA pode passar nenhuma expense sem report no grupo." Toda linha nova de
-// invoice_expenses / invoice_payments / expenses (staff) — venha da UI, de
+// invoice_expenses / invoice_incomes / staff_expenses — venha da UI, de
 // scripts ou de qualquer automação — é reportada no grupo REPORTS. Dedup em
 // stream_mail_moves (message_id = 'ern:<uuid>', sem FK). Para não duplicar o
 // report que a própria UI já mandou, consulta o log de ENVIADAS do UltraMsg:
@@ -101,11 +101,11 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
   const patch = (e: { expense_date?: string | null }, d: string) =>
     e.expense_date ? { payment_date: d } : { payment_date: d, expense_date: d }
 
-  const { data: se } = await db.from('expenses')
+  const { data: se } = await db.from('staff_expenses')
     .select('id, expense_date, created_at').not('receipt_url', 'is', null).is('payment_date', null)
   for (const e of (se || []) as any[]) {
     const d = dateOf(e); if (!d) continue
-    const { error } = await db.from('expenses').update(patch(e, d)).eq('id', e.id)
+    const { error } = await db.from('staff_expenses').update(patch(e, d)).eq('id', e.id)
     if (!error) fixed++
   }
 
@@ -225,10 +225,10 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     for (const e of rows) await mark(`ern:ie:${e.id}`, label)
   }
 
-  // 2) invoice_payments (incomes) — mesma regra: só quando o dinheiro ENTROU.
+  // 2) invoice_incomes — mesma regra: só quando o dinheiro ENTROU.
   // ATENÇÃO ao modelo (incidente QuickSilver 31/jul): em incomes, payment_date é
   // a data PREVISTA — quem marca "recebido" é paid_at. Previsões nunca reportam.
-  const ip = await pageAll(() => db.from('invoice_payments')
+  const ip = await pageAll(() => db.from('invoice_incomes')
     .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote, rides(project_name, project_code), clients(name))')
     .gte('updated_at', EPOCH).not('paid_at', 'is', null).order('created_at').order('id'))
   for (const p of ip as any[]) {
@@ -239,7 +239,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
     const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
     if (!alreadySent(Number(p.amount)) && isRecentMoney(paidOn)) {
-      // `description` de invoice_payments é onde o MEMO de quem mandou o dinheiro
+      // `description` de invoice_incomes é onde o MEMO de quem mandou o dinheiro
       // (Zelle) é gravado: texto de terceiro, peneirado antes de ir pro grupo.
       await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, semMarcacao(String(p.description || '').slice(0, 160))].join('\n'))
       out.push(label)
@@ -247,8 +247,8 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     await mark(key, label)
   }
 
-  // 3) expenses (staff seasons) — mesma regra: reporta só quando PAGA.
-  const se = await pageAll(() => db.from('expenses')
+  // 3) staff_expenses (seasons) — mesma regra: reporta só quando PAGA.
+  const se = await pageAll(() => db.from('staff_expenses')
     .select('id, amount, payment_date, description, created_at, seasons(season_code, staff(name))')
     .gte('updated_at', EPOCH).not('payment_date', 'is', null).order('created_at').order('id'))
   for (const s of se as any[]) {

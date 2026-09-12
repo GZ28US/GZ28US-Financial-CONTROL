@@ -11,8 +11,8 @@
 //    de leitura dos itens em suas origens!!!!"
 //
 // Portanto esta página é uma VISTA, nada mais: ela LÊ as 6 tabelas de item
-// comprado (invoice_expenses, inputs, inventory, goods, good_expenses e
-// expenses), deriva
+// comprado (invoice_expenses, inputs, inventory, assets, assets_expenses e
+// staff_expenses), deriva
 // o badge com a MESMA cascata de todas as outras telas (lib/deliverStatus.ts →
 // deriveDeliverStatus) e lista. Nenhum insert, nenhum update, nenhum delete,
 // nenhuma leitura de part_streams — se um dia alguém quiser GRAVAR algo aqui,
@@ -23,9 +23,9 @@
 // do dono define o universo — stream é compra viva ou morta, não rascunho.
 // Invoice de quote também fica fora: quote não é compra.
 //
-// A 6ª tabela, expenses, entrou por lei do dono (Márcio, 03/set/2026): "compra
-// pessoal esta no lugar certo (expenses, origin='PERSONAL'), mas TEM que estar
-// no STREAM tambem, e tem que ter rastreio". expenses é quase toda FOLHA
+// A 6ª tabela, staff_expenses, entrou por lei do dono (Márcio, 03/set/2026): "compra
+// pessoal esta no lugar certo (staff_expenses, origin='PERSONAL'), mas TEM que estar
+// no STREAM tambem, e tem que ter rastreio". staff_expenses é quase toda FOLHA
 // (WEEKLY/MONTHLY/DAILY, Zelle, mensal): só a linha com order_number OU
 // tracking_number é ITEM, e o corte é feito NA QUERY (EXPENSE_ITEM_GATE, o
 // mesmo do robô e da ponte de e-mail) — salário nunca sai do banco para cá.
@@ -259,10 +259,10 @@ export default function StreamPage() {
         fetchAll<InvoiceExpenseRow>('invoice_expenses', `id, invoice_id, item, price, quantity, stock_source_type, ${DELIVER_SELECT}`, flags),
         fetchAll<InputRow>('inputs', `id, description, unit_price, quantity, source_type, ${DELIVER_SELECT}`, flags),
         fetchAll<InputRow>('inventory', `id, description, unit_price, quantity, source_type, ${DELIVER_SELECT}`, flags),
-        fetchAll<GoodRow>('goods', `id, description, unit_price, quantity, ${DELIVER_SELECT}`, flags),
-        fetchAll<GoodExpenseRow>('good_expenses', `id, description, amount, ${DELIVER_SELECT}`, flags),
+        fetchAll<GoodRow>('assets', `id, description, unit_price, quantity, ${DELIVER_SELECT}`, flags),
+        fetchAll<GoodExpenseRow>('assets_expenses', `id, description, amount, ${DELIVER_SELECT}`, flags),
         // expenses: o gate "é ITEM?" vai NA QUERY — folha nunca chega aqui.
-        fetchAll<ExpenseRow>('expenses', `id, description, amount, expense_date, origin, season_id, ${DELIVER_SELECT}`, flags, q => q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)),
+        fetchAll<ExpenseRow>('staff_expenses', `id, description, amount, expense_date, origin, season_id, ${DELIVER_SELECT}`, flags, q => q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)),
         // O carro e o cliente vêm de carona (ordem (a)): mesma leitura, dois
         // embeds. Sem eles a linha continuaria dizendo só o código da invoice.
         fetchAll<InvoiceRef>('invoices', 'id, invoice_code, ride_id, client_id, is_quote, origin, rides(project_code, project_name), clients(name)', flags),
@@ -352,7 +352,7 @@ export default function StreamPage() {
           sourceLabel: 'INVENTORY', href: `${BASE_PATH}/supplies/${r.id}?src=inventory`,
         })
       }
-      // goods e good_expenses → o quadro /goods (não há ficha por linha lá).
+      // assets e assets_expenses → o quadro /goods (não há ficha por linha lá).
       for (const r of goods) {
         const status = deriveDeliverStatus(r)
         if (!status) continue

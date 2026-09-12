@@ -28,7 +28,7 @@ function todayStr() { return new Date().toISOString().slice(0, 10) }
 // separado, que ele ainda não autorizou.
 const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 
-// FLEET não é linha de `goods`: são os RIDES da casa, lidos do mesmo banco de
+// FLEET não é linha de `assets`: são os RIDES da casa, lidos do mesmo banco de
 // sempre (Márcio, 27/ago/2026: "use o DB dos rides... não crie nenhum campo").
 // O critério é o title_scope que o financeiro já usa: OWN = nosso, TOOL =
 // ferramenta de trabalho. As despesas de cada carro são as invoice_expenses
@@ -81,7 +81,7 @@ type Good = DeliverChipRow & {
   // picked_up/tracking_number/carrier/eta/delivered_at são colunas desta mesma
   // tabela, trazidas pelo select('*'). Status não é coluna: é derivado.
   order_number?: string | null
-  // Coluna que a tabela `goods` já tem e o select('*') já traz: é ela que diz se
+  // Coluna que a tabela `assets` já tem e o select('*') já traz: é ela que diz se
   // a linha está PAGA — o degrau em que a cascata do status começa (29/ago/2026).
   payment_date?: string | null
 }
@@ -330,14 +330,14 @@ export default function GoodsPage() {
     // tiebreaker so rows entered later for the same day still float to the top.
     // nullsFirst:false pushes goods with no purchase_date to the bottom.
     const { data, error } = await supabase
-      .from('goods')
+      .from('assets')
       .select('*')
       .order('purchase_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
     if (error) { console.error(error); setLoading(false); return }
 
     const goodsWithStats = await Promise.all((data || []).map(async (good) => {
-      const { data: expenses } = await supabase.from('good_expenses').select('amount').eq('good_id', good.id)
+      const { data: expenses } = await supabase.from('assets_expenses').select('amount').eq('good_id', good.id)
       const expensesTotal = (expenses || []).reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
       return { ...good, expensesTotal }
     }))
@@ -349,7 +349,7 @@ export default function GoodsPage() {
   }
 
   async function removeGood(id: string) {
-    const { error } = await supabase.from('goods').delete().eq('id', id)
+    const { error } = await supabase.from('assets').delete().eq('id', id)
     if (error) { alert(error.message); return }
     setConfirmId(null)
     loadGoods()
@@ -365,7 +365,7 @@ export default function GoodsPage() {
 
   async function confirmEditPurchase() {
     if (!editingPurchaseGroupId) return
-    const { error } = await supabase.from('goods').update({
+    const { error } = await supabase.from('assets').update({
       supplier: editingPurchaseSupplier || null,
       purchase_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
       // UMA data só (lei 18/ago, goods 19/ago): payment_date espelha sempre.
@@ -377,7 +377,7 @@ export default function GoodsPage() {
   }
 
   async function removePurchaseGroup(groupId: string) {
-    const { error } = await supabase.from('goods').delete().eq('purchase_group', groupId)
+    const { error } = await supabase.from('assets').delete().eq('purchase_group', groupId)
     if (error) { alert(error.message); return }
     setConfirmGroupId(null)
     loadGoods()
@@ -565,7 +565,7 @@ export default function GoodsPage() {
       // (summed per purchase_group) is treated as a possible re-scan.
       if (supplier && date && total > 0) {
         const { data: existing } = await supabase
-          .from('goods')
+          .from('assets')
           .select('id, supplier, purchase_date, unit_price, quantity, purchase_group')
           .ilike('supplier', supplier)
           .eq('purchase_date', date)
@@ -603,7 +603,7 @@ export default function GoodsPage() {
     const groupId = generateUUID()
     const source = scannedPurchase.source || DEFAULT_SOURCE
     const purchaseDate = isValidDate(scannedPurchase.date) ? scannedPurchase.date : null
-    const { data: insertedGoods, error } = await supabase.from('goods').insert(
+    const { data: insertedGoods, error } = await supabase.from('assets').insert(
       scannedPurchase.items.map(item => ({
         description: item.description,
         quantity: parseFloat(item.quantity) || 1,
@@ -631,7 +631,7 @@ export default function GoodsPage() {
     ).select('id')
     if (error) { alert(error.message); return }
 
-    // Sales tax + shipping land as extra cost lines (good_expenses) on the first good
+    // Sales tax + shipping land as extra cost lines (assets_expenses) on the first good
     // of the purchase, carrying the same supplier/source/date.
     const firstGoodId = insertedGoods?.[0]?.id
     if (firstGoodId) {
@@ -640,7 +640,7 @@ export default function GoodsPage() {
         { description: 'Shipping', amount: parseFloat(scannedPurchase.shipping) || 0 },
       ].filter(x => x.amount > 0)
       if (extraLines.length > 0) {
-        await supabase.from('good_expenses').insert(extraLines.map(x => ({
+        await supabase.from('assets_expenses').insert(extraLines.map(x => ({
           good_id: firstGoodId,
           description: x.description,
           amount: x.amount,
@@ -653,7 +653,7 @@ export default function GoodsPage() {
           // sistema cuja natureza é conhecida por CONSTRUÇÃO, e é exatamente por
           // isso que o backfill da migration só pôde carimbar estas descrições.
           nature: 'CHARGE',
-          // good_expenses.order_number existe desde a migration de 29/ago:
+          // assets_expenses.order_number existe desde a migration de 29/ago:
           // tax/frete pertencem ao MESMO pedido da compra.
           order_number: scannedPurchase.orderNumber || null,
         })))

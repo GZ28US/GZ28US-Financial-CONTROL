@@ -17,7 +17,7 @@ const supabase = createClient(
 // the CRON_SECRET env var. Two passes:
 //   1) Active staff seasons → fire DAILY / WEEKLY / MONTHLY expense reports;
 //      records each send in expense_reports_sent so we never duplicate.
-//   2) invoice_payments rows that are past-due (payment_date <= today) AND
+//   2) invoice_incomes rows that are past-due (payment_date <= today) AND
 //      still UNPAID (paid_at IS NULL) AND not yet alerted (delayed_alert_sent_at
 //      IS NULL) → fire one ⚠ DELAYED PAYMENT WhatsApp alert each, then stamp
 //      delayed_alert_sent_at so the alert never repeats.
@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
 
   for (const season of activeSeasons) {
     const { data: expenses } = await supabase
-      .from('expenses')
+      .from('staff_expenses')
       .select('id, type, description, amount, source, origin')
       .eq('season_id', season.id)
       .in('type', ['DAILY', 'WEEKLY', 'MONTHLY'])
@@ -179,7 +179,7 @@ export async function GET(req: NextRequest) {
   // and haven't been alerted yet. One ⚠ alert per row, then stamp
   // delayed_alert_sent_at so it never repeats.
   const { data: delayed, error: delayedErr } = await supabase
-    .from('invoice_payments')
+    .from('invoice_incomes')
     .select('id, invoice_id, amount, payment_date, source, description')
     .is('paid_at', null)
     .is('delayed_alert_sent_at', null)
@@ -251,7 +251,7 @@ export async function GET(req: NextRequest) {
         `Due: ${formatDate(p.payment_date)} — *${formatUSD(amount)}*`,
       ]
       // Mesma peneira do report de staff acima — e aqui ela pesa mais: a
-      // `description` de invoice_payments é onde o MEMO de quem mandou o dinheiro
+      // `description` de invoice_incomes é onde o MEMO de quem mandou o dinheiro
       // (Zelle) é gravado, texto que um terceiro escreveu. Ver lib/waMentions.
       if (p.description) lines.push(semMarcacao(p.description))
       if (p.source) lines.push(semMarcacao(p.source))
@@ -261,7 +261,7 @@ export async function GET(req: NextRequest) {
       const { ok, detail } = await sendWhatsApp(caption)
       if (ok) {
         await supabase
-          .from('invoice_payments')
+          .from('invoice_incomes')
           .update({ delayed_alert_sent_at: new Date().toISOString() })
           .eq('id', p.id)
         delayedSent++

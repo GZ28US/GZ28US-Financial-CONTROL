@@ -175,7 +175,7 @@ export default function SupplierOrdersPage() {
                        inventar campo é proibido.
                     O DELIVER STATUS deste pedido aparece nas linhas de item que o
                     carregam (invoice_expenses / inputs / inventory / goods /
-                    good_expenses), que é onde ele foi comprado. */}
+                    assets_expenses), que é onde ele foi comprado. */}
                 <span className="text-gray-400">{o.order_date || 'no date'}</span>
                 {(() => { const ed = effectiveDate(o); return ed && ed !== o.order_date ? <span className="text-green-500 text-sm">→ paid {ed}</span> : null })()}
                 {o.region && <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${o.region === 'BR' ? 'bg-emerald-900 text-emerald-200' : 'bg-blue-900 text-blue-200'}`}>{o.region === 'BR' ? '🇧🇷 BR · PowerTrade' : '🇺🇸 US'}</span>}

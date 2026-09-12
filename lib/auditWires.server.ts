@@ -28,7 +28,7 @@
 //   EXATO          registro de valor exato (≤3 d, ou com o nome ≤7 d / sem data) — a pergunta já é do card da Conciliação (informativo)
 //   AMBIGUO        vários wires × vários registros com a taxa e o nome não desempata                          → amount = as taxas
 //   REGISTRO_LONGE sem registro na data; há registro com o nome a 8–30 dias ou sem data                      → amount = o wire
-//   OUTRO_REGISTRO sem registro de invoice; outra tabela (folha, fixo, goods, insumo, estoque, capital, empréstimo) tem o valor exato
+//   OUTRO_REGISTRO sem registro de invoice; outra tabela (folha, fixo, assets, insumo, estoque, capital, empréstimo) tem o valor exato
 //                  (≤3 d, ou com o nome ≤30 d / sem data)                                                    → amount = o wire
 //   SEM_REGISTRO   nenhum registro com o nome em ±30 d, nenhum com a taxa do wire (±1 d), nada de mesmo valor nas outras tabelas → o wire
 //   TAXA_DENTRO    wire JÁ casado cujo registro soma wire + $0,01–$60 (a taxa ficou dentro: dinheiro em dobro) → amount = a diferença
@@ -140,10 +140,10 @@ async function loadOthers(db: any, amts: number[], fixedSuppliers: any[]): Promi
   const q = (table: string, sel: string, col: string, fallback?: string): Promise<any[]> => fetchAll(db, table, sel, (x: any) => x.in(col, amts))
     .catch((e: any) => fallback && /bank_transaction_id/.test(String(e?.message)) ? fetchAll(db, table, fallback, (x: any) => x.in(col, amts)) : missing(e) ? [] : Promise.reject(e))
   const [ex, fx, gd, ge, inp, inv, capEv, finEv] = await Promise.all([
-    q('expenses', 'id, description, type, amount, payment_date, expense_date, paid_from, paid_to, origin, payment_reference, bank_transaction_id', 'amount', 'id, description, type, amount, payment_date, expense_date, paid_from, paid_to, origin, payment_reference'),
+    q('staff_expenses', 'id, description, type, amount, payment_date, expense_date, paid_from, paid_to, origin, payment_reference, bank_transaction_id', 'amount', 'id, description, type, amount, payment_date, expense_date, paid_from, paid_to, origin, payment_reference'),
     q('fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from, bank_transaction_id', 'amount'),
-    q('goods', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, paid_from', 'unit_price'),
-    q('good_expenses', 'id, description, supplier, amount, payment_date, expense_date, paid_from', 'amount'),
+    q('assets', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, paid_from', 'unit_price'),
+    q('assets_expenses', 'id, description, supplier, amount, payment_date, expense_date, paid_from', 'amount'),
     q('inputs', 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, paid_from', 'unit_price'),
     q('inventory', 'id, description, supplier, source_type, unit_price, quantity, payment_date, purchase_date, paid_from', 'unit_price'),
     q('capital_events', 'id, event_date, kind, member, amount, description', 'amount'),
@@ -153,10 +153,10 @@ async function loadOthers(db: any, amts: number[], fixedSuppliers: any[]): Promi
   const qty = (r: any) => num(r.unit_price) * (num(r.quantity) || 1)
   // hrefs e selos: os mesmos do candidatePool (lib/bankReconcile.server.ts)
   return [
-    ...ex.map((x: any) => ({ table: 'expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${cut(x.description || x.type, 60)}`, supplier: null, text: x.description, amount: num(x.amount), date: x.payment_date, href: '/staff', paid_from: x.paid_from, paid_to: x.paid_to, bank_transaction_id: x.bank_transaction_id || null, payment_reference: x.payment_reference || null })),
+    ...ex.map((x: any) => ({ table: 'staff_expenses', id: x.id, label: `${x.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA'} · ${cut(x.description || x.type, 60)}`, supplier: null, text: x.description, amount: num(x.amount), date: x.payment_date, href: '/staff', paid_from: x.paid_from, paid_to: x.paid_to, bank_transaction_id: x.bank_transaction_id || null, payment_reference: x.payment_reference || null })),
     ...fx.map((f: any) => { const s: any = supName.get(String(f.supplier_id)); const tarifa = s?.cost_type === 'BANK'; return { table: 'fixed_cost_expenses', id: f.id, label: `${tarifa ? 'TARIFA' : 'FIXO'} · ${s?.company || ''} · ${cut(f.description, 50)}`, supplier: s?.company || null, text: f.description, amount: num(f.amount), date: f.payment_date, href: tarifa ? '/costs/bank' : f.supplier_id ? '/costs/fixed/' + f.supplier_id : '/costs/fixed', paid_from: f.paid_from, bank_transaction_id: f.bank_transaction_id || null } }),
-    ...gd.map((g: any) => ({ table: 'goods', id: g.id, label: `GOODS · ${cut(g.description, 50)}${g.supplier ? ' · ' + g.supplier : ''}`, supplier: g.supplier, text: g.description, amount: qty(g), date: g.payment_date, href: '/goods', paid_from: g.paid_from })),
-    ...ge.map((g: any) => ({ table: 'good_expenses', id: g.id, label: `GOODS · ${cut(g.description, 50)}${g.supplier ? ' · ' + g.supplier : ''}`, supplier: g.supplier, text: g.description, amount: num(g.amount), date: g.payment_date, href: '/goods', paid_from: g.paid_from })),
+    ...gd.map((g: any) => ({ table: 'assets', id: g.id, label: `GOODS · ${cut(g.description, 50)}${g.supplier ? ' · ' + g.supplier : ''}`, supplier: g.supplier, text: g.description, amount: qty(g), date: g.payment_date, href: '/goods', paid_from: g.paid_from })),
+    ...ge.map((g: any) => ({ table: 'assets_expenses', id: g.id, label: `GOODS · ${cut(g.description, 50)}${g.supplier ? ' · ' + g.supplier : ''}`, supplier: g.supplier, text: g.description, amount: num(g.amount), date: g.payment_date, href: '/goods', paid_from: g.paid_from })),
     ...inp.map((x: any) => ({ table: 'inputs', id: x.id, label: `SUPPLY · ${cut(x.description, 50)}${x.supplier ? ' · ' + x.supplier : ''}`, supplier: x.supplier, text: x.description, amount: qty(x), date: x.payment_date, href: '/supplies', paid_from: x.paid_from })),
     ...inv.filter((x: any) => x.source_type === 'PURCHASED').map((x: any) => ({ table: 'inventory', id: x.id, label: `STOCK · ${cut(x.description, 50)}${x.supplier ? ' · ' + x.supplier : ''}`, supplier: x.supplier, text: x.description, amount: qty(x), date: x.payment_date, href: '/inventory', paid_from: x.paid_from })),
     ...capEv.filter((c: any) => c.kind !== 'CONTRIBUTION').map((c: any) => ({ table: 'capital_events', id: c.id, label: `CAPITAL · RETIRADA · ${c.member || ''}${c.description ? ' · ' + cut(c.description, 40) : ''}`, supplier: c.member, text: c.description, amount: num(c.amount), date: c.event_date, href: '/adm/financials' })),
@@ -431,7 +431,7 @@ export function computeWireAudit(data: WireAuditData): WireAudit {
       if (r) { splitOk++; splitNotes.push(`${code(r)} «${cut(r.item, 30)}» ${usd(num(r.price))} + extra ${usd(num(r.extra))} = wire de ${usd(wa)} (${dm(w.date)}, ${w.match_engine})`) }
       continue
     }
-    if (grp && diff < 0) continue   // pedido pode ter membro fora de invoice_expenses (goods/inputs/inventory): só a sobra é prova
+    if (grp && diff < 0) continue   // pedido pode ter membro fora de invoice_expenses (assets/inputs/inventory): só a sobra é prova
     const isTaxa = x.fee != null && Math.abs(diff - x.fee) < 0.005
     if (diff > 0.009 && diff <= WIRE_FEE_MAX) {
       if (isTaxa) { dobroCerto += diff; if (!feeProof(w).posted) dobroPendente += diff }

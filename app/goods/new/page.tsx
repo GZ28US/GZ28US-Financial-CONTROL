@@ -22,7 +22,7 @@ type Expense = {
   source: string
   receipt_urls: string[]
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
-  // loja) — good_expenses.order_number existe desde a migration de 29/ago/2026.
+  // loja) — assets_expenses.order_number existe desde a migration de 29/ago/2026.
   order_number: string
   // O status não é campo desde 30/ago/2026 — é interpretação. Os únicos fatos
   // que se guardam: peguei no balcão? e a compra foi cancelada/estornada?
@@ -217,7 +217,7 @@ export default function NewGoodPage() {
     await ensureSupplier(supplier)
     for (const exp of expenses) { await ensureSupplier(exp.supplier) }
 
-    const { data: good, error } = await supabase.from('goods').insert([{
+    const { data: good, error } = await supabase.from('assets').insert([{
       description,
       quantity: qty || 1,
       unit_price: unitPrice,
@@ -242,7 +242,7 @@ export default function NewGoodPage() {
     if (error || !good) { alert(error?.message || 'Error saving good'); return }
 
     if (expenses.length > 0) {
-      const { error: e } = await supabase.from('good_expenses').insert(expenses.map(ex => ({
+      const { error: e } = await supabase.from('assets_expenses').insert(expenses.map(ex => ({
         good_id: good.id,
         description: ex.description,
         amount: parseFloat(ex.amount) || 0,

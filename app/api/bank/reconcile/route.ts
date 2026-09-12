@@ -57,7 +57,7 @@ async function staffNames(db: any): Promise<Map<string, string>> {
   return new Map<string, string>(seasons.map((s: any) => [String(s.id), nameOf.get(String(s.staff_id)) || '?']))
 }
 async function expenseTaken(db: any): Promise<Set<string>> {
-  const rows = await fetchAll(db, 'bank_transactions', 'matched_id', (q: any) => q.eq('matched_table', 'expenses').neq('match_status', 'REMOVED').not('matched_id', 'is', null))
+  const rows = await fetchAll(db, 'bank_transactions', 'matched_id', (q: any) => q.eq('matched_table', 'staff_expenses').neq('match_status', 'REMOVED').not('matched_id', 'is', null))
   return new Set(rows.map((r: any) => String(r.matched_id)))
 }
 const rejectedOf = (l: any) => { const da = l && l.doubt_answered && typeof l.doubt_answered === 'object' ? l.doubt_answered : {}; return new Set<string>([...(Array.isArray(da.cands) ? da.cands : []), ...(da.cand ? [da.cand] : [])].map(String)) }
@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
       // órfãos: linha criada pelo motor (marcador + elo) sem linha MATCHED apontando pra ela
       const fxAuto = await fetchAll(db, 'fixed_cost_expenses', 'id, description, amount, bank_transaction_id, payment_date, supplier_id', (q: any) => q.not('bank_transaction_id', 'is', null).ilike('description', '%Bank Link)%'))
       const inAuto = await fetchAll(db, 'inputs', 'id, description, unit_price, quantity, order_number, payment_date, category', (q: any) => q.like('order_number', 'bank:%'))
-      const exAuto = await fetchAll(db, 'expenses', 'id, description, amount, payment_reference', (q: any) => q.like('payment_reference', 'bank:%').eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'))
+      const exAuto = await fetchAll(db, 'staff_expenses', 'id, description, amount, payment_reference', (q: any) => q.like('payment_reference', 'bank:%').eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'))
       const bankIds = [...new Set([...fxAuto.map((r: any) => String(r.bank_transaction_id)), ...inAuto.map((r: any) => String(r.order_number).slice(5)), ...exAuto.map((r: any) => String(r.payment_reference).slice(5))])]
       const lineById = new Map<string, any>()
       for (let i = 0; i < bankIds.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, name, merchant, amount, match_status, matched_table, matched_id').in('id', bankIds.slice(i, i + 200)); for (const l of data || []) lineById.set(String(l.id), l) }
@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
       const orphans = [
         ...fxAuto.filter((r: any) => !pointsAt(String(r.bank_transaction_id), 'fixed_cost_expenses', r.id)).map((r: any) => ({ table: 'fixed_cost_expenses', id: r.id, label: r.description, amount: num(r.amount), bank_id: r.bank_transaction_id, code: codeFor(String(r.bank_transaction_id)) })),
         ...inAuto.filter((r: any) => !pointsAt(String(r.order_number).slice(5), 'inputs', r.id)).map((r: any) => ({ table: 'inputs', id: r.id, label: r.description, amount: num(r.unit_price) * (num(r.quantity) || 1), bank_id: String(r.order_number).slice(5), code: codeFor(String(r.order_number).slice(5)) })),
-        ...exAuto.filter((r: any) => !pointsAt(String(r.payment_reference).slice(5), 'expenses', r.id)).map((r: any) => ({ table: 'expenses', id: r.id, label: 'PESSOAL · ' + r.description, amount: num(r.amount), bank_id: String(r.payment_reference).slice(5), code: codeFor(String(r.payment_reference).slice(5)) })),
+        ...exAuto.filter((r: any) => !pointsAt(String(r.payment_reference).slice(5), 'staff_expenses', r.id)).map((r: any) => ({ table: 'staff_expenses', id: r.id, label: 'PESSOAL · ' + r.description, amount: num(r.amount), bank_id: String(r.payment_reference).slice(5), code: codeFor(String(r.payment_reference).slice(5)) })),
       ]
       // DUPLAS (revisão do diff: prova no nível dos motores, não menos): só
       // lançamentos criados por REGRA (tarifas fora), gêmeo na MESMA tabela e
@@ -164,7 +164,7 @@ export async function GET(req: NextRequest) {
         const today = todayNY()
         bucketSig = { total: brows.length, balance: Math.round(brows.reduce((a: number, r: any) => a + expLine(r), 0) * 100) / 100, older_7d: brows.filter((r: any) => r.payment_date && signedDays(String(r.payment_date), today) > 7).length }
         // linhas do banco do balde (por id e por grupo) — pra órfão, dupla, ponteiro morto e valor
-        const blines = await fetchAll(db, 'bank_transactions', 'id, name, merchant, amount, match_status, matched_table, matched_id, reviewed_at, match_engine', (q: any) => q.eq('match_status', 'MATCHED').in('matched_table', ['invoice_expenses', 'purchase_group', 'expenses', 'expense_group']))
+        const blines = await fetchAll(db, 'bank_transactions', 'id, name, merchant, amount, match_status, matched_table, matched_id, reviewed_at, match_engine', (q: any) => q.eq('match_status', 'MATCHED').in('matched_table', ['invoice_expenses', 'purchase_group', 'staff_expenses', 'expense_group']))
         // Órfão = NENHUMA linha casada apontando, de qualquer motor (a substituta do Plaid casa por EXACT — revisão 19).
         const byRow = new Map<string, any>(), byGroup = new Map<string, any>()
         for (const l of blines) { if (l.matched_table === 'invoice_expenses') byRow.set(String(l.matched_id), l); else if (l.matched_table === 'purchase_group') byGroup.set(String(l.matched_id), l) }
@@ -194,29 +194,29 @@ export async function GET(req: NextRequest) {
           for (let i = 0; i < lids.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').in('id', lids.slice(i, i + 200)); for (const x of data || []) lptr.set(String(x.id), x) }
           for (const r of linkedRows) {
             const x = lptr.get(String(r.bank_transaction_id))
-            const ok = x && x.match_status === 'MATCHED' && ((x.matched_table === 'expenses' && String(x.matched_id) === String(r.id)) || (x.matched_table === 'expense_group' && String(x.matched_id) === String(x.id)))
-            if (!ok) orphans.push({ table: 'expenses', id: r.id, label: 'FOLHA · ' + String(r.description || '').slice(0, 80), amount: num(r.amount), bank_id: String(r.bank_transaction_id), code: x && x.match_status === 'REMOVED' ? 'SUBSTITUÍDA' : 'ELO SOLTO' })
+            const ok = x && x.match_status === 'MATCHED' && ((x.matched_table === 'staff_expenses' && String(x.matched_id) === String(r.id)) || (x.matched_table === 'expense_group' && String(x.matched_id) === String(x.id)))
+            if (!ok) orphans.push({ table: 'staff_expenses', id: r.id, label: 'FOLHA · ' + String(r.description || '').slice(0, 80), amount: num(r.amount), bank_id: String(r.bank_transaction_id), code: x && x.match_status === 'REMOVED' ? 'SUBSTITUÍDA' : 'ELO SOLTO' })
           }
         } catch (e) { const m = String((e as Error).message || e); if (!/bank_transaction_id/.test(m)) errors.push('elo solto: ' + m.slice(0, 160)) }
         // ponteiro morto: linha do banco (BUCKET) apontando pra registro que sumiu
         const rowIds = new Set(brows.map((r: any) => String(r.id)))
         // Folha casada por id (EXACT/NAME/humano/ADJUST): existência em lote, não uma query por linha.
         const expIds = new Set<string>()
-        { const ids = blines.filter((l: any) => l.matched_table === 'expenses').map((l: any) => String(l.matched_id)); for (let i = 0; i < ids.length; i += 200) { const { data } = await db.from('expenses').select('id').in('id', ids.slice(i, i + 200)); for (const r of data || []) expIds.add(String(r.id)) } }
+        { const ids = blines.filter((l: any) => l.matched_table === 'staff_expenses').map((l: any) => String(l.matched_id)); for (let i = 0; i < ids.length; i += 200) { const { data } = await db.from('staff_expenses').select('id').in('id', ids.slice(i, i + 200)); for (const r of data || []) expIds.add(String(r.id)) } }
         for (const l of blines) {
-          if (l.match_engine !== ENGINE_BUCKET && !['expenses', 'expense_group'].includes(String(l.matched_table))) continue
-          if (l.matched_table === 'expenses') { if (!expIds.has(String(l.matched_id))) deadPointers.push({ bank_id: l.id, table: 'expenses', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) }); continue }   // ponteiro morto: balde + folha casada (CASAR COM AJUSTE)
+          if (l.match_engine !== ENGINE_BUCKET && !['staff_expenses', 'expense_group'].includes(String(l.matched_table))) continue
+          if (l.matched_table === 'staff_expenses') { if (!expIds.has(String(l.matched_id))) deadPointers.push({ bank_id: l.id, table: 'staff_expenses', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) }); continue }   // ponteiro morto: balde + folha casada (CASAR COM AJUSTE)
           if (l.matched_table === 'invoice_expenses') {
             if (rowIds.has(String(l.matched_id))) continue
             const { data } = await db.from('invoice_expenses').select('id').eq('id', l.matched_id).maybeSingle()
             if (!data) deadPointers.push({ bank_id: l.id, table: 'invoice_expenses', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) })
-          } else if (['inputs', 'inventory', 'fixed_cost_expenses', 'expenses'].includes(String(l.matched_table))) {
+          } else if (['inputs', 'inventory', 'fixed_cost_expenses', 'staff_expenses'].includes(String(l.matched_table))) {
             const { data } = await (db.from(l.matched_table) as any).select('id').eq('id', l.matched_id).maybeSingle()
             if (!data) deadPointers.push({ bank_id: l.id, table: l.matched_table, id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) })
           } else if (l.matched_table === 'expense_group') {
             // CASAR COM AJUSTE em par/trio: elo pela coluna; soma das passagens tem que bater com o banco.
             if (expenseLinkColumnMissing()) continue
-            const { data: rows } = await db.from('expenses').select('id, amount').eq('bank_transaction_id', l.id)
+            const { data: rows } = await db.from('staff_expenses').select('id, amount').eq('bank_transaction_id', l.id)
             if (!rows || !rows.length) deadPointers.push({ bank_id: l.id, table: 'expense_group', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) })
             else { const s = Math.round(rows.reduce((a: number, r: any) => a + num(r.amount), 0) * 100) / 100; if (Math.abs(s - Math.abs(num(l.amount))) >= 0.011) amountDrift.push({ bank_id: l.id, row_id: rows[0].id, bank_amount: Math.abs(num(l.amount)), row_amount: s, label: (l.merchant || l.name || '') + ' · folha ×' + rows.length }) }
           } else if (l.matched_table === 'purchase_group') {
@@ -344,7 +344,7 @@ export async function GET(req: NextRequest) {
       const invAll = new Map(invoices.map((i: any) => [i.id, i]))
       const attributed = attribLines.sort((a: any, b: any) => String(b.reviewed_at).localeCompare(String(a.reviewed_at))).map((l: any) => {
         const t = String(l.matched_table || '')
-        const dest = t === 'invoice_expenses' ? 'CAR' : t === 'inventory' ? 'STOCK' : t === 'inputs' ? 'SUPPLIES' : t === 'fixed_cost_expenses' ? 'FIXO' : t === 'purchase_group' ? 'SPLIT' : t === 'expenses' ? 'PESSOAL' : '?'
+        const dest = t === 'invoice_expenses' ? 'CAR' : t === 'inventory' ? 'STOCK' : t === 'inputs' ? 'SUPPLIES' : t === 'fixed_cost_expenses' ? 'FIXO' : t === 'purchase_group' ? 'SPLIT' : t === 'staff_expenses' ? 'PESSOAL' : '?'
         const inv = t === 'invoice_expenses' ? invAll.get(carInv.get(String(l.matched_id)) || '') : null
         const href = inv && inv.ride_id ? '/rides/' + inv.ride_id + '/invoices/' + inv.id : dest === 'STOCK' ? '/inventory' : dest === 'SUPPLIES' ? '/supplies' : dest === 'FIXO' ? '/costs/fixed' : dest === 'PESSOAL' ? '/staff' : '/adm/bank#a-atribuir'
         return { bank_id: l.id, date: l.date, amount: Math.abs(num(l.amount)), name: l.merchant || l.name || '', dest, label: String(l.matched_note || ''), href, reviewed_at: l.reviewed_at }
@@ -382,7 +382,7 @@ export async function GET(req: NextRequest) {
         const labelOf = (r: any) => [r.description, r.source && !/auto-captura/i.test(String(r.source)) ? r.source : '', r.type].filter(Boolean).join(' · ')
         for (const g of suppliers) {
           const first = byId.get(g.line_ids[0])
-          g.app_rows = first ? expFree.filter((r: any) => nameHit(first, { table: 'expenses', id: r.id, label: labelOf(r), date: r.expense_date, amount: num(r.amount), undated: false } as any)).sort((a: any, b: any) => String(b.expense_date).localeCompare(String(a.expense_date))).slice(0, 8).map((r: any) => ({ id: r.id, date: String(r.payment_date || r.expense_date || '').slice(0, 10), amount: num(r.amount), paid_from: r.paid_from || null, staff: staffOf.get(String(r.season_id)) || '?', desc: String(r.description || '').slice(0, 70), linked: !!r.bank_transaction_id })) : []
+          g.app_rows = first ? expFree.filter((r: any) => nameHit(first, { table: 'staff_expenses', id: r.id, label: labelOf(r), date: r.expense_date, amount: num(r.amount), undated: false } as any)).sort((a: any, b: any) => String(b.expense_date).localeCompare(String(a.expense_date))).slice(0, 8).map((r: any) => ({ id: r.id, date: String(r.payment_date || r.expense_date || '').slice(0, 10), amount: num(r.amount), paid_from: r.paid_from || null, staff: staffOf.get(String(r.season_id)) || '?', desc: String(r.description || '').slice(0, 70), linked: !!r.bank_transaction_id })) : []
           g.near = g.line_ids.map((id: string) => { const l = byId.get(id); const cands = l ? nearExpenseMatches(l, expFree, staffOf, rejectedOf(l)) : []; return { line_id: id, date: l?.date, amount: Math.abs(num(l?.amount)), cands } }).filter((x: any) => x.cands.length)
         }
       } catch (e) { for (const g of suppliers) { g.app_rows = []; g.near = []; g.near_error = String((e as Error).message || e).slice(0, 120) } }
@@ -450,14 +450,14 @@ export async function GET(req: NextRequest) {
       const want = (t: string) => [...new Set(pend.filter((r: any) => r.matched_table === t).map((r: any) => String(r.matched_id)))]
       const grab = async (t: string, sel: string) => { const ids = want(t); if (!ids.length) return []; const { data } = await (db.from(t) as any).select(sel).in('id', ids); return data || [] }
       const [hIe, hIp, hPay, hFx, hKg] = await Promise.all([
-        grab('invoice_expenses', 'id, invoice_id'), grab('invoice_parts', 'id, invoice_id'), grab('invoice_payments', 'id, invoice_id'),
+        grab('invoice_expenses', 'id, invoice_id'), grab('invoice_items', 'id, invoice_id'), grab('invoice_incomes', 'id, invoice_id'),
         grab('fixed_cost_expenses', 'id, supplier_id'),
-        (async () => { const ids = want('kit_group'); if (!ids.length) return []; const { data } = await db.from('invoice_parts').select('kit_group, invoice_id').in('kit_group', ids); return data || [] })(),
+        (async () => { const ids = want('kit_group'); if (!ids.length) return []; const { data } = await db.from('invoice_items').select('kit_group, invoice_id').in('kit_group', ids); return data || [] })(),
       ])
       const invNeed = new Map<string, string>()
       for (const r of hIe as any[]) invNeed.set('invoice_expenses:' + r.id, r.invoice_id)
-      for (const r of hIp as any[]) invNeed.set('invoice_parts:' + r.id, r.invoice_id)
-      for (const r of hPay as any[]) invNeed.set('invoice_payments:' + r.id, r.invoice_id)
+      for (const r of hIp as any[]) invNeed.set('invoice_items:' + r.id, r.invoice_id)
+      for (const r of hPay as any[]) invNeed.set('invoice_incomes:' + r.id, r.invoice_id)
       for (const r of hKg as any[]) if (!invNeed.has('kit_group:' + r.kit_group)) invNeed.set('kit_group:' + r.kit_group, r.invoice_id)
       const invIds = [...new Set([...invNeed.values()])].filter(Boolean)
       const rideOf = new Map<string, string>()
@@ -469,7 +469,7 @@ export async function GET(req: NextRequest) {
       const bankSups = new Set<string>()
       if (fxSupIds.length) { const { data: bs } = await db.from('fixed_cost_suppliers').select('id, cost_type').in('id', fxSupIds); for (const s of bs || []) if (s.cost_type === 'BANK') bankSups.add(s.id) }
       for (const r of hFx as any[]) hrefOf.set('fixed_cost_expenses:' + r.id, r.supplier_id ? (bankSups.has(r.supplier_id) ? '/costs/bank' : '/costs/fixed/' + r.supplier_id) : '/costs/fixed')
-      const staticHref: Record<string, string> = { goods: '/goods', good_expenses: '/goods', inputs: '/supplies', inventory: '/inventory', expenses: '/staff', expense_group: '/staff', capital_events: '/adm/financials', financing_events: '/adm/financials' }
+      const staticHref: Record<string, string> = { assets: '/goods', assets_expenses: '/goods', inputs: '/supplies', inventory: '/inventory', staff_expenses: '/staff', expense_group: '/staff', capital_events: '/adm/financials', financing_events: '/adm/financials' }
       for (const r of pend) { const k = r.matched_table + ':' + r.matched_id; if (!hrefOf.has(k) && staticHref[r.matched_table]) hrefOf.set(k, staticHref[r.matched_table]) }
       const batches = new Map<string, { batch: string; n: number; pending: number; fee: number; exact: number; name: number; rule: number; learn: number; transfer: number; bucket: number; from: string; to: string; trigger?: string | null; started_at?: string | null }>()
       for (const r of autoRows || []) {
@@ -636,7 +636,7 @@ export async function POST(req: NextRequest) {
       const shares = allocate(bank, rows0.map((r: any) => ({ id: String(r.id), amount: num(r.amount) })))
       const backfill: any[] = []
       const claimed: string[] = []
-      const rollback = async () => { for (const id of claimed) { const r0 = rows0.find((r: any) => String(r.id) === id); if (r0) await db.from('expenses').update({ bank_transaction_id: null, amount: r0.amount, paid_from: r0.paid_from ?? null, source: r0.source ?? null }).eq('id', id).eq('bank_transaction_id', line.id) } }
+      const rollback = async () => { for (const id of claimed) { const r0 = rows0.find((r: any) => String(r.id) === id); if (r0) await db.from('staff_expenses').update({ bank_transaction_id: null, amount: r0.amount, paid_from: r0.paid_from ?? null, source: r0.source ?? null }).eq('id', id).eq('bank_transaction_id', line.id) } }
       const fixes: any[] = []
       for (const r of rows0.slice().sort((a: any, b: any) => String(a.id).localeCompare(String(b.id)))) {
         const newAmt = shares.get(String(r.id))!
@@ -646,19 +646,19 @@ export async function POST(req: NextRequest) {
         if (String(r.paid_from || '') !== 'GZ28US') patch.paid_from = 'GZ28US'
         if (r.paid_from && r.source === r.paid_from) patch.source = 'GZ28US'
         // Uma escrita por registro, guardada pelo elo vazio e pelo valor antigo: 0 linhas = alguém mexeu.
-        const { data: ok, error } = await db.from('expenses').update(patch).eq('id', r.id).is('bank_transaction_id', null).eq('amount', r.amount).select('id')
-        if (error) { await rollback(); return NextResponse.json({ error: 'expenses: ' + error.message }, { status: 500 }) }
+        const { data: ok, error } = await db.from('staff_expenses').update(patch).eq('id', r.id).is('bank_transaction_id', null).eq('amount', r.amount).select('id')
+        if (error) { await rollback(); return NextResponse.json({ error: 'staff_expenses: ' + error.message }, { status: 500 }) }
         if (!ok || !ok.length) { await rollback(); return NextResponse.json({ error: 'registro da folha mudou enquanto você olhava — recarregue' }, { status: 409 }) }
         claimed.push(String(r.id))
-        backfill.push({ t: 'expenses', id: r.id, f: 'bank_transaction_id', v: String(line.id), o: null })
-        if (patch.amount !== undefined) { backfill.push({ t: 'expenses', id: r.id, f: 'amount', v: newAmt.toFixed(2), o: oldAmt.toFixed(2) }); fixes.push({ check_key: 'engine-questions', table_name: 'expenses', row_id: r.id, field: 'amount', old_value: oldAmt.toFixed(2), new_value: newAmt.toFixed(2), label: ('CASAR COM AJUSTE · valor ' + oldAmt.toFixed(2) + ' → ' + newAmt.toFixed(2) + ' (banco) · ' + String(r.description || '').slice(0, 80)).slice(0, 200) }) }
-        if (patch.paid_from !== undefined) { backfill.push({ t: 'expenses', id: r.id, f: 'paid_from', v: 'GZ28US', o: r.paid_from ?? null }); fixes.push({ check_key: 'engine-questions', table_name: 'expenses', row_id: r.id, field: 'paid_from', old_value: r.paid_from ?? null, new_value: 'GZ28US', label: ('CASAR COM AJUSTE · quem pagou ' + (r.paid_from || '—') + ' → GZ28US (o banco prova; sai da conta corrente/empréstimo de ' + (r.paid_from || '—') + ') · ' + String(r.description || '').slice(0, 60)).slice(0, 200) }) }
-        if (patch.source !== undefined) backfill.push({ t: 'expenses', id: r.id, f: 'source', v: 'GZ28US', o: r.source ?? null })
+        backfill.push({ t: 'staff_expenses', id: r.id, f: 'bank_transaction_id', v: String(line.id), o: null })
+        if (patch.amount !== undefined) { backfill.push({ t: 'staff_expenses', id: r.id, f: 'amount', v: newAmt.toFixed(2), o: oldAmt.toFixed(2) }); fixes.push({ check_key: 'engine-questions', table_name: 'staff_expenses', row_id: r.id, field: 'amount', old_value: oldAmt.toFixed(2), new_value: newAmt.toFixed(2), label: ('CASAR COM AJUSTE · valor ' + oldAmt.toFixed(2) + ' → ' + newAmt.toFixed(2) + ' (banco) · ' + String(r.description || '').slice(0, 80)).slice(0, 200) }) }
+        if (patch.paid_from !== undefined) { backfill.push({ t: 'staff_expenses', id: r.id, f: 'paid_from', v: 'GZ28US', o: r.paid_from ?? null }); fixes.push({ check_key: 'engine-questions', table_name: 'staff_expenses', row_id: r.id, field: 'paid_from', old_value: r.paid_from ?? null, new_value: 'GZ28US', label: ('CASAR COM AJUSTE · quem pagou ' + (r.paid_from || '—') + ' → GZ28US (o banco prova; sai da conta corrente/empréstimo de ' + (r.paid_from || '—') + ') · ' + String(r.description || '').slice(0, 60)).slice(0, 200) }) }
+        if (patch.source !== undefined) backfill.push({ t: 'staff_expenses', id: r.id, f: 'source', v: 'GZ28US', o: r.source ?? null })
       }
       // Recheca o ponteiro DEPOIS do claim das linhas (EXACT/NAME/humano casam por matched_id, sem elo).
       const takenNow = await expenseTaken(db)
       if (ids.some(i => takenNow.has(String(i)))) { await rollback(); return NextResponse.json({ error: 'registro da folha acabou de ser casado por outra linha — recarregue' }, { status: 409 }) }
-      const cnd = rows0.length === 1 ? { table: 'expenses', id: String(rows0[0].id) } : { table: 'expense_group', id: String(line.id), members: rows0.map((r: any) => ({ table: 'expenses', id: String(r.id) })) }
+      const cnd = rows0.length === 1 ? { table: 'staff_expenses', id: String(rows0[0].id) } : { table: 'expense_group', id: String(line.id), members: rows0.map((r: any) => ({ table: 'staff_expenses', id: String(r.id) })) }
       const sign = cand.delta < 0 ? '−' : '+'
       const note = ('CASADA COM AJUSTE · Δ ' + sign + '$' + Math.abs(cand.delta).toFixed(2) + ' (' + cand.pct + '%) · ' + rows0.length + ' da folha · ' + cand.staff.join(', ') + (cand.paid_from_mismatch ? ' · pagador ' + cand.paid_from.join('/') + ' → GZ28US' : '')).slice(0, 150)
       try { await writeMatch(db, line, cnd, { matched_note: note, match_engine: 'ADJUST', match_batch: null, match_rule: null, reviewed_at: null }, backfill) }
@@ -678,13 +678,13 @@ export async function POST(req: NextRequest) {
     if (action === 'unlink_expense') {
       const rowId = String(body.row_id || '')
       if (!rowId) return NextResponse.json({ error: 'row_id required' }, { status: 400 })
-      const { data: r0 } = await db.from('expenses').select('id, description, bank_transaction_id').eq('id', rowId).maybeSingle()
+      const { data: r0 } = await db.from('staff_expenses').select('id, description, bank_transaction_id').eq('id', rowId).maybeSingle()
       if (!r0 || !r0.bank_transaction_id) return NextResponse.json({ error: 'registro sem elo — recarregue' }, { status: 409 })
       const { data: l0 } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').eq('id', r0.bank_transaction_id).maybeSingle()
-      if (l0 && l0.match_status === 'MATCHED' && ((l0.matched_table === 'expenses' && String(l0.matched_id) === rowId) || (l0.matched_table === 'expense_group' && String(l0.matched_id) === String(l0.id)))) return NextResponse.json({ error: 'a linha do banco ainda aponta pra este registro — DESFAZER no Bank Link' }, { status: 409 })
-      const { error } = await db.from('expenses').update({ bank_transaction_id: null }).eq('id', rowId).eq('bank_transaction_id', r0.bank_transaction_id)
+      if (l0 && l0.match_status === 'MATCHED' && ((l0.matched_table === 'staff_expenses' && String(l0.matched_id) === rowId) || (l0.matched_table === 'expense_group' && String(l0.matched_id) === String(l0.id)))) return NextResponse.json({ error: 'a linha do banco ainda aponta pra este registro — DESFAZER no Bank Link' }, { status: 409 })
+      const { error } = await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('id', rowId).eq('bank_transaction_id', r0.bank_transaction_id)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      await db.from('data_fixes').insert({ check_key: 'auto-book', table_name: 'expenses', row_id: rowId, field: 'bank_transaction_id', old_value: String(r0.bank_transaction_id), new_value: null, label: ('ELO SOLTO · ' + String(r0.description || '').slice(0, 120)).slice(0, 200) }).then(() => undefined, () => undefined)
+      await db.from('data_fixes').insert({ check_key: 'auto-book', table_name: 'staff_expenses', row_id: rowId, field: 'bank_transaction_id', old_value: String(r0.bank_transaction_id), new_value: null, label: ('ELO SOLTO · ' + String(r0.description || '').slice(0, 120)).slice(0, 200) }).then(() => undefined, () => undefined)
       return NextResponse.json({ ok: true })
     }
     // ── PERGUNTAS DO MOTOR (BL 0.10.0): responder por fornecedor ──
@@ -723,11 +723,11 @@ export async function POST(req: NextRequest) {
             const amt = Math.abs(num(l.amount))
             const desc = mark(name + ' · ' + String(l.name || ''), MARKER_ASSIGNED)
             // Retry idempotente: UMA despesa pessoal por linha do banco (elo payment_reference).
-            const { data: prevE } = await db.from('expenses').select('id').eq('payment_reference', 'bank:' + l.id).eq('origin', 'PERSONAL').maybeSingle()
+            const { data: prevE } = await db.from('staff_expenses').select('id').eq('payment_reference', 'bank:' + l.id).eq('origin', 'PERSONAL').maybeSingle()
             let c: any = prevE || null
-            if (!c) { const { data: ins, error } = await db.from('expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: desc, amount: amt, source: String(l.merchant || l.name || name).slice(0, 120), expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_reference: 'bank:' + l.id }).select('id').single(); if (error || !ins) throw new Error('expenses: ' + (error?.message || 'insert falhou')); c = ins }
-            try { await writeMatch(db, l, { table: 'expenses', id: c.id }, { matched_note: ('PESSOAL · ' + name + ' · season ' + (se.season_code || String(se.id).slice(0, 6))).slice(0, 150), match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }) }
-            catch (e) { await db.from('expenses').delete().eq('id', c.id).eq('payment_reference', 'bank:' + l.id); throw e }
+            if (!c) { const { data: ins, error } = await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: desc, amount: amt, source: String(l.merchant || l.name || name).slice(0, 120), expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_reference: 'bank:' + l.id }).select('id').single(); if (error || !ins) throw new Error('staff_expenses: ' + (error?.message || 'insert falhou')); c = ins }
+            try { await writeMatch(db, l, { table: 'staff_expenses', id: c.id }, { matched_note: ('PESSOAL · ' + name + ' · season ' + (se.season_code || String(se.id).slice(0, 6))).slice(0, 150), match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }) }
+            catch (e) { await db.from('staff_expenses').delete().eq('id', c.id).eq('payment_reference', 'bank:' + l.id); throw e }
             booked++
           } catch (e) { errors.push(String((e as Error).message || e).slice(0, 120)) }
         }
@@ -968,14 +968,14 @@ export async function POST(req: NextRequest) {
           const seasonId = String(b.season_id || '')
           const { data: se } = await db.from('seasons').select('id, staff_id, season_code').eq('id', seasonId).maybeSingle()
           if (!se) throw new Error('season inválida')
-          const { data: created, error } = await db.from('expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: mark(label, MARKER_ASSIGNED), amount: amt, source: supplier.slice(0, 120), expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', payment_reference: 'bank:' + line.id }).select('id').single()
-          if (error || !created) throw new Error('expenses: ' + (error?.message || 'insert falhou'))
+          const { data: created, error } = await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: mark(label, MARKER_ASSIGNED), amount: amt, source: supplier.slice(0, 120), expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', payment_reference: 'bank:' + line.id }).select('id').single()
+          if (error || !created) throw new Error('staff_expenses: ' + (error?.message || 'insert falhou'))
           newId = created.id
           const note = 'ATRIBUÍDA · PESSOAL ' + (se.season_code || '') + ' · ' + label
-          const dropPersonal = () => db.from('expenses').delete().eq('id', newId).eq('payment_reference', 'bank:' + line.id)
-          if (!await repoint('expenses', newId, note)) { await dropPersonal(); throw new Error('linha do banco já decidida — recarregue') }
-          if (!await dropBucketRow()) { await unpoint('expenses', newId); await dropPersonal(); throw new Error('linha não está no balde — recarregue') }
-          await logMatchEvent(db, line, 'MATCH', { matched_table: 'expenses', matched_id: newId, note, engine: ENGINE_BUCKET })
+          const dropPersonal = () => db.from('staff_expenses').delete().eq('id', newId).eq('payment_reference', 'bank:' + line.id)
+          if (!await repoint('staff_expenses', newId, note)) { await dropPersonal(); throw new Error('linha do banco já decidida — recarregue') }
+          if (!await dropBucketRow()) { await unpoint('staff_expenses', newId); await dropPersonal(); throw new Error('linha não está no balde — recarregue') }
+          await logMatchEvent(db, line, 'MATCH', { matched_table: 'staff_expenses', matched_id: newId, note, engine: ENGINE_BUCKET })
           href = '/staff/' + se.staff_id + '/seasons/' + se.id + '/expenses'
           await fixRow(line, 'assign', 'A ATRIBUIR', 'PERSONAL', 'PESSOAL ' + (se.season_code || '') + ' · ' + lineLabel)
         } else if (dest === 'FIXO') {
@@ -1100,7 +1100,7 @@ export async function POST(req: NextRequest) {
         const del = async (table: string, col: string, f: (q: any) => any, msg: string) => { const q0: any = (db.from(table) as any).delete().eq('purchase_group', line.id).ilike(col, '%' + MARKER_ASSIGNED + '%'); const { data: r } = await f(q0).select('id'); if (r && r.length) changed.push(msg + (r.length > 1 ? ' ×' + r.length : '')) }
         await del('inputs', 'description', q => q, 'insumo apagado'); await del('inventory', 'description', q => q, 'estoque apagado'); await del('invoice_expenses', 'item', q => q.neq('invoice_id', bucketId), 'parte apagada')
         { const { data: r } = await db.from('fixed_cost_expenses').delete().eq('bank_transaction_id', line.id).ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('custo fixo apagado') }
-        { const { data: r } = await db.from('expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('despesa pessoal apagada') }
+        { const { data: r } = await db.from('staff_expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('despesa pessoal apagada') }
         await logMatchEvent(db, line, 'MATCH', { matched_table: 'invoice_expenses', matched_id: made.id, note: 'DESATRIBUÍDA · ' + made.supplier, engine: ENGINE_BUCKET })
       }
       await fixRow(line, 'unassign', String(line.matched_table), 'A ATRIBUIR', ('DESATRIBUIR · ' + line.date + ' · ' + (line.merchant || line.name || '') + (changed.length ? ' → ' + changed.join(', ') : '')))
@@ -1218,11 +1218,11 @@ export async function POST(req: NextRequest) {
     // motor (marcador obrigatório) que ficou sem linha casada apontando pra ele.
     if (action === 'purge_orphan') {
       const table = String(body.table || ''), rowId = String(body.row_id || '')
-      if (!['fixed_cost_expenses', 'inputs', 'inventory', 'invoice_expenses', 'expenses'].includes(table) || !rowId) return NextResponse.json({ error: 'table/row_id inválidos' }, { status: 400 })
+      if (!['fixed_cost_expenses', 'inputs', 'inventory', 'invoice_expenses', 'staff_expenses'].includes(table) || !rowId) return NextResponse.json({ error: 'table/row_id inválidos' }, { status: 400 })
       const { data: row } = await (db.from(table) as any).select('*').eq('id', rowId).maybeSingle()
       if (!row) return NextResponse.json({ error: 'linha não existe mais' }, { status: 404 })
       const marker = String(table === 'invoice_expenses' ? row.item : row.description || '')
-      const bankRef = table === 'fixed_cost_expenses' ? String(row.bank_transaction_id || '') : table === 'expenses' ? (String(row.payment_reference || '').startsWith('bank:') && row.origin === 'PERSONAL' ? String(row.payment_reference).slice(5) : '') : table === 'inputs' && String(row.order_number || '').startsWith('bank:') ? String(row.order_number || '').slice(5) : String(row.purchase_group || '')
+      const bankRef = table === 'fixed_cost_expenses' ? String(row.bank_transaction_id || '') : table === 'staff_expenses' ? (String(row.payment_reference || '').startsWith('bank:') && row.origin === 'PERSONAL' ? String(row.payment_reference).slice(5) : '') : table === 'inputs' && String(row.order_number || '').startsWith('bank:') ? String(row.order_number || '').slice(5) : String(row.purchase_group || '')
       if (!bankRef || !/Bank Link\)/.test(marker)) return NextResponse.json({ error: 'não é lançamento do motor — nunca apago linha de gente' }, { status: 409 })
       if (table === 'invoice_expenses') { const bId = await bucketInvoiceId(db); if (row.invoice_id !== bId) return NextResponse.json({ error: 'linha de invoice fora do balde — nunca apago linha de gente' }, { status: 409 }) }
       // QUALQUER linha casada apontando (motor ou humano, por id ou por grupo) = não é órfão (revisão 19).

@@ -3,6 +3,17 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { requireUser } from '@/lib/apiAuth.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
 
+// ── DOIS BANCOS NO MESMO ARQUIVO — E SÓ UM FOI RENOMEADO (onda 2, 11/set/2026) ─
+// `us` é o banco do US; `br` é o banco do GZ28BR, que é OUTRO projeto Supabase e NÃO
+// entra nesta onda. Os cinco renames (invoice_payments→invoice_incomes,
+// invoice_parts→invoice_items, goods→assets, good_expenses→assets_expenses,
+// expenses→staff_expenses) valeram SÓ no US. Portanto todo `br.from('invoice_payments')`
+// e `br.from('invoice_parts')` daqui pra baixo continua com o nome VELHO de propósito:
+// é o nome que existe no BR. Trocar por engano faria o espelho estourar em silêncio —
+// e esta rota é a que cria a SHOPPING INVOICE do BR quando o GZ28BR pagou conta nossa.
+// (`invoice_expenses`, `invoice_services` e `invoices` não mudam de nome em lugar nenhum.)
+// O `us.from(...)` deste arquivo toca só em invoices, rides e invoice_expenses: nada a trocar.
+//
 // ── GZ28BR-paid US expenses  ->  a BR SHOPPING INVOICE (client BR.085) ─────────
 // Lei do usuário (25/ago/2026): quando uma despesa de invoice de RIDE do GZ28US é
 // marcada PAID FROM = GZ28BR, o GZ28BR pagou uma conta nossa — e isso tem que
@@ -184,6 +195,7 @@ async function cliente085(br: SupabaseClient): Promise<string> {
 // invoice, ela fica (o dinheiro se moveu — só o app BR pode desfazer isso).
 // Leitura que FALHA não é "nada pago": o erro sobe e nada é apagado.
 async function temDinheiroPago(br: SupabaseClient, id: string): Promise<boolean> {
+  // BANCO DO BR: lá a tabela ainda se chama invoice_payments (o rename foi só no US).
   const { data, error } = await br.from('invoice_payments').select('id').eq('invoice_id', id).not('paid_at', 'is', null).limit(1)
   if (error) throw new Falha('db', 'Falha ao conferir se o GZ28US já pagou a shopping invoice do BR: ' + error.message)
   return !!data?.length
@@ -200,6 +212,8 @@ async function apagarShoppingBR(br: SupabaseClient, id: string, clientId: string
     throw new Falha('conflict', `O elo br_invoice_id aponta para a invoice ${nome} do BR, que NÃO é do cliente BR.085 — nada foi apagado.`)
   }
   if (await temDinheiroPago(br, id)) return { apagada: false, code: ex.invoice_code || null }
+  // BANCO DO BR: nomes do esquema BRASILEIRO — invoice_payments e invoice_parts seguem
+  // vivos lá. O rename de 11/set foi só no US.
   for (const t of ['invoice_payments', 'invoice_parts', 'invoice_services', 'invoice_expenses']) {
     const { error: e } = await br.from(t).delete().eq('invoice_id', id)
     if (e) throw new Falha('db', `Falha ao apagar ${t} da shopping invoice ${nome} do BR: ${e.message}`)
@@ -271,8 +285,10 @@ async function espelhar(us: SupabaseClient, br: SupabaseClient, usInvoiceId: str
       }
       brInvoiceId = String(ex.id); code = ex.invoice_code
       // Só o pendente é refeito — um pagamento que o GZ28US já fez é dinheiro real.
+      // BANCO DO BR (nome velho de propósito: o BR não foi renomeado).
       const e1 = (await br.from('invoice_payments').delete().eq('invoice_id', brInvoiceId).is('paid_at', null)).error
       if (e1) throw new Falha('db', 'Falha ao limpar o saldo pendente no BR: ' + e1.message)
+      // BANCO DO BR (nome velho de propósito: o BR não foi renomeado).
       const e2 = (await br.from('invoice_parts').delete().eq('invoice_id', brInvoiceId)).error
       if (e2) throw new Falha('db', 'Falha ao limpar os itens no BR: ' + e2.message)
       const e3 = (await br.from('invoice_services').delete().eq('invoice_id', brInvoiceId)).error
@@ -392,15 +408,18 @@ async function espelhar(us: SupabaseClient, br: SupabaseClient, usInvoiceId: str
     const eD = (await br.from('invoice_expenses').delete().in('id', sobrando)).error
     if (eD) throw new Falha('db', 'Falha ao remover despesa antiga no BR: ' + eD.message)
   }
+  // BANCO DO BR (nome velho de propósito: o BR não foi renomeado).
   const e5 = (await br.from('invoice_parts').insert(partRows)).error
   if (e5) throw new Falha('db', 'Falha ao gravar os itens no BR: ' + e5.message)
 
   // Só o que ainda não foi acertado vira pendência (o que o US já pagou sobreviveu).
+  // BANCO DO BR (nome velho de propósito: o BR não foi renomeado).
   const { data: settled, error: eSettled } = await br.from('invoice_payments').select('amount').eq('invoice_id', brInvoiceId)
   if (eSettled) throw new Falha('db', 'Falha ao ler os pagamentos da shopping invoice do BR: ' + eSettled.message)
   const alreadyPaid = (settled || []).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0)
   const owed = r2(totalBrl - alreadyPaid)
   if (owed > 0.005) {
+    // BANCO DO BR (nome velho de propósito: o BR não foi renomeado).
     const e6 = (await br.from('invoice_payments').insert([{
       invoice_id: brInvoiceId, amount: owed, paid_at: null, payment_date: latestPaid || todayUTC(),
       source: null, description: 'Pending balance', paid_from: 'GZ28US', paid_to: 'GZ28BR',

@@ -313,7 +313,7 @@ export default function EditPackPage() {
     const factor = parseFloat(qty) || 1
     if (it.is_kit) {
       // Use a real UUID for the group id: it's valid for both uuid and text columns,
-      // so it survives applyPack/duplicate into invoice_parts/expenses without the
+      // so it survives applyPack/duplicate into invoice_items/invoice_expenses without the
       // "invalid input syntax for type uuid" error.
       const group = crypto.randomUUID()
       // The kit's display name everywhere (expenses + items) is the ALIAS.

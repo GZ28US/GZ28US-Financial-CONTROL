@@ -60,7 +60,7 @@ export default function EditExpensePage() {
 
   async function loadExpense() {
     const { data, error } = await supabase
-      .from('expenses')
+      .from('staff_expenses')
       .select('*')
       .eq('id', expenseId)
       .single()
@@ -95,14 +95,14 @@ export default function EditExpensePage() {
       urls.push(urlData.publicUrl)
     }
     setReceiptUrls(urls)
-    await supabase.from('expenses').update({ receipt_url: urls.length > 0 ? JSON.stringify(urls) : null }).eq('id', expenseId)
+    await supabase.from('staff_expenses').update({ receipt_url: urls.length > 0 ? JSON.stringify(urls) : null }).eq('id', expenseId)
     setUploading(false)
   }
 
   async function removeReceiptUrl(index: number) {
     const updated = receiptUrls.filter((_, i) => i !== index)
     setReceiptUrls(updated)
-    await supabase.from('expenses').update({ receipt_url: updated.length > 0 ? JSON.stringify(updated) : null }).eq('id', expenseId)
+    await supabase.from('staff_expenses').update({ receipt_url: updated.length > 0 ? JSON.stringify(updated) : null }).eq('id', expenseId)
   }
 
   async function saveExpense() {
@@ -114,7 +114,7 @@ export default function EditExpensePage() {
     const paymentCols = paymentToRow(payment)
     if (type !== 'SINGLE') paymentCols.payment_date = null
 
-    const { error } = await supabase.from('expenses').update({
+    const { error } = await supabase.from('staff_expenses').update({
       type,
       description: description || null,
       amount: parseFloat(amount),

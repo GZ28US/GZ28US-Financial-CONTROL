@@ -129,7 +129,7 @@ export async function runStaffTravelSweep(db: SupabaseClient): Promise<{ opened:
       const code = `US.${String(max + 1).padStart(3, '0')}`
       const { data: se } = await db.from('seasons').insert({ season_code: code, staff_id: member.id, date_entry: p.arriveDate || p.flightDate || today }).select().single()
       if (se) {
-        await db.from('expenses').insert({ season_id: se.id, type: 'SINGLE', amount: p.total, expense_date: today, payment_date: today, description: `Passagem de IDA — ${p.pnr} (${p.last}/${p.first}) ${origin}-${dest}`, source: 'Auto-captura e-mail (staff travel)' })
+        await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', amount: p.total, expense_date: today, payment_date: today, description: `Passagem de IDA — ${p.pnr} (${p.last}/${p.first}) ${origin}-${dest}`, source: 'Auto-captura e-mail (staff travel)' })
         await sendStaffWhatsApp([`✈️ *SEASON ABERTA — ${member.name}*`, '', `🎫 *Localizador: ${p.pnr}*`, `👤 Nome: *${p.first}*`, `👤 Sobrenome: *${p.last}*`, '', flightsLine, `🗓 Chegada: ${p.arriveDate || p.flightDate || '—'}`, '', `Bem-vindo(a)! Season ${code} aberta no sistema. 🇺🇸`].join('\n'))
         out.opened.push(`${member.name} ${p.pnr}`)
       }
@@ -137,7 +137,7 @@ export async function runStaffTravelSweep(db: SupabaseClient): Promise<{ opened:
       const { data: open } = await db.from('seasons').select('id, season_code').eq('staff_id', member.id).is('date_conclusion', null).order('date_entry', { ascending: false }).limit(1)
       const season = open?.[0]
       if (season) {
-        await db.from('expenses').insert({ season_id: season.id, type: 'SINGLE', amount: p.total, expense_date: today, payment_date: today, description: `Passagem de VOLTA — ${p.pnr} (${p.last}/${p.first}) ${origin}-${dest}`, source: 'Auto-captura e-mail (staff travel)' })
+        await db.from('staff_expenses').insert({ season_id: season.id, type: 'SINGLE', amount: p.total, expense_date: today, payment_date: today, description: `Passagem de VOLTA — ${p.pnr} (${p.last}/${p.first}) ${origin}-${dest}`, source: 'Auto-captura e-mail (staff travel)' })
         await db.from('seasons').update({ date_conclusion: p.flightDate || today }).eq('id', season.id)
         await sendStaffWhatsApp([`✈️ *PASSAGEM DE VOLTA — ${member.name}*`, '', `🎫 *Localizador: ${p.pnr}*`, `👤 Nome: *${p.first}*`, `👤 Sobrenome: *${p.last}*`, '', flightsLine, `🗓 Voo: ${p.flightDate || '—'}`, '', `A Season ${season.season_code} se encerra com este voo. 👏`, `${member.name.split(' ')[0]}, obrigado DEMAIS pelos serviços prestados nesta temporada. Boa viagem e volte em breve — sua casa te espera! 🙏🇺🇸🇧🇷`].join('\n'))
         out.closed.push(`${member.name} ${p.pnr}`)

@@ -28,6 +28,15 @@
 --      the app instantly. Rollback is at the very bottom.
 -- ============================================================================
 
+-- ATUALIZADO EM 11/set/2026 (onda 6 do pacote): os nomes das cinco tabelas renomeadas
+-- na onda 2 foram trocados na lista abaixo — invoice_parts→invoice_items,
+-- invoice_payments→invoice_incomes, goods→assets, good_expenses→assets_expenses,
+-- expenses→staff_expenses (e o mesmo no ROLLBACK comentado no fim). A lista monta a
+-- política POR NOME (`<tabela>_authenticated_all`), e a onda 2 já renomeou as políticas
+-- existentes junto com as tabelas: com o nome velho aqui, um rerun criaria política na
+-- VIEW-PONTE (que não aceita RLS) em vez da tabela.
+-- ISTO NÃO É PARA RODAR AGORA: a fase 1 do RLS já rodou em 11/set/2026. O arquivo fica
+-- como registro e como base da fase 2.
 begin;
 
 -- ----------------------------------------------------------------------------
@@ -158,10 +167,10 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'clients','rides','ride_owners','invoices','invoice_parts','invoice_services',
-    'invoice_payments','invoice_expenses','invoice_notes','invoice_duties','staff',
-    'seasons','expenses','expense_reports_sent','suppliers','fixed_cost_suppliers',
-    'fixed_cost_expenses','packs','goods','good_expenses','inputs','inventory',
+    'clients','rides','ride_owners','invoices','invoice_items','invoice_services',
+    'invoice_incomes','invoice_expenses','invoice_notes','invoice_duties','staff',
+    'seasons','staff_expenses','expense_reports_sent','suppliers','fixed_cost_suppliers',
+    'fixed_cost_expenses','packs','assets','assets_expenses','inputs','inventory',
     'inventory_sales','ride_builds','quote_backups','categories','transactions'
   ] loop
     execute format('alter table public.%I enable row level security;', t);
@@ -192,10 +201,10 @@ commit;
 -- declare t text;
 -- begin
 --   foreach t in array array[
---     'clients','rides','ride_owners','invoices','invoice_parts','invoice_services',
---     'invoice_payments','invoice_expenses','invoice_notes','invoice_duties','staff',
---     'seasons','expenses','expense_reports_sent','suppliers','fixed_cost_suppliers',
---     'fixed_cost_expenses','packs','goods','good_expenses','inputs','inventory',
+--     'clients','rides','ride_owners','invoices','invoice_items','invoice_services',
+--     'invoice_incomes','invoice_expenses','invoice_notes','invoice_duties','staff',
+--     'seasons','staff_expenses','expense_reports_sent','suppliers','fixed_cost_suppliers',
+--     'fixed_cost_expenses','packs','assets','assets_expenses','inputs','inventory',
 --     'inventory_sales','ride_builds','quote_backups','categories','transactions'
 --   ] loop
 --     execute format('drop policy if exists %I on public.%I;', t || '_authenticated_all', t);

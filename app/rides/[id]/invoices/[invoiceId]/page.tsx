@@ -189,7 +189,7 @@ export default function ViewInvoicePage() {
     // If this invoice was converted from a quote, surface the archived original.
     const { data: backup } = await supabase.from('quote_backups').select('*').eq('invoice_id', invoiceId).order('archived_at', { ascending: false }).limit(1).maybeSingle()
     if (backup) setQuoteBackup(backup)
-    const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+    const { data: partsData } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
     // PAGO PELO CLIENTE SAIU DO APP US (Márcio, 11/set/2026). A carga separava os
     // items espelhados da despesa do cliente (mirror_expense_id) pra dar bloco próprio
     // a eles, fora da base do imposto e do desconto. O elo está preenchido em 0 de 804
@@ -199,7 +199,7 @@ export default function ViewInvoicePage() {
     if (partsData) setParts(partsData.filter((p: any) => !p.mirror_expense_id))
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData)
-    const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
+    const { data: paymentsData } = await supabase.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (paymentsData) setPayments(orderIncomes(paymentsData))
     const { data: notesData } = await supabase.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (notesData) setNotes(notesData)

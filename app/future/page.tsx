@@ -79,7 +79,7 @@ async function ensureStaffPayments() {
     .select('id, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_currency, pay_day')
     .is('date_conclusion', null).not('pay_type', 'is', null)
   if (!seasons || seasons.length === 0) return
-  const { data: existing } = await supabase.from('expenses').select('season_id, type, expense_date')
+  const { data: existing } = await supabase.from('staff_expenses').select('season_id, type, expense_date')
   const has = new Set((existing || []).map((e: any) => `${e.season_id}|${e.type}|${e.expense_date}`))
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -130,7 +130,7 @@ async function ensureStaffPayments() {
       }
     }
   }
-  if (toInsert.length > 0) await supabase.from('expenses').insert(toInsert)
+  if (toInsert.length > 0) await supabase.from('staff_expenses').insert(toInsert)
 }
 
 // Collapse any stored milestone label (incl. legacy long forms like
@@ -192,9 +192,9 @@ export default function HomePage() {
     const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
     const invIds = (invs || []).map((i: any) => String(i.id))
     const [pays, exps, parts] = await Promise.all([
-      childRows('invoice_payments', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
+      childRows('invoice_incomes', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
       childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier', invIds),
-      childRows('invoice_parts', 'id, invoice_id, unit_price, quantity', invIds),
+      childRows('invoice_items', 'id, invoice_id, unit_price, quantity', invIds),
     ])
 
 
@@ -215,7 +215,7 @@ export default function HomePage() {
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
-      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
+      supabase.from('staff_expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
       supabase.from('seasons').select('id, staff_id'),
       supabase.from('staff').select('id, name'),
     ])

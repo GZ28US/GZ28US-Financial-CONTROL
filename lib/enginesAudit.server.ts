@@ -93,7 +93,7 @@ export async function enginesAudit(db: any): Promise<EnginesAudit> {
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, purchase_group, order_number'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, bank_transaction_id'),
     // expenses.bank_transaction_id vem da MIGRATION_expenses_bank_link — sem ela, lê sem a coluna (o elo então é só o payment_reference).
-    fetchAll(db, 'expenses', expensesSel + ', bank_transaction_id').catch((e: any) => /bank_transaction_id/.test(String(e.message)) ? fetchAll(db, 'expenses', expensesSel) : Promise.reject(e)),
+    fetchAll(db, 'staff_expenses', expensesSel + ', bank_transaction_id').catch((e: any) => /bank_transaction_id/.test(String(e.message)) ? fetchAll(db, 'staff_expenses', expensesSel) : Promise.reject(e)),
     fetchAll(db, 'suppliers', 'name, aliases, is_dealership'),
     fetchAll(db, 'invoices', 'id, invoice_code, origin'),
     fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, pending, match_status, match_engine, matched_table, matched_id, reviewed_at', (q: any) => q.or('match_status.is.null,match_status.neq.REMOVED')),
@@ -122,11 +122,11 @@ export async function enginesAudit(db: any): Promise<EnginesAudit> {
   for (const b of matched) if (b.matched_table && b.matched_id) pointed.set(b.matched_table + ':' + b.matched_id, b)
   const byLineId = new Map(bank.map((b: any) => [String(b.id), b]))
   const lineOf = (table: string, row: any): any => pointed.get(table + ':' + row.id) || (row.purchase_group ? pointed.get('purchase_group:' + row.purchase_group) : null)
-    || ((table === 'fixed_cost_expenses' || table === 'expenses') && row.bank_transaction_id ? byLineId.get(String(row.bank_transaction_id)) : null)
-    || (table === 'expenses' && String(row.payment_reference || '').startsWith('bank:') ? byLineId.get(String(row.payment_reference).slice(5)) : null)
+    || ((table === 'fixed_cost_expenses' || table === 'staff_expenses') && row.bank_transaction_id ? byLineId.get(String(row.bank_transaction_id)) : null)
+    || (table === 'staff_expenses' && String(row.payment_reference || '').startsWith('bank:') ? byLineId.get(String(row.payment_reference).slice(5)) : null)
     || (table === 'inputs' && String(row.order_number || '').startsWith('bank:') ? byLineId.get(String(row.order_number).slice(5)) : null) || null
   const ieAmt = (r: any) => num(r.price) * (num(r.quantity) || 1) + num(r.tax) + num(r.extra)
-  const rowsOf: Record<string, Map<string, any>> = { invoice_expenses: new Map(ie.map((r: any) => [String(r.id), r])), inputs: new Map(inputs.map((r: any) => [String(r.id), r])), fixed_cost_expenses: new Map(fixed.map((r: any) => [String(r.id), r])), expenses: new Map(expenses.map((r: any) => [String(r.id), r])) }
+  const rowsOf: Record<string, Map<string, any>> = { invoice_expenses: new Map(ie.map((r: any) => [String(r.id), r])), inputs: new Map(inputs.map((r: any) => [String(r.id), r])), fixed_cost_expenses: new Map(fixed.map((r: any) => [String(r.id), r])), staff_expenses: new Map(expenses.map((r: any) => [String(r.id), r])) }
   const shape = (table: string, r: any) => table === 'invoice_expenses' ? { label: [invCode(r.invoice_id), r.supplier, r.item].filter(Boolean).join(' · '), vendor: String(r.supplier || ''), amount: ieAmt(r), date: day(r.payment_date || r.expense_date), href: invById.get(String(r.invoice_id))?.origin === 'BUCKET' ? '/adm/bank#a-atribuir' : '/invoices' }
     : table === 'inputs' ? { label: ['SUPPLY', r.supplier, r.description].filter(Boolean).join(' · '), vendor: String(r.supplier || ''), amount: num(r.unit_price) * (num(r.quantity) || 1), date: day(r.payment_date || r.purchase_date), href: '/supplies' }
     : table === 'fixed_cost_expenses' ? { label: ['FIXO', r.description].filter(Boolean).join(' · '), vendor: String(r.description || ''), amount: num(r.amount), date: day(r.payment_date || r.expense_date), href: '/costs/fixed' }

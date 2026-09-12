@@ -34,7 +34,7 @@ import { EXPENSE_ITEM_GATE } from './deliverStatus'
 // de ITEM_TABLES (este robô, mailToItem, o STREAM), nunca só em JS depois. O
 // predicado mora em lib/deliverStatus.ts (módulo puro) para o STREAM, que roda
 // no browser, usar o mesmo sem importar este arquivo server-only.
-export const ITEM_TABLES = ['invoice_expenses', 'inputs', 'inventory', 'goods', 'good_expenses', 'expenses'] as const
+export const ITEM_TABLES = ['invoice_expenses', 'inputs', 'inventory', 'assets', 'assets_expenses', 'staff_expenses'] as const
 export type ItemTable = (typeof ITEM_TABLES)[number]
 export { EXPENSE_ITEM_GATE }
 
@@ -213,7 +213,7 @@ export async function refreshItemTracking(db: SupabaseClient): Promise<TrackResu
       .not('payment_date', 'is', null)
       .is('cancel_status', null)
       .or('nature.is.null,nature.eq.PART')
-    if (table === 'expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
+    if (table === 'staff_expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
     const { data, error } = await q
     if (error) return { ...out, error: `${table}: ${error.message}` }
     for (const r of (data || []) as ItemRow[]) {

@@ -1,10 +1,16 @@
 -- ══ COLE ISTO NO EDITOR SQL DO PROJETO **US** — uma vez só ══════════════════
+-- ATENÇÃO (11/set/2026): ISTO JÁ RODOU e NÃO é para rodar agora. Fica aqui só como
+-- registro do degrau zero do STREAM. Os nomes das tabelas foram atualizados para
+-- depois dos cinco renames da onda 2 (goods→assets, good_expenses→assets_expenses,
+-- expenses→staff_expenses) porque tudo aqui é idempotente (add column if not exists,
+-- create index if not exists) e, se algum dia alguém rodar de novo, tem de bater com
+-- o banco de hoje — com o nome velho ele estouraria, ou pior, mexeria na VIEW-PONTE.
 -- (1) o degrau zero do STREAM  (2) o elo da linha do espelho
 
 do $$
 declare t text;
 begin
-  foreach t in array array['invoice_expenses','inputs','inventory','goods','good_expenses','expenses']
+  foreach t in array array['invoice_expenses','inputs','inventory','assets','assets_expenses','staff_expenses']
   loop
     execute format('alter table public.%I add column if not exists nature text', t);
     execute format($f$
@@ -33,7 +39,7 @@ create index if not exists idx_invoice_expenses_br_expense_id
 
 update public.invoice_expenses set nature='CHARGE'
   where nature is null and btrim(item) in ('Sales Tax','Shipping','Shipping and handling');
-update public.good_expenses set nature='CHARGE'
+update public.assets_expenses set nature='CHARGE'
   where nature is null and btrim(description) in ('Sales Tax','Shipping','Shipping and handling');
 update public.inputs set nature='CHARGE'
   where nature is null and btrim(description) in ('Sales Tax','Shipping','Shipping and handling');

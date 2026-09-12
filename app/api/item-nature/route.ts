@@ -14,7 +14,7 @@ import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from '@/lib/itemTracki
 //
 // ── POR QUE AGRUPADO POR FORNECEDOR, E NÃO LINHA A LINHA ────────────────────
 // Medido no banco US em 04/set/2026 (1.544 linhas nas 6 tabelas de item, o gate
-// de `expenses` aplicado): elas caem em ~187 grupos de fornecedor canonizado, e
+// de `staff_expenses` aplicado): elas caem em ~187 grupos de fornecedor canonizado, e
 // 34 grupos cobrem 80% DAS LINHAS enquanto 23 grupos cobrem 90% DO DINHEIRO.
 // Linha a linha, o trabalho é interminável e ninguém começa; por fornecedor, ele
 // é FINITO — e é essa a diferença entre a regra existir e a regra ser aplicada.
@@ -115,7 +115,7 @@ const hintFor = (text: string): Nature | null => {
 // ── AS TABELAS DE ITEM, COM O NOME DE CADA COLUNA ───────────────────────────
 // ITEM_TABLES é a lista canônica (lib/itemTracking.server.ts) — esta rota não
 // inventa a sua. O que muda por tabela é só como cada uma escreve descrição,
-// fornecedor, valor e data; e `expenses` carrega o EXPENSE_ITEM_GATE, senão a
+// fornecedor, valor e data; e `staff_expenses` carrega o EXPENSE_ITEM_GATE, senão a
 // FOLHA inteira entraria na fila de classificação (lei de 03/set/2026).
 // A invoice entra como CONTEXTO da linha: "013.2" ao lado de "Sales Tax" é a
 // diferença entre decidir e adivinhar — e o link abre a invoice de verdade
@@ -149,17 +149,17 @@ const SPECS: Record<ItemTable, Spec> = {
     desc: r => r.description, amount: r => num(r.unit_price) * (num(r.quantity) || 1),
     date: r => r.payment_date || r.purchase_date || null, href: () => '/inventory',
   },
-  goods: {
+  assets: {
     select: 'id, description, supplier, unit_price, quantity, payment_date, purchase_date, nature',
     desc: r => r.description, amount: r => num(r.unit_price) * (num(r.quantity) || 1),
     date: r => r.payment_date || r.purchase_date || null, href: () => '/goods',
   },
-  good_expenses: {
+  assets_expenses: {
     select: 'id, description, supplier, amount, payment_date, expense_date, nature',
     desc: r => r.description, amount: r => num(r.amount),
     date: r => r.payment_date || r.expense_date || null, href: () => '/goods',
   },
-  expenses: {
+  staff_expenses: {
     select: 'id, description, supplier, amount, payment_date, expense_date, origin, order_number, tracking_number, nature',
     desc: r => r.description, amount: r => num(r.amount),
     date: r => r.payment_date || r.expense_date || null, href: () => '/stream',
@@ -171,7 +171,7 @@ async function fetchAll(db: any, table: string, select: string): Promise<any[]> 
   const out: any[] = []
   for (let from = 0; ; from += 1000) {
     let q = db.from(table).select(select).order('id').range(from, from + 999)
-    if (table === 'expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
+    if (table === 'staff_expenses') q = q.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
     const { data, error } = await q
     if (error) throw Object.assign(new Error(`${table}: ${error.message}`), { pgMessage: error.message })
     out.push(...(data || []))
@@ -343,11 +343,11 @@ export async function POST(req: NextRequest) {
         // realmente mudou. Quem já tinha resposta não é sobrescrito — e não entra
         // na trilha como se tivesse sido (o placar do card ficaria mentindo).
         let upd = db.from(table).update({ nature }).in('id', chunk).is('nature', null)
-        // O GATE DE `expenses` TAMBÉM NA ESCRITA. A leitura já o aplica, mas o
+        // O GATE DE `staff_expenses` TAMBÉM NA ESCRITA. A leitura já o aplica, mas o
         // id chega pelo corpo do POST: sem repetir o gate aqui, bastaria um id
         // de FOLHA no payload para carimbar natureza numa linha de salário. A
         // lei de 03/set/2026 diz que folha nunca sai do banco — nem por engano.
-        if (table === 'expenses') upd = upd.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
+        if (table === 'staff_expenses') upd = upd.eq('origin', 'PERSONAL').or(EXPENSE_ITEM_GATE)
         const { data, error } = await upd.select(spec.select)
         if (error) return NextResponse.json({ error: `${table}: ${error.message}`, needs_migration: missingNature({ pgMessage: error.message }), applied }, { status: 500 })
         const written = data || []

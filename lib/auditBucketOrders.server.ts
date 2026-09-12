@@ -150,7 +150,7 @@ export function computeBucketOrders(d: BucketOrdersData): BucketOrdersResult {
     consider('invoice_expenses', e, ieAmt(e), e.payment_date || e.expense_date, String(e.item || ''), `EXPENSE · ${invLabel(e.invoice_id)} · ${e.item || ''}${e.supplier ? ' · ' + e.supplier : ''}`, 'inv:' + e.invoice_id, invCode(e.invoice_id), invHref(e.invoice_id), !!i && !i.is_quote && i.origin !== BUCKET_ORIGIN)
   }
   for (const x of d.inputs || []) consider('inputs', x, qtyAmt(x), x.payment_date || x.purchase_date, String(x.description || ''), `SUPPLY · ${x.category ? x.category + ' · ' : ''}${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, 'inputs', 'SUPPLIES', '/supplies', true)
-  for (const g of d.goods || []) consider('goods', g, qtyAmt(g), g.payment_date || g.purchase_date, String(g.description || ''), `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, 'goods', 'GOODS', '/goods', true)
+  for (const g of d.goods || []) consider('assets', g, qtyAmt(g), g.payment_date || g.purchase_date, String(g.description || ''), `GOODS · ${g.description || ''}${g.supplier ? ' · ' + g.supplier : ''}`, 'assets', 'GOODS', '/goods', true)
   for (const x of d.inventory || []) consider('inventory', x, qtyAmt(x), x.payment_date || x.purchase_date, String(x.description || ''), `STOCK · ${x.description || ''}${x.supplier ? ' · ' + x.supplier : ''}`, 'inventory', 'ESTOQUE', '/inventory', x.source_type === 'PURCHASED')
 
   // ── 2 · o que o balde escreveu por linha do banco (no balde ou já atribuído) ──
@@ -163,7 +163,7 @@ export function computeBucketOrders(d: BucketOrdersData): BucketOrdersResult {
   for (const x of d.inputs || []) if (x.purchase_group && lineIds.has(String(x.purchase_group))) addMade(x.purchase_group, { table: 'inputs', id: String(x.id), label: clip(x.description, 70), amount: qtyAmt(x), href: '/supplies', inBucket: false, where: 'SUPPLIES' })
   for (const x of d.inventory || []) if (x.purchase_group && lineIds.has(String(x.purchase_group))) addMade(x.purchase_group, { table: 'inventory', id: String(x.id), label: clip(x.description, 70), amount: qtyAmt(x), href: '/inventory', inBucket: false, where: 'ESTOQUE' })
   for (const f of d.fixed || []) if (f.bank_transaction_id && lineIds.has(String(f.bank_transaction_id))) addMade(f.bank_transaction_id, { table: 'fixed_cost_expenses', id: String(f.id), label: clip(f.description, 70), amount: num(f.amount), href: f.supplier_id ? '/costs/fixed/' + f.supplier_id : '/costs/fixed', inBucket: false, where: 'FIXO' })
-  for (const x of d.expenses || []) { const ref = String(x.payment_reference || ''); if (ref.startsWith('bank:') && lineIds.has(ref.slice(5))) addMade(ref.slice(5), { table: 'expenses', id: String(x.id), label: clip(x.description, 70), amount: num(x.amount), href: '/staff', inBucket: false, where: 'PESSOAL' }) }
+  for (const x of d.expenses || []) { const ref = String(x.payment_reference || ''); if (ref.startsWith('bank:') && lineIds.has(ref.slice(5))) addMade(ref.slice(5), { table: 'staff_expenses', id: String(x.id), label: clip(x.description, 70), amount: num(x.amount), href: '/staff', inBucket: false, where: 'PESSOAL' }) }
 
   const isBucketLine = (b: any) => b.match_engine === ENGINE_BUCKET && b.match_status === 'MATCHED'
   const bucketLines = live.filter((b: any) => isBucketLine(b) && !b.pending && num(b.amount) > 0.005 && okDay(b.date))
@@ -365,10 +365,10 @@ export async function auditBucketOrders(db: any): Promise<BucketOrdersResult> {
     fetchAll(db, 'rides', 'id, project_name'),
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, purchase_group, order_number, paid_from, paid_to, cancel_status'),
     fetchAll(db, 'inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, purchase_group, order_number, paid_from, paid_to, cancel_status'),
-    fetchAll(db, 'goods', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, purchase_group, order_number, paid_from, paid_to, cancel_status'),
+    fetchAll(db, 'assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, purchase_group, order_number, paid_from, paid_to, cancel_status'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, purchase_group, order_number, paid_from, paid_to, cancel_status'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, bank_transaction_id', (q: any) => q.not('bank_transaction_id', 'is', null)),
-    fetchAll(db, 'expenses', 'id, description, amount, payment_date, expense_date, payment_reference', (q: any) => q.like('payment_reference', 'bank:%')),
+    fetchAll(db, 'staff_expenses', 'id, description, amount, payment_date, expense_date, payment_reference', (q: any) => q.like('payment_reference', 'bank:%')),
     fetchAll(db, 'suppliers', 'id, name, aliases, is_dealership'),
     optional(fetchAll(db, 'auto_book_mail', 'id, booked_table, booked_id', (q: any) => q.not('booked_id', 'is', null)), 'auto_book_mail'),
   ])

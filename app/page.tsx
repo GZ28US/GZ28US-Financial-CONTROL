@@ -145,9 +145,9 @@ export default function HomePage() {
     const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
     const invIds = (invs || []).map((i: any) => String(i.id))
     const [pays, exps, parts] = await Promise.all([
-      childRows('invoice_payments', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
+      childRows('invoice_incomes', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
       childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier', invIds),
-      childRows('invoice_parts', 'id, invoice_id, unit_price, quantity', invIds),
+      childRows('invoice_items', 'id, invoice_id, unit_price, quantity', invIds),
     ])
 
 
@@ -168,7 +168,7 @@ export default function HomePage() {
       supabase.from('clients').select('id, name'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
-      supabase.from('expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
+      supabase.from('staff_expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
       supabase.from('seasons').select('id, staff_id'),
       supabase.from('staff').select('id, name'),
     ])

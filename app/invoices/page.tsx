@@ -83,9 +83,9 @@ export default function InvoicesPage() {
     let paysBy = new Map<string, any[]>(), expsBy = new Map<string, any[]>(), partsBy = new Map<string, any[]>(), svcsBy = new Map<string, any[]>()
     if (ids.length) {
       const [pRes, eRes, prRes, sRes] = await Promise.all([
-        supabase.from('invoice_payments').select('invoice_id, amount, paid_at').in('invoice_id', ids),
+        supabase.from('invoice_incomes').select('invoice_id, amount, paid_at').in('invoice_id', ids),
         supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', ids),
-        supabase.from('invoice_parts').select('invoice_id, unit_price, quantity').in('invoice_id', ids),
+        supabase.from('invoice_items').select('invoice_id, unit_price, quantity').in('invoice_id', ids),
         supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', ids),
       ])
       paysBy = group(pRes.data); expsBy = group(eRes.data); partsBy = group(prRes.data); svcsBy = group(sRes.data)
