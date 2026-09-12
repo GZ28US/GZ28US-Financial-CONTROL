@@ -45,7 +45,10 @@ type Client = {
   preferred_message_method: string | null
 }
 
-type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; paid_from?: string | null; mirror_expense_id?: string | null }
+// paid_from SAIU DO TIPO (11/set): a única coisa que lia paid_from de PEÇA era a
+// conta do que o cliente pagou direto, e o CLIENT saiu do app US. A coluna segue no
+// banco até a onda que a derruba; o tipo não promete mais um campo que a tela não usa.
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; mirror_expense_id?: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
@@ -112,7 +115,6 @@ export default function ViewInvoicePage() {
   const [ride, setRide] = useState<any>(null)
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [parts, setParts] = useState<Part[]>([])
-  const [clientParts, setClientParts] = useState<Part[]>([])
   // item (lowercased) -> manufacturer part number, for the SHOW PART NUMBERS display.
   const [pnByItem, setPnByItem] = useState<Map<string, string>>(new Map())
   const [services, setServices] = useState<Service[]>([])
@@ -188,14 +190,13 @@ export default function ViewInvoicePage() {
     const { data: backup } = await supabase.from('quote_backups').select('*').eq('invoice_id', invoiceId).order('archived_at', { ascending: false }).limit(1).maybeSingle()
     if (backup) setQuoteBackup(backup)
     const { data: partsData } = await supabase.from('invoice_parts').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    // A linha PAGA PELO CLIENTE agora é linha de verdade no banco (09/set), e não
-    // pode entrar na lista comum: ela tem bloco próprio na tela e fica FORA da
-    // base do imposto e do desconto. Separar na carga é o que mantém o número
-    // idêntico ao de antes — só a origem mudou, de soma na hora para linha lida.
-    if (partsData) {
-      setParts(partsData.filter((p: any) => !p.mirror_expense_id))
-      setClientParts(partsData.filter((p: any) => !!p.mirror_expense_id))
-    }
+    // PAGO PELO CLIENTE SAIU DO APP US (Márcio, 11/set/2026). A carga separava os
+    // items espelhados da despesa do cliente (mirror_expense_id) pra dar bloco próprio
+    // a eles, fora da base do imposto e do desconto. O elo está preenchido em 0 de 804
+    // linhas — nunca houve um item espelho — e a máquina que os criava saiu; o filtro
+    // fica de pé enquanto a coluna existir no banco, pra nenhuma linha teimosa aparecer
+    // duas vezes na invoice impressa.
+    if (partsData) setParts(partsData.filter((p: any) => !p.mirror_expense_id))
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData)
     const { data: paymentsData } = await supabase.from('invoice_payments').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
@@ -444,11 +445,6 @@ export default function ViewInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Invoice not found.</p></main>
   )
 
-  // Soma das despesas que o CLIENTE pagou direto ao fornecedor.
-  function clientPaidTotalFor(list: { paid_from?: string | null; price: number; quantity?: number | null; tax?: number | null; extra?: number | null }[]) {
-    return list.filter(e => String(e.paid_from || '').trim().toUpperCase() === 'CLIENT')
-      .reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
-  }
   const showPartNumbers = !!invoice.show_part_numbers
   const pnFor = (p: { source_item?: string | null; description: string }) => pnByItem.get(((p.source_item || p.description) || '').trim().toLowerCase()) || ''
   const partsSubTotal = parts.reduce((s, p) => s + p.unit_price * p.quantity, 0)
@@ -458,25 +454,15 @@ export default function ViewInvoicePage() {
   const partsAndServicesTotal = partsTotal + servicesTotal
   const hasDiscount = (invoice.global_discount || 0) > 0
   const globalDiscountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
-  // O valor do cliente vem da LINHA gravada, não mais somado da despesa na hora.
-  // Mesmo número, outra origem — é a ordem dele de 09/set: "tem que estar gravado
-  // no banco certo", e a tela lê o que está lá.
-  const clientPartsTotal = clientParts.reduce((s2, p) => s2 + p.unit_price * p.quantity, 0)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount + clientPartsTotal
+  const grandTotal = partsAndServicesTotal - globalDiscountAmount
   // Match the edit page exactly: income counts only payments explicitly marked
   // PAID (paid_at), and the Florida parts tax is itself an expense GZ28 owes —
   // included in both the global and paid expense totals.
-  // PAGO PELO CLIENTE (Márcio, 06/set/2026): ele pôs a peça no cartão dele e pagou
-  // o fornecedor direto. Não houve movimentação financeira nossa, então o valor
-  // entra dos DOIS lados no mesmo montante — item e receita — e a linha fecha com
-  // margem zero. Fica FORA da base da FL tax e FORA do desconto global (decisão
-  // dele): dentro, a GZ28US passaria a dever imposto sobre uma venda sem margem, e
-  // o desconto jogaria a linha pra prejuízo.
-  const clientPaidExpenses = expenses.filter(e => String(e.paid_from || '').trim().toUpperCase() === 'CLIENT')
-  const clientPaidTotal = clientPartsTotal
-  // NÃO se soma mais nada por fora: a renda espelho já é linha em invoice_payments,
-  // já vem com baixa, e portanto JÁ está dentro destes dois. Somar de novo era a
-  // contagem dupla que este trabalho existe para evitar.
+  // A invoice impressa tinha três lugares do cliente que pagava o fornecedor direto: o
+  // clone da despesa no bloco PARTS, a linha «ITEMS PAID DIRECTLY BY THE CLIENT» acima do
+  // GRAND TOTAL e a entrada de margem zero no INCOME. Os três saíram em 11/set com a
+  // opção CLIENT — é regra do app do BR. Nenhuma invoice do US tinha uma: ZERO despesas
+  // com paid_from CLIENT nas 1.689 linhas, ZERO items espelhados nas 804.
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + p.amount, 0)
   const totalIncomeAll = payments.reduce((s, p) => s + p.amount, 0)
   const balance = totalPaid - grandTotal
@@ -938,22 +924,10 @@ export default function ViewInvoicePage() {
             </div>
           )}
 
-          {(parts.length > 0 || clientPaidTotal > 0) && (
+          {parts.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">PARTS</label>
               <div className={sectionClass}>
-                {/* CLONE da despesa paga pelo cliente. Linha derivada: não existe em
-                    invoice_parts, por isso não se edita aqui — a verdade mora na
-                    despesa, e mexer nela move os dois lados juntos. */}
-                {clientPaidExpenses.map((e) => (
-                  <div key={'cli-' + e.id} className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-base font-bold truncate" title={e.item || ''}>{e.item || e.supplier || '—'}</p>
-                      <p className="text-sm text-gray-400">PAID BY THE CLIENT · cloned from the expense — not editable</p>
-                    </div>
-                    <p className="font-bold">{formatUSD(e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0))}</p>
-                  </div>
-                ))}
                 {(() => { const seen = new Set<string>(); return parts.map((part) => {
                   if (part.kit_group) {
                     if (seen.has(part.kit_group)) return null
@@ -1022,23 +996,13 @@ export default function ViewInvoicePage() {
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>ITEMS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
             {hasDiscount && <div className={rowClass}><span className={labelClass}>GLOBAL DISCOUNT ({invoice.global_discount}%)</span><span className="font-bold text-red-400">- {formatUSD(globalDiscountAmount)}</span></div>}
-            {clientPaidTotal > 0 && <div className={rowClass}><span className={labelClass}>ITEMS PAID DIRECTLY BY THE CLIENT</span><span className="font-bold">{formatUSD(clientPaidTotal)}</span></div>}
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>
 
-          {!invoice.is_quote && (payments.length > 0 || clientPaidTotal > 0) && (
+          {!invoice.is_quote && payments.length > 0 && (
             <div>
               <label className="block mb-3 text-lg font-bold">INCOME</label>
               <div className={sectionClass}>
-                {clientPaidTotal > 0 && (
-                  <div className={`flex items-center justify-between gap-4 px-4 py-3 ${payments.length ? 'border-b border-gray-700' : ''}`}>
-                    <div>
-                      <p className="text-base font-bold">{formatUSD(clientPaidTotal)}</p>
-                      <p className="text-sm text-gray-400">PAID DIRECTLY BY THE CLIENT · {clientPaidExpenses.length} item{clientPaidExpenses.length > 1 ? 's' : ''}</p>
-                      <p className="text-sm text-gray-500">The client paid the supplier — no money moved through GZ28US.</p>
-                    </div>
-                  </div>
-                )}
                 {payments.map((payment, index) => {
                   const isPaid = !!payment.paid_at
                   return (

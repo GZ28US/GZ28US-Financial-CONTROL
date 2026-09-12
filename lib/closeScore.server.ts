@@ -46,14 +46,15 @@ export const CLOSE_RULES = {
 // Métodos que por definição não passam na Regions (crédito de loja, meio brasileiro). CASH NÃO entra: é o padrão do
 // formulário (components/PaymentFields.tsx defaultPayment / paymentFromRow) e há wire de carro gravado como CASH.
 const NON_BANK_METHODS = new Set(['TEMU CREDIT', 'PIX'])
-const BR_PAID = new Set(['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'])   // a régua brPaid do candidatePool: nunca passa na Regions
+const BR_PAID = new Set(['GZ28BR'])   // a régua brPaid do candidatePool: nunca passa na Regions — sócio e cliente saíram do vocabulário em 11/set
 const OWNED = new Set(['MATCHED', 'TRANSFER', 'IGNORED'])
 
-// QUEM PAGOU — CÓPIA LITERAL de whoPaid (lib/financials.ts, FIN 0.14.2). Copiada, não importada, porque lib/financials.ts é
+// QUEM PAGOU — CÓPIA LITERAL de whoPaid (lib/financials.ts, FIN 0.15.0). Copiada, não importada, porque lib/financials.ts é
 // 'use client'. Mexeu lá, mexe aqui: o teste do placar compara as duas em todas as linhas de produção.
-const PAYERS = ['GZ28US', 'GZ28BR', 'BETO', 'HERALDO', 'CLIENT']
+// São dois pagadores desde 11/set (CLIENT, RAFA, BETO e HERALDO saíram do app US; nenhuma linha os usava).
+const PAYERS = ['GZ28US', 'GZ28BR']
 export function whoPaidCopy(r: { paid_from?: string | null; source?: string | null }): string | null {
-  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; if (s === 'RAFA') return 'GZ28BR'; return PAYERS.includes(s) ? s : null }
+  const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; return PAYERS.includes(s) ? s : null }
   return norm(r.paid_from) || norm(r.source)
 }
 

@@ -468,8 +468,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       // a mesma régua de «paga no app, sem banco»; o feed tem que enxergar a data (feed cego não julga). CASAR grava
       // data e elo pela rota (A CONFERIR com DESFAZER). Linha dentro de pedido: o banco cobrou o pedido inteiro — fica pra gente.
       const amt = expLine(e), ed = String(e.expense_date).slice(0, 10), toks = nameTok(e.supplier)
-      // Paga por sócio/BR/cliente nunca passou na Regions (mesma exclusão do candidatePool); e o valor tem que ser único também do lado do APP.
-      const outside = ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].includes(String(e.paid_from || '')) || String((e as any).paid_to || '') === 'GZ28BR'
+      // Paga pela BR nunca passou na Regions (mesma exclusão do candidatePool; sócio e cliente saíram do vocabulário em 11/set); e o valor tem que ser único também do lado do APP.
+      const outside = String(e.paid_from || '') === 'GZ28BR' || String((e as any).paid_to || '') === 'GZ28BR'
       const appTwin = !outside && amt > 0 && [...d.invExpenses.filter((x: any) => x.id !== e.id && !x.payment_date), ...d.fixedExpenses.filter((x: any) => !x.payment_date), ...d.goods.filter((x: any) => !x.payment_date), ...d.inputs.filter((x: any) => !x.payment_date)].some((x: any) => { const a2 = 'item' in x ? expLine(x) : 'unit_price' in x ? qtyLine(x) : Number(x.amount) || 0; const dt = String(x.expense_date || x.purchase_date || '').slice(0, 10); return Math.abs(a2 - amt) < 0.011 && dt && dayDiff(dt, ed) <= 10 })
       const cands = !feedBlind && !outside && !appTwin && ed <= feedUntil && !e.purchase_group && amt > 0 && toks.length ? bank.lines.filter(x => { if (x.s !== 'NEW' || Math.abs(x.a - amt) >= 0.011 || dayDiff(x.d, ed) > 10) return false; const lt = new Set(nameTok(x.n)); return toks.some(t => lt.has(t)) }) : []
       // Casamento desfeito no card verde (DESFEITO na memória, BL 1.5.1): a Regions ainda tem a linha, mas o par foi recusado — não é mais «certo».
@@ -828,7 +828,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   {
     // Sinais, do mais forte pro mais fraco:
     //   casada com a Regions      → GZ28US, certo (o banco provou)          [bulk PREENCHER CERTOS]
-    //   antes da conta abrir      → NÃO foi GZ28US; BR ou Beto (humano decide)
+    //   antes da conta abrir      → NÃO foi GZ28US; então é GZ28BR (humano decide)
     //   não consta na Regions     → provavelmente não foi GZ28US (item de pedido somado pode enganar)
     //   consta na Regions (±10d)  → provavelmente GZ28US — o motor/MATCH confirma
     //   campo SOURCE              → sugestão fraca
@@ -876,8 +876,9 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       else if (srcMapped === 'GZ28US' && inRegions(amount, date) !== false) { certain = true; suggest = 'GZ28US'; extra = 'o campo antigo SOURCE já dizia: GZ28US'; signal = 'source' }
       else if (srcMapped === 'GZ28US') { suggest = 'GZ28US'; extra = 'SOURCE antigo diz GZ28US, mas não consta na Regions — conferir'; signal = 'conflict' }
       else if (gid && gBank !== undefined) { suggest = 'GZ28US'; extra = 'pedido casado com a Regions (total do pedido mudou — conferir)'; signal = 'present' }
-      // Antes da conta abrir NÃO foi GZ28US — mas GZ28BR × BETO é decisão de gente:
-      // sem palpite pré-carregado (revisão #5).
+      // Antes da conta abrir NÃO foi GZ28US — e desde 11/set o único outro pagador é a
+      // GZ28BR; ainda assim segue sem palpite pré-carregado (revisão #5): a data antes
+      // da Regions não prova de qual caixa saiu.
       // WIRE + TAXA (DC 1.48.0 → 1.51.0): a linha traz a taxa do wire dentro; o banco mostra o wire limpo no mesmo dia. Desde a decisão de 10/set
       // (todo lançamento é do AUTO-BOOK) o Data Checker não tira a taxa de registro nenhum: sugere o pagador, sem CERTO, e aponta «O wire tem dono?».
       else if (table === 'invoice_expenses' && (() => { const w = wireOf(r, amount); return !!w && wireClaims.get(String(w.id)) === 1 })()) {
@@ -887,7 +888,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       }
       // O RECIBO (DC 1.48.0): documento brasileiro provado entra pela rota (AUTO); sócio, gente ou palpite vem pré-carregado — depois de toda prova dura, antes do pré-Regions.
       else if (rcpHint) { suggest = rcpHint; extra = 'o recibo mostra ' + (rcp!.payer ? 'o pagador «' + rcp!.payer + '»' : 'um documento ' + (rcp!.currency || rcp!.method || '')) + ' — ' + rcpHint + '?'; signal = 'source' }
-      else if (date && date < (bank.opened || REGIONS_OPENED)) { extra = 'antes da Regions abrir — GZ28BR ou BETO?'; signal = 'pre-open' }
+      else if (date && date < (bank.opened || REGIONS_OPENED)) { extra = 'antes da Regions abrir — a conta nem existia, então foi a GZ28BR?'; signal = 'pre-open' }
       else {
         const hitItem = inRegions(amount, date)
         const hitGroup = gid && gSum ? inRegions(gSum, date) : null
@@ -921,7 +922,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'paid-from', title: 'Quem pagou esta conta?', blocks: 'o caixa por banco sai errado e a conciliação não fecha',
-      why: 'Quem pagou define a conta corrente com a GZ28BR e o empréstimo de sócio (Beto) no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia = GZ28BR ou BETO (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
+      why: 'Quem pagou define a conta corrente com a GZ28BR no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. São dois pagadores, e só: GZ28US e GZ28BR (o Márcio tirou CLIENT, RAFA, BETO e HERALDO em 11/set — conta paga do bolso de sócio vai morar em outra área do app quando existir). Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia, então não foi GZ28US (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }

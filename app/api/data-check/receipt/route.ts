@@ -42,13 +42,14 @@ const resolveName = (registry: { name: string; res: RegExp[] }[], raw: string): 
 const parseUrls = (u: any): string[] => { try { const j = typeof u === 'string' ? JSON.parse(u) : u; return Array.isArray(j) ? j.map(String) : [String(u)] } catch { return [String(u)] } }
 const addDays = (iso: string, d: number) => new Date(Date.parse(iso.slice(0, 10)) + d * 864e5).toISOString().slice(0, 10)
 
-// QUEM PAGOU, pelo que o recibo mostra. Sócio, cliente e gente vêm ANTES (sugestão); GZ28BR só com documento brasileiro
+// QUEM PAGOU, pelo que o recibo mostra. Gente vem ANTES (sugestão); GZ28BR só com documento brasileiro
 // pago pela BR (ou sem pagador impresso — o instrumento é dela); GZ28US nunca daqui.
+// SÓCIO SAIU (11/set): BETO e HERALDO eram palpite de pagador, e pagador de sócio não existe mais no app US
+// («quando tiver, vão ficar em outra área do app»). Palpite de um valor que o seletor não oferece é palpite
+// que ninguém pode aceitar. Nenhuma das 207 leituras guardadas sugeriu um dos dois (medido em 11/set).
 function payerVerdict(r: { payer: string; method: string; currency: string }): { paid_from: string | null; hint: string | null } {
   const payer = r.payer.toUpperCase(), method = r.method.toUpperCase(), cur = r.currency.toUpperCase()
   const brDoc = cur === 'BRL' || /PIX|TED|BOLETO|\bDOC\b/.test(method)
-  if (/\bBETO\b|ROBERTO/.test(payer)) return { paid_from: null, hint: 'BETO' }
-  if (/HERALDO/.test(payer)) return { paid_from: null, hint: 'HERALDO' }
   if (/MARCIO|MÁRCIO|\bDEMA\b/.test(payer)) return { paid_from: null, hint: brDoc ? 'GZ28BR' : 'GZ28US' }
   if (brDoc && (!payer || /GZ28 ?BR|GZ28BR|SPEEDSHOP BRASIL|GALP[AÃ]O Z28/.test(payer))) return { paid_from: 'GZ28BR', hint: null }
   if (brDoc) return { paid_from: null, hint: 'GZ28BR' }   // documento brasileiro pago por outra empresa/pessoa: palpite, não prova

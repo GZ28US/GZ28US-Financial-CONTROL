@@ -170,13 +170,10 @@ export async function candidatePool(db: any): Promise<Pool> {
   const realInvoice = (invoiceId: string) => { const i = invById.get(invoiceId); return !!i && !i.is_quote }
   const out: Cand[] = [], inn: Cand[] = []
   // Pagou/recebeu o Brasil ⇒ nunca passa na Regions. Datado no futuro ⇒ ainda não aconteceu.
-  // Pago por sócio (BETO/HERALDO/RAFA) também nunca passou na Regions — fora
-  // do pool igual ao GZ28BR (caso do histórico do Humberto, 26/ago).
-  // Quem pagou por fora da Regions nunca casa com o extrato. CLIENT entra aqui pelo
-// motivo mais forte de todos: a compra foi no cartão do próprio cliente — não existe
-// linha nenhuma no nosso banco pra casar, e sem este corte ela ficaria pra sempre
-// na fila do Bank Link, podendo ser auto-casada com a cobrança errada.
-const brPaid = (r: any) => ['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'].includes(String(r.paid_from || '')) || r.paid_to === 'GZ28BR'
+  // Quem pagou por fora da Regions nunca casa com o extrato — e desde 11/set só existe
+// um pagador de fora: a GZ28BR. Sócio (BETO/HERALDO/RAFA) e CLIENT saíram do
+// vocabulário do app US sem deixar linha, então saíram deste corte junto.
+const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to === 'GZ28BR'
   const future = (d: string | null) => !!d && d.slice(0, 10) > today
   // Valor negativo no app = estorno/crédito: vai pro pool OPOSTO com o valor absoluto.
   const push = (arr: Cand[], c: Cand) => {

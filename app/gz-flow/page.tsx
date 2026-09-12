@@ -31,7 +31,9 @@ export default function GzFlowPage() {
     //   paid_from US/…  + paid_to GZ28BR → GZ28US pagou conta do BR (aumenta)
     //   paid_from GZ28BR + paid_to GZ28BR → interna do BR, fora do flow.
     // `source` continua no filtro para linhas legadas/automatizadas sem paid_from.
-    const FLOW = `paid_from.eq.${GZ},source.eq.${GZ},paid_to.eq.${GZ},paid_from.eq.RAFA,source.eq.RAFA`   // RAFA = conta corrente BR (decisão de 22/ago); SOURCE legado também (whoPaid)
+    // O apelido RAFA saiu em 11/set com o resto do vocabulário: ZERO linhas com RAFA em
+    // paid_from ou source, em todas as sete tabelas (medido pela REST) — o filtro não perde nada.
+    const FLOW = `paid_from.eq.${GZ},source.eq.${GZ},paid_to.eq.${GZ}`   // SOURCE legado conta (whoPaid)
     const [
       { data: pays }, { data: invExps }, { data: goods }, { data: goodExps },
       { data: inputs }, { data: inventory }, { data: fixed }, { data: staff },
@@ -48,7 +50,7 @@ export default function GzFlowPage() {
     // Classify one expense row: 'PAID' (BR paid a non-BR bill), 'GOT' (someone
     // else paid a BR bill — BR owes us more), or null (BR internal / unrelated).
     const flowSide = (r: any): 'PAID' | 'GOT' | null => {
-      const by = whoPaid(r) || ''   // FIN 0.14.2: a mesma régua do DFC e do Balanço (SOURCE legado, RAFA = BR)
+      const by = whoPaid(r) || ''   // FIN 0.15.0: a mesma régua do DFC e do Balanço (SOURCE legado conta)
       const bill = r.paid_to || ''
       if (bill === GZ && by !== GZ) return 'GOT'
       if (by === GZ && bill !== GZ) return 'PAID'

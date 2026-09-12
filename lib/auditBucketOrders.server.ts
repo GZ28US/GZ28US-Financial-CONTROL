@@ -15,7 +15,7 @@
 //
 // CANDIDATO HUMANO = a régua do candidatePool (lib/bankReconcile.server.ts:124-249), nas tabelas de compra que têm order_number:
 // invoice_expenses de invoice REAL (existe, não é quote, não é o balde), inputs, goods, inventory PURCHASED; valor > 0; não pago por
-// fora da Regions (GZ28BR/BETO/HERALDO/RAFA/CLIENT, :176); LIVRE — nenhuma linha viva do banco aponta pra ela nem pro grupo dela
+// fora da Regions (só GZ28BR desde 11/set, :176); LIVRE — nenhuma linha viva do banco aponta pra ela nem pro grupo dela
 // (:143-149, :184); e não nasceu do motor (purchase_group = id de linha do banco, marcador «Bank Link)», order_number «bank:»). O nome
 // bate (nameHit / shortNameHit, :296 / :365) e a data (payment_date, senão a da compra — :190, :210, :212, :213) fica a até 10 dias
 // da data POSTADA do banco (bank_transactions.date) ou da AUTORIZAÇÃO do cartão (raw->>authorized_date, só quando vem 0 a 10 dias
@@ -71,7 +71,7 @@ export const WINDOW_DAYS = 10            // data da linha humana × data postada
 export const AUTH_LAG_MAX_DAYS = 10      // autorização só vale se vier 0 a 10 dias antes da postada
 export const REFUND_WINDOW_DAYS = 30     // cobrança → entrada igual do mesmo comerciante (mesmo dia ou depois)
 const SUBSET_MIN = 2, SUBSET_MAX = 6, SUBSET_GROUP_MAX = 8, PART_MAX = 6
-const BR_PAID = new Set(['GZ28BR', 'BETO', 'HERALDO', 'RAFA', 'CLIENT'])   // a régua do candidatePool (brPaid, :176)
+const BR_PAID = new Set(['GZ28BR'])   // a régua do candidatePool (brPaid, :176); sócio e cliente saíram do vocabulário em 11/set
 
 type Via = 'PEDIDO' | 'PEDIDO_PARTE' | 'DIA' | 'DIA_PARTE'
 const VIA_RANK: Record<Via, number> = { PEDIDO: 0, PEDIDO_PARTE: 1, DIA: 2, DIA_PARTE: 3 }

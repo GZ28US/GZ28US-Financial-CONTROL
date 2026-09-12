@@ -1245,14 +1245,12 @@ export default function EditInvoicePage() {
     const payDate = isValidDate(editingPurchaseDate) ? editingPurchaseDate : ''
     // Um pedido = um grupo: o ORDER NUMBER editado aqui vale pra TODAS as linhas.
     const orderNo = editingPurchaseOrderNumber.trim()
-    // Quem pagou foi o CLIENTE não se perde aqui: o seletor deste editor é o SOURCE
-    // (só GZ28US/GZ28BR), e copiá-lo por cima apagaria a marcação — junto com a
-    // receita espelho, o corte do caixa e a exclusão da fila do banco.
-    const guardaCliente = (e: { paid_from?: string | null }) =>
-      String(e.paid_from || '').trim().toUpperCase() === 'CLIENT' ? e.paid_from as string : editingPurchaseSource
+    // O seletor deste diálogo é o SOURCE (GZ28US/GZ28BR) e ele vale como PAID FROM do
+    // grupo. Havia aqui uma guarda que preservava paid_from='CLIENT' pra não apagar a
+    // marcação do cliente; CLIENT saiu do app US em 11/set e nenhuma linha o usava.
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, source: editingPurchaseSource, paid_from: guardaCliente(e), order_number: orderNo }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, source: editingPurchaseSource, paid_from: editingPurchaseSource, order_number: orderNo }
         : e
     ))
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
@@ -1263,7 +1261,7 @@ export default function EditInvoicePage() {
           expense_date: payDate || null,
           payment_date: payDate || null,
           source: editingPurchaseSource || DEFAULT_SOURCE,
-          paid_from: guardaCliente(exp) || DEFAULT_SOURCE,
+          paid_from: editingPurchaseSource || DEFAULT_SOURCE,
           order_number: orderNo || null,
         }).eq('id', exp.id)
       }

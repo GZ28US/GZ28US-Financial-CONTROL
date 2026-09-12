@@ -355,10 +355,6 @@ export const SEQUENCIA: Etapa[] = [
       { id: '8.14', estado: 'À MÃO', desde: '03/09/2026',
         texto: 'No app do BR o valor é em REAIS; o dólar vai em amount_usd, convertido pela taxa da invoice. Depois de pago, o valor congela.',
         fala: 'depois que está pago, tem que ficar o valor que foi pago no dia, não pode variar mais.' },
-      { id: '8.15', estado: 'NO AR', desde: '09/09/2026',
-        texto: 'PAID FROM CLIENT: despesa, item e receita carregam o MESMO número, gravado no banco — não calculado na tela —, com o mesmo comprovante.',
-        fala: 'não é a tela que tem que derivar, tem que estar gravado no banco certo.',
-        onde: 'lib/clientPaidMirror.server.ts · app/api/cron/invoice-receipts' },
     ],
   },
   {
