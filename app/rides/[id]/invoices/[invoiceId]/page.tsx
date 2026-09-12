@@ -45,7 +45,10 @@ type Client = {
   preferred_message_method: string | null
 }
 
-type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; paid_from?: string | null; mirror_expense_id?: string | null }
+// paid_from SAIU DO TIPO (11/set): a única coisa que lia paid_from de PEÇA era a
+// conta do que o cliente pagou direto, e o CLIENT saiu do app US. A coluna segue no
+// banco até a onda que a derruba; o tipo não promete mais um campo que a tela não usa.
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; mirror_expense_id?: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }

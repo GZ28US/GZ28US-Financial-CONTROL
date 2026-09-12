@@ -828,7 +828,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   {
     // Sinais, do mais forte pro mais fraco:
     //   casada com a Regions      → GZ28US, certo (o banco provou)          [bulk PREENCHER CERTOS]
-    //   antes da conta abrir      → NÃO foi GZ28US; BR ou Beto (humano decide)
+    //   antes da conta abrir      → NÃO foi GZ28US; então é GZ28BR (humano decide)
     //   não consta na Regions     → provavelmente não foi GZ28US (item de pedido somado pode enganar)
     //   consta na Regions (±10d)  → provavelmente GZ28US — o motor/MATCH confirma
     //   campo SOURCE              → sugestão fraca
