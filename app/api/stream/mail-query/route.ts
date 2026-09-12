@@ -1,23 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken, mailProvider, listGmailIds } from '@/lib/streamMail.server'
+import { pastaDoProvedor, termoDeBuscaGraph } from '@/lib/mailFolders'
 
 // Read-only mailbox queries for the assistant's daily sweeps — the service key
 // and Graph tokens stay server-side; callers authenticate with the same read
 // key as the WhatsApp read routes. slot picks the stream_mail_auth row.
 //   op=folders                  → folder tree (3 levels) with item counts
 //   op=list&folder=<id|name>    → newest messages in a folder
-//   op=search&q=<text>          → $search across the mailbox
+//   op=search&q=<text>          → $search across the mailbox (+ phrase=1 tenta a
+//                                 frase exata, ver o bloco do op=search)
 //   op=msg&id=<messageId>       → one message with its full text body
 //   op=attachments&id=<msgId>   → the message's attachments (name, type, size)
 //   op=attach&id=<msgId>&att=<attachmentId> → one attachment as base64, ready to
 //                                 hand to /api/read-doc (o documento anexado é a
 //                                 verdade — nota, invoice, boleto, contrato)
+//
+// PEDIDO MAL FEITO DEVOLVE 400 COM O MOTIVO, NUNCA 502 (11/set/2026, ordem dele
+// no PACOTE): 502 é "o app quebrou" e script que não confere erro lê como "zero
+// resultados". `folder` é traduzido por provedor (spam ↔ junkemail ↔ SPAM) e as
+// aspas saem do `q` do Graph — as duas regras moram em lib/mailFolders.ts.
+// O CONTRÁRIO TAMBÉM É LEI: recusa de INFRA do provedor (401/403 de token e
+// consentimento, 429 de throttle) continua saindo 5xx — ver `culpaDoChamador`.
+// Vale nos dois ramos, Graph e Gmail; fora do `list`/`search` (msg, attach,
+// mkdir, move, rmdir) o contrato de erro é o antigo, não foi mexido.
+// Sem as aspas a busca é por PALAVRA, não por frase exata: a resposta diz
+// (`quotesRemoved` + `warning`) e `phrase=1` tenta a frase.
 
 export const dynamic = 'force-dynamic'
 
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
 const G = 'https://graph.microsoft.com/v1.0'
+
+// ── DE QUEM É A CULPA (11/set/2026, conserto depois da revisão) ─────────────
+// 4xx do provedor NÃO é tudo "pedido mal feito". 400 (termo ou id torto) e 404
+// (pasta que esta caixa não tem) são de quem chamou e viram 400 aqui. Já 401 e
+// 403 (token revogado, consentimento caído) e 429 (throttle do Graph, que morde
+// justamente o $search em varredura dia-a-dia) são falha de INFRA e continuam
+// 502 — é o 5xx que acende o alerta da Vercel (foi ele que descobriu o bug das
+// aspas em 10/set) e é nele que os scripts das rodadas tentam de novo. Carimbar
+// throttle de "pedido errado" apagaria o alerta e faria a sessão concluir que
+// não há e-mail quando a caixa só estava engasgada.
+const culpaDoChamador = (status: number) => status === 400 || status === 404
 
 const slim = (m: any) => ({
   id: m.id,
@@ -66,9 +90,29 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
   }
   if (op === 'list' || op === 'search') {
     const top = Math.min(50, parseInt(p.get('limit') || '25') || 25)
-    const folder = p.get('folder') || 'INBOX'
     const q = p.get('q')
     if (op === 'search' && !q) return NextResponse.json({ error: 'missing q' }, { status: 400 })
+    // `folder=junkemail` (nome do Outlook) numa caixa Google virava 502 desde o
+    // commit `4e78812` — e antes dele era pior: 200 com lista vazia, calado.
+    // Agora traduz ("spam" → `SPAM`) e, se não reconhecer, 400 com os válidos
+    // DAQUELA caixa (o rótulo de usuário vai pelo id, e o 400 já traz a lista).
+    // Só no `list`: a busca ignora `folder`, e quem já manda o parâmetro à toa
+    // não pode passar a levar 400.
+    let folder = 'INBOX', folderTraduzida = false
+    if (op === 'list') {
+      const alvo = pastaDoProvedor(p.get('folder') || '', 'gmail')
+      if (!alvo.ok) {
+        const r = await fetch(`${API}/labels`, { headers: GH }).catch(() => null)
+        const rotulos = r ? await r.json().catch(() => null) : null
+        return NextResponse.json({
+          error: alvo.motivo, provider: 'gmail', account: auth.account,
+          validFolders: alvo.validas,
+          labels: (rotulos?.labels || []).map((l: { id: string; name: string }) => ({ id: l.id, name: l.name })),
+        }, { status: 400 })
+      }
+      folder = alvo.folder
+      folderTraduzida = alvo.traduzida
+    }
     // Página por página (10/set/2026): o Gmail devolve página curta com mais
     // resultado atrás, e "veio menos que o limite" NÃO quer dizer janela completa
     // (caixa 5: 122 achadas por janela larga contra 349 dia a dia). `nextPageToken`
@@ -76,13 +120,33 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
     const lista = await listGmailIds(tk.access_token, {
       max: top,
       pageToken: p.get('pageToken') || undefined,
-      ...(op === 'list' ? { labelIds: folder.toUpperCase() === 'INBOX' ? 'INBOX' : folder } : { q: q as string }),
+      ...(op === 'list' ? { labelIds: folder } : { q: q as string }),
     })
-    if (lista.error && !lista.ids.length) return NextResponse.json({ error: 'gmail list failed: ' + lista.error }, { status: 502 })
+    // Rótulo que passou pela tradução mas não existe nesta caixa (um `Label_99`
+    // chutado) volta como "Invalid label" do Google: é pedido errado, 400. O
+    // resto vai pelo HTTP do próprio Google (`lista.status`, novo na
+    // `listGmailIds`): 400/404 é pedido — inclusive `pageToken` vencido, que
+    // antes saía 502 e fazia caçar defeito de infra —, e 401/403/429 (token,
+    // quota, throttle) segue 502, que é o que acende alerta e faz repetir.
+    if (lista.error && !lista.ids.length) {
+      const rotuloTorto = /invalid label/i.test(lista.error)
+      const doChamador = rotuloTorto || (lista.status != null && culpaDoChamador(lista.status))
+      return NextResponse.json({
+        error: 'gmail list failed: ' + lista.error, provider: 'gmail', account: auth.account,
+        ...(lista.status != null ? { providerStatus: lista.status } : {}),
+        ...(op === 'list' ? { folder } : {}),
+        hint: rotuloTorto ? 'pegue o id do rótulo em op=folders'
+          : doChamador ? 'o Google recusou o PEDIDO (rótulo, q ou pageToken torto) — confira o parâmetro antes de repetir'
+          : 'não foi o pedido: token, quota, throttle ou Google sem resposta — tente de novo',
+      }, { status: doChamador ? 400 : 502 })
+    }
     const out = []
     for (const m of lista.ids.slice(0, top)) out.push(await meta(m.id))
     return NextResponse.json({
       account: auth.account, provider: 'gmail', messages: out,
+      // A pasta que valeu de verdade — quem pediu "spam" precisa ver `SPAM` na
+      // resposta para saber em que pasta olhou.
+      ...(op === 'list' ? { folder, ...(folderTraduzida ? { folderTranslated: true } : {}) } : {}),
       nextPageToken: lista.nextPageToken, more: !!lista.nextPageToken,
       ...(lista.error ? { partial: true, error: lista.error } : {}),
     })
@@ -225,21 +289,95 @@ export async function GET(req: NextRequest) {
   }
 
   if (op === 'list') {
-    const folder = p.get('folder') || 'inbox'
+    // `folder=spam` numa caixa Outlook (aqui é `junkemail`) devolvia 502 — foi
+    // assim na caixa 1 em 10/set 17:46 Orlando, dentro do alerta de 5xx. Traduz
+    // o nome comum; nome que esta caixa não endereça sai como 400 com os
+    // válidos, e pasta de caso continua indo pelo id do `op=folders`.
+    // ⚠️ Para NOME DE PASTA DE CASO ("Market", "Rides/US.042 - SublimeHell") a
+    // mudança é 200→400, não 502→400: a medida da casa ([[mail-processed-watermark]],
+    // [[email-round-process]]) é que pasta customizada devolvia 0 mensagens EM
+    // SILÊNCIO — leitura cega que não prova pasta vazia. Quem trata não-2xx como
+    // fatal passa a parar aqui; é o preço de não mentir "vazio".
+    const alvo = pastaDoProvedor(p.get('folder') || '', 'graph')
+    if (!alvo.ok) return NextResponse.json({ error: alvo.motivo, account: auth.account, validFolders: alvo.validas }, { status: 400 })
+    const folder = alvo.folder
     const top = Math.min(100, parseInt(p.get('limit') || '25') || 25)
     const r = await fetch(`${G}/me/mailFolders/${encodeURIComponent(folder)}/messages?$top=${top}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId&$orderby=receivedDateTime desc`, { headers: gh(token) })
     const data = await r.json().catch(() => null)
-    if (!Array.isArray(data?.value)) return NextResponse.json({ error: data?.error?.message || 'list failed' }, { status: 502 })
-    return NextResponse.json({ account: auth.account, messages: data.value.map(slim) })
+    // Recusa do Graph por causa do PEDIDO (pasta que a caixa não tem, id torto)
+    // é 400/404 lá e passa a ser 400 aqui; throttle e token caído seguem 502
+    // (ver `culpaDoChamador`). Mentir sobre de quem é a culpa — para qualquer um
+    // dos dois lados — faz a sessão procurar defeito no lugar errado.
+    if (!Array.isArray(data?.value)) {
+      const doChamador = culpaDoChamador(r.status)
+      const espera = r.headers.get('retry-after')
+      return NextResponse.json({
+        error: data?.error?.message || `list failed (HTTP ${r.status})`, account: auth.account, folder, providerStatus: r.status,
+        ...(doChamador
+          ? { hint: 'o Outlook não achou esta pasta na caixa — confira o id em op=folders' }
+          : r.status >= 400
+            ? { hint: `recusa de INFRA do Outlook (HTTP ${r.status}: token, consentimento ou throttle) — o pedido está de pé, tente de novo` }
+            : {}),
+        ...(espera ? { retryAfter: espera } : {}),
+      }, { status: doChamador ? 400 : 502 })
+    }
+    return NextResponse.json({ account: auth.account, folder, ...(alvo.traduzida ? { folderTranslated: true } : {}), messages: data.value.map(slim) })
   }
 
   if (op === 'search') {
     const q = p.get('q') || ''
     if (!q) return NextResponse.json({ error: 'missing q' }, { status: 400 })
-    const r = await fetch(`${G}/me/messages?$search=${encodeURIComponent(`"${q}"`)}&$top=${Math.min(100, parseInt(p.get('limit') || '25') || 25)}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId`, { headers: gh(token) })
+    // AS ASPAS (ordem dele, 11/set): o `$search` já embrulha o termo inteiro em
+    // aspas, então aspa dentro do `q` quebra o KQL — medido em 10/set 20:53
+    // Orlando, `q="Destroyer Grey"` deu 502 `An identifier was expected at
+    // position 0.` e o mesmo termo sem aspas deu 200. Em vez de devolver erro de
+    // servidor, tira as aspas e DIZ NA RESPOSTA que tirou — porque o resultado
+    // muda: sem aspas a busca é pelas PALAVRAS, não pela frase, e pode voltar
+    // e-mail a mais. A janela `received:` continua valendo.
+    const { termo, aspasRemovidas } = termoDeBuscaGraph(q)
+    if (!termo) return NextResponse.json({ error: 'q só tinha aspas: sobrou termo nenhum para buscar', q }, { status: 400 })
+    // FRASE EXATA, OPT-IN (`phrase=1`): manda `$search="\"termo\""`, a forma com
+    // aspa escapada. NÃO ESTÁ MEDIDA contra caixa de verdade — esta fatia não
+    // chamou o Graph —, por isso não é o padrão; se ele recusar, vem 400 com a
+    // mensagem dele e o chamador repete sem `phrase=1`. Com operador de campo
+    // dentro do termo o embrulho não faz sentido, então recusa antes de mandar.
+    const querFrase = /^(1|true|sim)$/i.test(p.get('phrase') || '')
+    if (querFrase && termo.includes(':')) {
+      return NextResponse.json({ error: 'phrase=1 é só para texto puro: tire o operador (from:, subject:, received:) do q, ou repita sem phrase=1', q: termo }, { status: 400 })
+    }
+    const expressaoDeBusca = querFrase ? `"\\"${termo}\\""` : `"${termo}"`
+    const r = await fetch(`${G}/me/messages?$search=${encodeURIComponent(expressaoDeBusca)}&$top=${Math.min(100, parseInt(p.get('limit') || '25') || 25)}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId`, { headers: gh(token) })
     const data = await r.json().catch(() => null)
-    if (!Array.isArray(data?.value)) return NextResponse.json({ error: data?.error?.message || 'search failed' }, { status: 502 })
-    return NextResponse.json({ account: auth.account, messages: data.value.map(slim) })
+    // Termo que o KQL não engole (400) é culpa de quem chamou; throttle e token
+    // caído continuam 502 (ver `culpaDoChamador`) — o 429 morde justamente esta
+    // busca quando a rodada varre 6 caixas dia a dia.
+    if (!Array.isArray(data?.value)) {
+      const doChamador = culpaDoChamador(r.status)
+      const espera = r.headers.get('retry-after')
+      return NextResponse.json({
+        error: data?.error?.message || `search failed (HTTP ${r.status})`, account: auth.account, q: termo, providerStatus: r.status,
+        ...(doChamador
+          ? { hint: querFrase
+              ? 'o KQL recusou a frase escapada do phrase=1 — repita sem phrase=1 (busca pelas palavras)'
+              : 'o KQL do Outlook recusou o termo — palavra solta e `received:AAAA-MM-DD..AAAA-MM-DD` funcionam' }
+          : r.status >= 400
+            ? { hint: `recusa de INFRA do Outlook (HTTP ${r.status}: token, consentimento ou throttle) — o termo está de pé, tente de novo` }
+            : {}),
+        ...(espera ? { retryAfter: espera } : {}),
+      }, { status: doChamador ? 400 : 502 })
+    }
+    return NextResponse.json({
+      account: auth.account, q: termo,
+      ...(querFrase ? { phrase: true } : {}),
+      // O aviso vai em TEXTO, não só num campo booleano que ninguém lê: quem
+      // procurou o fornecedor exato precisa saber que o conjunto pode ser maior
+      // antes de pendurar o e-mail numa invoice.
+      ...(aspasRemovidas && !querFrase ? {
+        quotesRemoved: true,
+        warning: 'as aspas saíram do q: busca pelas PALAVRAS, não pela frase exata — pode vir e-mail a mais, confira cada um antes de amarrar a uma compra. Frase: repita com phrase=1',
+      } : {}),
+      messages: data.value.map(slim),
+    })
   }
 
   if (op === 'msg') {
