@@ -26,7 +26,12 @@ type Service = { id?: string; description: string; price: string; payment_date?:
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 // date_label: a milestone marker ("ARRIVAL" / "CONCLUSION") used
 // INSTEAD of a calendar payment_date. Empty = a real date (or undated) is used.
-type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_from: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
+// RENDA NÃO TEM PAID FROM (Márcio, 26/ago e de novo em 11/set/2026: "quem paga é o
+// cliente"). O campo já não era gravado por esta tela; saiu do tipo porque a coluna
+// `invoice_incomes.paid_from` sai do banco na onda 9 do pacote
+// (MIGRATION_pacote_onda9_regra_dos_campos.sql) — tipo que carrega campo que não existe
+// convida alguém a gravá-lo de volta.
+type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
 type Note = { id?: string; note: string }
 // stock_source_type / stock_donor are the lineage carriers: when an item is
 // pulled FROM STOCK into this expense list, we copy the stock row's source_type
@@ -116,7 +121,7 @@ type StockItem = {
   order_number: string | null
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
-type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_from: string; paid_to: string; date: string; receipt_url: string; description: string }
+type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
 // rowIds: DB ids das linhas por trás do report — no fechamento do diálogo TODAS
 // são "mutadas" na rede de segurança (report-net), enviadas ou recusadas, para o
 // NÃO do usuário valer também no cron (incidente 31/jul/2026).
@@ -330,9 +335,9 @@ export default function EditInvoicePage() {
   const [editingServiceIndex, setEditingServiceIndex] = useState<number | null>(null)
   const [editingService, setEditingService] = useState<Service>({ description: '', price: '' })
   const [payments, setPayments] = useState<Payment[]>([])
-  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+  const [newPayment, setNewPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null)
-  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+  const [editingPayment, setEditingPayment] = useState<Payment>({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   // paidInConfirm: clicking UNPAID (to mark PAID) opens a "PAID IN?" date box,
   // defaulting to today. The chosen date sets paid_at; payment_date is untouched.
   // Going PAID -> UNPAID just clears paid_at with no box.
@@ -539,7 +544,6 @@ export default function EditInvoicePage() {
       amount: String(p.amount),
       payment_date: p.payment_date || '',
       source: p.source || '',
-      paid_from: p.paid_from || 'GZ28US',
       paid_to: p.paid_to || 'GZ28US',
       amount_brl: p.amount_brl != null ? String(p.amount_brl) : '',
       receipt_url: p.receipt_url || '',
@@ -1040,7 +1044,6 @@ export default function EditInvoicePage() {
           // AMOUNT (R$) nascer 0,00 num Pix que dizia R$ na cara.
           amount_brl: (paidTo === 'GZ28BR' && docIsBRL && printed > 0) ? printed.toFixed(2) : '',
           source: matchIncomeMethod(p.source, paidTo),
-          paid_from: 'GZ28US',
           paid_to: paidTo,
           date: String(p.date || ''),
           receipt_url: receiptUrl,
@@ -1048,7 +1051,7 @@ export default function EditInvoicePage() {
           description: String(p.payer || ''),
         }
       })
-      if (list.length === 0) list.push({ amount: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
+      if (list.length === 0) list.push({ amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: receiptUrl, description: '' })
 
       const openReview = () => setScannedPayments(list)
 
@@ -1095,7 +1098,7 @@ export default function EditInvoicePage() {
       const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
         ? new Date(p.date + 'T12:00:00Z').toISOString()
         : new Date().toISOString()
-      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_from: p.paid_from || 'GZ28US', paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
+      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
     })
     setPayments(prev => sortByDateAsc([...prev, ...newRows], incomeOrderDate))
     setScannedPayments(null)
@@ -1877,7 +1880,7 @@ export default function EditInvoicePage() {
 
   function addPayment() {
     if (!newPayment.amount) { alert('Please enter an amount'); return }
-    setPayments(sortByDateAsc([...payments, newPayment], incomeOrderDate)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+    setPayments(sortByDateAsc([...payments, newPayment], incomeOrderDate)); setNewPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
   // Add the outstanding PENDING BALANCE (grand total − listed income) as a new income —
   // undated and unpaid, since it has no scheduled date or payment yet.
@@ -1885,7 +1888,7 @@ export default function EditInvoicePage() {
     if (amount <= 0.005) return
     // Keep FULL precision (not toFixed(2)) so the listed income exactly matches the grand
     // total — rounding to cents would leave the balance fractionally negative.
-    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', date_label: '', paid_at: '' }
+    const row: Payment = { amount: String(amount), amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: 'Pending balance', date_label: '', paid_at: '' }
     setPayments(sortByDateAsc([...payments, row], incomeOrderDate))
   }
   function removePayment(index: number) {
@@ -1902,9 +1905,9 @@ export default function EditInvoicePage() {
       if (error) { alert(error.message); return }
     }
     const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
 
   // REMIND — send the client a friendly reminder about a DELAYED (overdue,
   // still-unpaid) income. Delivered by the client's PREFERRED method — never
@@ -3019,7 +3022,7 @@ export default function EditInvoicePage() {
                   </div>
                 </div>
               ))}
-              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', paid_from: 'GZ28US', paid_to: 'GZ28US', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
+              <button onClick={() => setScannedPayments([...scannedPayments, { amount: '', source: '', paid_to: 'GZ28US', date: '', receipt_url: '', description: '' }])} className="text-gray-400 hover:text-white text-sm font-bold">+ ADD INCOME</button>
             </div>
             <div className="flex gap-3 pt-2 border-t border-gray-700">
               <div className="flex-1 text-right text-gray-400 font-bold self-center">

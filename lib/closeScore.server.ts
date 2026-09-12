@@ -412,7 +412,10 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
   const recOpen: Rec[] = []
   for (const p of d.payments) {
     if (!p.paid_at || !realInv(p.invoice_id) || p.mirror_expense_id) continue   // espelho não é caixa
-    if (BR_PAID.has(String(p.paid_from || '')) || p.paid_to === 'GZ28BR') continue
+    // Renda não tem PAID FROM (quem paga é o cliente): o que tira a linha da Regions é o dinheiro ter caído na
+    // GZ28BR. O paid_from da renda saiu do select e sai do banco na onda 9 — nunca teve GZ28BR em nenhuma das 220
+    // (medido em 12/set: 22 GZ28US, 1 nome de cliente, 197 vazios), então o placar não muda um centavo.
+    if (p.paid_to === 'GZ28BR') continue
     const date = day(p.paid_at), amount = num(p.amount)
     if (!okDay(date)) continue
     if (amount <= 0.005) { if (amount < -0.005) skip('refund_received', -amount); continue }
@@ -586,7 +589,7 @@ export async function closeScore(db: any, opts: CloseOpts = {}): Promise<CloseSc
     fetchAll(db, 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method'),
     fetchAll(db, 'inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group'),
-    fetchAll(db, 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, paid_from, description, mirror_expense_id'),
+    fetchAll(db, 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, cost_type'),
     opt(fetchAll(db, 'cash_balances', 'id, account, balance_date, balance, source')),

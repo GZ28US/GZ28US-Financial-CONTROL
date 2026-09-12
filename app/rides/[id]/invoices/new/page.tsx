@@ -185,9 +185,14 @@ export default function NewInvoicePage() {
 
       // INCOMES (payments) — carried so the duplicate is a true clone, not a quote shell.
       const { data: pays } = await supabase.from('invoice_incomes').select('*').eq('invoice_id', sourceId).order('created_at', { ascending: true })
+      // paid_from NÃO viaja (onda 9 do pacote PAID FROM/TO): renda não tem PAID FROM e a
+      // coluna sai do banco. E não bastaria o valor vir vazio — o insert em LISTA do
+      // postgrest-js monta o `?columns=` com Object.keys de cada linha, chave com
+      // undefined inclusive; com a coluna fora do banco o PostgREST recusa o insert
+      // inteiro e a duplicata desfaz tudo. Por isso a chave sai, não só o valor.
       const payRows = (pays || []).map((p: any) => ({
         invoice_id: inv.id, amount: p.amount, amount_brl: p.amount_brl, payment_date: p.payment_date,
-        source: p.source, paid_from: p.paid_from, paid_to: p.paid_to, receipt_url: p.receipt_url,
+        source: p.source, paid_to: p.paid_to, receipt_url: p.receipt_url,
         description: p.description, paid_at: p.paid_at,
       }))
       if (payRows.length) { const { error: pae } = await supabase.from('invoice_incomes').insert(payRows); if (pae) throw new Error('incomes: ' + pae.message) }
