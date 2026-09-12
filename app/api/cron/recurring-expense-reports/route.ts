@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { enviaUltra } from '@/lib/waSend.server'
 
 // This cron runs server-side with NO user session. Under RLS the bare anon key
 // is blocked, so it talks to Supabase with the SERVICE-ROLE key (bypasses RLS).
@@ -31,27 +32,21 @@ function formatUSD(v: number) {
 // Same registered signature appended to every report (see app/api/whatsapp/route.ts).
 const SIGNATURE = 'Sent by GZ28US Control App®'
 
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): `@numero` no
+// texto do report vira marcação de verdade no grupo — ver lib/waMentions. Este
+// é o único remetente que fala com a UltraMsg em JSON e com `priority: 10`; o
+// helper mantém os dois exatamente como estavam (`json` e `extra`), porque
+// mudar o transporte de um report que funciona não é o assunto desta mudança.
 async function sendWhatsApp(body: string): Promise<{ ok: boolean; detail?: any }> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) {
+  if (!process.env.ULTRAMSG_INSTANCE || !process.env.ULTRAMSG_TOKEN || !groupId) {
     return { ok: false, detail: 'UltraMsg env vars not set' }
   }
   const signed = body.trimEnd().endsWith(SIGNATURE) ? body : `${body}\n\n${SIGNATURE}`
-  try {
-    // ULTRAMSG_INSTANCE already includes the "instance" prefix (e.g. instance174454).
-    const res = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, to: groupId, body: signed, priority: 10 }),
-    })
-    const data = await res.json()
-    const sent = data?.sent === 'true' || data?.sent === true
-    return { ok: sent, detail: data }
-  } catch (err: any) {
-    return { ok: false, detail: err?.message }
-  }
+  const r = await enviaUltra(groupId, signed, { json: true, extra: { priority: 10 } })
+  const sent = r.data?.sent === 'true' || r.data?.sent === true
+  // Sem status HTTP = a chamada nem saiu (rede caiu): aí o detalhe é o erro cru.
+  return { ok: sent, detail: r.status === null ? r.error : r.data }
 }
 
 export async function GET(req: NextRequest) {

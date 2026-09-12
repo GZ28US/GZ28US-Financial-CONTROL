@@ -8,6 +8,7 @@
 // reportada. Roda no mail-poll (cron 5min) — PC desligado incluso.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { enviaUltra } from '@/lib/waSend.server'
 
 // Só linhas criadas após a entrada da rede — histórico não é re-reportado.
 const EPOCH = '2026-07-26T16:00:00Z'
@@ -48,18 +49,12 @@ async function markReported(db: SupabaseClient, key: string, label: string): Pro
 const lineTotal = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 const ownerOf = (inv: any) => inv?.rides?.project_name || inv?.rides?.project_code || inv?.clients?.name || ''
 
+// Report no grupo pelo caminho único (lib/waSend.server.ts, 11/set/2026):
+// `@numero` no texto vira marcação de verdade. Ver lib/waMentions.
 async function sendReport(body: string): Promise<boolean> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) return false
-  try {
-    const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-    })
-    return r.ok
-  } catch { return false }
+  if (!groupId) return false
+  return (await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)).httpOk
 }
 
 // Últimas mensagens ENVIADAS pela instância (dedup contra o report da própria UI).

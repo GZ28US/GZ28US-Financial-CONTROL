@@ -14,6 +14,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { enviaUltra } from '@/lib/waSend.server'
 
 export const MAX_HOURS = 10          // Márcio, 23/ago
 export const ESCALATE_MIN = 60
@@ -71,16 +72,17 @@ export async function evaluateDuties(db: SupabaseClient): Promise<DutyIncident[]
 }
 
 async function sendWhats(to: string, body: string): Promise<string | null> {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return 'no ultramsg env'
   // O staff US.008 é o próprio Márcio: cobrança dirigida a ele iria pro número
   // da instância e morreria calada. Vai pro REPORTS. Ver waSelfGuard.
-  const dest = waSafeTarget(to)
-  const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, to: dest, body }).toString(),
-  })
-  return r.ok ? null : `ultramsg ${r.status}`
+  //
+  // O envio em si mora em lib/waSend.server.ts (11/set/2026): é lá que o
+  // `@numero` do texto vira marcação de verdade. Aqui a cobrança é DM na maioria
+  // das vezes — e em conversa de um pra um a trava não deixa marcar, o WhatsApp
+  // já notifica sozinho. O campo aparece quando o aviso cai no grupo STAFF (staff
+  // sem telefone) ou na escalação, que é justamente quando alguém precisa ser
+  // chamado pelo nome.
+  const r = await enviaUltra(waSafeTarget(to), body)
+  return r.httpOk ? null : (r.error || `ultramsg ${r.status}`)
 }
 const phoneChat = (phone: string | null) => { const d = String(phone || '').replace(/\D/g, ''); return d.length >= 10 ? `${d.length === 10 ? '1' + d : d}@c.us` : null }
 

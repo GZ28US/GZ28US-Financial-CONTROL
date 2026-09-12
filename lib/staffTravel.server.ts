@@ -10,6 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken } from './streamMail.server'
+import { enviaUltra } from './waSend.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}` })
@@ -20,18 +21,13 @@ const BR_AIRPORTS = ['GRU', 'GIG', 'VCP', 'CGH', 'BSB', 'CNF']
 const US_AIRPORTS = ['MCO', 'MIA', 'IAH', 'IAD', 'EWR', 'ORD', 'JFK', 'ATL', 'DFW', 'LAX', 'TPA']
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
+// Report no grupo STAFF pelo caminho único (lib/waSend.server.ts, 11/set/2026):
+// quando o texto chamar o membro com `@numero`, o campo `mentions` vai junto e o
+// celular dele acende. Ver lib/waMentions.
 async function sendStaffWhatsApp(body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_STAFF_GROUP_ID || process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) return
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  if (!groupId) return
+  await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)
 }
 
 type Parsed = {

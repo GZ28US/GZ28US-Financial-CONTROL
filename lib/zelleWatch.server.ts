@@ -20,6 +20,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { enviaUltra } from '@/lib/waSend.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const SIGNATURE = 'Sent by GZ28US Control App®'
@@ -40,16 +41,12 @@ type Hit = {
   memo?: string
 }
 
+// Um caminho só até a UltraMsg (lib/waSend.server.ts, 11/set/2026) — é lá que o
+// `@numero` do texto vira marcação de verdade, e enviaUltra nunca lança: o aviso
+// segue best-effort, o lançamento do Zelle não depende dele.
 async function wa(to: string, body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: dest, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  await enviaUltra(dest, `${body}\n\n${SIGNATURE}`)
 }
 
 async function msToken(db: SupabaseClient): Promise<string | null> {

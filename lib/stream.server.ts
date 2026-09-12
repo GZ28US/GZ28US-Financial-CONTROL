@@ -6,6 +6,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { guessCarrier, statusFrom17Track, type StreamRow, type StreamStatus } from './stream'
 import { brSendKeyValue } from './apiAuth.server'
+import { enviaUltra } from './waSend.server'
 
 export function streamDb(): SupabaseClient {
   return createClient(
@@ -82,18 +83,12 @@ export async function t17GetInfo(tracking: string, carrier?: string | null): Pro
 
 // Same registered signature every report carries (see app/api/whatsapp/route.ts).
 const SIGNATURE = 'Sent by GZ28US Control App®'
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): `@numero` no
+// texto do report vira marcação de verdade no grupo. Ver lib/waMentions.
 export async function sendStreamWhatsApp(body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) return
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  if (!groupId) return
+  await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)
 }
 
 // CANCELLED/REFUNDED sit above every carrier-mapped status so a 17TRACK push

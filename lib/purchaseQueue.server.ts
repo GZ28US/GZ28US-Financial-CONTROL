@@ -23,6 +23,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { enviaUltra } from '@/lib/waSend.server'
 import { bucketInvoiceId, logMatchEvent, MARKER_BUCKET, MARKER_ASSIGNED, ENGINE_BUCKET } from '@/lib/bankReconcile.server'
 import { normSup } from '@/lib/supplierMatch'
 import { normNature } from '@/lib/itemNature'
@@ -59,15 +60,14 @@ const keyOf = (r: StreamRow): string => String(r.order_number || r.id).slice(-6)
 // Temu cobra via PayPal (aprendizado da PESCA TEMU 19/ago); resto = débito Regions.
 const methodOf = (r: StreamRow): string => /temu/i.test(r.supplier || '') ? 'PAYPAL' : 'GZ28US Regions DebitCard'
 
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): o sino da fila e
+// o relatório de ERRADO chamam gente pelo nome, e com `@numero` no texto a
+// pessoa passa a ser MARCADA de verdade quando o destino é grupo (no PVT dele a
+// trava não marca — o WhatsApp já notifica). Ver lib/waMentions.
 async function wa(to: string, body: string): Promise<boolean> {
-  const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
-  if (!instance || !tk || !to) return false
+  if (!to) return false
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
-  const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token: tk, to: dest, body: `${body}\n\n${SIGNATURE}` }),
-  }).catch(() => null)
-  return !!r?.ok
+  return (await enviaUltra(dest, `${body}\n\n${SIGNATURE}`)).httpOk
 }
 
 // 23h–07h de Orlando o app dorme (perguntar às 3h só ensina a ignorar o grupo).

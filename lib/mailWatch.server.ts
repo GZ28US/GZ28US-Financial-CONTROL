@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { listMailAuths, freshAccessToken, type MailAuth } from '@/lib/streamMail.server'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { enviaUltra } from '@/lib/waSend.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -38,16 +39,12 @@ export type MailWatch = {
 
 // `notify_to` vem do banco (mail_watches) — é o caminho mais fácil de alguém
 // reapontar pro cel do Márcio sem querer e o alerta sumir de novo. Guarda aqui.
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): quando o
+// `notify_to` for um GRUPO e o texto chamar alguém com `@numero`, a marcação sai
+// de verdade. enviaUltra nunca lança — o watcher continua best-effort.
 async function wa(to: string, body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: dest, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  await enviaUltra(dest, `${body}\n\n${SIGNATURE}`)
 }
 
 // O snippet do Gmail vem com entidade HTML crua (&#39;, &quot;) — sem isto o
