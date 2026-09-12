@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken, mailProvider, listGmailIds } from '@/lib/streamMail.server'
+import { pastaDoProvedor, termoDeBuscaGraph } from '@/lib/mailFolders'
 
 // Read-only mailbox queries for the assistant's daily sweeps — the service key
 // and Graph tokens stay server-side; callers authenticate with the same read
@@ -13,6 +14,11 @@ import { getMailAuth, freshAccessToken, mailProvider, listGmailIds } from '@/lib
 //   op=attach&id=<msgId>&att=<attachmentId> → one attachment as base64, ready to
 //                                 hand to /api/read-doc (o documento anexado é a
 //                                 verdade — nota, invoice, boleto, contrato)
+//
+// PEDIDO MAL FEITO DEVOLVE 400 COM O MOTIVO, NUNCA 502 (11/set/2026, ordem dele
+// no PACOTE): 502 é "o app quebrou" e script que não confere erro lê como "zero
+// resultados". `folder` é traduzido por provedor (spam ↔ junkemail ↔ SPAM) e as
+// aspas saem do `q` do Graph — as duas regras moram em lib/mailFolders.ts.
 
 export const dynamic = 'force-dynamic'
 
@@ -66,9 +72,29 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
   }
   if (op === 'list' || op === 'search') {
     const top = Math.min(50, parseInt(p.get('limit') || '25') || 25)
-    const folder = p.get('folder') || 'INBOX'
     const q = p.get('q')
     if (op === 'search' && !q) return NextResponse.json({ error: 'missing q' }, { status: 400 })
+    // `folder=junkemail` (nome do Outlook) numa caixa Google virava 502 desde o
+    // commit `4e78812` — e antes dele era pior: 200 com lista vazia, calado.
+    // Agora traduz ("spam" → `SPAM`) e, se não reconhecer, 400 com os válidos
+    // DAQUELA caixa (o rótulo de usuário vai pelo id, e o 400 já traz a lista).
+    // Só no `list`: a busca ignora `folder`, e quem já manda o parâmetro à toa
+    // não pode passar a levar 400.
+    let folder = 'INBOX', folderTraduzida = false
+    if (op === 'list') {
+      const alvo = pastaDoProvedor(p.get('folder') || '', 'gmail')
+      if (!alvo.ok) {
+        const r = await fetch(`${API}/labels`, { headers: GH }).catch(() => null)
+        const rotulos = r ? await r.json().catch(() => null) : null
+        return NextResponse.json({
+          error: alvo.motivo, provider: 'gmail', account: auth.account,
+          validFolders: alvo.validas,
+          labels: (rotulos?.labels || []).map((l: { id: string; name: string }) => ({ id: l.id, name: l.name })),
+        }, { status: 400 })
+      }
+      folder = alvo.folder
+      folderTraduzida = alvo.traduzida
+    }
     // Página por página (10/set/2026): o Gmail devolve página curta com mais
     // resultado atrás, e "veio menos que o limite" NÃO quer dizer janela completa
     // (caixa 5: 122 achadas por janela larga contra 349 dia a dia). `nextPageToken`
@@ -76,13 +102,25 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
     const lista = await listGmailIds(tk.access_token, {
       max: top,
       pageToken: p.get('pageToken') || undefined,
-      ...(op === 'list' ? { labelIds: folder.toUpperCase() === 'INBOX' ? 'INBOX' : folder } : { q: q as string }),
+      ...(op === 'list' ? { labelIds: folder } : { q: q as string }),
     })
-    if (lista.error && !lista.ids.length) return NextResponse.json({ error: 'gmail list failed: ' + lista.error }, { status: 502 })
+    // Rótulo que passou pela tradução mas não existe nesta caixa (um `Label_99`
+    // chutado) volta como "Invalid label" do Google: é pedido errado, 400.
+    if (lista.error && !lista.ids.length) {
+      const rotuloTorto = /invalid label/i.test(lista.error)
+      return NextResponse.json({
+        error: 'gmail list failed: ' + lista.error, provider: 'gmail', account: auth.account,
+        ...(op === 'list' ? { folder } : {}),
+        ...(rotuloTorto ? { hint: 'pegue o id do rótulo em op=folders' } : {}),
+      }, { status: rotuloTorto ? 400 : 502 })
+    }
     const out = []
     for (const m of lista.ids.slice(0, top)) out.push(await meta(m.id))
     return NextResponse.json({
       account: auth.account, provider: 'gmail', messages: out,
+      // A pasta que valeu de verdade — quem pediu "spam" precisa ver `SPAM` na
+      // resposta para saber em que pasta olhou.
+      ...(op === 'list' ? { folder, ...(folderTraduzida ? { folderTranslated: true } : {}) } : {}),
       nextPageToken: lista.nextPageToken, more: !!lista.nextPageToken,
       ...(lista.error ? { partial: true, error: lista.error } : {}),
     })
@@ -225,21 +263,52 @@ export async function GET(req: NextRequest) {
   }
 
   if (op === 'list') {
-    const folder = p.get('folder') || 'inbox'
+    // `folder=spam` numa caixa Outlook (aqui é `junkemail`) devolvia 502 — foi
+    // assim na caixa 1 em 10/set 17:46 Orlando, dentro do alerta de 5xx. Traduz
+    // o nome comum; nome que não existe por aqui sai como 400 com os válidos, e
+    // pasta de caso continua indo pelo id do `op=folders`.
+    const alvo = pastaDoProvedor(p.get('folder') || '', 'graph')
+    if (!alvo.ok) return NextResponse.json({ error: alvo.motivo, account: auth.account, validFolders: alvo.validas }, { status: 400 })
+    const folder = alvo.folder
     const top = Math.min(100, parseInt(p.get('limit') || '25') || 25)
     const r = await fetch(`${G}/me/mailFolders/${encodeURIComponent(folder)}/messages?$top=${top}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId&$orderby=receivedDateTime desc`, { headers: gh(token) })
     const data = await r.json().catch(() => null)
-    if (!Array.isArray(data?.value)) return NextResponse.json({ error: data?.error?.message || 'list failed' }, { status: 502 })
-    return NextResponse.json({ account: auth.account, messages: data.value.map(slim) })
+    // Recusa do Graph por causa do PEDIDO (pasta que não existe, id torto) é 4xx
+    // lá e passa a ser 400 aqui: 502 é falha nossa, e mentir sobre de quem é a
+    // culpa faz a sessão procurar defeito no lugar errado.
+    if (!Array.isArray(data?.value)) {
+      const doChamador = r.status >= 400 && r.status < 500
+      return NextResponse.json({
+        error: data?.error?.message || 'list failed', account: auth.account, folder,
+        ...(doChamador ? { hint: 'pasta não encontrada nesta caixa — pegue o id em op=folders' } : {}),
+      }, { status: doChamador ? 400 : 502 })
+    }
+    return NextResponse.json({ account: auth.account, folder, ...(alvo.traduzida ? { folderTranslated: true } : {}), messages: data.value.map(slim) })
   }
 
   if (op === 'search') {
     const q = p.get('q') || ''
     if (!q) return NextResponse.json({ error: 'missing q' }, { status: 400 })
-    const r = await fetch(`${G}/me/messages?$search=${encodeURIComponent(`"${q}"`)}&$top=${Math.min(100, parseInt(p.get('limit') || '25') || 25)}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId`, { headers: gh(token) })
+    // AS ASPAS (ordem dele, 11/set): o `$search` já embrulha o termo inteiro em
+    // aspas, então aspa dentro do `q` quebra o KQL — medido em 10/set 20:53
+    // Orlando, `q="Destroyer Grey"` deu 502 `An identifier was expected at
+    // position 0.` e o mesmo termo sem aspas deu 200. Em vez de devolver erro de
+    // servidor, tira as aspas e diz na resposta que tirou: a busca vira por
+    // PALAVRA em vez de frase exata, e a janela `received:` continua valendo.
+    const { termo, aspasRemovidas } = termoDeBuscaGraph(q)
+    if (!termo) return NextResponse.json({ error: 'q só tinha aspas: sobrou termo nenhum para buscar', q }, { status: 400 })
+    const r = await fetch(`${G}/me/messages?$search=${encodeURIComponent(`"${termo}"`)}&$top=${Math.min(100, parseInt(p.get('limit') || '25') || 25)}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId`, { headers: gh(token) })
     const data = await r.json().catch(() => null)
-    if (!Array.isArray(data?.value)) return NextResponse.json({ error: data?.error?.message || 'search failed' }, { status: 502 })
-    return NextResponse.json({ account: auth.account, messages: data.value.map(slim) })
+    // Termo que o KQL não engole é culpa de quem chamou: 400 com o motivo do
+    // próprio Graph, nunca 502 (que script sem checagem lê como "zero achados").
+    if (!Array.isArray(data?.value)) {
+      const doChamador = r.status >= 400 && r.status < 500
+      return NextResponse.json({
+        error: data?.error?.message || 'search failed', account: auth.account, q: termo,
+        ...(doChamador ? { hint: 'termo inválido para o KQL do Outlook — palavra solta e `received:AAAA-MM-DD..AAAA-MM-DD` funcionam; frase entre aspas, não' } : {}),
+      }, { status: doChamador ? 400 : 502 })
+    }
+    return NextResponse.json({ account: auth.account, q: termo, ...(aspasRemovidas ? { quotesRemoved: true } : {}), messages: data.value.map(slim) })
   }
 
   if (op === 'msg') {
