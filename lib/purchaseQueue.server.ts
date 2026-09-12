@@ -23,6 +23,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 import { bucketInvoiceId, logMatchEvent, MARKER_BUCKET, MARKER_ASSIGNED, ENGINE_BUCKET } from '@/lib/bankReconcile.server'
 import { normSup } from '@/lib/supplierMatch'
 import { normNature } from '@/lib/itemNature'
@@ -59,15 +61,25 @@ const keyOf = (r: StreamRow): string => String(r.order_number || r.id).slice(-6)
 // Temu cobra via PayPal (aprendizado da PESCA TEMU 19/ago); resto = débito Regions.
 const methodOf = (r: StreamRow): string => /temu/i.test(r.supplier || '') ? 'PAYPAL' : 'GZ28US Regions DebitCard'
 
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): o sino da fila e
+// o relatório de ERRADO chamam gente pelo nome, e com `@numero` no texto a
+// pessoa passa a ser MARCADA de verdade quando o destino é grupo (no PVT dele a
+// trava não marca — o WhatsApp já notifica). Ver lib/waMentions.
+//
+// DOIS PEDAÇOS DAQUI NÃO SÃO NOSSOS: o que veio do e-mail da loja (fornecedor,
+// número do pedido, título do item e o ENDEREÇO DE ENTREGA do sino) e o que uma
+// pessoa DIGITOU no grupo e é ecoado de volta (o destino do "ERRADO ..." e o
+// destino da regra aprendida). Os dois passam por `semMarcacao` antes de entrar
+// no corpo — eco de texto alheio não escolhe quem o app marca.
+//
+// TODO envio deste arquivo vai pra GRUPO: `PVT` é o grupo REPORTS
+// (120363425950692194@g.us) e `chat` é ele ou o ULTRAMSG_GROUP_ID — ou seja, é
+// exatamente onde `mencoesDoTexto` está ligado. Não existe aqui envio "pra chat
+// de pessoa" onde a peneira fosse dispensável.
 async function wa(to: string, body: string): Promise<boolean> {
-  const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
-  if (!instance || !tk || !to) return false
+  if (!to) return false
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
-  const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token: tk, to: dest, body: `${body}\n\n${SIGNATURE}` }),
-  }).catch(() => null)
-  return !!r?.ok
+  return (await enviaUltra(dest, `${body}\n\n${SIGNATURE}`)).httpOk
 }
 
 // 23h–07h de Orlando o app dorme (perguntar às 3h só ensina a ignorar o grupo).
@@ -393,7 +405,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       if (ref && ref !== 'NEEDS_VALUE') {
         await db.from('placement_rules').update({ hits: (rule.hits || 0) + 1 }).eq('id', rule.id)
         const amt = amountOf(r.item)
-        await wa(PVT, `🛒 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
+        await wa(PVT, `🛒 *COMPRA REGISTRADA — ${semMarcacao(r.supplier || 'Loja')}*\n\nPedido: ${semMarcacao(r.order_number || '—')}\n${semMarcacao(titleOf(r))}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Regra aplicada: *${refLabel(ref)}*\nSe o destino estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
       }
     }
 
@@ -410,7 +422,7 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
       const ref = await place(db, r, 'INPUTS/APARTMENT', placed, natureOf.get(r.id) ?? null)
       if (!ref || ref === 'NEEDS_VALUE') { await db.from('part_streams').update({ asked_count: 1 }).eq('id', r.id); continue }
       const amt = amountOf(r.item)
-      await wa(PVT, `🏠 *COMPRA REGISTRADA — ${r.supplier || 'Loja'}*\n\nPedido: ${r.order_number || '—'}\n${titleOf(r)}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Só item de casa — registrada em *${refLabel(ref)}*\nSe estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
+      await wa(PVT, `🏠 *COMPRA REGISTRADA — ${semMarcacao(r.supplier || 'Loja')}*\n\nPedido: ${semMarcacao(r.order_number || '—')}\n${semMarcacao(titleOf(r))}${amt != null ? ' — *' + usd(amt) + '*' : ''}\n\n✅ Só item de casa — registrada em *${refLabel(ref)}*\nSe estiver errado, responda: *ERRADO ${keyOf(r)}: <destino certo>*`)
     }
   }
 
@@ -445,7 +457,10 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         const row = matches[0]
         const dest = parseDestination(err[2] || '', true)
         if (!dest) { await wa(chat, `⚠️ ERRADO ${err[1]}: me diz o destino certo — *ERRADO ${err[1]}: <APARTMENT | CATS | OFICINA | carro | IGNORA>*`); await markSeen(mid, body, 'ERRADO-NO-DEST'); answered++; continue }
-        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${dest.slice(5)}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
+        // O destino é o que a pessoa digitou; ecoar cru deixaria a resposta dela
+        // escolher quem o app marca no grupo — ver semMarcacao em lib/waMentions.
+        // (A CHAVE, `err[1]`, casa só com [\w.-]: não cabe "@" nela.)
+        if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${semMarcacao(dest.slice(5))}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
         const [refDest, refId] = String(row.placed_ref || '').split('#')
         if (!refId) { await wa(chat, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
         // A ponte item↔remessa morre junto com a linha de dinheiro desfeita —
@@ -478,12 +493,17 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         if (!dest) continue
         const ref = await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
         if (ref === 'NEEDS_VALUE') { await wa(chat, `⚠️ ${keyOf(row)} ainda não tem valor (PESCA TEMU pendente) — repete a resposta depois da pesca.`); await markSeen(mid, body, 'NEEDS-VALUE'); answered++; continue }
-        if (!ref) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${kv[2].trim()}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
+        if (!ref) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${semMarcacao(kv[2].trim())}*" (${keyOf(row)}). Tenta o código US.xxx ou o nome exato.`); await markSeen(mid, body, 'BAD-RIDE'); answered++; continue }
         open.splice(open.indexOf(row), 1)
         answered++
         if (/\bSEMPRE\b/i.test(body) && r_supplier(row)) {
+          // A REGRA GRAVADA usa o fornecedor CRU — é dado, e é com ele que o
+          // `includes` do passo 1 vai comparar; peneirar aqui quebraria o casamento.
+          // Só o ECO no grupo é peneirado: o fornecedor veio do e-mail da loja e o
+          // `refLabel(dest)` é "RIDE:<o que a pessoa digitou>" (parseDestination
+          // aceita até 60 caracteres livres). Ver semMarcacao em lib/waMentions.
           await db.from('placement_rules').insert({ store: r_supplier(row), destination: dest, note: `aprendida da resposta: "${body.slice(0, 60)}"` })
-          await wa(chat, `🧠 Regra aprendida: *${r_supplier(row)} → ${refLabel(dest)}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
+          await wa(chat, `🧠 Regra aprendida: *${semMarcacao(r_supplier(row))} → ${semMarcacao(refLabel(dest))}* (sempre). ✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
         } else {
           await wa(chat, `✅ ${keyOf(row)} registrada em *${refLabel(ref)}*`)
         }
@@ -513,11 +533,20 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
     const all = [...needPlace, ...needItems]
     const newest = all.map(r => r.last_asked_at).filter(Boolean).sort().pop() || null
     if (all.length && hourSince(newest)) {
+      // CADA LINHA DO SINO É TEXTO DA LOJA, NÃO NOSSO: pedido, fornecedor, título
+      // e endereço de entrega saem todos do e-mail que a loja mandou, e este sino
+      // toca de hora em hora PRA GRUPO — é o envio mais frequente do arquivo.
+      // Por isso os quatro passam por `semMarcacao` (lib/waMentions) antes de
+      // virar corpo. A DECISÃO de destacar o endereço continua olhando o valor
+      // CRU (`r.ship_to`): peneirar só o que é impresso, nunca o que é comparado.
+      // O `titleOf(r)` é peneirado DEPOIS do corte em 34 — a peneira é que tem de
+      // ver o texto exato que sai, e não um pedaço maior que foi descartado.
+      // (`r.id` é uuid e `usd()` é número do app: não cabe "@" neles.)
       const line = (r: StreamRow) => {
         const amt = amountOf(r.item)
         // Alarme herdado da captura: entrega fora do galpão merece destaque.
-        const addr = r.ship_to && !/11320|space\s*blvd/i.test(r.ship_to) ? ' 🚨 ' + r.ship_to : ''
-        return `• ${r.order_number || r.id} — ${r.supplier || '?'} ${titleOf(r).slice(0, 34)}${amt != null ? ' — ' + usd(amt) : ''}${addr}`
+        const addr = r.ship_to && !/11320|space\s*blvd/i.test(r.ship_to) ? ' 🚨 ' + semMarcacao(r.ship_to) : ''
+        return `• ${semMarcacao(r.order_number || r.id)} — ${semMarcacao(r.supplier || '?')} ${semMarcacao(titleOf(r).slice(0, 34))}${amt != null ? ' — ' + usd(amt) : ''}${addr}`
       }
       const blk = (label: string, rows: StreamRow[]) => rows.length ? `\n\n*${label} (${rows.length})*\n${rows.map(line).join('\n')}` : ''
       // Cada loja tem seu comando na thread da PESCA (ordem dele, 25/ago): a

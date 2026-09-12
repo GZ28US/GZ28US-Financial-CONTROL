@@ -20,6 +20,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
+import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const SIGNATURE = 'Sent by GZ28US Control App®'
@@ -40,16 +42,17 @@ type Hit = {
   memo?: string
 }
 
+// Um caminho só até a UltraMsg (lib/waSend.server.ts, 11/set/2026) — é lá que o
+// `@numero` do texto vira marcação de verdade, e enviaUltra nunca lança: o aviso
+// segue best-effort, o lançamento do Zelle não depende dele.
+//
+// NOME DE QUEM MANDOU E MEMO SÃO TEXTO DE FORA — quem digita é o outro lado do
+// Zelle, e estes avisos vão pro GRUPO. Por isso os dois passam por `semMarcacao`
+// (lib/waMentions) antes de entrar no corpo: um memo "paguei @13213150973" não
+// pode escolher quem o app marca aqui dentro.
 async function wa(to: string, body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return
   const dest = waSafeTarget(to) // nunca o próprio número — ver waSelfGuard
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: dest, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  await enviaUltra(dest, `${body}\n\n${SIGNATURE}`)
 }
 
 async function msToken(db: SupabaseClient): Promise<string | null> {
@@ -265,14 +268,14 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
           : target.via === 'VALOR PROXIMO' ? `⚠️ pendência de $${(hit.amount + (target.diferenca || 0)).toFixed(2)} — ${target.diferenca && target.diferenca > 0 ? `ainda faltam $${target.diferenca.toFixed(2)}` : `sobraram $${Math.abs(target.diferenca || 0).toFixed(2)}`}; a linha pendente FICOU`
           : `⚠️ ${target.via} — nenhuma pendência bateu com este valor, confira`
         booked.push(`${hit.party} $${hit.amount} → ${target.code} (${target.via})`)
-        await wa(MARCIO_US, `💰 *ZELLE RECEBIDO — LANÇADO*\n$${hit.amount.toFixed(2)} de ${hit.party}\nInvoice ${target.code}\n${nota}\nConf ${hit.conf} · Regions •9336${recibo ? '\n📎 comprovante anexado' : '\n⚠️ sem comprovante anexado'}`)
+        await wa(MARCIO_US, `💰 *ZELLE RECEBIDO — LANÇADO*\n$${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nInvoice ${target.code}\n${nota}\nConf ${hit.conf} · Regions •9336${recibo ? '\n📎 comprovante anexado' : '\n⚠️ sem comprovante anexado'}`)
       } else {
         pending.push(`${hit.party} $${hit.amount}`)
-        await wa(MARCIO_US, `⚠️ *ZELLE RECEBIDO — SEM DESTINO*\n$${hit.amount.toFixed(2)} de ${hit.party}\nConf ${hit.conf} · Regions •9336\n\nPrimeiro pagamento deste remetente — me diga a invoice e eu lanço.`)
+        await wa(MARCIO_US, `⚠️ *ZELLE RECEBIDO — SEM DESTINO*\n$${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nConf ${hit.conf} · Regions •9336\n\nPrimeiro pagamento deste remetente — me diga a invoice e eu lanço.`)
       }
     } else {
       pending.push(`OUT ${hit.party} $${hit.amount}`)
-      await wa(MARCIO_US, `💸 *ZELLE ENVIADO*\n$${hit.amount.toFixed(2)} para ${hit.party}${hit.memo ? `\n"${hit.memo}"` : ''}\nConf ${hit.conf} · Regions •9336\n\nMe diga o carro/invoice e eu lanço a despesa.`)
+      await wa(MARCIO_US, `💸 *ZELLE ENVIADO*\n$${hit.amount.toFixed(2)} para ${semMarcacao(hit.party)}${hit.memo ? `\n"${semMarcacao(hit.memo)}"` : ''}\nConf ${hit.conf} · Regions •9336\n\nMe diga o carro/invoice e eu lanço a despesa.`)
     }
   }
 

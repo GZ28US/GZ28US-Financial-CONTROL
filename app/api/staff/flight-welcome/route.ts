@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
+import { enviaUltra } from '@/lib/waSend.server'
 
 // BOAS-VINDAS DA PASSAGEM (Márcio, 27/ago/2026: "foi comprada a passagem, tem
 // que ter msg de boas-vindas pro membro no Staff, passando todos os dados da
@@ -132,19 +133,26 @@ export async function POST(req: NextRequest) {
   const fone = String(r.st.phone || '').replace(/\D/g, '')
   if (!fone) return NextResponse.json({ error: `${r.st.name} está sem telefone no cadastro` }, { status: 400 })
 
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return NextResponse.json({ error: 'WhatsApp não configurado' }, { status: 500 })
+  if (!process.env.ULTRAMSG_INSTANCE || !process.env.ULTRAMSG_TOKEN) return NextResponse.json({ error: 'WhatsApp não configurado' }, { status: 500 })
 
   const body = buildWelcome(r.f, r.st.name)
-  const res = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, to: `${fone}@c.us`, body }),
-  })
-  const out = await res.json().catch(() => ({}))
+  // Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026). Aqui o destino é
+  // SEMPRE o celular da pessoa (`@c.us`), e a trava de lib/waMentions não marca em
+  // conversa de um pra um — o WhatsApp já notifica. Ou seja: o texto das
+  // boas-vindas continua saindo byte por byte como antes.
+  //
+  // O QUE MUDA DE VERDADE AQUI: o destino sai do CADASTRO do staff, sem passar
+  // pelo waSafeTarget — e o telefone do US.002 (Márcio) no cadastro É o número da
+  // própria instância (medido em 11/set/2026). Nesse caso a UltraMsg aceitava,
+  // respondia `sent: true`, jogava fora, e este endpoint gravava `welcome_sent_at`
+  // de uma mensagem que ninguém recebeu. Agora o helper RECUSA o self-send (a
+  // mesma trava da rota, lib/waSelfGuard) e a resposta é 502 com o motivo escrito
+  // — sem carimbo falso de "avisado".
+  const envio = await enviaUltra(`${fone}@c.us`, body)
   // 'sent: true' da UltraMsg não prova entrega — por isso devolvemos a resposta crua.
-  if (!res.ok || String(out?.sent) !== 'true') {
-    return NextResponse.json({ error: 'UltraMsg recusou', detail: out }, { status: 502 })
+  if (!envio.httpOk || String(envio.data?.sent) !== 'true') {
+    // Sem status HTTP = a chamada nem saiu (rede caiu): aí o detalhe é o erro cru.
+    return NextResponse.json({ error: 'UltraMsg recusou', detail: envio.status === null ? envio.error : envio.data }, { status: 502 })
   }
   const stamp = new Date().toISOString()
   await db.from('staff_flights').update({ welcome_sent_at: stamp, updated_at: stamp }).eq('id', flightId)

@@ -12,6 +12,7 @@
 // stream_mail_moves (from_addr 'stream-answer').
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { enviaUltra } from '@/lib/waSend.server'
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
 const PENDING_MARK = '❓ destino a definir'
@@ -26,13 +27,13 @@ async function fetchGroupMessages(limit = 40): Promise<WaMsg[]> {
   return Array.isArray(data) ? data : []
 }
 
+// A resposta ao grupo sai pelo caminho único (lib/waSend.server.ts, 11/set/2026):
+// quem respondeu pode ser chamado de volta com `@numero` e agora é MARCADO de
+// verdade. Ver lib/waMentions.
 async function replyToGroup(body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN, groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) return
-  await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-  }).catch(() => {})
+  const groupId = process.env.ULTRAMSG_GROUP_ID
+  if (!groupId) return
+  await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)
 }
 
 // O destino que a resposta descreve. Resolve contra rides/invoices dos DOIS

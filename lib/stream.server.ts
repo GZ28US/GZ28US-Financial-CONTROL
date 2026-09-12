@@ -6,6 +6,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { guessCarrier, statusFrom17Track, type StreamRow, type StreamStatus } from './stream'
 import { brSendKeyValue } from './apiAuth.server'
+import { enviaUltra } from './waSend.server'
+import { semMarcacao } from './waMentions'
 
 export function streamDb(): SupabaseClient {
   return createClient(
@@ -82,18 +84,12 @@ export async function t17GetInfo(tracking: string, carrier?: string | null): Pro
 
 // Same registered signature every report carries (see app/api/whatsapp/route.ts).
 const SIGNATURE = 'Sent by GZ28US Control App®'
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): `@numero` no
+// texto do report vira marcação de verdade no grupo. Ver lib/waMentions.
 export async function sendStreamWhatsApp(body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) return
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  if (!groupId) return
+  await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)
 }
 
 // CANCELLED/REFUNDED sit above every carrier-mapped status so a 17TRACK push
@@ -220,15 +216,25 @@ export async function applyTrackInfo(db: SupabaseClient, row: StreamRow, info: a
     // On a BR row, carrier-DELIVERED means "arrived at PowerTrade" (the US
     // forwarder) — the Paraguay + GZ28BR legs come after, updated separately.
     const deliveredLabel = row.app === 'BR' ? 'DELIVERED at PowerTrade' : 'DELIVERED'
+    // TEXTO DE FORA NÃO ESCOLHE QUEM O APP MARCA (11/set/2026, ver lib/waMentions):
+    // este aviso sai pro GRUPO (sendStreamWhatsApp → ULTRAMSG_GROUP_ID) e três
+    // pedaços dele vieram de fora — `item` e `supplier` do e-mail da loja, e o
+    // nome da transportadora do 17TRACK. Passam por `semMarcacao` antes de entrar
+    // no corpo. Ficam de fora, por não caberem "@" neles: `tracking_number`
+    // (1Z+16 ou 10/12 dígitos), a data formatada e o `where` — que é rótulo do
+    // próprio app (invoice_code · nome do carro, escritos na tela do app).
+    const item = semMarcacao(row.item)
+    const fonte = [semMarcacao(row.supplier), where].filter(Boolean).join(' · ')
+    const transp = semMarcacao(updated.carrier)
     if (next === 'DELIVERED') {
       await notify(row,
-        `✅ *STREAM — ${deliveredLabel}*\n${row.item}\n${[row.supplier, where].filter(Boolean).join(' · ')}` +
-        `${updated.carrier || row.tracking_number ? `\n${[updated.carrier, row.tracking_number].filter(Boolean).join(' ')}` : ''}`,
+        `✅ *STREAM — ${deliveredLabel}*\n${item}\n${fonte}` +
+        `${updated.carrier || row.tracking_number ? `\n${[transp, row.tracking_number].filter(Boolean).join(' ')}` : ''}`,
       )
     } else if (next === 'SHIPPED') {
       await notify(row,
-        `🚚 *STREAM — SHIPPED*\n${row.item}\n${[row.supplier, where].filter(Boolean).join(' · ')}` +
-        `\n${[updated.carrier, row.tracking_number].filter(Boolean).join(' ')}` +
+        `🚚 *STREAM — SHIPPED*\n${item}\n${fonte}` +
+        `\n${[transp, row.tracking_number].filter(Boolean).join(' ')}` +
         `${eta ? `\nETA ${fmtDate(eta)}` : ''}`,
       )
     }

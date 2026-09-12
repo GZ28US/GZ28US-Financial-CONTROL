@@ -38,3 +38,24 @@ export function mencoesDoTexto(texto: string, destino: string): string {
   const numeros = [...new Set(achados.map(a => a.slice(1)))].slice(0, 32)
   return numeros.join(',')
 }
+
+// ── TEXTO DE FORA NÃO ESCOLHE QUEM O APP MARCA (11/set/2026) ───────────────
+// A menção sai do CORPO — e vários avisos deste app carregam texto de terceiro:
+// remetente e assunto crus de qualquer e-mail que chegue, o memo livre de quem
+// manda o Zelle, a resposta que alguém digita no grupo da fila. Sem esta peneira,
+// um `no-reply@123456789.mailer.com` ou um assunto "boleto @202609110001" bastaria
+// para um e-mail de fora decidir quem o app marca num grupo interno.
+//
+// Quem escreve o MOLDE da mensagem continua podendo marcar à vontade; o que passa
+// por aqui é só o pedaço que veio de fora. A quebra é mínima e legível — um espaço
+// entre o "@" e os dígitos, que é o bastante para o `@numero` virar texto de novo:
+// "no-reply@ 123456789.mailer.com". Nada de caractere invisível, que some no
+// print e assombra depois.
+//
+// Medido em 11/set/2026 (só leitura): 0 de 1.000 pares assunto+remetente em
+// stream_mail_moves e 0 de 220 descrições de invoice_payments (é lá que o memo do
+// Zelle é gravado) casariam com o padrão. Risco real, frequência medida ZERO — a
+// peneira existe para que continue assim quando o volume mudar.
+export function semMarcacao(texto: unknown): string {
+  return String(texto ?? '').replace(/@(?=\d{8,15}(?!\d))/g, '@ ')
+}

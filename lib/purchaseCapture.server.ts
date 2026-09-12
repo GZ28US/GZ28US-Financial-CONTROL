@@ -18,6 +18,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken, listGmailIds } from './streamMail.server'
 import { gmailAccessToken } from './appsMail.server'
+import { enviaUltra } from './waSend.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -165,22 +166,19 @@ async function processPurchase(db: SupabaseClient, seenSet: Set<string>, msg: Ma
   // "PESCA TEMU"; o Claude lê os pedidos no Chrome logado, registra tudo e SÓ
   // ENTÃO as perguntas de destino (uma por expense) saem no grupo de report.
   if (inserted.length && isTemu) {
-    const instance = process.env.ULTRAMSG_INSTANCE, tk = process.env.ULTRAMSG_TOKEN
-    if (instance && tk) {
-      // 31/ago/2026: grupo REPORTS, nunca o número da própria instância — a
-      // UltraMsg recusa e o envio morre calado. Ver zelleWatch.
-      const pvt = '120363425950692194@g.us'
-      const body = [
-        '🛒 *COMPRA TEMU DETECTADA*', '',
-        `Pedido(s): ${orders.join(', ')}`,
-        'STREAM já registrado. A Temu não manda itens nem valores por e-mail.', '',
-        '👉 Abre a thread *PESCA TEMU* no Claude e roda o comando — o login da Temu é lá dentro, no Claude Browser.',
-      ].join('\n')
-      await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: tk, to: pvt, body: `${body}\n\n${SIGNATURE}` }),
-      }).catch(() => {})
-    }
+    // 31/ago/2026: grupo REPORTS, nunca o número da própria instância — a
+    // UltraMsg recusa e o envio morre calado. Ver zelleWatch.
+    const pvt = '120363425950692194@g.us'
+    const body = [
+      '🛒 *COMPRA TEMU DETECTADA*', '',
+      `Pedido(s): ${orders.join(', ')}`,
+      'STREAM já registrado. A Temu não manda itens nem valores por e-mail.', '',
+      '👉 Abre a thread *PESCA TEMU* no Claude e roda o comando — o login da Temu é lá dentro, no Claude Browser.',
+    ].join('\n')
+    // Caminho único até a UltraMsg (lib/waSend.server.ts, 11/set/2026): `@numero`
+    // no texto vira marcação de verdade no grupo. enviaUltra nunca lança e já
+    // devolve calado sem ULTRAMSG_* no ambiente — a captura segue mesmo assim.
+    await enviaUltra(pvt, `${body}\n\n${SIGNATURE}`)
     await db.from('stream_mail_moves').insert({ message_id: msg.key, subject: msg.subject.slice(0, 120), from_addr: 'purchase-capture', folder_name: store.slice(0, 60), state: 'CAPTURED — PESCA TEMU pedido no PVT' })
     seenSet.add(msg.key)
     return inserted

@@ -21,6 +21,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken, listMailAuths, listGmailIds } from './streamMail.server'
+import { enviaUltra } from './waSend.server'
+import { semMarcacao } from './waMentions'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -60,15 +62,20 @@ function stripHtml(html: string): string {
   return html.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+// O envio passa por lib/waSend.server.ts desde 11/set/2026: um caminho só até a
+// UltraMsg, e é lá que o `@numero` escrito no texto vira marcação de verdade
+// (só em grupo — aqui o destino é sempre o REPORTS). enviaUltra nunca lança e já
+// devolve calado quando falta ULTRAMSG_* no ambiente, então o aviso segue
+// best-effort: a fatura é lançada de qualquer jeito.
+//
+// DOS CAMPOS DESTES DOIS AVISOS, UM SÓ VEM DE FORA SEM FORMA FIXA: o fornecedor
+// da remessa (`matched[0].supplier`, escrito pelo e-mail da loja) — esse passa
+// por `semMarcacao` no ponto de montagem. Os outros não têm como carregar um
+// "@": `carrier` é um de quatro literais (FedEx/UPS/Aramex/DHL), o nº da fatura
+// e os waybills saem de regex de [A-Z0-9-]/dígitos, e o invoice_code é rótulo
+// que o próprio app escreve. Ver semMarcacao em lib/waMentions.
 async function wa(body: string): Promise<void> {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return
-  try {
-    await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: MARCIO_US, body: `${body}\n\n${SIGNATURE}` }),
-    })
-  } catch { /* best-effort */ }
+  await enviaUltra(MARCIO_US, `${body}\n\n${SIGNATURE}`)
 }
 
 // Candidatos a waybill: DHL 10 dígitos, FedEx 12, UPS 1Z+16. Não filtramos aqui
@@ -249,7 +256,7 @@ export async function runDutyWatch(db: SupabaseClient): Promise<{ booked: string
       `🛃 *IMPOSTO DE IMPORTAÇÃO — LANÇADO*`,
       ``,
       `Carrier: *${carrier}*  ·  Waybill ${wb}`,
-      `Remessa: ${supplier}`,
+      `Remessa: ${semMarcacao(supplier)}`,
       `Valor: *${usd(amount)}*${invoiceIds.length > 1 ? ` — ${usd(share)} em cada` : ''}`,
       `Invoice: ${invoiceIds.map(codeOf).join(' + ')}`,
       ``,

@@ -8,6 +8,8 @@
 // reportada. Roda no mail-poll (cron 5min) — PC desligado incluso.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 
 // Só linhas criadas após a entrada da rede — histórico não é re-reportado.
 const EPOCH = '2026-07-26T16:00:00Z'
@@ -48,18 +50,30 @@ async function markReported(db: SupabaseClient, key: string, label: string): Pro
 const lineTotal = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 const ownerOf = (inv: any) => inv?.rides?.project_name || inv?.rides?.project_code || inv?.clients?.name || ''
 
+// Report no grupo pelo caminho único (lib/waSend.server.ts, 11/set/2026):
+// `@numero` no texto vira marcação de verdade. Ver lib/waMentions.
+//
+// O `true` daqui é o critério da rota — HTTP ok E a UltraMsg confirmando que
+// mandou —, não só o HTTP. HTTP 200 com `sent: "false"` (instância fora do ar,
+// número inválido) é recusa, e dizer "reportado" nesse caso seria mentira dita
+// pro Bank Link. ATENÇÃO ao que isto NÃO muda: a marca de "já reportada" continua
+// sendo gravada mesmo quando o envio falha (ver reportAttributedExpense, e a
+// mesma escolha na rede acima) — é decisão antiga e deliberada, de 04/set: a
+// marca registra que a linha FOI TRATADA, e sem ela o balão voltaria a cada 5
+// minutos. Quem devolve "false" aqui só está dizendo a verdade sobre o balão.
+//
+// TEXTO DE FORA NÃO ESCOLHE QUEM O APP MARCA (11/set/2026, ver lib/waMentions):
+// o destino aqui é SEMPRE grupo (ULTRAMSG_GROUP_ID), que é onde `mencoesDoTexto`
+// está ligado, e os balões desta rede carregam campo que veio de fora — item e
+// fornecedor do e-mail da loja, número de pedido, e a `description` do pagamento
+// (é lá que o memo digitado por quem manda o Zelle é gravado). Todos passam por
+// `semMarcacao` no ponto de montagem, logo abaixo. Ficam de fora, de propósito,
+// os rótulos que o próprio app escreve: `invoice_code`, `season_code`, o dono
+// (nome do carro / do cliente), o nome do staff, a data e o `usd()`.
 async function sendReport(body: string): Promise<boolean> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) return false
-  try {
-    const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token, to: groupId, body: `${body}\n\n${SIGNATURE}` }),
-    })
-    return r.ok
-  } catch { return false }
+  if (!groupId) return false
+  return (await enviaUltra(groupId, `${body}\n\n${SIGNATURE}`)).ok
 }
 
 // Últimas mensagens ENVIADAS pela instância (dedup contra o report da própria UI).
@@ -199,10 +213,12 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     const head = `*EXPENSE PAID* ${e0.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`
     const label = `EXPENSE ${e0.invoices?.invoice_code || '—'} ${usd(total)} (${rows.length} itens)`
     if (!alreadySent(total) && rows.some((e) => isRecentMoney(e.payment_date))) {
-      const names = rows.map((e) => String(e.item || '').slice(0, 60))
+      // item, fornecedor e pedido vieram do e-mail da loja: peneirados DEPOIS do
+      // corte, que é o texto que de fato vai pro grupo (ver semMarcacao).
+      const names = rows.map((e) => semMarcacao(String(e.item || '').slice(0, 60)))
       const itemsLine = rows.length === 1 ? names[0]
         : `${rows.length} itens: ${names.slice(0, 3).join(' · ')}${rows.length > 3 ? ` +${rows.length - 3}` : ''}`
-      const srcLine = [e0.supplier, e0.order_number ? `pedido ${e0.order_number}` : ''].filter(Boolean).join(' — ')
+      const srcLine = [semMarcacao(e0.supplier), e0.order_number ? `pedido ${semMarcacao(e0.order_number)}` : ''].filter(Boolean).join(' — ')
       await sendReport([head, `${e0.payment_date || ''} — *${usd(total)}*`, srcLine, itemsLine].filter(Boolean).join('\n'))
       out.push(label)
     }
@@ -223,7 +239,9 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
     const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
     if (!alreadySent(Number(p.amount)) && isRecentMoney(paidOn)) {
-      await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, String(p.description || '').slice(0, 160)].join('\n'))
+      // `description` de invoice_payments é onde o MEMO de quem mandou o dinheiro
+      // (Zelle) é gravado: texto de terceiro, peneirado antes de ir pro grupo.
+      await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, semMarcacao(String(p.description || '').slice(0, 160))].join('\n'))
       out.push(label)
     }
     await mark(key, label)
@@ -239,7 +257,8 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     const who = s.seasons?.staff?.name || '—'
     const label = `EXPENSE STAFF ${s.seasons?.season_code || ''} ${usd(s.amount)}`
     if (!alreadySent(Number(s.amount)) && isRecentMoney(s.payment_date)) {
-      await sendReport([`*EXPENSE PAID — STAFF* ${s.seasons?.season_code || '—'} — ${who}`, `${s.payment_date || ''} — *${usd(s.amount)}*`, String(s.description || '').slice(0, 160)].join('\n'))
+      // A `description` da season é digitada por gente; peneirada como as outras.
+      await sendReport([`*EXPENSE PAID — STAFF* ${s.seasons?.season_code || '—'} — ${who}`, `${s.payment_date || ''} — *${usd(s.amount)}*`, semMarcacao(String(s.description || '').slice(0, 160))].join('\n'))
       out.push(label)
     }
     await mark(key, label)
@@ -304,8 +323,10 @@ export async function reportAttributedExpense(db: SupabaseClient, { invoice, row
   const owner = invoice?.owner || ownerOf(invoice)
   const head = `*EXPENSE PAID* ${code}${owner ? ` — ${owner}` : ''}`
   const date = String(row.payment_date || line?.date || '').slice(0, 10)
-  const srcLine = [row.supplier, row.order_number ? `pedido ${row.order_number}` : ''].filter(Boolean).join(' — ')
-  const itemLine = String(row.item || '').slice(0, 60)
+  // Mesmo balão da rede acima, mesma peneira: fornecedor, pedido e item vieram do
+  // e-mail da loja e o destino é grupo (ver semMarcacao em lib/waMentions).
+  const srcLine = [semMarcacao(row.supplier), row.order_number ? `pedido ${semMarcacao(row.order_number)}` : ''].filter(Boolean).join(' — ')
+  const itemLine = semMarcacao(String(row.item || '').slice(0, 60))
   const reported = await sendReport([head, `${date} — *${usd(total)}*`, srcLine, itemLine].filter(Boolean).join('\n'))
   await markReported(db, key, `EXPENSE ${code} ${usd(total)} (atribuída · Bank Link)`)
   return { reported }

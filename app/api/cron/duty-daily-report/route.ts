@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
+import { enviaUltra } from '@/lib/waSend.server'
 
 // ── DUTIES DO DIA — report automático (Márcio, 01/ago/2026) ──────────────────
 // "às 4am de cada dia, este report automático." Todo dia às 4am de Orlando
@@ -77,15 +78,12 @@ export function buildDayReport(events: Ev[], day: string, header: string): strin
   return body + '\n\n' + FOOTER + '\n\nSent by GZ28US Control App®'
 }
 
+// O resumo vai pro grupo STAFF por lib/waSend.server.ts (11/set/2026): quando o
+// texto chamar alguém com `@numero`, o campo `mentions` vai junto e o nome ACENDE
+// no celular da pessoa — antes o "@" era só tinta. Ver lib/waMentions.
 async function sendToGroup(body: string) {
-  const instance = process.env.ULTRAMSG_INSTANCE, token = process.env.ULTRAMSG_TOKEN
-  if (!instance || !token) return 'no ultramsg env'
-  const r = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, to: STAFF_GROUP_ID, body }).toString(),
-  })
-  return r.ok ? null : `ultramsg ${r.status}`
+  const r = await enviaUltra(STAFF_GROUP_ID, body)
+  return r.httpOk ? null : (r.error || `ultramsg ${r.status}`)
 }
 
 export async function GET(req: NextRequest) {

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { enviaUltra } from '@/lib/waSend.server'
+import { semMarcacao } from '@/lib/waMentions'
 
 // This cron runs server-side with NO user session. Under RLS the bare anon key
 // is blocked, so it talks to Supabase with the SERVICE-ROLE key (bypasses RLS).
@@ -31,27 +33,27 @@ function formatUSD(v: number) {
 // Same registered signature appended to every report (see app/api/whatsapp/route.ts).
 const SIGNATURE = 'Sent by GZ28US Control App®'
 
+// Envio pelo caminho único (lib/waSend.server.ts, 11/set/2026): `@numero` no
+// texto do report vira marcação de verdade no grupo — ver lib/waMentions. Este
+// é o único remetente que fala com a UltraMsg em JSON e com `priority: 10`; o
+// helper mantém os dois exatamente como estavam (`json` e `extra`), porque
+// mudar o transporte de um report que funciona não é o assunto desta mudança.
 async function sendWhatsApp(body: string): Promise<{ ok: boolean; detail?: any }> {
-  const instance = process.env.ULTRAMSG_INSTANCE
-  const token = process.env.ULTRAMSG_TOKEN
   const groupId = process.env.ULTRAMSG_GROUP_ID
-  if (!instance || !token || !groupId) {
+  if (!process.env.ULTRAMSG_INSTANCE || !process.env.ULTRAMSG_TOKEN || !groupId) {
     return { ok: false, detail: 'UltraMsg env vars not set' }
   }
   const signed = body.trimEnd().endsWith(SIGNATURE) ? body : `${body}\n\n${SIGNATURE}`
-  try {
-    // ULTRAMSG_INSTANCE already includes the "instance" prefix (e.g. instance174454).
-    const res = await fetch(`https://api.ultramsg.com/${instance}/messages/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, to: groupId, body: signed, priority: 10 }),
-    })
-    const data = await res.json()
-    const sent = data?.sent === 'true' || data?.sent === true
-    return { ok: sent, detail: data }
-  } catch (err: any) {
-    return { ok: false, detail: err?.message }
-  }
+  const r = await enviaUltra(groupId, signed, { json: true, extra: { priority: 10 } })
+  const sent = r.data?.sent === 'true' || r.data?.sent === true
+  // O DETALHE TEM DE SOBRAR ALGUMA COISA PRA DEPURAR (11/set/2026). Três casos:
+  // sem status HTTP = a chamada nem saiu (rede caiu, ou a trava de self-send
+  // recusou) → vai o erro cru; resposta que não é JSON (a UltraMsg devolvendo
+  // página de erro com HTTP 200 é o caso clássico) → o `data` vira `{}` e sem isto
+  // o cron respondia `detail: {}`, que não diz nada → vai o texto cru; resto → o
+  // JSON mesmo. Robô que roda sozinho só tem o que ele mesmo contar.
+  const corpoVazio = !r.data || Object.keys(r.data).length === 0
+  return { ok: sent, detail: r.status === null ? r.error : (corpoVazio ? (r.raw.slice(0, 400) || `ultramsg ${r.status}`) : r.data) }
 }
 
 export async function GET(req: NextRequest) {
@@ -144,9 +146,13 @@ export async function GET(req: NextRequest) {
         `${season.season_code}${staffName ? ` — ${staffName}` : ''}`,
         `${periodLabel} — ${formatDate(today)} — *${formatUSD(amount)}*`,
       ]
-      if (exp.description) lines.push(exp.description)
+      // `description` e `source` são texto livre gravado por gente (e, no caso do
+      // staff travel, montado a partir do e-mail da companhia aérea). O destino
+      // deste report é GRUPO, então passam por `semMarcacao` antes de virar corpo:
+      // texto de fora não escolhe quem o app marca. Ver lib/waMentions.
+      if (exp.description) lines.push(semMarcacao(exp.description))
       if (exp.origin === 'PERSONAL') lines.push('PERSONAL')
-      if (exp.source) lines.push(exp.source)
+      if (exp.source) lines.push(semMarcacao(exp.source))
       lines.push('')
       lines.push(`Running total: ${formatUSD(runningTotal)}`)
 
@@ -244,8 +250,11 @@ export async function GET(req: NextRequest) {
         `${invoice.invoice_code || '—'}${ownerLabel ? ` — ${ownerLabel}` : ''}`,
         `Due: ${formatDate(p.payment_date)} — *${formatUSD(amount)}*`,
       ]
-      if (p.description) lines.push(p.description)
-      if (p.source) lines.push(p.source)
+      // Mesma peneira do report de staff acima — e aqui ela pesa mais: a
+      // `description` de invoice_payments é onde o MEMO de quem mandou o dinheiro
+      // (Zelle) é gravado, texto que um terceiro escreveu. Ver lib/waMentions.
+      if (p.description) lines.push(semMarcacao(p.description))
+      if (p.source) lines.push(semMarcacao(p.source))
 
       const caption = lines.join('\n')
 
