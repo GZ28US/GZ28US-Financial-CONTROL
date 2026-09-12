@@ -44,7 +44,7 @@
 -- da Notredame vem COM anexo nas 8 de 8, e a trava de anexo o prenderia para
 -- sempre. A partir deste commit a exceção derruba palavra E anexo.
 comment on column public.marketing_senders.hard_stop_waived_at is
-  'Remetente que o Márcio mandou apagar SEMPRE: preenchida, a trava de PALAVRA transacional (HARD_STOP: fatura, boleto, invoice…) E a trava de ANEXO deixam de valer para ESTE endereço. O que continua travando depende do ramo: no Outlook, conversa (In-Reply-To e References) e remetente protegido (barrado/lib/mailProtected.server.ts); no Gmail, SÓ In-Reply-To — lá o barrado() ainda não é chamado. NULL = regra normal. Decisão dele, linha a linha — nunca por volume.';
+  'Remetente que o Márcio mandou apagar SEMPRE: preenchida, a trava de PALAVRA transacional (HARD_STOP: fatura, boleto, invoice…) E a trava de ANEXO deixam de valer para ESTE endereço. O que continua travando depende do ramo: no Outlook, conversa (In-Reply-To e References) e remetente protegido (barrado/lib/mailProtected.server.ts); no Gmail, remetente protegido TAMBÉM (o barrado() entrou no ramo Gmail em 11/set, no mesmo pacote) e conversa só por In-Reply-To, porque References não é pedido nos metadataHeaders. NULL = regra normal. Decisão dele, linha a linha — nunca por volume.';
 
 -- ── 2. OS TRÊS AUTOMÁTICOS QUE FALTAVAM, JÁ COM A EXCEÇÃO PREENCHIDA ────────
 -- `email` é a PRIMARY KEY (medido em 11/set no schema do PostgREST; a tabela foi
