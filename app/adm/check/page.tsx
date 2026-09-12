@@ -144,6 +144,21 @@ const nameTok = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9 
 const dayDiff = (a: string, b: string) => Math.abs(Math.round((Date.parse(a.slice(0, 10)) - Date.parse(b.slice(0, 10))) / 864e5))
 // WA SEND LOG (caso Gui, 31/ago): falhas de envio do /api/whatsapp gravadas em wa_send_log.
 type WaSignal = { state: 'loading' | 'ok' | 'missing' | 'error'; fails: { id: string; at: string; destination: string | null; group_name: string | null; kind: string | null; body_head: string | null; error: string | null; http_status: number | null }[] }
+// TRÊS COISAS DIFERENTES NO MESMO LOG (11/set/2026): desde que o portão do envio
+// subiu, wa_send_log guarda (a) entrega que falhou de verdade — o grupo não
+// ouviu; (b) pedido RECUSADO no portão (401, sem sessão e sem x-send-key), que é
+// a trava trabalhando; (c) auto-envio BARRADO (400), idem. Misturar os três fazia
+// o card "não saiu" contar segurança como pendência. Nada some: são listas
+// separadas, com o probe da conferência marcado como probe.
+type WaFail = WaSignal['fails'][number]
+type WaKind = 'gate' | 'guard' | 'delivery'
+const waKind = (f: WaFail): WaKind => {
+  const err = String(f.error || '')
+  if (f.http_status === 401 || /^unauthorized/i.test(err)) return 'gate'
+  if (/self-send bloqueado|auto-envio/i.test(err)) return 'guard'
+  return 'delivery'
+}
+const waProbe = (f: WaFail) => /^__.*__$/.test(String(f.group_name || f.destination || '').trim())
 // O QUE É ESTA LINHA? (04/set/2026) — o sinal de /api/item-nature: as linhas sem
 // natureza, AGRUPADAS POR FORNECEDOR canonizado. O card tem corpo próprio (o
 // grupo é a unidade de trabalho, não a linha) — ver <NatureWorkbench> lá embaixo.
@@ -1092,21 +1107,38 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
 
   // STAFF · AVISOS DE WHATSAPP QUE NÃO SAÍRAM (caso Gui, 31/ago: o RESUMED das
   // 12:28 morreu calado — só um toast de 3s no celular dele). Toda tentativa de
-  // envio agora fica em wa_send_log; aqui aparecem as FALHAS dos últimos 14 dias.
+  // envio fica em wa_send_log; aqui aparecem as FALHAS dos últimos 14 dias,
+  // agora em DOIS cards: entrega que falhou de verdade (o grupo não ouviu) e
+  // pedido recusado pela trava de envio, que é coisa de segurança, não de
+  // entrega. Antes vinham no mesmo monte e o probe da conferência de segurança
+  // aparecia como aviso perdido.
   {
-    const items: Item[] = []
-    if (wa.state === 'missing') items.push({ href: '/whatsapp', code: 'MIGRATION', label: 'Rodar MIGRATION_wa_send_log.sql no SQL Editor', extra: 'sem a tabela, falha de envio morre sem registro — foi assim no caso do Gui' })
-    if (wa.state === 'error') items.push({ href: '/whatsapp', code: 'SINAL', label: 'sinal do WA SEND LOG indisponível — verificação NÃO rodou', extra: 'recarregue a página' })
-    for (const f of wa.fails) items.push({
-      href: '/whatsapp', code: f.http_status ? 'HTTP ' + f.http_status : 'FALHA', when: String(f.at).slice(0, 10),
-      label: `${String(f.at).slice(0, 16).replace('T', ' ')} · ${f.group_name || f.destination || 'destino?'} · "${String(f.body_head || '').slice(0, 60)}"`,
+    const avisos: Item[] = []
+    if (wa.state === 'missing') avisos.push({ href: '/whatsapp', code: 'MIGRATION', label: 'Rodar MIGRATION_wa_send_log.sql no SQL Editor', extra: 'sem a tabela, falha de envio morre sem registro — foi assim no caso do Gui' })
+    if (wa.state === 'error') avisos.push({ href: '/whatsapp', code: 'SINAL', label: 'sinal do WA SEND LOG indisponível — verificação NÃO rodou', extra: 'recarregue a página' })
+
+    const linha = (f: WaFail, code: string): Item => ({
+      href: '/whatsapp', code, when: String(f.at).slice(0, 10),
+      label: `${String(f.at).slice(0, 16).replace('T', ' ')} · ${f.group_name || f.destination || 'destino?'}${waProbe(f) ? ' · PROBE da conferência de segurança' : ''} · "${String(f.body_head || '').slice(0, 60)}"`,
       extra: String(f.error || 'erro desconhecido').slice(0, 140),
     })
+
+    const naoSaiu = wa.fails.filter(f => waKind(f) === 'delivery')
+    const barrados = wa.fails.filter(f => waKind(f) !== 'delivery')
+
+    const items = [...avisos, ...naoSaiu.map(f => linha(f, f.http_status ? 'HTTP ' + f.http_status : 'FALHA'))]
     if (items.length) checks.push({
       group: 'STAFF', key: 'wa-send-failures', title: 'Aviso de WhatsApp que NÃO saiu',
       blocks: 'o grupo não fica sabendo do que aconteceu (duty, relatório, alerta)',
-      why: 'Márcio (01/ago): "o sistema deve saber de tudo sozinho" — mas o aviso de envio falho era um toast de 3 segundos no celular do funcionário. Agora TODA tentativa do /api/whatsapp fica em wa_send_log (sucesso e falha) e as falhas de 14 dias aparecem aqui. Causas típicas: telefone-host da instância UltraMsg desconectado (mensagem fica em fila — reconectar o aparelho no painel do UltraMsg), grupo renomeado no WhatsApp (a rota resolve por NOME), ou instância sem crédito.',
+      why: 'Márcio (01/ago): "o sistema deve saber de tudo sozinho" — mas o aviso de envio falho era um toast de 3 segundos no celular do funcionário. Agora TODA tentativa do /api/whatsapp fica em wa_send_log (sucesso e falha) e as falhas de 14 dias aparecem aqui. Este card conta só ENTREGA que falhou: telefone-host da instância UltraMsg desconectado (mensagem fica em fila — reconectar o aparelho no painel do UltraMsg), grupo renomeado no WhatsApp (a rota resolve por NOME), ou instância sem crédito. Pedido recusado pela trava de envio tem card próprio ("Pedido de WhatsApp barrado pela trava"), porque ali a trava fez o trabalho dela — não é mensagem perdida.',
       items,
+    })
+
+    if (barrados.length) checks.push({
+      group: 'STAFF', key: 'wa-send-blocked', title: 'Pedido de WhatsApp barrado pela trava',
+      blocks: 'nada — a mensagem não saiu de propósito; só vira problema se quem foi barrado era nosso',
+      why: 'Desde 11/set/2026 o POST /api/whatsapp só aceita tela logada (JWT do Supabase) ou servidor/script com x-send-key, e a rota barra auto-envio (mandar pro próprio número da instância). Toda recusa fica no wa_send_log com destino e começo do texto — nunca a chave. RECUSADO (401) = pedido sem sessão e sem chave: se for chamada NOSSA, o chamador está sem o header (ou sem sessão) e precisa de conserto; se for de fora, é a porta fechando, e não há o que fazer. BARRADO (400) = a trava de auto-envio. Linha marcada PROBE é a conferência de segurança que eu mesmo disparo contra um grupo inexistente: não envia nada e é esperada.',
+      items: barrados.map(f => linha(f, waKind(f) === 'gate' ? 'RECUSADO' : 'BARRADO')),
     })
   }
 
