@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { runMarketingKill } from '@/lib/marketingKill.server'
 
@@ -18,11 +19,12 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const key = req.headers.get('x-read-key') || req.nextUrl.searchParams.get('key') || ''
-  const cronOk = !!process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`
-  const keyOk = !!process.env.WHATSAPP_READ_KEY && key === process.env.WHATSAPP_READ_KEY
-  if (!cronOk && !keyOk) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // PORTÃO ÚNICO (11/set/2026): a checagem à mão virou lib/apiAuth.server.ts, pra
+  // troca de chave mexer num lugar só. Aceita o cron da Vercel (Bearer CRON_SECRET)
+  // ou a chave de leitura no header x-read-key; `?key=` segue valendo enquanto os
+  // scripts das sessões e o atalho do iPhone não migram (a chave na URL vai parar
+  // em todo log de acesso). As duas comparações falham fechadas.
+  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const t0 = Date.now()
   try {

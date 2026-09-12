@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { readKeyOk } from '@/lib/apiAuth.server'
+import { smsKeyOk } from '@/lib/apiAuth.server'
 
 // ── SMS DO iPHONE US → SISTEMA (Márcio, 02/ago/2026) ─────────────────────────
 // "Muitos americanos não usam WhatsApp, é tudo por msg de texto. É importante
@@ -10,7 +10,7 @@ import { readKeyOk } from '@/lib/apiAuth.server'
 // SMS E iMessage. Guardamos em sms_messages (RLS on, só service role), e o
 // vault (#86) indexa a partir daí. Aceita GET com query params também, porque
 // o Atalhos monta requisições GET com mais facilidade pra iniciantes.
-//   POST /ca/api/sms/webhook?key=<WHATSAPP_READ_KEY>  body JSON {sender, body}
+//   POST /ca/api/sms/webhook?key=<SMS_WEBHOOK_SECRET>  body JSON {sender, body}
 //   GET  /ca/api/sms/webhook?key=...&sender=...&body=...
 
 export const dynamic = 'force-dynamic'
@@ -33,9 +33,11 @@ async function save(sender: string, body: string) {
 }
 
 export async function POST(req: NextRequest) {
-  // O Atalhos do iPhone manda a chave em ?key=; o header x-read-key também vale.
-  // Falha fechada: sem WHATSAPP_READ_KEY no ambiente, nada entra (11/set/2026).
-  if (!readKeyOk(req, { allowQuery: true })) {
+  // O Atalhos do iPhone manda o segredo em ?key=. Desde 11/set é segredo PRÓPRIO
+  // (SMS_WEBHOOK_SECRET): a URL guardada no telefone não abre mais o resto do app, e
+  // trocar a chave de leitura não pede mexer no Atalhos. A chave de leitura ainda
+  // vale enquanto o atalho estiver na URL velha. Falha fechada.
+  if (!smsKeyOk(req)) {
     return NextResponse.json({ error: 'bad key' }, { status: 401 })
   }
   const b = await req.json().catch(() => null) as { sender?: string; body?: string } | null
@@ -46,7 +48,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
-  if (!readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'bad key' }, { status: 401 })
+  if (!smsKeyOk(req)) return NextResponse.json({ error: 'bad key' }, { status: 401 })
   // Sem sender/body é só um ping de teste.
   if (!p.get('body')) return NextResponse.json({ ok: true, ping: true })
   const r = await save(String(p.get('sender') || ''), String(p.get('body') || ''))

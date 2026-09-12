@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { waDb, waSyncInstance } from '@/lib/waStore.server'
 
 // WHATSAPP HUB — rede de segurança (cron 10/10min): o webhook é o caminho
@@ -16,11 +17,12 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const key = req.nextUrl.searchParams.get('key') || ''
-  const cronOk = !!process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`
-  const keyOk = !!process.env.WHATSAPP_READ_KEY && key === process.env.WHATSAPP_READ_KEY
-  if (!cronOk && !keyOk) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // PORTÃO ÚNICO (11/set/2026): a checagem à mão virou lib/apiAuth.server.ts, pra
+  // troca de chave mexer num lugar só. Aceita o cron da Vercel (Bearer CRON_SECRET)
+  // ou a chave de leitura no header x-read-key; `?key=` segue valendo enquanto os
+  // scripts das sessões e o atalho do iPhone não migram (a chave na URL vai parar
+  // em todo log de acesso). As duas comparações falham fechadas.
+  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const instance = process.env.ULTRAMSG_INSTANCE
   const token = process.env.ULTRAMSG_TOKEN

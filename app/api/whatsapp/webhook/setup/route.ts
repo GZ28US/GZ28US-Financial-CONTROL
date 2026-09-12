@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readKeyOk } from '@/lib/apiAuth.server'
+import { requireUser, sendKeyOk, webhookKeyValue } from '@/lib/apiAuth.server'
 
 // Registra (ou confere) o webhook da instância UltraMsg — sem que o token saia
 // daqui. Chamar uma vez depois do deploy:
@@ -16,10 +16,12 @@ function creds() {
   return { instance: process.env.ULTRAMSG_INSTANCE, token: process.env.ULTRAMSG_TOKEN }
 }
 
-// A chave vale onde sempre valeu (?key= no GET, `key` no corpo do POST) e no
-// header x-read-key; falha fechada — sem WHATSAPP_READ_KEY, nada entra (11/set/2026).
+// ESTA ROTA APONTA O WEBHOOK DA INSTÂNCIA — quem entra aqui redireciona TODA mensagem
+// que chega no WhatsApp da empresa pro servidor que quiser. Por isso ela não abre com
+// a chave de LEITURA (11/set/2026): só tela logada (JWT) ou a chave de ENVIO no header
+// x-send-key. Falha fechada.
 export async function GET(req: NextRequest) {
-  if (!readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!sendKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { instance, token } = creds()
   if (!instance || !token) return NextResponse.json({ error: 'UltraMsg not configured' }, { status: 503 })
   const r = await fetch(`https://api.ultramsg.com/${instance}/instance/settings?token=${encodeURIComponent(token)}`)
@@ -28,12 +30,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
+  if (!sendKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
-  if (!readKeyOk(req, { bodyKey: body.key })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { instance, token } = creds()
   if (!instance || !token) return NextResponse.json({ error: 'UltraMsg not configured' }, { status: 503 })
-  const url = String(body.url || `https://www.gz28us.com/ca/api/whatsapp/webhook?key=${need || ''}`)
+  // A URL padrão leva o segredo PRÓPRIO do webhook; sem ele no ambiente a rota não
+  // inventa URL com a chave de leitura (era o que fazia antes) — diz o que falta.
+  const segredo = webhookKeyValue()
+  if (!body.url && !segredo) return NextResponse.json({ error: 'falta ULTRAMSG_WEBHOOK_SECRET no ambiente (ou mande url no corpo)' }, { status: 503 })
+  const url = String(body.url || `https://www.gz28us.com/ca/api/whatsapp/webhook?key=${segredo}`)
   const r = await fetch(`https://api.ultramsg.com/${instance}/instance/settings`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

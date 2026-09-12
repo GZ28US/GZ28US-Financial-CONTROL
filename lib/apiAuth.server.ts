@@ -59,6 +59,42 @@ export function brSendKeyValue(): string | undefined {
   return process.env.GZ28BR_SEND_KEY || sendKeyValue()
 }
 
+/**
+ * O WEBHOOK DA ULTRAMSG tem segredo PRÓPRIO (`ULTRAMSG_WEBHOOK_SECRET`). A UltraMsg
+ * não manda header: o segredo anda na URL cadastrada no painel dela, então ele não
+ * pode ser a mesma chave que abre e-mail, espelho e o `webhook/setup` — vazou a URL,
+ * vazou tudo. Aqui ele abre SÓ esta porta.
+ * TRANSIÇÃO: enquanto o painel da UltraMsg estiver na URL velha, a chave de leitura
+ * também abre. A queda dessa linha é o último passo da troca de chaves, depois que a
+ * URL nova estiver salva no painel (memory/troca-de-chaves-11set.md).
+ */
+function segredoDeUrlOk(req: NextRequest, proprio: string | undefined): boolean {
+  if (mesmoSegredo(req.nextUrl.searchParams.get('key'), proprio)) return true
+  if (mesmoSegredo(req.headers.get('x-webhook-key'), proprio)) return true
+  return readKeyOk(req, { allowQuery: true })   // TRANSIÇÃO — cai quando as duas URLs estiverem trocadas
+}
+
+export function webhookKeyValue(): string | undefined {
+  return process.env.ULTRAMSG_WEBHOOK_SECRET
+}
+
+export function webhookKeyOk(req: NextRequest): boolean {
+  return segredoDeUrlOk(req, webhookKeyValue())
+}
+
+/**
+ * O ATALHO DE SMS DO iPHONE, mesma história: a URL fica salva no Atalhos e leva o
+ * segredo na query. Segredo próprio (`SMS_WEBHOOK_SECRET`) pra que trocar a chave de
+ * leitura não exija mexer no telefone — e pra que a URL do telefone não abra mais nada.
+ */
+export function smsKeyValue(): string | undefined {
+  return process.env.SMS_WEBHOOK_SECRET
+}
+
+export function smsKeyOk(req: NextRequest): boolean {
+  return segredoDeUrlOk(req, smsKeyValue())
+}
+
 /** Servidor ou script mandando mensagem: header `x-send-key`. */
 export function sendKeyOk(req: NextRequest): boolean {
   return mesmoSegredo(req.headers.get('x-send-key'), sendKeyValue())

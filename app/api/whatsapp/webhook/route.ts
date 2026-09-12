@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readKeyOk } from '@/lib/apiAuth.server'
+import { webhookKeyOk } from '@/lib/apiAuth.server'
 import { createClient } from '@supabase/supabase-js'
 import { waNormalize, waStore, waTouchChat, waDb } from '@/lib/waStore.server'
 
@@ -29,10 +29,12 @@ function db() {
 }
 
 export async function POST(req: NextRequest) {
-  // A UltraMsg não manda header: a chave vem em ?key= (a URL cadastrada acima);
-  // x-read-key também vale. Falha fechada — sem WHATSAPP_READ_KEY no ambiente,
-  // nada entra (11/set/2026).
-  if (!readKeyOk(req, { allowQuery: true })) {
+  // A UltraMsg não manda header: o segredo vem em ?key= (a URL cadastrada acima).
+  // Desde 11/set é segredo PRÓPRIO do webhook (ULTRAMSG_WEBHOOK_SECRET) — vazar a
+  // URL do painel não abre mais o resto do app. A chave de leitura ainda vale
+  // enquanto a URL velha estiver salva lá. Falha fechada: sem segredo nenhum no
+  // ambiente, nada entra.
+  if (!webhookKeyOk(req)) {
     return NextResponse.json({ error: 'bad key' }, { status: 401 })
   }
   const payload = await req.json().catch(() => null)
