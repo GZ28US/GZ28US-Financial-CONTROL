@@ -96,13 +96,33 @@ export const PEDIDO_NOVO = [
   // solto não vem embrulhado assim.
   /\border\b[^\n]{0,40}?\(#(\d{5,8})\)/gi,                                    // "Order Confirmation (#384734)"
   /\bpedido\s*(?:n[ºo°]|#)?\s*[:#]?\s*(\d{5,})\b/gi,                          // lojas BR
+  // LOJA SHOPIFY: "Receipt for order #13150" (Livro 3.7, 11/set/2026). O piso de
+  // 6 dígitos da regra de cima deixava de fora a numeração de loja pequena, que
+  // começa baixa e cresce devagar — e o recibo da Detail Ground (10/set 13:39,
+  // US$ 77,67) morreu calado por isso: ZERO linha em `auto_book_mail`, e a
+  // compra só apareceu pela foto no grupo do time.
+  // A trava aqui é a CERQUILHA COLADA: "#13150" depois de "order". Sem o "#",
+  // cinco dígitos soltos perto da palavra "order" são CEP, valor e id de tudo
+  // quanto é coisa — é a mesma razão de a lista ser fechada.
+  /\border\s*(?:id|number|no\.?)?\s*#\s?(\d{5,8})\b/gi,                        // Shopify — "Receipt for order #13150"
   // Varejo americano com prefixo de letras — Home Depot "Order #WH43863914",
   // Lowe's, Walmart. A palavra "order" colada continua sendo a trava: sozinho,
   // "WH43863914" tem a mesma cara de SKU e de nº de nota (07/set/2026: a compra
   // de $186,47 da Home Depot ficou sem pedido nenhum por falta deste formato).
   // (sem flag `i`: a palavra aceita as duas caixas, o CÓDIGO tem de vir em
   //  maiúsculas — com `i`, "order the wh12345678" viraria pedido.)
-  /\b[Oo]rder\s*(?:[Nn]umber|#|[Nn]o\.?)?\s*[:#]?\s*#?([A-Z]{2,3}\d{6,12})\b/g, // Home Depot & cia
+  // UMA LETRA JÁ BASTA, E QUATRO DÍGITOS TAMBÉM (Livro 5.9, 11/set/2026): o
+  // pedido da Aeromotive é "A13706" — 1 letra e 5 dígitos —, e com o piso de
+  // 2 letras + 6 dígitos ele não era pedido nenhum. Os dois e-mails da mesma
+  // compra (10/set 22:37 e 22:38) abriram as dúvidas 07142a50 e 3ccf912c, as
+  // duas "sem numero de pedido", com o número à vista no corpo.
+  // O piso continua de 5 CARACTERES no total (1 letra + 4 dígitos), que é o
+  // mesmo MIN_PEDIDO do dicionário: abaixo disso o pedido não casa com linha
+  // nenhuma e só faria ruído.
+  // O `(?!-\d)` é a trava de recorte: sem ele, um código do tipo "T2024-001"
+  // entregaria o pedaço "T2024" como se fosse o pedido inteiro — meio número é
+  // pior que nenhum, porque casa com a linha errada.
+  /\b[Oo]rder\s*(?:[Nn]umber|#|[Nn]o\.?)?\s*[:#]?\s*#?([A-Z]{1,3}\d{4,12})\b(?!-\d)/g, // Aeromotive A13706 · Home Depot WH43863914
 ]
 
 type Linha = { tabela: ItemTable; id: string; order_number: string; tracking_number: string | null; carrier: string | null; delivered_at: string | null; cancel_status: string | null }
