@@ -22,7 +22,12 @@
 --
 -- ── O QUE NÃO ENTRA (de propósito) ──────────────────────────────────────────
 --   • lucas.sena@hapvida.com.br ("DEPOSITO IDENTIFICADO", 1 mensagem) é GENTE.
---     Correspondência de gente não se apaga sozinha — lib/mailProtected.ts.
+--     ATENÇÃO, NÃO HÁ REDE EMBAIXO: o que protege o lucas.sena é UMA coisa só —
+--     ele NÃO está em marketing_senders, e o robô só toca em quem está na lista.
+--     lib/mailProtected.ts (protectedSender) não sabe o que é Hapvida: conferido
+--     linha a linha em 11/set, ele só casa DESPACHANTE, ADVOGADOS, ESIGN e VIP.
+--     Por isso a lista tem de ser de ENDEREÇO EXATO. Listar um `%@hapvida.com.br`
+--     genérico apagaria a carta dele sozinho, sem nada segurando.
 --   • Os 36 antigos da Intermédica (2021–2024) estão ARQUIVADOS em pasta, e o
 --     robô não varre pasta: só caixa de entrada e lixo eletrônico.
 --   • comunicado.importante@intermedica.com.br (2 mensagens, 11/set: "Comunicado
@@ -39,7 +44,7 @@
 -- da Notredame vem COM anexo nas 8 de 8, e a trava de anexo o prenderia para
 -- sempre. A partir deste commit a exceção derruba palavra E anexo.
 comment on column public.marketing_senders.hard_stop_waived_at is
-  'Remetente que o Márcio mandou apagar SEMPRE: preenchida, a trava de PALAVRA transacional (HARD_STOP: fatura, boleto, invoice…) E a trava de ANEXO deixam de valer para ESTE endereço. Conversa (In-Reply-To/References) e remetente protegido (lib/mailProtected.ts) continuam travando. NULL = regra normal. Decisão dele, linha a linha — nunca por volume.';
+  'Remetente que o Márcio mandou apagar SEMPRE: preenchida, a trava de PALAVRA transacional (HARD_STOP: fatura, boleto, invoice…) E a trava de ANEXO deixam de valer para ESTE endereço. O que continua travando depende do ramo: no Outlook, conversa (In-Reply-To e References) e remetente protegido (barrado/lib/mailProtected.server.ts); no Gmail, SÓ In-Reply-To — lá o barrado() ainda não é chamado. NULL = regra normal. Decisão dele, linha a linha — nunca por volume.';
 
 -- ── 2. OS TRÊS AUTOMÁTICOS QUE FALTAVAM, JÁ COM A EXCEÇÃO PREENCHIDA ────────
 -- `email` é a PRIMARY KEY (medido em 11/set no schema do PostgREST; a tabela foi
@@ -82,8 +87,19 @@ select email, account, active, evidence, hits, blocked, hard_stop_waived_at
 -- comment on column public.marketing_senders.hard_stop_waived_at is
 --   'Remetente que o Márcio mandou apagar SEMPRE: preenchida, a trava de PALAVRA transacional (HARD_STOP: fatura, boleto, invoice…) não vale para ESTE endereço. Anexo, conversa (In-Reply-To/References) e remetente protegido continuam travando. NULL = regra normal. Decisão dele, linha a linha — nunca por volume.';
 --
--- O rollback do SQL sozinho NÃO desfaz o código: com o commit no ar e as três
--- linhas removidas, o robô simplesmente volta a ignorar esses remetentes (ele
--- só toca em quem está na lista) e a Hapvida volta a ser apagada à mão pela
--- rodada de e-mail. Ninguém fica apagando nada indevido.
+-- O rollback acima tira o que ESTE arquivo põe, e para os três endereços ele
+-- basta: sem linha na lista, o robô volta a ignorá-los (só toca em quem está na
+-- lista) e a Hapvida volta a sair à mão pela rodada de e-mail.
+--
+-- MAS ELE NÃO DESFAZ TUDO, e é justo saber disso antes de rodar. O código que
+-- sobe junto derruba a trava de anexo para TODO endereço dispensado, e hoje já
+-- existe um: contato@pagoufacil.com.br, com a exceção desde 10/set. Deploy feito,
+-- e-mail dele com anexo passa a ir sozinho para os Itens Excluídos mesmo que este
+-- SQL nunca rode. Para devolver ESSE ao comportamento antigo, é outra linha:
+--
+-- update public.marketing_senders set hard_stop_waived_at = null
+--  where email = 'contato@pagoufacil.com.br';
+--
+-- (isso devolve também a trava de PALAVRA dele, que é o que o Márcio dispensou em
+--  10/set — então é recuo de verdade, não meia-volta.)
 -- ═══════════════════════════════════════════════════════════════════════════

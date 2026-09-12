@@ -34,15 +34,36 @@
 //
 // 11/set/2026 — A EXCEÇÃO PASSA A DERRUBAR TAMBÉM A TRAVA DE ANEXO. Ordem dele:
 // "HP Vida é coisa do BR, a Chris paga por lá, não estamos registrando isso ainda,
-// apague sempre os emails" · "Apagar sempre, automático". Entraram na lista, com a
-// exceção preenchida, os três automáticos que faltavam (MIGRATION_hapvida_apaga_sempre):
-// comunicacao@contato.hapvidandi.com.br, ccg@contato.comunicacaoccg.com.br e
-// boleto.notredamesp@hapvida.com.br. É esse último que obriga a mudança: o boleto vem
-// COM ANEXO nas 8 de 8 mensagens medidas em 11/set, e a trava de anexo o prenderia
-// para sempre — a ordem "apagar sempre" viraria "bloquear sempre".
-// Quem NÃO cede: conversa (In-Reply-To/References) e remetente protegido
-// (lib/mailProtected.ts). Gente continua intocável — lucas.sena@hapvida.com.br, que é
-// pessoa de verdade, não está e não entra na lista.
+// apague sempre os emails" · "Apagar sempre, automático". Quem obriga a mudança é
+// boleto.notredamesp@hapvida.com.br: o boleto vem COM ANEXO nas 8 de 8 mensagens
+// medidas em 11/set, e a trava de anexo o prenderia para sempre — a ordem "apagar
+// sempre" viraria "bloquear sempre". Esse endereço e mais dois
+// (comunicacao@contato.hapvidandi.com.br e ccg@contato.comunicacaoccg.com.br) só
+// entram na lista pela MIGRATION_hapvida_apaga_sempre.sql, que é passo de gente e
+// pode não ter rodado ainda.
+//
+// ESTE CÓDIGO, SOZINHO, JÁ MUDA COMPORTAMENTO NO DEPLOY — não espera a migration.
+// contato@pagoufacil.com.br está dispensado desde 10/set 17:03 (Orlando). Medido em
+// 11/set 21:25 (Orlando, leitura direta da tabela): depois da dispensa de PALAVRA o
+// `blocked` dele ainda andou de 8.296 para 8.308, com last_blocked_subject "HAPVIDA:
+// atenção ao vencimento do seu boleto hoje!". Com a palavra já dispensada, esses 12
+// bloqueios só podem ser ANEXO, conversa ou move que falhou — e boleto com PDF é a
+// explicação óbvia. Ou seja: no minuto em que isto subir, e-mail dele com anexo que
+// hoje fica parado na caixa passa a ir sozinho para os Itens Excluídos. É o que ele
+// pediu, mas começa ANTES do SQL, e desfazer isso não é apagar as três linhas da
+// migration: é zerar o `hard_stop_waived_at` do pagoufacil.
+//
+// QUEM NÃO CEDE — E NÃO É IGUAL NOS DOIS RAMOS:
+//   • Outlook (Graph): remetente protegido (barrado, lib/mailProtected.server.ts) e
+//     conversa, lendo In-Reply-To E References nos cabeçalhos. Três travas de pé.
+//   • Gmail: SÓ In-Reply-To. Aqui `barrado()` não é chamado e `References` nem é
+//     pedido nos metadataHeaders — o conserto é outra fatia do pacote de 11/set,
+//     ainda não feita. Dispensado em caixa Gmail anda com UMA trava, não três; hoje
+//     não há exposição viva (as mensagens da Hapvida estão todas na caixa 2, que é
+//     Graph), mas a próxima linha que ele mandar dispensar pode ser de caixa Google.
+// Gente continua intocável pelo motivo mais simples do mundo, e não por proteção
+// especial: lucas.sena@hapvida.com.br NÃO está em marketing_senders, e o robô só
+// toca em quem está na lista.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mailProvider, maySweep, listGmailIds } from '@/lib/streamMail.server'
@@ -65,14 +86,25 @@ const G = 'https://graph.microsoft.com/v1.0'
 // +nº de pedido com hífen (111-9605878-5792209), que escapava da trava numérica.
 const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|\b\d{3}-\d{7}-\d{7}\b|\baprovad|\bapproved\b|\bcharged\b|\bsuspended\b|conta suspensa|account suspension|cancel|c[oó]digo|verification code|senha|password|2fa|refund|estorno|reembolso|invoice|fatura|boleto|nota fiscal|contrato|\bassinad|\bsignature\b|\bsigned\b|candidat|vaga de|check-?in|reserva confirmada|itiner|shipped|entregue|delivered|tracking|rastreio/i
 
-// TETO DE AÇÃO POR PASTA (11/set/2026), o freio que veio junto com a leitura da pasta
-// inteira: LISTAR ficou completo e é barato (10 GETs), mas AGIR custa — cada mensagem
-// de remetente listado gasta um GET de cabeçalho, um move e escrita no banco. Este cron
-// roda de 5 em 5 minutos com maxDuration 60s; sem freio, uma pasta entupida mata a
-// rodada no meio. 120 por pasta é o dobro do que o robô alcançava antes (60) e segura
-// o caso do remetente que trava sempre — o pagoufacil acumulou 8.296 bloqueios
-// reencontrando os mesmos e-mails. O que passar do teto cai na rodada seguinte.
+// OS DOIS FREIOS (11/set/2026), que vieram junto com a leitura da pasta inteira.
+// LISTAR ficou completo e é barato; AGIR é que custa — cada mensagem de remetente
+// listado gasta um GET de cabeçalho, um move e uma escrita no banco.
+//
+// TOCADAS_MAX é POR PASTA, não por rodada: 120 mensagens de remetente listado em cada
+// pasta de cada caixa. Ele é o dobro do alcance antigo (60) e segura o caso do
+// remetente que trava sempre (o pagoufacil acumulou 8.296 bloqueios reencontrando os
+// mesmos e-mails), mas NÃO segura o relógio: medido em stream_mail_auth em 11/set são
+// 5 caixas em faxina — 3 Outlook × 2 pastas + 2 Gmail = 8 unidades de varredura —, e
+// 8 × 120 autoriza 960 mensagens tocadas numa rodada, muito mais do que cabe em 60s.
+// Quem segura o relógio é o freio de baixo.
+//
+// ORCAMENTO_MS é o freio DA RODADA. O cron roda de 5 em 5 minutos com maxDuration 60s
+// (app/api/cron/marketing-kill/route.ts) e a Vercel corta a função no meio se passar —
+// inclusive no meio de um move. 45s deixa folga para a mensagem em curso (3 chamadas)
+// e para a resposta. Estourou, a rodada para LIMPA, diz no log quais caixas ficaram de
+// fora, e o que sobrou cai na rodada seguinte, cinco minutos depois.
 const TOCADAS_MAX = 120
+const ORCAMENTO_MS = 45_000
 
 // auto_sweep é OBRIGATÓRIO no tipo de propósito: se alguém trocar o select('*')
 // por uma lista de colunas e esquecer dele, o tsc quebra em vez de o robô voltar
@@ -102,6 +134,11 @@ async function gmailToken(a: Auth): Promise<string | null> {
 
 export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: string[]; blocked: string[] }> {
   const killed: string[] = [], blocked: string[] = []
+  // O relógio da rodada — ver ORCAMENTO_MS lá em cima. Medido antes de cada caixa,
+  // de cada pasta e de cada mensagem, que são os três lugares onde dá para parar sem
+  // deixar trabalho pela metade.
+  const t0 = Date.now()
+  const semTempo = () => Date.now() - t0 > ORCAMENTO_MS
   const { data: senders } = await db.from('marketing_senders').select('*').eq('active', true)
   if (!senders?.length) return { killed, blocked }
   const listed = new Map<string, Row>((senders as Row[]).map(s => [String(s.email).toLowerCase(), s]))
@@ -115,6 +152,10 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
   // Notredame vem com PDF em 8 de 8, e sem isto "apagar sempre" virava bloquear
   // sempre. Para quem NÃO é dispensado, anexo continua barrando — é ele que separa
   // a propaganda do documento de verdade.
+  // ISTO MORDE NO DEPLOY, não quando a migration rodar: contato@pagoufacil.com.br já
+  // está dispensado desde 10/set e seus e-mails com anexo — hoje só bloqueados —
+  // passam a ir para os Itens Excluídos na primeira rodada depois da subida. Ver o
+  // cabeçalho do arquivo, com a medida.
   const anexoTrava = (addr: string, temAnexo: boolean) => temAnexo && !dispensado(addr)
 
   const kill = async (account: string, addr: string, subj: string, folder: string) => {
@@ -132,8 +173,20 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
   }
 
   const { data: auths } = await db.from('stream_mail_auth').select('*')
-  for (const a of (auths || []) as Auth[]) {
-    if (!a.refresh_token || !maySweep(a)) continue // caixa de arquivo não se limpa sozinha
+  const fila = ((auths || []) as Auth[]).filter(a => a.refresh_token && maySweep(a)) // caixa de arquivo não se limpa sozinha
+  // A ORDEM DAS CAIXAS GIRA A CADA RODADA (11/set/2026). O PostgREST devolve
+  // stream_mail_auth na ordem física da tabela — medida em 11/set: galpaoz28,
+  // gz28us@gmail, gz28speedshop, gz28br, gz28shopping, gz28us@hotmail —, e
+  // gz28us@hotmail.com, a segunda que mais mata, cai SEMPRE em último. Varrendo
+  // sempre na mesma ordem, quem perde quando o orçamento estoura é sempre a mesma
+  // caixa, calada, rodada após rodada. O giro é o relógio e nada mais: a cada fatia de
+  // 5 minutos (o passo do cron) a fila começa numa caixa diferente, sem estado no
+  // banco, então nenhuma caixa é a última duas rodadas seguidas.
+  const giro = fila.length ? Math.floor(Date.now() / 300_000) % fila.length : 0
+  const ordem = [...fila.slice(giro), ...fila.slice(0, giro)]
+  for (let i = 0; i < ordem.length; i++) {
+    const a = ordem[i]
+    if (semTempo()) { console.warn(`[marketing-kill] ${ORCAMENTO_MS / 1000}s: rodada encerrada; ficaram sem varredura ${ordem.slice(i).map(x => x.account).join(', ')}`); break }
     // ── Outlook (caixas Microsoft): caixa de entrada + lixo eletrônico ───────
     // Provedor pela LINHA (mailProvider), não pelo domínio da conta (04/set/2026).
     if (mailProvider(a) === 'graph') {
@@ -141,6 +194,7 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
       if (!token) continue
       const H = { Authorization: `Bearer ${token}` }
       for (const folder of ['inbox', 'junkemail']) {
+        if (semTempo()) { console.warn(`[marketing-kill] tempo: ${a.account}/${folder} não foi varrida nesta rodada`); break }
         // A PASTA INTEIRA, PÁGINA POR PÁGINA (11/set/2026). Antes eram só as 60 mais
         // novas, e 60 é pouco para pasta que acumula: em 11/set o Lixo Eletrônico da
         // caixa 2 tinha 79 mensagens e as 5 do pagoufacil que faltavam estavam nas
@@ -153,41 +207,63 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
         // mensagens. Lendo primeiro e agindo depois, o pulo não existe.
         //
         // TETO: 10 páginas de 100 = 1.000 mensagens por pasta (3 caixas Outlook × 2
-        // pastas = 6.000 no pior caso). O teto é por causa do relógio, não do Graph:
-        // este cron roda de 5 em 5 minutos com maxDuration 60s, e listagem que não
-        // acaba come o orçamento inteiro e mata a rodada no meio. 1.000 é ~12× a
-        // maior pasta medida hoje (79); pasta maior que isso é sinal de faxina
-        // atrasada, e o que sobrar cai na rodada seguinte.
+        // pastas = 6.000 no pior caso). É teto de tamanho, não de relógio — quem
+        // segura o relógio é o ORCAMENTO_MS, conferido a cada página e antes de cada
+        // mensagem. 1.000 é ~12× a maior pasta medida hoje (79); pasta maior que isso
+        // é sinal de faxina atrasada, o log avisa e o resto cai na rodada seguinte.
         const PAGINAS_MAX = 10, POR_PAGINA = 100
-        type Stub = { id: string; subject?: string; from?: { emailAddress?: { address?: string } }; hasAttachments?: boolean }
+        // `id` é OPCIONAL no tipo porque a resposta vem de x.json(), que é `any`:
+        // escrever `id: string` seria promessa, não prova — ver a conferência lá
+        // embaixo, antes de tocar na mensagem.
+        type Stub = { id?: string; subject?: string; from?: { emailAddress?: { address?: string } }; hasAttachments?: boolean }
         const mensagens: Stub[] = []
+        let falhou = false
         let proxima: string | null = `${G}/me/mailFolders/${folder}/messages?$top=${POR_PAGINA}&$select=id,subject,from,hasAttachments`
-        for (let pagina = 0; proxima && pagina < PAGINAS_MAX; pagina++) {
+        for (let pagina = 0; proxima && pagina < PAGINAS_MAX && !semTempo(); pagina++) {
           // O tipo da resposta é escrito à mão porque `proxima` sai de dentro dela:
           // sem isto o tsc acusa o laço de se definir em cima de si mesmo (TS7022).
           const r: { value?: Stub[]; '@odata.nextLink'?: string } | null =
             await fetch(proxima, { headers: H }).then(x => x.json()).catch(() => null)
-          if (!r?.value) break // erro ou pasta que não existe nesta caixa: não insiste
+          if (!r?.value) {
+            // PARADA COM RECIBO (11/set/2026). Throttling do Graph (429), token
+            // vencido no meio da paginação ou resposta fora do formato param a
+            // varredura desta pasta. Calado, isso é exatamente o veneno que esta
+            // fatia existe para matar: pasta que parou na página 1 fica igual a
+            // pasta lida inteira, e "não bloqueia" volta a parecer "não tem".
+            console.warn(`[marketing-kill] ${a.account}/${folder}: listagem parou na página ${pagina + 1}; a pasta NÃO foi lida inteira nesta rodada`)
+            falhou = true
+            break
+          }
           mensagens.push(...r.value)
           proxima = typeof r['@odata.nextLink'] === 'string' ? r['@odata.nextLink'] : null
         }
+        // Sobrou pasta para trás? Diga por quê — cada motivo tem conserto diferente.
+        if (!falhou && proxima) console.warn(`[marketing-kill] ${a.account}/${folder}: leitura incompleta (${mensagens.length} lidas) por ${semTempo() ? 'tempo da rodada' : `teto de ${PAGINAS_MAX} páginas`}; o resto fica para a rodada seguinte`)
         // O SEGUNDO TETO — TOCADAS_MAX, lá em cima: ler a pasta inteira é barato,
-        // agir é que custa.
+        // agir é que custa. E o freio da rodada (ORCAMENTO_MS) responde antes dele,
+        // porque a mensagem que começa aos 59s termina cortada pela Vercel.
         let tocadas = 0
         for (const m of mensagens) {
           const addr = String(m.from?.emailAddress?.address || '').toLowerCase()
           if (!listed.has(addr)) continue
-          if (++tocadas > TOCADAS_MAX) break
+          // O id vem de x.json(), que é `any`. Sem esta conferência, item sem id
+          // viraria a string "undefined" na URL do move: o move dá 404, a mensagem
+          // entra como BLOQUEADA e engorda justo o contador que a gente lê como
+          // "remetente que não devia estar na lista". Some do diagnóstico, não da caixa.
+          const id = typeof m.id === 'string' ? m.id : ''
+          if (!id) { console.warn(`[marketing-kill] ${a.account}/${folder}: item de ${addr} veio sem id na listagem; pulado`); continue }
+          if (semTempo()) { console.warn(`[marketing-kill] ${a.account}/${folder}: tempo da rodada estourou depois de ${tocadas} tocadas; a cauda cai na rodada seguinte`); break }
+          if (++tocadas > TOCADAS_MAX) { console.warn(`[marketing-kill] ${a.account}/${folder}: teto de ${TOCADAS_MAX} tocadas atingido; ficou cauda de remetente listado nesta pasta`); break }
           const subj = String(m.subject || '')
           if (anexoTrava(addr, !!m.hasAttachments) || palavraTrava(addr, subj)) { await block(a.account, addr, subj); continue }
           // Este robô só toca em remetente AUDITADO, mas auditoria é humana e
           // humano erra: a trava única responde antes de qualquer move.
-          if (await barrado(db, 'marketing-kill', a.id ?? null, a.account, { id: m.id, subject: subj, from: addr, folder })) { await block(a.account, addr, subj); continue }
-          const hd = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders,bodyPreview`, { headers: H }).then(x => x.json()).catch(() => null)
+          if (await barrado(db, 'marketing-kill', a.id ?? null, a.account, { id, subject: subj, from: addr, folder })) { await block(a.account, addr, subj); continue }
+          const hd = await fetch(`${G}/me/messages/${encodeURIComponent(id)}?$select=internetMessageHeaders,bodyPreview`, { headers: H }).then(x => x.json()).catch(() => null)
           const heads: { name?: string }[] = hd?.internetMessageHeaders || []
           const inReply = heads.some(x => /^(in-reply-to|references)$/i.test(String(x.name)))
           if (inReply || palavraTrava(addr, String(hd?.bodyPreview || ''))) { await block(a.account, addr, subj); continue }
-          const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'deleteditems' }) })
+          const mv = await fetch(`${G}/me/messages/${encodeURIComponent(id)}/move`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'deleteditems' }) })
           if (mv.ok) await kill(a.account, addr, subj, folder)
           else await block(a.account, addr, subj)
         }
@@ -202,14 +278,20 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
       const q = 'in:inbox (' + [...listed.keys()].map(e => 'from:' + e).join(' OR ') + ')'
       // Página por página (10/set/2026) — ver listGmailIds: página curta não é fim de lista.
       // MESMO TETO DO OUTLOOK (11/set/2026): eram 50, e 50 é a mesma armadilha das 60 do
-      // Graph — o que passa disso nunca é visto. Aqui a busca já vem filtrada pelos
-      // remetentes da lista, então 1.000 é folga grande; o `max` e o `maxPages` existem
-      // só para a rodada não correr atrás de pageToken sem fim dentro dos 60s do cron.
-      const list = await listGmailIds(token, { q, max: 1000, maxPages: 10 })
-      // O mesmo teto de AÇÃO do Outlook, pelo mesmo motivo (60s de cron). Aqui a lista
-      // já vem só com remetente da nossa lista, então o teto conta direto.
+      // Graph — o que passa disso nunca era visto. Aqui, ao contrário do Graph, a busca
+      // já vem filtrada por `from:` da nossa lista: TODO id listado é id em que se vai
+      // mexer, então pedir mais do que o teto de ação é pagar listagem para jogar fora.
+      // Por isso a lista pede exatamente TOCADAS_MAX, numa página só — e o
+      // `nextPageToken` que voltar é o recibo de que ficou cauda para a próxima rodada.
+      const list = await listGmailIds(token, { q, max: TOCADAS_MAX, maxPages: 1 })
+      // Lista incompleta com recibo, igual ao vizinho fetchRecentGmail: sem isto, erro
+      // do Gmail no meio da listagem some, e o robô devolve ok:true dizendo que varreu.
+      if (list.error) console.error(`[marketing-kill] ${a.account}: lista incompleta —`, list.error)
+      if (list.nextPageToken) console.warn(`[marketing-kill] ${a.account}: mais de ${TOCADAS_MAX} mensagens de remetente listado na caixa de entrada; a cauda cai na rodada seguinte`)
       let tocadas = 0
       for (const it of list.ids) {
+        if (semTempo()) { console.warn(`[marketing-kill] ${a.account}: tempo da rodada estourou depois de ${tocadas} tocadas`); break }
+        // Cinto: a lista já vem no teto, mas o teto de AÇÃO mora aqui, do lado do move.
         if (++tocadas > TOCADAS_MAX) break
         const msg = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=In-Reply-To`, { headers: H }).then(x => x.json()).catch(() => null)
         const heads: { name: string; value: string }[] = msg?.payload?.headers || []
@@ -218,6 +300,11 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
         if (!listed.has(addr)) continue
         const subj = hv('subject')
         const hasAtt = /"filename":"[^"]+"/.test(JSON.stringify(msg?.payload?.parts || []))
+        // UMA TRAVA SÓ AQUI, e é bom que esteja escrito onde o move acontece: neste
+        // ramo não se chama `barrado()` (remetente protegido) e não se pede
+        // `References` — só In-Reply-To. Para remetente dispensado, que agora passa
+        // por palavra e por anexo, isto é o que sobra. Conserto é outra fatia do
+        // pacote de 11/set, ainda não feita.
         if (hv('in-reply-to') || anexoTrava(addr, hasAtt) || palavraTrava(addr, subj, String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
         const t = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}/trash`, { method: 'POST', headers: H })
         if (t.ok) await kill(a.account, addr, subj, 'INBOX')
