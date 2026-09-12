@@ -37,7 +37,14 @@
 //   • NUNCA lança valor que ele leu com pouca confiança — total sem rótulo
 //     forte ("Order total", "Total paid") vira pergunta, não linha.
 //   • NUNCA lança 0,00 (o PO de $0.00 do Temu não gera linha nenhuma).
-//   • NUNCA repete pergunta: `message_key` é único e a resposta vira regra.
+//   • NUNCA repete pergunta: `message_key` é único e a resposta vira regra. E
+//     desde 11/set/2026 nem quando a loja manda DUAS cartas da mesma compra —
+//     mesmo fornecedor, mesmo valor ao centavo, dúvida aberta nas últimas 24h
+//     é a mesma pergunta (`chaveDuvida`, Livro 5.9). A 2ª carta NÃO some: ela
+//     deixa a sua própria linha em `auto_book_mail` (status DUPLICATE, com o
+//     trecho lido e o id da dúvida que responde por ela) e sai da caixa — e se
+//     ela trouxer o número do pedido que a dúvida aberta não tem, o número é
+//     ENXERTADO na dúvida antes de ela ser calada.
 //   • NUNCA escreve status — status é derivado (lib/deliverStatus.ts).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -47,7 +54,7 @@ import {
 } from './streamMail.server'
 import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
-import { matchSupplier, supplierDirectoryFrom } from './supplierMatch'
+import { matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
 import { cacaNaPasta, respostaUnica, type PastaHit } from './dropboxHunt.server'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
@@ -77,6 +84,7 @@ export type AutoBookMailResult = {
   lancados: string[]
   semRecibo: string[]
   perguntas: string[]
+  duplicadas: string[]
   duvidasApp: string[]
   arquivados: string[]
   semPasta: string[]
@@ -163,9 +171,75 @@ const DOM_VENDOR: Record<string, string> = {
   'uber.com': 'Uber', 'apple.com': 'Apple', 'walmart.com': 'Walmart', 'harborfreight.com': 'Harbor Freight',
   'oreillyauto.com': "O'Reilly Auto Parts", 'napaonline.com': 'NAPA', 'tirerack.com': 'Tire Rack',
 }
+// ── QUEM É TRILHO E QUEM É PLATAFORMA NÃO É FORNECEDOR ─────────────────────
+// Dois domínios da lista acima mentem sobre quem vendeu, e os dois já custaram
+// dúvida errada:
+//   • PAYPAL é o trilho do pagamento. "paypal.com" como fornecedor não casa com
+//     NADA no app (lá está escrito HHP, HP Tuners, Temu) — e foi assim que o
+//     aviso de envio da compra HHP 384734 abriu a dúvida 6bab19c6 como cobrança
+//     nova de "PayPal" (Livro 3.6). O comerciante está escrito no corpo, na
+//     linha "Merchant".
+//   • SHOPIFY é a plataforma da loja, não a loja. O recibo sai de
+//     @t.shopifyemail.com e o nome da loja está no NOME do remetente ("Detail
+//     Ground") — "Shopifyemail" seria um fornecedor inventado (Livro 3.7).
+const ehDominio = (dom: string, base: string) => dom === base || dom.endsWith('.' + base)
+export const ehPayPalMsg = (msg: MailMsg) => /paypal\./i.test(msg.fromAddr)
+export const ehLojaShopify = (msg: MailMsg) => ehDominio((msg.fromAddr.split('@')[1] || '').toLowerCase(), 'shopifyemail.com')
+
+// O corpo chega com TODOS os espaços colapsados em um só (streamMail.server.ts
+// troca `\s+` por ' '), então não existe "linha" para ler: o que sobra é
+// "… Merchant High Horse Performance, Inc. Transaction ID 8XY… ". Por isso a
+// leitura é por CERCA: pega no máximo 60 caracteres depois da palavra e corta
+// no primeiro rótulo seguinte do recibo. Nome que não passa na peneira volta
+// nulo — inventar fornecedor é pior que ficar com o domínio.
+const PP_MERCHANT = /\b(?:merchant|comerciante|vendedor)\b\s*:?\s*([^|•·\n]{2,60})/gi
+const PP_PROXIMO_ROTULO = /\b(transaction|invoice|order|payment|amount|total|receipt|purchase|seller|buyer|date|ship\w*|paypal|description|quantity|unit|subtotal|item|status|note)\b/i
+export function comercianteDoPayPal(texto: string): string | null {
+  for (const m of String(texto || '').matchAll(PP_MERCHANT)) {
+    const nome = nomeSemSufixo(
+      m[1].replace(/^(information|info|details|detalhes|name|nome)\b[\s:–-]*/i, '')
+        // O e-mail de contato do vendedor vem COLADO no nome, e é o próximo
+        // campo do recibo: "Merchant High Horse Performance, Inc.
+        // orders@highhorseperformance.com Shipping address …" (trecho real da
+        // dúvida 6bab19c6). O nome acaba onde começa o endereço.
+        .split(/\s+\S*@\S*/)[0]
+        .split(PP_PROXIMO_ROTULO)[0],
+    )
+    // A PENEIRA, e ela é o coração desta função: a palavra "merchant" também
+    // aparece em prosa ("contact the merchant directly"), e dali sai frase, não
+    // fornecedor. Nome de loja começa com MAIÚSCULA, tem no máximo 5 palavras,
+    // não tem arroba nem link. O que não passa devolve nulo, e o robô fica com o
+    // domínio — inventar fornecedor é pior que ficar com "PayPal".
+    if (!/^[A-Z0-9À-Þ]/.test(nome)) continue
+    if (/@|https?:/i.test(nome)) continue
+    if (nome.length < 2 || nome.length > 40 || nome.split(/\s+/).length > 5) continue
+    return nome
+  }
+  return null
+}
+
+// "HP Tuners LLC" tem de virar "HP Tuners": é assim que o fornecedor está
+// escrito no app, e o sufixo societário fazia o casamento por nome falhar justo
+// nos recibos que mais importam (07/set: o T46 de $499,99).
+export function nomeSemSufixo(bruto: string): string {
+  return String(bruto || '').trim()
+    .replace(/\.{2,}$/, '')
+    .replace(/[,\s]+(LLC?|INC|LTD|CO|S\.?A|LTDA)\.?$/i, '')
+    .replace(/[.,;:\s]+$/, '')
+    .trim()
+}
+
 export function vendorOf(msg: MailMsg): string {
   const dom = (msg.fromAddr.split('@')[1] || '').toLowerCase()
-  for (const [k, v] of Object.entries(DOM_VENDOR)) if (dom === k || dom.endsWith('.' + k)) return v
+  if (ehPayPalMsg(msg)) {
+    const comerciante = comercianteDoPayPal(msg.text)
+    if (comerciante) return comerciante
+  }
+  if (ehLojaShopify(msg)) {
+    const loja = nomeSemSufixo(String(msg.from || '').replace(/["']/g, ''))
+    if (loja.length >= 2) return loja.slice(0, 40)
+  }
+  for (const [k, v] of Object.entries(DOM_VENDOR)) if (ehDominio(dom, k)) return v
   const base = dom.replace(/^(mail|email|no-?reply|orders?|transaction|info|news|e|m|t)\./, '').split('.')[0]
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : (msg.from || msg.fromAddr).slice(0, 40)
 }
@@ -217,7 +291,30 @@ export function totaisPorPedido(texto: string): Record<string, { amount: number;
 // "order has been received" não casa com `order (receiv…)`: tem quatro palavras
 // no meio. Por isso a janela de até 40 caracteres entre o pedido e o verbo — foi
 // assim que "Your HP Tuners order has been received!" passou batido em 07/set.
-const COMPRA_ASSUNTO = /\border\b.{0,40}?\b(confirmed|received|placed|acknowledged)\b|\border\s*(confirm|receiv|placed|acknowledg)|orders?\s+confirmation|confirmation of your order|confirmed:|thank(s| you) for (your|shopping)|your (order|purchase|receipt|invoice)\b|purchase (is )?confirmed|receipt for your (payment|purchase)|payment receipt|pedido (confirmado|recebido|realizado)|confirma[çc][ãa]o (do|de) pedido|recibo d[eo] pagamento|nota fiscal/i
+//
+// "RECEIPT FOR ORDER" ENTRA (11/set/2026, Livro 3.7): é o assunto padrão do
+// recibo de loja Shopify — "Receipt for order #13150". Não casava com nada
+// daqui ("receipt for your purchase" pede o "your"), e a compra de US$ 77,67 da
+// Detail Ground não deixou uma linha sequer na fila.
+const COMPRA_ASSUNTO = /\border\b.{0,40}?\b(confirmed|received|placed|acknowledged)\b|\border\s*(confirm|receiv|placed|acknowledg)|orders?\s+confirmation|confirmation of your order|confirmed:|thank(s| you) for (your|shopping)|your (order|purchase|receipt|invoice)\b|purchase (is )?confirmed|receipt for (your (payment|purchase)|order)|payment receipt|pedido (confirmado|recebido|realizado)|confirma[çc][ãa]o (do|de) pedido|recibo d[eo] pagamento|nota fiscal/i
+
+// ── AVISO DE ENVIO DO PAYPAL NÃO É COBRANÇA (Livro 3.6, 11/set/2026) ───────
+// O caso, medido: em 10/set 14:23 chegou o aviso do PayPal de que a compra da
+// HHP (pedido 384734), LANÇADA em 09/set, tinha saído para entrega. O e-mail
+// traz o valor pago dentro, o assunto fala do pedido, e a peneira leu tudo isso
+// como dinheiro novo: nasceu a dúvida 6bab19c6, "Cobranca de PayPal — US$
+// 1.290,93", fechada à mão como IGNORED. Dinheiro nenhum se moveu duas vezes,
+// mas a fila de dúvida é do dono, e dúvida falsa nela é ruído que cansa.
+//
+// A trava é ESTREITA de propósito, e vale só para o PayPal: assunto de embarque
+// em e-mail de LOJA continua passando, porque a confirmação de compra da Home
+// Depot fala de embarque no corpo e é compra de verdade (foi a lição de 07/set,
+// que custou uma rodada inteira). No PayPal é diferente: o recibo dele tem
+// assunto ESTRUTURADO ("<comerciante>: $499.99 USD") e nunca fala de entrega —
+// então "on its way" ali só pode ser a segunda carta da mesma compra. O
+// rastreio dentro dela continua sendo lido pelo mailToItem, que escreve o fato
+// na linha que já existe.
+const ENVIO_ASSUNTO = /\bon (its|the) way\b|\b(has|have|was|were) shipped\b|\bshipping (confirmation|update)\b|\bout for delivery\b|\bdelivered\b|\ba caminho\b|\bfoi (enviado|despachado)\b|\bsaiu para entrega\b/i
 
 // ── O RECIBO DO PAYPAL ─────────────────────────────────────────────────────
 // O PayPal é o trilho de pagamento da casa e o recibo dele não tem rótulo
@@ -228,16 +325,17 @@ const COMPRA_ASSUNTO = /\border\b.{0,40}?\b(confirmed|received|placed|acknowledg
 // e o comerciante que vem dali vale mais que o domínio "paypal.com".
 const PAYPAL_ASSUNTO = /^(.{2,60}?)\s*:\s*(R\$|US\$|\$)?\s*([0-9][0-9.,]{0,13})\s*(USD|BRL)?\s*$/
 export function paypalReceipt(msg: MailMsg): { vendor: string; amount: number; currency: string } | null {
-  if (!/paypal\./i.test(msg.fromAddr)) return null
+  if (!ehPayPalMsg(msg)) return null
   const m = msg.subject.match(PAYPAL_ASSUNTO)
   if (!m) return null
   const n = parseNumber(m[3])
   if (n == null || !(n > 0)) return null
   const currency = m[4]?.toUpperCase() || (/R\$/.test(m[2] || '') ? 'BRL' : 'USD')
-  // "HP Tuners LLC" tem de virar "HP Tuners": é assim que o fornecedor está
-  // escrito no app, e o sufixo societário fazia o casamento por nome falhar
-  // justo nos recibos que mais importam (07/set: o T46 de $499,99).
-  const vendor = m[1].replace(/\.{2,}$/, '').replace(/[,\s]+(LLC?|INC|LTD|CO|S\.?A|LTDA)\.?$/i, '').trim()
+  // O CORPO VEM ANTES DO ASSUNTO (11/set/2026, Livro 3.6). O assunto corta o
+  // comerciante em 60 caracteres — "Whaleco Commerce, LL..." — e nome cortado
+  // não casa com cadastro nenhum. A linha "Merchant" do corpo traz o nome
+  // inteiro; sem ela, fica o do assunto, como sempre foi.
+  const vendor = comercianteDoPayPal(msg.text) || nomeSemSufixo(m[1])
   return { vendor, amount: n, currency }
 }
 
@@ -245,11 +343,20 @@ export function classify(msg: MailMsg): { kind: AbKind; money: ReturnType<typeof
   const texto = `${msg.subject}\n${msg.text}`
   const orders = orderNumbersIn(texto)
   const pp = paypalReceipt(msg)
+  // O aviso de ENVIO do PayPal morre aqui, calado, como marketing: ele não é
+  // recibo (não tem o assunto estruturado) e o que ele carrega já foi pago.
+  if (!pp && ehPayPalMsg(msg) && ENVIO_ASSUNTO.test(msg.subject)) return null
   const money = pp ? { amount: pp.amount, currency: pp.currency, strong: true, label: 'PayPal (assunto)' } : parseMoney(texto)
   if (pp) return { kind: 'CHARGE', money, orders }
   const refund = ESTORNOU.test(texto)
   const cobranca = COBRANCA.test(texto)
-  const compra = COMPRA_ASSUNTO.test(msg.subject) || !!(money?.strong && orders.length)
+  // Recibo de loja Shopify com o número do pedido NO ASSUNTO é compra, diga o
+  // resto do assunto o que disser. O número tem de estar no ASSUNTO, e não em
+  // qualquer lugar do corpo: a campanha do Shopify Email sai do MESMO domínio e
+  // carrega "order #12345" no rodapé ("check your order status", cupom) — com a
+  // peneira no corpo inteiro, promoção viraria dúvida na fila do dono. Recibo
+  // põe o pedido no assunto ("Receipt for order #13150"); anúncio não põe.
+  const compra = COMPRA_ASSUNTO.test(msg.subject) || (ehLojaShopify(msg) && orderNumbersIn(msg.subject).length > 0) || !!(money?.strong && orders.length)
   if (!refund && !compra && !cobranca) return null
   if (!orders.length && !money) return null
   return { kind: refund ? 'REFUND' : compra ? 'PURCHASE' : 'CHARGE', money, orders }
@@ -508,6 +615,26 @@ export async function achaPapel(db: SupabaseClient, order: string | null, vendor
   return null
 }
 
+// ── O CADASTRO DE FORNECEDORES, UMA LEITURA POR RODADA ─────────────────────
+// O PostgREST corta a resposta em 1.000 linhas SEM DIZER NADA: passando disso o
+// diretório volta pela metade, `matchSupplier` deixa de achar o nome curado, e o
+// teste de "já tem linha por perto" fica menos eficaz sem ninguém saber. Hoje são
+// 212 cadastros (medido em 11/set/2026, só leitura) — longe do corte. Por isso o
+// teto é explícito e a chegada nele GRITA na rodada, em vez de esperar alguém
+// desconfiar. (`lancar` tem a sua própria leitura, e ela é rara: só quando uma
+// regra BOOK vai gravar linha.)
+const TETO_SUPPLIERS = 2000
+async function diretorioFornecedores(db: SupabaseClient, out: AutoBookMailResult): Promise<SupplierEntry[]> {
+  const { data: sups, error } = await db.from('suppliers').select('name,aliases,is_dealership').limit(TETO_SUPPLIERS)
+  if (error) {
+    out.erros.push(`cadastro de fornecedores: ${error.message} — o teste "já tem linha por perto" roda só com a grafia crua do e-mail`)
+    return []
+  }
+  const linhas = sups || []
+  if (linhas.length >= 1000) out.erros.push(`cadastro de fornecedores voltou com ${linhas.length} linhas — pode estar truncado no corte do PostgREST, e aí o nome CURADO deixa de casar`)
+  return supplierDirectoryFrom(linhas)
+}
+
 // ── JÁ EXISTE ALGO DESTE COMERCIANTE POR PERTO? ────────────────────────────
 // Teste deliberadamente FRACO: fornecedor parecido + data na janela, NUNCA
 // valor exato. Conferir recibo do PayPal por valor de uma linha só já deu
@@ -516,8 +643,24 @@ export async function achaPapel(db: SupabaseClient, order: string | null, vendor
 // nenhuma mesmo quando a compra está lançada. Aqui a pergunta é outra e mais
 // honesta: "temos QUALQUER coisa deste comerciante nestes dias?". Se não temos,
 // é dinheiro fora do app e vale perguntar.
-async function temLinhaPorPerto(db: SupabaseClient, vendor: string, data: string, dias = 6): Promise<boolean> {
-  const like = `%${vendor.slice(0, 12)}%`
+// O NOME PROCURADO É O DO COMERCIANTE, E ELE TEM DOIS (11/set/2026, Livro 3.6).
+// Quem chama daqui é o ramo do PayPal, e antes chegava "PayPal" — que não existe
+// em linha nenhuma do app, porque lá está escrito o vendedor. Agora chega o
+// comerciante lido do corpo ("High Horse Performance"), e aí aparece a segunda
+// metade do problema: o app escreve esse mesmo fornecedor como "HHP". Por isso o
+// teste roda com as DUAS grafias — a crua do e-mail e a CURADA do cadastro
+// (suppliers.aliases) — e basta uma achar.
+// É a única busca que cura o nome, e por um motivo: aqui a pergunta não é "onde
+// está o histórico desta grafia", é "existe QUALQUER linha deste comerciante
+// nestes dias". As outras buscas continuam com o nome cru, de propósito.
+// O CADASTRO CHEGA PRONTO, LIDO UMA VEZ POR RODADA (`dir`): a 1ª versão de
+// 11/set lia a tabela `suppliers` INTEIRA a cada e-mail do PayPal, e o laço de
+// nomes ainda multiplicava as consultas por dois. Ler o mesmo cadastro oito
+// vezes numa rodada não melhora resposta nenhuma — e a rodada roda de hora em
+// hora, dentro do teto de tempo da Vercel.
+async function temLinhaPorPerto(db: SupabaseClient, dir: SupplierEntry[], vendor: string, data: string, dias = 6): Promise<boolean> {
+  const casado = matchSupplier(vendor, dir)
+  const nomes = [...new Set([vendor, casado?.name].filter(Boolean).map(n => String(n).slice(0, 12)))]
   const de = new Date(Date.parse(data + 'T12:00:00Z') - dias * 86400e3).toISOString().slice(0, 10)
   const ate = new Date(Date.parse(data + 'T12:00:00Z') + dias * 86400e3).toISOString().slice(0, 10)
   // `fixed_cost_expenses` (assinaturas) não tem coluna `supplier` — o prestador
@@ -530,8 +673,10 @@ async function temLinhaPorPerto(db: SupabaseClient, vendor: string, data: string
     ['inputs', 'purchase_date', 'supplier'],
     ['fixed_cost_expenses', 'expense_date', 'description'],
   ] as const) {
-    const { data: hit } = await db.from(t).select('id').ilike(campo, like).gte(col, de).lte(col, ate).limit(1)
-    if ((hit || []).length) return true
+    for (const nome of nomes) {
+      const { data: hit } = await db.from(t).select('id').ilike(campo, `%${nome}%`).gte(col, de).lte(col, ate).limit(1)
+      if ((hit || []).length) return true
+    }
   }
   return false
 }
@@ -587,6 +732,35 @@ export async function lancar(
 }
 
 const keyOf = (slot: number, m: MailMsg) => `${slot}|${m.received}|${m.fromAddr}|${m.subject.slice(0, 90)}`
+
+// ── DUAS CARTAS DA MESMA COMPRA, UMA PERGUNTA SÓ (Livro 5.9, 11/set/2026) ──
+// O `message_key` garante que o MESMO e-mail nunca pergunta duas vezes. Não
+// garante nada quando a loja manda DOIS e-mails da mesma compra: a Aeromotive
+// mandou a confirmação às 22:37 e o e-mail de boas-vindas às 22:38 de 10/set, e
+// nasceram as dúvidas 07142a50 e 3ccf912c, uma ao lado da outra, para uma
+// compra só (lançada à mão na US.019.3).
+//
+// A régua é a do dono: MESMO FORNECEDOR + MESMO VALOR AO CENTAVO, com dúvida
+// ABERTA nas últimas 24 horas. Duas travas por cima dela, as duas para o lado
+// de perguntar demais, que é o lado barato:
+//   • sem valor legível não deduplica — "sem valor" é igual a "sem valor" em
+//     compras que não têm nada a ver uma com a outra;
+//   • ESTORNO não se confunde com compra. Devolução de US$ 77,67 da mesma loja
+//     na mesma semana é outra pergunta ("qual linha ela abate?"), e engoli-la
+//     seria silêncio — o único erro que esta fila não pode cometer.
+//
+// OS TIPOS DE ENTRADA SÃO FROUXOS DE PROPÓSITO: quem chama do banco traz
+// `amount` de coluna `numeric` (o PostgREST devolve isso como STRING quando
+// quer) e `kind` de coluna `text` livre. Prometer `number` e `AbKind` no
+// parâmetro passaria no tsc e mentiria na hora certa — aqui o número é
+// convertido e o kind é comparado como texto.
+export function chaveDuvida(vendor: string | null | undefined, amount: number | string | null | undefined, kind: string | null | undefined): string | null {
+  const v = String(vendor || '').trim().toLowerCase()
+  if (!v || amount == null || amount === '') return null
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return null
+  return `${String(kind || '').toUpperCase() === 'REFUND' ? 'REFUND' : 'COMPRA'}|${v}|${n.toFixed(2)}`
+}
 
 // ── ARQUIVAR O QUE FOI RESOLVIDO ───────────────────────────────────────────
 // Cobrança dele, 07/set/2026: *"porque tem tanto email da sua pauta ainda na
@@ -647,6 +821,16 @@ async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Prom
   if (!token) return { ...vazio, nome: nome + ':sem-token' }
   const gmail = mailProvider(auth) === 'gmail'
   const msgs = gmail ? await fetchRecentGmail(token, desde, { q: GMAIL_Q_COMPRA, max: 60 }) : await fetchRecentMessages(token, desde)
+  // ── A ORDEM É A DO RELÓGIO, NÃO A DA CAIXA (11/set/2026, Livro 5.9) ───────
+  // O Graph devolve `receivedDateTime desc` (streamMail.server.ts) e o Gmail vem
+  // na ordem dele: a carta mais NOVA chegava primeiro no laço. Com a dedução de
+  // duas cartas da mesma compra isso decidia QUAL das duas vira a pergunta, e
+  // decidia errado — no caso Aeromotive, a de 22:38 ("Thanks for your order!",
+  // sem pedido) abriria a dúvida e a de 22:37 ("Order A13706 Confirmed"), a
+  // única que carrega o número, seria a calada. Medido linha a linha na fila em
+  // 11/set. Aqui a rodada passa a ler na ordem em que as cartas chegaram: a
+  // primeira pergunta é a da primeira carta, como está escrito no Livro.
+  msgs.sort((a, b) => String(a.received || '').localeCompare(String(b.received || '')))
   // Só o Graph tem o mapa de pastas aqui, e só caixa com auto_sweep ligado é
   // varrida por robô ([[email-multi-account]]).
   const podeArquivar = !gmail && maySweep(auth)
@@ -671,6 +855,7 @@ async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMai
     status, finished_at: new Date().toISOString(),
     counts: {
       lidos: r.lidos, com_dinheiro: r.comDinheiro, perguntas: r.perguntas.length,
+      duplicadas: r.duplicadas.length,
       lancados: r.lancados.length, ja_tem_linha: r.jaTemLinha.length,
       ignorados: r.ignorados.length, duvidas_app: r.duvidasApp.length, sem_recibo: r.semRecibo.length,
       arquivados: r.arquivados.length, sem_pasta: r.semPasta.length,
@@ -681,7 +866,7 @@ async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMai
 }
 
 export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = 'cron'): Promise<AutoBookMailResult> {
-  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duvidasApp: [], arquivados: [], semPasta: [], achadosNoApp: [], papelSemLinha: [], erros: [] }
+  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duplicadas: [], duvidasApp: [], arquivados: [], semPasta: [], achadosNoApp: [], papelSemLinha: [], erros: [] }
   const rodada = await abreRodada(db, horas, trigger)
   const desde = new Date(Date.now() - horas * 3600e3).toISOString()
   out.janela = `desde ${desde}`
@@ -690,8 +875,27 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
   const rules = (rulesRaw || []) as AbRule[]
   const conhecidos = await pedidosConhecidos(db)
   const apps = await appsPorDominio(db)
+  const dirFornecedores = await diretorioFornecedores(db, out)
   const { data: jaNaFila } = await db.from('auto_book_mail').select('message_key').gte('created_at', new Date(Date.now() - 30 * 86400e3).toISOString())
   const naFila = new Set(((jaNaFila || []) as { message_key: string }[]).map(r => r.message_key))
+  // As dúvidas ABERTAS das últimas 24h, pela chave fornecedor+valor — ver
+  // `chaveDuvida`. Só DOUBT: dúvida já respondida (BOOKED/IGNORED) não cala a
+  // próxima pergunta, porque a resposta dela virou regra ou linha.
+  //
+  // Guarda o ID e o PEDIDO de cada dúvida aberta, não só a chave: a 2ª carta
+  // precisa poder DIZER de quem ela é duplicata, e precisa poder enxertar na
+  // dúvida o número de pedido que ela trouxe e a 1ª não tinha. Os tipos vêm
+  // frouxos porque o banco é frouxo — `amount` é `numeric` (pode chegar como
+  // string) e `kind`/`status` são `text` livre.
+  type Aberta = { id: string; order: string | null; question: string | null }
+  const { data: abertas } = await db.from('auto_book_mail')
+    .select('id, vendor, amount, kind, order_number, question').eq('status', 'DOUBT')
+    .gte('created_at', new Date(Date.now() - 24 * 3600e3).toISOString())
+  const duvidaAberta = new Map<string, Aberta>()
+  for (const r of (abertas || []) as { id: string; vendor: string | null; amount: number | string | null; kind: string | null; order_number: string | null; question: string | null }[]) {
+    const k = chaveDuvida(r.vendor, r.amount, r.kind)
+    if (k && !duvidaAberta.has(k)) duvidaAberta.set(k, { id: String(r.id), order: r.order_number, question: r.question })
+  }
 
   for (const auth of await listMailAuths(db)) {
     let caixa: Caixa
@@ -724,14 +928,27 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         continue
       }
 
-      // ── O RECIBO DO PAYPAL É A PERNA DO PAGAMENTO, NÃO A COMPRA ──────────
+      // ── O E-MAIL DO PAYPAL É A PERNA DO PAGAMENTO, NÃO A COMPRA ──────────
       // Ele quase nunca traz número de pedido, então não dá para casar por
       // pedido. Se já existe linha desse comerciante por perto da data, o
-      // recibo é o pagamento de algo JÁ lançado e perguntar seria ruído puro.
+      // e-mail é o pagamento de algo JÁ lançado e perguntar seria ruído puro.
       // Se não existe NADA dele na janela, aí sim é dinheiro fora do app — foi
       // exatamente assim que o $4,17 do Temu apareceu na conferência à mão.
-      if (pp && !c.orders.length && await temLinhaPorPerto(db, vendor, data)) {
-        out.jaTemLinha.push(`${vendor} ${pp.currency} ${pp.amount} — recibo PayPal de compra já lançada`)
+      // VALE PARA QUALQUER CARTA DO PAYPAL (11/set/2026, Livro 3.6), não só
+      // para o recibo de assunto estruturado: era o `pp` aqui que deixava o
+      // aviso de envio da HHP passar direto para a fila. E o `vendor` que chega
+      // agora é o COMERCIANTE lido do corpo — com "PayPal" este teste nunca
+      // achava nada, porque o app não guarda o trilho, guarda o vendedor.
+      // **MENOS ESTORNO.** Este portão diz "isto é o pagamento de algo já
+      // lançado"; dinheiro VOLTANDO não é pagamento de nada, e a pergunta dele é
+      // outra ("qual linha ele abate?"). Sem esta trava, um "we've refunded"
+      // do PayPal sem número de pedido sumia calado assim que existisse
+      // QUALQUER linha do comerciante em ±6 dias — e com o comerciante lido do
+      // corpo isso passou a casar muito mais. Engolir estorno é exatamente o
+      // silêncio que a nota da 5.9 promete não cometer.
+      if (ehPayPalMsg(msg) && c.kind !== 'REFUND' && !c.orders.length && await temLinhaPorPerto(db, dirFornecedores, vendor, data)) {
+        const quanto = c.money ? `${c.money.currency} ${c.money.amount}` : 'sem valor lido'
+        out.jaTemLinha.push(`${vendor} ${quanto} — e-mail do PayPal de compra já lançada`)
         if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
         continue
       }
@@ -811,6 +1028,53 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
             continue
           }
         }
+        // ── A MESMA COMPRA JÁ PERGUNTOU HÁ POUCO? (Livro 5.9) ──────────────
+        // O lugar do corte é este, e não depois de montar a pergunta: a busca no
+        // app acima pode RESOLVER a carta (melhor que calá-la), mas as buscas de
+        // papel e de pasta abaixo só montam o TEXTO de uma pergunta que não vai
+        // ser feita — e a primeira delas ainda empurrava a carta silenciada para
+        // `papelSemLinha`, ruído de relatório sobre pergunta que não existe.
+        //
+        // CALAR NÃO É SUMIR. A 2ª carta deixa três rastros:
+        //   1. o NÚMERO DO PEDIDO, quando ela traz e a dúvida aberta não tem: é
+        //      enxertado na dúvida ANTES de calar. Era o defeito de nascença
+        //      desta regra — a carta calada era justamente a que trazia o A13706
+        //      que este mesmo commit ensinou o robô a ler;
+        //   2. a PRÓPRIA LINHA dela em `auto_book_mail`, status DUPLICATE, com o
+        //      trecho lido e o id da dúvida que responde por ela. Sem essa linha
+        //      o `message_key` não existe, a janela de 3 h relê a carta na
+        //      rodada seguinte e — com a 1ª dúvida já respondida (11 de 19 foram
+        //      respondidas em ≤3 h, medido em 11/set) — a 2ª pergunta nasce de
+        //      novo, uma hora atrasada. Era o defeito inteiro em uma frase;
+        //   3. o e-mail SAI da caixa, como sai tudo que o robô resolve.
+        const chaveDup = chaveDuvida(vendor, it.amount, c.kind)
+        const aberta = chaveDup ? duvidaAberta.get(chaveDup) : undefined
+        if (chaveDup && aberta) {
+          let enxerto = ''
+          if (it.order && !aberta.order) {
+            const q = `${aberta.question || ''} · PEDIDO ${it.order} veio na 2a carta ("${msg.subject.slice(0, 50)}"), que e a mesma compra — a pergunta acima nasceu sem ele`.trim()
+            // `.eq('status','DOUBT')`: se o dono respondeu a dúvida entre a carga
+            // do início da rodada e agora, não se escreve por cima da resposta.
+            const { error: eEnx } = await db.from('auto_book_mail')
+              .update({ order_number: it.order, question: q.slice(0, 2000), updated_at: new Date().toISOString() })
+              .eq('id', aberta.id).eq('status', 'DOUBT')
+            if (eEnx) out.erros.push(`enxerto do pedido ${it.order} na duvida ${aberta.id.slice(0, 8)}: ${eEnx.message}`)
+            else { aberta.order = it.order; aberta.question = q; enxerto = ` — o pedido ${it.order} foi enxertado na dúvida ${aberta.id.slice(0, 8)}` }
+          }
+          const { error: eDup } = await db.from('auto_book_mail').insert({
+            message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
+            from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
+            currency: it.currency, amount: it.amount, status: 'DUPLICATE', answered_at: new Date().toISOString(),
+            question: `2a carta da mesma compra — a duvida ${aberta.id.slice(0, 8)} responde pelas duas${enxerto ? ` (e ficou com o pedido ${it.order})` : ''}`,
+            extracted: { label: it.label, strong: it.strong, orders: c.orders, duplicada_de: aberta.id, trecho: msg.text.slice(0, 900) },
+          })
+          if (eDup) out.erros.push(`duplicada ${vendor}: ${eDup.message}`)
+          else naFila.add(chave)
+          out.duplicadas.push(`${vendor} ${it.currency} ${it.amount} — "${msg.subject.slice(0, 50)}" é a 2ª carta da mesma compra; a dúvida ${aberta.id.slice(0, 8)} responde pelas duas${enxerto}`)
+          if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa.pastas, msg, vendor, out)
+          continue
+        }
+
         // 2) o papel: o pedido aparece no nome de algum recibo ja guardado?
         const papel = await achaPapel(db, it.order, vendor)
         if (papel) out.papelSemLinha.push(`${vendor} ${it.order} — papel guardado em ${papel}, mas SEM linha no app`)
@@ -849,14 +1113,20 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         const question = c.kind === 'REFUND'
           ? `Estorno de ${vendor}${it.order ? ' (pedido ' + it.order + ')' : ''}${valor}: qual linha ele abate?`
           : `${c.kind === 'CHARGE' ? 'Cobranca' : 'Compra'} de ${vendor}${it.order ? ' — pedido ' + it.order : ''}${valor}: entra em qual invoice/carro?${falta.length ? ' (' + falta.join('; ') + ')' : ''}`
-        const { error } = await db.from('auto_book_mail').insert({
+        const { data: nova, error } = await db.from('auto_book_mail').insert({
           message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
           from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
           currency: it.currency, amount: it.amount, question, cands,
           extracted: { label: it.label, strong: it.strong, orders: c.orders, totais, trecho: msg.text.slice(0, 900) },
-        })
+        }).select('id').single()
         if (error) { out.erros.push(`fila ${vendor}: ${error.message}`); continue }
         naFila.add(chave)
+        // A carta de 22:38 tem de ver a pergunta que a de 22:37 acabou de
+        // abrir: as duas chegam na MESMA rodada, e sem esta linha a dedução só
+        // valeria na rodada seguinte — quando as duas dúvidas já existem. O id
+        // vem de volta do insert porque a 2ª carta precisa DIZER de quem ela é
+        // duplicata, e enxertar o pedido nesta mesma linha se for o caso.
+        if (chaveDup && nova) duvidaAberta.set(chaveDup, { id: String((nova as { id: string }).id), order: it.order, question })
         out.perguntas.push(question)
       }
     }

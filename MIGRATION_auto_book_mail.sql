@@ -31,7 +31,7 @@ create table if not exists auto_book_mail (
   extracted     jsonb,                    -- tudo que o parser conseguiu ler do e-mail
   question      text,                     -- a ÚNICA pergunta a fazer ao humano
   cands         jsonb,                    -- destinos sugeridos [{table,ref,label,n,last}]
-  status        text not null default 'DOUBT',      -- DOUBT | BOOKED | IGNORED
+  status        text not null default 'DOUBT',      -- DOUBT | BOOKED | IGNORED | DUPLICATE (2ª carta da mesma compra, 11/set/2026 — Livro 5.9; o robô escreve, gente não responde)
   answer        jsonb,
   answered_at   timestamptz,
   booked_table  text,
