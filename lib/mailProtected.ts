@@ -17,7 +17,21 @@
 
 // Correspondência de contraparte ATIVA — as mesmas caras que disparam o VIP MAIL
 // ALERT. Quem merece um aviso no WhatsApp não pode ser varrido em silêncio.
-const VIP = /celinak|@sema\.org|performanceracing\.com|kooksheaders|guerra\.law|kravitz|montway\.com|autotagsandtitle|venterraliving|esusu\.org|treperformance|titanmotorsports|stripe\.com|refunds@united|highhorseperformance\.com|kramerautoplex\.com|joesal67@gmail\.com/i
+//
+// STRIPE É `@stripe\.com`, NÃO `stripe\.com` (11/set/2026). Solto, o padrão pegava
+// junto o subdomínio de PROPAGANDA `e.stripe.com` — e `updates@e.stripe.com` é um
+// dos 65 remetentes que ELE curou em `marketing_senders` para o matador apagar (3
+// mortes registradas no gz28us@gmail: 21/08 13:20, 31/08 11:25 e 08/09 11:35). Com
+// a trava única entrando também no ramo Gmail, a proteção venceria a curadoria e a
+// propaganda ficaria IMORTAL na caixa: a busca é `in:inbox`, o e-mail não sai, o
+// cron passa de 5 em 5 minutos e cada passada somaria um bloqueio — a doença que
+// deu 1.418 bloqueios no radiumauto e 8.308 no pagoufacil. Medido em 11/set às
+// 21:28 de Orlando (REST, só leitura): dos 65 ativos, `updates@e.stripe.com` era o
+// ÚNICO a bater nesta lista, e o que chega de verdade da Stripe —
+// `notifications@stripe.com`, visto em `mail_processed` — continua protegido pelo
+// padrão estreito. O aviso de VIP no WhatsApp não muda: ele tem a lista dele
+// (`VIP_FROM` em lib/inboxZero.server.ts) e segue avisando do jeito que avisava.
+const VIP = /celinak|@sema\.org|performanceracing\.com|kooksheaders|guerra\.law|kravitz|montway\.com|autotagsandtitle|venterraliving|esusu\.org|treperformance|titanmotorsports|@stripe\.com|refunds@united|highhorseperformance\.com|kramerautoplex\.com|joesal67@gmail\.com/i
 
 // Despachante da frota (Auto Tags & Title Central): o thread carrega invoice,
 // recibo de DMV e acerto de crédito. Já é o caso de duas perdas.
