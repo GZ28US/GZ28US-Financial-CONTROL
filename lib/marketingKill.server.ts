@@ -20,10 +20,19 @@
 // encontrava o e-mail toda passada e nunca podia apagar: 523 bloqueios no Mecanizou,
 // 1.158 no radiumauto, 2.609 no amenify. Para remetente que ELE já curou na lista, a
 // identidade do remetente já é a prova; o cabeçalho virou bônus, não requisito.
-// Bateu tudo  → move pra Itens Excluídos (recuperável; nunca delete permanente) e
-//               registra em `marketing_kills`.
+// Bateu tudo  → move pra Itens Excluídos (Outlook) ou pra Lixeira (Gmail) —
+//               recuperável, nunca delete permanente — e registra em
+//               `marketing_kills`, que desde 11/set diz também QUAL ROBÔ moveu e
+//               PARA ONDE (`robot`/`moved_to`): a mesma tabela é o rastro dos três
+//               robôs que apagam, com o spam-sweep e o marketing-sweep.
 // Travou      → NÃO apaga: incrementa `blocked` e deixa o e-mail onde está, pro humano.
 //               Remetente que bloqueia demais é sinal de que não devia estar na lista.
+//
+// TRAVA ÚNICA NOS DOIS RAMOS (Márcio, 11/set/2026: "entra"). O `barrado()` de
+// `lib/mailProtected.server.ts` roda colado no move tanto no Outlook quanto no
+// Gmail. Até 11/set só o Outlook chamava, e este era o ÚNICO robô que apagava sem
+// a trava — despachante, advogado, VIP e pedido de assinatura estavam protegidos
+// nas caixas Microsoft e desprotegidos nas duas caixas Google.
 //
 // EXCEÇÃO POR REMETENTE — `hard_stop_waived_at` (10/set/2026). Ordem do Márcio:
 // "apague a HPVida sempre". contato@pagoufacil.com.br manda "Sua fatura Hapvida está
@@ -36,7 +45,7 @@
 // nunca por volume.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { mailProvider, maySweep, listGmailIds } from '@/lib/streamMail.server'
+import { mailProvider, maySweep, listGmailIds, registrarFaxina } from '@/lib/streamMail.server'
 import { barrado } from './mailProtected.server'
 
 const G = 'https://graph.microsoft.com/v1.0'
@@ -92,10 +101,14 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
   const palavraTrava = (addr: string, ...textos: string[]) =>
     !listed.get(addr)?.hard_stop_waived_at && textos.some(t => HARD_STOP.test(t))
 
-  const kill = async (account: string, addr: string, subj: string, folder: string) => {
+  // `destino` entrou em 11/set: a mesma tabela passou a registrar os três robôs
+  // que apagam (aqui, spam-sweep e marketing-sweep), e cada provedor manda pra um
+  // lugar — Itens Excluídos no Outlook, Lixeira no Gmail. Quem escreve a linha é o
+  // `registrarFaxina` de streamMail.server.ts, pra tabela ter um escritor só.
+  const kill = async (account: string, addr: string, subj: string, folder: string, destino: string) => {
     const row = listed.get(addr)!
     killed.push(`${account} · ${addr} — ${subj.slice(0, 50)}`)
-    await db.from('marketing_kills').insert({ account, sender: addr, subject: subj.slice(0, 200), folder })
+    await registrarFaxina(db, 'marketing-kill', account, addr, subj, folder, destino)
     row.hits = (row.hits || 0) + 1
     await db.from('marketing_senders').update({ hits: row.hits, last_hit: new Date().toISOString(), last_subject: subj.slice(0, 200) }).eq('email', addr)
   }
@@ -130,7 +143,7 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
           const inReply = heads.some(x => /^(in-reply-to|references)$/i.test(String(x.name)))
           if (inReply || palavraTrava(addr, String(hd?.bodyPreview || ''))) { await block(a.account, addr, subj); continue }
           const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'deleteditems' }) })
-          if (mv.ok) await kill(a.account, addr, subj, folder)
+          if (mv.ok) await kill(a.account, addr, subj, folder, 'deleteditems')
           else await block(a.account, addr, subj)
         }
       }
@@ -145,16 +158,27 @@ export async function runMarketingKill(db: SupabaseClient): Promise<{ killed: st
       // Página por página (10/set/2026) — ver listGmailIds: página curta não é fim de lista.
       const list = await listGmailIds(token, { q, max: 50 })
       for (const it of list.ids) {
-        const msg = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=In-Reply-To`, { headers: H }).then(x => x.json()).catch(() => null)
+        // `References` entrou junto com a trava única (11/set): o ramo Outlook
+        // trava conversa por In-Reply-To OU References, e aqui só o primeiro era
+        // pedido — resposta encaminhada dentro de um fio carrega References sem
+        // In-Reply-To e passava batido. Os dois lados perguntam a mesma coisa.
+        const msg = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=In-Reply-To&metadataHeaders=References`, { headers: H }).then(x => x.json()).catch(() => null)
         const heads: { name: string; value: string }[] = msg?.payload?.headers || []
         const hv = (n: string) => String((heads.find(h => h.name.toLowerCase() === n) || { value: '' }).value || '')
         const addr = (hv('from').match(/<([^>]+)>/) || [null, hv('from')])[1].toLowerCase()
         if (!listed.has(addr)) continue
         const subj = hv('subject')
         const hasAtt = /"filename":"[^"]+"/.test(JSON.stringify(msg?.payload?.parts || []))
-        if (hv('in-reply-to') || hasAtt || palavraTrava(addr, subj, String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
+        if (hv('in-reply-to') || hv('references') || hasAtt || palavraTrava(addr, subj, String(msg?.snippet || ''))) { await block(a.account, addr, subj); continue }
+        // TRAVA ÚNICA TAMBÉM NO GMAIL (Márcio, 11/set: "entra"). Este era o ÚNICO
+        // robô que apagava sem chamar `barrado()` — o ramo Outlook logo acima
+        // chama desde 08/set, e spam-sweep, marketing-sweep e inbox-zero também.
+        // Fica COLADA no trash, como manda lib/mailProtected.ts: é a checagem
+        // junto da ação que sobrevive a refatoração. Barrou → conta como travado
+        // (o remetente ganha `blocked`, igual ao Outlook) e o e-mail fica onde está.
+        if (await barrado(db, 'marketing-kill', a.id ?? null, a.account, { id: it.id, subject: subj, from: addr, folder: 'INBOX' })) { await block(a.account, addr, subj); continue }
         const t = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${it.id}/trash`, { method: 'POST', headers: H })
-        if (t.ok) await kill(a.account, addr, subj, 'INBOX')
+        if (t.ok) await kill(a.account, addr, subj, 'INBOX', 'trash')
         else await block(a.account, addr, subj)
       }
     }

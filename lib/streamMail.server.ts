@@ -957,6 +957,43 @@ const SPAM_SENDERS: RegExp[] = [
 // Facebook só cai se for cutucada/aniversário — avisos de segurança ficam.
 const SPAM_FB_SUBJECT = /poked you|birthday|anivers[áa]rio/i
 
+// ── O RASTRO DE QUEM APAGA — UM LUGAR SÓ (11/set/2026) ─────────────────────
+// Ordem do Márcio no pacote de 10–11/set: sweepSpam e sweepMarketing têm de
+// REGISTRAR o que movem. Até aqui só o marketing kill anotava (397 linhas em
+// `marketing_kills`, medidas em 11/set); estes dois moviam pros Itens
+// Excluídos calados. Quando uma mensagem aparecia no lixo não havia como dizer
+// quem a pôs lá — e "não tem registro" não distingue "nenhum robô fez" de "o
+// robô fez e não anotou", que é a mesma lição de `lib/mailProtected.server.ts`.
+//
+// Tabela é a `marketing_kills`, a que o matador já usa: ela já guarda de,
+// assunto, pasta de origem, quando e qual caixa; a migration só acrescentou
+// QUAL ROBÔ (`robot`) e PARA ONDE (`moved_to`). Tabela nova seria campo
+// repetido, e a lei proíbe.
+//
+// LOG NUNCA DERRUBA O ROBÔ — mesma regra do `wa_send_log` e da marca
+// d'água: a mensagem JÁ foi movida quando esta função roda, e rastro que
+// quebra a faxina é pior que rastro nenhum.
+export async function registrarFaxina(
+  db: SupabaseClient, robo: string, account: string | null,
+  sender: string, subject: string, folder: string, movedTo: string,
+): Promise<void> {
+  const base = { account, sender, subject: String(subject || '').slice(0, 200), folder }
+  try {
+    const { error } = await db.from('marketing_kills').insert({ ...base, robot: robo, moved_to: movedTo })
+    // O supabase-js NÃO lança: erro vem no campo, não no catch (bug de 03/set
+    // na marca d'água, que respondeu ok sem gravar linha nenhuma). Sem este
+    // `if`, log quebrado ficaria invisível.
+    if (error) {
+      // REDE PRO INTERVALO ENTRE O DEPLOY E A MIGRATION. Sem as colunas novas o
+      // insert inteiro falha, e como erro de log é engolido o marketing kill —
+      // que HOJE grava — ficaria mudo sem ninguém perceber. Então tenta de novo
+      // no formato antigo: perde-se quem moveu, não a linha.
+      const { error: eVelho } = await db.from('marketing_kills').insert(base)
+      console.error('[faxina-log]', robo, error.message, eVelho ? `· nem no formato antigo: ${eVelho.message}` : '· gravado SEM robot/moved_to — falta rodar MIGRATION_sweep_kill_log.sql')
+    }
+  } catch (e) { console.error('[faxina-log]', robo, e) }
+}
+
 export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[] }> {
   const deleted: string[] = []
   // Só caixas Microsoft: as chamadas abaixo são Graph. Vem da tabela, não de
@@ -983,7 +1020,12 @@ export async function sweepSpam(db: SupabaseClient): Promise<{ deleted: string[]
             method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
             body: JSON.stringify({ destinationId: 'deleteditems' }),
           })
-          if (mv.ok) deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+          if (mv.ok) {
+            deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+            // Registra DEPOIS do move e só quando ele deu certo: a linha diz o
+            // que aconteceu de verdade na caixa, nunca o que se tentou.
+            await registrarFaxina(db, 'spam-sweep', auth.account || null, addr, subj, folder, 'deleteditems')
+          }
         }
       }
     } catch (e) { console.error('[spam-sweep]', slot, e) }
@@ -1022,7 +1064,10 @@ export async function sweepMarketing(db: SupabaseClient): Promise<{ deleted: str
           method: 'POST', headers: { ...graphH(token), 'Content-Type': 'application/json' },
           body: JSON.stringify({ destinationId: 'deleteditems' }),
         })
-        if (mv.ok) deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+        if (mv.ok) {
+          deleted.push(`[slot ${slot}] ${addr} — ${subj.slice(0, 60)}`)
+          await registrarFaxina(db, 'marketing-sweep', auth.account || null, addr, subj, 'inbox', 'deleteditems')
+        }
       }
     } catch (e) { console.error('[marketing-sweep]', slot, e) }
   }
