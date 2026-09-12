@@ -254,11 +254,17 @@ export const GMAIL_Q_COMPRA = '(order OR orders OR receipt OR invoice OR purchas
 // juntar `max` ou acabar a lista, com teto de páginas para não estourar o tempo
 // de função de ninguém. Devolve o token que sobrou — `nextPageToken` não nulo
 // quer dizer "tem mais" — e o erro, em vez de fingir caixa vazia.
+//
+// `status` (11/set/2026) = o HTTP que o Google devolveu quando houve erro, nulo
+// quando deu certo ou quando nem resposta houve. Existe para quem chama poder
+// separar PEDIDO ERRADO (400/404: rótulo torto, pageToken vencido) de FALHA DE
+// INFRA (401/403/429: token, quota, throttle) — a mensagem de texto sozinha não
+// dá para decidir isso sem adivinhar. Quem só lê `ids`/`error` segue igual.
 export type GmailStub = { id: string; threadId?: string }
 export async function listGmailIds(
   accessToken: string,
   opts: { q?: string; labelIds?: string; max: number; pageToken?: string; maxPages?: number },
-): Promise<{ ids: GmailStub[]; nextPageToken: string | null; error: string | null }> {
+): Promise<{ ids: GmailStub[]; nextPageToken: string | null; error: string | null; status: number | null }> {
   const H = { Authorization: `Bearer ${accessToken}` }
   const ids: GmailStub[] = []
   let pageToken = opts.pageToken || ''
@@ -270,13 +276,13 @@ export async function listGmailIds(
     const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${qs}`, { headers: H }).catch(() => null)
     const j = r ? await r.json().catch(() => null) : null
     if (!r?.ok || !j || j.error) {
-      return { ids, nextPageToken: pageToken || null, error: String(j?.error?.message || `HTTP ${r?.status ?? 'sem resposta'}`) }
+      return { ids, nextPageToken: pageToken || null, error: String(j?.error?.message || `HTTP ${r?.status ?? 'sem resposta'}`), status: r?.status ?? null }
     }
     ids.push(...((j.messages || []) as GmailStub[]))
     pageToken = j.nextPageToken || ''
     if (!pageToken) break
   }
-  return { ids, nextPageToken: pageToken || null, error: null }
+  return { ids, nextPageToken: pageToken || null, error: null, status: null }
 }
 
 export async function fetchRecentGmail(accessToken: string, sinceIso: string, opts?: { q?: string; max?: number }): Promise<MailMsg[]> {

@@ -25,29 +25,45 @@
 // ([[claudinha-is-an-interface]]). Nome que ninguém reconhece não vira mais 502:
 // a rota devolve 400 dizendo quais valem NAQUELA caixa.
 //
+// ⚠️ O QUE O 400 PODE E O QUE NÃO PODE DIZER (conserto de 11/set, depois da
+// revisão): nome não reconhecido NÃO quer dizer "a pasta não existe". Pasta de
+// caso existe e é só ilistável POR NOME — o Graph endereça pasta pelo nome
+// bem-conhecido ou pelo id, e o Gmail só pelo id do rótulo ([[mail-processed-watermark]]:
+// "op=list&folder=<nome> só funciona com nome bem-conhecido"). O texto do erro
+// fala do ENDEREÇO, nunca da existência, senão a sessão lê "sumiu" e vai caçar
+// no lugar errado — que é exatamente o defeito que esta fatia veio matar.
+//
 // (A `mail-file` tem o mapa dela, `BEM_CONHECIDAS`, para outra coisa: lá o nome
 // serve para CRIAR pasta por caminho. Aqui só se traduz e se valida o que já
-// existe — não se cria nada.)
+// existe — não se cria nada. Os nomes que os dois entendem são os mesmos,
+// "arquivo morto" incluído, para o que se arquiva poder ser conferido.)
 
 export type ProvedorDeMail = 'graph' | 'gmail'
 
-type Pasta = { graph: string; gmail: string; nomes: string[] }
+// `gmail: null` = o lugar existe no Outlook e NÃO tem equivalente listável no
+// Gmail (o caso do arquivo morto: lá arquivar é tirar o rótulo INBOX).
+type Pasta = { graph: string; gmail: string | null; nomes: string[] }
 
-// Os cinco lugares que toda caixa tem e que as rodadas de e-mail pedem pelo
-// nome ([[email-round-process]]): entrada, lixo eletrônico, lixeira, enviados e
-// rascunhos. Pasta/label de caso vai sempre pelo id do `op=folders`.
+// Os lugares que toda caixa tem e que as rodadas de e-mail pedem pelo nome
+// ([[email-round-process]]): entrada, lixo eletrônico, lixeira, enviados,
+// rascunhos e o arquivo morto. Pasta/label de caso vai sempre pelo id do
+// `op=folders`.
 const PASTAS: Pasta[] = [
   { graph: 'inbox', gmail: 'INBOX', nomes: ['inbox', 'caixa de entrada', 'entrada'] },
   { graph: 'junkemail', gmail: 'SPAM', nomes: ['junkemail', 'junk', 'junk email', 'spam', 'lixo eletronico', 'lixo'] },
   { graph: 'deleteditems', gmail: 'TRASH', nomes: ['deleteditems', 'deleted', 'deleted items', 'trash', 'lixeira', 'excluidos', 'itens excluidos'] },
   { graph: 'sentitems', gmail: 'SENT', nomes: ['sentitems', 'sent', 'sent items', 'enviados', 'itens enviados'] },
   { graph: 'drafts', gmail: 'DRAFT', nomes: ['drafts', 'draft', 'rascunhos', 'rascunho'] },
+  // "arquivo morto" é o nome que a casa usa e que a `mail-file` já aceita desde
+  // o conserto da pasta fantasma: quem arquiva por lá TEM que conseguir conferir
+  // por aqui com o mesmo nome.
+  { graph: 'archive', gmail: null, nomes: ['archive', 'arquivo morto', 'arquivo', 'arquivados'] },
 ]
 
 // Nomes reservados do Graph que não estão na tabela acima — quem já chama com
 // eles continua passando direto, o contrato não muda.
 const GRAPH_BEM_CONHECIDAS = [
-  'archive', 'clutter', 'conflicts', 'conversationhistory', 'localfailures',
+  'clutter', 'conflicts', 'conversationhistory', 'localfailures',
   'msgfolderroot', 'outbox', 'recoverableitemsdeletions', 'scheduled',
   'searchfolders', 'serverfailures', 'syncissues',
 ]
@@ -56,6 +72,12 @@ const GRAPH_BEM_CONHECIDAS = [
 const GMAIL_DO_SISTEMA = [
   'INBOX', 'SPAM', 'TRASH', 'SENT', 'DRAFT', 'STARRED', 'IMPORTANT', 'UNREAD', 'CHAT',
   'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
+]
+
+const validasDoGraph = () => [...PASTAS.map(p => p.graph), ...GRAPH_BEM_CONHECIDAS]
+const validasDoGmail = () => [
+  ...PASTAS.map(p => p.gmail).filter((g): g is string => !!g),
+  ...GMAIL_DO_SISTEMA.filter(l => !PASTAS.some(p => p.gmail === l)),
 ]
 
 // "Lixo Eletrônico", "lixo_eletronico" e "LIXO ELETRONICO" são a mesma coisa:
@@ -75,16 +97,36 @@ export type PastaResolvida =
 const pareceIdDoGraph = (v: string) => /^[A-Za-z0-9_+/=-]{16,}$/.test(v) && /[A-Z]/.test(v)
 
 export function pastaDoProvedor(bruto: string, provedor: ProvedorDeMail): PastaResolvida {
-  const cru = String(bruto || '').trim()
-  // Só quem não pediu pasta nenhuma cai na caixa de entrada. Nome que existe e
-  // não foi reconhecido TEM que dar 400 — "listei outra pasta calado" é o
-  // defeito que esta função veio consertar.
-  if (!cru) return { ok: true, folder: provedor === 'gmail' ? 'INBOX' : 'inbox', traduzida: false }
+  const recebido = String(bruto ?? '')
+  const cru = recebido.trim()
+  // Só quem NÃO PEDIU pasta nenhuma (parâmetro ausente ou vazio) cai na caixa de
+  // entrada. `folder=%20` — o script que montou a URL com a variável vazia —
+  // PEDIU alguma coisa e não pode ser atendido calado com outra pasta: 400.
+  // "Listei outra pasta sem avisar" é o defeito que esta função veio consertar.
+  if (!cru) {
+    if (recebido.length) {
+      return {
+        ok: false,
+        motivo: 'folder veio só com espaço em branco — a variável que montou a URL está vazia; mande o nome da pasta ou não mande o parâmetro (aí vale a caixa de entrada)',
+        validas: provedor === 'gmail' ? validasDoGmail() : validasDoGraph(),
+      }
+    }
+    return { ok: true, folder: provedor === 'gmail' ? 'INBOX' : 'inbox', traduzida: false }
+  }
   const k = chave(cru)
 
   const hit = PASTAS.find(p => p.nomes.includes(k))
   if (hit) {
     const folder = provedor === 'gmail' ? hit.gmail : hit.graph
+    // Lugar que existe num provedor e não no outro (arquivo morto no Gmail):
+    // dizer O PORQUÊ, não fingir que o nome é inválido.
+    if (!folder) {
+      return {
+        ok: false,
+        motivo: `"${cru}" não se lista numa caixa Gmail — lá arquivar é TIRAR o rótulo INBOX, não há pasta de arquivo morto; o que foi arquivado aparece pelo id do rótulo em op=folders`,
+        validas: validasDoGmail(),
+      }
+    }
     return { ok: true, folder, traduzida: folder !== cru }
   }
 
@@ -94,8 +136,9 @@ export function pastaDoProvedor(bruto: string, provedor: ProvedorDeMail): PastaR
     if (pareceIdDoGraph(cru)) return { ok: true, folder: cru, traduzida: false }
     return {
       ok: false,
-      motivo: `pasta "${cru}" não existe numa caixa Outlook — para uma pasta sua, mande o id que o op=folders devolve, não o nome`,
-      validas: [...PASTAS.map(p => p.graph), ...GRAPH_BEM_CONHECIDAS],
+      // NÃO diz "não existe": pasta de caso existe e só não se endereça por nome.
+      motivo: `"${cru}" não é nome que uma caixa Outlook enderece — o Graph aceita nome BEM-CONHECIDO ou id; pasta sua existe, mas só se lista pelo id que o op=folders devolve`,
+      validas: validasDoGraph(),
     }
   }
 
@@ -106,17 +149,33 @@ export function pastaDoProvedor(bruto: string, provedor: ProvedorDeMail): PastaR
   if (sistema) return { ok: true, folder: sistema, traduzida: sistema !== cru }
   return {
     ok: false,
-    motivo: `label "${cru}" não existe numa caixa Gmail — no Gmail a pasta é RÓTULO, e o de usuário vai pelo id (Label_16), nunca pelo nome`,
-    validas: [...PASTAS.map(p => p.gmail), ...GMAIL_DO_SISTEMA.filter(l => !PASTAS.some(p => p.gmail === l))],
+    // Idem: o rótulo pode existir; o que não dá é endereçá-lo pelo NOME.
+    motivo: `não dá para listar o rótulo "${cru}" pelo nome numa caixa Gmail — rótulo de usuário vai pelo id (Label_16), que vem no op=folders`,
+    validas: validasDoGmail(),
   }
 }
 
-// O `$search` do Graph já nasce embrulhado em aspas na rota; aspa dentro do
-// termo quebra o KQL. Tirar é o que ele decidiu ("o Graph aceita a expressão sem
-// elas") — o efeito é buscar as palavras em vez da frase exata, e a janela
-// `received:AAAA-MM-DD..AAAA-MM-DD` continua funcionando igual.
+// ── O TERMO DO $search DO GRAPH ─────────────────────────────────────────────
+// A rota embrulha o termo em aspas (`$search="..."`), então aspa DENTRO do `q`
+// quebra o KQL. Tirar é o que ele decidiu ("o Graph aceita a expressão sem
+// elas"). Duas regras, porque a aspa tem dois papéis:
+//
+//   • aspa colada num operador de campo (`subject:"doc fee"`, `from:"x@y.com"`)
+//     é APAGADA, não vira espaço: trocar por espaço descola o `subject:` do
+//     valor (`subject: doc fee`) e fabrica um erro de KQL que a rota depois
+//     ainda culparia quem chamou. Vira `subject:doc fee`;
+//   • aspa solta em volta de frase vira espaço e some.
+//
+// ⚠️ A VERDADE DO QUE ISSO FAZ: sem as aspas a busca deixa de ser por FRASE
+// EXATA e passa a ser pelas palavras (como o KQL as combina é dele). `"eBay
+// Commerce Inc"` pode voltar MAIS e-mail do que a frase — por isso a rota
+// devolve `quotesRemoved` junto de um aviso em texto, e quem quiser tentar a
+// frase exata pede `phrase=1` (ver a rota).
 export function termoDeBuscaGraph(bruto: string): { termo: string; aspasRemovidas: boolean } {
   const cru = String(bruto || '')
-  const termo = cru.replace(/["“”„«»]/g, ' ').replace(/\s+/g, ' ').trim()
+  const termo = cru
+    .replace(/:\s*["“”„«»]+/g, ':')
+    .replace(/["“”„«»]/g, ' ')
+    .replace(/\s+/g, ' ').trim()
   return { termo, aspasRemovidas: termo !== cru.trim() }
 }
