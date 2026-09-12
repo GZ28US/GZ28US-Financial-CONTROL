@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
@@ -95,7 +95,7 @@ export default function NewInputPage() {
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   const [notes, setNotes] = useState('')
-  const [source, setSource] = useState(DEFAULT_SOURCE)
+  const [source] = useState(DEFAULT_SOURCE)
   // Universal payment block (inputs keep their own `source` field — no write-through).
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
@@ -189,7 +189,9 @@ export default function NewInputPage() {
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       // Registered = paid (Comprovante = PAGA); payment_date is a mirror of the
       // single DATE — never a second date. No date yet → both stay empty.
-      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
+      // SUPPLIES e ESTOQUE não têm escolha de pagador (Márcio, 11/set): PAID FROM e PAID
+      // TO nascem GZ28US, escondidos — o paymentToRow grava pela régua da tabela.
+      ...paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, table, purchaseDate),
     }])
     if (error) { alert(error.message); return }
 
@@ -345,10 +347,10 @@ export default function NewInputPage() {
             onPickedUp={setPickedUp} onCancelStatus={setCancelStatus} onTracking={setTracking} onCarrier={setCarrier} />
         </div>
 
-        <div>
-          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-          <SourceSelect value={source} onChange={setSource} className={selectClass} />
-        </div>
+        {/* O seletor PAID FROM (que gravava o SOURCE legado) SAIU daqui em 12/set/2026:
+            SUPPLIES e ESTOQUE não têm escolha de pagador — «nenhuma outra do app» além das
+            cinco tabelas (Márcio, 11/set). E era o segundo PAID FROM da mesma tela, ao lado
+            do bloco de pagamento. O SOURCE continua nascendo GZ28US no insert. */}
 
         <div className="flex gap-4">
           <div className="flex-1">
@@ -407,7 +409,7 @@ export default function NewInputPage() {
         </div>
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
-        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
+        <PaymentFields value={payment} onChange={setPayment} table={table} hidePaidToggle />
 
         <div>
           <label className="block mb-2 text-lg font-bold">NOTES</label>

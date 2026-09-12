@@ -14,7 +14,7 @@ import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { mirrorBrShoppingInvoice, brMirrorFailureCause, type BrMirrorItem } from '@/lib/brShoppingMirror'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
-import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, methodsFor } from '@/components/PaymentFields'
+import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, HOUSE_PAYER, hiddenPayerBorn, methodsFor } from '@/components/PaymentFields'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, type DeliverChipRow } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
@@ -599,7 +599,9 @@ export default function EditInvoicePage() {
         // Data Checker e a tela contam a MESMA história.
         payment_method: e.payment_method || 'CASH',
         paid_from: e.paid_from || e.source || '',
-        paid_to: e.paid_to || 'GZ28US',
+        // PAID TO carrega a VERDADE (vazio = vazio): desde 12/set ele não aparece na tela, e
+        // o `|| 'GZ28US'` de antes virava gravação na próxima edição da linha.
+        paid_to: e.paid_to || '',
         order_number: e.order_number || '',
         // Rastreio da PRÓPRIA LINHA — não há mais join com part_streams. E não
         // se carrega status nenhum: ele não existe mais como campo.
@@ -1265,6 +1267,9 @@ export default function EditInvoicePage() {
           payment_date: payDate || null,
           source: editingPurchaseSource || DEFAULT_SOURCE,
           paid_from: editingPurchaseSource || DEFAULT_SOURCE,
+          // PAID TO escondido (12/set/2026): GZ28US quando este diálogo dá o pagamento a
+          // uma linha do pedido que estava sem; linha já paga fica com o que tem.
+          ...(hiddenPayerBorn(isValidDate(exp.payment_date), !!payDate) ? { paid_to: HOUSE_PAYER } : {}),
           order_number: orderNo || null,
         }).eq('id', exp.id)
       }
@@ -2251,6 +2256,8 @@ export default function EditInvoicePage() {
     if ((editingExpense.supplier || '').trim() !== (exp?.supplier || '').trim()) {
       await ensureSupplier(editingExpense.supplier)
     }
+    // Linha já salva: o pagador escondido nasce só se ESTA edição dá o pagamento a ela.
+    const paidToBorn = hiddenPayerBorn(isValidDate(exp.payment_date), isValidDate(editingExpense.payment_date))
     if (exp.id) {
       const { error } = await supabase.from('invoice_expenses').update({
         // Espelho: a única data é a do pagamento; o formulário edita payment_date.
@@ -2265,7 +2272,11 @@ export default function EditInvoicePage() {
         receipt_url: editingExpense.receipt_urls.length > 0 ? JSON.stringify(editingExpense.receipt_urls) : null,
         payment_method: editingExpense.payment_method || 'CASH',
         paid_from: editingExpense.paid_from || null,
-        paid_to: editingExpense.paid_to || 'GZ28US',
+        // PAID TO escondido (12/set/2026): só grava — GZ28US — quando esta edição registra o
+        // pagamento de uma linha que estava sem; fora isso a chave nem vai e o banco fica com o
+        // que tem. O `|| 'GZ28US'` de antes preenchia a linha velha a cada salvamento, e com o
+        // campo fora da tela seria o app respondendo por ninguém (hiddenPayerBorn).
+        ...(paidToBorn ? { paid_to: HOUSE_PAYER } : {}),
         // ORDER NUMBER sagrado: a edição da linha persiste o pedido também.
         order_number: (editingExpense.order_number || '').trim() || null,
         // PICKED UP / TRACKING / CARRIER: colunas desta linha. Linha não paga
@@ -2292,7 +2303,7 @@ export default function EditInvoicePage() {
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', id: exp.id }; setExpenses(updated)
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', ...(exp.id && paidToBorn ? { paid_to: HOUSE_PAYER } : {}), id: exp.id }; setExpenses(updated)
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY })
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY }) }
@@ -2565,7 +2576,9 @@ export default function EditInvoicePage() {
         // Caso Drácula: salvar a invoice NÃO responde "quem pagou" por ninguém —
         // linha sem resposta continua NULL no banco.
         paid_from: ex.paid_from || null,
-        paid_to: ex.paid_to || 'GZ28US',
+        // Linha NOVA: PAID TO nasce GZ28US, sempre, escondido (Márcio, 11/set: «deixe SEMPRE
+        // como GZ28US, pra todas, só não mostre na tela»).
+        paid_to: HOUSE_PAYER,
         // Legacy write-through: `source` stays the who-paid marker = PAID FROM.
         source: ex.paid_from || ex.source || null,
         // ORDER NUMBER é SAGRADO (29/ago/2026): toda linha nova persiste o
@@ -3472,7 +3485,9 @@ export default function EditInvoicePage() {
                 onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
               <button onClick={() => openStockModal('new')} className="bg-green-800 hover:bg-green-700 px-3 py-3 rounded-2xl font-bold text-sm shrink-0 whitespace-nowrap">📦 FROM STOCK</button>
             </div>
-            {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid) / PAID TO (whose bill). */}
+            {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid). O PAID TO saiu
+                da tela em 12/set/2026 — em despesa de invoice ele é «SEMPRE como GZ28US, pra
+                todas, só não mostre na tela» (Márcio, 11/set); a linha nova nasce com ele no insert. */}
             <div className="flex gap-2 flex-wrap">
               <div className="flex-1 min-w-[8rem]">
                 <label className="block mb-1 text-xs text-gray-400">PAYMENT METHOD</label>
@@ -3486,13 +3501,6 @@ export default function EditInvoicePage() {
                 <select value={newExpense.paid_from} onChange={(e) => setNewExpense({ ...newExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full`}>
                   {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                   {newExpense.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(newExpense.paid_from) && <option value={newExpense.paid_from}>{newExpense.paid_from}</option>}
-                </select>
-              </div>
-              <div className="flex-1 min-w-[8rem]">
-                <label className="block mb-1 text-xs text-gray-400">PAID TO</label>
-                <select value={newExpense.paid_to} onChange={(e) => setNewExpense({ ...newExpense, paid_to: e.target.value })} className={`${smallInputClass} w-full`}>
-                  {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  {newExpense.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(newExpense.paid_to) && <option value={newExpense.paid_to}>{newExpense.paid_to}</option>}
                 </select>
               </div>
             </div>
@@ -3734,7 +3742,8 @@ export default function EditInvoicePage() {
                                 </div>
                               )}
                             </div>
-                            {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid) / PAID TO (whose bill). */}
+                            {/* Universal payment block: PAYMENT METHOD / PAID FROM (who paid). PAID TO fora
+                                da tela desde 12/set/2026 (sempre GZ28US, escondido — Márcio, 11/set). */}
                             <div className="flex gap-2 flex-wrap">
                               <div className="flex-1 min-w-[8rem]">
                                 <label className="block mb-1 text-xs text-gray-400">PAYMENT METHOD</label>
@@ -3751,13 +3760,11 @@ export default function EditInvoicePage() {
                                   {editingExpense.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(editingExpense.paid_from) && <option value={editingExpense.paid_from}>{editingExpense.paid_from}</option>}
                                 </select>
                               </div>
-                              <div className="flex-1 min-w-[8rem]">
-                                <label className="block mb-1 text-xs text-gray-400">PAID TO</label>
-                                <select value={editingExpense.paid_to} onChange={(e) => setEditingExpense({ ...editingExpense, paid_to: e.target.value })} className={`${smallInputClass} w-full`}>
-                                  {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                                  {editingExpense.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(editingExpense.paid_to) && <option value={editingExpense.paid_to}>{editingExpense.paid_to}</option>}
-                                </select>
-                              </div>
+                              {/* A tela nunca esconde o que está gravado FORA da régua: PAID TO diferente
+                                  de GZ28US (e não vazio) aparece como aviso, dizendo o que o salvamento faz. */}
+                              {editingExpense.paid_to && editingExpense.paid_to !== HOUSE_PAYER && (
+                                <p className="basis-full text-xs text-amber-300">PAID TO gravado nesta linha: {editingExpense.paid_to} — fora da régua (despesa de invoice é sempre {HOUSE_PAYER}). {isValidDate(expenses[editingExpenseIndex!]?.payment_date || '') ? 'O campo não aparece e salvar não o muda.' : `Se este salvamento registrar o pagamento, vira ${HOUSE_PAYER}.`}</p>
+                              )}
                             </div>
                             <div className="flex gap-4 items-start flex-wrap">
                               <div className="flex-1 min-w-[14rem]">

@@ -1084,8 +1084,11 @@ export default function ViewInvoicePage() {
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                           <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}{((exp.tax || 0) > 0 || (exp.extra || 0) > 0) ? ` · TOTAL: ${formatUSD(exp.price * (exp.quantity || 1) + (exp.tax || 0) + (exp.extra || 0))}` : ''}</p>
-                          {/* Uma data só (lei 18/ago/2026): a da expense é a do PAGAMENTO. */}
-                          {!invoice.is_quote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}{exp.payment_method ? ` · ${exp.payment_method}` : ''}{(exp.paid_from || exp.paid_to) ? ` · ${exp.paid_from || 'GZ28US'} → ${exp.paid_to || 'GZ28US'}` : ''}</p>}
+                          {/* Uma data só (lei 18/ago/2026): a da expense é a do PAGAMENTO.
+                              Quem pagou aparece como está gravado (vazio não vira GZ28US). O PAID TO
+                              saiu da tela em 12/set/2026 — é sempre GZ28US, escondido (Márcio, 11/set) —
+                              e só volta a aparecer quando o gravado foge da régua. */}
+                          {!invoice.is_quote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}{exp.payment_method ? ` · ${exp.payment_method}` : ''}{exp.paid_from ? ` · ${exp.paid_from}` : ''}{exp.paid_to && exp.paid_to !== 'GZ28US' ? ` → ${exp.paid_to}` : ''}</p>}
                           {/* ORDER NUMBER sagrado + semáforo do STREAM (join por
                               order_number normalizado — tracking nunca mora aqui).
                               CASCATA (Márcio, 29/ago/2026): "PAGOU? Bought / TEM

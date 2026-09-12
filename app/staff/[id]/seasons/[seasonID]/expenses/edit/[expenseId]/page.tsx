@@ -111,8 +111,9 @@ export default function EditExpensePage() {
     // Recurring rows (DAILY/WEEKLY/MONTHLY) are payroll/forecast definitions,
     // not actual payments — they never carry a payment_date. No expenseDate
     // override here so an untouched save round-trips the stored payment_date.
-    const paymentCols = paymentToRow(payment)
-    if (type !== 'SINGLE') paymentCols.payment_date = null
+    // PAID TO é GZ28US escondido (Márcio, 11/set): grava só se este salvamento registra
+    // o pagamento de uma linha que estava sem; linha já paga fica com o que tem.
+    const paymentCols = paymentToRow({ ...payment, paid: type === 'SINGLE' && payment.paid }, 'staff_expenses')
 
     const { error } = await supabase.from('staff_expenses').update({
       type,
@@ -186,7 +187,7 @@ export default function EditExpensePage() {
           <input type="text" value={supplier} onChange={(e) => setSupplier(e.target.value)} className={inputClass} placeholder="Who received the money" />
         </div>
 
-        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle={type !== 'SINGLE'} />
+        <PaymentFields value={payment} onChange={setPayment} table="staff_expenses" hidePaidToggle={type !== 'SINGLE'} />
 
         <div>
           <label className="block mb-2 text-lg font-bold">PAYMENT REFERENCE</label>

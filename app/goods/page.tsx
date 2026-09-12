@@ -9,6 +9,7 @@ import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+import { HOUSE_PAYER } from '@/components/PaymentFields'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
@@ -260,7 +261,10 @@ export default function GoodsPage() {
         if (error) { alert(error.message); return }
       } else {
         if (!fleetForm.invoiceId) { alert('Este carro nao tem invoice para receber a despesa.'); return }
-        const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: fleetForm.invoiceId }])
+        // Linha NOVA de invoice: PAID TO nasce GZ28US, escondido (Márcio, 11/set). A edição
+        // (update acima) não mexe em pagador. Este formulário não tem PAID FROM — quem pagou
+        // a despesa da frota segue sendo pergunta do Data Checker quando ela for paga.
+        const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: fleetForm.invoiceId, paid_to: HOUSE_PAYER }])
         if (error) { alert(error.message); return }
       }
       setFleetForm(null)
@@ -488,6 +492,7 @@ export default function GoodsPage() {
         carrier: s.carrier || null,
         receipt_url: s.receiptUrl,
         purchase_group: grupo,
+        paid_to: HOUSE_PAYER,     // linha nova de invoice: PAID TO GZ28US escondido (Márcio, 11/set)
       }))
       const { error } = await supabase.from('invoice_expenses').insert(rows)
       if (error) { alert(error.message); return }
@@ -612,6 +617,10 @@ export default function GoodsPage() {
         payment_date: purchaseDate, // espelho — comprada = paga
         supplier: scannedPurchase.supplier || null,
         source,
+        // O PAID FROM do diálogo do scan vale pro paid_from (o campo que o Data Checker e a
+        // conta corrente leem), e o PAID TO nasce GZ28US, escondido (Márcio, 11/set).
+        paid_from: source,
+        paid_to: HOUSE_PAYER,
         // ORDER NUMBER sagrado: toda linha do grupo carrega o pedido lido.
         order_number: scannedPurchase.orderNumber || null,
         // PICKED UP pelo DOCUMENTO (Márcio, 30/ago/2026): "Se teve endereco de
@@ -647,6 +656,9 @@ export default function GoodsPage() {
           expense_date: purchaseDate,
           supplier: scannedPurchase.supplier || null,
           source,
+          // Mesmo pagador do pedido; PAID TO GZ28US escondido (Márcio, 11/set).
+          paid_from: source,
+          paid_to: HOUSE_PAYER,
           // ENCARGO na origem (04/set/2026): estas duas linhas são o imposto e o
           // frete do MESMO pedido, materializados aqui pelo próprio app — não são
           // uma segunda compra e nunca chegam de caminhão. É a única linha do

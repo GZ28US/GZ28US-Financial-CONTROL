@@ -112,8 +112,8 @@ export default function NewExpensePage() {
 
     // Recurring rows (DAILY/WEEKLY/MONTHLY) are payroll/forecast definitions,
     // not actual payments — they never carry a payment_date.
-    const paymentCols = paymentToRow(payment, type === 'SINGLE' ? expenseDate : null)
-    if (type !== 'SINGLE') paymentCols.payment_date = null
+    // PAID FROM escolhe (GZ28US/GZ28BR); PAID TO nasce GZ28US escondido (Márcio, 11/set).
+    const paymentCols = paymentToRow({ ...payment, paid: type === 'SINGLE' && payment.paid }, 'staff_expenses', type === 'SINGLE' ? expenseDate : null)
 
     const { error } = await supabase.from('staff_expenses').insert([{
       season_id: seasonID,
@@ -281,7 +281,7 @@ export default function NewExpensePage() {
           <input type="text" value={supplier} onChange={(e) => setSupplier(e.target.value)} className={inputClass} placeholder="Who received the money" />
         </div>
 
-        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle={type !== 'SINGLE'} />
+        <PaymentFields value={payment} onChange={setPayment} table="staff_expenses" hidePaidToggle={type !== 'SINGLE'} />
 
         <div>
           <label className="block mb-2 text-lg font-bold">PAYMENT REFERENCE</label>

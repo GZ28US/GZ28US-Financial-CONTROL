@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
+import { HOUSE_PAYER } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -311,7 +312,10 @@ export default function InventoryPage() {
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
         source_type: 'PURCHASED',
-
+        // ESTOQUE não tem escolha de pagador (Márcio, 11/set): compra que nasce aqui
+        // grava PAID FROM e PAID TO GZ28US — escondidos, que esta tela nem os mostra.
+        paid_from: HOUSE_PAYER,
+        paid_to: HOUSE_PAYER,
       }))
     )
     if (error) { alert(error.message); return }

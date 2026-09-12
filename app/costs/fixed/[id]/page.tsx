@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, payerToRow } from '@/components/PaymentFields'
 import SendToDialog, { type SendTarget } from '@/components/SendToDialog'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
@@ -166,7 +166,9 @@ export default function FixedCostSupplierViewPage() {
     setPaying(r)
     setPayDate(isValidDate(r.payment_date) ? (r.payment_date as string) : todayYmd())
     setPayAmount(String(r.amount ?? ''))
-    setPayPayment(paymentFromRow({ ...r, paid_from: r.paid_from || r.source }))
+    // Sem o `|| r.source` de antes: o SOURCE só alimentava o seletor de PAID FROM, que
+    // em custo fixo não aparece mais (os dois pagadores são GZ28US, escondidos).
+    setPayPayment(paymentFromRow(r))
     setPayReceipt(r.receipt_url || '')
     setJustScanned(false)
   }
@@ -192,7 +194,7 @@ export default function FixedCostSupplierViewPage() {
         if (t > 0) amt = t.toFixed(2)
         if (/^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || ''))) dt = String(parsed.date)
       }
-      setPaying(r); setPayDate(dt); setPayAmount(amt); setPayPayment(paymentFromRow({ ...r, paid_from: r.paid_from || r.source })); setPayReceipt(receiptUrl)
+      setPaying(r); setPayDate(dt); setPayAmount(amt); setPayPayment(paymentFromRow(r)); setPayReceipt(receiptUrl)
       setJustScanned(!!receiptUrl)
     } catch (err) {
       console.error(err); alert('Failed to scan receipt. Please try again.')
@@ -204,13 +206,17 @@ export default function FixedCostSupplierViewPage() {
   async function savePayment() {
     if (!paying) return
     setSavingPay(true)
+    // PAID FROM e PAID TO de custo fixo são GZ28US, escondidos (Márcio, 11/set): gravam
+    // quando o pagamento nasce aqui (+ PAY numa conta em aberto); no conserto de um
+    // pagamento que já existia, ficam como estão — e o SOURCE legado acompanha o PAID FROM.
+    const payer = payerToRow(payPayment, 'fixed_cost_expenses', isValidDate(payDate))
+    const legacySource = payer.paid_from !== undefined ? { source: payer.paid_from || DEFAULT_SOURCE } : {}
     const { error } = await supabase.from('fixed_cost_expenses').update({
       payment_date: isValidDate(payDate) ? payDate : null,
       amount: parseFloat(payAmount) || 0,
-      source: payPayment.paidFrom || DEFAULT_SOURCE, // legacy write-through
+      ...legacySource, // legacy write-through
       payment_method: payPayment.method || null,
-      paid_from: payPayment.paidFrom || null,
-      paid_to: payPayment.paidTo || null,
+      ...payer,
       receipt_url: payReceipt || null,
     }).eq('id', paying.id)
     setSavingPay(false)
@@ -220,10 +226,9 @@ export default function FixedCostSupplierViewPage() {
       ...paying,
       payment_date: isValidDate(payDate) ? payDate : null,
       amount: parseFloat(payAmount) || 0,
-      source: payPayment.paidFrom || DEFAULT_SOURCE,
+      ...legacySource,
       payment_method: payPayment.method || null,
-      paid_from: payPayment.paidFrom || null,
-      paid_to: payPayment.paidTo || null,
+      ...payer,
       receipt_url: payReceipt || null,
     }
     const wasScanned = justScanned
@@ -501,7 +506,7 @@ export default function FixedCostSupplierViewPage() {
               </div>
             </div>
             {/* UNIVERSAL PAYMENT BLOCK — recording a payment is PAID by definition */}
-            <PaymentFields value={payPayment} onChange={setPayPayment} hidePaidToggle />
+            <PaymentFields value={payPayment} onChange={setPayPayment} table="fixed_cost_expenses" hidePaidToggle />
             <DatePicker label="PAYMENT DATE" value={payDate} onChange={setPayDate} compact />
             {payReceipt && <a href={payReceipt} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-400 hover:text-blue-300 text-sm">📎 Receipt attached</a>}
             <button onClick={savePayment} disabled={savingPay} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{savingPay ? 'Saving…' : 'SAVE PAYMENT'}</button>

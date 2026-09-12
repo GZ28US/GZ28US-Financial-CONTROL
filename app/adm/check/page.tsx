@@ -27,7 +27,7 @@ import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyL
 import { DC_CHANGELOG } from '@/lib/dcVersion'
 import { NATURES, NATURE_LABEL, NATURE_HINT, type Nature } from '@/lib/itemNature'
 import { classifyInput } from '@/lib/inputsCategory'
-import { brAccount } from '@/lib/financials'
+import { brAccount, whoPaid } from '@/lib/financials'
 import type { EnginesAudit } from '@/lib/enginesAudit.server'   // só o tipo: o sinal vem pela rota
 import type { AuditItem as AuditItemT } from '@/lib/auditWires.server'   // só os tipos (DC 1.51.0): o sinal vem por /api/data-check/audit
 import type { CloseScore, CloseMonth } from '@/lib/closeScore.server'
@@ -160,6 +160,22 @@ const waKind = (f: WaFail): WaKind => {
   return 'delivery'
 }
 const waProbe = (f: WaFail) => /^__.*__$/.test(String(f.group_name || f.destination || '').trim())
+// TAXA DE STAFF SEM DATA (12/set/2026). Até o commit b1f2248 (28/jul/2026, 09:43 de Orlando —
+// «STAFF: pagamento recorrente vira lançamento com data»), uma linha DAILY/WEEKLY/MONTHLY de
+// staff_expenses era TAXA: o total da season fazia valor × dias e nunca lia expense_date, então
+// o campo ficava vazio sem ninguém notar. Das 103 recorrentes do US, só cinco ficaram assim, todas
+// de antes da virada (medido em 12/set/2026). A MESMA função decide o card novo e tira essas linhas
+// do «vencido».
+const isStaffRateUndated = (e: { type?: string | null; expense_date?: string | null }) => !!e.type && e.type !== 'SINGLE' && !e.expense_date
+const STAFF_RATE_MODEL_END = '2026-07-28'   // último dia (em Orlando) em que a linha recorrente ainda era taxa
+type StaffRateRow = { id: string; season_id: string | null; type: string; description: string | null; amount: number | string | null; paid_from: string | null; created_at: string; season_code: string | null; staff_id: string | null; staff_name: string | null }
+type StaffRateSignal = { state: 'loading' | 'error' | 'ok'; rows: StaffRateRow[] }
+// Quanto valeria como taxa, pelo modelo de hoje — só onde a conta foi feita (sessão do Márcio,
+// 11/set/2026, pelas datas das seasons). Nas três de Food ninguém fez a conta, e o card diz isso.
+const STAFF_RATE_WORTH: Record<string, string> = {
+  be59504a: 'US$ 100/dia × 7–8 dias = US$ 700–800',
+  e50b30c7: 'US$ 2.250/mês × 3 meses = US$ 6.750',
+}
 // O QUE É ESTA LINHA? (04/set/2026) — o sinal de /api/item-nature: as linhas sem
 // natureza, AGRUPADAS POR FORNECEDOR canonizado. O card tem corpo próprio (o
 // grupo é a unidade de trabalho, não a linha) — ver <NatureWorkbench> lá embaixo.
@@ -228,7 +244,7 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
     return { ...c, items }
   })
 }
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal, engines: EnginesSignal, audit: AuditSignal): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal, engines: EnginesSignal, audit: AuditSignal, staffRate: StaffRateSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -603,12 +619,23 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   // linha paga sem pagador nenhum (o DFC assume Regions até alguém dizer).
   {
     const acc = brAccount(d)
+    // CEGO nas tabelas SEM escolha (12/set/2026): SUPPLIES, ESTOQUE e CUSTO FIXO saíram do
+    // «Quem pagou esta conta?» — lá os pagadores são GZ28US pela régua. As linhas pagas sem
+    // pagador desses três continuam no CEGO (brAccount não mudou), então o item diz quantas
+    // são e que a pergunta delas não existe mais, em vez de mandar a pessoa a um card que
+    // não as mostra.
+    // A mesma régua do brAccount: linha com payment_date e whoPaid vazio, de qualquer valor.
+    const houseBlind = [
+      ...d.inputs.map((r: any) => r.payment_date && !whoPaid(r) ? qtyLine(r) : null),
+      ...d.inventory.map((r: any) => r.payment_date && !whoPaid(r) ? qtyLine(r) : null),
+      ...d.fixedExpenses.map((r: any) => r.payment_date && !whoPaid(r) ? (parseFloat(r.amount) || 0) : null),
+    ].filter((v): v is number => v !== null)
     const items: Item[] = [
       { href: '/gz-flow', code: 'RECEBEU', label: 'a BR recebeu por nós ' + usd(acc.gotIncome) + ' (receita nossa que entrou lá)', amount: acc.gotIncome, link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } },
       { href: '/gz-flow', code: 'PAGOU', label: 'a BR pagou contas nossas: ' + usd(acc.paid), amount: acc.paid },
       { href: '/gz-flow', code: 'NÓS', label: 'nós pagamos contas da BR: ' + usd(acc.usPaidBr), amount: acc.usPaidBr },
       { href: '/adm/financials/balance', code: 'SALDO', label: (acc.net >= 0 ? 'a BR nos deve ' : 'nós devemos à BR ') + usd(Math.abs(acc.net)), amount: Math.abs(acc.net), extra: 'saldo = recebeu por nós + contas da BR que pagamos − contas nossas que ela pagou · o mesmo número da linha «Conta corrente GZ28BR» do Balanço', link: { href: BASE_PATH + '/adm/financials/balance', label: 'BALANÇO ↗' } },
-      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions e este saldo não as vê — cada uma decidida no card «Quem pagou esta conta?» corrige o saldo', link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
+      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions e este saldo não as vê' + (acc.blindN - houseBlind.length > 0 ? ` — as ${acc.blindN - houseBlind.length} de invoice, asset e staff se decidem no card «Quem pagou esta conta?»` : '') + (houseBlind.length ? ` — ${houseBlind.length} (${usd(houseBlind.reduce((s, v) => s + v, 0))}) são de SUPPLIES, ESTOQUE ou CUSTO FIXO, onde não há escolha (GZ28US pela régua, 11/set) e o card não pergunta mais` : ''), link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
     ]
     checks.push({ group: 'FINANCIAL', key: 'br-account', good: true, title: 'Conta corrente GZ28BR', blocks: 'o saldo entre as duas empresas — notícia, não pendência; a pendência mora em «Quem pagou esta conta?»', why: 'João, 9/set: antes da Regions a BR recebia e pagava tudo, e o lucro é da GZ28US — a BR nos deve esse lucro; depois aconteceu também, e ao contrário (nós pagando conta da BR). A conta é UMA (lib/financials brAccount): o Balanço e este card leem a mesma função, na régua do GZ-FLOW (paid_to GZ28BR = ela recebeu por nós; paid_from GZ28BR = ela pagou por nós; nós pagando conta paid_to GZ28BR = ela nos deve mais; sócio sai do saldo e vira empréstimo de sócio). O que este card mostra de novo é o CEGO: linha paga sem pagador nenhum não entra no saldo e o DFC a conta como Regions.', items })
   }
@@ -645,7 +672,11 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     // banco não recebe o fix de data (endureceria a dupla) — vai pro card 5b.
     const linkedMonth = new Set(d.fixedExpenses.filter((e: any) => e.bank_transaction_id).map((e: any) => e.supplier_id + '|' + String(e.expense_date || e.payment_date || '').slice(0, 7)))
     const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY) && !(supEnd(e) && due(e) && due(e) > supEnd(e)!) && !(due(e) && linkedMonth.has(e.supplier_id + '|' + due(e).slice(0, 7))))
-    const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL' && (!due(e) || due(e) <= TODAY))
+    // Linha RECORRENTE de staff sem data nenhuma não entra aqui (12/set/2026): as que existem
+    // são TAXA do modelo anterior a 28/jul, não conta vencida — e o FIX de data deste card daria
+    // a ela um payment_date com o valor da taxa, que ninguém sabe se foi o pago. Mora no card
+    // STAFF «Taxa de staff sem data», que pede a data E o valor.
+    const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL' && (!due(e) || due(e) <= TODAY) && !isStaffRateUndated(e))
     const items: Item[] = [
       ...fx.map((e: any) => {
         const sup = d.fixedSuppliers.get(e.supplier_id)
@@ -662,7 +693,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     ].sort((a, b) => (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha vencido (ou sem data nenhuma)', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
-      why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer.',
+      why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer. A linha DAILY/WEEKLY/MONTHLY de staff sem data não é conta vencida (as que existem são taxa do modelo anterior a 28/jul/2026): mora no card «Taxa de staff sem data» (STAFF), que pede a data e o valor.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -910,20 +941,25 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         fix: { kind: 'select' as const, table, rowId: r.id, field: 'paid_from', options: PAID_FROM_SELECT, current: null },
       }
     }
+    // SÓ AS TABELAS COM ESCOLHA (12/set/2026). O Márcio, em 11/set: só invoice_expenses,
+    // assets, assets_expenses e staff_expenses escolhem quem pagou («nenhuma outra do app»;
+    // nas incomes a escolha é o PAID TO, que não é pergunta deste card). SUPPLIES (inputs),
+    // ESTOQUE (inventory) e CUSTO FIXO (fixed_cost_expenses) têm os dois pagadores GZ28US,
+    // escondidos — perguntar «quem pagou?» onde a tela nem oferece a escolha era pedir a
+    // alguém uma resposta que a régua já deu. Saíram 68 perguntas (31 + 15 + 22, medido em
+    // 12/set). As linhas continuam no banco como estão; o CEGO da conta corrente e o placar
+    // do fechamento ainda as contam (ver o item CEGO lá em cima).
     const items: Item[] = [
       // Auditoria do João (25/ago): 310 das 937 eram linhas NÃO PAGAS — quem pagou?
       // ninguém ainda. O paid_from nasce na hora do pagamento; só linha PAGA entra.
       ...d.invExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => { const m = invoiceMeta(d, e.invoice_id); return mk('invoice_expenses', e, 'PROJ', m.href, [m.code, m.car, e.item, e.supplier].filter(Boolean).join(' · '), expLine(e)) }),
-      ...d.fixedExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0)),
       ...d.expenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => mk('staff_expenses', e, e.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', '/staff', e.description || e.type || '', parseFloat(e.amount) || 0)),
       ...d.goods.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('assets', g, 'GOODS', '/goods', [g.description, g.supplier].filter(Boolean).join(' · '), qtyLine(g))),
       ...d.goodExpenses.filter((g: any) => !g.paid_from && g.payment_date).map((g: any) => mk('assets_expenses', g, 'GOODS', '/goods', g.description || '', parseFloat(g.amount) || 0)),
-      ...d.inputs.filter((x: any) => !x.paid_from && x.payment_date).map((x: any) => mk('inputs', x, 'INPUT', '/supplies', [x.description, x.category].filter(Boolean).join(' · '), qtyLine(x))),
-      ...d.inventory.filter((x: any) => x.source_type === 'PURCHASED' && !x.paid_from && x.payment_date).map((x: any) => mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x))),
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'paid-from', title: 'Quem pagou esta conta?', blocks: 'o caixa por banco sai errado e a conciliação não fecha',
-      why: 'Quem pagou define a conta corrente com a GZ28BR no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. São dois pagadores, e só: GZ28US e GZ28BR (o Márcio tirou CLIENT, RAFA, BETO e HERALDO em 11/set — conta paga do bolso de sócio vai morar em outra área do app quando existir). Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia, então não foi GZ28US (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
+      why: 'Quem pagou define a conta corrente com a GZ28BR no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. São dois pagadores, e só: GZ28US e GZ28BR (o Márcio tirou CLIENT, RAFA, BETO e HERALDO em 11/set — conta paga do bolso de sócio vai morar em outra área do app quando existir). Só pergunta onde existe ESCOLHA: despesa de invoice, asset, despesa de asset e staff (Márcio, 11/set). SUPPLIES, ESTOQUE e CUSTO FIXO saíram daqui em 12/set — lá os dois pagadores são GZ28US, escondidos, e a tela nem oferece a escolha. Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia, então não foi GZ28US (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -1103,6 +1139,45 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       group: 'STAFF', key: 'staff-duties', title: 'Timer de trabalho esquecido, dobrado ou virando a noite',
       blocks: 'as horas da equipe ficam infladas e o relatório diário mente',
       why: `Timer que ninguém pausou vira hora que ninguém trabalhou. Regras (Márcio): ${duty.maxHours}h por duty, uma duty por vez, nada vira a noite ligado. O cron (30 em 30min, 07–22h de Orlando) avisa a PRÓPRIA pessoa no WhatsApp — um aviso por duty por dia — e escala pro grupo GZ28US - STAFF se seguir rodando 60min depois. O conserto (pausar/finalizar) é na tela DUTIES.`,
+      items,
+    })
+  }
+
+  // STAFF · TAXA DE STAFF SEM DATA (12/set/2026). Cinco linhas de staff_expenses sem data —
+  // 3× «Food» US$ 20 (a6dc29c9, 1df93652, 79dbc678), «Labor» US$ 100 (be59504a) e «Monthly
+  // Payments» US$ 2.250 (e50b30c7) — que não são pagamento: são a TAXA do modelo anterior a
+  // 28/jul. Decisão da sessão do Márcio em 12/set: ficam FORA da conta corrente BR vs US e viram
+  // PERGUNTA, porque lançar US$ 2.250 ou US$ 6.750 como dívida seria inventar o número. Nenhum
+  // conserto automático: o item não tem FIX, só o caminho até a linha (e o VISTO, se a resposta
+  // for «deixa assim»). A régua é isStaffRateUndated; a leitura é própria (precisa de created_at,
+  // season e nome), e sinal que não veio aparece como SINAL, nunca como card vazio.
+  {
+    const ymdNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+    const dmyNY = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit', year: 'numeric' })
+    const PER: Record<string, string> = { DAILY: '/dia', WEEKLY: '/semana', MONTHLY: '/mês' }
+    const usdBr = (v: number) => 'US$ ' + v.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+    const items: Item[] = []
+    if (staffRate.state === 'loading') items.push({ href: '/staff', code: 'SINAL', label: 'lendo as linhas de staff sem data… esta conferência ainda não rodou' })
+    if (staffRate.state === 'error') items.push({ href: '/staff', code: 'SINAL', label: 'sinal das linhas de staff sem data indisponível — esta conferência NÃO rodou', extra: 'recarregue a página' })
+    for (const r of staffRate.rows) {
+      const born = new Date(r.created_at)
+      const antiga = ymdNY.format(born) <= STAFF_RATE_MODEL_END
+      const amt = Number(r.amount) || 0
+      const where = r.staff_id && r.season_id ? `/staff/${r.staff_id}/seasons/${r.season_id}` : null
+      items.push({
+        href: where ? `${where}/expenses/edit/${r.id}` : '/staff',
+        code: antiga ? 'TAXA' : 'SEM DATA',
+        label: [r.staff_name, r.season_code, `${r.description || r.type} — ${usdBr(amt)}${PER[r.type] || ''} (${r.type})`].filter(Boolean).join(' · '),
+        extra: antiga
+          ? `taxa do modelo antigo, nascida em ${dmyNY.format(born)} (Orlando) · PAID FROM ${r.paid_from || 'vazio'} · como taxa hoje: ${STAFF_RATE_WORTH[r.id.slice(0, 8)] || 'a conta não foi feita'} · diga a DATA e o VALOR que de fato saíram`
+          : `nasceu em ${dmyNY.format(born)} (Orlando), DEPOIS da virada de 28/jul — não é taxa antiga: a tela NEW EXPENSE da season ainda grava linha DAILY/WEEKLY/MONTHLY sem data · diga a DATA e o VALOR`,
+        link: where ? { href: BASE_PATH + where + '/expenses', label: 'SEASON ↗' } : undefined,
+      })
+    }
+    if (items.length) checks.push({
+      group: 'STAFF', key: 'staff-rate-undated', title: 'Taxa de staff sem data: quanto saiu, e quando?',
+      blocks: 'o total da season soma a taxa como se fosse um pagamento, e a conta corrente BR vs US fica sem estas linhas até alguém dizer o valor real',
+      why: 'Até 28/jul/2026 (commit «STAFF: pagamento recorrente vira lançamento com data»), a linha DAILY, WEEKLY ou MONTHLY de uma season era a TAXA do funcionário, não um pagamento: o total da season fazia valor × dias e nunca lia a data — por isso o campo de data destas linhas ficou vazio. Desde então a taxa mora na season e cada pagamento é uma linha com data; das 103 recorrentes do US, em 12/set só cinco estavam sem data, todas nascidas antes da virada. Como taxa, pelo modelo de hoje, elas valeriam outra coisa: o «Labor» do Marcelo (US$ 100/dia) daria US$ 700–800 pelos 7–8 dias, e o «Monthly Payments» do Jeferson (US$ 2.250/mês) daria US$ 6.750 pelos 3 meses — não os US$ 100 e US$ 2.250 gravados. Ninguém sabe qual número é a verdade, e por isso elas NÃO entram na conta corrente BR vs US (decisão de 12/set): as duas pagas pela GZ28BR virariam dívida do US com um valor inventado. O que o card pede é a DATA e o VALOR do que de fato saiu. Não há conserto automático, e a data não sai de seasons.pay_day: o 5 que aparece lá é o padrão da coluna (pay_type e pay_rate estão vazios nas três seasons), e gerar 05/abr, 05/mai… fabricaria data com cara de prova. A resposta se lança na própria linha (ABRIR REGISTRO: com TYPE = SINGLE aparecem DATE e o PAID) ou em pagamentos novos na season. Enquanto isso, o total da season em STAFF ▸ SEASONS soma o valor gravado de cada uma, uma vez, como se tivesse sido pago.',
       items,
     })
   }
@@ -1886,6 +1961,7 @@ export default function DataCheckPage() {
   const [gval, setGval] = useState('')                                     // valor escolhido no item guiado
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
   const [wa, setWa] = useState<WaSignal>({ state: 'loading', fails: [] })  // falhas de envio do WhatsApp (wa_send_log)
+  const [staffRate, setStaffRate] = useState<StaffRateSignal>({ state: 'loading', rows: [] })   // taxa de staff sem data (12/set/2026)
   const [nature, setNature] = useState<NatureSignal>({ state: 'loading', needsMigration: false, totals: null, groups: [] })   // "o que é esta linha?" agrupado por fornecedor
   const [receipt, setReceipt] = useState<ReceiptSignal>({ state: 'loading', readings: {} })   // o que os recibos disseram (DC 1.47.0)
 
@@ -1902,6 +1978,27 @@ export default function DataCheckPage() {
         if (we) setWa({ state: /does not exist|schema cache/i.test(we.message) ? 'missing' : 'error', fails: [] })
         else setWa({ state: 'ok', fails: (wf || []) as WaSignal['fails'] })
       } catch { setWa({ state: 'error', fails: [] }) }
+    })()
+    // TAXA DE STAFF SEM DATA (12/set/2026): a régua isStaffRateUndated no banco (recorrente e sem
+    // expense_date), com a season e o nome — três leituras pequenas, bloco próprio pra um tropeço
+    // aqui não calar os outros sinais. Qualquer erro vira SINAL no card, nunca «nada a perguntar».
+    ;(async () => {
+      try {
+        const { data: er, error: ee } = await supabase.from('staff_expenses')
+          .select('id, season_id, type, description, amount, paid_from, created_at')
+          .is('expense_date', null).neq('type', 'SINGLE').order('created_at', { ascending: true })
+        if (ee) { setStaffRate({ state: 'error', rows: [] }); return }
+        const exps = (er || []) as { id: string; season_id: string | null; type: string; description: string | null; amount: number | string | null; paid_from: string | null; created_at: string }[]
+        const seasonIds = [...new Set(exps.map(e => e.season_id).filter((x): x is string => !!x))]
+        const { data: ss, error: se } = seasonIds.length ? await supabase.from('seasons').select('id, season_code, staff_id').in('id', seasonIds) : { data: [], error: null }
+        if (se) { setStaffRate({ state: 'error', rows: [] }); return }
+        const seasons = new Map(((ss || []) as { id: string; season_code: string | null; staff_id: string | null }[]).map(s => [s.id, s]))
+        const staffIds = [...new Set([...seasons.values()].map(s => s.staff_id).filter((x): x is string => !!x))]
+        const { data: st, error: te } = staffIds.length ? await supabase.from('staff').select('id, name').in('id', staffIds) : { data: [], error: null }
+        if (te) { setStaffRate({ state: 'error', rows: [] }); return }
+        const names = new Map(((st || []) as { id: string; name: string | null }[]).map(p => [p.id, p.name]))
+        setStaffRate({ state: 'ok', rows: exps.map(e => { const s = e.season_id ? seasons.get(e.season_id) : undefined; return { ...e, season_code: s?.season_code ?? null, staff_id: s?.staff_id ?? null, staff_name: (s?.staff_id && names.get(s.staff_id)) || null } }) })
+      } catch { setStaffRate({ state: 'error', rows: [] }) }
     })()
     // NATUREZA DA LINHA (04/set): o que ainda ninguém disse, agrupado por
     // fornecedor. Vem em bloco PRÓPRIO, e não pendurado na corrente do banco: um
@@ -2000,7 +2097,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit])
+  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
   // O chip BANK conta o que PERGUNTA a gente (BL 1.5.0 · DC 1.50.0): pergunta linha a linha + UMA por fornecedor, do mesmo plano do
   // cron (lib/bankLineState.server) — pendente, «vai casar», maturando e teto esperam o AUTO-LINK e não contam.

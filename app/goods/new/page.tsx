@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow, HOUSE_PAYER } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -237,7 +237,8 @@ export default function NewGoodPage() {
       carrier: carrier.trim() || null,
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
-      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
+      // ASSET: PAID FROM escolhe (GZ28US/GZ28BR); PAID TO nasce GZ28US escondido (Márcio, 11/set).
+      ...paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, 'assets', purchaseDate),
     }]).select().single()
     if (error || !good) { alert(error?.message || 'Error saving good'); return }
 
@@ -250,6 +251,11 @@ export default function NewGoodPage() {
         payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
+        // O seletor PAID FROM desta linha grava no SOURCE legado — e agora no paid_from,
+        // que é o campo que o Data Checker e a conta corrente leem. O PAID TO nasce
+        // GZ28US, escondido (Márcio, 11/set: despesa de asset só escolhe quem pagou).
+        paid_from: ex.source || DEFAULT_SOURCE,
+        paid_to: HOUSE_PAYER,
         // A despesa extra carrega o número do SEU pedido (pode divergir do good)
         // — e o SEU próprio status de entrega, pela mesma razão.
         order_number: ex.order_number.trim() || null,
@@ -625,7 +631,7 @@ export default function NewGoodPage() {
         </div>
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
-        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
+        <PaymentFields value={payment} onChange={setPayment} table="assets" hidePaidToggle />
 
         <button onClick={saveGood} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE GOOD</button>
         <a href={`${BASE_PATH}/goods`} className="text-gray-400 text-xl">Cancel</a>

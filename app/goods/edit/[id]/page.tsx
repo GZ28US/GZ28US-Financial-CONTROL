@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow, HOUSE_PAYER } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -324,7 +324,9 @@ export default function EditGoodPage() {
       ...(nature ? { nature } : {}),
       source: payment.paidFrom, // legacy write-through — PAID FROM is the source of truth
       receipt_url: goodReceiptUrls.length > 0 ? JSON.stringify(goodReceiptUrls) : null,
-      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
+      // ASSET: PAID FROM escolhe; PAID TO é GZ28US escondido (Márcio, 11/set) e só grava
+      // se esta edição dá a data de pagamento a um asset que não tinha.
+      ...paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, 'assets', purchaseDate),
       updated_at: new Date().toISOString(),
     }).eq('id', goodId)
     if (error) { alert(error.message); return }
@@ -337,6 +339,11 @@ export default function EditGoodPage() {
         payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
+        // Linha NOVA: o PAID FROM do seletor vai também pro paid_from (o campo que o Data
+        // Checker e a conta corrente leem) e o PAID TO nasce GZ28US, escondido (Márcio, 11/set).
+        // A edição de uma linha que já existe (saveEditExpense) não mexe em pagador nenhum.
+        paid_from: ex.source || DEFAULT_SOURCE,
+        paid_to: HOUSE_PAYER,
         order_number: ex.order_number.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
       })))
@@ -579,7 +586,7 @@ export default function EditGoodPage() {
         </div>
 
         {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = purchase date */}
-        <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />
+        <PaymentFields value={payment} onChange={setPayment} table="assets" hidePaidToggle />
 
         <button onClick={saveGood} className="bg-green-700 hover:bg-green-600 px-6 py-4 rounded-2xl text-xl font-bold">SAVE CHANGES</button>
         <a href={`${BASE_PATH}/goods`} className="text-gray-400 text-xl">Cancel</a>

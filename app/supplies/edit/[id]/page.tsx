@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
@@ -148,7 +147,10 @@ export default function EditInputPage() {
     // rodar ela vem undefined e vira null — que é a verdade: "ninguém disse ainda".
     setNature(data.nature ?? null)
     setNotes(data.notes || '')
-    setSource(data.source || DEFAULT_SOURCE)
+    // Sem seletor na tela, o SOURCE faz só ida e volta: vazio continua vazio. O
+    // `|| DEFAULT_SOURCE` de antes preenchia GZ28US em qualquer salvamento — com o
+    // campo escondido, seria o app respondendo «quem pagou» por ninguém.
+    setSource(data.source || '')
     // Initialize the payment block from the row so an untouched save round-trips.
     setPayment(paymentFromRow(data))
     setReceiptUrls(parseReceiptUrls(data.receipt_url))
@@ -228,11 +230,14 @@ export default function EditInputPage() {
       // para coluna inexistente, não lista vazia).
       ...(nature ? { nature } : {}),
       notes: notes.trim() || null,
-      source,
+      source: source || null,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       // Registered = paid (Comprovante = PAGA); payment_date is a mirror of the
       // single DATE — never a second date. No date yet → both stay empty.
-      ...(() => { const pr = paymentToRow({ ...payment, paid: true }, purchaseDate); if (!isValidDate(purchaseDate)) pr.payment_date = null; return pr })(),
+      // SUPPLIES e ESTOQUE não têm escolha de pagador (Márcio, 11/set): os dois campos
+      // são GZ28US escondidos e só gravam se este salvamento dá a data de pagamento a
+      // uma linha que não tinha; linha já paga fica com o que o banco tem.
+      ...paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, table, purchaseDate),
       updated_at: new Date().toISOString(),
     }).eq('id', inputId)
     if (error) { alert(error.message); return }
@@ -296,12 +301,9 @@ export default function EditInputPage() {
         </div>
         )}
 
-        {!donated && (
-        <div>
-          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-          <SourceSelect value={source} onChange={setSource} className={selectClass} />
-        </div>
-        )}
+        {/* O seletor PAID FROM (que gravava o SOURCE legado) SAIU daqui em 12/set/2026:
+            SUPPLIES e ESTOQUE não têm escolha de pagador (Márcio, 11/set), e era o segundo
+            PAID FROM da mesma tela. O SOURCE gravado volta pro banco como veio. */}
 
         <div className="flex gap-4">
           <div className="flex-1">
@@ -368,7 +370,7 @@ export default function EditInputPage() {
         )}
 
         {/* UNIVERSAL PAYMENT BLOCK — payment date = purchase date when PAID */}
-        {!donated && <PaymentFields value={payment} onChange={setPayment} hidePaidToggle />}
+        {!donated && <PaymentFields value={payment} onChange={setPayment} table={table} hidePaidToggle />}
 
         <div>
           <label className="block mb-2 text-lg font-bold">NOTES</label>

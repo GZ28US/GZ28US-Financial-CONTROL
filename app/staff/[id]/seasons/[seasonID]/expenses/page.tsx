@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
-import PaymentFields, { defaultPayment, paymentFromRow, type PaymentInfo } from '@/components/PaymentFields'
+import PaymentFields, { defaultPayment, paymentFromRow, payerToRow, HOUSE_PAYER, type PaymentInfo } from '@/components/PaymentFields'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
@@ -169,8 +169,9 @@ export default function ExpensesPage() {
       amount_brl: brl,
       payment_date: payDate,
       payment_method: payPayment.method || null,
-      paid_from: payPayment.paidFrom || null,
-      paid_to: payPayment.paidTo || null,
+      // PAID FROM escolhe; PAID TO é GZ28US escondido (Márcio, 11/set) — grava quando
+      // este é o pagamento que nasce, e não mexe no de uma linha que já estava paga.
+      ...payerToRow(payPayment, 'staff_expenses', true),
       // Legacy write-through, como nas outras telas de despesa de staff.
       source: payPayment.paidFrom || null,
       paid_via: payPayment.method || null,
@@ -326,6 +327,9 @@ export default function ExpensesPage() {
       origin: scannedPurchase.origin || 'GZ28US',
       expense_date: isValidDate(scannedPurchase.date) ? scannedPurchase.date : null,
       receipt_url: scannedPurchase.receiptUrl ? JSON.stringify([scannedPurchase.receiptUrl]) : null,
+      // Linha NOVA: PAID TO nasce GZ28US, escondido (Márcio, 11/set). O scan não pergunta
+      // quem pagou — isso nasce no RECORD PAYMENT, onde o PAID FROM aparece.
+      paid_to: HOUSE_PAYER,
     }])
     if (error) { alert(error.message); return }
 
@@ -636,7 +640,7 @@ export default function ExpensesPage() {
                 The R$ is the anchor. On save the dollar freezes at the commercial rate of {payDate || 'the payment date'} — the dollar of the day it was paid, forever.
               </p>
             )}
-            <PaymentFields value={payPayment} onChange={setPayPayment} hidePaidToggle />
+            <PaymentFields value={payPayment} onChange={setPayPayment} table="staff_expenses" hidePaidToggle />
             <DatePicker label="PAYMENT DATE" value={payDate} onChange={setPayDate} compact />
             <button onClick={savePayment} disabled={savingPay} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{savingPay ? 'Saving…' : 'SAVE PAYMENT'}</button>
           </div>
