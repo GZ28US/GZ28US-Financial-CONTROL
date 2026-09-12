@@ -5,6 +5,11 @@
 -- expenses→staff_expenses) porque tudo aqui é idempotente (add column if not exists,
 -- create index if not exists) e, se algum dia alguém rodar de novo, tem de bater com
 -- o banco de hoje — com o nome velho ele estouraria, ou pior, mexeria na VIEW-PONTE.
+-- RESSALVA (conferida na onda 6): "tudo idempotente" vale menos o NOME DA CHECK — o
+-- rename não renomeia constraint, então `assets` ainda carrega a `goods_nature_check`
+-- da primeira rodada e um rerun criaria uma `assets_nature_check` idêntica ao lado.
+-- Mais uma razão para não rodar. O mesmo bloco e a mesma ressalva estão em
+-- MIGRATION_item_nature.sql, que é de onde este trecho veio.
 -- (1) o degrau zero do STREAM  (2) o elo da linha do espelho
 
 do $$

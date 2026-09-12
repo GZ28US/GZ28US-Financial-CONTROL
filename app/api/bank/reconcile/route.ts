@@ -5,6 +5,7 @@ import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPla
 import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
+import { tabelaAtual } from '@/lib/tableRenames'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -1154,7 +1155,18 @@ export async function POST(req: NextRequest) {
             }
             // Linha do balde ATRIBUÍDA volta atribuída (reviewed_at = quando foi) — senão fica presa em A CONFERIR sem ação (revisão 23).
             const attributed = r.engine === ENGINE_BUCKET && /^ATRIBUÍDA/.test(String(r.note || ''))
-            await writeMatch(db, l, { table: r.matched_table, id: r.matched_id, members: Array.isArray(r.members) ? r.members : [] }, { matched_note: r.note || null, match_engine: r.engine || null, match_batch: attributed ? null : (r.batch || null), reviewed_at: attributed ? r.at : null })
+            // `members` é JSON `[{table,id}]` GRAVADO no diário, com NOME DE TABELA
+            // DENTRO, e é a única coisa que diz em quais linhas repor a data de
+            // pagamento — o writeMatch faz db.from(<table do JSON>) com ele. A
+            // migration da onda 2 reescreve a COLUNA matched_table do diário e NÃO
+            // toca neste JSON. Medido pela REST na noite de 11/set/2026, antes dos renames:
+            // 1.253 registros, 28 com members, 2 deles com 'goods' dentro (8
+            // entradas) — e esses 2 são justamente o ÚLTIMO registro da sua linha do
+            // banco, que é o que este laço reencena. tabelaAtual() traduz na LEITURA,
+            // como writeUnmatch já faz com bank_transactions.backfill; idempotente, e
+            // o MATCH que o restore grava de volta já sai com o nome de hoje.
+            const members = (Array.isArray(r.members) ? r.members : []).map((m: any) => ({ ...m, table: tabelaAtual(m?.table) }))
+            await writeMatch(db, l, { table: r.matched_table, id: r.matched_id, members }, { matched_note: r.note || null, match_engine: r.engine || null, match_batch: attributed ? null : (r.batch || null), reviewed_at: attributed ? r.at : null })
             matched++
           } else if (['TRANSFER', 'IGNORE', 'QUEUE'].includes(r.action)) {
             const st = r.action === 'QUEUE' ? 'QUEUED' : r.action === 'IGNORE' ? 'IGNORED' : 'TRANSFER'

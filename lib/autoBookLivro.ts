@@ -319,7 +319,7 @@ export const SEQUENCIA: Etapa[] = [
         onde: 'lancar · auto_book_mail_rules',
         nota: 'Medido em 10/09: nenhuma regra aprendida ainda — todo lançamento até hoje veio de resposta humana.' },
       { id: '8.3', estado: 'NO AR', desde: '07/09/2026',
-        texto: 'Cada tabela com a sua coluna de valor: price na invoice, amount em expenses, unit_price em supplies. Trocar grava zero.',
+        texto: 'Cada tabela com a sua coluna de valor: price na invoice, amount em staff_expenses, unit_price em supplies. Trocar grava zero.',
         onde: 'lancar' },
       { id: '8.4', estado: 'NO AR', desde: '07/09/2026',
         texto: 'O fornecedor entra com o nome do CADASTRO; sem cadastro que case, entra o nome como veio — inventar é pior. A cura é só na escrita: a busca no banco usa o nome cru, que é o que está lá.',

@@ -1,5 +1,19 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- MIGRATION_item_nature.sql · 04/set/2026
+--
+-- ATUALIZADO NA ONDA 6 DO PACOTE (11–12/set/2026): os nomes das cinco tabelas renomeadas
+-- na onda 2 foram trocados aqui — goods→assets, good_expenses→assets_expenses,
+-- expenses→staff_expenses (invoice_parts e invoice_payments não aparecem neste
+-- arquivo). O array abaixo monta `alter table public.%I` POR NOME: com o nome velho,
+-- um rerun mexeria na VIEW-PONTE em vez da tabela, e view não aceita `add column`.
+-- ISTO NÃO É PARA RODAR AGORA: rodou em 04/set/2026 e fica como registro do degrau
+-- que faltava no STREAM. Se algum dia alguém rodar de novo, quase tudo é idempotente
+-- (add column if not exists, create index if not exists, update ... where nature is
+-- null) — MENOS o nome da CHECK: o rename não renomeia constraint, então a tabela
+-- `assets` ainda carrega a `goods_nature_check` da rodada de 04/set e o bloco tentaria
+-- criar uma `assets_nature_check` idêntica ao lado. Mais uma razão para não rodar.
+-- (O mesmo bloco, e o mesmo aviso, valem para RODAR_NO_US.sql.)
+--
 -- "O QUE É ESTA LINHA?" — a pergunta que faltava ANTES de "chegou?".
 --
 -- Ordem do Márcio: "veja os bought, tem um monte de coisa lá que não era pra ter
@@ -18,7 +32,7 @@
 -- conferido pelos DADOS e não pelo nome):
 --   part_id .................. 0 de 1.185 em invoice_expenses (o elo está morto)
 --   part_number .............. só 40% das linhas que comprovadamente chegaram
---   category (inputs/inv/goods) é DESTINO: CONSUMPTION/APARTMENT/CATS/STOCK
+--   category (inputs/inv/assets) é DESTINO: CONSUMPTION/APARTMENT/CATS/STOCK
 --   source ................... é a EMPRESA (GZ28US/GZ28BR)
 --   kit_group / kit_name ..... 0 linhas preenchidas
 --   tax / extra .............. é o VALOR do encargo, não a natureza; e só existe
@@ -39,7 +53,7 @@
 do $$
 declare t text;
 begin
-  foreach t in array array['invoice_expenses','inputs','inventory','goods','good_expenses','expenses']
+  foreach t in array array['invoice_expenses','inputs','inventory','assets','assets_expenses','staff_expenses']
   loop
     execute format('alter table public.%I add column if not exists nature text', t);
     execute format($f$
@@ -77,7 +91,7 @@ end $$;
 -- tax/shipping do scan em linha literal):
 update public.invoice_expenses set nature = 'CHARGE'
   where nature is null and btrim(item) in ('Sales Tax','Shipping','Shipping and handling');
-update public.good_expenses set nature = 'CHARGE'
+update public.assets_expenses set nature = 'CHARGE'
   where nature is null and btrim(description) in ('Sales Tax','Shipping','Shipping and handling');
 update public.inputs set nature = 'CHARGE'
   where nature is null and btrim(description) in ('Sales Tax','Shipping','Shipping and handling');
@@ -88,8 +102,8 @@ update public.inputs set nature = 'CHARGE'
 
 -- ── 4. CONFERÊNCIA ──────────────────────────────────────────────────────────
 select 'invoice_expenses' t, count(*) total, count(nature) classificadas from public.invoice_expenses
-union all select 'inputs',        count(*), count(nature) from public.inputs
-union all select 'inventory',     count(*), count(nature) from public.inventory
-union all select 'goods',         count(*), count(nature) from public.goods
-union all select 'good_expenses', count(*), count(nature) from public.good_expenses
-union all select 'expenses',      count(*), count(nature) from public.expenses;
+union all select 'inputs',          count(*), count(nature) from public.inputs
+union all select 'inventory',       count(*), count(nature) from public.inventory
+union all select 'assets',          count(*), count(nature) from public.assets
+union all select 'assets_expenses', count(*), count(nature) from public.assets_expenses
+union all select 'staff_expenses',  count(*), count(nature) from public.staff_expenses;

@@ -3,8 +3,11 @@
 
 // GZ28US vs GZ28BR Flow — the inter-company ledger. Reads GZ28US data (USD):
 //   GZ28BR GOT  = incomes PAID TO GZ28BR   (invoice_incomes.paid_to = 'GZ28BR')  → money GZ28BR holds for us
-//   GZ28BR PAID = every expense PAID FROM GZ28BR (source = 'GZ28BR' across invoice
-//                 expenses, goods, good-expenses, inputs, inventory, fixed costs, staff)
+//   GZ28BR PAID = every expense PAID FROM GZ28BR (source = 'GZ28BR' across the seven
+//                 spend tables this page reads: invoice_expenses, assets,
+//                 assets_expenses, inputs, inventory, fixed_cost_expenses and
+//                 staff_expenses — assets / assets_expenses / staff_expenses being
+//                 wave 2's new names for goods / good_expenses / expenses)
 // This page is identical in both apps; BR reads the same GZ28US project via supabaseUS.
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'

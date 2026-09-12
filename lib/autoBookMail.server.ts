@@ -56,6 +56,7 @@ import { ITEM_TABLES } from './itemTracking.server'
 import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
 import { matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
 import { cacaNaPasta, respostaUnica, type PastaHit } from './dropboxHunt.server'
+import { tabelaAtual } from './tableRenames'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
 export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
@@ -703,7 +704,16 @@ export async function lancar(
   target: Record<string, unknown>,
   dados: { vendor: string; order: string | null; amount: number; date: string; desc: string },
 ): Promise<{ table: string; id: string } | { erro: string }> {
-  const t = String(target.table || '')
+  // O ALVO CHEGA DE DENTRO DE UM JSON GRAVADO NO BANCO, e com NOME DE TABELA nele:
+  // ou de `auto_book_mail.cands[].table` (a sugestão que a pessoa clicou ao responder
+  // a dúvida), ou de `auto_book_mail_rules.target.table` (a regra aprendida). A
+  // migration da onda 2 reescreve `auto_book_mail.booked_table` — a coluna de TEXTO —
+  // e não entra em JSON nenhum. Medido pela REST na noite de 11/set/2026, antes dos renames:
+  // 6 das 20 linhas da fila guardam 'expenses' dentro de `cands` (9 entradas); regras
+  // aprendidas, zero. Sem traduzir, a peneira de destino abaixo recusa a própria
+  // sugestão que o robô ofereceu («tabela "expenses" nao e destino de compra») e o
+  // lançamento morre na mão de quem respondeu. tabelaAtual() é idempotente.
+  const t = tabelaAtual(String(target.table || ''))
   // O NOME DO FORNECEDOR ENTRA CURADO (ordem dele, 07/set/2026: *"normalize
   // sempre os nomes dos fornecedores, ensine todos os robôs de escaneamento a
   // fazer isso, assim os dados já entram certos"*). O e-mail escreve o remetente

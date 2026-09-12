@@ -1054,8 +1054,14 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
     else if (cand.table === 'invoice_incomes') await fill('invoice_incomes', [cand.id], 'paid_at', paidAtFor(line.date))
     else if (cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group') {
       // Só os MEMBROS que formaram o total do grupo (revisão #18), nunca "todo mundo do grupo".
+      // AQUI é onde o nome de tabela vindo de dentro do JSON vira db.from(): quando o
+      // RESTAURAR DIÁRIO reencena um MATCH, os membros saem de bank_match_log.members,
+      // que a migration da onda 2 não reescreve. A tradução já é feita na leitura (rota
+      // restore_log), e repetida aqui de propósito: writeMatch é o funil único do
+      // casamento, então nenhum futuro chamador que traga members do banco escapa.
+      // tabelaAtual() é idempotente — membro montado em memória (nome de hoje) passa igual.
       const byTable = new Map<string, string[]>()
-      for (const m of cand.members || []) byTable.set(m.table, [...(byTable.get(m.table) || []), m.id])
+      for (const m of cand.members || []) { const t = tabelaAtual(m.table); byTable.set(t, [...(byTable.get(t) || []), m.id]) }
       for (const [t, ids] of byTable) await fill(t, ids, 'payment_date', line.date)
     }
   } catch (e) {
@@ -1581,6 +1587,8 @@ export async function bucketReach(db: any, line: any, bucketId: string): Promise
   return out
 }
 // Quantas partes a última divisão desta linha registrou no diário (members).
+// O terceiro leitor de `members` — e o único que NÃO precisa de tabelaAtual(): aqui
+// só o TAMANHO da lista é usado, o nome de tabela de dentro não vira db.from() nenhum.
 export async function lastMatchMembersCount(db: any, bankId: string): Promise<number | null> {
   try {
     const { data } = await db.from('bank_match_log').select('members').eq('bank_id', bankId).eq('action', 'MATCH').order('at', { ascending: false }).limit(1).maybeSingle()
