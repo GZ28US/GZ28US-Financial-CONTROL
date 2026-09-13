@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions, countryDefaults, formatUKPostcode } from '@/lib/utils'
+import { BASE_PATH, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions, countryDefaults, phoneOnCountryChange, formatUKPostcode } from '@/lib/utils'
 
 const usaStates = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -68,6 +68,7 @@ export default function EditClientPage({
       ...form,
       country,
       ...countryDefaults(country),
+      phone: phoneOnCountryChange(country, form.phone),
     })
   }
 

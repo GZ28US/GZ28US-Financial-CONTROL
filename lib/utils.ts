@@ -63,8 +63,8 @@ export const ENGLAND_REGIONS = [
   'South East', 'South West', 'West Midlands', 'Yorkshire and The Humber',
 ]
 
-// The 21 provinces of Angola (political-administrative division of 2024), in
-// alphabetical order.
+// The 21 provinces of Angola (political-administrative division of 2024), in the order
+// of that division's list.
 export const ANGOLA_PROVINCES = [
   'Bengo', 'Benguela', 'Bié', 'Cabinda', 'Cuando', 'Cubango', 'Cuanza Norte',
   'Cuanza Sul', 'Cunene', 'Huambo', 'Huíla', 'Icolo e Bengo', 'Luanda', 'Lunda Norte',
@@ -79,12 +79,25 @@ export function angolaProvinceOptions(current: string): string[] {
   return ANGOLA_PROVINCES.includes(current) ? ANGOLA_PROVINCES : [current, ...ANGOLA_PROVINCES]
 }
 
-// What an empty PHONE and the STATE field start as when the COUNTRY select changes.
+// The PHONE prefix and the STATE a country starts with when the COUNTRY select changes
+// (whether the prefix is written over the phone: phoneOnCountryChange, below).
 export function countryDefaults(country: string): { phone: string; state: string } {
   if (country === 'BRAZIL') return { phone: '+55 ', state: 'SP' }
   if (country === 'ENGLAND') return { phone: '+44 ', state: 'London' }
   if (country === 'ANGOLA') return { phone: '+244 ', state: 'Luanda' }
   return { phone: '+1 ', state: 'FL' }
+}
+
+// The PHONE after the COUNTRY select changes. ANGOLA writes '+244 ' only into a phone
+// with no number yet — empty, or just a country prefix (+1 / +55 / +44 / +244: what the
+// form starts with, or what an earlier switch left) — so a number already typed or
+// stored survives the switch. USA / BRAZIL / ENGLAND keep their original behavior: the
+// prefix always replaces the field.
+export function phoneOnCountryChange(country: string, current: string | null | undefined): string {
+  const seed = countryDefaults(country).phone
+  if (country !== 'ANGOLA') return seed
+  const digits = (current || '').replace(/\D/g, '')
+  return ['', '1', '55', '44', '244'].includes(digits) ? seed : (current || '')
 }
 
 // Client-facing text (self-service forms, e-mails and WhatsApp texts to the client, the

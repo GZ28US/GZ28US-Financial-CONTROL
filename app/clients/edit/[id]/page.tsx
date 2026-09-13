@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   BASE_PATH, formatCPF, isValidCPF, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions,
-  countryDefaults, formatUKPostcode,
+  countryDefaults, phoneOnCountryChange, formatUKPostcode,
 } from '@/lib/utils'
 import Header from '@/components/Header'
 
@@ -97,6 +97,7 @@ export default function EditClientPage() {
       ...form,
       country,
       ...countryDefaults(country),
+      phone: phoneOnCountryChange(country, form.phone),
     })
   }
 

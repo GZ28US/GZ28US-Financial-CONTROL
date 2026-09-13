@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
   BASE_PATH, clientCode, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions,
-  countryDefaults, formatUKPostcode, isUKPostcode,
+  countryDefaults, phoneOnCountryChange, formatUKPostcode, isUKPostcode,
 } from '@/lib/utils'
 import Header from '@/components/Header'
 
@@ -57,6 +57,7 @@ export default function NewClientPage() {
       ...form,
       country,
       ...countryDefaults(country),
+      phone: phoneOnCountryChange(country, form.phone),
       zip: '',
       address: '',
       city: '',

@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   BASE_PATH, formatCPF, isValidCPF, ENGLAND_REGIONS, angolaProvinceOptions,
-  countryDefaults, formatUKPostcode, isUKPostcode, clientSpeaksPortuguese,
+  countryDefaults, phoneOnCountryChange, formatUKPostcode, isUKPostcode, clientSpeaksPortuguese,
 } from '@/lib/utils'
 
 // PUBLIC client self-service form. The shop sends a client this link (SEND CLIENT
@@ -165,6 +165,7 @@ export default function ClientSelfFormPage() {
       ...form,
       country,
       ...countryDefaults(country),
+      phone: phoneOnCountryChange(country, form.phone),
     })
   }
 
