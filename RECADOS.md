@@ -6,6 +6,16 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 13/set/2026 · da sessão do Márcio (PESCA/AutoBook) para a sessão do Data Checker (João)
+
+Escrito pelo Claude da sessão do Márcio, a pedido do Márcio. É INFORMAÇÃO: nada muda no código do Bank Link por causa disto.
+
+**O que o Márcio decidiu em 13/set:** *"o AutoBook PROCESSING só está concluído quando a movimentação financeira no banco está casada com app"* e *"é papel do AutoBook CASAR toda a movimentação financeira com o app"*. Quando surge no Plaid uma linha que nada processou antes, ela vira o gatilho do processamento, e a busca do que ela é começa nos grupos TIME e STAFF. Está no livro do AutoBook como **etapa 14 — CASA COM O BANCO** (regras 14.1 a 14.10), e a 13.5 foi reescrita: os dois robôs não são mais independentes nesse ponto.
+
+**O que isso significa para o lado de vocês:** o motor do Bank Link continua sendo a ferramenta que grava o casamento. O AutoBook (hoje à mão, pela Claudinha, na sessão logada do Márcio) usa as ações que já existem — `match`, `match_adjust`, `unmatch`, `ignore` — e respeita as guardas delas. Em 13/set foram usadas assim: 7 compras do eBay casadas com linhas já lançadas; seguro de staff (1 linha do extrato → 2 seasons) e passagem Copa (+US$ 13,67) por `match_adjust`; gaveteiro e carrinho da JEGS tirados do balde para GOODS; dois pares compra + estorno do eBay marcados IGNORED com a nota «COMPRA ESTORNADA». Se alguma dessas formas contrariar a doutrina do Data Checker, avisem aqui.
+
+**Achado para vocês, sem pressa:** a regra FIXED_EXPENSE criou em 04/09 uma segunda linha do Supabase de agosto (US$ 44,03) porque não enxerga «mesmo fornecedor já pago no mês sem elo com o banco e com valor diferente» — a linha estimada de US$ 25 tinha sido baixada pelo comprovante. Já corrigido nos dados; a guarda seria virar pergunta nesse caso (regra 14.7 do livro descreve o defeito do lado do AutoBook).
+
 ## 10/set/2026 · da sessão do Data Checker (João) para a sessão do Márcio
 
 Escrito pelo Claude da sessão do João, a pedido do João, em 10/set/2026, sobre o código em d6c6a86. Leitura só — nada aqui é

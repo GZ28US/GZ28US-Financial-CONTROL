@@ -95,7 +95,7 @@ export default function AutoBookPage() {
           <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-950 text-amber-300">EM DESENVOLVIMENTO</span>
         </div>
         <p className="text-gray-300 mb-1">
-          O livro do robô: toda regra, na ordem em que o gasto ou a receita anda — do e-mail que chega até a linha registrada no app.
+          O livro do robô: toda regra, na ordem em que o gasto ou a receita anda — do e-mail (ou da linha do banco) até a movimentação casada no app. Só casado o processamento termina.
         </p>
         <p className="text-gray-500 text-sm mb-6">{TODAS.length} regras · atualizado em {dataBR(LIVRO_ATUALIZADO)}</p>
 
@@ -132,7 +132,7 @@ export default function AutoBookPage() {
 
         {sequencia.length > 0 && (
           <>
-            <h2 className="text-sm font-bold text-gray-400 tracking-widest mb-3">A SEQUÊNCIA — DO E-MAIL AO APP</h2>
+            <h2 className="text-sm font-bold text-gray-400 tracking-widest mb-3">A SEQUÊNCIA — DO E-MAIL AO BANCO CASADO</h2>
             <div className="flex flex-col gap-4 mb-10">
               {sequencia.map((e) => <CartaoDaEtapa key={e.id} e={e} />)}
             </div>

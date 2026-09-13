@@ -5,6 +5,9 @@
 //    todos os passo do PROCESSAMENTO."
 //   "Quero tudo do nosso AutoBook lá, tem que viver lá, se vive em outro lugar,
 //    mova pra lá."
+//   13/set/2026 — o fim do caminho mudou: "o AutoBook PROCESSING só está concluído
+//    quando a movimentação financeira no banco está casada com app". O livro vai
+//    agora do e-mail até a linha do extrato casada (etapa 14).
 //
 // ── POR QUE ESTE ARQUIVO EXISTE ────────────────────────────────────────────
 // Até aqui as regras do AutoBook moravam em três lugares que ninguém lia junto:
@@ -53,7 +56,7 @@ export type Regra = {
 
 export type Etapa = { id: string; titulo: string; resumo: string; regras: Regra[] }
 
-export const LIVRO_ATUALIZADO = '2026-09-12'
+export const LIVRO_ATUALIZADO = '2026-09-13'
 
 // ═══ A SEQUÊNCIA — O CAMINHO DO E-MAIL DE COMPRA ATÉ A LINHA NO APP ═══════════
 export const SEQUENCIA: Etapa[] = [
@@ -190,6 +193,9 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'A data do pagamento é o dia em que pagamos, e vem do recibo ou do e-mail do vendedor. A data do extrato é a do processamento; a data de um pedido ainda não pago não é pagamento.',
         fala: 'a data do pagamento é o dia que pagamos, o dia que aparece no banco deve ser a data de processamento, são 2 datas diferentes. Nunca o dia do pagamento é o mesmo do processamento.',
         nota: 'O robô ainda não grava a data do pagamento na linha que lança — ver 8.7.' },
+      { id: '4.9', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Antes de cadastrar custo fixo a partir de um e-mail, abre o anexo: cobrança única — multa rescisória, taxa, acordo — não é mensalidade. Mensalidade só nasce com dois sinais de recorrência (contrato, duas faturas seguidas, a palavra «mensalidade»).',
+        nota: 'Caso Emive (BR, 28/07): o boleto «RECEITA MULTA RESCISORIA ALARME» de R$ 1.311,88 virou fixo MENSAL sem ninguém abrir o PDF, com 8 parcelas fantasma (R$ 10,5 mil no Future Flow). Corrigido em 13/09: paga uma vez, em 11/08, R$ 1.446,59 com juros.' },
     ],
   },
   {
@@ -355,6 +361,14 @@ export const SEQUENCIA: Etapa[] = [
       { id: '8.14', estado: 'À MÃO', desde: '03/09/2026',
         texto: 'No app do BR o valor é em REAIS; o dólar vai em amount_usd, convertido pela taxa da invoice. Depois de pago, o valor congela.',
         fala: 'depois que está pago, tem que ficar o valor que foi pago no dia, não pode variar mais.' },
+      { id: '8.15', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Merch da marca — camiseta, boné, moletom GZ28 — é MARKETING: brinde para evento, cliente e redes. Entra em custo com fornecedor de marketing, não em estoque de revenda nem em uniforme.',
+        onde: 'fixed_cost_suppliers (cost_type MARKETING) · fixed_cost_expenses SINGLE',
+        nota: 'TSS Printing, 13/09: lote de 100 camisetas (FJR082616, US$ 1.094,82) e pedido #1131 (US$ 380, 26/06).' },
+      { id: '8.16', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Seguro viagem e passagem de gente do time são custo do GZ28US na season da pessoa: uma linha por pessoa, com voucher e nota fiscal, e a data do pagamento. Compra para duas pessoas divide ao meio.',
+        onde: 'staff_expenses (origin GZ28US, season_id)',
+        nota: 'Molde: seguro do Jeferson (pedido Promo 1186818). Aplicado em 13/09 ao pedido 1187616 (Guilherme US.003 + João Luca US.002).' },
     ],
   },
   {
@@ -424,7 +438,8 @@ export const SEQUENCIA: Etapa[] = [
       { id: '10.10', estado: 'NO AR', desde: '01/08/2026',
         texto: 'Comprovante anexado = despesa paga: a data do pagamento entra sozinha, a cada 5 minutos.',
         fala: 'Se tem comprovante, está PAGA.',
-        onde: 'lib/expenseReportNet.server.ts · enforceReceiptPaid' },
+        onde: 'lib/expenseReportNet.server.ts · enforceReceiptPaid',
+        nota: 'Na agendada de custo fixo a baixa acontece pelo valor ESTIMADO — defeito descrito na 14.7.' },
     ],
   },
   {
@@ -502,9 +517,9 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'A transportadora é perguntada de hora em hora pelos números de rastreio já gravados nas linhas.',
         onde: 'vercel.json (37 * * * *) · app/api/items/track' },
       { id: '13.5', estado: 'NO AR',
-        texto: 'A linha do extrato do banco é ligada ao registro pelo AUTO-LINK (Bank Link, sessão do João), que só lança quando ninguém lançou.',
+        texto: 'A linha do extrato do banco é ligada ao registro pelo motor do Bank Link (sessão do João), que só lança quando ninguém lançou. Garantir que TODA movimentação fique casada é papel do AutoBook — etapa 14.',
         onde: 'lib/bankReconcile.server.ts',
-        nota: 'Outro robô: o AutoBook não lê o AUTO-LINK, nem o contrário.' },
+        nota: 'Até 13/09 eram dois robôs que não se liam. Em 13/09 o Márcio pôs o casamento dentro do processamento do AutoBook (14.1); o motor continua sendo a ferramenta que grava o casamento.' },
       { id: '13.6', estado: 'NO AR', desde: '10/09/2026',
         texto: 'O Data Checker confere os dois robôs lado a lado e pergunta a gente quando eles discordam.',
         onde: 'lib/enginesAudit.server.ts · card «Os dois motores concordam?»' },
@@ -517,6 +532,53 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'Compra real escrita POR CIMA de um placeholder antigo some da rede de report: a rede só lê linha com updated_at depois do EPOCH (26/07/2026), e escrever por fora do app não encosta nesse campo. Quem escreve por cima tem de gravar updated_at junto — senão o balão sai com uma parte da compra e ninguém percebe, porque a parte que falta nunca é perguntada.',
         onde: 'lib/expenseReportNet.server.ts:15 (EPOCH) · :200 (.gte(updated_at, EPOCH))',
         nota: 'Medido na HHP #384917 (12/09/2026, US.022.2 Apocalypse, US$ 4.112,27): das 5 linhas, 3 entraram por cima de placeholders de 12/07 e ficaram invisíveis — o grupo recebeu US$ 2.821,12 de 2 itens às 01h06 Orlando. Destravado encostando no updated_at; o complemento de US$ 1.291,15 saiu na passada seguinte, por ordem dele («Rede manda o complemento»). O mesmo alçapão pega qualquer escrita por fora do app.' },
+    ],
+  },
+  {
+    id: '14',
+    titulo: 'CASA COM O BANCO',
+    resumo: 'O processamento só termina aqui: a movimentação do banco ligada ao registro no app. Lançado e sem casar é processamento em aberto; linha do banco sem processamento nenhum é gatilho.',
+    regras: [
+      { id: '14.1', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'O processamento do AutoBook só está CONCLUÍDO quando a movimentação no banco está casada com o registro no app. Lançar não conclui: enquanto a linha do extrato estiver sem casamento, o gasto ou a receita segue em processamento. Casar toda a movimentação financeira com o app é papel do AutoBook.',
+        fala: 'o AutoBook PROCESSING só está concluído quando a movimentação financeira no banco está casada com app, enquanto isso não está feito, o processamento não está concluído … é papel do AutoBook CASAR toda a movimentação financeira com o app',
+        onde: 'bank_transactions.match_status · Bank Link (/api/bank/reconcile: match, match_adjust, unmatch, ignore)',
+        nota: 'Hoje quem casa é a Claudinha, à mão, pelas ações do Bank Link na sessão logada do Márcio; cada caso aprendido vira regra nesta etapa e pedido ao App development, até o robô fazer tudo. Medido em 13/09 (06 a 13/09): 102 linhas na Regions, 41 casadas, 17 pendentes, 44 compensadas sem casamento.' },
+      { id: '14.2', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Linha PENDENTE no banco não casa: espera compensar, porque o Plaid troca o id da linha ao postar. O processamento dela fica aberto até lá.',
+        onde: 'lib/bankReconcile.server.ts · humanMatch (recusa pending)' },
+      { id: '14.3', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Valor igual ao centavo e mesma compra: liga a linha do banco ao registro que já existe. Dinheiro que já está no app nunca ganha um segundo lançamento.',
+        onde: 'Bank Link · match',
+        nota: 'eBay, 13/09: rodas Welds (HellKing), faróis Morimoto e hood pin (Apocalypse), emblemas (HellMonster), conector do pisca (GoldenEye) — todos lançados certos e sem casamento.' },
+      { id: '14.4', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Uma cobrança que pagou vários registros casa com todos juntos: itens do mesmo pedido pelo grupo de compra; despesas de staff (duas passagens, dois seguros) pelo «casar com ajuste», até 3, com a diferença de câmbio rateada ao centavo.',
+        onde: 'Bank Link · match (purchase_group) · match_adjust (expense_group)',
+        nota: 'Seguro Promo 1187616 (Guilherme + João Luca, US$ 212,78) e passagem Copa AZPYJG (US$ 750,44 estimado → US$ 764,11 do banco), 13/09.' },
+      { id: '14.5', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Linha que o motor mandou para o balde «A ATRIBUIR» e já tem dono: DESFAZER no Bank Link (o app apaga a compra do balde), lançar no lugar certo com o comprovante, e casar. Equipamento da oficina vai para GOODS; seguro e passagem de staff, para a season (8.16); merch da marca, para MARKETING (8.15).',
+        onde: 'Bank Link · unmatch + match / match_adjust',
+        nota: 'JEGS gaveteiro 97259544 e carrinho 97298972 → GOODS; seguro Promo 1187616 → seasons; 13/09.' },
+      { id: '14.6', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Compra que voltou inteira (cancelada pelo vendedor ou devolvida), com a cobrança e o estorno no banco, não é gasto: DESFAZ a cobrança do balde e as duas linhas ficam IGNORADAS com a nota «COMPRA ESTORNADA» e o número do pedido. Compra que ficou, com estorno parcial, segue a 8.10.',
+        onde: 'Bank Link · unmatch + ignore',
+        nota: 'eBay 01-14353-04110 (porcas de roda, cancelado) e 03-14444-12482 (amortecedores do porta-malas, devolvidos), Camaro, 13/09.' },
+      { id: '14.7', estado: 'FURO', desde: '13/09/2026',
+        texto: 'Agendada só vira paga com o valor do recibo. Se o valor real é diferente do estimado, a linha ganha o valor real antes da baixa — senão o banco não acha o gêmeo, o Bank Link lança outra linha e o mês fica em dobro.',
+        onde: 'lib/expenseReportNet.server.ts · enforceReceiptPaid (10.10)',
+        nota: 'Hoje o comprovante anexado dá baixa na agendada pelo valor ESTIMADO. Caso Supabase ago/2026: US$ 25 (estimativa baixada) + US$ 44,03 (Bank Link) para uma fatura de 44,03 — a de 25 foi apagada em 12/09.' },
+      { id: '14.8', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Dinheiro que não passa pela Regions (C6 do BR, cartão pessoal, conta de sócio) fecha pelo comprovante, não pelo extrato: a linha diz de onde saiu, e a falta de casamento na Regions não reabre o processamento.',
+        nota: 'Aluguel do galpão de maio/2026 pago pela Connect (C2B), decisão dele em 13/09; multa da Emive paga pelo C6 da Galpão.' },
+      { id: '14.9', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Os dois caminhos terminam no mesmo lugar. Com e-mail: o robô detecta a movimentação, processa e lança pelos meios já ensinados, e quando a linha aparece no Plaid ele CASA e fecha. Sem nada antes: a linha do Plaid que nenhum processamento tocou vira o GATILHO e dispara o processamento dessa despesa — descobrir o que é, lançar e casar —, que só fecha casado.',
+        fala: 'quando a movimentação aparece no plaid, o robô CASA a movimentação e finaliza o processamento · quando surge uma linha no plaid que não havia sido processada de nenhuma forma prévia, o paid passa a ser o trigger e dispara o processamento desta despesa, até que esteja casada no app',
+        onde: 'bank_transactions (match_status NEW, compensada) → etapas 7 a 13 → Bank Link',
+        nota: 'Hoje o motor do Bank Link manda a linha sem dono para o balde «A ATRIBUIR» ou deixa NEW; o gatilho que abre o processamento é à mão, pela Claudinha.' },
+      { id: '14.10', estado: 'À MÃO', desde: '13/09/2026',
+        texto: 'Para descobrir o que é uma linha do banco que chegou sem e-mail, o primeiro lugar de busca são os grupos TIME e STAFF do app US: é onde o time posta a foto do recibo, pede a compra e avisa o que pagou.',
+        fala: 'o melhor lugar pra buscar o que são estas movimentações são os grupos TIME e STAFF (app do US)',
+        onde: 'espelho whatsapp_messages (banco US): 🇺🇸GZ28US Time 🇺🇸 120363422206851200@g.us · GZ28US - STAFF 120363400165413030@g.us — só a linha canônica (duplicate_of nulo)' },
     ],
   },
 ]
