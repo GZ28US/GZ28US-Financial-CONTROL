@@ -102,6 +102,14 @@ function classify(subject: string, from: string): Kind {
   // "Your receipt from Apple." — o ponto final não faz parte do nome.
   let m = s.match(/^Your receipt from (.+?)(?:\s+#([\d-]+))?\.?$/i)
   if (m) return { kind: 'receipt', vendor: m[1].trim().replace(/[.,;]+$/, ''), receiptNo: m[2] || null }
+  // Orb (13/set/2026 — a Supabase fatura por ele): «Payment received for Supabase
+  // Pte. Ltd. invoice (#TJTDRU-00007)», nº com letras. Sem isto o recibo virava
+  // vendor-mail e, com mail_match vazio, era descartado em toda passada até sair
+  // da janela de 3 dias. Só vale para app CONHECIDO: o registerReceipt cria
+  // fornecedor quando não acha o app, e sem a trava qualquer empresa que fature
+  // pela Orb entraria como assinatura.
+  m = s.match(/^Payment received for (.+?) invoice \(#([A-Z0-9-]+)\)\s*$/i)
+  if (m && knownApp(`${s} ${from}`)) return { kind: 'receipt', vendor: m[1].trim(), receiptNo: m[2] }
   m = s.match(/^New invoice from (.+?)\s*\(/i)
   if (m) return { kind: 'bill', vendor: m[1].trim() }
   m = s.match(/payment to (.+?) was unsuccessful/i)
@@ -232,11 +240,73 @@ type ReceiptInfo = {
   payDate: string; link: string; msgKey: string; box: string
 }
 
-// Registra um recibo; devolve o app (criado se preciso) e se registrou de fato
-// (false = era duplicado). notifyEach fora do backfill.
+// ── Qual linha EM ABERTO este dinheiro liquida? ─────────────────────────────
+// 13/set/2026, duas correções que só funcionam juntas:
+//
+// (1) A janela do mês ia até `mês-31`. Em mês de 30 dias o PostgREST devolve 400
+//     para '2026-09-31', o erro era ignorado e o robô INSERIA em vez de adotar —
+//     assim ficaram abertas as agendadas de setembro da Claude (c62bdc7b, US$ 200)
+//     e da Vercel (e13c9cd8, US$ 20). Agora vai do dia 1º até ANTES do dia 1º do
+//     mês seguinte, e erro na busca PARA a passada (o e-mail fica para a próxima)
+//     em vez de virar "não há agendada".
+//
+// (2) Consertar só a janela faria o PRÓXIMO recibo da Claude adotar a agendada
+//     de US$ 200, fosse qual fosse. A Claude cobra de dois jeitos: a mensalidade
+//     do Max (US$ 200) e recargas de uso várias vezes por dia (US$ 10–114; 28
+//     recibos em setembro até o dia 12). Foi o que houve em agosto, quando a
+//     busca ainda funcionava: a agendada 4358f2bd virou a recarga de US$ 46,87.
+//     Então: app que já cobrou 2+ vezes nos 31 dias até o recibo só adota linha
+//     cujo valor esteja a 10% do recibo. App de uma cobrança por mês adota a do
+//     mês seja qual for o valor — a Supabase agendou US$ 25 e cobrou US$ 45 de
+//     uso, e essa adoção não pode travar. Sem candidata, insere (o que o robô já
+//     fazia em todo mês de 30 dias).
+const REFUSED = '⚠️ Pagamento recusado'
+const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T00:00:00Z') + n * 86_400_000).toISOString().slice(0, 10)
+const firstOfNextMonth = (ymd: string) => {
+  const y = Number(ymd.slice(0, 4)), m = Number(ymd.slice(5, 7))
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+}
+type OpenPick = { id: string | null; scheduled: boolean; multi: boolean }
+
+async function openRowToSettle(db: SupabaseClient, supplierId: string, ymd: string, amount: number | null): Promise<OpenPick> {
+  const [open, paid] = await Promise.all([
+    db.from('fixed_cost_expenses').select('id, amount, expense_date, description')
+      .eq('supplier_id', supplierId).is('payment_date', null)
+      .gte('expense_date', ymd.slice(0, 7) + '-01').lt('expense_date', firstOfNextMonth(ymd)),
+    db.from('fixed_cost_expenses').select('id', { count: 'exact', head: true })
+      .eq('supplier_id', supplierId).not('payment_date', 'is', null)
+      .gte('payment_date', addDays(ymd, -31)).lte('payment_date', ymd),
+  ])
+  if (open.error) throw new Error(`linhas em aberto: ${open.error.message}`)
+  if (paid.error) throw new Error(`cobranças dos últimos 31 dias: ${paid.error.message}`)
+  const multi = (paid.count ?? 0) >= 2
+  const rows = (open.data || []) as { id: string; amount: number | null; expense_date: string; description: string | null }[]
+  const refused = (r: { description: string | null }) => (r.description || '').startsWith(REFUSED)
+  const diff = (r: { amount: number | null }) => Math.abs(Number(r.amount) - Number(amount))
+  // Recusa primeiro: é a retentativa daquela cobrança que chegou.
+  const candidates = multi
+    ? rows.filter(r => amount != null && r.amount != null && diff(r) <= Math.max(1, 0.1 * Math.abs(Number(r.amount))))
+        .sort((a, b) => Number(refused(b)) - Number(refused(a)) || diff(a) - diff(b) || a.expense_date.localeCompare(b.expense_date))
+    : [...rows].sort((a, b) => Number(refused(b)) - Number(refused(a)) || a.expense_date.localeCompare(b.expense_date))
+  const pick = candidates[0]
+  return { id: pick?.id ?? null, scheduled: !!pick && !refused(pick), multi }
+}
+
+// Marca do aviso "recibo sem valor" em stream_mail_moves — a tabela de marcas que
+// a rede de report, o purchase-capture, o queue-answer e o stream-answer já usam,
+// cada um com o seu from_addr. O e-mail sem valor fica na caixa e o cron passa
+// por ele a cada 5 minutos durante 3 dias: sem a marca o grupo levaria o mesmo
+// aviso centenas de vezes (Outlook nunca move nada dos Itens Enviados).
+const SEM_VALOR_FROM = 'apps-sem-valor'
+
+// Registra um recibo; devolve o app (criado se preciso), se registrou de fato
+// (false = duplicado ou sem valor) e `keep`: true = o e-mail NÃO sai do lugar,
+// porque nada foi lançado e ele precisa continuar ao alcance da próxima passada
+// (e-mail em Apps/* nunca mais é lido). Erro de banco LANÇA exceção: o chamador
+// registra e também não arquiva. notifyEach fora do backfill.
 async function registerReceipt(
   db: SupabaseClient, apps: AppRow[], info: ReceiptInfo, out: AppsSweepResult, notifyEach: boolean,
-): Promise<{ row: AppRow | null; registered: boolean }> {
+): Promise<{ row: AppRow | null; registered: boolean; keep?: boolean }> {
   const { app: appName, domains } = appNameFor(info.vendor, info.from)
   let row = matchApp(apps, appName, info.vendor || '', senderDomain(info.from))
 
@@ -261,6 +331,40 @@ async function registerReceipt(
     if (dupAmt?.length) return { row, registered: false }
   }
 
+  // NUNCA LANÇA ZERO (13/set/2026). Sem valor lido, nada vira dinheiro: nem app
+  // novo, nem linha de US$ 0,00, nem a agendada do mês adotada com zero — ela
+  // sairia da conta como paga. O e-mail fica onde está (keep). App que não está
+  // no cadastro nem avisa: sem valor e sem cadastro, o mais provável é confirmação
+  // de loja no caminho genérico «Order/Purchase confirmation», não assinatura.
+  // App cadastrado avisa o grupo UMA vez por e-mail (marca em stream_mail_moves).
+  if (info.amount == null) {
+    const name = row?.description || appName
+    out.errors.push(`${name}: valor ilegível no recibo ${info.receiptNo ? '#' + info.receiptNo : info.msgKey} (${info.box}) — nada lançado, e-mail mantido na caixa`)
+    if (row && notifyEach) {
+      const key = `${SEM_VALOR_FROM}:${info.msgKey}`
+      const { data: seen, error: eSeen } = await db.from('stream_mail_moves').select('message_id').eq('from_addr', SEM_VALOR_FROM).eq('message_id', key).limit(1)
+      if (eSeen) throw new Error(`marca do aviso sem valor: ${eSeen.message}`)
+      if (!seen?.length) {
+        const { error: eMark } = await db.from('stream_mail_moves').insert({ message_id: key, subject: `${name}${info.receiptNo ? ' #' + info.receiptNo : ''} — ${info.payDate}`.slice(0, 120), from_addr: SEM_VALOR_FROM, folder_name: info.box.slice(0, 60), state: 'SEM VALOR — nada lançado' })
+        // Sem a marca gravada não avisa: melhor um aviso a menos que um por passada.
+        if (eMark) throw new Error(`marca do aviso sem valor: ${eMark.message}`)
+        await sendStreamWhatsApp([
+          `⚠️ *APP RECEIPT — AMOUNT UNREADABLE — ${semMarcacao(name)}*`,
+          info.receiptNo ? `Receipt #${semMarcacao(info.receiptNo)}` : null,
+          `Paid: ${fmtDate(info.payDate)}`,
+          'Nothing was booked — the scheduled charge of this month stays open. Enter the amount on the APPS page.',
+          `📧 The e-mail stays where it is (${info.box}).`,
+        ].filter(Boolean).join('\n'))
+      }
+    }
+    return { row, registered: false, keep: true }
+  }
+  const amount = info.amount
+
+  // Decide ANTES de escrever qualquer coisa: se a busca falhar, a exceção sobe,
+  // o e-mail não é arquivado e a próxima passada tenta de novo.
+  const settle: OpenPick = row ? await openRowToSettle(db, row.id, info.payDate, amount) : { id: null, scheduled: false, multi: false }
+
   if (!row) {
     const { data: created, error } = await db.from('fixed_cost_suppliers').insert({
       description: appName,
@@ -271,50 +375,55 @@ async function registerReceipt(
       periodicity: 'MONTHLY',
       date_entry: info.payDate,
       payment_day_1: Number(info.payDate.slice(8, 10)),
-      amount_1: info.amount ?? 0,
+      amount_1: amount,
     }).select('*').single()
-    if (error || !created) { out.errors.push(`create ${appName}: ${error?.message}`); return { row: null, registered: false } }
+    // Antes devolvia "não registrou" e o chamador ARQUIVAVA o e-mail sem nada lançado.
+    if (error || !created) throw new Error(`create ${appName}: ${error?.message || 'sem linha de volta'}`)
     row = created as AppRow
     apps.push(row)
     out.newApps.push(appName)
-    if (notifyEach) await sendStreamWhatsApp(`🆕 *NEW APP DETECTED — ${semMarcacao(appName)}*\n${semMarcacao(info.vendor || '')}\nFirst charge: *${fmtUSD(info.amount ?? 0)}* — ${fmtDate(info.payDate)}\nRegistered under COSTS → APPS.`)
+    if (notifyEach) await sendStreamWhatsApp(`🆕 *NEW APP DETECTED — ${semMarcacao(appName)}*\n${semMarcacao(info.vendor || '')}\nFirst charge: *${fmtUSD(amount)}* — ${fmtDate(info.payDate)}\nRegistered under COSTS → APPS.`)
   } else {
     // O preço acompanha a cobrança mais recente POR DATA; recibo mais antigo
     // que o cadastro puxa o date_entry pra trás.
+    // amount_1 é o preço da ASSINATURA — é dele que a página gera as agendadas
+    // dos próximos 6 meses. Em app que cobra várias vezes (Claude), só o recibo
+    // que liquidou a agendada o atualiza: recarga de uso não é preço de plano
+    // (13/set/2026: o amount_1 da Claude estava em 100,77, uma recarga, e a
+    // agendada de 2027-02-17 nasceu com os 46,87 de outra).
     const { data: latest } = await db.from('fixed_cost_expenses').select('payment_date')
       .eq('supplier_id', row.id).not('payment_date', 'is', null)
       .order('payment_date', { ascending: false }).limit(1)
     const latestDate = latest?.[0]?.payment_date || ''
     const patch: Record<string, unknown> = {}
-    if (info.amount != null && info.payDate >= latestDate) { patch.amount_1 = info.amount; row.amount_1 = info.amount }
+    if (info.payDate >= latestDate && (!settle.multi || settle.scheduled)) { patch.amount_1 = amount; row.amount_1 = amount }
     if (row.date_entry && info.payDate < row.date_entry) { patch.date_entry = info.payDate; patch.payment_day_1 = Number(info.payDate.slice(8, 10)); row.date_entry = info.payDate }
     if (Object.keys(patch).length) await db.from('fixed_cost_suppliers').update(patch).eq('id', row.id)
   }
   await rememberDomains(db, row, domains)
 
-  // Casa com a linha agendada em aberto do MESMO mês; senão insere nova.
-  const monthKey = info.payDate.slice(0, 7)
-  const { data: openRows } = await db.from('fixed_cost_expenses').select('id')
-    .eq('supplier_id', row.id).is('payment_date', null)
-    .gte('expense_date', monthKey + '-01').lte('expense_date', monthKey + '-31')
+  // Liquida a linha em aberto escolhida por openRowToSettle; sem ela, insere nova.
+  // Escrita recusada pelo banco LANÇA: o e-mail não é arquivado e volta na próxima
+  // passada (antes o erro era ignorado e o recibo saía da caixa sem nada lançado).
   const desc = `${row.description || appName}${info.receiptNo ? ` #${info.receiptNo}` : ''}`
-  if (openRows?.length) {
-    await db.from('fixed_cost_expenses').update({ amount: info.amount ?? 0, payment_date: info.payDate, description: desc, receipt_url: info.link }).eq('id', openRows[0].id)
+  if (settle.id) {
+    const { error: eUp } = await db.from('fixed_cost_expenses').update({ amount, payment_date: info.payDate, description: desc, receipt_url: info.link }).eq('id', settle.id)
+    if (eUp) throw new Error(`baixa da linha ${settle.id}: ${eUp.message}`)
   } else {
-    await db.from('fixed_cost_expenses').insert({
-      supplier_id: row.id, type: 'SINGLE', description: desc, amount: info.amount ?? 0,
+    const { error: eIns } = await db.from('fixed_cost_expenses').insert({
+      supplier_id: row.id, type: 'SINGLE', description: desc, amount,
       source: 'GZ28US', expense_date: info.payDate, payment_date: info.payDate, receipt_url: info.link,
     })
+    if (eIns) throw new Error(`inserir o pagamento: ${eIns.message}`)
   }
-  out.payments.push({ app: row.description || appName, amount: info.amount ?? 0, date: info.payDate, box: info.box })
+  out.payments.push({ app: row.description || appName, amount, date: info.payDate, box: info.box })
   if (notifyEach) {
     await sendStreamWhatsApp([
       `💵 *APP EXPENSE — ${semMarcacao(row.description || appName)}*`,
       info.vendor && info.vendor !== row.description ? semMarcacao(info.vendor) : null,
       info.receiptNo ? `Receipt #${semMarcacao(info.receiptNo)}` : null,
-      `Amount: *${fmtUSD(info.amount ?? 0)}*`,
+      `Amount: *${fmtUSD(amount)}*`,
       `Paid: ${fmtDate(info.payDate)}`,
-      info.amount == null ? '⚠️ Could not read the amount — fix it on the APPS page.' : null,
       `📧 Filed under Apps/${row.description || appName} (${info.box})`,
     ].filter(Boolean).join('\n'))
   }
@@ -335,19 +444,23 @@ async function handleFailure(
   const row = matchApp(apps, appName, vendor, senderDomain(from))
   const amount = parseAmount(subject) ?? parseAmount(text) ?? null
   if (row) {
-    const monthKey = date.slice(0, 7)
-    const { data: open } = await db.from('fixed_cost_expenses').select('id')
-      .eq('supplier_id', row.id).is('payment_date', null)
-      .gte('expense_date', monthKey + '-01').lte('expense_date', monthKey + '-31')
-    const desc = `⚠️ Pagamento recusado — ${subject.slice(0, 120)}`
-    if (open?.length) {
-      await db.from('fixed_cost_expenses').update({ description: desc, amount: amount ?? undefined }).eq('id', open[0].id)
+    // Mesma escolha do recibo (openRowToSettle, 13/set/2026): em app que cobra
+    // várias vezes, a recusa só toma uma linha a 10% do valor. A recusa do Stripe
+    // quase nunca traz valor, então compara pelo preço do plano (amount_1): sem
+    // isso cada e-mail de recusa sem valor abriria uma linha nova que nenhuma
+    // retentativa adota (achado do cético, 13/set). Sem candidata, linha própria.
+    const pick = await openRowToSettle(db, row.id, date, amount ?? (Number(row.amount_1) || null))
+    const desc = `${REFUSED} — ${subject.slice(0, 120)}`
+    if (pick.id) {
+      const { error: eUp } = await db.from('fixed_cost_expenses').update({ description: desc, amount: amount ?? undefined }).eq('id', pick.id)
+      if (eUp) throw new Error(`recusa na linha ${pick.id}: ${eUp.message}`)
     } else {
-      await db.from('fixed_cost_expenses').insert({
+      const { error: eIns } = await db.from('fixed_cost_expenses').insert({
         supplier_id: row.id, type: 'SINGLE', description: desc,
         amount: amount ?? (Number(row.amount_1) || 0), source: 'GZ28US',
         expense_date: date, payment_date: null,
       })
+      if (eIns) throw new Error(`inserir a recusa: ${eIns.message}`)
     }
   }
   if (notifyEach) await sendStreamWhatsApp(`⚠️ *APP PAYMENT FAILED — ${semMarcacao(appName)}*\n${semMarcacao(subject)}\nCheck the card on file.`)
@@ -455,9 +568,11 @@ async function gmailSweep(db: SupabaseClient, slot: number, box: string, apps: A
       }
       const { app: appName } = appNameFor(cls.vendor, from)
       if (cls.kind === 'failure') {
+        // Registra ANTES de arquivar (13/set/2026): se o banco recusar, a exceção
+        // sobe e o e-mail continua ao alcance da próxima passada.
+        await handleFailure(db, apps, appName, cls.vendor, from, subject, '', date, out, !opts.full)
         const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
         if (row) { await fileUnder(m.id, await ensureLabel(`Apps/${row.description || row.company}`)); out.filed++ }
-        await handleFailure(db, apps, appName, cls.vendor, from, subject, '', date, out, !opts.full)
         continue
       }
       if (cls.kind === 'cancel') {
@@ -475,17 +590,24 @@ async function gmailSweep(db: SupabaseClient, slot: number, box: string, apps: A
       // Recibo: corpo pra tirar o valor.
       const fullMsg = await (await fetch(`${API}/messages/${id}?format=full`, { headers: gh(token) })).json()
       const b64 = (s: string) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
-      let text = ''
+      // Texto e HTML guardados SEPARADOS (13/set/2026). Antes o HTML só era lido
+      // quando não havia text/plain nenhum — e o recibo Orb da Supabase tem um
+      // text/plain que é SÓ o assunto (63 caracteres), com o valor morando no HTML
+      // («$45.00 has been charged»). Texto primeiro, como sempre foi nos Stripe;
+      // HTML quando o texto não traz valor — e só para app do catálogo: no caminho
+      // genérico «Order/Purchase confirmation» o HTML de uma loja qualquer viraria
+      // APP NOVO com valor de verdade (achado do cético).
+      let plain = '', html = ''
       const walk = (part: any) => {
         if (!part) return
-        if (part.mimeType === 'text/plain' && part.body?.data) text += b64(part.body.data) + '\n'
-        else if (part.mimeType === 'text/html' && part.body?.data && !text) text += stripHtml(b64(part.body.data))
+        if (part.mimeType === 'text/plain' && part.body?.data) plain += b64(part.body.data) + '\n'
+        else if (part.mimeType === 'text/html' && part.body?.data && !html) html = stripHtml(b64(part.body.data))
         for (const sp of part.parts || []) walk(sp)
       }
       walk(fullMsg.payload)
-      const { row, registered } = await registerReceipt(db, apps, {
+      const { row, registered, keep } = await registerReceipt(db, apps, {
         vendor: cls.vendor, receiptNo: cls.receiptNo, from,
-        amount: parseAmount(text.replace(/\s+/g, ' ')), payDate: date,
+        amount: parseAmount(plain.replace(/\s+/g, ' ')) ?? (html && knownApp(`${subject} ${from}`) ? parseAmount(html) : null), payDate: date,
         // authuser= abre a CONTA certa no navegador: /u/0 é sempre a primeira
         // conta logada, e com duas caixas Google o recibo da segunda abriria
         // na primeira (04/set/2026). O id segue no URL — o dedup por
@@ -493,6 +615,7 @@ async function gmailSweep(db: SupabaseClient, slot: number, box: string, apps: A
         link: box.includes('@') ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(box)}#all/${m.id}` : `https://mail.google.com/mail/u/0/#all/${m.id}`,
         msgKey: m.id, box,
       }, out, !opts.full)
+      if (keep) continue // nada lançado: o e-mail fica ao alcance da próxima passada
       const name = row?.description || appName
       await fileUnder(m.id, await ensureLabel(`Apps/${name}`))
       if (registered) out.filed++
@@ -546,7 +669,8 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
   const seen = new Set<string>()
   const msgs: any[] = []
   if (opts.full) {
-    for (const term of ['"Your receipt from"', '"New invoice from"', '"was unsuccessful"', '"Purchase Confirmation"']) {
+    // "Payment received for" (Orb) entrou em 13/set/2026 junto com o formato no classify().
+    for (const term of ['"Your receipt from"', '"New invoice from"', '"was unsuccessful"', '"Purchase Confirmation"', '"Payment received for"']) {
       const r = await (await fetch(`${G}/me/messages?$search=${encodeURIComponent(term)}&$top=250&${SELECT}`, { headers: oh(token) })).json()
       for (const m of r.value || []) if (!seen.has(m.id)) { seen.add(m.id); msgs.push(m) }
     }
@@ -576,9 +700,10 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
       }
       const { app: appName } = appNameFor(cls.vendor, from)
       if (cls.kind === 'failure') {
+        // Registra ANTES de mover (13/set/2026) — ver o mesmo passo no Gmail.
+        await handleFailure(db, apps, appName, cls.vendor, from, subject, '', date, out, !opts.full)
         const row = matchApp(apps, appName, cls.vendor, senderDomain(from))
         if (row && !inSent) { await moveTo(m.id, await ensureFolder(String(row.description || row.company))); out.filed++ }
-        await handleFailure(db, apps, appName, cls.vendor, from, subject, '', date, out, !opts.full)
         continue
       }
       if (cls.kind === 'cancel') {
@@ -595,12 +720,12 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
 
       const body = await (await fetch(`${G}/me/messages/${m.id}?$select=body`, { headers: oh(token) })).json()
       const text = stripHtml(String(body?.body?.content || ''))
-      const { row, registered } = await registerReceipt(db, apps, {
+      const { row, registered, keep } = await registerReceipt(db, apps, {
         vendor: cls.vendor, receiptNo: cls.receiptNo, from,
         amount: parseAmount(text), payDate: date,
         link: m.webLink || `outlook:${m.id}`, msgKey: m.id, box,
       }, out, !opts.full)
-      if (!inSent) {
+      if (!inSent && !keep) {
         await moveTo(m.id, await ensureFolder(String(row?.description || appName)))
         if (registered) out.filed++
       }
