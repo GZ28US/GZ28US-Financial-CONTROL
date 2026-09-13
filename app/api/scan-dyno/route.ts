@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { cronOk, readKeyOk, requireUser } from '@/lib/apiAuth.server'
 
 // DYNO SHEET SCAN — the US app records torque in POUND-FEET (lb·ft), always
 // (user law 20/aug/2026). The model reads the sheet AS PRINTED (value + unit);
@@ -10,7 +11,11 @@ const LBFT_PER_NM = 1 / 1.3558179       // N·m  → lb·ft
 const LBFT_PER_KGFM = 9.80665 / 1.3558179 // kgf·m → lb·ft
 const HP_PER_CV = 0.98632                // metric hp (cv/PS) → hp
 
+// PORTÃO (13/set/2026): cada chamada gasta a chave da Anthropic, e a rota respondia
+// a pedido anônimo. Entra tela logada (sessionHeaders), servidor do próprio app
+// (selfCallHeaders) ou script de sessão com x-read-key no header.
 export async function POST(req: NextRequest) {
+  if (!cronOk(req) && !readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const { base64, mediaType } = await req.json()
 

@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { normNature } from '@/lib/itemNature'
+import { cronOk, readKeyOk, requireUser } from '@/lib/apiAuth.server'
 
 // Receipt OCR runs on Opus for maximum accuracy, which is slower than Sonnet —
 // allow up to 60s so a tough/crumpled receipt never times out mid-scan.
 export const maxDuration = 60
 
+// PORTÃO (13/set/2026): cada chamada gasta a chave da Anthropic, e a rota respondia
+// a pedido anônimo. Entra tela logada (sessionHeaders), servidor do próprio app
+// (selfCallHeaders) ou script de sessão com x-read-key no header.
 export async function POST(req: NextRequest) {
+  if (!cronOk(req) && !readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const body = await req.json()
     const { base64, mediaType, mode } = body

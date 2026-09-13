@@ -374,7 +374,7 @@ export default function ViewInvoicePage() {
         // mailto: made plain-text emails with dead links (Johnny/NiteKing, 31/jul).
         if (!client?.email) { alert('This client has no email on file.\nAdd an email first (client EDIT).'); setSending(false); return }
         const res = await fetch(`${BASE_PATH}/api/mail/client`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ kind: 'invoice-pdf', id: invoiceId, pdfUrl, filename: fname }),
         })
         const d = await res.json().catch(() => ({}))

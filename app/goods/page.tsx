@@ -430,7 +430,7 @@ export default function GoodsPage() {
 
       const { base64, mediaType } = await fileForScan(file)
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await sessionHeaders(),
         // separateExtras: imposto rateado por item e frete como linha própria —
         // é o modo feito para despesa de invoice, que é o que esta linha é.
         body: JSON.stringify({ base64, mediaType, separateExtras: true, today: todayStr() }),
@@ -525,7 +525,7 @@ export default function GoodsPage() {
 
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         // separateExtras keeps the item price clean and returns sales tax + shipping
         // separately (per item) so they can land as the good's extra cost lines.
         body: JSON.stringify({ base64, mediaType, separateExtras: true, today: todayStr() }),

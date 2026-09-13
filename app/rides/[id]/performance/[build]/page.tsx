@@ -220,7 +220,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       const { base64, mediaType } = await fileForScan(file)
       const res = await fetch(`${BASE_PATH}/api/scan-dyno`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         body: JSON.stringify({ base64, mediaType: mediaType || 'application/octet-stream' }),
       })
       const data = await res.json()
@@ -240,7 +240,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
         let hp = 0
         try {
           const fr = await fetch(`${BASE_PATH}/api/factory-specs`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car),
+            method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(car),
           })
           const fs = await fr.json().catch(() => ({}))
           hp = Number(fs?.hp) || 0
@@ -444,7 +444,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     let hp: number | null = null, nm: number | null = null
     if (car) {
       try {
-        const res = await fetch(`${BASE_PATH}/api/factory-specs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(car) })
+        const res = await fetch(`${BASE_PATH}/api/factory-specs`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(car) })
         const data = await res.json().catch(() => ({}))
         if (Number.isFinite(Number(data.hp))) hp = Number(data.hp)
         if (Number.isFinite(Number(data.nm))) nm = Number(data.nm)

@@ -169,7 +169,7 @@ export default function ViewRidePage() {
       setSendingPic(true)
       try {
         const r = await fetch(`${BASE_PATH}/api/mail/client`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ kind: 'car-photo', id: rideId }),
         })
         const d = await r.json().catch(() => ({}))

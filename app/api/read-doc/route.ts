@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 
 // LEITOR DE DOCUMENTO — pergunta livre sobre um PDF ou imagem, respondida pela
 // visão da Anthropic com a chave que já vive no servidor.
@@ -11,14 +12,18 @@ import { NextRequest, NextResponse } from 'next/server'
 // POST { key, base64, mediaType, question }
 //   → { answer: "<texto do modelo>" }
 // Serve para qualquer documento do negócio: extrato, contrato, carta, apólice.
+//
+// PORTÃO (13/set/2026): conferia `if (need && body.key !== need)` — sem a variável
+// no ambiente, abria para qualquer um gastar a Anthropic. Agora falha fechado pelo
+// portão único: x-read-key no header, a chave no corpo (os scripts das sessões já
+// mandam assim) ou tela logada.
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function POST(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
   const body = await req.json().catch(() => ({}))
-  if (need && body.key !== need) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!readKeyOk(req, { bodyKey: body?.key }) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 503 })

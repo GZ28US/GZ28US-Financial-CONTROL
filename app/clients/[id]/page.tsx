@@ -99,7 +99,7 @@ export default function ViewClientPage() {
       setSending(true)
       try {
         const r = await fetch(`${BASE_PATH}/api/mail/client`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ kind: 'client-form', id: clientId }),
         })
         const d = await r.json().catch(() => ({}))

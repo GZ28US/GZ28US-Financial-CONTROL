@@ -283,7 +283,7 @@ export default function InputsPage() {
       const { base64, mediaType } = await fileForScan(file)
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         body: JSON.stringify({ base64, mediaType }),
       })
       const data = await response.json()

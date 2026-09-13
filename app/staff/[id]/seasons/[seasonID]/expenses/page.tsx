@@ -240,7 +240,7 @@ export default function ExpensesPage() {
 
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         body: JSON.stringify({ base64, mediaType }),
       })
       const data = await response.json()

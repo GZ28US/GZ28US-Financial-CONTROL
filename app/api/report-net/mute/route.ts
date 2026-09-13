@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireUser } from '@/lib/apiAuth.server'
 
 // REPORT-NET MUTE (incidente 31/jul/2026): quando o usuário responde NÃO no
 // diálogo de report do editor, a escolha precisa valer também para a rede de
@@ -8,10 +9,14 @@ import { createClient } from '@supabase/supabase-js'
 // decisão; a rede só cobre o que nunca passou por um diálogo.
 // Chamado no fechamento do diálogo para TODAS as linhas listadas (enviadas ou
 // recusadas) — enviar de novo nunca acontece, silenciar é respeitado.
+//
+// PORTÃO (13/set/2026): silenciar a rede é decisão da tela do editor, logada
+// (sessionHeaders). Aberta, qualquer um calava o aviso de gasto por id.
 
 const KEY_RE = /^(ie|ip|se):[0-9a-f-]{36}$/
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  if (!(await requireUser(req))) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !service) return NextResponse.json({ ok: false, error: 'missing env' }, { status: 500 })

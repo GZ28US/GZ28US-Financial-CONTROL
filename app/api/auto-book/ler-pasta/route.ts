@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { baixarDaPasta, tipoDeArquivo } from '@/lib/dropboxRead.server'
-import { requireUser } from '@/lib/auth.server'
+import { cronOk, requireUser, selfCallHeaders } from '@/lib/apiAuth.server'
 
 // PASSO 7 DO AUTOBOOK: LER O DOCUMENTO QUE ELE SALVOU NA PASTA.
 //
@@ -18,8 +18,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
-  const cron = (req.headers.get('authorization') || '') === `Bearer ${process.env.CRON_SECRET}`
-  if (!cron && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!cronOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const b = await req.json().catch(() => ({}))
   const path = String(b?.path || '')
@@ -38,7 +37,8 @@ export async function POST(req: NextRequest) {
 
   const base = process.env.GZ28_SELF_URL || 'https://www.gz28us.com/ca'
   const r = await fetch(`${base}/api/scan-receipt`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // O scan-receipt tem portão desde 13/set/2026: servidor chamando o próprio app leva os segredos do ambiente.
+    method: 'POST', headers: selfCallHeaders(),
     body: JSON.stringify({ base64: arq.base64, mediaType: arq.mediaType, mode: b?.mode || 'purchase', separateExtras: true }),
   })
   const lido = await r.json().catch(() => null)

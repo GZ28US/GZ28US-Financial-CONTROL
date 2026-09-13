@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 
 // ── LAST-7-DAYS WORKED HOURS per staff member (Márcio, 02/ago/2026) ──────────
 // Feeds the day-by-day bar chart shown when a member's board is expanded on
@@ -8,13 +9,17 @@ import { createClient } from '@supabase/supabase-js'
 // day — never event detail. Same math as the 4am report: worked time = deltas
 // of the cumulative seconds_banked at every PAUSED/DONE, bucketed by
 // Orlando's local day.
+//
+// PORTÃO (13/set/2026): horas de cada staff não são públicas. Tela logada
+// (sessionHeaders) ou x-read-key no header.
 
 export const dynamic = 'force-dynamic'
 
 const TZ_OFFSET_MS = 4 * 3600 * 1000 // Orlando EDT (UTC-4), same clock as the 4am report
 const localDay = (iso: string) => new Date(new Date(iso).getTime() - TZ_OFFSET_MS).toISOString().slice(0, 10)
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) return NextResponse.json({ error: 'no service key' }, { status: 500 })

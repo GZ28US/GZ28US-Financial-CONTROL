@@ -238,7 +238,7 @@ export default function InventoryPage() {
 
       const { base64, mediaType } = await fileForScan(file)
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType }),
+        method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ base64, mediaType }),
       })
       const data = await response.json()
       if (data.error) { alert(`Scan error: ${data.error}\n${data.detail || ''}`); setScanning(false); return }

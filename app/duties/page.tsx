@@ -135,7 +135,7 @@ export default function StaffDutiesPage() {
   // Last-7-days worked hours per member, for the chart on the expanded board.
   const [hours7, setHours7] = useState<Hours7 | null>(null)
   useEffect(() => {
-    void fetch(`${BASE_PATH}/api/duty-hours`).then(r => r.json()).then(j => { if (j?.days) setHours7(j) }).catch(() => {})
+    void sessionHeaders().then(headers => fetch(`${BASE_PATH}/api/duty-hours`, { headers })).then(r => r.json()).then(j => { if (j?.days) setHours7(j) }).catch(() => {})
   }, [])
 
   useEffect(() => { void load() }, [])
@@ -317,10 +317,10 @@ export default function StaffDutiesPage() {
   // duty_events: o sistema guarda TODO evento por conta própria (Márcio,
   // 01/ago/2026) — o grupo é aviso, o banco é a memória. Fire-and-forget.
   function logDutyEvent(action: 'STARTED' | 'RESUMED' | 'PAUSED' | 'DONE', d: Duty, secs: number | null) {
-    void fetch(`${BASE_PATH}/api/duty-events`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    void sessionHeaders().then(headers => fetch(`${BASE_PATH}/api/duty-events`, {
+      method: 'POST', headers,
       body: JSON.stringify({ duty_id: d.id, staff_id: d.staff_id, staff_name: staffNameOf(d.staff_id), action, seconds_banked: secs, description: d.description, car_label: d.carLabel, invoice_code: d.invoiceCode }),
-    }).catch(() => {})
+    })).catch(() => {})
   }
 
   // ── Time tracking ──────────────────────────────────────────────────────────

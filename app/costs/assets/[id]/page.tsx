@@ -9,6 +9,7 @@ import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
 // ASSET / MARKETING detail — every payment of one asset or one marketing deal.
@@ -125,7 +126,7 @@ export default function AssetSupplierViewPage() {
       const { error: upErr } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (!upErr) receiptUrl = supabase.storage.from('expense-receipts').getPublicUrl(path).data.publicUrl
       const { base64, mediaType } = await fileForScan(file)
-      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType }) })
+      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ base64, mediaType }) })
       const data = await res.json()
       let amt = String(r.amount ?? ''); let dt = isValidDate(r.payment_date) ? (r.payment_date as string) : todayYmd()
       if (!data.error) {

@@ -926,7 +926,7 @@ export default function EditInvoicePage() {
       const { base64, mediaType } = await fileForScan(file)
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         body: JSON.stringify({ base64, mediaType, separateExtras: true, today: todayStr() }),
       })
       const data = await response.json()
@@ -1020,7 +1020,7 @@ export default function EditInvoicePage() {
       const { base64, mediaType } = await fileForScan(file)
       const response = await fetch(`${BASE_PATH}/api/scan-receipt`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await sessionHeaders(),
         body: JSON.stringify({ base64, mediaType, mode: 'payment', today: todayStr() }),
       })
       const data = await response.json()
@@ -2804,10 +2804,10 @@ export default function EditInvoicePage() {
   function muteReportNet(kind: 'ie' | 'ip', reports: Array<{ rowIds?: string[] }> | null) {
     const keys = (reports || []).flatMap(r => (r.rowIds || []).map(id => `${kind}:${id}`))
     if (keys.length === 0) return
-    void fetch(`${BASE_PATH}/api/report-net/mute`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    void sessionHeaders().then(headers => fetch(`${BASE_PATH}/api/report-net/mute`, {
+      method: 'POST', headers,
       body: JSON.stringify({ keys }),
-    }).catch(() => {})
+    })).catch(() => {})
   }
 
   async function sendIncomeReports() {

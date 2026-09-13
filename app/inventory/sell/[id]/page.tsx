@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 
 type Item = { id: string; description: string | null; quantity: number; unit_price: number; supplier: string | null; source_type?: string | null }
@@ -52,7 +53,7 @@ export default function SellInventoryPage() {
       const { error: upErr } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
       if (!upErr) receiptUrl = supabase.storage.from('expense-receipts').getPublicUrl(path).data.publicUrl
       const { base64, mediaType } = await fileForScan(file)
-      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, mediaType }) })
+      const res = await fetch(`${BASE_PATH}/api/scan-receipt`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ base64, mediaType }) })
       const data = await res.json()
       let amt = ''; let dt = todayYmd(); let dsc = ''
       if (!data.error) {

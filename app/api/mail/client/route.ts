@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { requireUser, sendKeyOk } from '@/lib/apiAuth.server'
 
 // Client e-mails sent BY THE APP (Graph, gz28us@hotmail.com) as real HTML with
 // a clickable button — the old mailto: composer produced plain text with a dead
@@ -15,6 +16,10 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 //   → quote/invoice PDF ATTACHED (fetched server-side, ONLY from our own
 //     public invoice-pdfs bucket) + button link; recipient = the invoice's
 //     client on file. Born from the Johnny/NiteKing dead-link quote (31/jul).
+//
+// PORTÃO (13/set/2026): a rota manda e-mail da caixa da empresa para o cliente de
+// qualquer id — respondia a pedido anônimo. Agora só tela logada (sessionHeaders)
+// ou quem tem a chave de ENVIO no header x-send-key.
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +49,7 @@ function emailHtml(o: { first: string; isBR: boolean; kind: 'car-photo' | 'clien
 const PDF_PREFIX = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/invoice-pdfs/`
 
 export async function POST(req: NextRequest) {
+  if (!sendKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => null)
   const kind = b?.kind as 'car-photo' | 'client-form' | 'invoice-pdf'
   const id = String(b?.id || '')
