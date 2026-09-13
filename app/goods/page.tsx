@@ -499,7 +499,7 @@ export default function GoodsPage() {
       // manda o documento estar nos dois lugares.
       try {
         const r = await fetch(`${BASE_PATH}/api/ride-folder`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ action: 'invoice-receipts', zone: 'US', invoiceId: s.invoiceId }),
         })
         const rd = await r.json().catch(() => ({}))

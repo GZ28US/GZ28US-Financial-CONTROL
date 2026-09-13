@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { BASE_PATH, clientCode } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
 import {
@@ -309,7 +310,7 @@ export default function NewRidePage() {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify({ action: 'create', zone: 'US', code: projectCode.trim(), name: projectName || '' }),
         })
         const data = await res.json().catch(() => ({}))

@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 const FULL_PROJECT_LABOR = 'Full Project Labor'
 
@@ -42,10 +43,10 @@ function pad3(n: number | string) {
 // nomeia é a rota, lendo o banco — a tela só avisa que esta invoice mexeu. Não
 // se espera pelo resultado: papel é consequência do lançamento, nunca condição.
 function syncInvoiceReceipts(invoiceId: string) {
-  fetch(`${BASE_PATH}/api/ride-folder`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  sessionHeaders().then(headers => fetch(`${BASE_PATH}/api/ride-folder`, {
+    method: 'POST', headers,
     body: JSON.stringify({ action: 'invoice-receipts', zone: 'US', invoiceId }),
-  }).catch(() => { /* Dropbox fora do ar não derruba a invoice */ })
+  })).catch(() => { /* Dropbox fora do ar não derruba a invoice */ })
 }
 
 async function syncInvoiceFolder(rideId: string, invoiceCode: string, service: string | null, oldInvoiceCode?: string) {
@@ -53,7 +54,7 @@ async function syncInvoiceFolder(rideId: string, invoiceCode: string, service: s
     const { data: r } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
     if (!r?.project_code) return
     await fetch(`${BASE_PATH}/api/ride-folder`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: await sessionHeaders(),
       body: JSON.stringify({
         action: 'invoice-folder', zone: 'US',
         code: r.project_code, name: r.project_name || '',

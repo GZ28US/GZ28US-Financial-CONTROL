@@ -198,7 +198,7 @@ export default function EditRidePage() {
     const found = new Set<string>()
     await Promise.all(['US'].map(async (zone) => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code, name: projectName, match: 'stock tune' }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'find', zone, code, name: projectName, match: 'stock tune' }) })
         const d = await res.json().catch(() => ({}))
         for (const f of d.files || []) found.add(String(f))
       } catch { /* status display only */ }
@@ -234,7 +234,7 @@ export default function EditRidePage() {
       const filename = `${prefix ? prefix + ' ' : ''}${projectCode}${projectName ? ' - ' + projectName : ''} ${osTag} Tune.${ext}`
       const put = async (extra: Record<string, unknown>) => {
         try {
-          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', code: projectCode, name: projectName, filename, contentBase64: b64, ...extra }) })
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', code: projectCode, name: projectName, filename, contentBase64: b64, ...extra }) })
           const d = await res.json().catch(() => ({}))
           return !!(d.ok && d.result === 'uploaded')
         } catch { return false }
@@ -357,7 +357,7 @@ export default function EditRidePage() {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await sessionHeaders(),
           body: JSON.stringify({ action: 'rename', zone, oldCode, oldName, newCode, name: projectName || '' }),
         })
         const data = await res.json().catch(() => ({}))
@@ -374,7 +374,7 @@ export default function EditRidePage() {
       for (const zone of ['US', 'BR']) {
         try {
           await fetch(`${BASE_PATH}/api/ride-folder`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: await sessionHeaders(),
             body: JSON.stringify({ action: 'retag', zone, code: newCode, oldCode, oldName, newCode, newName: projectName || '', rootFolder: 'BoneStock TuneRepository' }),
           })
         } catch { /* não-fatal: o arquivo re-sincroniza com o nome novo no próximo save do tune */ }

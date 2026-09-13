@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
+import { cronOk, readKeyOk, selfCallHeaders } from '@/lib/apiAuth.server'
 
 // O RECIBO TAMBÉM CHEGA NA PASTA QUANDO QUEM ESCREVE É ROBÔ.
 //
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
     const zone = String(inv.invoice_code || '').startsWith('BR.') ? 'BR' : 'US'
     try {
       const r = await fetch(`${base}/api/ride-folder`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: selfCallHeaders(),
         body: JSON.stringify({ action: 'invoice-receipts', zone, invoiceId: inv.id }),
       })
       const j = await r.json().catch(() => ({}))

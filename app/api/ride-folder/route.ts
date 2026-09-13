@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser, cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { createHash } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { supplierDirectoryFrom, matchSupplier } from '@/lib/supplierMatch'
@@ -252,6 +253,15 @@ async function syncMailFolder(action: 'create' | 'rename', code: string, name: s
 
 export async function POST(req: NextRequest) {
   try {
+    // PORTÃO (13/set/2026). Esta rota cria, renomeia, sobe e APAGA arquivo nas pastas
+    // dos carros no Dropbox, e respondia a qualquer pedido anônimo — medido em 12/set
+    // pela sessão PESCA/AutoBook: `invoice-receipts` sem sessão nem chave voltou 200.
+    // A auditoria de 11/set não a pegou. Entram: tela com admin logado (sessionHeaders),
+    // o cron/servidor do próprio app (selfCallHeaders) e sessão com a chave de leitura
+    // no HEADER — nunca na URL.
+    if (!cronOk(req) && !readKeyOk(req) && !(await requireUser(req))) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
     if (!process.env.DROPBOX_REFRESH_TOKEN || !process.env.DROPBOX_APP_KEY) {
       return NextResponse.json({ error: 'Dropbox folder sync not configured (missing DROPBOX_* env vars).' }, { status: 501 })
     }

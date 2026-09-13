@@ -882,7 +882,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
           r.onerror = reject
           r.readAsDataURL(blob)
         })
-        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone: 'US', code: rideCode, name: rideName, filename, subfolder: 'Performance', contentBase64: b64 }) })
+        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone: 'US', code: rideCode, name: rideName, filename, subfolder: 'Performance', contentBase64: b64 }) })
       } catch { /* non-fatal */ }
       // Receipt lines: BoneStock corrected → latest pull corrected (pulls are sorted newest first).
       const bs = pulls.find(isBoneStock)
@@ -1433,7 +1433,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const found = new Set<string>()
     await Promise.all(['US'].map(async (zone) => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'find', zone, code: rideCode, name: rideName, match: 'stock tune' }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'find', zone, code: rideCode, name: rideName, match: 'stock tune' }) })
         const d = await res.json().catch(() => ({}))
         for (const f of d.files || []) found.add(String(f))
       } catch { /* status display only */ }
@@ -1464,7 +1464,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const ruim: string[] = []
     await Promise.all(['US', 'BR'].map(async (zone) => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'retag-os', zone, code: rideCode, name: rideName, osTag: tag, rootFolder: BONESTOCK_REPO }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'retag-os', zone, code: rideCode, name: rideName, osTag: tag, rootFolder: BONESTOCK_REPO }) })
         const d = await res.json().catch(() => ({}))
         // Rename que falha em silêncio deixa as duas zonas dizendo coisas
         // diferentes sobre o mesmo carro. Melhor avisar do que fingir que deu.
@@ -1496,7 +1496,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     // O nome da pasta foi lido do Dropbox, não inventado.
     const put = async (extra: Record<string, unknown>): Promise<boolean> => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', code: rideCode, name: rideName, filename, contentBase64: b64, ...extra }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', code: rideCode, name: rideName, filename, contentBase64: b64, ...extra }) })
         const d = await res.json().catch(() => ({}))
         return d.ok && d.result === 'uploaded'
       } catch { return false }
@@ -1697,7 +1697,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
       const results = await Promise.all(['US'].map(async (zone) => {
         try {
-          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
           const d = await res.json().catch(() => ({}))
           return d.ok ? String(d.result) : 'error'
         } catch { return 'error' }
@@ -1731,7 +1731,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       const savedIn: string[] = []
       for (const zone of ['US']) {
         try {
-          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
           const d = await res.json().catch(() => ({}))
           if (d.ok && d.result === 'uploaded' && typeof d.path === 'string') {
             const folderOnly = d.path.split('/').slice(0, -1).join('\\')

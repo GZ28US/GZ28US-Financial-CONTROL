@@ -99,3 +99,15 @@ export function smsKeyOk(req: NextRequest): boolean {
 export function sendKeyOk(req: NextRequest): boolean {
   return mesmoSegredo(req.headers.get('x-send-key'), sendKeyValue())
 }
+
+/**
+ * SERVIDOR CHAMANDO ROTA DO PRÓPRIO APP (13/set/2026) — a cron invoice-receipts chama o
+ * /api/ride-folder por HTTP. Leva os mesmos segredos que o portão confere (cronOk,
+ * readKeyOk), lidos do ambiente do servidor; nunca vai para o navegador.
+ */
+export function selfCallHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (process.env.CRON_SECRET) h.Authorization = `Bearer ${process.env.CRON_SECRET}`
+  if (process.env.WHATSAPP_READ_KEY) h['x-read-key'] = process.env.WHATSAPP_READ_KEY
+  return h
+}

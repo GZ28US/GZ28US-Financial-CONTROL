@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { packTargetBhp, isBaselineName, BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 
 // BUILDS — every ride's performance data is grouped into builds (Build.01, Build.02…),
 // and a build IS a pack: it carries the pack name ("Z1250sc Alpha170 Pack"), which states
@@ -125,7 +126,7 @@ export default function RideBuildsPage() {
     for (const from of candidates) {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ action: 'rename-file', zone: 'US', code: ride.project_code, name: ride.project_name, from, to }),
         })
         const d = await res.json().catch(() => ({}))
