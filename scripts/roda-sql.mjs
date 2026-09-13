@@ -54,11 +54,18 @@ if (arquivo && pergunta) morre('--file e --pergunta não andam juntos')
 // Leitura tem de ser fácil (o pg_catalog só se lê por aqui), mas "fácil" não pode
 // virar porta de escrita: qualquer coisa que não seja um único SELECT/WITH vai pro
 // caminho do arquivo revisado.
+// TEXTO ENTRE APÓSTROFOS NÃO É COMANDO (13/set/2026). `has_table_privilege('anon', t,
+// 'TRUNCATE')` e `where note like 'onda 9 · do %'` eram recusados como escrita. Só vale
+// na PERGUNTA, e só porque ela roda dentro de `set transaction read only`: aí quem
+// recusa escrita é o banco, inclusive a escondida em texto executado por função
+// (query_to_xml('delete …')). No modo ARQUIVO a varredura segue crua de propósito —
+// `do $$ … execute 'drop table x' … $$` tem de continuar pedindo as duas chaves.
+const semTexto = s => s.replace(/'(?:[^']|'')*'/g, "''")
 if (pergunta) {
   const limpa = pergunta.trim().replace(/;+\s*$/, '')
-  if (/;/.test(limpa)) morre('--pergunta aceita UMA consulta só (achei ponto-e-vírgula no meio)')
+  if (/;/.test(semTexto(limpa))) morre('--pergunta aceita UMA consulta só (achei ponto-e-vírgula no meio)')
   if (!/^(select|with)\b/i.test(limpa)) morre('--pergunta só aceita SELECT (ou WITH … select). Escrita vai em arquivo .sql, com --confirmo.')
-  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|comment|notify|do)\b/i.test(limpa)) morre('--pergunta tem palavra de escrita dentro. Escrita vai em arquivo .sql, com --confirmo.')
+  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|comment|notify|do)\b/i.test(semTexto(limpa))) morre('--pergunta tem palavra de escrita dentro. Escrita vai em arquivo .sql, com --confirmo.')
 }
 
 // ── o SQL ───────────────────────────────────────────────────────────────────
@@ -69,13 +76,15 @@ if (arquivo) {
   sql = fs.readFileSync(p, 'utf8')
   rotulo = path.basename(p)
 } else {
-  sql = pergunta
-  rotulo = '(pergunta na linha de comando)'
+  sql = pergunta.trim().replace(/;+\s*$/, '')
+  rotulo = '(pergunta na linha de comando · transação só-leitura, imposta pelo banco)'
 }
 
 // ── o que este SQL FAZ, dito antes de fazer ─────────────────────────────────
 const semComentario = sql.replace(/^\s*--.*$/gm, '')
-const escreve = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|comment on)\b/i.test(semComentario)
+// o que se varre atrás de escrita: a pergunta sem os textos (ver semTexto); o arquivo, cru
+const varrido = pergunta ? semTexto(semComentario) : semComentario
+const escreve = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|comment on)\b/i.test(varrido)
 const temTransacao = /^\s*begin\s*;/im.test(semComentario) && /^\s*commit\s*;/im.test(semComentario)
 // CONTAR COMANDO RESPEITANDO $$ … $$: quebrar no ponto-e-vírgula cru parte os blocos
 // `do $$ … end $$` em pedaços e o resumo mente — dizia 56 comandos numa migration de
@@ -142,13 +151,13 @@ const APAGA = [
   [/\bdrop\s+(column|view|function|trigger|policy|index)\b/i, 'drop de objeto'],
   [/\btruncate\b/i, 'truncate'],
 ]
-const apagaOque = APAGA.filter(([re]) => re.test(semComentario)).map(([, n]) => n)
+const apagaOque = APAGA.filter(([re]) => re.test(varrido)).map(([, n]) => n)
 // DELETE conta como apagar mesmo COM where: o FIC1650 é uma linha só, e é dinheiro
 // (US$ 1.523,04). Linha de dinheiro apagada por engano não tem desfazer — pede as
 // duas chaves igual a um drop. E `delete` sem where ganha nome próprio no aviso,
 // porque esse leva a tabela inteira e não parece perigoso à primeira vista.
-if (/\bdelete\s+from\b/i.test(semComentario)) {
-  apagaOque.push(/\bdelete\s+from\s+[\w."]+\s*(;|$)/im.test(semComentario) ? 'delete SEM WHERE (tabela inteira)' : 'delete de linha')
+if (/\bdelete\s+from\b/i.test(varrido)) {
+  apagaOque.push(/\bdelete\s+from\s+[\w."]+\s*(;|$)/im.test(varrido) ? 'delete SEM WHERE (tabela inteira)' : 'delete de linha')
 }
 
 const fmt = new Intl.DateTimeFormat('pt-BR', {
@@ -199,6 +208,11 @@ const leSegredo = f => {
 
 const token = leSegredo('supabase-mgmt-token.txt')
 const dbUrl = leSegredo(`${projeto}-db-url.txt`)
+
+// A pergunta vai dentro de uma transação SÓ-LEITURA: é o banco, e não a lista de
+// palavras acima, quem garante que ela não escreve. Medido em 13/set/2026 pela
+// Management API: `transaction_read_only` volta "on" e o SELECT volta com as linhas.
+if (pergunta) sql = 'set transaction read only;\n' + sql
 
 async function viaManagementApi() {
   const r = await fetch(`https://api.supabase.com/v1/projects/${REF[projeto]}/database/query`, {
