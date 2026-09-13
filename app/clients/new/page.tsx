@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
-  BASE_PATH, clientCode, CLIENT_COUNTRIES, ENGLAND_REGIONS,
+  BASE_PATH, clientCode, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions,
   countryDefaults, formatUKPostcode, isUKPostcode,
 } from '@/lib/utils'
 import Header from '@/components/Header'
@@ -65,8 +65,9 @@ export default function NewClientPage() {
 
   // ZIP -> address autofill. USA uses zippopotam.us (city + state). Brazil uses
   // viacep.com.br (street + city + state). England uses postcodes.io (city + region;
-  // it has no street-level data, so ADDRESS stays manual). All fields stay editable;
-  // failures are silently ignored so the user can just type manually.
+  // it has no street-level data, so ADDRESS stays manual). Angola has NO lookup: its
+  // POSTAL CODE is optional free text. All fields stay editable; failures are
+  // silently ignored so the user can just type manually.
   useEffect(() => {
     const digits = form.zip.replace(/\D/g, '')
     if (form.country === 'USA' && digits.length === 5) lookupUSA(digits)
@@ -178,17 +179,24 @@ export default function NewClientPage() {
   const stateOptions =
     form.country === 'USA' ? usaStates
     : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : form.country === 'ANGOLA' ? angolaProvinceOptions(form.state)
     : brazilStates
   // Each country names its own postal code / subdivision, and shows its own samples.
-  const zipLabel = form.country === 'USA' ? 'ZIP' : form.country === 'ENGLAND' ? 'POSTCODE' : 'CEP'
-  const stateLabel = form.country === 'ENGLAND' ? 'REGION' : 'STATE'
+  const zipLabel =
+    form.country === 'USA' ? 'ZIP'
+    : form.country === 'ENGLAND' ? 'POSTCODE'
+    : form.country === 'ANGOLA' ? 'POSTAL CODE'
+    : 'CEP'
+  const stateLabel = form.country === 'ENGLAND' ? 'REGION' : form.country === 'ANGOLA' ? 'PROVINCE' : 'STATE'
   const phonePlaceholder =
     form.country === 'USA' ? '+1 (407) 123-4567'
     : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : form.country === 'ANGOLA' ? '+244 923 456 789'
     : '+55 (62) 99999-9999'
   const zipPlaceholder =
     form.country === 'USA' ? '32837'
     : form.country === 'ENGLAND' ? 'SW1A 1AA'
+    : form.country === 'ANGOLA' ? ''
     : '74000-000'
   const inputClass = 'bg-gray-900 border border-gray-700 rounded-2xl px-5 py-4 text-xl'
 

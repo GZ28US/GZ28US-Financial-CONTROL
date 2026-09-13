@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar } from '@/lib/utils'
+import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
@@ -145,9 +145,9 @@ export default function ViewRidePage() {
     const method = client.preferred_message_method || 'WhatsApp'
     const link = `${window.location.origin}${BASE_PATH}/rides/self/${rideId}`
     const firstName = (client.name || '').split(' ')[0]
-    const isBR = client.country === 'BRAZIL'
+    const isPT = clientSpeaksPortuguese(client.country)
     // WhatsApp uses *bold*/_italic_ markdown; SMS / E-Mail / Instagram use plain text.
-    const waBody = isBR
+    const waBody = isPT
       ? `Oi${firstName ? ` ${firstName}` : ''}! 👋\n\nQueremos a sua foto favorita do seu carro para o registro na *_GZ28 V8 SpeedShop_*. É só abrir o link, escolher a foto e tocar em *ENVIAR FOTO*:\n\n${link}\n\nObrigado! 📸`
       : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nWe'd love your favorite picture of your car for your record at *_GZ28 V8 SpeedShop_*. Just open the link, choose the photo and tap *SEND PHOTO*:\n\n${link}\n\nThank you! 📸`
     const plain = waBody.replace(/[*_]/g, '')

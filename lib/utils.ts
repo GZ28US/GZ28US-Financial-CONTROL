@@ -52,7 +52,9 @@ export function clientCode(c: { is_quote?: boolean | null; client_number: number
 
 // Countries a client address can use, in dropdown order. ENGLAND uses UK postcodes
 // (letters + digits, "SW1A 1AA") and the 9 English REGIONS in the state field.
-export const CLIENT_COUNTRIES = ['USA', 'BRAZIL', 'ENGLAND']
+// ANGOLA has no postal-code lookup or mask (the field stays optional free text) and
+// uses its 21 PROVINCES in the state field.
+export const CLIENT_COUNTRIES = ['USA', 'BRAZIL', 'ENGLAND', 'ANGOLA']
 
 // The 9 regions of England — exactly the strings postcodes.io returns as `region`,
 // so a postcode lookup always lands on one of these.
@@ -61,11 +63,36 @@ export const ENGLAND_REGIONS = [
   'South East', 'South West', 'West Midlands', 'Yorkshire and The Humber',
 ]
 
+// The 21 provinces of Angola (political-administrative division of 2024), in
+// alphabetical order.
+export const ANGOLA_PROVINCES = [
+  'Bengo', 'Benguela', 'Bié', 'Cabinda', 'Cuando', 'Cubango', 'Cuanza Norte',
+  'Cuanza Sul', 'Cunene', 'Huambo', 'Huíla', 'Icolo e Bengo', 'Luanda', 'Lunda Norte',
+  'Lunda Sul', 'Malanje', 'Moxico', 'Moxico Leste', 'Namibe', 'Uíge', 'Zaire',
+]
+
+// PROVINCE options for an ANGOLA client. A <select> whose value isn't among its options
+// SHOWS the first one while the form still holds (and saves) the stored value — so a
+// stored province outside the list (typed elsewhere, an old spelling, or blank) goes on
+// top as-is instead of looking silently replaced.
+export function angolaProvinceOptions(current: string): string[] {
+  return ANGOLA_PROVINCES.includes(current) ? ANGOLA_PROVINCES : [current, ...ANGOLA_PROVINCES]
+}
+
 // What an empty PHONE and the STATE field start as when the COUNTRY select changes.
 export function countryDefaults(country: string): { phone: string; state: string } {
   if (country === 'BRAZIL') return { phone: '+55 ', state: 'SP' }
   if (country === 'ENGLAND') return { phone: '+44 ', state: 'London' }
+  if (country === 'ANGOLA') return { phone: '+244 ', state: 'Luanda' }
   return { phone: '+1 ', state: 'FL' }
+}
+
+// Client-facing text (self-service forms, e-mails and WhatsApp texts to the client, the
+// printed invoice) is in PORTUGUESE for a Portuguese-speaking country: BRAZIL and
+// ANGOLA. Language ONLY — CPF, Brazilian states, the CEP lookup and anything else
+// Brazil-specific stay keyed on country === 'BRAZIL'.
+export function clientSpeaksPortuguese(country: string | null | undefined): boolean {
+  return country === 'BRAZIL' || country === 'ANGOLA'
 }
 
 // Mask a UK postcode as the user types: OUTWARD + space + INWARD (the inward half is
@@ -85,7 +112,8 @@ export function isUKPostcode(raw: string): boolean {
 // an individual WhatsApp chat, BY the client's country (both apps have clients from
 // several countries). Brazil -> +55 (DDD + number; a 10/11-digit "55…" is a DDD, not
 // the country code, so it still gets +55). England -> +44 (the national trunk "0" is
-// dropped: 07911 123456 -> 447911123456). USA (default) -> +1.
+// dropped: 07911 123456 -> 447911123456). Angola -> +244 (9 national digits, typed with
+// or without 244 / 00244: 923 456 789 -> 244923456789). USA (default) -> +1.
 export function toWaNumber(phone: string | null | undefined, country?: string | null): string {
   const digits = (phone || '').replace(/\D/g, '')
   if (!digits) return ''
@@ -98,6 +126,10 @@ export function toWaNumber(phone: string | null | undefined, country?: string | 
     const rest = digits.startsWith('44') && digits.length >= 12 ? digits.slice(2) : digits
     const local = rest.replace(/^0/, '')
     return local.length === 9 || local.length === 10 ? '44' + local : digits
+  }
+  if (country === 'ANGOLA') {
+    const local = angolaNational(digits)
+    return local.length === 9 ? '244' + local : digits
   }
   if (digits.startsWith('1') && digits.length === 11) return digits
   if (digits.length === 10) return '1' + digits
@@ -113,17 +145,36 @@ export function formatCPF(raw: string): string {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
 }
 
+// Angola's 9 national digits out of a phone typed as "+244 923456789", "244923456789",
+// "00244 923 456 789" or "923 456 789". The 244 / 00244 prefix is dropped only when the
+// length says it is one (12 / 14 digits); any other shape comes back as-is.
+function angolaNational(digits: string): string {
+  if (digits.length === 14 && digits.startsWith('00244')) return digits.slice(5)
+  if (digits.length === 12 && digits.startsWith('244')) return digits.slice(3)
+  return digits
+}
+
 // Display a phone number in its country's format:
 //   BR  +55 (11) 98121.5678  (mobile)  /  +55 (11) 3121.5678  (landline)
 //   UK  +44 7911 123456      (mobile)  /  +44 20 7946 0958    (London/2-digit area)
+//   AO  +244 923 456 789     (mobile 9…  /  landline 2… — always 3-3-3)
 //   US  +1 (321) 315.0973
-// `country` ('BRAZIL' | 'ENGLAND' | 'USA') forces the format; otherwise it's inferred
-// from the digits (leading 55/44 with 12-13 digits => Brazil/England, else US).
+// `country` ('BRAZIL' | 'ENGLAND' | 'ANGOLA' | 'USA') forces the format; otherwise it's
+// inferred from the digits (leading 55/44 with 12-13 digits => Brazil/England; exactly
+// 12 digits "244…" or 14 digits "00244…" => Angola; else US).
 // Unknown shapes return the original string untouched.
 export function formatPhone(phone: string | null | undefined, country?: string | null): string {
   if (!phone) return ''
   const digits = String(phone).replace(/\D/g, '')
   if (!digits) return String(phone)
+  const isAO = country === 'ANGOLA' || (!country && (
+    (digits.length === 12 && digits.startsWith('244')) || (digits.length === 14 && digits.startsWith('00244'))
+  ))
+  if (isAO) {
+    const local = angolaNational(digits)
+    if (local.length === 9) return `+244 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`
+    return String(phone)
+  }
   const isUK = country === 'ENGLAND' || (!country && digits.startsWith('44') && digits.length > 11)
   if (isUK) {
     // After +44 the national trunk "0" is dropped: 020 7946 0958 -> +44 20 7946 0958.

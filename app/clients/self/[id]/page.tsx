@@ -4,15 +4,16 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
-  BASE_PATH, formatCPF, isValidCPF, ENGLAND_REGIONS,
-  countryDefaults, formatUKPostcode, isUKPostcode,
+  BASE_PATH, formatCPF, isValidCPF, ENGLAND_REGIONS, angolaProvinceOptions,
+  countryDefaults, formatUKPostcode, isUKPostcode, clientSpeaksPortuguese,
 } from '@/lib/utils'
 
 // PUBLIC client self-service form. The shop sends a client this link (SEND CLIENT
 // on the client page) so the client fills in their own details and saves. It is
 // login-free (rendered outside AuthGate — see components/AuthGate.tsx) and has NO
 // app navigation or other links: only this page. The client-facing text is shown
-// in the CLIENT's language — Portuguese for a BRAZIL client, English otherwise.
+// in the CLIENT's language — Portuguese for a Portuguese-speaking client (BRAZIL,
+// ANGOLA), English otherwise.
 // The brand/logo are this app's. Reads/writes the one client row by id via anon key.
 
 const BRAND = 'GZ28 V8 SpeedShop'
@@ -45,18 +46,21 @@ const STRINGS = {
     email: 'E-MAIL', emailPh: 'voce@exemplo.com',
     instagram: 'INSTAGRAM', instagramPh: '@seuusuario',
     facebook: 'FACEBOOK', facebookPh: 'facebook.com/usuario ou @usuario',
-    country: 'PAÍS', countryOptions: [['BRAZIL', 'BRASIL'], ['USA', 'EUA'], ['ENGLAND', 'INGLATERRA']] as [string, string][],
+    country: 'PAÍS', countryOptions: [['BRAZIL', 'BRASIL'], ['USA', 'EUA'], ['ENGLAND', 'INGLATERRA'], ['ANGOLA', 'ANGOLA']] as [string, string][],
     phone: 'TELEFONE / WHATSAPP',
     cpfOptional: '(opcional)', cpfInvalid: 'CPF inválido. Corrija o CPF ou deixe o campo em branco.',
     looking: '— buscando endereço…',
     address: 'ENDEREÇO', addressPh: 'Rua, número, complemento',
     city: 'CIDADE', cityPh: 'Cidade',
-    state: 'ESTADO',
+    state: 'ESTADO', province: 'PROVÍNCIA', postalCode: 'CÓDIGO POSTAL',
     pref: 'COMO PREFERE RECEBER MENSAGENS',
     loading: 'Carregando…',
     notFoundTitle: 'Cadastro não encontrado', notFoundBody: `Confira o link recebido ou fale com a ${BRAND}.`,
     savedTitle: 'Dados salvos!', savedThanks: 'Obrigado', savedRest: '! Recebemos suas informações.',
     consent: `Ao enviar este formulário, você autoriza a ${BRAND} a coletar e usar seus dados pessoais (incluindo CPF) apenas para o seu atendimento, conforme a LGPD (Lei nº 13.709/2018). Não compartilhamos seus dados com terceiros sem necessidade, e você pode pedir acesso, correção ou exclusão a qualquer momento.`,
+    // Same promise without the CPF and the LGPD (both Brazil-only) — for a
+    // Portuguese-speaking client from outside Brazil (ANGOLA).
+    consentNoCpf: `Ao enviar este formulário, você autoriza a ${BRAND} a coletar e usar seus dados pessoais apenas para o seu atendimento. Não vendemos nem compartilhamos seus dados sem necessidade, e você pode pedir acesso, correção ou exclusão a qualquer momento.`,
   },
   en: {
     fillPrompt: 'Fill in your details and tap', saveWord: 'SAVE', saving: 'SAVING…',
@@ -64,13 +68,13 @@ const STRINGS = {
     email: 'EMAIL', emailPh: 'you@example.com',
     instagram: 'INSTAGRAM', instagramPh: '@username',
     facebook: 'FACEBOOK', facebookPh: 'facebook.com/user or @user',
-    country: 'COUNTRY', countryOptions: [['USA', 'USA'], ['BRAZIL', 'BRAZIL'], ['ENGLAND', 'ENGLAND']] as [string, string][],
+    country: 'COUNTRY', countryOptions: [['USA', 'USA'], ['BRAZIL', 'BRAZIL'], ['ENGLAND', 'ENGLAND'], ['ANGOLA', 'ANGOLA']] as [string, string][],
     phone: 'PHONE / WHATSAPP',
     cpfOptional: '(optional)', cpfInvalid: 'Invalid CPF. Fix the CPF or leave the field blank.',
     looking: '— looking up…',
     address: 'ADDRESS', addressPh: 'Street, number, unit',
     city: 'CITY', cityPh: 'City',
-    state: 'STATE',
+    state: 'STATE', province: 'PROVINCE', postalCode: 'POSTAL CODE',
     pref: 'PREFERRED MESSAGE METHOD',
     loading: 'Loading…',
     notFoundTitle: 'Record not found', notFoundBody: `Check the link you received or contact ${BRAND}.`,
@@ -105,19 +109,27 @@ export default function ClientSelfFormPage() {
     preferred_message_method: 'WhatsApp',
   })
 
-  // Language follows the client's country: BRAZIL -> Portuguese, otherwise English.
-  const L = form.country === 'BRAZIL' ? STRINGS.pt : STRINGS.en
+  // Language follows the client's country: BRAZIL / ANGOLA -> Portuguese, otherwise English.
+  const L = clientSpeaksPortuguese(form.country) ? STRINGS.pt : STRINGS.en
+  // The Portuguese consent names the CPF and the LGPD — Brazil-only; ANGOLA reads it without them.
+  const consent = L === STRINGS.pt && form.country !== 'BRAZIL' ? STRINGS.pt.consentNoCpf : L.consent
 
   // Each country names its own postal code / subdivision, and shows its own samples.
-  const zipLabel = form.country === 'USA' ? 'ZIP' : form.country === 'ENGLAND' ? 'POSTCODE' : 'CEP'
-  const stateLabel = form.country === 'ENGLAND' ? 'REGION' : L.state
+  const zipLabel =
+    form.country === 'USA' ? 'ZIP'
+    : form.country === 'ENGLAND' ? 'POSTCODE'
+    : form.country === 'ANGOLA' ? L.postalCode
+    : 'CEP'
+  const stateLabel = form.country === 'ENGLAND' ? 'REGION' : form.country === 'ANGOLA' ? L.province : L.state
   const phonePlaceholder =
     form.country === 'USA' ? '+1 (407) 123-4567'
     : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : form.country === 'ANGOLA' ? '+244 923 456 789'
     : '+55 (11) 99999-9999'
   const zipPlaceholder =
     form.country === 'USA' ? '32801'
     : form.country === 'ENGLAND' ? 'SW1A 1AA'
+    : form.country === 'ANGOLA' ? ''
     : '00000-000'
 
   useEffect(() => { if (id) load(id) }, [id])
@@ -158,9 +170,9 @@ export default function ClientSelfFormPage() {
 
   // ZIP/CEP/POSTCODE -> address autofill. USA uses zippopotam.us (city + state); Brazil
   // uses viacep.com.br (street + city + state); England uses postcodes.io (city + region
-  // — it has no street-level data, so ADDRESS stays manual). Called from the field's
-  // onChange (only on the client's own typing — never on load, so a saved address is
-  // never clobbered).
+  // — it has no street-level data, so ADDRESS stays manual). Angola has no lookup (its
+  // postal code is optional free text). Called from the field's onChange (only on the
+  // client's own typing — never on load, so a saved address is never clobbered).
   async function lookupZip(country: string, rawZip: string) {
     const digits = rawZip.replace(/\D/g, '')
     if (country === 'ENGLAND' && isUKPostcode(rawZip)) {
@@ -267,6 +279,7 @@ export default function ClientSelfFormPage() {
   const stateOptions =
     form.country === 'USA' ? usaStates
     : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : form.country === 'ANGOLA' ? angolaProvinceOptions(form.state)
     : brazilStates
 
   if (loading) {
@@ -364,7 +377,7 @@ export default function ClientSelfFormPage() {
                 lookupZip(form.country, v)
               }}
               className={inputClass}
-              inputMode={form.country === 'ENGLAND' ? 'text' : 'numeric'}
+              inputMode={form.country === 'ENGLAND' || form.country === 'ANGOLA' ? 'text' : 'numeric'}
               placeholder={zipPlaceholder}
             />
           </div>
@@ -395,7 +408,7 @@ export default function ClientSelfFormPage() {
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
-          <p className="text-xs text-gray-500 leading-relaxed">{L.consent}</p>
+          <p className="text-xs text-gray-500 leading-relaxed">{consent}</p>
 
           <button
             onClick={save}

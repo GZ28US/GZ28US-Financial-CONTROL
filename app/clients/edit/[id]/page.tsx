@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
-  BASE_PATH, formatCPF, isValidCPF, CLIENT_COUNTRIES, ENGLAND_REGIONS,
+  BASE_PATH, formatCPF, isValidCPF, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions,
   countryDefaults, formatUKPostcode,
 } from '@/lib/utils'
 import Header from '@/components/Header'
@@ -136,14 +136,19 @@ export default function EditClientPage() {
   const stateOptions =
     form.country === 'USA' ? usaStates
     : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : form.country === 'ANGOLA' ? angolaProvinceOptions(form.state)
     : brazilStates
   const phonePlaceholder =
     form.country === 'USA' ? '+1 (407) 123-4567'
     : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : form.country === 'ANGOLA' ? '+244 923 456 789'
     : '+55 (62) 99999-9999'
+  // This form has no labels — the placeholder IS the field's name. Angola has no
+  // postal-code format to sample, so it shows just the name.
   const zipPlaceholder =
     form.country === 'USA' ? 'ZIP'
     : form.country === 'ENGLAND' ? 'POSTCODE (SW1A 1AA)'
+    : form.country === 'ANGOLA' ? 'POSTAL CODE'
     : 'CEP'
 
   if (loading) {

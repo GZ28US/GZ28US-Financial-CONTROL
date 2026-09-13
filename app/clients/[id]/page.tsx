@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber, formatPhone } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, formatPhone, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 
 type Client = {
@@ -75,9 +75,9 @@ export default function ViewClientPage() {
     const method = client.preferred_message_method || 'WhatsApp'
     const link = `${window.location.origin}${BASE_PATH}/clients/self/${clientId}`
     const firstName = (client.name || '').split(' ')[0]
-    const isBR = client.country === 'BRAZIL'
+    const isPT = clientSpeaksPortuguese(client.country)
     // WhatsApp uses *bold*/_italic_ markdown; SMS / E-Mail / Instagram use plain text.
-    const waBody = isBR
+    const waBody = isPT
       ? `Oi${firstName ? ` ${firstName}` : ''}! 👋\n\nPara agilizar seu atendimento na *_GZ28 V8 SpeedShop_*, por favor preencha seus dados neste link e toque em *SALVAR*:\n\n${link}\n\nObrigado!`
       : `Hi${firstName ? ` ${firstName}` : ''}! 👋\n\nTo speed up your service at *_GZ28 V8 SpeedShop_*, please fill in your details at this link and tap *SAVE*:\n\n${link}\n\nThank you!`
     const plain = waBody.replace(/[*_]/g, '')

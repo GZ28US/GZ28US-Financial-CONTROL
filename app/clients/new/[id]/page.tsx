@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, CLIENT_COUNTRIES, ENGLAND_REGIONS, countryDefaults, formatUKPostcode } from '@/lib/utils'
+import { BASE_PATH, CLIENT_COUNTRIES, ENGLAND_REGIONS, angolaProvinceOptions, countryDefaults, formatUKPostcode } from '@/lib/utils'
 
 const usaStates = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -97,10 +97,12 @@ export default function EditClientPage({
   const stateOptions =
     form.country === 'USA' ? usaStates
     : form.country === 'ENGLAND' ? ENGLAND_REGIONS
+    : form.country === 'ANGOLA' ? angolaProvinceOptions(form.state)
     : brazilStates
   const phonePlaceholder =
     form.country === 'USA' ? '+1 (407) 123-4567'
     : form.country === 'ENGLAND' ? '+44 7911 123456'
+    : form.country === 'ANGOLA' ? '+244 923 456 789'
     : '+55 (62) 99999-9999'
 
   if (loading) {
@@ -206,7 +208,7 @@ export default function EditClientPage({
         </select>
 
         <input
-          placeholder={form.country === 'ENGLAND' ? 'POSTCODE (SW1A 1AA)' : form.country === 'USA' ? 'ZIP' : 'CEP'}
+          placeholder={form.country === 'ENGLAND' ? 'POSTCODE (SW1A 1AA)' : form.country === 'USA' ? 'ZIP' : form.country === 'ANGOLA' ? 'POSTAL CODE' : 'CEP'}
           value={form.zip}
           onChange={(e) =>
             setForm({

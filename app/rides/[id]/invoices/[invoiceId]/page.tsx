@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
-import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber } from '@/lib/utils'
+import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
@@ -497,11 +497,12 @@ export default function ViewInvoicePage() {
 
   // Regra do Márcio (31/jul/2026, caso Sidney Penna): cliente do BRASIL recebe a
   // fatura IMPRESSA/ENVIADA em PORTUGUÊS — os rótulos do print viram PT pelo
-  // client.country; a tela do app segue em inglês.
-  const ptPrint = client?.country === 'BRAZIL'
+  // client.country; a tela do app segue em inglês. Desde 13/set/2026 vale pra todo
+  // cliente de língua portuguesa (ANGOLA também) — só o rótulo "UF" é do Brasil.
+  const ptPrint = clientSpeaksPortuguese(client?.country)
   const T = ptPrint ? {
     quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
-    clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
+    clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: client?.country === 'ANGOLA' ? 'Cidade/Província' : 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
     vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Serviço',
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Impostos Flórida', itemsTotal: 'Total dos Itens',
     services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',

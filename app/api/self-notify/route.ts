@@ -152,7 +152,12 @@ async function avisoClient(db: SupabaseClient, id: string): Promise<Montagem> {
     country: txt(c.country), phone: txt(c.phone), cpf: txt(c.cpf), address: txt(c.address),
     city: txt(c.city), state: txt(c.state), zip: txt(c.zip), preferred_message_method: txt(c.preferred_message_method),
   }
-  const zipLabel = form.country === 'USA' ? 'ZIP' : form.country === 'ENGLAND' ? 'POSTCODE' : 'CEP'
+  const zipLabel =
+    form.country === 'USA' ? 'ZIP'
+    : form.country === 'ENGLAND' ? 'POSTCODE'
+    : form.country === 'ANGOLA' ? 'POSTAL CODE'
+    : 'CEP'
+  const stateLabel = form.country === 'ANGOLA' ? 'Province' : 'State'
   // Confirm to the internal REPORTS group (team language: English) that the client
   // filled in their own data, listing every field they filled (blanks skipped).
   const rows: string[] = []
@@ -164,7 +169,7 @@ async function avisoClient(db: SupabaseClient, id: string): Promise<Montagem> {
   if (form.country === 'BRAZIL' && form.cpf.trim()) rows.push(`CPF: ${form.cpf.trim()}`)
   if (form.address.trim()) rows.push(`Address: ${form.address.trim()}`)
   if (form.city.trim()) rows.push(`City: ${form.city.trim()}`)
-  if (form.state.trim()) rows.push(`State: ${form.state.trim()}`)
+  if (form.state.trim()) rows.push(`${stateLabel}: ${form.state.trim()}`)
   if (form.zip.trim()) rows.push(`${zipLabel}: ${form.zip.trim()}`)
   if (form.preferred_message_method.trim()) rows.push(`Messages: ${form.preferred_message_method.trim()}`)
   const body = `✅ *FORM FILLED BY THE CLIENT*\n${form.name || '—'}\nThe client filled in and saved their own details:${rows.length ? '\n\n' + rows.join('\n') : ''}`

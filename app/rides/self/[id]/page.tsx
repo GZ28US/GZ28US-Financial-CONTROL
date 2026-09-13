@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, clientSpeaksPortuguese } from '@/lib/utils'
 
 // PUBLIC car-photo upload page. The shop sends the client this link (PIC FROM CLIENT
 // on the ride page) so the client uploads their favorite picture of their car. It is
 // login-free (rendered outside AuthGate — see components/AuthGate.tsx) and has NO app
 // navigation: only this page. The picture becomes the ride's photo (rides.photo_url).
-// Client-facing text is in the CLIENT's language — Portuguese for a BRAZIL client,
-// English otherwise. The brand/logo are this app's.
+// Client-facing text is in the CLIENT's language — Portuguese for a Portuguese-speaking
+// client (BRAZIL, ANGOLA), English otherwise. The brand/logo are this app's.
 
 const BRAND = 'GZ28 V8 SpeedShop'
 const LOGO = 'logo_gz28_black.png'
@@ -55,8 +55,8 @@ export default function RideSelfPhotoPage() {
   const [preview, setPreview] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // Language follows the client's country: BRAZIL -> Portuguese, otherwise English.
-  const L = country === 'BRAZIL' ? STRINGS.pt : STRINGS.en
+  // Language follows the client's country: BRAZIL / ANGOLA -> Portuguese, otherwise English.
+  const L = clientSpeaksPortuguese(country) ? STRINGS.pt : STRINGS.en
 
   useEffect(() => { if (id) load(id) }, [id])
 

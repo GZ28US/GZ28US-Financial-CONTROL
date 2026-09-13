@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 import { requireUser, sendKeyOk } from '@/lib/apiAuth.server'
+import { clientSpeaksPortuguese } from '@/lib/utils'
 
 // Client e-mails sent BY THE APP (Graph, gz28us@hotmail.com) as real HTML with
 // a clickable button — the old mailto: composer produced plain text with a dead
@@ -26,22 +27,22 @@ export const dynamic = 'force-dynamic'
 const G = 'https://graph.microsoft.com/v1.0'
 const SITE = 'https://www.gz28us.com/ca'
 
-function emailHtml(o: { first: string; isBR: boolean; kind: 'car-photo' | 'client-form'; link: string }): { subject: string; html: string } {
+function emailHtml(o: { first: string; isPT: boolean; kind: 'car-photo' | 'client-form'; link: string }): { subject: string; html: string } {
   const btn = (label: string) =>
     `<p style="margin:28px 0"><a href="${o.link}" style="background:#b91c1c;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:14px 28px;border-radius:10px;display:inline-block">${label}</a></p>`
-  const fallback = o.isBR
+  const fallback = o.isPT
     ? `<p style="font-size:12px;color:#666">Se o botão não abrir, copie este endereço no navegador:<br/><a href="${o.link}">${o.link}</a></p>`
     : `<p style="font-size:12px;color:#666">If the button doesn't open, copy this address into your browser:<br/><a href="${o.link}">${o.link}</a></p>`
-  const signature = `<p style="margin-top:32px">${o.isBR ? 'Obrigado!' : 'Thank you!'}<br/><b>GZ28 V8 SpeedShop</b><br/>11320 Space Blvd, Orlando, FL 32837<br/>(321) 315-0973</p>`
+  const signature = `<p style="margin-top:32px">${o.isPT ? 'Obrigado!' : 'Thank you!'}<br/><b>GZ28 V8 SpeedShop</b><br/>11320 Space Blvd, Orlando, FL 32837<br/>(321) 315-0973</p>`
   const wrap = (inner: string) => `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;max-width:560px;line-height:1.5">${inner}${fallback}${signature}</div>`
-  const hi = `<p>${o.isBR ? 'Oi' : 'Hi'}${o.first ? ` ${o.first}` : ''}! 👋</p>`
+  const hi = `<p>${o.isPT ? 'Oi' : 'Hi'}${o.first ? ` ${o.first}` : ''}! 👋</p>`
 
   if (o.kind === 'car-photo') {
-    return o.isBR
+    return o.isPT
       ? { subject: 'Sua foto do carro — GZ28 V8 SpeedShop', html: wrap(`${hi}<p>Queremos a sua foto favorita do seu carro para o registro na <b>GZ28 V8 SpeedShop</b>. É só tocar no botão, escolher a foto e enviar:</p>${btn('ENVIAR FOTO')}`) }
       : { subject: 'Your car photo — GZ28 V8 SpeedShop', html: wrap(`${hi}<p>We'd love your favorite picture of your car for your record at <b>GZ28 V8 SpeedShop</b>. Just tap the button, choose the photo and send:</p>${btn('SEND PHOTO')}`) }
   }
-  return o.isBR
+  return o.isPT
     ? { subject: 'Complete seu cadastro — GZ28 V8 SpeedShop', html: wrap(`${hi}<p>Para agilizar seu atendimento na <b>GZ28 V8 SpeedShop</b>, preencha seus dados no botão abaixo e toque em <b>SALVAR</b>:</p>${btn('PREENCHER MEUS DADOS')}`) }
     : { subject: 'Complete your details — GZ28 V8 SpeedShop', html: wrap(`${hi}<p>To speed up your service at <b>GZ28 V8 SpeedShop</b>, please fill in your details at the button below and tap <b>SAVE</b>:</p>${btn('FILL IN MY DETAILS')}`) }
 }
@@ -74,20 +75,21 @@ export async function POST(req: NextRequest) {
       : { data: null }
     if (!c?.email) return NextResponse.json({ error: 'client has no email on file' }, { status: 400 })
 
-    const isBR = c.country === 'BRAZIL'
-    const noun = inv.is_quote ? (isBR ? 'orçamento' : 'quote') : (isBR ? 'fatura' : 'invoice')
+    // Portuguese for a Portuguese-speaking client (BRAZIL, ANGOLA).
+    const isPT = clientSpeaksPortuguese(c.country)
+    const noun = inv.is_quote ? (isPT ? 'orçamento' : 'quote') : (isPT ? 'fatura' : 'invoice')
     const first = (c.name || '').split(' ')[0]
     const filename = String(b?.filename || `${inv.invoice_code}.pdf`).replace(/[^\w.\- ]/g, '')
     const subject = filename.replace(/\.pdf$/i, '')
-    const btnLabel = inv.is_quote ? (isBR ? 'VER MEU ORÇAMENTO' : 'VIEW YOUR QUOTE') : (isBR ? 'VER MINHA FATURA' : 'VIEW YOUR INVOICE')
+    const btnLabel = inv.is_quote ? (isPT ? 'VER MEU ORÇAMENTO' : 'VIEW YOUR QUOTE') : (isPT ? 'VER MINHA FATURA' : 'VIEW YOUR INVOICE')
     const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;max-width:560px;line-height:1.5">` +
-      `<p>${isBR ? 'Olá' : 'Hello'}${first ? ` ${first}` : ''},</p>` +
-      (isBR
+      `<p>${isPT ? 'Olá' : 'Hello'}${first ? ` ${first}` : ''},</p>` +
+      (isPT
         ? `<p>Seu ${noun} <b>${inv.invoice_code}</b> está anexado a este e-mail em PDF — e você também pode abri-lo aqui:</p>`
         : `<p>Your ${noun} <b>${inv.invoice_code}</b> is attached to this email as a PDF — and you can also open it right here:</p>`) +
       `<p style="margin:28px 0"><a href="${pdfUrl}" style="background:#b91c1c;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:14px 28px;border-radius:10px;display:inline-block">${btnLabel}</a></p>` +
-      `<p>${isBR ? 'Qualquer dúvida, estamos à disposição.' : "Any questions, we're at your service."}</p>` +
-      `<p style="margin-top:32px">${isBR ? 'Obrigado,' : 'Thank you,'}<br/><b>GZ28 V8 SpeedShop</b><br/>11320 Space Blvd, Orlando, FL 32837<br/>(321) 315-0973</p></div>`
+      `<p>${isPT ? 'Qualquer dúvida, estamos à disposição.' : "Any questions, we're at your service."}</p>` +
+      `<p style="margin-top:32px">${isPT ? 'Obrigado,' : 'Thank you,'}<br/><b>GZ28 V8 SpeedShop</b><br/>11320 Space Blvd, Orlando, FL 32837<br/>(321) 315-0973</p></div>`
 
     const pdf = await fetch(pdfUrl)
     if (!pdf.ok) return NextResponse.json({ error: `pdf fetch failed (${pdf.status})` }, { status: 502 })
@@ -133,7 +135,7 @@ export async function POST(req: NextRequest) {
 
   const { subject, html } = emailHtml({
     first: (clientRow.name || '').split(' ')[0],
-    isBR: clientRow.country === 'BRAZIL',
+    isPT: clientSpeaksPortuguese(clientRow.country),
     kind, link,
   })
 
