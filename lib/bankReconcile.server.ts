@@ -60,6 +60,12 @@ export type Member = { table: string; id: string }
 // casado com esta linha, igual membro de pedido/folha — pointerKeys() é a régua única.
 export const MIXED_GROUP = 'mixed_group'
 export const MIXED_TABLES = new Set(['invoice_expenses', 'inputs', 'inventory', 'assets', 'assets_expenses', 'staff_expenses', 'fixed_cost_expenses'])
+// ENTRADA mista (BL 1.6.0, Márcio, 13/set — sessão do AutoBook): UMA entrada do banco paga RENDAS de várias invoices — o wire da
+// Tamiami de 04/set, −$128.000 = US.049.1 $119.084,75 + US.050.1 $8.915,25. Só invoice_incomes: aporte (capital_events) e
+// empréstimo (financing_events) são um evento cada, e despesa não entra em linha de entrada. MIXED_TABLES segue sendo só a SAÍDA.
+export const MIXED_IN_TABLES = new Set(['invoice_incomes'])
+// Tabela que pode ser membro de misto, em qualquer direção — a régua do mixedClash.
+const mixable = (t: string) => MIXED_TABLES.has(t) || MIXED_IN_TABLES.has(t)
 // Os membros de uma linha mista, com o nome de tabela de HOJE (JSON gravado — mesma cautela do backfill; ver lib/tableRenames).
 export function mixedMembers(line: any): Member[] {
   if (!line || line.matched_table !== MIXED_GROUP || !Array.isArray(line.matched_members)) return []
@@ -1077,10 +1083,11 @@ export async function adoptScheduled(db: any, line: any, a: any, opts: { engine:
 // MEMBRO DE MISTO não tem índice único: mora no JSON, e o bank_transactions_matched_uidx (matched_table, matched_id) só segura o
 // ponteiro. Quem, além desta linha, já conta um registro que este casamento conta? Outro misto vivo (para qualquer claim que conte
 // registro das tabelas do misto) e, no claim MISTO, também o ponteiro simples e o pedido (purchase_group) de cada membro. '' = ninguém.
+// Renda conta nas duas pontas (entrada mista): o casamento simples de uma renda que já é membro de misto vivo é recusado aqui.
 async function mixedClash(db: any, line: any, cand: { table: string; id: string; members?: Member[] }): Promise<string> {
   const grouped = cand.table === MIXED_GROUP || cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group'
-  const keys = grouped ? (cand.members || []).map(m => tabelaAtual(m.table) + ':' + String(m.id)) : [String(cand.table) + ':' + String(cand.id)]
-  if (!keys.some(k => MIXED_TABLES.has(k.slice(0, k.indexOf(':'))))) return ''
+  const keys = grouped ? (cand.members || []).map(m => tabelaAtual(m.table) + ':' + String(m.id)) : [tabelaAtual(String(cand.table)) + ':' + String(cand.id)]
+  if (!keys.some(k => mixable(k.slice(0, k.indexOf(':'))))) return ''
   const want = new Set(keys)
   const others = await fetchBankLines(db, 'id, match_status, matched_table, matched_id', (q: any) => q.eq('matched_table', MIXED_GROUP).eq('match_status', 'MATCHED').neq('id', line.id))
   for (const o of others) for (const m of mixedMembers(o)) if (want.has(m.table + ':' + m.id)) return m.table + ':' + m.id + ' já é membro do casamento misto da linha ' + o.id
@@ -1173,7 +1180,9 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
       // tabelaAtual() é idempotente — membro montado em memória (nome de hoje) passa igual.
       const byTable = new Map<string, string[]>()
       for (const m of cand.members || []) { const t = tabelaAtual(m.table); byTable.set(t, [...(byTable.get(t) || []), m.id]) }
-      for (const [t, ids] of byTable) await fill(t, ids, 'payment_date', line.date)
+      // Renda (só na ENTRADA mista) recebe paid_at — a baixa, com a mesma hora do casamento simples de renda —, nunca payment_date
+      // (o previsto). O fill só escreve onde está nulo e registra no backfill: o DESFAZER devolve só o que este casamento preencheu.
+      for (const [t, ids] of byTable) { if (t === 'invoice_incomes') await fill(t, ids, 'paid_at', paidAtFor(line.date)); else await fill(t, ids, 'payment_date', line.date) }
     }
   } catch (e) {
     // Falhou no meio: o que JÁ foi preenchido entra no backfill da linha antes de relançar — senão o DESFAZER não o acha.
@@ -1195,9 +1204,13 @@ async function wireInvoiceFor(db: any, l: any): Promise<{ invoice_id: string; co
   const { data } = await db.from('bank_transactions').select('name, amount, matched_table, matched_id')
     .gte('date', d0).lte('date', d1).ilike('name', '%WIRE%').eq('match_status', 'MATCHED')
   const wantIn = /INCOMING/i.test(String(l.name || ''))
-  const wires = (data || []).filter((w: any) => !FEE_RE.test(String(w.name || '')) && (wantIn ? num(w.amount) < 0 : num(w.amount) > 0) && ['invoice_incomes', 'invoice_expenses', 'invoice_items'].includes(String(w.matched_table)))
+  // Wire casado MISTO (BL 1.6.0 — o da Tamiami paga rendas de DUAS invoices) conta como wire do dia, mas não tem UMA invoice:
+  // é ambíguo — devolve null e a tarifa segue pro destino padrão (Regions Bank). Contá-lo evita o erro oposto: com ele fora da
+  // lista, um segundo wire simples no mesmo dia viraria «único» e levaria a tarifa que talvez seja do misto.
+  const wires = (data || []).filter((w: any) => !FEE_RE.test(String(w.name || '')) && (wantIn ? num(w.amount) < 0 : num(w.amount) > 0) && ['invoice_incomes', 'invoice_expenses', 'invoice_items', MIXED_GROUP].includes(String(w.matched_table)))
   if (wires.length !== 1) return null
   const w = wires[0]
+  if (w.matched_table === MIXED_GROUP) return null
   const { data: src } = await db.from(w.matched_table).select('invoice_id').eq('id', w.matched_id).maybeSingle()
   if (!src?.invoice_id) return null
   const { data: inv } = await db.from('invoices').select('id, invoice_code, is_quote').eq('id', src.invoice_id).maybeSingle()
@@ -1330,7 +1343,8 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       else if (t === 'invoice_incomes') await report('invoice_incomes', 'invoice_incomes.paid_at', b => b.eq('id', id).eq('paid_at', paidAtFor(bankDay)))
       else if (t === 'purchase_group') { for (const g of ['assets', 'inputs', 'inventory', 'invoice_expenses']) await report(g, `${g}.payment_date`, b => b.eq('purchase_group', id).eq('payment_date', bankDay)) }
       else if (t === 'kit_group') await report('invoice_items', 'invoice_items.payment_date', b => b.eq('kit_group', id).eq('payment_date', bankDay))
-      else if (t === MIXED_GROUP) { for (const m of mixedMembers(line)) await report(m.table, `${m.table}.payment_date`, b => b.eq('id', m.id).eq('payment_date', bankDay)) }
+      // Renda da entrada mista confere a BAIXA (paid_at, a hora do casamento); os outros membros, payment_date.
+      else if (t === MIXED_GROUP) { for (const m of mixedMembers(line)) { if (m.table === 'invoice_incomes') await report(m.table, 'invoice_incomes.paid_at', b => b.eq('id', m.id).eq('paid_at', paidAtFor(bankDay))); else await report(m.table, `${m.table}.payment_date`, b => b.eq('id', m.id).eq('payment_date', bankDay)) } }
     }
   }
   // PAID FROM cravado por causa DESTE casamento (bulk CERTO do Data Checker,
@@ -1342,7 +1356,8 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
   // desfazer o casamento desfaz a prova (revisão #20).
   if (line.match_status === 'MATCHED' && line.matched_table && line.matched_id) {
     // Grupo não é tabela: o pedido acha os itens pelo purchase_group; o misto anda pelos membros gravados na linha.
-    const targets: { t: string; id: string }[] = line.matched_table === 'purchase_group' ? [] : line.matched_table === MIXED_GROUP ? mixedMembers(line).map(m => ({ t: m.table, id: m.id })) : [{ t: line.matched_table, id: line.matched_id }]
+    // Renda não tem PAID FROM (quem paga é o cliente; a coluna sai do banco na onda 9): membro renda do misto fica fora.
+    const targets: { t: string; id: string }[] = line.matched_table === 'purchase_group' ? [] : line.matched_table === MIXED_GROUP ? mixedMembers(line).filter(m => m.table !== 'invoice_incomes').map(m => ({ t: m.table, id: m.id })) : [{ t: line.matched_table, id: line.matched_id }]
     if (line.matched_table === 'purchase_group') for (const g of ['assets', 'inputs', 'inventory', 'invoice_expenses']) {
       const { data: ms } = await db.from(g).select('id').eq('purchase_group', line.matched_id)
       for (const m of ms || []) targets.push({ t: g, id: m.id })

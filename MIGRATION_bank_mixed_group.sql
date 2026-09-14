@@ -6,6 +6,8 @@
 --   matched_table   = 'mixed_group'
 --   matched_id      = o id da própria linha (a convenção do expense_group)
 --   matched_members = [{"table": "<tabela>", "id": "<uuid>"}, …]   (2 a 10; a rota match_mixed valida)
+-- ENTRADA mista (acrescentada no mesmo dia, depois desta migration rodar — só este comentário mudou): a linha que ENTROU paga
+-- RENDAS de várias invoices, todas de invoice_incomes (o wire da Tamiami de 04/set, −$128.000 = US.049.1 + US.050.1). A coluna é a mesma.
 -- Toda escrita que devolve a linha a sem casamento limpa a coluna junto.
 --
 -- ORDEM: rode ESTA migration ANTES do deploy do código da BL 1.6.0. O código lê a coluna com rede (sem ela, lê sem ela);

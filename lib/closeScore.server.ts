@@ -422,6 +422,7 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
     if (!okDay(date)) continue
     if (amount <= 0.005) { if (amount < -0.005) skip('refund_received', -amount); continue }
     if (date < R.REGIONS_OPENED) { skip('pre_open_received', amount); continue }
+    // `pointed` já traz a renda membro de ENTRADA mista viva (pointerKeys — o wire da Tamiami que paga US.049.1 + US.050.1): recebida com prova, conta uma vez só.
     if (!judgeUntil || date > judgeUntil) { if (!pointed.has('invoice_incomes:' + p.id)) skip('fresh_received', amount); continue }
     if (pointed.has('invoice_incomes:' + p.id) || !acc.has(date.slice(0, 7))) continue
     recOpen.push({ key: 'invoice_incomes:' + p.id, p, amount, date, group: '' })

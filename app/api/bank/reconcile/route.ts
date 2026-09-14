@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill } from '@/lib/bankReconcile.server'
+import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill } from '@/lib/bankReconcile.server'
 import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
@@ -92,7 +92,8 @@ export async function GET(req: NextRequest) {
       // valor do banco acompanha pra conferir grupos (total mudou = não é mais certo).
       const acc: { table: string; id: string; amount: number; n: string }[] = []
       // Linha MISTA (BL 1.6.0): além do ponteiro, cada MEMBRO sai como par casado — o banco provou quem pagou cada um. O `amount`
-      // de um membro é o valor da linha INTEIRA (o Data Checker só usa `amount` pra conferir purchase_group).
+      // de um membro é o valor da linha INTEIRA (o Data Checker só usa `amount` pra conferir purchase_group). Renda da ENTRADA mista sai
+      // igual ('invoice_incomes:<id>'): casada é casada — o Data Checker não a lê como pagador (renda não tem PAID FROM).
       const matchedRows = await fetchBankLines(db, 'id, matched_table, matched_id, amount, match_engine, reviewed_at, name, merchant', (q: any) => q.eq('match_status', 'MATCHED').not('matched_id', 'is', null))
       for (const r of matchedRows) for (const k of pointerKeys(r)) { const i = k.indexOf(':'); acc.push({ table: k.slice(0, i), id: k.slice(i + 1), amount: Math.abs(num(r.amount)), n: String(r.merchant || r.name || '').slice(0, 60) }) }   // n: o comerciante — prova pro «sem fornecedor»
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
@@ -697,6 +698,8 @@ export async function POST(req: NextRequest) {
     // Decisão HUMANA: nasce vista (como o match à mão), sem motor, e NÃO ensina regra — um cupom misto não diz o fornecedor de nada.
     // Nada no registro muda (valor, pagador, origem, descrição): o banco só prova quem pagou. Escreve o elo da folha (reversível,
     // no backfill) e a data de pagamento onde falta; o DESFAZER em CASADAS/Bank Link devolve exatamente isso e nunca apaga membro.
+    // ENTRADA mista (mesma BL, mesmo dia): a linha que ENTROU paga rendas de várias invoices — o wire da Tamiami de 04/set, −$128.000
+    // = US.049.1 $119.084,75 + US.050.1 $8.915,25. Na renda o casamento só preenche a BAIXA (paid_at) onde falta, nunca o previsto.
     if (action === 'match_mixed') {
       const bankId2 = String(body.bank_id || '')
       const raw: any[] | null = Array.isArray(body.members) ? body.members : null
@@ -708,24 +711,33 @@ export async function POST(req: NextRequest) {
       // Qualquer linha em aberto (NEW/QUEUED); linha do balde casada pelo motor BUCKET não entra — DESFAZER/DESATRIBUIR primeiro.
       if (!['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' + (line.match_engine === ENGINE_BUCKET ? ' (linha do balde: DESFAZER antes de casar misto)' : '') }, { status: 409 })
       if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar' }, { status: 409 })
-      if (!(num(line.amount) > 0)) return NextResponse.json({ error: 'só saída casa com registros mistos' }, { status: 409 })
+      // A DIREÇÃO decide o pool e as tabelas (BL 1.6.0, entrada mista — Márcio, 13/set): SAÍDA (amount > 0) casa com registros de
+      // MIXED_TABLES do pool.out; ENTRADA (amount < 0, o wire da Tamiami de 04/set, −$128.000 = US.049.1 + US.050.1) casa só com
+      // RENDAS (invoice_incomes) do pool.inn — nada de aporte, empréstimo ou despesa. Pedido com registro da outra direção é recusado.
+      const amt0 = num(line.amount)
+      if (Math.abs(amt0) < 0.005) return NextResponse.json({ error: 'linha do banco de valor zero não casa' }, { status: 409 })
+      const inflow = amt0 < 0
+      const allowed = inflow ? MIXED_IN_TABLES : MIXED_TABLES
       if (raw.length < 2 || raw.length > 10) return NextResponse.json({ error: 'casamento misto pede de 2 a 10 registros' }, { status: 400 })
       const members = raw.map((m: any) => ({ table: tabelaAtual(String(m?.table || '')), id: String(m?.id || '') }))
       if (members.some(m => !m.table || !m.id)) return NextResponse.json({ error: 'membro sem table/id' }, { status: 400 })
       const keys = members.map(m => m.table + ':' + m.id)
       if (new Set(keys).size !== keys.length) return NextResponse.json({ error: 'registro repetido na lista de membros' }, { status: 400 })
-      const badT = [...new Set(members.filter(m => !MIXED_TABLES.has(m.table)).map(m => m.table))]
-      if (badT.length) return NextResponse.json({ error: 'tabela fora do casamento misto: ' + badT.join(', ') + ' (vale ' + [...MIXED_TABLES].join(', ') + ')' }, { status: 400 })
-      // Cada membro tem de ser SAÍDA válida do pool AGORA: livre de linha viva, não paga pela GZ28BR, não datada no futuro, valor
-      // não zero, estoque só PURCHASED, invoice só real (não orçamento). O valor sai do pool — nunca do pedido.
+      const wrongDir = [...new Set(members.filter(m => (inflow ? MIXED_TABLES : MIXED_IN_TABLES).has(m.table)).map(m => m.table))]
+      if (wrongDir.length) return NextResponse.json({ error: inflow ? 'a linha do banco é ENTRADA ($' + Math.abs(amt0).toFixed(2) + ' que entrou) e ' + wrongDir.join(', ') + ' é registro de SAÍDA — entrada mista só casa com rendas (invoice_incomes)' : 'a linha do banco é SAÍDA ($' + amt0.toFixed(2) + ' que saiu) e invoice_incomes é RENDA — saída mista só casa com ' + [...MIXED_TABLES].join(', ') }, { status: 400 })
+      const badT = [...new Set(members.filter(m => !allowed.has(m.table)).map(m => m.table))]
+      if (badT.length) return NextResponse.json({ error: 'tabela fora do casamento misto de ' + (inflow ? 'ENTRADA' : 'SAÍDA') + ': ' + badT.join(', ') + ' (vale ' + [...allowed].join(', ') + ')' }, { status: 400 })
+      // Cada membro tem de ser candidato válido do pool AGORA, na direção da linha. SAÍDA: livre de linha viva, não paga pela GZ28BR,
+      // não datada no futuro, valor não zero, estoque só PURCHASED, invoice só real (não orçamento). ENTRADA: renda livre de linha
+      // viva, de invoice real, não caída na GZ28BR (paid_to), não espelho de despesa, não futura. O valor sai do pool (absoluto) — nunca do pedido.
       const pool = await candidatePool(db)
-      const outByKey = new Map<string, any>(pool.out.map(c => [c.table + ':' + c.id, c]))
-      const cands = keys.map(k => outByKey.get(k))
+      const byKey = new Map<string, any>((inflow ? pool.inn : pool.out).map(c => [c.table + ':' + c.id, c]))
+      const cands = keys.map(k => byKey.get(k))
       const invalid = keys.filter((k, i) => !cands[i])
-      if (invalid.length) return NextResponse.json({ error: 'registro não vale como saída (já casado, pago pela GZ28BR, datado no futuro, valor zero, estoque não comprado ou invoice orçamento) — recarregue: ' + invalid.join(', ') }, { status: 409 })
-      const bank = Math.round(Math.abs(num(line.amount)) * 100) / 100
-      const sum = Math.round(cands.reduce((a: number, c: any) => a + num(c.amount), 0) * 100) / 100
-      if (Math.abs(sum - bank) >= 0.011) return NextResponse.json({ error: 'os registros somam $' + sum.toFixed(2) + ' e o banco cobrou $' + bank.toFixed(2) + ' — tem que somar exatamente o valor da linha' }, { status: 409 })
+      if (invalid.length) return NextResponse.json({ error: (inflow ? 'renda não vale como entrada (já casada — inclusive como membro de outro misto —, caiu na GZ28BR, espelho de despesa, datada no futuro, valor zero/negativo ou invoice orçamento)' : 'registro não vale como saída (já casado, pago pela GZ28BR, datado no futuro, valor zero, estoque não comprado ou invoice orçamento)') + ' — recarregue: ' + invalid.join(', ') }, { status: 409 })
+      const bank = Math.round(Math.abs(amt0) * 100) / 100
+      const sum = Math.round(cands.reduce((a: number, c: any) => a + Math.abs(num(c.amount)), 0) * 100) / 100
+      if (Math.abs(sum - bank) >= 0.011) return NextResponse.json({ error: 'os registros somam $' + sum.toFixed(2) + ' e o banco ' + (inflow ? 'recebeu' : 'cobrou') + ' $' + bank.toFixed(2) + ' — tem que somar exatamente o valor da linha' }, { status: 409 })
       // FOLHA/PESSOAL: elo gravado (bank_transaction_id) com QUALQUER linha recusa — a outra ponta pode ser um CASAR COM AJUSTE no meio
       // (linha ainda NEW, elo escrito antes do claim), e sobrescrever um elo "morto" contaria o registro duas vezes. Elo velho de linha
       // removida/resetada se limpa no SOLTAR do Data Checker (ELO SOLTO / SUBSTITUÍDA). payment_reference bank: segue a régua do pool (linha viva).
@@ -1252,7 +1264,7 @@ export async function POST(req: NextRequest) {
       for (const r of logs) if (!latest.has(r.bank_id)) latest.set(r.bank_id, r)
       const lines2 = await fetchAll(db, 'bank_transactions', '*', (q: any) => q.eq('match_status', 'NEW'))
       let matched = 0, statused = 0, gone = 0, errors2 = 0
-      let mixedPool: Set<string> | null = null   // saídas livres do pool, lidas uma vez e só se houver misto a restaurar (o writeMatch confere o resto)
+      let mixedPool: { out: Set<string>; inn: Set<string> } | null = null   // saídas e entradas livres do pool, lidas uma vez e só se houver misto a restaurar (o writeMatch confere o resto)
       for (const l of lines2) {
         const r = latest.get(String(l.id)); if (!r) continue
         try {
@@ -1281,10 +1293,13 @@ export async function POST(req: NextRequest) {
             // O elo da folha volta junto (guardado pelo elo vazio, no `pre`): sem ele o CASAR COM AJUSTE de outra linha oferecia a passagem.
             const pre: Backfill[] = [], relinked: string[] = []
             const unlink = async () => { for (const id of relinked) await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('id', id).eq('bank_transaction_id', l.id) }
+            // ENTRADA mista (linha com amount < 0): cada membro tem de ser RENDA livre do pool.inn (a régua do match_mixed na entrada);
+            // membro de tabela da outra direção = o diário não vale mais pra esta linha — fica NEW, como alvo sumido.
             if (r.matched_table === MIXED_GROUP) {
-              if (!mixedPool) mixedPool = new Set((await candidatePool(db)).out.map(c => c.table + ':' + c.id))
-              const free = mixedPool
-              if (members.length < 2 || members.some((m: any) => !free.has(m.table + ':' + m.id))) { gone++; continue }
+              if (!mixedPool) { const p0 = await candidatePool(db); mixedPool = { out: new Set(p0.out.map(c => c.table + ':' + c.id)), inn: new Set(p0.inn.map(c => c.table + ':' + c.id)) } }
+              const inflow = num(l.amount) < 0
+              const free = inflow ? mixedPool.inn : mixedPool.out, allowed = inflow ? MIXED_IN_TABLES : MIXED_TABLES
+              if (members.length < 2 || Math.abs(num(l.amount)) < 0.005 || members.some((m: any) => !allowed.has(m.table) || !free.has(m.table + ':' + m.id))) { gone++; continue }
               for (const m of members.filter((x: any) => x.table === 'staff_expenses')) {
                 const { data: ok, error } = await db.from('staff_expenses').update({ bank_transaction_id: l.id }).eq('id', m.id).is('bank_transaction_id', null).select('id')
                 if (error || !ok || !ok.length) { await unlink(); throw new Error('elo da folha') }
