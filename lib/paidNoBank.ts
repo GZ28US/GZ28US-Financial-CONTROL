@@ -63,7 +63,12 @@ export const orlandoDay = (ts: unknown): string => {
   if (!s) return ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
   const t = Date.parse(s)
-  return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) : ''
+  if (!Number.isFinite(t)) return ''
+  // Meia-noite UTC EXATA é data de calendário gravada crua (seletor de data → 'AAAA-MM-DDT00:00:00Z'), não instante: medido em
+  // 14/set, 21 das 166 rendas baixadas estão assim (129 ao meio-dia UTC, o resto com hora de verdade). Converter essas para
+  // Orlando jogaria o recebimento para o dia ANTERIOR; o dia é o que está escrito.
+  if (new Date(t).toISOString().endsWith('T00:00:00.000Z')) return new Date(t).toISOString().slice(0, 10)
+  return new Date(t).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 }
 
 // Quem pagou é a GZ28US? (renda: quem recebeu.) A régua de lib/payerRule decide onde o vazio é GZ28US escondido.

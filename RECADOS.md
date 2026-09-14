@@ -29,8 +29,10 @@ tudo no ar** (master 4fddd2b, deploy READY 01:13 Orlando, conferido no código s
   - Índice único (client_id, invoice_code) nos dois. Criar invoice com código repetido no mesmo cliente passa a dar 23505, de propósito.
   - Os elos das despesas das 006.N (US, 58) e das 085.N (BR, 68) foram preenchidos, com trilha `shopping-invoice-elos`.
   - O motor (`lib/crossing.server.ts`) ainda NÃO rodou.
-- **Achado de passagem (não consertado):** `lib/closeScore.server.ts` tira o dia do `paid_at` do UTC cru. Renda baixada depois das
-  20h de Orlando cai no dia seguinte (lei O RELÓGIO). O card novo usa o dia de Orlando (`orlandoDay` em lib/paidNoBank.ts).
+- **Achado de passagem (não consertado):** `lib/closeScore.server.ts` e o DFC (`lib/financials.ts`, cashDate) tiram o dia do `paid_at`
+  do UTC cru. Renda baixada com hora real depois das 20h de Orlando cai no dia seguinte (lei O RELÓGIO). **Cuidado ao consertar:**
+  medido em 14/set, das 166 rendas baixadas, 129 estão ao meio-dia UTC e **21 à meia-noite UTC exata**, que é data de calendário
+  gravada crua. Converter essas para Orlando as joga para o dia ANTERIOR. O `orlandoDay` de lib/paidNoBank.ts já trata as duas.
 
 ## 14/set/2026 (00h38 Orlando) · da sessão do Márcio para a sessão do João — LEI DO PLAID NO FUNIL + TARIFA INTERNACIONAL (BL 1.7.0)
 
