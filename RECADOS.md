@@ -56,6 +56,10 @@ em posto, mercado e loja.
   invoices = ambíguo, a tarifa fica no destino padrão. No placar do fechamento a renda membro de misto vivo já é «recebida com prova».
   Revisão: se o backfill não chega na linha, o `writeMatch` tenta de novo e, falhando, desfaz o `paid_at`/`payment_date` que acabou de
   preencher (senão o DESFAZER deixava a renda recebida sem aviso); o PONTEIRO MORTO do misto tem texto e confirmação das duas direções.
+- **13/set (noite) · MISTO COM SINAL (BL 1.6.1 · DC 1.54.1):** a direção da linha deixou de escolher a tabela e passou a dar o SINAL. Cada
+  membro (qualquer tabela de gasto ou renda) é procurado nos dois pools: do lado da linha soma, do lado oposto desconta, e o líquido bate
+  com o banco. Caso: `ec82c762…` «STRIPE TRANSFER GZ28 V8 SPEEDS», 11/ago, −US$ 1.318,84 = 4 vendas de credencial SEMA (créditos em
+  fixed_cost_expenses, +1.375,00) − tarifa Stripe (56,16). Régua única `mixedNet()` no match_mixed, no RESTAURAR DIÁRIO e no VALOR MUDOU.
 
 **Quem casa a Wawa e o wire da Tamiami:** a sessão do AutoBook, pela API, depois do deploy. Esta mudança não escreveu nada no banco.
 

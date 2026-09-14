@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill } from '@/lib/bankReconcile.server'
+import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixable, mixedNet, mixedFromPool, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill, type Pool } from '@/lib/bankReconcile.server'
 import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
@@ -212,12 +212,14 @@ export async function GET(req: NextRequest) {
         for (const l of blines) {
           if (l.match_engine !== ENGINE_BUCKET && !['staff_expenses', 'expense_group', MIXED_GROUP].includes(String(l.matched_table))) continue
           if (l.matched_table === MIXED_GROUP) {
-            // CASAMENTO MISTO (BL 1.6.0): membro que sumiu = ponteiro morto (DESFAZER devolve a linha); membros que somam outro valor = VALOR MUDOU.
+            // CASAMENTO MISTO (BL 1.6.0): membro que sumiu = ponteiro morto (DESFAZER devolve a linha); membros cujo líquido dá outro valor = VALOR MUDOU.
             const ms = mixedMembers(l)
             const amts = await memberAmounts(db, ms)
             const gone = ms.filter(m => !amts.has(m.table + ':' + m.id))
             if (!ms.length || gone.length) deadPointers.push({ bank_id: l.id, table: MIXED_GROUP, id: l.matched_id, label: (l.merchant || l.name || '') + ' · misto: ' + (ms.length ? gone.map(m => m.table).join(', ') + ' sumiu' : 'sem membros gravados'), amount: Math.abs(num(l.amount)) })
-            else { const s = Math.round(ms.reduce((a, m) => a + (amts.get(m.table + ':' + m.id) || 0), 0) * 100) / 100; if (Math.abs(s - Math.abs(num(l.amount))) >= 0.011) amountDrift.push({ bank_id: l.id, row_id: ms[0].id, bank_amount: Math.abs(num(l.amount)), row_amount: s, label: (l.merchant || l.name || '') + ' · misto ×' + ms.length }) }
+            // A soma é COM SINAL (BL 1.6.1, mixedNet — a régua do match_mixed): o registro do lado oposto da linha desconta (o repasse
+            // da Stripe = créditos das credenciais − a tarifa). Soma crua em valor absoluto chamava o casamento líquido certo de VALOR MUDOU.
+            else { const mn = mixedNet(num(l.amount), ms.map(m => ({ table: m.table, id: m.id, amount: amts.get(m.table + ':' + m.id) || 0 }))); if (!mn.ok) amountDrift.push({ bank_id: l.id, row_id: ms[0].id, bank_amount: Math.abs(num(l.amount)), row_amount: mn.net, label: (l.merchant || l.name || '') + ' · misto ×' + ms.length }) }
             continue
           }
           if (l.matched_table === 'staff_expenses') { if (!expIds.has(String(l.matched_id))) deadPointers.push({ bank_id: l.id, table: 'staff_expenses', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) }); continue }   // ponteiro morto: balde + folha casada (CASAR COM AJUSTE)
@@ -700,6 +702,8 @@ export async function POST(req: NextRequest) {
     // no backfill) e a data de pagamento onde falta; o DESFAZER em CASADAS/Bank Link devolve exatamente isso e nunca apaga membro.
     // ENTRADA mista (mesma BL, mesmo dia): a linha que ENTROU paga rendas de várias invoices — o wire da Tamiami de 04/set, −$128.000
     // = US.049.1 $119.084,75 + US.050.1 $8.915,25. Na renda o casamento só preenche a BAIXA (paid_at) onde falta, nunca o previsto.
+    // MISTO COM SINAL (BL 1.6.1, 13/set): o repasse da Stripe de 11/ago, −$1.318,84 = 4 vendas de credencial SEMA (créditos em
+    // fixed_cost_expenses, +$1.375,00) − a tarifa da Stripe ($56,16) — registro do lado oposto da linha DESCONTA (mixedNet).
     if (action === 'match_mixed') {
       const bankId2 = String(body.bank_id || '')
       const raw: any[] | null = Array.isArray(body.members) ? body.members : null
@@ -711,33 +715,33 @@ export async function POST(req: NextRequest) {
       // Qualquer linha em aberto (NEW/QUEUED); linha do balde casada pelo motor BUCKET não entra — DESFAZER/DESATRIBUIR primeiro.
       if (!['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' + (line.match_engine === ENGINE_BUCKET ? ' (linha do balde: DESFAZER antes de casar misto)' : '') }, { status: 409 })
       if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar' }, { status: 409 })
-      // A DIREÇÃO decide o pool e as tabelas (BL 1.6.0, entrada mista — Márcio, 13/set): SAÍDA (amount > 0) casa com registros de
-      // MIXED_TABLES do pool.out; ENTRADA (amount < 0, o wire da Tamiami de 04/set, −$128.000 = US.049.1 + US.050.1) casa só com
-      // RENDAS (invoice_incomes) do pool.inn — nada de aporte, empréstimo ou despesa. Pedido com registro da outra direção é recusado.
+      // A DIREÇÃO da linha decide o SINAL de cada membro, não a tabela (BL 1.6.1, misto com sinal — o repasse da Stripe, 13/set; na
+      // BL 1.6.0 a saída só aceitava MIXED_TABLES do pool.out e a entrada só rendas do pool.inn). Tabela: qualquer uma de mixable()
+      // (as sete de gasto e a renda) — nada de aporte, empréstimo, pedido ou invoice_items. Cada membro é procurado nos DOIS pools:
+      // do lado da linha soma, do lado oposto desconta (mixedNet, a régua única): o crédito de gasto (valor negativo, pool.inn) entra
+      // numa linha que ENTROU, a despesa comum (pool.out) desconta numa entrada, a renda desconta numa saída.
       const amt0 = num(line.amount)
       if (Math.abs(amt0) < 0.005) return NextResponse.json({ error: 'linha do banco de valor zero não casa' }, { status: 409 })
       const inflow = amt0 < 0
-      const allowed = inflow ? MIXED_IN_TABLES : MIXED_TABLES
       if (raw.length < 2 || raw.length > 10) return NextResponse.json({ error: 'casamento misto pede de 2 a 10 registros' }, { status: 400 })
       const members = raw.map((m: any) => ({ table: tabelaAtual(String(m?.table || '')), id: String(m?.id || '') }))
       if (members.some(m => !m.table || !m.id)) return NextResponse.json({ error: 'membro sem table/id' }, { status: 400 })
       const keys = members.map(m => m.table + ':' + m.id)
       if (new Set(keys).size !== keys.length) return NextResponse.json({ error: 'registro repetido na lista de membros' }, { status: 400 })
-      const wrongDir = [...new Set(members.filter(m => (inflow ? MIXED_TABLES : MIXED_IN_TABLES).has(m.table)).map(m => m.table))]
-      if (wrongDir.length) return NextResponse.json({ error: inflow ? 'a linha do banco é ENTRADA ($' + Math.abs(amt0).toFixed(2) + ' que entrou) e ' + wrongDir.join(', ') + ' é registro de SAÍDA — entrada mista só casa com rendas (invoice_incomes)' : 'a linha do banco é SAÍDA ($' + amt0.toFixed(2) + ' que saiu) e invoice_incomes é RENDA — saída mista só casa com ' + [...MIXED_TABLES].join(', ') }, { status: 400 })
-      const badT = [...new Set(members.filter(m => !allowed.has(m.table)).map(m => m.table))]
-      if (badT.length) return NextResponse.json({ error: 'tabela fora do casamento misto de ' + (inflow ? 'ENTRADA' : 'SAÍDA') + ': ' + badT.join(', ') + ' (vale ' + [...allowed].join(', ') + ')' }, { status: 400 })
-      // Cada membro tem de ser candidato válido do pool AGORA, na direção da linha. SAÍDA: livre de linha viva, não paga pela GZ28BR,
-      // não datada no futuro, valor não zero, estoque só PURCHASED, invoice só real (não orçamento). ENTRADA: renda livre de linha
-      // viva, de invoice real, não caída na GZ28BR (paid_to), não espelho de despesa, não futura. O valor sai do pool (absoluto) — nunca do pedido.
+      const badT = [...new Set(members.filter(m => !mixable(m.table)).map(m => m.table))]
+      if (badT.length) return NextResponse.json({ error: 'tabela fora do casamento misto: ' + badT.join(', ') + ' (vale ' + [...MIXED_TABLES, ...MIXED_IN_TABLES].join(', ') + ')' }, { status: 400 })
+      // Cada membro tem de ser candidato LIVRE do pool AGORA, em um dos dois lados: livre de linha viva (inclusive como membro de outro
+      // misto), não paga pela GZ28BR (renda: não caída na GZ28BR), não espelho de despesa, não datada no futuro, valor não zero, estoque
+      // só PURCHASED, invoice só real (não orçamento). O valor sai do pool (absoluto) — nunca do pedido.
       const pool = await candidatePool(db)
-      const byKey = new Map<string, any>((inflow ? pool.inn : pool.out).map(c => [c.table + ':' + c.id, c]))
-      const cands = keys.map(k => byKey.get(k))
-      const invalid = keys.filter((k, i) => !cands[i])
-      if (invalid.length) return NextResponse.json({ error: (inflow ? 'renda não vale como entrada (já casada — inclusive como membro de outro misto —, caiu na GZ28BR, espelho de despesa, datada no futuro, valor zero/negativo ou invoice orçamento)' : 'registro não vale como saída (já casado, pago pela GZ28BR, datado no futuro, valor zero, estoque não comprado ou invoice orçamento)') + ' — recarregue: ' + invalid.join(', ') }, { status: 409 })
+      const found = mixedFromPool(pool, amt0, members)
+      if (found.missing.length) return NextResponse.json({ error: 'registro não é candidato livre (já casado — inclusive como membro de outro misto —, pago pela GZ28BR ou renda caída na GZ28BR, espelho de despesa, datado no futuro, valor zero, estoque não comprado ou invoice orçamento) — recarregue: ' + found.missing.join(', ') }, { status: 409 })
+      if (found.both.length) return NextResponse.json({ error: 'registro aparece nos dois lados do pool (entrada e saída) — recarregue: ' + found.both.join(', ') }, { status: 409 })
+      const cands = found.cands, mn = found.net
       const bank = Math.round(Math.abs(amt0) * 100) / 100
-      const sum = Math.round(cands.reduce((a: number, c: any) => a + Math.abs(num(c.amount)), 0) * 100) / 100
-      if (Math.abs(sum - bank) >= 0.011) return NextResponse.json({ error: 'os registros somam $' + sum.toFixed(2) + ' e o banco ' + (inflow ? 'recebeu' : 'cobrou') + ' $' + bank.toFixed(2) + ' — tem que somar exatamente o valor da linha' }, { status: 409 })
+      const dirTxt = inflow ? 'ENTRADA ($' + bank.toFixed(2) + ' que entrou)' : 'SAÍDA ($' + bank.toFixed(2) + ' que saiu)'
+      if (!mn.onSide || !(mn.plus > 0.005)) return NextResponse.json({ error: 'a linha do banco é ' + dirTxt + ' e nenhum registro está do lado dela — todos são ' + (inflow ? 'SAÍDA (gasto, ou estorno de renda)' : 'ENTRADA (renda, ou crédito/estorno de gasto)') + '; o lado oposto só desconta, então o misto precisa de pelo menos um registro que ' + (inflow ? 'entrou' : 'saiu') }, { status: 409 })
+      if (Math.abs(mn.net - bank) >= 0.011) return NextResponse.json({ error: 'os registros dão, com sinal, +$' + mn.plus.toFixed(2) + (mn.minus ? ' −$' + mn.minus.toFixed(2) : '') + ' = $' + mn.net.toFixed(2) + ' e o banco ' + (inflow ? 'recebeu' : 'cobrou') + ' $' + bank.toFixed(2) + ' — o líquido tem que bater exatamente com o valor da linha' }, { status: 409 })
       // FOLHA/PESSOAL: elo gravado (bank_transaction_id) com QUALQUER linha recusa — a outra ponta pode ser um CASAR COM AJUSTE no meio
       // (linha ainda NEW, elo escrito antes do claim), e sobrescrever um elo "morto" contaria o registro duas vezes. Elo velho de linha
       // removida/resetada se limpa no SOLTAR do Data Checker (ELO SOLTO / SUBSTITUÍDA). payment_reference bank: segue a régua do pool (linha viva).
@@ -773,8 +777,10 @@ export async function POST(req: NextRequest) {
         try { takenNow = await expenseTaken(db) } catch (e) { await rollback(); return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 500 }) }
         if (staffIds.some(i => takenNow.has(i))) { await rollback(); return NextResponse.json({ error: 'registro da folha acabou de ser casado por outra linha — recarregue' }, { status: 409 }) }
       }
-      const short = (c: any) => { const seg = String(c.label || '').split(' · '); return seg[0] + (seg[1] ? ' ' + seg[1].slice(0, 22) : '') + ' $' + num(c.amount).toFixed(2) }
-      const note = (String(body.note || '').trim() || ('MISTO · ' + members.length + ' registros · ' + cands.map(short).join(' + '))).slice(0, 150)
+      // Nota com o LÍQUIDO na frente (BL 1.6.1): «MISTO · 5 registros · +1375,00 −56,16 · …» — o que soma e o que desconta, depois os registros.
+      const brl = (v: number) => v.toFixed(2).replace('.', ',')
+      const short = (c: any, sign: number) => { const seg = String(c.label || '').split(' · '); return (sign < 0 ? '−' : '+') + seg[0] + (seg[1] ? ' ' + seg[1].slice(0, 22) : '') + ' $' + num(c.amount).toFixed(2) }
+      const note = (String(body.note || '').trim() || ('MISTO · ' + members.length + ' registros · +' + brl(mn.plus) + (mn.minus ? ' −' + brl(mn.minus) : '') + ' · ' + cands.map((c: any, i: number) => short(c, mn.parts[i].sign)).join(' '))).slice(0, 150)
       const cnd = { table: MIXED_GROUP, id: String(line.id), members }
       try { await writeMatch(db, line, cnd, { matched_members: members, matched_note: note, match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }, pre) }
       catch (e) {
@@ -789,9 +795,10 @@ export async function POST(req: NextRequest) {
         const msg = String((e as Error).message || e)
         return NextResponse.json({ error: msg.slice(0, 200), needs_migration: MIGRATION_RE.test(msg) }, { status: 409 })
       }
-      const parts = cands.map((c: any) => c.table + ' $' + num(c.amount).toFixed(2)).join(' + ')
+      const parts = mn.parts.map((p, i) => (i ? (p.sign > 0 ? ' + ' : ' − ') : (p.sign > 0 ? '' : '−')) + p.table + ' $' + p.amount.toFixed(2)).join('')
       await db.from('data_fixes').insert({ check_key: 'bank-reconcile', table_name: 'bank_transactions', row_id: line.id, field: 'match_status', old_value: String(line.match_status), new_value: 'MATCHED', label: ('MISTO · ' + line.date + ' · ' + (line.merchant || line.name || '') + ' · $' + bank.toFixed(2) + ' = ' + parts).slice(0, 200) }).then(() => undefined, () => undefined)
-      return NextResponse.json({ ok: true, status: 'MATCHED', bank, sum, note, members: cands.map((c: any) => ({ table: c.table, id: c.id, amount: num(c.amount), label: c.label })) })
+      // `sum` é o LÍQUIDO (plus − minus); cada membro diz o sinal com que entrou na conta (+1 do lado da linha, −1 do lado oposto).
+      return NextResponse.json({ ok: true, status: 'MATCHED', bank, sum: mn.net, plus: mn.plus, minus: mn.minus, note, members: cands.map((c: any, i: number) => ({ table: c.table, id: c.id, amount: num(c.amount), sign: mn.parts[i].sign, label: c.label })) })
     }
     // SOLTAR (Data Checker · ELO SOLTO): a passagem diz que casou, a linha do banco não a aponta — só limpa o elo.
     if (action === 'unlink_expense') {
@@ -1264,7 +1271,7 @@ export async function POST(req: NextRequest) {
       for (const r of logs) if (!latest.has(r.bank_id)) latest.set(r.bank_id, r)
       const lines2 = await fetchAll(db, 'bank_transactions', '*', (q: any) => q.eq('match_status', 'NEW'))
       let matched = 0, statused = 0, gone = 0, errors2 = 0
-      let mixedPool: { out: Set<string>; inn: Set<string> } | null = null   // saídas e entradas livres do pool, lidas uma vez e só se houver misto a restaurar (o writeMatch confere o resto)
+      let mixedPool: Pool | null = null   // o pool (saídas e entradas livres), lido uma vez e só se houver misto a restaurar (o writeMatch confere o resto)
       for (const l of lines2) {
         const r = latest.get(String(l.id)); if (!r) continue
         try {
@@ -1286,18 +1293,20 @@ export async function POST(req: NextRequest) {
             // como writeUnmatch já faz com bank_transactions.backfill; idempotente, e
             // o MATCH que o restore grava de volta já sai com o nome de hoje.
             const members = (Array.isArray(r.members) ? r.members : []).map((m: any) => ({ ...m, table: tabelaAtual(m?.table) }))
-            // CASAMENTO MISTO (BL 1.6.0): membro não tem índice único — cada um tem de ser SAÍDA livre do pool AGORA (a régua do match_mixed:
+            // CASAMENTO MISTO (BL 1.6.0): membro não tem índice único — cada um tem de ser candidato livre do pool AGORA (a régua do match_mixed:
             // livre de linha viva, não GZ28BR, não futura, estoque comprado, invoice real); senão o alvo sumiu ou foi tomado e a linha fica NEW.
             // O elo da folha volta junto (guardado pelo elo vazio, no `pre`): sem ele o CASAR COM AJUSTE de outra linha oferecia a passagem.
             const pre: Backfill[] = [], relinked: string[] = []
             const unlink = async () => { for (const id of relinked) await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('id', id).eq('bank_transaction_id', l.id) }
-            // ENTRADA mista (linha com amount < 0): cada membro tem de ser RENDA livre do pool.inn (a régua do match_mixed na entrada);
-            // membro de tabela da outra direção = o diário não vale mais pra esta linha — fica NEW, como alvo sumido.
+            // MISTO COM SINAL (BL 1.6.1): a régua do match_mixed inteira — tabela de mixable(), 2 a 10 sem repetido, cada membro livre em
+            // UM dos dois pools, pelo menos um do lado da linha e o LÍQUIDO (mixedNet: do lado da linha soma, do oposto desconta) batendo
+            // com |valor da linha|. Qualquer falha = o diário não vale mais pra esta linha — fica NEW, como alvo sumido.
             if (r.matched_table === MIXED_GROUP) {
-              if (!mixedPool) { const p0 = await candidatePool(db); mixedPool = { out: new Set(p0.out.map(c => c.table + ':' + c.id)), inn: new Set(p0.inn.map(c => c.table + ':' + c.id)) } }
-              const inflow = num(l.amount) < 0
-              const free = inflow ? mixedPool.inn : mixedPool.out, allowed = inflow ? MIXED_IN_TABLES : MIXED_TABLES
-              if (members.length < 2 || Math.abs(num(l.amount)) < 0.005 || members.some((m: any) => !allowed.has(m.table) || !free.has(m.table + ':' + m.id))) { gone++; continue }
+              if (!mixedPool) mixedPool = await candidatePool(db)
+              const mkeys = members.map((m: any) => m.table + ':' + String(m?.id || ''))
+              const shapeOk = members.length >= 2 && members.length <= 10 && new Set(mkeys).size === mkeys.length && Math.abs(num(l.amount)) >= 0.005 && members.every((m: any) => m.table && m.id && mixable(m.table))
+              const fp = shapeOk ? mixedFromPool(mixedPool, num(l.amount), members.map((m: any) => ({ table: m.table, id: String(m.id) }))) : null
+              if (!fp || fp.missing.length || fp.both.length || !fp.net.ok) { gone++; continue }
               for (const m of members.filter((x: any) => x.table === 'staff_expenses')) {
                 const { data: ok, error } = await db.from('staff_expenses').update({ bank_transaction_id: l.id }).eq('id', m.id).is('bank_transaction_id', null).select('id')
                 if (error || !ok || !ok.length) { await unlink(); throw new Error('elo da folha') }

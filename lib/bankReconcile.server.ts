@@ -62,10 +62,12 @@ export const MIXED_GROUP = 'mixed_group'
 export const MIXED_TABLES = new Set(['invoice_expenses', 'inputs', 'inventory', 'assets', 'assets_expenses', 'staff_expenses', 'fixed_cost_expenses'])
 // ENTRADA mista (BL 1.6.0, Márcio, 13/set — sessão do AutoBook): UMA entrada do banco paga RENDAS de várias invoices — o wire da
 // Tamiami de 04/set, −$128.000 = US.049.1 $119.084,75 + US.050.1 $8.915,25. Só invoice_incomes: aporte (capital_events) e
-// empréstimo (financing_events) são um evento cada, e despesa não entra em linha de entrada. MIXED_TABLES segue sendo só a SAÍDA.
+// empréstimo (financing_events) são um evento cada. Na BL 1.6.0 despesa não entrava em linha de entrada; desde a BL 1.6.1 (misto com
+// sinal, mixedNet) as duas listas valem nas duas direções — a direção da linha só decide se o membro soma ou desconta.
 export const MIXED_IN_TABLES = new Set(['invoice_incomes'])
-// Tabela que pode ser membro de misto, em qualquer direção — a régua do mixedClash.
-const mixable = (t: string) => MIXED_TABLES.has(t) || MIXED_IN_TABLES.has(t)
+// Tabela que pode ser membro de misto, em qualquer direção — a régua do mixedClash e, desde a BL 1.6.1 (misto com sinal), do
+// match_mixed e do RESTAURAR DIÁRIO: a direção da linha não escolhe mais a tabela, só o SINAL de cada membro (mixedNet).
+export const mixable = (t: string) => MIXED_TABLES.has(t) || MIXED_IN_TABLES.has(t)
 // Os membros de uma linha mista, com o nome de tabela de HOJE (JSON gravado — mesma cautela do backfill; ver lib/tableRenames).
 export function mixedMembers(line: any): Member[] {
   if (!line || line.matched_table !== MIXED_GROUP || !Array.isArray(line.matched_members)) return []
@@ -117,6 +119,44 @@ export async function memberAmounts(db: any, members: Member[]): Promise<Map<str
     for (const r of data || []) out.set(t + ':' + r.id, t === 'invoice_expenses' ? num(r.price) * (num(r.quantity) || 1) + num(r.tax) + num(r.extra) : ['inputs', 'inventory', 'assets'].includes(t) ? num(r.unit_price) * (num(r.quantity) || 1) : num(r.amount))
   }
   return out
+}
+// ── MISTO COM SINAL (BL 1.6.1, Márcio, 13/set/2026 — pedido da sessão do AutoBook) ──
+// A linha do banco tem DIREÇÃO (Plaid: amount > 0 = SAIU, < 0 = ENTROU) e cada registro tem LADO, pela régua do candidatePool (valor
+// negativo vai pro pool oposto como ESTORNO): gasto (MIXED_TABLES) positivo SAI e negativo (crédito/estorno) ENTRA; renda
+// (invoice_incomes) positiva ENTRA e negativa (estorno) SAI. Registro do lado da linha SOMA (+1), do lado oposto DESCONTA (−1); o
+// LÍQUIDO bate com |valor da linha| ±0,011, com pelo menos um registro do lado da linha. Caso real: STRIPE TRANSFER GZ28 V8 SPEEDS de
+// 11/ago, −$1.318,84 na Regions = 4 vendas de credencial SEMA lançadas como crédito em fixed_cost_expenses (−275, −275, −550, −275:
+// lado ENTRA, +1.375,00) menos a tarifa da Stripe (fixed_cost_expenses +56,16: lado SAI, −56,16).
+// Régua ÚNICA: o match_mixed e o RESTAURAR DIÁRIO passam `side` (o pool onde o registro está, com o valor absoluto do pool); leitor que
+// confere a soma (VALOR MUDOU) passa o valor GRAVADO, com sinal, e o lado sai daqui — um casamento líquido certo nunca vira deriva.
+export type MixedSide = 'OUT' | 'IN'
+export type MixedNet = { net: number; plus: number; minus: number; onSide: number; ok: boolean; parts: { table: string; id: string; amount: number; side: MixedSide; sign: 1 | -1 }[] }
+export function mixedNet(lineAmount: number, parts: { table: string; id: string; amount: number; side?: MixedSide }[]): MixedNet {
+  const c2 = (v: number) => Math.round(v * 100) / 100
+  const lineSide: MixedSide = num(lineAmount) < 0 ? 'IN' : 'OUT'
+  let plus = 0, minus = 0, onSide = 0
+  const out = parts.map(p => {
+    const table = tabelaAtual(String(p.table)), a = num(p.amount)
+    const side: MixedSide = p.side || (MIXED_IN_TABLES.has(table) ? (a < 0 ? 'OUT' : 'IN') : (a < 0 ? 'IN' : 'OUT'))
+    const sign: 1 | -1 = side === lineSide ? 1 : -1
+    if (sign > 0) { plus += Math.abs(a); onSide++ } else minus += Math.abs(a)
+    return { table, id: String(p.id), amount: c2(Math.abs(a)), side, sign }
+  })
+  const net = c2(plus - minus)
+  return { net, plus: c2(plus), minus: c2(minus), onSide, parts: out, ok: onSide > 0 && plus > 0.005 && Math.abs(net - c2(Math.abs(num(lineAmount)))) < 0.011 }
+}
+// Os membros pedidos procurados nos DOIS pools (BL 1.6.1): `missing` = em nenhum (não é candidato livre agora); `both` = nos dois (o push
+// do candidatePool põe cada registro num lado só — se um dia não puser, recusa). `cands` e `net` seguem a ordem dos achados.
+export function mixedFromPool(pool: Pool, lineAmount: number, members: Member[]): { cands: Cand[]; missing: string[]; both: string[]; net: MixedNet } {
+  const outBy = new Map<string, Cand>(pool.out.map(c => [c.table + ':' + c.id, c])), innBy = new Map<string, Cand>(pool.inn.map(c => [c.table + ':' + c.id, c]))
+  const cands: Cand[] = [], sides: MixedSide[] = [], missing: string[] = [], both: string[] = []
+  for (const m of members) {
+    const k = tabelaAtual(m.table) + ':' + String(m.id), o = outBy.get(k), i = innBy.get(k)
+    if (o && i) both.push(k)
+    else if (!o && !i) missing.push(k)
+    else { cands.push((o || i)!); sides.push(o ? 'OUT' : 'IN') }
+  }
+  return { cands, missing, both, net: mixedNet(lineAmount, cands.map((c, n) => ({ table: c.table, id: c.id, amount: c.amount, side: sides[n] }))) }
 }
 export type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; group?: string | null; members?: Member[]; href?: string; detail?: string; score?: number; dd?: number | null; supplier_id?: string | null }
 // AUTO-BOOK (BL 0.8.0): `sched` = contas fixas AGENDADAS em aberto (sem pagamento
@@ -1202,7 +1242,7 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
       // tabelaAtual() é idempotente — membro montado em memória (nome de hoje) passa igual.
       const byTable = new Map<string, string[]>()
       for (const m of cand.members || []) { const t = tabelaAtual(m.table); byTable.set(t, [...(byTable.get(t) || []), m.id]) }
-      // Renda (só na ENTRADA mista) recebe paid_at — a baixa, com a mesma hora do casamento simples de renda —, nunca payment_date
+      // Renda membro de misto (somando numa entrada ou, desde a BL 1.6.1, descontando numa saída) recebe paid_at — a baixa, com a mesma hora do casamento simples de renda —, nunca payment_date
       // (o previsto). O fill só escreve onde está nulo e registra no backfill: o DESFAZER devolve só o que este casamento preencheu.
       for (const [t, ids] of byTable) { if (t === 'invoice_incomes') await fill(t, ids, 'paid_at', paidAtFor(line.date)); else await fill(t, ids, 'payment_date', line.date) }
     }
