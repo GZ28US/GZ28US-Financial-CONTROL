@@ -64,6 +64,9 @@ export const US_CLIENTE_GZ28BR = '97c4a91e-d1c2-48ca-9d05-8662fe324f27' // «GZ2
 export const BR_CLIENTE_GZ28US = '6d4264bc-9357-4190-94d8-bdc3a254d5bd' // «GZ28 V8 SpeedShop USA LLC» (client_number 85 no BR)
 export const TRILHA = 'shopping-invoice-travessia'
 const MARGEM_US = 1.10      // só na direção 1 (lei do 10% US)
+// MARKUP POR LINHA (Márcio, 14/set/2026: o dinheiro da venda da MasterPiece, BR.484, caiu na Regions e o US gastou nos carros do BR —
+// esses gastos atravessam SEM os 10%). BR invoice_expenses.us_markup_pct: vazio = a lei do 10% US; 0 = custo exato; outro = aquele %.
+const markupDe = (s: Row): number => { const v = s?.us_markup_pct; return v == null || String(v) === '' ? MARGEM_US : 1 + num(v) / 100 }
 const SPREAD = 0.20         // R$ sobre a cotação — o usd_rate do app BR
 const IOF = 1.0638          // 6,38% de IOF do cartão internacional — a regra do editor do BR
 const TOL = 0.02            // US$: arredondamento de centavo dos dois lados
@@ -178,7 +181,7 @@ export function bancosDoServidor(): Bancos | { erro: string } {
 // nenhuma escrita sai, porque duas rodadas da mesma chave se entrelaçariam.
 const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
   US: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_items', 'mirror_src'], ['invoice_incomes', 'mirror_src'], ['invoice_incomes', 'br_payment_id'], ['crossing_locks', 'mirror_key']],
-  BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id']],
+  BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct']],
 }
 
 export type Foto = {
@@ -411,7 +414,7 @@ const confere = (banco: Banco, tabela: string, linha: Row, cols: string[]): Conf
   ({ banco, tabela, id: String(linha.id), campos: Object.fromEntries(cols.map(c => [c, linha[c] ?? null])) })
 // Os campos que cada conta usa, por tabela de origem.
 const COLS = {
-  brDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'amount_usd', 'expense_date', 'payment_date', 'paid_from', 'source'],
+  brDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'amount_usd', 'expense_date', 'payment_date', 'paid_from', 'source', 'us_markup_pct'],
   brPagamento: ['invoice_id', 'amount', 'amount_usd', 'paid_at', 'paid_to', 'payment_date'],
   usDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'payment_date', 'paid_from', 'paid_to', 'source'],
   usRenda: ['invoice_id', 'amount', 'amount_brl', 'paid_at', 'paid_to', 'payment_date'],
@@ -740,7 +743,7 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
       }
     }
     const txtS = (s: Row) => chaveTexto(s.item), txtE = (e: Row) => chaveTexto(e.item)
-    const a = casar(SE, EE, (s, e) => perto(Rs(s), custoUS(e) * MARGEM_US), txtS, txtE)
+    const a = casar(SE, EE, (s, e) => perto(Rs(s), custoUS(e) * markupDe(s)), txtS, txtE)
     a.pares.forEach(p => pares.push({ s: p.s, e: p.t, como: 'valor' }))
     const bq = casar(a.restoS, a.restoT, (s, e) => perto(Rs(s), custoUS(e)), txtS, txtE)
     bq.pares.forEach(p => pares.push({ s: p.s, e: p.t, como: 'valor-b' }))
@@ -774,12 +777,13 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     const faltaItem: { s: Row; e: Row; Rv: number; C: number }[] = []
     for (const p of pares) {
       const C = custoUS(p.e), Rv = Rs(p.s), it = itemDe.get(p.s.id)
-      const classe: Par['classe'] = perto(Rv, C * MARGEM_US) ? 'ok' : perto(Rv, C) ? 'b' : 'divergente'
+      const mk = markupDe(p.s)
+      const classe: Par['classe'] = perto(Rv, C * mk) ? 'ok' : perto(Rv, C) ? 'b' : 'divergente'
       m.c.pares.push({ direcao: 1, fonte_tabela: 'invoice_expenses', fonte_id: p.s.id, alvo_tabela: 'invoice_expenses', alvo_id: p.e.id, alvo_invoice: uInv.get(p.e.invoice_id)?.invoice_code || '?', como: p.como, classe, usd_fonte: Rv == null ? null : r2(Rv), usd_alvo: r2(C), rotulo: limpa(p.s.item).slice(0, 80) })
       if (classe === 'b') {
-        m.conflito(`classe (b): ${limpa(p.s.item).slice(0, 40)} — BR guardou US$ ${r2(Rv || 0)} = custo cru; devia ser ${r2(C * MARGEM_US)} (correção proposta à parte)`)
+        m.conflito(`classe (b): ${limpa(p.s.item).slice(0, 40)} — BR guardou US$ ${r2(Rv || 0)} = custo cru; devia ser ${r2(C * mk)} (correção proposta à parte)`)
         const q = num(p.s.quantity) || 1, f = fatorBR(p.s, B.usd_rate), te = num(p.s.tax) + num(p.s.extra)
-        const alvoUsd = r2(C * MARGEM_US)
+        const alvoUsd = r2(C * mk)
         const auPara = r2((alvoUsd - (te ? te / f : 0)) / q)
         const pricePara = r2(auPara * f)
         correcoes.push({
@@ -788,7 +792,7 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
           fator_linha: r4(f), fator_invoice: r4(num(B.usd_rate) * IOF), delta_usd: r2(alvoUsd - (Rv || 0)),
           sql: `update invoice_expenses set amount_usd = ${auPara}, price = ${pricePara} where id = '${p.s.id}' and amount_usd = ${num(p.s.amount_usd)} and price = ${num(p.s.price)};`,
         })
-      } else if (classe === 'divergente') m.conflito(`valor divergente: ${limpa(p.s.item).slice(0, 40)} — BR US$ ${Rv == null ? 'sem amount_usd' : r2(Rv)} × US custo ${r2(C)} (esperado ${r2(C * MARGEM_US)})`)
+      } else if (classe === 'divergente') m.conflito(`valor divergente: ${limpa(p.s.item).slice(0, 40)} — BR US$ ${Rv == null ? 'sem amount_usd' : r2(Rv)} × US custo ${r2(C)} (esperado ${r2(C * mk)})`)
       if (!it) {
         if (p.como === 'mirror_src' && classe === 'ok' && Rv != null) faltaItem.push({ s: p.s, e: p.e, Rv, C })
         else m.conflito(`a despesa ${limpa(p.e.item).slice(0, 40)} não tem item correspondente na ${uInv.get(p.e.invoice_id)?.invoice_code}`)
@@ -831,9 +835,10 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
       if (Rv == null) { m.conflito(`linha do BR sem amount_usd: ${limpa(s.item).slice(0, 40)} — sem o US$ gravado não se sabe se o +10% está dentro`); continue }
       if (!dia) { m.conflito(`linha do BR sem a data em que o GZ28US pagou (expense_date/payment_date): ${limpa(s.item).slice(0, 40)}`); continue }
       const f = fatorBR(s, B.usd_rate)
-      const price = r2(num(s.amount_usd) / MARGEM_US)
-      const tax = num(s.tax) ? r2(num(s.tax) / f / MARGEM_US) : 0
-      const ext = num(s.extra) ? r2(num(s.extra) / f / MARGEM_US) : 0
+      const mk = markupDe(s)
+      const price = r2(num(s.amount_usd) / mk)
+      const tax = num(s.tax) ? r2(num(s.tax) / f / mk) : 0
+      const ext = num(s.extra) ? r2(num(s.extra) / f / mk) : 0
       const C = r2(price * q + tax + ext)
       const src = `BR:invoice_expenses:${s.id}`
       const conf1 = [confere('BR', 'invoice_expenses', s, [...COLS.brDespesa])]
