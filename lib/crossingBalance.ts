@@ -117,8 +117,6 @@ export const PENDING_DECISIONS: readonly PendingDecisionDef[] = [
   { key: 'br-lines-eibach', since: '2026-09-14', kind: 'br_lines_without_006',
     brExpenseIds: ['83ae1eb9-1447-4aba-a7c2-262c38e47fcf', '7cd8dcb1-048c-481b-a2e9-292b283a67ea', 'c33f9a33-385a-42c9-87b2-99d6b72b00f2'],
     note: 'Eibach Pro-Kits paid by GZ28US on BR invoices US.004.1, US.005.1 and US.006.2 — in no 006.N yet. If they belong, GZ28BR owes this too.' },
-  { key: 'hold-sidney-085.2', since: '2026-09-14', kind: 'on_hold_invoice', brInvoiceCodes: ['085.2'], originUsInvoiceIds: ['982ccd2b-0e1f-49a7-af1d-08239a0d05cc'],
-    note: 'US.001.1 GoldenEye (Sidney Penna): his income paid to GZ28BR has no R$ recorded, so it is not deducted from 085.2 yet. Waiting for Márcio on which R$ is right.' },
   // A US.007.1 Panther ainda NÃO tem 085.N (travada no motor): o código que ela vai ganhar só existe quando o Márcio liberar — o
   // 085.21 que o plano de 14/set 01:47 previa foi para uma season do Jeferson na aplicação de 14/set 10:30. Referência por id, nunca por código futuro.
   { key: 'hold-085.1-panther', since: '2026-09-14', kind: 'possible_double_count', brInvoiceCodes: ['085.1'], originUsInvoiceIds: ['15b95131-0e21-4b01-b7bf-504b2448af9f', '828e9c2f-6d48-4beb-aef4-e7f8b9050d82'],

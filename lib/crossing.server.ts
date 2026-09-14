@@ -100,7 +100,6 @@ export const RENDA_BR_DECIDIDA: Readonly<Record<string, { usd: number; motivo: s
 // fica em CONFLITO com o motivo escrito — o plano mostra os números que ela gravaria (manchete.bloqueadas),
 // e nada é escrito até o dono responder. A resposta do Márcio vira a remoção de UMA linha daqui.
 export const CHAVES_SEGURAS: Readonly<Record<string, string>> = {
-  'US:invoice:982ccd2b': 'US.001.1 GoldenEye → 085.2: o R$ real das 6 rendas de Sidney Penna está na planilha dele (câmbio 5,50; R$ 158.650,47 registrados) e a regra do app carimbaria R$ 166.524,59 — carimbo não se corrige depois; segura até o Márcio responder (14/set)',
   'US:invoice:15b95131': 'US.009.1 Poltergeist → 085.1: possível contagem dobrada com a US.007.1 Panther — segura até o Márcio responder (14/set)',
   'US:invoice:828e9c2f': 'US.007.1 Panther (ainda sem 085.N): possível contagem dobrada com a US.009.1 Poltergeist — segura até o Márcio responder (14/set)',
 }
