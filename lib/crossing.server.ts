@@ -300,11 +300,10 @@ export async function carregarCotacoes(datas: string[]): Promise<Cotacoes> {
     }
     return true   // 11 dias lidos sem pregão: sem número — buscar de novo não muda isso
   }
-  const faixas: [string, string][] = []
-  for (const d of validas.filter(x => !resolvida(x))) {
-    const ini = addDias(d, -10), ult = faixas[faixas.length - 1]
-    if (ult && ini <= addDias(ult[1], 1)) { if (d > ult[1]) ult[1] = d } else faixas.push([ini, d])
-  }
+  // UMA faixa só, do primeiro dia que falta (−10) ao último: em produção (14/set 10:21) as dezenas de faixas estreitas
+  // levaram HTTP 429 da AwesomeAPI e 39 datas ficaram sem cotação. Blocos de 120 dias = ~5 chamadas para o histórico todo.
+  const faltam = validas.filter(x => !resolvida(x))
+  const faixas: [string, string][] = faltam.length ? [[addDias(faltam[0], -10), faltam[faltam.length - 1]]] : []
   if (faixas.length) {
     const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' })
     try {
@@ -312,8 +311,16 @@ export async function carregarCotacoes(datas: string[]): Promise<Cotacoes> {
         let de = inicio
         while (de <= ate) {
           const fim = addDias(de, 119) < ate ? addDias(de, 119) : ate
-          const r = await fetch(`https://economia.awesomeapi.com.br/json/daily/USD-BRL/200?start_date=${de.replace(/-/g, '')}&end_date=${fim.replace(/-/g, '')}`, { cache: 'no-store' })
+          const url = `https://economia.awesomeapi.com.br/json/daily/USD-BRL/200?start_date=${de.replace(/-/g, '')}&end_date=${fim.replace(/-/g, '')}`
+          let r = await fetch(url, { cache: 'no-store' })
+          // 429 = limite da API gratuita: espera (Retry-After quando vem, senão 2 s, 4 s, 8 s) e tenta de novo — nunca inventa número.
+          for (let tentativa = 0; r.status === 429 && tentativa < 3; tentativa++) {
+            const pede = Number(r.headers.get('retry-after')) || 0
+            await new Promise(ok => setTimeout(ok, Math.min(15_000, pede > 0 ? pede * 1000 : 2000 * 2 ** tentativa)))
+            r = await fetch(url, { cache: 'no-store' })
+          }
           if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          await new Promise(ok => setTimeout(ok, 400))   // folga entre blocos: a API gratuita conta por segundo
           const j = await r.json()
           if (!Array.isArray(j)) throw new Error('resposta sem lista')
           // Mais de um registro no mesmo dia: fica o de timestamp mais tarde (o fechamento).
