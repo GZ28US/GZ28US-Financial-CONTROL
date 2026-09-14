@@ -6,6 +6,34 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 14/set/2026 (19h20 Orlando) · da sessão do Márcio para a sessão do João — ESTORNO SAI DO DINHEIRO (FIN 0.17.0, DC 1.57–1.58) E BL 1.7.3
+
+Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. Tudo no ar e conferido no código servido.
+
+- **Estorno (decisão do Márcio sobre o HHP 382526, estornado inteiro na Regions):** «deixe nas invoices como estornado, e faça os
+  controles financeiros».
+  - Régua única em `lib/estorno.ts` (`foraDoDinheiro`): linha REFUNDED sem a linha NEGATIVA do estorno lançada (lei 8.10) sai de todo
+    total. A lista cobre invoice, pending, custo, DRE/DFC/Balanço, conta BR×US e placar do fechamento.
+  - Com a negativa lançada, as duas se anulam. CANCELLED continua contando: o dinheiro está com o vendedor e a linha da Regions existe.
+  - `lib/financials.ts` tira essas linhas no carregamento e guarda em `d.estornadas`. Card novo do DC `refunded-out` lista cada uma para conferir.
+  - Coluna nova `invoice_items.cancel_status`; o editor marca item como CANCELLED/REFUNDED.
+  - O robô do e-mail (`lib/mailToItem.server.ts`) só carimba REFUNDED quando o valor devolvido lido no e-mail cobre o pedido; estorno parcial
+    vira dúvida no relatório dele.
+  - `closeScore`: registro estornado não precisa de linha do banco (`skipped.estornada_paid`).
+- **BL 1.7.3:**
+  - A regra da frota não cria Frota quando há despesa de invoice com palavra de combustível a ±3 dias e ±US$ 0,10 (Livro 14.24).
+  - match/rematch com `purchase_group` de 1 item cai na linha única (`acharCandidato` na rota).
+- **Travessia (motor `lib/crossing.server.ts`, cron no minuto 47):**
+  - Histórico aplicado; «BR deve ao US» às 19h: US$ 90.751,14.
+  - Cotação diária em `fx_usd_brl_daily`.
+  - Campo novo no BR `invoice_expenses.us_markup_pct` (vazio = 10%, 0 = custo exato).
+  - Travas restantes são dinheiro do BR, esperando o Márcio.
+- **Dado mexido hoje, com trilha em data_fixes:**
+  - `humberto-emprestimo-regions`: financing do Humberto, 3 DISBURSEMENT de 87.500.
+  - `apaga-006.6-duplicata`, `chopper-sem-fl-tax`, `tarifa-ultramsg-br-006.9`, `classe-b-10pct`, `item-extra-dobrado`, `hhp-382526-a-comprar`,
+    `hhp-382526-estorno-006.27`, `coltpython-0068`, `armageddon-006.2-unica`.
+  - `coltpython-0068` inclui 4 linhas eBay do balde A ATRIBUIR atribuídas à 006.8, com `reviewed_at` e nota como o ATRIBUIR do Bank Link.
+
 ## 14/set/2026 (10h40 Orlando) · da sessão do Márcio para a sessão do João — A CONTA BR × US PASSA A LER SÓ AS SHOPPING INVOICES (FIN 0.16.0, DC 1.56.0)
 
 Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. A decisão é do Márcio (13/set): «TODA E QUALQUER movimentação financeira entre o
