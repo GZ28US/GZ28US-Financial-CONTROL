@@ -21,15 +21,27 @@ function db() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
+// CÓDIGO DE VERIFICAÇÃO NÃO ENTRA NO BANCO (Márcio, 14/set/2026: «Não guardar códigos»).
+// A automação do iPhone manda TODO texto que chega; código de banco, login e 2FA seria
+// segredo gravado em tabela. Sai quem é só o código ("123456", "G-123456") ou quem traz
+// palavra de código junto de um número de 4 a 8 dígitos. O resto entra normal.
+const OTP_WORDS = /\b(code|c[óo]digo|verification|verify|one[- ]?time|otp|passcode|2fa|security code|authentication|autentica[çc][ãa]o|pin)\b/i
+function isVerificationCode(body: string): boolean {
+  const t = (body || '').trim()
+  if (/^[A-Za-z]{0,3}[- ]?\d{4,8}\.?$/.test(t)) return true
+  return OTP_WORDS.test(t) && /(^|\D)\d{4,8}(\D|$)/.test(t)
+}
+
 async function save(sender: string, body: string) {
   if (!body) return { error: 'empty body' }
+  if (isVerificationCode(body)) return { error: undefined, skipped: 'verification-code' }
   const { error } = await db().from('sms_messages').insert({
     sender: (sender || '').slice(0, 200) || null,
     body: body.slice(0, 8000),
     received_at: new Date().toISOString(),
     source: 'IOS_SHORTCUT',
   })
-  return { error: error?.message }
+  return { error: error?.message, skipped: undefined }
 }
 
 export async function POST(req: NextRequest) {
@@ -43,7 +55,7 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => null) as { sender?: string; body?: string } | null
   const r = await save(String(b?.sender || ''), String(b?.body || ''))
   if (r.error) return NextResponse.json({ error: r.error }, { status: 400 })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, ...(r.skipped ? { skipped: r.skipped } : {}) })
 }
 
 export async function GET(req: NextRequest) {
@@ -53,5 +65,5 @@ export async function GET(req: NextRequest) {
   if (!p.get('body')) return NextResponse.json({ ok: true, ping: true })
   const r = await save(String(p.get('sender') || ''), String(p.get('body') || ''))
   if (r.error) return NextResponse.json({ error: r.error }, { status: 400 })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, ...(r.skipped ? { skipped: r.skipped } : {}) })
 }
