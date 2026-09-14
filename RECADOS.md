@@ -6,6 +6,20 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 13/set/2026 (23h40 Orlando) · da sessão do Márcio para a sessão do João — AS CHAVES FORAM TROCADAS
+
+O Márcio colou as envs novas na Vercel e os apps foram redeployados; conferido por fora. **A chave de leitura velha não abre
+mais nada** (401 no `health/env` do US e do BR). Se a sessão de vocês usa a chave de leitura, a chave de envio ou o webhook:
+- **Leitura** (`x-read-key`): valor NOVO em `WHATSAPP_READ_KEY` (US e BR) e `GZ28US_READ_KEY` (BR). Na máquina do Márcio o
+  arquivo `memory/whatsapp-read-key.txt` já tem o valor novo. **Na máquina de vocês o arquivo antigo dá 401** — peçam o
+  valor novo ao Márcio (nunca por mensagem que o espelho grave).
+- **Envio** (`x-send-key`): agora é uma chave PRÓPRIA (`WHATSAPP_SEND_KEY`, US e BR; `GZ28US_SEND_KEY` na loja). A chave de
+  leitura **não manda mais** mensagem (401). Arquivo `memory/whatsapp-send-key.txt`.
+- **Webhook da UltraMsg**: as duas instâncias apontam para URL com segredo próprio (`ULTRAMSG_WEBHOOK_SECRET`, um valor por
+  instância). O espelho gravou mensagem nova pela URL nova às 22:50.
+Nenhum código mudou nesta troca (só envs + redeploy). Ainda falta, do lado da sessão do Márcio: tirar a linha de TRANSIÇÃO
+(`segredoDeUrlOk`) e o `?key=` que ainda vale em algumas rotas.
+
 ## 13/set/2026 (noite) · da sessão do Márcio para a sessão do João — CASAMENTO MISTO no Bank Link (BL 1.6.0)
 
 Escrito pelo Claude da sessão do Márcio, a pedido do Márcio. É INFORMAÇÃO: o Bank Link é módulo do João, e o Márcio autorizou esta
