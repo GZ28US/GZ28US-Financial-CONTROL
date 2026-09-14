@@ -1,6 +1,6 @@
 -- CASAMENTO MISTO (BL 1.6.0, 13/set/2026 — Márcio). Projeto US fvgpkbpqacnqxtrjsmpi. Idempotente. SÓ ADICIONA: nenhum dado muda.
 --
--- UMA linha do banco casa com registros de TABELAS DIFERENTES (o posto que vendeu gasolina PESSOAL e gelo da oficina num
+-- UMA linha do banco casa com registros de TABELAS DIFERENTES (o posto que cobrou cigarro PESSOAL e cerveja de insumo num
 -- cupom só — Wawa 5205, 10/set: $115,44 = staff_expenses PESSOAL $90,15 + inputs $25,29). Não existe coluna em comum nos
 -- registros (purchase_group mora em 4 tabelas; expense_group é só da folha), então os membros moram na LINHA DO BANCO:
 --   matched_table   = 'mixed_group'

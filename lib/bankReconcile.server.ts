@@ -53,7 +53,7 @@ export async function fetchAll(db: any, table: string, select: string, filter?: 
 
 export type Member = { table: string; id: string }
 // CASAMENTO MISTO (BL 1.6.0, Márcio, 13/set/2026): UMA linha do banco ⇄ registros de TABELAS DIFERENTES — o posto que vendeu
-// gasolina PESSOAL e gelo da oficina num cupom só (Wawa 5205, 10/set, $115,44 = PESSOAL $90,15 + insumo $25,29). O grupo não
+// cigarro PESSOAL e cerveja de insumo num cupom só (Wawa 5205, 10/set, $115,44 = PESSOAL $90,15 + insumo $25,29). O grupo não
 // tem coluna em comum nos registros (purchase_group só existe em 4 tabelas; expense_group é só da folha), então os MEMBROS
 // moram na própria linha do banco: matched_table 'mixed_group', matched_id = id da linha (convenção do expense_group) e
 // matched_members = [{table,id}] (MIGRATION_bank_mixed_group.sql). Todo leitor de matched_table conta cada membro como
@@ -92,8 +92,10 @@ async function updateLine(db: any, patch: Record<string, unknown>, where: (q: an
   return r
 }
 // Linhas vivas (não REMOVED) cujo casamento misto tem este registro como membro — guarda de quem apaga ou solta registro.
+// O filtro vai como TEXTO JSON: array cru o postgrest-js manda como literal de array do Postgres (cs.{[object Object]}) e o
+// jsonb recusa com 22P02 — a guarda nunca rodava e o PURGAR / a purga do balde morriam no primeiro órfão (revisão da BL 1.6.0).
 export async function mixedLinesWith(db: any, table: string, id: string): Promise<any[]> {
-  const { data, error } = await db.from('bank_transactions').select('id, match_status').eq('matched_table', MIXED_GROUP).neq('match_status', 'REMOVED').contains('matched_members', [{ table, id }])
+  const { data, error } = await db.from('bank_transactions').select('id, match_status').eq('matched_table', MIXED_GROUP).neq('match_status', 'REMOVED').contains('matched_members', JSON.stringify([{ table, id }]))
   if (error) { if (/matched_members/.test(String(error.message || ''))) return []; throw new Error('bank_transactions: ' + error.message) }
   return data || []
 }
@@ -1072,6 +1074,38 @@ export async function adoptScheduled(db: any, line: any, a: any, opts: { engine:
   return { days }
 }
 
+// MEMBRO DE MISTO não tem índice único: mora no JSON, e o bank_transactions_matched_uidx (matched_table, matched_id) só segura o
+// ponteiro. Quem, além desta linha, já conta um registro que este casamento conta? Outro misto vivo (para qualquer claim que conte
+// registro das tabelas do misto) e, no claim MISTO, também o ponteiro simples e o pedido (purchase_group) de cada membro. '' = ninguém.
+async function mixedClash(db: any, line: any, cand: { table: string; id: string; members?: Member[] }): Promise<string> {
+  const grouped = cand.table === MIXED_GROUP || cand.table === 'purchase_group' || cand.table === 'kit_group' || cand.table === 'expense_group'
+  const keys = grouped ? (cand.members || []).map(m => tabelaAtual(m.table) + ':' + String(m.id)) : [String(cand.table) + ':' + String(cand.id)]
+  if (!keys.some(k => MIXED_TABLES.has(k.slice(0, k.indexOf(':'))))) return ''
+  const want = new Set(keys)
+  const others = await fetchBankLines(db, 'id, match_status, matched_table, matched_id', (q: any) => q.eq('matched_table', MIXED_GROUP).eq('match_status', 'MATCHED').neq('id', line.id))
+  for (const o of others) for (const m of mixedMembers(o)) if (want.has(m.table + ':' + m.id)) return m.table + ':' + m.id + ' já é membro do casamento misto da linha ' + o.id
+  if (cand.table !== MIXED_GROUP) return ''
+  const byTable = new Map<string, string[]>()
+  for (const m of cand.members || []) { const t = tabelaAtual(m.table); byTable.set(t, [...(byTable.get(t) || []), String(m.id)]) }
+  const groups = new Set<string>()
+  for (const [t, ids] of byTable) {
+    const { data, error } = await db.from('bank_transactions').select('id').eq('match_status', 'MATCHED').eq('matched_table', t).in('matched_id', ids).neq('id', line.id).limit(1)
+    if (error) throw new Error('bank_transactions: ' + error.message)
+    if (data && data.length) return 'registro de ' + t + ' já casado com a linha ' + data[0].id
+    if (['invoice_expenses', 'inputs', 'inventory', 'assets'].includes(t)) {
+      const { data: rows, error: gErr } = await db.from(t).select('purchase_group').in('id', ids)
+      if (gErr) throw new Error(t + ': ' + gErr.message)
+      for (const r of rows || []) if (r.purchase_group) groups.add(String(r.purchase_group))
+    }
+  }
+  if (groups.size) {
+    const { data, error } = await db.from('bank_transactions').select('id').eq('match_status', 'MATCHED').eq('matched_table', 'purchase_group').in('matched_id', [...groups]).neq('id', line.id).limit(1)
+    if (error) throw new Error('bank_transactions: ' + error.message)
+    if (data && data.length) return 'o pedido de um membro já está casado com a linha ' + data[0].id
+  }
+  return ''
+}
+
 export async function writeMatch(db: any, line: any, cand: Cand | { table: string; id: string; members?: Member[] }, extra: Record<string, unknown>, pre: Backfill[] = []): Promise<{ backfill: Backfill[] }> {
   // Linha MISTA: os membros vão no MESMO claim (o chamador passa matched_members; o RESTAURAR DIÁRIO não passa e eles saem de
   // cand.members). Claim que falha não escreveu nada — nem ponteiro, nem membros. Sem a migration o claim falha inteiro.
@@ -1100,6 +1134,17 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
         }
         await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('id', o.id).eq('bank_transaction_id', o.bank_transaction_id)
       }
+    }
+  }
+  // MISTO (revisão da BL 1.6.0): o claim é conferido DEPOIS de gravado, contra toda linha viva que já conta um registro deste
+  // casamento (pool carregado antes, RESTAURAR DIÁRIO, duas abas, fatia do motor). Conflito — ou conferência que falhou, que não
+  // prova nada — devolve a linha como estava, antes do diário: nada é contado duas vezes. O chamador desfaz o `pre` (a linha não pegou).
+  {
+    let clash = ''
+    try { clash = await mixedClash(db, line, cand) } catch (e) { clash = 'conferência do casamento misto falhou (' + String((e as Error).message || e).slice(0, 80) + ')' }
+    if (clash) {
+      await updateLine(db, { match_status: line.match_status || 'NEW', matched_table: null, matched_id: null, matched_members: null, matched_note: line.matched_note ?? null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }, (q: any) => q.eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id))
+      throw new Error(clash.slice(0, 160) + ' — recarregue')
     }
   }
   await logMatchEvent(db, line, 'MATCH', { matched_table: cand.table, matched_id: cand.id, note: (extra as any).matched_note, engine: (extra as any).match_engine, batch: (extra as any).match_batch, members: (cand as any).members || null })
