@@ -1133,7 +1133,14 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
       if (error && /bank_transaction_id/.test(error.message)) { EXP_LINK_COL_MISSING = true; EXP_LINK_MISSING_AT = Date.now() }
       for (const o of (rows || []).filter((r: any) => r.bank_transaction_id && String(r.bank_transaction_id) !== String(line.id))) {
         // O elo só é VIVO se a outra linha ainda aponta pra ele: ponteiro, par/trio da folha, ou membro do casamento misto.
-        const ol = (await fetchBankLines(db, 'id, match_status, matched_table, matched_id', (q: any) => q.eq('id', o.bank_transaction_id)))[0] || null
+        // Leitura que falha não prova nada (revisão da BL 1.6.0): devolve a linha como estava ANTES do diário, como o mixedClash —
+        // nunca fica linha MATCHED sem evento no diário e sem data preenchida.
+        let ol: any = null
+        try { ol = (await fetchBankLines(db, 'id, match_status, matched_table, matched_id', (q: any) => q.eq('id', o.bank_transaction_id)))[0] || null }
+        catch (e) {
+          await updateLine(db, { match_status: line.match_status || 'NEW', matched_table: null, matched_id: null, matched_members: null, matched_note: line.matched_note ?? null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }, (q: any) => q.eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id))
+          throw new Error('conferência do elo da folha falhou (' + String((e as Error).message || e).slice(0, 80) + ') — recarregue')
+        }
         const live = !!ol && ol.match_status === 'MATCHED' && ((ol.matched_table === 'staff_expenses' && String(ol.matched_id) === String(o.id)) || (ol.matched_table === 'expense_group' && String(ol.matched_id) === String(ol.id)) || (ol.matched_table === MIXED_GROUP && String(ol.matched_id) === String(ol.id) && mixedMembers(ol).some(m => m.table === 'staff_expenses' && m.id === String(o.id))))
         if (live) {
           await updateLine(db, { match_status: line.match_status || 'NEW', matched_table: null, matched_id: null, matched_members: null, matched_note: line.matched_note ?? null, match_engine: null, match_batch: null, match_rule: null, reviewed_at: null, backfill: null }, (q: any) => q.eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id))
@@ -1167,6 +1174,21 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
     const { error } = await db.from('bank_transactions').update({ backfill }).eq('id', line.id).eq('matched_table', cand.table).eq('matched_id', cand.id)
     if (error) throw new Error('backfill registrado no app mas não na linha do banco: ' + error.message)
   }
+  // Backfill que não chega na linha é preenchimento que o DESFAZER não acha (a linha fica com o `pre` do claim e o paid_at/payment_date
+  // preenchido fica pra sempre — revisão da BL 1.6.0, entrada mista). Tenta de novo; se ainda falhar, DESFAZ o que este casamento
+  // acabou de preencher (guardado pelo valor escrito, nunca apaga data que outro gravou depois) e relança: linha e registros voltam a bater.
+  const persist = async () => {
+    try { await save(); return } catch { /* segunda tentativa abaixo */ }
+    try { await save(); return } catch (e) {
+      const stuck: string[] = []
+      for (const b of backfill.slice(pre.length)) {
+        const { error } = await db.from(b.t).update({ [b.f]: null }).eq('id', b.id).eq(b.f, b.v)
+        if (error) stuck.push(b.t + '.' + b.f + ':' + b.id)
+      }
+      backfill.splice(pre.length)
+      throw new Error(String((e as Error).message || e) + (stuck.length ? ' · NÃO revertido (confira): ' + stuck.join(', ') : ' · datas preenchidas revertidas'))
+    }
+  }
   try {
     if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
     else if (cand.table === 'invoice_incomes') await fill('invoice_incomes', [cand.id], 'paid_at', paidAtFor(line.date))
@@ -1186,10 +1208,10 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
     }
   } catch (e) {
     // Falhou no meio: o que JÁ foi preenchido entra no backfill da linha antes de relançar — senão o DESFAZER não o acha.
-    if (backfill.length > pre.length) await save().catch(() => undefined)
+    if (backfill.length > pre.length) await persist().catch(() => undefined)
     throw e
   }
-  if (backfill.length > pre.length) await save()   // o claim já gravou o `pre`
+  if (backfill.length > pre.length) await persist()   // o claim já gravou o `pre`
   return { backfill }
 }
 
@@ -1322,7 +1344,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     // PESSOAL da PERGUNTA (engine nulo, sem backfill): a despesa da season que o motor criou
     // morre com o DESFAZER — marcador + elo + origem, nunca linha de gente (revisão 4/set).
     // CASAR COM AJUSTE sem o elo no backfill (restore/reset — o claim grava [] quando nada foi escrito): solta o elo da folha pela coluna.
-    // Misto sem o elo no backfill (RESTAURAR DIÁRIO não refaz o elo): mesma limpeza pela coluna.
+    // Misto: o match_mixed e o RESTAURAR DIÁRIO gravam o elo no backfill; esta limpeza pela coluna é a rede pra linha mista cujo backfill não o tem.
     if ((t === 'expense_group' || t === MIXED_GROUP || (t === 'staff_expenses' && String(line.match_engine) === 'ADJUST')) && !(recorded || []).some((b: any) => b && b.t === 'staff_expenses' && b.f === 'bank_transaction_id') && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
     let personalHandled = false
     if (t === 'staff_expenses' && !bucketHandled) {

@@ -1286,8 +1286,6 @@ export async function POST(req: NextRequest) {
             // como writeUnmatch já faz com bank_transactions.backfill; idempotente, e
             // o MATCH que o restore grava de volta já sai com o nome de hoje.
             const members = (Array.isArray(r.members) ? r.members : []).map((m: any) => ({ ...m, table: tabelaAtual(m?.table) }))
-            // CASAMENTO MISTO (BL 1.6.0): os membros são registros escolhidos um a um — todos têm de existir, senão o alvo sumiu. O claim
-            // regrava matched_members a partir do diário; o elo da folha não volta (como no expense_group) — o pool os segura pelos membros.
             // CASAMENTO MISTO (BL 1.6.0): membro não tem índice único — cada um tem de ser SAÍDA livre do pool AGORA (a régua do match_mixed:
             // livre de linha viva, não GZ28BR, não futura, estoque comprado, invoice real); senão o alvo sumiu ou foi tomado e a linha fica NEW.
             // O elo da folha volta junto (guardado pelo elo vazio, no `pre`): sem ele o CASAR COM AJUSTE de outra linha oferecia a passagem.
