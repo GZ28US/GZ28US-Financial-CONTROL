@@ -6,6 +6,33 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 13/set/2026 (noite) · da sessão do Márcio para a sessão do João — CASAMENTO MISTO no Bank Link (BL 1.6.0)
+
+Escrito pelo Claude da sessão do Márcio, a pedido do Márcio. É INFORMAÇÃO: o Bank Link é módulo do João, e o Márcio autorizou esta
+mudança na sessão dele («Faça você agora»). Conte ao João; se algo aqui não servir, avise aqui mesmo.
+
+**Por quê.** A linha da Regions `c32ef0ff…` (Wawa 5205, 10/set, US$ 115,44, NEW) é UM cupom com duas coisas: gasolina PESSOAL
+(staff_expenses `bcceb32e…`, US$ 90,15) e gelo da oficina (inputs `f7f440d8…`, US$ 25,29). Nada casava: purchase_group não existe
+na folha, o CASAR COM AJUSTE (expense_group) só junta folha, e o DIVIDIR do balde só vale pra linha do balde. O cupom misto se repete
+em posto, mercado e loja.
+
+**O que mudou (branch bank-mixed; a migration roda antes do deploy):**
+- Ação nova `match_mixed` em `/api/bank/reconcile` (`bank_id`, `members: [{table,id}]`, `note?`). A linha fica `matched_table = 'mixed_group'`,
+  `matched_id` = a própria linha, e os membros na coluna NOVA `bank_transactions.matched_members` (MIGRATION_bank_mixed_group.sql).
+- Guardas: linha NEW/QUEUED (balde casado pelo motor não entra), não pendente, saída, 2 a 10 membros, sem repetido, só as sete tabelas de
+  gasto (nunca renda/capital/empréstimo/invoice_items), cada membro tem de ser SAÍDA válida do `candidatePool` agora (o valor vem do pool),
+  soma = banco ao centavo, folha sem elo pra linha viva. Nasce vista, sem motor, sem `learnFromMatch`. Não muda valor, pagador, origem
+  nem descrição dos membros; escreve só o elo da folha e a data de pagamento onde falta, tudo no backfill.
+- `lib/bankReconcile.server.ts`: `pointerKeys()`/`mixedMembers()` são a régua única; o pool tira os membros; `writeMatch` trata o misto no
+  conflito da folha e nas datas; `writeUnmatch` devolve o backfill, solta o elo, volta o PAID FROM membro a membro e NUNCA apaga membro;
+  todo reset de linha limpa `matched_members`. `fetchBankLines()` lê com a coluna e, sem a migration, lê sem ela.
+- Leitores que passaram a contar o membro como casado: sinal `?matched=1`, ELO SOLTO / PONTEIRO MORTO / VALOR MUDOU, SOLTAR, PURGAR órfão,
+  purga do balde, RESTAURAR DIÁRIO, e as auditorias do Data Checker (closeScore, auditPayer, auditWires, auditBucketOrders, auditDiscount,
+  enginesAudit). BL 1.6.0 e DC 1.54.0 no changelog, com o detalhe.
+- Sem tela nova: o casamento misto nasce visto e não aparece em CASADAS A CONFERIR; desfaz-se pela ação `unmatch` (ou pelo PONTEIRO MORTO).
+
+**Quem casa a Wawa:** a sessão do AutoBook, pela API, depois do deploy. Esta mudança não escreveu nada no banco.
+
 ## 13/set/2026 · da sessão do Márcio (PESCA/AutoBook) para a sessão do Data Checker (João)
 
 Escrito pelo Claude da sessão do Márcio, a pedido do Márcio. É INFORMAÇÃO: nada muda no código do Bank Link por causa disto.

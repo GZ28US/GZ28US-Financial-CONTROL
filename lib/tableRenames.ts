@@ -54,6 +54,12 @@
 // `quote_backups.snapshot` (11 linhas) é CHAVE do próprio snapshot, não nome de
 // tabela — e a chave `expenses` do JSON dos packs é a mesma história.
 //
+// DEPOIS DA VARREDURA (13/set/2026, BL 1.6.0): `bank_transactions.matched_members` é JSON `[{table,id}]`
+// novo — os membros do CASAMENTO MISTO (uma linha do banco ⇄ registros de tabelas diferentes). Nasceu depois
+// dos renames e é gravado com o nome de HOJE, mas é o mesmo tipo de dado que o `members` do diário: quem lê
+// passa por tabelaAtual() (lib/bankReconcile.server.ts · mixedMembers), e o próximo rename de tabela tem de
+// olhar esta coluna também.
+//
 // A tradução é SÓ NA LEITURA e é idempotente: nome novo entra e sai igual. O que
 // não está no mapa passa intacto — inclusive os valores com prefixo `US.` / `BR.`
 // (`US.goods`, `BR.invoice_expenses`), que são OUTRA convenção: marcam a zona, não

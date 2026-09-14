@@ -41,7 +41,7 @@
 // e sem outro meio de pagamento escrito no item (Zelle, PayPal, cartão, cash, cheque — sem a palavra wire). Par recusado (NÃO É ESSE) nunca volta.
 // Datas: a do dinheiro é bank_transactions.date (postada); para wire a Regions autoriza e posta no mesmo dia (raw->>authorized_date).
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { fetchAll, num, isFee, twinKey, signedDays } from './bankReconcile.server'
+import { fetchAll, fetchBankLines, pointerKeys, mixedMembers, MIXED_GROUP, num, isFee, twinKey, signedDays } from './bankReconcile.server'
 import { supplierDirectoryFrom, matchSupplier, normSup } from './supplierMatch'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
@@ -109,8 +109,8 @@ export async function auditWires(db: any): Promise<WireAudit> {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const BSEL = 'id, item_id, plaid_id, date, amount, name, pending, match_status, matched_table, matched_id, match_engine, category, authorized_date:raw->>authorized_date'
   const notRemoved = (q: any) => q.neq('match_status', 'REMOVED')   // a mesma régua do itemTwinKeys
-  const bankQ = fetchAll(db, 'bank_transactions', BSEL + ', doubt_answered', notRemoved)
-    .catch((e: any) => /doubt_answered/.test(String(e?.message)) ? fetchAll(db, 'bank_transactions', BSEL, notRemoved) : Promise.reject(e))
+  const bankQ = fetchBankLines(db, BSEL + ', doubt_answered', notRemoved)
+    .catch((e: any) => /doubt_answered/.test(String(e?.message)) ? fetchBankLines(db, BSEL, notRemoved) : Promise.reject(e))
   // bank_aliases pode não existir (o motor também segue sem ela — loadDbAliases); o resto sobe o erro.
   const aliasQ = Promise.resolve(db.from('bank_aliases').select('pattern, words, not_pattern')).then((r: any) => (r && !r.error && r.data) || [], () => [])
   const [bank, ie, invoices, suppliers, aliases, fixedSuppliers] = await Promise.all([
@@ -184,7 +184,7 @@ export function computeWireAudit(data: WireAuditData): WireAudit {
   const seen = new Map<string, Set<string>>()   // gêmea do feed = mesma chave vista por duas fontes (a régua do itemTwinKeys)
   for (const l of bank) { const k = twinKey(l); const src = String(l.plaid_id || '').startsWith('stmt:') ? 'stmt' : String(l.item_id || '?'); if (!seen.has(k)) seen.set(k, new Set()); seen.get(k)!.add(src) }
   const twin = (l: any) => (seen.get(twinKey(l))?.size || 0) >= 2
-  const taken = new Set<string>(bank.filter((l: any) => l.matched_id).map((l: any) => l.matched_table + ':' + l.matched_id))
+  const taken = new Set<string>(bank.filter((l: any) => l.matched_id).flatMap((l: any) => pointerKeys(l)))   // linha MISTA: cada membro tomado (BL 1.6.0)
   const takenGroups = new Set([...taken].filter(k => k.startsWith('purchase_group:')).map(k => k.slice('purchase_group:'.length)))
   const posted = bank.filter((l: any) => !l.pending && num(l.amount) > 0)
   const outF = posted.filter((l: any) => OUT_F_RE.test(String(l.name || '')))
@@ -237,6 +237,7 @@ export function computeWireAudit(data: WireAuditData): WireAudit {
     if (!l || l.match_status !== 'MATCHED' || !l.matched_id) return null
     if (l.matched_table === 'fixed_cost_expenses') { const f = fixById.get(String(l.matched_id)); return { table: 'fixed_cost_expenses', id: String(l.matched_id), label: f ? `TARIFA · ${cut(f.description, 50)} · ${usd(num(f.amount))}` : 'TARIFA', href: f && bankSup.has(String(f.supplier_id)) ? '/costs/bank' : f?.supplier_id ? '/costs/fixed/' + f.supplier_id : '/costs/fixed' } }
     if (l.matched_table === 'invoice_expenses') { const e = ieById.get(String(l.matched_id)); return { table: 'invoice_expenses', id: String(l.matched_id), label: e ? `${code(e)} · ${cut(e.item, 50)} · ${usd(ieAmt(e))}` : 'registro da invoice', href: e ? invHref(e.invoice_id) : null } }
+    if (l.matched_table === MIXED_GROUP) return { table: MIXED_GROUP, id: String(l.id), label: `MISTO · ${mixedMembers(l).length} registros (${[...new Set(mixedMembers(l).map(m => m.table))].join(', ')})`, href: '/adm/bank' }
     return { table: String(l.matched_table), id: String(l.matched_id), label: String(l.matched_table), href: null }
   }
   const expMemo = new Map<string, ReturnType<typeof wireExpectedFee>>()

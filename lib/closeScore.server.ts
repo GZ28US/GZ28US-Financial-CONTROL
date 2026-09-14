@@ -23,7 +23,7 @@
 // módulo neutro, o placar devolve null e a conta segue no card «Conta corrente GZ28BR» do Data Checker e no Balanço.
 // Erro de leitura NÃO é engolido: só tabela opcional ausente (migration) vira null.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { fetchAll, num, expensesRows, BUCKET_ORIGIN, BUCKET_CODE } from './bankReconcile.server'
+import { fetchAll, fetchBankLines, pointerKeys, mixedMembers, MIXED_GROUP, num, expensesRows, BUCKET_ORIGIN, BUCKET_CODE } from './bankReconcile.server'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
 export type AuditItem = { key: string; kind: string; title: string; amount: number; date: string | null; refs: AuditRef[]; evidence: string }
@@ -274,6 +274,8 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
     if (b.match_status !== 'MATCHED') return null
     if (!b.matched_id || !b.matched_table) return 'casada sem registro apontado (matched_id vazio)'
     if (b.matched_table === 'purchase_group') return groups.has(String(b.matched_id)) ? null : 'o pedido (purchase_group) apontado não tem mais nenhum item'
+    // Casamento MISTO (BL 1.6.0): a régua do pedido — morto quando nenhum membro gravado existe mais; tabela que o placar não lê não julga.
+    if (b.matched_table === MIXED_GROUP) { const ms = mixedMembers(b); if (!ms.length) return 'casamento misto sem membros gravados (matched_members vazio)'; return ms.some(m => { const s = exists[m.table]; return !s || s.has(m.id) }) ? null : 'nenhum registro do casamento misto existe mais' }
     const set = exists[String(b.matched_table)]
     if (!set) return null   // tabela que o placar não lê: não julga
     return set.has(String(b.matched_id)) ? null : `o registro ${b.matched_table} apontado não existe mais`
@@ -284,7 +286,7 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
   for (const b of live) {
     const why = deadWhy(b)
     if (why) { dead.set(String(b.id), why); continue }
-    if (b.match_status === 'MATCHED') { pointed.set(b.matched_table + ':' + b.matched_id, b); linkedLine.set(String(b.id), b) }
+    if (b.match_status === 'MATCHED') { for (const k of pointerKeys(b)) pointed.set(k, b); linkedLine.set(String(b.id), b) }   // linha MISTA: cada membro aponta pra ela
   }
   // A régua do «tomado» (candidatePool + enginesAudit.lineOf): ponteiro da linha, grupo casado, elo gravado no registro.
   const lineFor = (table: string, r: any): any => pointed.get(table + ':' + r.id)
@@ -580,7 +582,7 @@ export async function closeScore(db: any, opts: CloseOpts = {}): Promise<CloseSc
   const missing = (e: any) => /does not exist|relation|schema cache|PGRST205|42P01/.test(String(e?.message || e))
   const opt = (p: Promise<any[]>): Promise<any[] | null> => p.catch((e: any) => (missing(e) ? null : Promise.reject(e)))
   const [bank, accounts, invoiceExpenses, fixedExpenses, expenses, goods, goodExpenses, inputs, inventory, payments, invoices, fixedSuppliers, cashBalances, financingEvents, capitalEvents] = await Promise.all([
-    fetchAll(db, 'bank_transactions', 'id, item_id, date, amount, name, merchant, pending, plaid_id, match_status, match_engine, matched_table, matched_id'),
+    fetchBankLines(db, 'id, item_id, date, amount, name, merchant, pending, plaid_id, match_status, match_engine, matched_table, matched_id'),
     fetchAll(db, 'bank_accounts', 'id, institution, display_name, status'),   // NUNCA o token
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method, bank_transaction_id'),

@@ -46,7 +46,7 @@
 // entrada e FORA do balde (sem casamento ou casada com registro humano), pode ser a devolvida: fica fora dos itens (summary). Réplica de
 // 10/set: a cobrança DELAWAR de $5,349.65 (13/ago) e o crédito de −$5,349.65 (19/ago) — a cobrança ainda estava NEW, fora do balde.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { fetchAll, num, nameHit, shortNameHit, words, signedDays, stmtMerchant, loadDbAliases, BUCKET_ORIGIN, ENGINE_BUCKET, MARKER_BUCKET } from './bankReconcile.server'
+import { fetchAll, fetchBankLines, pointerKeys, num, nameHit, shortNameHit, words, signedDays, stmtMerchant, loadDbAliases, BUCKET_ORIGIN, ENGINE_BUCKET, MARKER_BUCKET } from './bankReconcile.server'
 import { supplierDirectoryFrom, matchSupplier, normSup } from './supplierMatch'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
@@ -116,7 +116,8 @@ export function computeBucketOrders(d: BucketOrdersData): BucketOrdersResult {
   const live = bank.filter((b: any) => String(b.match_status || '') !== 'REMOVED')
   const lineIds = new Set<string>(bank.map((b: any) => String(b.id)))
   const taken = new Set<string>(), takenGroups = new Set<string>()
-  for (const b of live) if (b.matched_id) { taken.add(String(b.matched_table) + ':' + String(b.matched_id)); if (b.matched_table === 'purchase_group') takenGroups.add(String(b.matched_id)) }
+  // pointerKeys: o ponteiro e, na linha MISTA (BL 1.6.0), cada membro — a régua do candidatePool.
+  for (const b of live) if (b.matched_id) { for (const k of pointerKeys(b)) taken.add(k); if (b.matched_table === 'purchase_group') takenGroups.add(String(b.matched_id)) }
   const invById = new Map<string, any>((d.invoices || []).map((i: any) => [String(i.id), i]))
   const rideName = new Map<string, string>((d.rides || []).map((r: any) => [String(r.id), String(r.project_name || '')]))
   const invoiceCodes = new Set<string>((d.invoices || []).map((i: any) => String(i.invoice_code || '').toUpperCase().replace(/[^A-Z0-9]/g, '')).filter((k: string) => k.length >= 3))
@@ -360,7 +361,7 @@ export async function auditBucketOrders(db: any): Promise<BucketOrdersResult> {
   // auto_book_mail só enfeita o rótulo («veio do AUTO-BOOK»): sem a migration do robô, segue sem ele. Qualquer outro erro sobe.
   const optional = (p: Promise<any[]>, table: string) => p.catch((e: any) => { const m = String(e?.message || e); if (m.startsWith(table + ':') && /does not exist|schema cache|PGRST205|42P01/.test(m)) return []; throw e })
   const [bank, invoices, rides, invoiceExpenses, inputs, goods, inventory, fixed, expenses, suppliers, mailBooked] = await Promise.all([
-    fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, pending, match_status, match_engine, matched_table, matched_id, reviewed_at, authorized_date:raw->>authorized_date'),
+    fetchBankLines(db, 'id, date, amount, name, merchant, pending, match_status, match_engine, matched_table, matched_id, reviewed_at, authorized_date:raw->>authorized_date'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'rides', 'id, project_name'),
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, purchase_group, order_number, paid_from, paid_to, cancel_status'),

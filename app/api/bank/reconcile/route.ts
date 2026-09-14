@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled } from '@/lib/bankReconcile.server'
+import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill } from '@/lib/bankReconcile.server'
 import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
@@ -13,7 +13,7 @@ import { tabelaAtual } from '@/lib/tableRenames'
 export const maxDuration = 300
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_|klass|priority|invoices_bucket|bank_merchant_rules_key|doubt_answered/
+const MIGRATION_RE = /match_engine|match_batch|reviewed_at|backfill|bank_transaction_id|match_rule|bank_auto_runs|pfc_|klass|priority|invoices_bucket|bank_merchant_rules_key|doubt_answered|matched_members/
 const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 // TO BOOK conta a idade desde a MARCAÇÃO (revisão BL 1.5.0): o diário guarda o QUEUE; sem diário, fica a data do banco.
 async function markQueuedAt(db: any, lines: any[]): Promise<void> {
@@ -87,12 +87,10 @@ export async function GET(req: NextRequest) {
       // correção é DESFAZER, não «conferir». reviewed_at ficou só como «visto». O
       // valor do banco acompanha pra conferir grupos (total mudou = não é mais certo).
       const acc: { table: string; id: string; amount: number; n: string }[] = []
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('bank_transactions').select('matched_table, matched_id, amount, match_engine, reviewed_at, name, merchant').eq('match_status', 'MATCHED').not('matched_id', 'is', null).order('id').range(from, from + 999)
-        if (error) throw new Error(error.message)
-        for (const r of data || []) acc.push({ table: r.matched_table, id: r.matched_id, amount: Math.abs(num(r.amount)), n: String(r.merchant || r.name || '').slice(0, 60) })   // n: o comerciante — prova pro «sem fornecedor»
-        if (!data || data.length < 1000) break
-      }
+      // Linha MISTA (BL 1.6.0): além do ponteiro, cada MEMBRO sai como par casado — o banco provou quem pagou cada um. O `amount`
+      // de um membro é o valor da linha INTEIRA (o Data Checker só usa `amount` pra conferir purchase_group).
+      const matchedRows = await fetchBankLines(db, 'id, matched_table, matched_id, amount, match_engine, reviewed_at, name, merchant', (q: any) => q.eq('match_status', 'MATCHED').not('matched_id', 'is', null))
+      for (const r of matchedRows) for (const k of pointerKeys(r)) { const i = k.indexOf(':'); acc.push({ table: k.slice(0, i), id: k.slice(i + 1), amount: Math.abs(num(r.amount)), n: String(r.merchant || r.name || '').slice(0, 60) }) }   // n: o comerciante — prova pro «sem fornecedor»
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
       // pra sugerir quem pagou. A conta abriu em 2025-11-10 com $0: antes disso,
       // nada foi GZ28US.
@@ -165,7 +163,7 @@ export async function GET(req: NextRequest) {
         const today = todayNY()
         bucketSig = { total: brows.length, balance: Math.round(brows.reduce((a: number, r: any) => a + expLine(r), 0) * 100) / 100, older_7d: brows.filter((r: any) => r.payment_date && signedDays(String(r.payment_date), today) > 7).length }
         // linhas do banco do balde (por id e por grupo) — pra órfão, dupla, ponteiro morto e valor
-        const blines = await fetchAll(db, 'bank_transactions', 'id, name, merchant, amount, match_status, matched_table, matched_id, reviewed_at, match_engine', (q: any) => q.eq('match_status', 'MATCHED').in('matched_table', ['invoice_expenses', 'purchase_group', 'staff_expenses', 'expense_group']))
+        const blines = await fetchBankLines(db, 'id, name, merchant, amount, match_status, matched_table, matched_id, reviewed_at, match_engine', (q: any) => q.eq('match_status', 'MATCHED').in('matched_table', ['invoice_expenses', 'purchase_group', 'staff_expenses', 'expense_group', MIXED_GROUP]))
         // Órfão = NENHUMA linha casada apontando, de qualquer motor (a substituta do Plaid casa por EXACT — revisão 19).
         const byRow = new Map<string, any>(), byGroup = new Map<string, any>()
         for (const l of blines) { if (l.matched_table === 'invoice_expenses') byRow.set(String(l.matched_id), l); else if (l.matched_table === 'purchase_group') byGroup.set(String(l.matched_id), l) }
@@ -192,10 +190,11 @@ export async function GET(req: NextRequest) {
           const linkedRows = await expensesRows(db, 'id, description, amount', (q: any) => q.not('bank_transaction_id', 'is', null))
           const lids = [...new Set(linkedRows.map((r: any) => String(r.bank_transaction_id)))]
           const lptr = new Map<string, any>()
-          for (let i = 0; i < lids.length; i += 200) { const { data } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').in('id', lids.slice(i, i + 200)); for (const x of data || []) lptr.set(String(x.id), x) }
+          for (let i = 0; i < lids.length; i += 200) { const chunk = lids.slice(i, i + 200); for (const x of await fetchBankLines(db, 'id, match_status, matched_table, matched_id', (q: any) => q.in('id', chunk))) lptr.set(String(x.id), x) }
           for (const r of linkedRows) {
             const x = lptr.get(String(r.bank_transaction_id))
-            const ok = x && x.match_status === 'MATCHED' && ((x.matched_table === 'staff_expenses' && String(x.matched_id) === String(r.id)) || (x.matched_table === 'expense_group' && String(x.matched_id) === String(x.id)))
+            // Casamento MISTO (BL 1.6.0): o elo vale enquanto a passagem é MEMBRO gravado da linha.
+            const ok = x && x.match_status === 'MATCHED' && ((x.matched_table === 'staff_expenses' && String(x.matched_id) === String(r.id)) || (x.matched_table === 'expense_group' && String(x.matched_id) === String(x.id)) || (x.matched_table === MIXED_GROUP && String(x.matched_id) === String(x.id) && mixedMembers(x).some(m => m.table === 'staff_expenses' && m.id === String(r.id))))
             if (!ok) orphans.push({ table: 'staff_expenses', id: r.id, label: 'FOLHA · ' + String(r.description || '').slice(0, 80), amount: num(r.amount), bank_id: String(r.bank_transaction_id), code: x && x.match_status === 'REMOVED' ? 'SUBSTITUÍDA' : 'ELO SOLTO' })
           }
         } catch (e) { const m = String((e as Error).message || e); if (!/bank_transaction_id/.test(m)) errors.push('elo solto: ' + m.slice(0, 160)) }
@@ -205,7 +204,16 @@ export async function GET(req: NextRequest) {
         const expIds = new Set<string>()
         { const ids = blines.filter((l: any) => l.matched_table === 'staff_expenses').map((l: any) => String(l.matched_id)); for (let i = 0; i < ids.length; i += 200) { const { data } = await db.from('staff_expenses').select('id').in('id', ids.slice(i, i + 200)); for (const r of data || []) expIds.add(String(r.id)) } }
         for (const l of blines) {
-          if (l.match_engine !== ENGINE_BUCKET && !['staff_expenses', 'expense_group'].includes(String(l.matched_table))) continue
+          if (l.match_engine !== ENGINE_BUCKET && !['staff_expenses', 'expense_group', MIXED_GROUP].includes(String(l.matched_table))) continue
+          if (l.matched_table === MIXED_GROUP) {
+            // CASAMENTO MISTO (BL 1.6.0): membro que sumiu = ponteiro morto (DESFAZER devolve a linha); membros que somam outro valor = VALOR MUDOU.
+            const ms = mixedMembers(l)
+            const amts = await memberAmounts(db, ms)
+            const gone = ms.filter(m => !amts.has(m.table + ':' + m.id))
+            if (!ms.length || gone.length) deadPointers.push({ bank_id: l.id, table: MIXED_GROUP, id: l.matched_id, label: (l.merchant || l.name || '') + ' · misto: ' + (ms.length ? gone.map(m => m.table).join(', ') + ' sumiu' : 'sem membros gravados'), amount: Math.abs(num(l.amount)) })
+            else { const s = Math.round(ms.reduce((a, m) => a + (amts.get(m.table + ':' + m.id) || 0), 0) * 100) / 100; if (Math.abs(s - Math.abs(num(l.amount))) >= 0.011) amountDrift.push({ bank_id: l.id, row_id: ms[0].id, bank_amount: Math.abs(num(l.amount)), row_amount: s, label: (l.merchant || l.name || '') + ' · misto ×' + ms.length }) }
+            continue
+          }
           if (l.matched_table === 'staff_expenses') { if (!expIds.has(String(l.matched_id))) deadPointers.push({ bank_id: l.id, table: 'staff_expenses', id: l.matched_id, label: l.merchant || l.name || '', amount: Math.abs(num(l.amount)) }); continue }   // ponteiro morto: balde + folha casada (CASAR COM AJUSTE)
           if (l.matched_table === 'invoice_expenses') {
             if (rowIds.has(String(l.matched_id))) continue
@@ -675,6 +683,84 @@ export async function POST(req: NextRequest) {
       await db.from('data_fixes').insert(fixes).then(() => undefined, () => undefined)
       return NextResponse.json({ ok: true, engine: 'ADJUST', delta: cand.delta, rows: rows0.length, note })
     }
+    // ── CASAMENTO MISTO (BL 1.6.0 — Márcio, 13/set/2026): UMA linha do banco ⇄ registros de TABELAS DIFERENTES ──
+    // O cupom do posto que pagou gasolina PESSOAL e gelo da oficina (Wawa 5205, 10/set: $115,44 = PESSOAL $90,15 + insumo $25,29).
+    // Decisão HUMANA: nasce vista (como o match à mão), sem motor, e NÃO ensina regra — um cupom misto não diz o fornecedor de nada.
+    // Nada no registro muda (valor, pagador, origem, descrição): o banco só prova quem pagou. Escreve o elo da folha (reversível,
+    // no backfill) e a data de pagamento onde falta; o DESFAZER em CASADAS/Bank Link devolve exatamente isso e nunca apaga membro.
+    if (action === 'match_mixed') {
+      const bankId2 = String(body.bank_id || '')
+      const raw: any[] | null = Array.isArray(body.members) ? body.members : null
+      if (!bankId2 || !raw) return NextResponse.json({ error: 'bank_id/members required' }, { status: 400 })
+      const { data: line0, error: lErr } = await db.from('bank_transactions').select(BSEL + ', matched_members').eq('id', bankId2).maybeSingle()
+      const line: any = line0   // select composto: o tipo do supabase-js não resolve a string concatenada (mesmo truque do match_adjust)
+      if (lErr) return NextResponse.json({ error: lErr.message, needs_migration: MIGRATION_RE.test(lErr.message) }, { status: 500 })
+      if (!line) return NextResponse.json({ error: 'bank line not found' }, { status: 404 })
+      // Qualquer linha em aberto (NEW/QUEUED); linha do balde casada pelo motor BUCKET não entra — DESFAZER/DESATRIBUIR primeiro.
+      if (!['NEW', 'QUEUED'].includes(String(line.match_status))) return NextResponse.json({ error: 'linha do banco já decidida — recarregue' + (line.match_engine === ENGINE_BUCKET ? ' (linha do balde: DESFAZER antes de casar misto)' : '') }, { status: 409 })
+      if (line.pending) return NextResponse.json({ error: 'linha ainda PENDING no banco — espere postar' }, { status: 409 })
+      if (!(num(line.amount) > 0)) return NextResponse.json({ error: 'só saída casa com registros mistos' }, { status: 409 })
+      if (raw.length < 2 || raw.length > 10) return NextResponse.json({ error: 'casamento misto pede de 2 a 10 registros' }, { status: 400 })
+      const members = raw.map((m: any) => ({ table: tabelaAtual(String(m?.table || '')), id: String(m?.id || '') }))
+      if (members.some(m => !m.table || !m.id)) return NextResponse.json({ error: 'membro sem table/id' }, { status: 400 })
+      const keys = members.map(m => m.table + ':' + m.id)
+      if (new Set(keys).size !== keys.length) return NextResponse.json({ error: 'registro repetido na lista de membros' }, { status: 400 })
+      const badT = [...new Set(members.filter(m => !MIXED_TABLES.has(m.table)).map(m => m.table))]
+      if (badT.length) return NextResponse.json({ error: 'tabela fora do casamento misto: ' + badT.join(', ') + ' (vale ' + [...MIXED_TABLES].join(', ') + ')' }, { status: 400 })
+      // Cada membro tem de ser SAÍDA válida do pool AGORA: livre de linha viva, não paga pela GZ28BR, não datada no futuro, valor
+      // não zero, estoque só PURCHASED, invoice só real (não orçamento). O valor sai do pool — nunca do pedido.
+      const pool = await candidatePool(db)
+      const outByKey = new Map<string, any>(pool.out.map(c => [c.table + ':' + c.id, c]))
+      const cands = keys.map(k => outByKey.get(k))
+      const invalid = keys.filter((k, i) => !cands[i])
+      if (invalid.length) return NextResponse.json({ error: 'registro não vale como saída (já casado, pago pela GZ28BR, datado no futuro, valor zero, estoque não comprado ou invoice orçamento) — recarregue: ' + invalid.join(', ') }, { status: 409 })
+      const bank = Math.round(Math.abs(num(line.amount)) * 100) / 100
+      const sum = Math.round(cands.reduce((a: number, c: any) => a + num(c.amount), 0) * 100) / 100
+      if (Math.abs(sum - bank) >= 0.011) return NextResponse.json({ error: 'os registros somam $' + sum.toFixed(2) + ' e o banco cobrou $' + bank.toFixed(2) + ' — tem que somar exatamente o valor da linha' }, { status: 409 })
+      // FOLHA/PESSOAL: nenhum elo (bank_transaction_id ou payment_reference bank:) pra linha VIVA; elo pra linha morta (REMOVED/resetada) é substituído.
+      const staffIds = members.filter(m => m.table === 'staff_expenses').map(m => m.id)
+      let staffRows: any[] = []
+      if (staffIds.length) {
+        if (await probeExpenseLink(db)) return NextResponse.json({ error: 'rode MIGRATION_expenses_bank_link.sql antes (coluna expenses.bank_transaction_id)', needs_link_migration: true }, { status: 409 })
+        staffRows = await expensesRows(db, 'id, description, amount, payment_reference', (q: any) => q.in('id', staffIds))
+        if (staffRows.length !== staffIds.length) return NextResponse.json({ error: 'registro da folha não existe mais — recarregue' }, { status: 409 })
+        const refs = [...new Set(staffRows.flatMap((r: any) => [r.bank_transaction_id ? String(r.bank_transaction_id) : '', String(r.payment_reference || '').startsWith('bank:') ? String(r.payment_reference).slice(5) : '']).filter(Boolean))]
+        const refLines = refs.length ? await fetchBankLines(db, 'id, match_status, matched_id', (q: any) => q.in('id', refs)) : []
+        const liveRef = new Set(refLines.filter((x: any) => x.match_status !== 'REMOVED' && x.matched_id).map((x: any) => String(x.id)))   // a régua do linkedLines do pool
+        const linked = staffRows.filter((r: any) => (r.bank_transaction_id && liveRef.has(String(r.bank_transaction_id))) || (String(r.payment_reference || '').startsWith('bank:') && liveRef.has(String(r.payment_reference).slice(5))))
+        if (linked.length) return NextResponse.json({ error: 'registro da folha já ligado a outra linha do banco — recarregue: ' + linked.map((r: any) => 'staff_expenses:' + r.id).join(', ') }, { status: 409 })
+      }
+      // O elo da folha ANTES do claim (a mesma ordem do CASAR COM AJUSTE), guardado pelo elo que se leu; entra no backfill como `pre`.
+      const pre: Backfill[] = []
+      const claimedStaff: any[] = []
+      const rollback = async () => { for (const r of claimedStaff) await db.from('staff_expenses').update({ bank_transaction_id: r.bank_transaction_id ?? null }).eq('id', r.id).eq('bank_transaction_id', line.id) }
+      for (const r of staffRows.slice().sort((a: any, b: any) => String(a.id).localeCompare(String(b.id)))) {
+        const q0: any = db.from('staff_expenses').update({ bank_transaction_id: line.id }).eq('id', r.id)
+        const { data: ok, error } = await (r.bank_transaction_id ? q0.eq('bank_transaction_id', r.bank_transaction_id) : q0.is('bank_transaction_id', null)).select('id')
+        if (error) { await rollback(); return NextResponse.json({ error: 'staff_expenses: ' + error.message }, { status: 500 }) }
+        if (!ok || !ok.length) { await rollback(); return NextResponse.json({ error: 'registro da folha mudou enquanto você olhava — recarregue' }, { status: 409 }) }
+        claimedStaff.push(r)
+        pre.push({ t: 'staff_expenses', id: String(r.id), f: 'bank_transaction_id', v: String(line.id), o: null })
+      }
+      // Recheca o ponteiro da folha DEPOIS do elo (EXACT/NAME/humano casam por matched_id, sem elo na coluna).
+      if (staffIds.length) { const takenNow = await expenseTaken(db); if (staffIds.some(i => takenNow.has(i))) { await rollback(); return NextResponse.json({ error: 'registro da folha acabou de ser casado por outra linha — recarregue' }, { status: 409 }) } }
+      const short = (c: any) => { const seg = String(c.label || '').split(' · '); return seg[0] + (seg[1] ? ' ' + seg[1].slice(0, 22) : '') + ' $' + num(c.amount).toFixed(2) }
+      const note = (String(body.note || '').trim() || ('MISTO · ' + members.length + ' registros · ' + cands.map(short).join(' + '))).slice(0, 150)
+      const cnd = { table: MIXED_GROUP, id: String(line.id), members }
+      try { await writeMatch(db, line, cnd, { matched_members: members, matched_note: note, match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }, pre) }
+      catch (e) {
+        // Só devolve o elo se o casamento NÃO pegou (relê a linha); releitura que falha não prova nada — nada é revertido às cegas.
+        const { data: now0, error: rErr } = await db.from('bank_transactions').select('match_status, matched_table, matched_id').eq('id', line.id).maybeSingle()
+        if (rErr) return NextResponse.json({ error: 'confira no Bank Link: o casamento misto falhou no meio e a linha não pôde ser relida — ' + String((e as Error).message || e).slice(0, 120) }, { status: 500 })
+        const landed = !!now0 && now0.match_status === 'MATCHED' && now0.matched_table === MIXED_GROUP && String(now0.matched_id) === String(line.id)
+        if (!landed) await rollback()
+        const msg = String((e as Error).message || e)
+        return NextResponse.json({ error: msg.slice(0, 200), needs_migration: MIGRATION_RE.test(msg) }, { status: 409 })
+      }
+      const parts = cands.map((c: any) => c.table + ' $' + num(c.amount).toFixed(2)).join(' + ')
+      await db.from('data_fixes').insert({ check_key: 'bank-reconcile', table_name: 'bank_transactions', row_id: line.id, field: 'match_status', old_value: String(line.match_status), new_value: 'MATCHED', label: ('MISTO · ' + line.date + ' · ' + (line.merchant || line.name || '') + ' · $' + bank.toFixed(2) + ' = ' + parts).slice(0, 200) }).then(() => undefined, () => undefined)
+      return NextResponse.json({ ok: true, status: 'MATCHED', bank, sum, note, members: cands.map((c: any) => ({ table: c.table, id: c.id, amount: num(c.amount), label: c.label })) })
+    }
     // SOLTAR (Data Checker · ELO SOLTO): a passagem diz que casou, a linha do banco não a aponta — só limpa o elo.
     if (action === 'unlink_expense') {
       const rowId = String(body.row_id || '')
@@ -682,7 +768,8 @@ export async function POST(req: NextRequest) {
       const { data: r0 } = await db.from('staff_expenses').select('id, description, bank_transaction_id').eq('id', rowId).maybeSingle()
       if (!r0 || !r0.bank_transaction_id) return NextResponse.json({ error: 'registro sem elo — recarregue' }, { status: 409 })
       const { data: l0 } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id').eq('id', r0.bank_transaction_id).maybeSingle()
-      if (l0 && l0.match_status === 'MATCHED' && ((l0.matched_table === 'staff_expenses' && String(l0.matched_id) === rowId) || (l0.matched_table === 'expense_group' && String(l0.matched_id) === String(l0.id)))) return NextResponse.json({ error: 'a linha do banco ainda aponta pra este registro — DESFAZER no Bank Link' }, { status: 409 })
+      const mixedOwner = l0 && l0.matched_table === MIXED_GROUP ? (await fetchBankLines(db, 'id, matched_table', (q: any) => q.eq('id', l0.id)))[0] : null   // os membros moram na coluna nova
+      if (l0 && l0.match_status === 'MATCHED' && ((l0.matched_table === 'staff_expenses' && String(l0.matched_id) === rowId) || (l0.matched_table === 'expense_group' && String(l0.matched_id) === String(l0.id)) || (l0.matched_table === MIXED_GROUP && mixedMembers(mixedOwner).some(m => m.table === 'staff_expenses' && m.id === rowId)))) return NextResponse.json({ error: 'a linha do banco ainda aponta pra este registro — DESFAZER no Bank Link' }, { status: 409 })
       const { error } = await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('id', rowId).eq('bank_transaction_id', r0.bank_transaction_id)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       await db.from('data_fixes').insert({ check_key: 'auto-book', table_name: 'staff_expenses', row_id: rowId, field: 'bank_transaction_id', old_value: String(r0.bank_transaction_id), new_value: null, label: ('ELO SOLTO · ' + String(r0.description || '').slice(0, 120)).slice(0, 200) }).then(() => undefined, () => undefined)
@@ -1149,7 +1236,7 @@ export async function POST(req: NextRequest) {
         const r = latest.get(String(l.id)); if (!r) continue
         try {
           if (r.action === 'MATCH' && r.matched_table && r.matched_id) {
-            if (!['purchase_group', 'kit_group', 'expense_group'].includes(r.matched_table)) {
+            if (!['purchase_group', 'kit_group', 'expense_group', MIXED_GROUP].includes(r.matched_table)) {
               const { data: tgt } = await (db.from(r.matched_table) as any).select('id').eq('id', r.matched_id).maybeSingle()
               if (!tgt) { gone++; continue }
             }
@@ -1166,7 +1253,10 @@ export async function POST(req: NextRequest) {
             // como writeUnmatch já faz com bank_transactions.backfill; idempotente, e
             // o MATCH que o restore grava de volta já sai com o nome de hoje.
             const members = (Array.isArray(r.members) ? r.members : []).map((m: any) => ({ ...m, table: tabelaAtual(m?.table) }))
-            await writeMatch(db, l, { table: r.matched_table, id: r.matched_id, members }, { matched_note: r.note || null, match_engine: r.engine || null, match_batch: attributed ? null : (r.batch || null), reviewed_at: attributed ? r.at : null })
+            // CASAMENTO MISTO (BL 1.6.0): os membros são registros escolhidos um a um — todos têm de existir, senão o alvo sumiu. O claim
+            // regrava matched_members a partir do diário; o elo da folha não volta (como no expense_group) — o pool os segura pelos membros.
+            if (r.matched_table === MIXED_GROUP) { const have = await memberAmounts(db, members); if (members.length < 2 || members.some((m: any) => !have.has(m.table + ':' + m.id))) { gone++; continue } }
+            await writeMatch(db, l, { table: r.matched_table, id: r.matched_id, members }, { matched_note: r.note || null, match_engine: r.engine || null, match_batch: attributed ? null : (r.batch || null), reviewed_at: attributed || r.matched_table === MIXED_GROUP ? r.at : null })
             matched++
           } else if (['TRANSFER', 'IGNORE', 'QUEUE'].includes(r.action)) {
             const st = r.action === 'QUEUE' ? 'QUEUED' : r.action === 'IGNORE' ? 'IGNORED' : 'TRANSFER'
@@ -1240,6 +1330,7 @@ export async function POST(req: NextRequest) {
       // QUALQUER linha casada apontando (motor ou humano, por id ou por grupo) = não é órfão (revisão 19).
       const { data: ptr } = await db.from('bank_transactions').select('id').eq('match_status', 'MATCHED').or('and(matched_table.eq.' + table + ',matched_id.eq.' + rowId + ')' + (row.purchase_group ? ',and(matched_table.eq.purchase_group,matched_id.eq.' + String(row.purchase_group) + ')' : '')).limit(1)
       if (ptr && ptr.length) return NextResponse.json({ error: 'uma linha do banco ainda aponta pra este lançamento — não é órfão' }, { status: 409 })
+      if ((await mixedLinesWith(db, table, rowId)).length) return NextResponse.json({ error: 'o lançamento é membro de um casamento MISTO vivo — não é órfão' }, { status: 409 })
       const { data: l } = await db.from('bank_transactions').select('match_status, matched_table, matched_id').eq('id', bankRef).maybeSingle()
       if (l && l.match_status === 'MATCHED' && ((l.matched_table === table && String(l.matched_id) === rowId) || (l.matched_table === 'purchase_group' && String(l.matched_id) === String(row.purchase_group || '')))) return NextResponse.json({ error: 'a linha do banco ainda aponta pra este lançamento — não é órfão' }, { status: 409 })
       const { error } = await (db.from(table) as any).delete().eq('id', rowId)

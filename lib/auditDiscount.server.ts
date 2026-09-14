@@ -35,7 +35,7 @@
 // preço de ITEMS daquela peça foi montado (invoice_items.base_cost × as contas do IMPORT); cobrança acima do MAP vai à
 // parte no resumo.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { fetchAll, num, nameHit, loadDbAliases, stmtMerchant, type Cand } from './bankReconcile.server'
+import { fetchAll, fetchBankLines, mixedMembers, num, nameHit, loadDbAliases, stmtMerchant, type Cand } from './bankReconcile.server'
 import { supplierDirectoryFrom, matchSupplier, normSup } from './supplierMatch'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
@@ -107,7 +107,7 @@ export async function loadDiscountData(db: any): Promise<DiscountData> {
     fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, part_number, price, quantity, tax, extra, item_discount, order_number, purchase_group, payment_date, expense_date, paid_from, paid_to, receipt_url'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'rides', 'id, project_name'),
-    fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, authorized_date:raw->>authorized_date'),
+    fetchBankLines(db, 'id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, authorized_date:raw->>authorized_date'),
     fetchAll(db, 'parts_database', 'id, item, part_number, map_price, shipping, handling, unit_price, part_discount, currency'),
     fetchAll(db, 'invoice_items', 'id, invoice_id, description, unit_price, quantity, base_cost, source_item'),
     fetchAll(db, 'supplier_orders', 'id, supplier_id, supplier_name, order_number, order_date, total, paid_total'),
@@ -140,6 +140,10 @@ export function auditDiscountFrom(d: DiscountData): DiscountAudit & { verdicts: 
   const feedFrom = postedDays[0] || null, feedUntil = postedDays[postedDays.length - 1] || null
   const pointed = new Map<string, any[]>()
   for (const b of live) if (b.match_status === 'MATCHED' && b.matched_table && b.matched_id) push(pointed, b.matched_table + ':' + b.matched_id, b)
+  // Linha MISTA (BL 1.6.0): o valor do banco cobre registros de OUTRAS tabelas (PESSOAL, insumo…). Só prova o nível que contém
+  // TODOS os membros dela; nível parcial fica sem prova de banco (como antes) — nunca vira BANCO_DIVERGE falso.
+  const mixedOf = new Map<string, any>()
+  for (const b of live) if (b.match_status === 'MATCHED') for (const m of mixedMembers(b)) mixedOf.set(m.table + ':' + m.id, b)
   // Pendente vale como solta: valor ao centavo + mesmo fornecedor + data perto; o texto da evidência diz «pendente».
   const loose = live.filter((b: any) => num(b.amount) > 0 && !NOT_LOOSE.has(String(b.match_status || '')))
   const authOf = (b: any) => okDay(b.authorized_date) ? day(b.authorized_date) : null
@@ -259,8 +263,10 @@ export function auditDiscountFrom(d: DiscountData): DiscountAudit & { verdicts: 
     const inside = lv.rows.filter(r => !brPaid(r)); if (!inside.length) return null
     const grp = lv.pg ? (pointed.get('purchase_group:' + lv.pg) || []) : []
     const seen = new Map<string, any>(); for (const b of grp) seen.set(String(b.id), b)
-    for (const r of inside) { const own = pointed.get('invoice_expenses:' + r.id) || []; if (!own.length && !grp.length) return null; for (const b of own) seen.set(String(b.id), b) }
-    for (const o of lv.others) { const own = pointed.get(o.table + ':' + o.id) || []; if (!own.length && !grp.length) return null; for (const b of own) seen.set(String(b.id), b) }
+    const lvKeys = new Set<string>([...lv.rows.map((r: any) => 'invoice_expenses:' + r.id), ...lv.others.map((o: any) => o.table + ':' + o.id)])
+    const ownOf = (k: string): any[] => { const own = pointed.get(k) || []; if (own.length) return own; const mb = mixedOf.get(k); return mb && mixedMembers(mb).every(m => lvKeys.has(m.table + ':' + m.id)) ? [mb] : [] }
+    for (const r of inside) { const own = ownOf('invoice_expenses:' + r.id); if (!own.length && !grp.length) return null; for (const b of own) seen.set(String(b.id), b) }
+    for (const o of lv.others) { const own = ownOf(o.table + ':' + o.id); if (!own.length && !grp.length) return null; for (const b of own) seen.set(String(b.id), b) }
     return seen.size ? [...seen.values()] : null
   }
   // (b) banco solto: mesmo fornecedor, ±10 d, valor de um lado só — e nenhuma solta do outro lado (senão é empate).

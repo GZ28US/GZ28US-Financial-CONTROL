@@ -12,6 +12,8 @@
 // Erro de leitura NÃO é engolido: tabela ausente vira erro (a rota traduz em «rode a migration»), nunca «robô nunca rodou».
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { supplierDirectoryFrom, matchSupplier, normSup } from './supplierMatch'
+// Só as réguas de LEITURA do ponteiro (linha MISTA, BL 1.6.0) — nada do motor que escreve.
+import { fetchBankLines, pointerKeys } from './bankReconcile.server'
 
 export type EngineRun = { started_at: string; finished_at: string | null; status: string; trigger: string; counts: Record<string, number>; errors: string[]; caixas: string[] }
 export type EnginesAudit = {
@@ -96,7 +98,7 @@ export async function enginesAudit(db: any): Promise<EnginesAudit> {
     fetchAll(db, 'staff_expenses', expensesSel + ', bank_transaction_id').catch((e: any) => /bank_transaction_id/.test(String(e.message)) ? fetchAll(db, 'staff_expenses', expensesSel) : Promise.reject(e)),
     fetchAll(db, 'suppliers', 'name, aliases, is_dealership'),
     fetchAll(db, 'invoices', 'id, invoice_code, origin'),
-    fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, pending, match_status, match_engine, matched_table, matched_id, reviewed_at', (q: any) => q.or('match_status.is.null,match_status.neq.REMOVED')),
+    fetchBankLines(db, 'id, date, amount, name, merchant, pending, match_status, match_engine, matched_table, matched_id, reviewed_at', (q: any) => q.or('match_status.is.null,match_status.neq.REMOVED')),
   ])
   const dir = supplierDirectoryFrom(suppliers)
   const canonCache = new Map<string, string>()
@@ -119,7 +121,7 @@ export async function enginesAudit(db: any): Promise<EnginesAudit> {
   const feed_until = posted.map((b: any) => day(b.date)).sort().reverse()[0] || null
   const matched = bank.filter((b: any) => b.match_status === 'MATCHED')
   const pointed = new Map<string, any>()   // 'table:id' → linha do banco que aponta
-  for (const b of matched) if (b.matched_table && b.matched_id) pointed.set(b.matched_table + ':' + b.matched_id, b)
+  for (const b of matched) if (b.matched_table && b.matched_id) for (const k of pointerKeys(b)) pointed.set(k, b)   // linha MISTA: cada membro aponta pra ela (BL 1.6.0)
   const byLineId = new Map(bank.map((b: any) => [String(b.id), b]))
   const lineOf = (table: string, row: any): any => pointed.get(table + ':' + row.id) || (row.purchase_group ? pointed.get('purchase_group:' + row.purchase_group) : null)
     || ((table === 'fixed_cost_expenses' || table === 'staff_expenses') && row.bank_transaction_id ? byLineId.get(String(row.bank_transaction_id)) : null)

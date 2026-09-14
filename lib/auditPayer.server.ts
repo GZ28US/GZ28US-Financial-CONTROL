@@ -33,7 +33,7 @@
 // OU mesmo PayPal; datas a ≤3 dias; nenhum identificador contradizendo; custos iguais OU a maior = a menor × 1,065 /
 // 1,10 / 1,1715 (a convenção antiga); e, com custos iguais, nenhuma saída da Regions somando o par ou o pedido. Resultado: 1 par.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { fetchAll, num, nameHit, expensesRows } from './bankReconcile.server'
+import { fetchAll, fetchBankLines, pointerKeys, mixedMembers, MIXED_GROUP, num, nameHit, expensesRows } from './bankReconcile.server'
 import { normSup } from './supplierMatch'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
@@ -155,7 +155,7 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
   const suffixOf = (b: any) => { const m = String(b.name || '').match(/\b(\d{4})\s*$/); return m ? m[1] : '' }
   for (const b of bank) { const s = suffixOf(b); if (s) suffixCount.set(s, (suffixCount.get(s) || 0) + 1) }
   const pointed = new Map<string, any>()
-  for (const b of bank) if (b.match_status === 'MATCHED' && b.matched_table && b.matched_id) pointed.set(b.matched_table + ':' + b.matched_id, b)
+  for (const b of bank) if (b.match_status === 'MATCHED' && b.matched_table && b.matched_id) for (const k of pointerKeys(b)) pointed.set(k, b)   // linha MISTA: cada membro aponta pra ela (BL 1.6.0)
   const byLineId = new Map<string, any>(bank.map((b: any) => [String(b.id), b]))
   // A linha do banco que JÁ aponta pra este registro (a mesma régua do enginesAudit lineOf).
   const ownLine = (x: AppRow): any => pointed.get(x.table + ':' + x.r.id) || (x.r.purchase_group ? pointed.get('purchase_group:' + x.r.purchase_group) : null)
@@ -181,7 +181,7 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
       const status = String(b.match_status || '')
       const self = !!mine && String(mine.id) === String(b.id)
       const hit = nameHit(b, { table: x.table, id: String(x.r.id), label: x.matchLabel, date: x.date, amount: x.amount, undated: false } as any)
-      const owner = !self && status === 'MATCHED' ? rowByKey.get(b.matched_table + ':' + b.matched_id) || null : null
+      const owner = !self && status === 'MATCHED' ? rowByKey.get(b.matched_table + ':' + b.matched_id) || mixedMembers(b).map(m => rowByKey.get(m.table + ':' + m.id)).find(Boolean) || null : null
       const creator = CREATOR_ENGINES.has(String(b.match_engine || ''))
       const ok = self || (UNDECIDED.has(status) && (hit || distinct)) || (status === 'MATCHED' && creator && hit && distinct)
       const why = self ? 'self' : UNDECIDED.has(status) ? (hit || distinct ? 'ok' : 'fraca') : status === 'MATCHED' ? (ok ? 'ok' : 'casada_com_outro') : 'decidida'
@@ -198,7 +198,7 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
     const lag = dd(x.date, byAuth ? auth : posted0)
     const when = lag === 0 ? `no mesmo dia ${byAuth ? 'da autorização' : 'da data postada'}` : `a ${plural(lag, 'dia', 'dias')} ${byAuth ? 'da autorização' : 'da data postada'}`
     const statusText = best.self ? 'já casada com ESTE registro — o banco e o pagador se contradizem'
-      : best.status === 'MATCHED' ? `já casada com «${cut(best.owner ? best.owner.label : b.matched_table + ':' + b.matched_id, 60)}», que o motor do banco CRIOU (${b.match_engine}) — a mesma compra lançada duas vezes, ou coincidência`
+      : best.status === 'MATCHED' ? `já casada com «${cut(best.owner ? best.owner.label + (b.matched_table === MIXED_GROUP ? ' (+ outros ' + (mixedMembers(b).length - 1) + ', casamento misto)' : '') : b.matched_table + ':' + b.matched_id, 60)}», que o motor do banco CRIOU (${b.match_engine}) — a mesma compra lançada duas vezes, ou coincidência`
       : best.status === 'QUEUED' ? 'na fila do Bank Link (QUEUED), sem dono' : 'sem dono no Bank Link (NEW)'
     const proof = [best.hit ? 'o nome bate' : `o nome não bate, mas o valor é único (nenhuma outra saída de ${usd(x.amount)} em ±${UNIQUE_WINDOW_DAYS} dias)`,
       sufN >= 10 ? `cartão final ${suf} (${sufN} linhas da Regions com o mesmo final)` : '', b.processor ? `processador ${b.processor}` : '',
@@ -346,7 +346,7 @@ export async function auditPayer(db: any): Promise<PayerAudit> {
     fetchAll(db, 'rides', 'id, project_name, client_id'),
     fetchAll(db, 'clients', 'id, name, client_number, is_quote, country'),
     // authorized_date = data da autorização do cartão (raw do Plaid; nula nas linhas de extrato). date = data POSTADA.
-    fetchAll(db, 'bank_transactions', 'id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, match_engine, authorized_date:raw->>authorized_date, processor:raw->payment_meta->>payment_processor', (q: any) => q.or('match_status.is.null,match_status.neq.REMOVED')),
+    fetchBankLines(db, 'id, date, amount, name, merchant, pending, match_status, matched_table, matched_id, match_engine, authorized_date:raw->>authorized_date, processor:raw->payment_meta->>payment_processor', (q: any) => q.or('match_status.is.null,match_status.neq.REMOVED')),
   ])
   return computePayerAudit({ invoiceExpenses, fixedExpenses, fixedSuppliers, expenses, goods, goodExpenses, inputs, inventory, invoices, invoiceParts, rides, clients, bank })
 }
