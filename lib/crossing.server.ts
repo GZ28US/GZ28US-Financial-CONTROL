@@ -80,9 +80,6 @@ export const FORA_DE_ESCOPO_BR: Readonly<Record<string, string>> = {
   'BR.502.1': 'classe (c) — 006.13 HellKong: item US 236,00 ≠ BR 227,24 (extra dobrado por quantidade; fora deste passo)',
   'BR.1009.1': 'classe (c) — 006.28 ScatPack NOVO BR: 1 linha no US, 5 no BR (fora deste passo)',
   'BR.496.1': 'classe (c) — 006.2 + 006.16 Armageddon: duas 006.N para a mesma BR (fora deste passo)',
-  'BR.1001.1': 'classe (b) — 006.18 Skipper: BR digitada como custo cru (correção BR proposta à parte, não aplicada)',
-  'US.006.1': 'classe (b) — 006.19 HellNessey: BR digitada como custo cru (correção BR proposta à parte, não aplicada)',
-  'BR.472.1': 'classe (b) — 006.26 Vintage SRT8: BR digitada como custo cru (correção BR proposta à parte, não aplicada)',
 }
 
 // A MESMA TRAVA DO LADO DAS 085.N — chave = código da invoice NO US (14/set/2026). As regras gerais já
