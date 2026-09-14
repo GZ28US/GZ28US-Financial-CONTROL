@@ -2728,8 +2728,6 @@ export default function EditInvoicePage() {
     // Linha da travessia US ⇄ BR não sai calada (14/set/2026 — ver linhasDaTravessia): pergunta antes,
     // e se a conferência no banco falhar, as remoções daquela tabela ficam para o próximo save.
     let partIdsToDelete = removedPartIds, paymentIdsToDelete = removedPaymentIds, expenseIdsToDelete = removedExpenseIds
-    // O que não deu para conferir continua marcado para remoção no próximo save (revisão 14/set) — não some da fila.
-    let keepPartIds: string[] = [], keepPaymentIds: string[] = [], keepExpenseIds: string[] = []
     {
       const [lp, li, le] = await Promise.all([
         linhasDaTravessia('invoice_items', removedPartIds),
@@ -2737,10 +2735,12 @@ export default function EditInvoicePage() {
         linhasDaTravessia('invoice_expenses', removedExpenseIds),
       ])
       const falhas = [lp, li, le].map(x => x.falha).filter(Boolean)
-      if (lp.falha) { partIdsToDelete = []; keepPartIds = removedPartIds }
-      if (li.falha) { paymentIdsToDelete = []; keepPaymentIds = removedPaymentIds }
-      if (le.falha) { expenseIdsToDelete = []; keepExpenseIds = removedExpenseIds }
-      if (falhas.length) alert('Não deu para conferir se as linhas removidas são da travessia US ⇄ BR — elas NÃO foram apagadas (salve de novo):\n' + falhas.join('\n'))
+      // Falhou a conferência: aquela tabela não apaga, e a fila de remoção sai limpa como sempre — o reload traz as linhas de
+      // volta à tela e quem removeu remove de novo. Manter a fila apagaria no save seguinte sem nada na tela dizendo (revisão 14/set).
+      if (lp.falha) partIdsToDelete = []
+      if (li.falha) paymentIdsToDelete = []
+      if (le.falha) expenseIdsToDelete = []
+      if (falhas.length) alert('Não deu para conferir se as linhas removidas são da travessia US ⇄ BR — elas NÃO foram apagadas (remova de novo e salve):\n' + falhas.join('\n'))
       const ligadas = new Set([...lp.ids, ...li.ids, ...le.ids])
       if (ligadas.size && !confirm(`${ligadas.size} linha(s) que você removeu são da TRAVESSIA US ⇄ BR — espelho de uma linha do app do BR, ou o Pending balance que o motor da travessia mantém.\n\nApagar aqui NÃO apaga a origem: enquanto a linha de origem existir no BR, o motor grava o espelho de novo.\n\nOK = apagar mesmo assim · Cancelar = manter essas linhas`)) {
         partIdsToDelete = partIdsToDelete.filter(id => !ligadas.has(id))
@@ -2755,7 +2755,7 @@ export default function EditInvoicePage() {
       removedNoteIds.length ? supabase.from('invoice_notes').delete().in('id', removedNoteIds) : null,
       expenseIdsToDelete.length ? supabase.from('invoice_expenses').delete().in('id', expenseIdsToDelete) : null,
     ].filter(Boolean))
-    setRemovedPartIds(keepPartIds); setRemovedServiceIds([]); setRemovedPaymentIds(keepPaymentIds); setRemovedNoteIds([]); setRemovedExpenseIds(keepExpenseIds)
+    setRemovedPartIds([]); setRemovedServiceIds([]); setRemovedPaymentIds([]); setRemovedNoteIds([]); setRemovedExpenseIds([])
 
     // A TRAVESSIA US ⇄ BR (lei 25/ago/2026, sagrada desde 13/set; motor desde 14/set/2026): despesa
     // PAID FROM GZ28BR e renda PAID TO GZ28BR viram a SHOPPING INVOICE do cliente BR.085 no app
