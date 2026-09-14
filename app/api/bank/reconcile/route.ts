@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixable, mixedNet, mixedFromPool, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill, type Pool } from '@/lib/bankReconcile.server'
+import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixable, mixedNet, mixedFromPool, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill, type Pool, type Cand } from '@/lib/bankReconcile.server'
 import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
@@ -81,6 +81,15 @@ function allocate(bank: number, rows: { id: string; amount: number }[]): Map<str
   const rest = Math.round((bank - acc) * 100) / 100
   if (rest) { const top = [...rows].sort((a, b) => b.amount - a.amount || a.id.localeCompare(b.id))[0]; out.set(top.id, Math.round(((out.get(top.id) || 0) + rest) * 100) / 100) }
   return out
+}
+
+// PEDIDO DE 1 ITEM (BL 1.7.3, 14/set — achado da sessão Auto Book: banco b4846e8b × grupo dd2f1fd6 levou 409). O pool só lista
+// purchase_group com 2+ itens; o pedido de 1 item aparece como a PRÓPRIA linha. Casar pelo grupo cai nessa linha única.
+function acharCandidato(arr: Cand[], table: string, rowId: string): Cand | undefined {
+  const direto = arr.find(c => c.table === table && c.id === rowId)
+  if (direto || table !== 'purchase_group') return direto
+  const membros = arr.filter(c => c.table !== 'purchase_group' && c.group === rowId)
+  return membros.length === 1 ? membros[0] : undefined
 }
 
 export async function GET(req: NextRequest) {
@@ -1452,7 +1461,7 @@ export async function POST(req: NextRequest) {
       if (!table || !rowId) throw new Error('table/row_id required')
       const pool = await candidatePool(db)
       const arr = num(cur.amount) > 0 ? pool.out : pool.inn
-      const cand = arr.find(c => c.table === table && c.id === rowId)
+      const cand = acharCandidato(arr, table, rowId)
       if (!cand || Math.abs(cand.amount - Math.abs(num(cur.amount))) >= 0.011) throw new Error('candidato não vale mais (já casado, valor mudou ou direção errada) — recarregue')
       // Data Checker autossuficiente: casamento por PROVA (valor exato + nome + linha única) vem com engine NAME — cai em A CONFERIR com DESFAZER, nota «AUTO ·».
       const autoMatch = body.engine === 'AUTO'
@@ -1476,7 +1485,7 @@ export async function POST(req: NextRequest) {
         const table = String(body.table || ''), rowId = String(body.row_id || '')
         const pool0 = await candidatePool(db)
         const arr0 = num(line.amount) > 0 ? pool0.out : pool0.inn
-        const c0 = arr0.find(c => c.table === table && c.id === rowId)
+        const c0 = acharCandidato(arr0, table, rowId)
         if (!c0 || Math.abs(c0.amount - Math.abs(num(line.amount))) >= 0.011) return NextResponse.json({ error: 'registro humano não vale mais (já casado, valor mudou ou direção errada) — recarregue' }, { status: 409 })
       }
       await writeUnmatch(db, line, changed, { unlearn: false, refuse: true })   // o lançamento do motor não era esse: a máquina não o refaz

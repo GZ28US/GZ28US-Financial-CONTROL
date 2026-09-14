@@ -973,6 +973,14 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
         const nearTwin = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail && x.date && daysBetween(x.date, l.date) <= 10 && (nameHit(l, x) || shortNameHit(l, x)))
         if (nearTwin.length) { if (cur) cur.cands = nearTwin; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
       }
+      // FOTO DA BOMBA VENCE A REGRA DA FROTA (BL 1.7.3 · Livro 14.24, 14/set): o RaceTrac de US$ 49,24 (16/03) foi para a Frota, mas
+      // a despesa «Fuel» do HellCougar US.013.3 tinha a foto da bomba. Abastecimento de CARRO lançado no app (±3 dias, ±US$ 0,10,
+      // palavra de combustível no rótulo, sem veto de peça) é esta linha: a regra não cria Frota por cima — vira pergunta com o candidato.
+      if (cls.klass === 'FUEL' || cls.klass === 'CONVENIENCE') {
+        const semSelo = (x: Cand) => String(x.label || '').replace(/^[A-Z ]+ · /, '')
+        const doCarro = arr.filter(x => free(x) && notRejected(x) && x.table === 'invoice_expenses' && Math.abs(x.amount - amt) <= 0.10 + 1e-9 && x.date && daysBetween(x.date, l.date) <= 3 && FUEL_WORDS.test(semSelo(x)) && !FUEL_VETO.test(semSelo(x)))
+        if (doCarro.length) { if (cur) cur.cands = doCarro; skip('abastecimento de carro já lançado no app (±3 d, ±US$ 0,10) — case com a despesa do carro, não com a Frota'); continue }
+      }
       if (rule.r.target === 'BUCKET') {
         // BALDE (fase B): despesa real no mesmo dia, sem dono. Maturidade de 7 dias
         // também no APLICAR humano (a nota escaneada 3 dias depois costuma estar ali);
