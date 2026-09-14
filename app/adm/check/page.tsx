@@ -22,6 +22,7 @@ import { tabelaAtual } from '@/lib/tableRenames'
 import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCard'
 import { PAID_FROM_OPTIONS } from '@/components/PaymentFields'
 import { HOUSE_PAYER, PAYER_RULE, fillHiddenPayers } from '@/lib/payerRule'
+import { paidNoBank, type PnbRow } from '@/lib/paidNoBank'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
@@ -116,7 +117,7 @@ type AutoBookSignal = { floor: string; needs_migration?: boolean; runs: { id: st
 // As saídas da Regions com id, nome e status (DC 1.44.0): «paga no app, sem banco» casa por prova e o imposto FL acha o recolhimento pelo nome.
 type BankLine = { d: string; a: number; id: string; n: string; s: string }
 type HealthRow = { conta: string; status: string; ultima_transacao: string | null; dias_em_silencio?: number; veredito_do_dado?: string; item_error: { code: string; msg: string } | null; ultima_atualizacao_plaid: string | null; diagnostico?: string }
-type BankSignal = { matched: Set<string>; matchedName: Map<string, string>; groups: Map<string, number>; outflows: Map<string, string[]>; lines: BankLine[]; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null; health?: HealthRow[] | null; healthState?: 'loading' | 'error' | 'ok' }
+type BankSignal = { matched: Set<string>; matchedName: Map<string, string>; groups: Map<string, number>; outflows: Map<string, string[]>; lines: BankLine[]; inLines?: BankLine[] | null; opened: string; cash: CashItem[] | null; cashState: 'loading' | 'error' | 'ok'; autobook?: AutoBookSignal | null; health?: HealthRow[] | null; healthState?: 'loading' | 'error' | 'ok' }
 // O APP PREENCHEU SOZINHO + DISPENSAS (DC 1.44.0): trilha «AUTO ·» dos últimos 7 dias (com DESFAZER genérico) e «visto, está certo».
 type AutoRow = { id: string; check_key: string; table_name: string; row_id: string; field: string; old_value: string | null; new_value: string | null; label: string; fixed_at: string }
 type AutoSignal = { state: 'loading' | 'error' | 'ok'; rows: AutoRow[]; dismissed: Record<string, string>; total?: number }
@@ -129,6 +130,40 @@ type AuditSignal = { state: 'loading' | 'error' | 'ok'; data: AuditPayload | nul
 // Sugestões da fila A ATRIBUIR (?bucket=1) e as invoices com o estado FECHADA — o card do balde fala por fornecedor.
 type BucketSig = { state: 'loading' | 'error' | 'ok'; sug: Map<string, { invoice_id: string; code: string; car: string; why: string; score: number }>; invoices: { id: string; code: string; ride_code: string; ride_name: string; closed: boolean }[] }
 const REGIONS_OPENED = '2025-11-10'
+// PAGA NO APP, SEM LINHA NO BANCO (DC 1.55.1 — a lei do Plaid): o que o loadFinancials não traz e o card precisa. O MÉTODO de
+// pagamento das sete tabelas de gasto (CASH, PAYPAL, ZELLE… agrupam o card), o fornecedor do estoque e da despesa de GOODS (nome
+// pra achar a linha), o elo da folha (bank_transaction_id, payment_reference bank:) e o nome do staff pela season. Só linha paga
+// desde a abertura da Regions, colunas mínimas, paginado por id como o loader. Carrega junto com o dataset (em paralelo); falha
+// vira { error } e o card diz SINAL — nunca derruba a página.
+type PayTrail = { rows: Map<string, Record<string, unknown>>; staffBySeason: Map<string, string> }
+async function loadPayTrail(): Promise<PayTrail> {
+  const paged = async (table: string, select: string, paidOnly: boolean): Promise<Record<string, unknown>[]> => {
+    const out: Record<string, unknown>[] = []
+    for (let from = 0; ; from += 1000) {
+      const base = supabase.from(table).select(select)
+      const { data, error } = await (paidOnly ? base.gte('payment_date', REGIONS_OPENED) : base).order('id').range(from, from + 999)
+      if (error) throw new Error(table + ': ' + error.message)
+      const page = (data || []) as unknown as Record<string, unknown>[]
+      out.push(...page)
+      if (page.length < 1000) break
+    }
+    return out
+  }
+  const spec: [string, string][] = [
+    ['invoice_expenses', 'id, payment_method'], ['inputs', 'id, payment_method'], ['inventory', 'id, supplier, payment_method'],
+    ['assets', 'id, payment_method'], ['assets_expenses', 'id, supplier, payment_method'],
+    ['staff_expenses', 'id, supplier, payment_method, payment_reference, bank_transaction_id'], ['fixed_cost_expenses', 'id, payment_method'],
+  ]
+  const [lists, seasons, staff] = await Promise.all([
+    Promise.all(spec.map(([t, sel]) => paged(t, sel, true))),
+    paged('seasons', 'id, staff_id', false), paged('staff', 'id, name', false),
+  ])
+  const rows = new Map<string, Record<string, unknown>>()
+  spec.forEach(([t], i) => { for (const { id, ...rest } of lists[i]) rows.set(t + ':' + String(id), rest) })
+  const names = new Map(staff.map(p => [String(p.id), String(p.name || '')]))
+  const staffBySeason = new Map(seasons.map(s => [String(s.id), names.get(String(s.staff_id)) || '']))
+  return { rows, staffBySeason }
+}
 let AUTO_CAT_RAN = false   // categoria sozinha: uma leitura da IA por abertura da página
 let AUTO_NATURE_RAN = false   // natureza sozinha (carro → dinheiro, PN → peça, hábito): uma rodada por abertura
 let AUTO_RECEIPT_RAN = false  // o recibo responde o que falta (DC 1.47.0): uma leitura por abertura, teto por chamada
@@ -453,7 +488,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       group: 'FINANCIAL', key: 'audit-close', headline: sm ? `${sm.months_fechavel}/${sm.months}` : undefined,
       title: 'Placar do fechamento: que mês já pode fechar?',
       blocks: sm ? `${sm.months_fechavel} fechável(is) · ${sm.months_quase} quase · ${sm.months_aberto} aberto(s) · ${usd(Number(sm.open_usd_total) || 0)} de pendências somadas (brutas: saídas + entradas, com o mês que corre)${audit.data && audit.data.live_proof_until ? ' · o caixa ao vivo verde prova os meses sem extrato' : ''} — placar, não pendência: cada coluna tem card` : 'o placar não carregou — sem ele ninguém sabe que mês fecha',
-      why: 'Um mês só fecha quando o dinheiro dele está provado dos dois lados. FECHÁVEL: mês completo (o feed passou do fim do mês mais 5 dias), a soma das linhas provada (extrato MANUAL em LEDGERS batendo ao centavo, ou o caixa ao vivo verde) e ZERO em tudo: linha da Regions sem dono, compra no balde A ATRIBUIR, pagamento da GZ28US sem linha, pagamento sem pagador e sem linha (o DFC conta como Regions), recebimento sem linha, achado das auditorias. QUASE: completo, extrato sem quebra, até $500 e até 10 pendências. ABERTO: o resto, inclusive o mês que ainda corre. O placar não pergunta nada novo — cada coluna tem card: sem dono e falta casar na Conciliação bancária; balde em «Compra sem dono há mais de 7 dias» e «Balde em dobro»; pago ou recebido sem linha em «Dinheiro no app que a Regions não mostra» (custo fixo em «Paga no app, sem linha no banco»); sem pagador em «Quem pagou esta conta?»; achados nos cards das auditorias; extrato em LEDGERS. O registro que uma linha aberta explica não soma duas vezes; achado marcado VISTO não trava o mês; defeito só de cadastro (fornecedor = a própria GZ28US) vale $0. «Em aberto» é soma bruta — saídas e entradas sem compensar, com o mês que corre —, não saldo. Por isso o placar não entra na conta de pendências. Só leitura (lib/closeScore.server.ts): nada aqui casa, cria ou apaga.',
+      why: 'Um mês só fecha quando o dinheiro dele está provado dos dois lados. FECHÁVEL: mês completo (o feed passou do fim do mês mais 5 dias), a soma das linhas provada (extrato MANUAL em LEDGERS batendo ao centavo, ou o caixa ao vivo verde) e ZERO em tudo: linha da Regions sem dono, compra no balde A ATRIBUIR, pagamento da GZ28US sem linha, pagamento sem pagador e sem linha (o DFC conta como Regions), recebimento sem linha, achado das auditorias. QUASE: completo, extrato sem quebra, até $500 e até 10 pendências. ABERTO: o resto, inclusive o mês que ainda corre. O placar não pergunta nada novo — cada coluna tem card: sem dono e falta casar na Conciliação bancária; balde em «Compra sem dono há mais de 7 dias» e «Balde em dobro»; pago ou recebido sem linha em «Paga no app, sem linha no banco» (a lei do Plaid) e, pela régua do placar, em «Dinheiro no app que a Regions não mostra»; sem pagador em «Quem pagou esta conta?»; achados nos cards das auditorias; extrato em LEDGERS. O registro que uma linha aberta explica não soma duas vezes; achado marcado VISTO não trava o mês; defeito só de cadastro (fornecedor = a própria GZ28US) vale $0. «Em aberto» é soma bruta — saídas e entradas sem compensar, com o mês que corre —, não saldo. Por isso o placar não entra na conta de pendências. Só leitura (lib/closeScore.server.ts): nada aqui casa, cria ou apaga.',
       items,
     })
   }
@@ -464,7 +499,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const items = auditItems(audit, 'noBank', 'audit-no-bank', { paid_no_bank: 'PAGO S/ LINHA', received_no_bank: 'RECEB S/ LINHA' })
     checks.push({
       group: 'FINANCIAL', key: 'audit-no-bank', title: 'Dinheiro no app que a Regions não mostra (pago ou recebido sem linha)', blocks: 'o DFC e o caixa contam pagamento ou recebimento que o extrato não tem — ou foi outro bolso, ou o valor ou a data do registro estão errados',
-      why: 'Um mês só fecha quando todo dinheiro que o app diz que saiu ou entrou na GZ28US tem a linha da Regions atrás. PAGO S/ LINHA: registro pago pela GZ28US (a régua de «quem pagou» do DFC), com data num período já julgado (o feed passou dela mais 5 dias), sem linha do banco apontando pra ele e sem linha aberta de mesmo valor por perto (essa é «falta casar» e pergunta na Conciliação). RECEB S/ LINHA: baixa com paid_at para a GZ28US sem entrada da Regions. Ou pagou ou recebeu outro bolso (sócio = empréstimo; BR = conta corrente GZ28BR), ou o valor ou a data do registro estão errados, ou falta casar com uma linha que já está casada com outro registro. Custo fixo tem card próprio («Paga no app, sem linha no banco»); linha de pedido que «Balde em dobro» já mostra fica lá. VISTO quando estiver certo — e o VISTO também tira o registro do placar. Só leitura: nada aqui casa, cria ou apaga.',
+      why: 'Um mês só fecha quando todo dinheiro que o app diz que saiu ou entrou na GZ28US tem a linha da Regions atrás. PAGO S/ LINHA: registro pago pela GZ28US (a régua de «quem pagou» do DFC), com data num período já julgado (o feed passou dela mais 5 dias), sem linha do banco apontando pra ele e sem linha aberta de mesmo valor por perto (essa é «falta casar» e pergunta na Conciliação). RECEB S/ LINHA: baixa com paid_at para a GZ28US sem entrada da Regions. Ou pagou ou recebeu outro bolso (sócio = empréstimo; BR = conta corrente GZ28BR), ou o valor ou a data do registro estão errados, ou falta casar com uma linha que já está casada com outro registro. O que o card «Paga no app, sem linha no banco» (BANK, a lei do Plaid — as sete tabelas de gasto e a renda) já pergunta aparece aqui como NÃO CONTA, e o custo fixo nem vem; linha de pedido que «Balde em dobro» já mostra fica lá. VISTO quando estiver certo — e o VISTO também tira o registro do placar. Só leitura: nada aqui casa, cria ou apaga.',
       items, impact: items.filter(i => !i.info).reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -1653,28 +1688,90 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       ]
       checks.push({ group: 'FINANCIAL', key: 'out-of-pattern', title: 'Fora do padrão (pico de gasto · linha quicando)', blocks: 'um número estranho passa pro DRE sem ninguém olhar', why: 'O que é certo mas fora do padrão também merece pergunta: um prestador que custou o dobro este mês, uma linha que muda de dono toda semana. Sem correção automática — só a pergunta, com o link.', items: sigErr ? sinal : fi, impact: an.reduce((t, a) => t + a.current, 0) })
     }
-    // PAGA NO APP, SEM BANCO — custo fixo «pago pela GZ28US» sem linha da Regions atrás.
+    // PAGA NO APP, SEM LINHA NO BANCO — a LEI DO PLAID (Márcio, 13/set/2026): «tudo que está no PLAID é PAID FROM GZ28US, o que
+    // não está no PLAID, não é, temos que designar» · «tudo que tem no Regions é PAID FROM (expenses) e PAID TO (incomes) GZ28US!».
+    // DC 1.55.1: o card saiu do custo fixo e cobre as sete tabelas de gasto + a renda (a régua mora em lib/paidNoBank.ts). O CASAR de
+    // um clique (e o AUTO-RUN) continua SÓ no custo fixo, como era; nas outras a linha única é sugestão com o link do Bank Link —
+    // o funil de lá crava o pagador (BL 1.7.0). Nenhuma escrita automática nova.
+    // Só com o sinal ?matched=1 vivo (sem ele o Set é vazio e TUDO viraria pergunta); feed cego = este card não julga ausência.
+    // Até onde o feed enxerga (feedUntil), menos 3 dias de postagem (a linha do banco posta em 1–3 dias).
     const fxs: any[] = (d as any).fixedExpenses || []
     const supMap: Map<string, any> = (d as any).fixedSuppliers instanceof Map ? (d as any).fixedSuppliers : new Map()
     const supName = new Map<string, string>([...supMap.values()].map((x: any) => [x.id, String(x.company || '')]))
-    // Só com o sinal ?matched=1 vivo (sem ele o Set é vazio e TUDO viraria pergunta); só paid_from GZ28US
-    // (sem origem é o card de paid_from); 3 dias de maturidade (a linha do banco posta em 1–3 dias).
-    // Até onde o feed enxerga (feedUntil), menos 3 dias de postagem; feed cego = este card não julga ausência.
     const cutoff3 = feedBlind ? '0000-00-00' : new Date(Date.parse(feedUntil) - 3 * 864e5).toISOString().slice(0, 10)
-    const pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card «AUTO-LINK»' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AUTO-LINK', link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' } }] : fxs.filter((e: any) => e.payment_date && String(e.payment_date).slice(0, 10) >= REGIONS_OPENED && String(e.payment_date).slice(0, 10) <= cutoff3 && !e.bank_transaction_id && !matched.has('fixed_cost_expenses:' + e.id) && e.paid_from === 'GZ28US')
-      .sort((a: any, b: any) => String(b.payment_date).localeCompare(String(a.payment_date)))
-      .map((e: any) => {
-        // PROVA (DC 1.44.0): UMA linha NEW da Regions com o valor exato, o nome do prestador e ±10 d — o casamento faltou, não o pagador.
-        const amt = Math.abs(Number(e.amount) || 0), pd = String(e.payment_date).slice(0, 10)
-        const toks = nameTok(supName.get(e.supplier_id) || '')
-        // Nome por PALAVRA INTEIRA (APPLE não é APPLEBEES; DUKE não é DUKES BBQ).
-        const cands = toks.length ? bank.lines.filter(x => { if (x.s !== 'NEW' || Math.abs(x.a - amt) >= 0.011 || dayDiff(x.d, pd) > 10) return false; const lt = new Set(nameTok(x.n)); return toks.some(t => lt.has(t)) }) : []
-        const refused = cands.length === 1 && auto.dismissed['paid-no-bank|' + e.id] === 'DESFEITO'   // casamento desfeito no card verde (BL 1.5.1): não é mais «certo»
-        const one = cands.length === 1 && !refused ? cands[0] : null
-        return { href: '/costs/fixed/' + (e.supplier_id || ''), code: one ? 'CASAR' : e.paid_from ? 'GZ28US' : 'SEM ORIGEM', label: (supName.get(e.supplier_id) || '?') + ' · ' + pd + ' · ' + String(e.description || '').slice(0, 60), extra: one ? `a Regions tem exatamente uma linha ${one.d} ${usd(one.a)} «${one.n}» — o casamento faltou` : refused ? 'a Regions tem uma linha igual, mas o casamento com ela foi desfeito antes (NÃO É ESSE) — case no Bank Link se era ela, ou VISTO' : cands.length > 1 ? `${cands.length} linhas da Regions batem — escolha no Bank Link` : 'pago «pela GZ28US» mas nenhuma linha da Regions casa — pagou de outra conta (sócio? BR?) ou o casamento não foi feito', amount: amt, certain: !!one, signal: one ? 'matched' : undefined, suggest: one ? one.id : undefined, link: { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' },
-          fix: one ? { kind: 'match' as const, table: 'fixed_cost_expenses', rowId: e.id, field: 'bank_transaction_id', bankId: one.id, confirmText: `Casar «${String(e.description || '').slice(0, 60)}» com a linha da Regions ${one.d} ${usd(one.a)} «${one.n}»? A linha do banco passa a apontar pra este custo (a data de pagamento que ele já tem fica como está); o casamento nasce visto e o DESFAZER dele fica 7 dias no card verde «O app preencheu sozinho».` } : undefined }
+    const payTrail = (d as FinData & { payTrail?: PayTrail | { error: string } }).payTrail
+    const trail: PayTrail | null = payTrail && !('error' in payTrail) ? payTrail : null
+    const bankLink = { href: BASE_PATH + '/adm/bank', label: 'BANK LINK ↗' }
+    let pn: Item[] = matched.size === 0 ? [{ href: '/adm/bank', code: 'SINAL', label: 'sem o sinal do Bank Link (?matched=1) este card não sabe', extra: 'recarregue; se persistir, veja o card «AUTO-LINK»' }] : feedBlind ? [{ href: '/adm/bank', code: 'SINAL', label: 'feed do banco cego ou sem sinal de saúde — este card não julga ausência até o feed voltar', extra: 'o que está «pago no app» pode simplesmente ainda não ter chegado no feed; veja o painel do AUTO-LINK', link: bankLink }] : []
+    if (!pn.length) {
+      // O rastro (método, fornecedor do estoque/GOODS, elo da folha) entra por cima da linha do dataset. Sem ele, só o custo fixo e a
+      // renda (que não precisam dele) são julgados — a folha sem o elo viraria pergunta falsa.
+      const withTrail = (table: string, rows: any[]) => rows.map(r => { const x = trail?.rows.get(table + ':' + r.id); return x ? { ...r, ...x } : r })
+      const staffOf = (r: any) => (trail && r.season_id ? trail.staffBySeason.get(String(r.season_id)) : '') || ''
+      const clientOf = (invoiceId: string) => { const inv = d.invoiceById.get(invoiceId); return String((inv?.client_id && d.clients.get(inv.client_id)?.name) || '') }
+      const rideOf = (invoiceId: string) => { const inv = d.invoiceById.get(invoiceId); return String((inv?.ride_id && d.rides.get(inv.ride_id)?.project_name) || '') }
+      const rows = paidNoBank({
+        rows: {
+          fixed_cost_expenses: withTrail('fixed_cost_expenses', fxs), invoice_incomes: d.payments,
+          ...(trail ? { invoice_expenses: withTrail('invoice_expenses', d.invExpenses), inputs: withTrail('inputs', d.inputs), inventory: withTrail('inventory', d.inventory), assets: withTrail('assets', d.goods), assets_expenses: withTrail('assets_expenses', d.goodExpenses), staff_expenses: withTrail('staff_expenses', d.expenses) } : {}),
+        },
+        amountOf: { invoice_expenses: expLine, inputs: qtyLine, inventory: qtyLine, assets: qtyLine, assets_expenses: (r: any) => parseFloat(r.amount) || 0, staff_expenses: (r: any) => parseFloat(r.amount) || 0, fixed_cost_expenses: (r: any) => parseFloat(r.amount) || 0, invoice_incomes: (r: any) => parseFloat(r.amount) || 0 },
+        hintOf: { invoice_expenses: (r: any) => r.supplier, inputs: (r: any) => r.supplier, inventory: (r: any) => r.supplier, assets: (r: any) => r.supplier, assets_expenses: (r: any) => [r.supplier, r.description].join(' '), staff_expenses: (r: any) => [staffOf(r), r.supplier, r.description].join(' '), fixed_cost_expenses: (r: any) => supName.get(r.supplier_id) || '', invoice_incomes: (r: any) => [clientOf(r.invoice_id), rideOf(r.invoice_id)].join(' ') },
+        matched, outLines: bank.lines, inLines: bank.inLines ?? null, from: REGIONS_OPENED, until: cutoff3, tok: nameTok,
+        skip: (table, r) => table === 'staff_expenses' && isStaffRateUndated(r),   // taxa de season sem data não é pagamento (card próprio)
       })
-    checks.push({ group: 'BANK', key: 'paid-no-bank', title: 'Paga no app, sem linha no banco', blocks: 'o caixa da Regions e o DRE contam dinheiro que talvez saiu de outro bolso (sócio = empréstimo, BR = intercompany)', why: 'Desde 2025-11-10 tudo que a GZ28US paga sai da Regions. Um custo fixo pago «pela GZ28US» sem linha casada é um de dois erros: paid_from errado (foi um sócio ou a BR) ou casamento faltando. Sem correção automática — a prova mora no extrato.', items: pn, impact: pn.reduce((t, i) => t + (i.amount || 0), 0) })
+      const who = (p: PnbRow): string => { const r = p.r; switch (p.table) {
+        case 'invoice_expenses': return [invoiceMeta(d, r.invoice_id).code, r.supplier].filter(Boolean).join(' · ')
+        case 'invoice_incomes': return [invoiceMeta(d, r.invoice_id).code, clientOf(r.invoice_id)].filter(Boolean).join(' · ')
+        case 'staff_expenses': return [staffOf(r) || 'staff', r.origin === 'PERSONAL' ? 'PESSOAL' : ''].filter(Boolean).join(' · ')
+        case 'fixed_cost_expenses': return supName.get(r.supplier_id) || '?'
+        default: return String(r.supplier || '')
+      } }
+      const what = (p: PnbRow) => String((p.table === 'invoice_expenses' ? p.r.item : p.table === 'staff_expenses' ? (p.r.description || p.r.type) : p.r.description) || '').slice(0, 60)
+      const hrefOf = (p: PnbRow) => p.table === 'invoice_expenses' || p.table === 'invoice_incomes' ? invoiceMeta(d, p.r.invoice_id).href : p.table === 'fixed_cost_expenses' ? '/costs/fixed/' + (p.r.supplier_id || '') : AUDIT_HREF[p.table] || '/adm/check'
+      const methodCode = (m: string) => { const u = m.trim().toUpperCase().replace(/\s+/g, ' '); return !u ? 'SEM MÉTODO' : /REGIONS/.test(u) && /DEBIT/.test(u) ? 'DÉBITO REGIONS' : u.slice(0, 16) }
+      const lineTxt = (x: { d: string; a: number; n: string }) => `${x.d} ${usd(x.a)} «${x.n}»`
+      const why0 = (p: PnbRow): string => {
+        const m = p.method.trim().toUpperCase(), inn = p.dir === 'in'
+        if (/CASH/.test(m)) return p.cash.length
+          ? `CASH: a Regions tem ${inn ? 'o depósito' : 'o saque'} ${lineTxt(p.cash[0])} a ±10 d — se o dinheiro vivo ${inn ? 'entrou' : 'saiu'} por ali, é casamento a fazer no Bank Link; se não, designar ${inn ? 'quem recebeu' : 'quem pagou'}`
+          : inn ? 'CASH recebido sem depósito na Regions (±10 d): o dinheiro não entrou na conta da GZ28US — pergunta de verdade, designar quem recebeu (GZ28BR? sócio?) ou corrigir'
+            : 'CASH sem saque ATM na Regions (±10 d): o dinheiro vivo não saiu da conta da GZ28US — pergunta de verdade, designar quem pagou (sócio? GZ28BR?) ou corrigir método/valor/data'
+        if (m === 'TEMU CREDIT' || m === 'PIX') return `${m} não passa na Regions — pela lei, fora do Plaid não é GZ28US: designar quem pagou`
+        if (/PAYPAL/.test(m)) return 'PAYPAL sem linha da Regions (valor exato, ±10 d): a PayPal cobrou de outro saldo ou cartão, ou juntou compras numa linha só — designar quem pagou ou casar a soma no Bank Link'
+        return inn ? 'recebido «na GZ28US» mas nenhuma entrada da Regions casa (valor exato, ±10 d, nome) — ou caiu em outro bolso e se designa (GZ28BR?), ou valor/data da baixa errados, ou falta casar (entrada que soma várias rendas)'
+          : 'pago «pela GZ28US» mas nenhuma linha da Regions casa (valor exato, ±10 d, nome) — ou pagou outro bolso e se designa (sócio? GZ28BR?), ou valor/data errados, ou falta casar (valor partido, pedido somado)'
+      }
+      pn = rows.sort((a, b) => Number(!!b.one) - Number(!!a.one) || b.date.localeCompare(a.date)).map((p): Item => {
+        const fixed = p.table === 'fixed_cost_expenses', inn = p.dir === 'in'
+        const refused = fixed && !!p.one && auto.dismissed['paid-no-bank|' + p.id] === 'DESFEITO'   // casamento desfeito no card verde (BL 1.5.1): não é mais «certo»
+        const one = refused ? null : p.one
+        const label = `${AUDIT_TAG[p.table] || p.table} · ${who(p) || '?'} · ${p.date}${what(p) ? ' · ' + what(p) : ''}`
+        const extra = one ? `a Regions tem exatamente uma ${inn ? 'entrada' : 'linha'} ${lineTxt(one)} com o valor, o nome e ±10 d — o casamento faltou${fixed ? '' : ' · case no Bank Link (lá o casamento crava o pagador)'}`
+          : refused ? 'a Regions tem uma linha igual, mas o casamento com ela foi desfeito antes (NÃO É ESSE) — case no Bank Link se era ela, ou VISTO'
+            : p.shared > 1 ? `a mesma linha ${lineTxt(p.cands[0])} é a única candidata de ${p.shared} registros deste card — escolha no Bank Link qual é`
+              : p.cands.length > 1 ? `${p.cands.length} linhas da Regions batem — escolha no Bank Link`
+                : why0(p) + (p.hint.length ? '' : ' · o registro não tem nome pra procurar na linha')
+        const dismiss = { kind: 'dismiss' as const, table: 'data_check', rowId: p.id, field: 'DISMISSED', checkKey: 'paid-no-bank', confirmText: `Marcar «visto, está certo» em «${label.slice(0, 90)}»? O card para de perguntar isto (fica na trilha; dá pra voltar).` }
+        return {
+          href: hrefOf(p), code: one ? 'CASAR' : methodCode(p.method), label, when: p.date, amount: p.amount, extra, link: bankLink,
+          // Só o custo fixo casa daqui (bank_transaction_id + a rota), certo e com AUTO-RUN — o comportamento de antes, intacto.
+          certain: fixed && !!one, signal: one ? (fixed ? 'matched' : 'present') : undefined, suggest: fixed && one ? one.id : undefined,
+          fix: fixed && one ? { kind: 'match' as const, table: 'fixed_cost_expenses', rowId: p.id, field: 'bank_transaction_id', bankId: one.id, confirmText: `Casar «${String(p.r.description || '').slice(0, 60)}» com a linha da Regions ${one.d} ${usd(one.a)} «${one.n}»? A linha do banco passa a apontar pra este custo (a data de pagamento que ele já tem fica como está); o casamento nasce visto e o DESFAZER dele fica 7 dias no card verde «O app preencheu sozinho».` } : dismiss,
+        }
+      })
+      if (!trail) pn.push({ href: '/adm/check', code: 'SINAL', label: 'o rastro do pagamento (método, elo da folha, fornecedor do estoque) não carregou — só o custo fixo e a renda foram julgados', extra: String((payTrail && 'error' in payTrail ? payTrail.error : '') || 'recarregue').slice(0, 160) })
+      if (bank.inLines == null) pn.push({ href: '/adm/bank', code: 'SINAL', label: 'o sinal das ENTRADAS da Regions não veio — a renda PAID TO GZ28US não foi julgada', extra: 'recarregue; a rota ?matched=1 devolve inflows desde o DC 1.55.1', link: bankLink })
+      // NADA PERGUNTA DUAS VEZES: o card do placar («Dinheiro no app que a Regions não mostra») lista pago/recebido sem linha pela régua
+      // dele; o que ESTE card já pergunta aparece lá como NÃO CONTA (o VISTO de lá segue valendo pro placar).
+      const asked = new Set(rows.map(p => p.table + ':' + p.id))
+      const anb = checks.find(c => c.key === 'audit-no-bank')
+      if (anb) {
+        anb.items = anb.items.map(i => { const m = /^(?:paid|received)_no_bank\|([a-z_]+:.+)$/.exec(String(i.fix?.rowId || '')); return m && asked.has(m[1]) && !i.info ? { ...i, info: 'a pergunta já conta no card «Paga no app, sem linha no banco» (BANK) — a lei do Plaid mora lá' } : i })
+        anb.impact = anb.items.filter(i => !i.info).reduce((s, i) => s + (i.amount || 0), 0)
+      }
+    }
+    checks.push({ group: 'BANK', key: 'paid-no-bank', title: 'Paga no app, sem linha no banco', blocks: 'o caixa da Regions, o DFC e o DRE contam dinheiro que talvez saiu ou entrou por outro bolso — e pela lei do Plaid o que não está no extrato não é GZ28US: pagador errado vira dívida calada (sócio = empréstimo, BR = conta corrente GZ28BR)', why: 'A LEI DO PLAID (Márcio, 13/set/2026): «tudo que está no PLAID é PAID FROM GZ28US, o que não está no PLAID, não é, temos que designar» e «tudo que tem no Regions é PAID FROM (expenses) e PAID TO (incomes) GZ28US». A conta da Regions abriu em 2025-11-10; desde então todo registro pago pela GZ28US nas sete tabelas de gasto — despesa de invoice, SUPPLIES, ESTOQUE comprado, GOODS, despesa de GOODS, staff e custo fixo — tem de ter a linha de SAÍDA da Regions atrás, e toda renda baixada (paid_at) com PAID TO GZ28US, a linha de ENTRADA. Pagou a GZ28US = PAID FROM GZ28US, ou vazio em SUPPLIES, ESTOQUE e CUSTO FIXO (lá a régua esconde o GZ28US); GZ28BR nunca entra. Fica de fora o que já tem linha (casado direto, pelo pedido, pela folha ou num misto; elo bank_transaction_id ou bank: de linha viva), a despesa de orçamento e do balde A ATRIBUIR, a renda espelho, o estoque DOADO, a taxa de season sem data e tudo pago antes de 2025-11-10 (a conta nem existia). Só julga até a última linha do feed menos 3 dias, e nunca com o feed cego ou sem o sinal do Bank Link. O CÓDIGO diz como foi pago (CASH, PAYPAL, ZELLE, SEM MÉTODO…): CASH sem saque ATM na Regions é pergunta de verdade — o dinheiro vivo não saiu da conta, então se designa quem pagou. CASAR = UMA linha NEW da Regions na direção certa, com o valor exato, o nome (fornecedor, staff ou cliente) e ±10 dias, que nenhum outro registro do card também disputa: no custo fixo o clique casa aqui (e o AUTO-RUN casa sozinho, com DESFAZER no card verde); nas outras tabelas é sugestão — case no Bank Link, que crava o pagador no casamento. Sem linha: ou pagou/recebeu outro bolso e se DESIGNA (sócio? GZ28BR?), ou valor/data estão errados, ou falta casar uma soma. VISTO quando estiver certo.', items: pn, impact: pn.reduce((t, i) => t + (i.amount || 0), 0) })
   }
   return checks
 }
@@ -2014,7 +2111,9 @@ export default function DataCheckPage() {
 
   useEffect(() => {
     setD(null); setError('')
-    loadFinancials().then(setD).catch(e => setError(String(e?.message || e)))
+    // O rastro do pagamento (DC 1.55.1) vem junto e em paralelo: falha dele é SINAL no card «Paga no app, sem linha no banco», nunca erro da página.
+    Promise.all([loadFinancials(), loadPayTrail().catch(e => ({ error: String((e as Error)?.message || e) }))])
+      .then(([fin, payTrail]) => setD(Object.assign(fin, { payTrail }))).catch(e => setError(String(e?.message || e)))
     // WA SEND LOG (caso Gui, 31/ago): falhas de envio dos últimos 14 dias.
     ;(async () => {
       try {
@@ -2079,13 +2178,15 @@ export default function DataCheckPage() {
           const outflows = new Map<string, string[]>()
           const lines: BankLine[] = []
           for (const o of (j.outflows || []) as { d: string; a: number; id?: string; n?: string; s?: string }[]) { const k = Number(o.a).toFixed(2); outflows.set(k, [...(outflows.get(k) || []), o.d]); lines.push({ d: o.d, a: Number(o.a), id: o.id || '', n: o.n || '', s: o.s || '' }) }
+          // ENTRADAS (DC 1.55.1): a renda PAID TO GZ28US procura a linha que ENTROU. Sem o campo (rota velha) = null — o card diz SINAL na renda.
+          const inLines: BankLine[] | null = Array.isArray(j.inflows) ? (j.inflows as { d: string; a: number; id?: string; n?: string; s?: string }[]).map(o => ({ d: o.d, a: Math.abs(Number(o.a)), id: o.id || '', n: o.n || '', s: o.s || '' })) : null
           // Grupo casado carrega o VALOR do banco: membro só é "certo" enquanto o
           // total do pedido ainda bate com o que o banco cobrou (revisão #1).
           const groups = new Map<string, number>()
           for (const m of j.matched as { table: string; id: string; amount: number }[]) if (m.table === 'purchase_group') groups.set(m.id, Number(m.amount) || 0)
           // Quem é o comerciante da linha casada: prova pro «sem fornecedor» (o banco é a testemunha).
           const matchedName = new Map<string, string>((j.matched as { table: string; id: string; n?: string }[]).filter(m => m.n).map(m => [m.table + ':' + m.id, String(m.n)]))
-          setBank(prev => ({ ...prev, matched: new Set((j.matched as { table: string; id: string }[]).map(m => m.table + ':' + m.id)), matchedName, groups, outflows, lines, opened: j.account_opened || REGIONS_OPENED }))
+          setBank(prev => ({ ...prev, matched: new Set((j.matched as { table: string; id: string }[]).map(m => m.table + ':' + m.id)), matchedName, groups, outflows, lines, inLines, opened: j.account_opened || REGIONS_OPENED }))
         }
         // AUTO-BOOK (BL 0.8.0): rodadas, erros, órfãos e duplas do motor automático.
         try {

@@ -102,14 +102,17 @@ export async function GET(req: NextRequest) {
       // Saídas da Regions (data, valor) — o Data Checker testa "consta na Regions?"
       // pra sugerir quem pagou. A conta abriu em 2025-11-10 com $0: antes disso,
       // nada foi GZ28US.
+      // ENTRADAS também (DC 1.55.1): «Paga no app, sem linha no banco» julga a renda PAID TO GZ28US contra o que ENTROU na Regions.
+      // Mesma leitura, sinal separado: `outflows` segue só com as saídas (a = valor positivo); `inflows` leva o valor ABSOLUTO da entrada.
       const outs: { d: string; a: number; id: string; n: string; s: string }[] = []
+      const ins: { d: string; a: number; id: string; n: string; s: string }[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status').gt('amount', 0).eq('pending', false).neq('match_status', 'REMOVED').order('id').range(from, from + 999)
+        const { data, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status').neq('amount', 0).eq('pending', false).neq('match_status', 'REMOVED').order('id').range(from, from + 999)
         if (error) throw new Error(error.message)
-        for (const r of data || []) outs.push({ d: r.date, a: Math.round(num(r.amount) * 100) / 100, id: r.id, n: String(r.merchant || r.name || '').slice(0, 60), s: String(r.match_status) })
+        for (const r of data || []) { const a = num(r.amount); (a > 0 ? outs : ins).push({ d: r.date, a: Math.round(Math.abs(a) * 100) / 100, id: r.id, n: String(r.merchant || r.name || '').slice(0, 60), s: String(r.match_status) }) }
         if (!data || data.length < 1000) break
       }
-      return NextResponse.json({ ok: true, matched: acc, outflows: outs, account_opened: '2025-11-10' })
+      return NextResponse.json({ ok: true, matched: acc, outflows: outs, inflows: ins, account_opened: '2025-11-10' })
     }
     // AUTO-BOOK (BL 0.8.0) — sinal pro Data Checker: rodadas, registradas por
     // motor (24h/7d), NEW restantes desde o piso, erros, ÓRFÃOS (lançamento do
