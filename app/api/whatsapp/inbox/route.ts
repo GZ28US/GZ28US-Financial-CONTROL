@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 import { waDb } from '@/lib/waStore.server'
+import { SMS_APP, SMS_NOTE, isSmsChat, smsAsMessage, smsOfChat, smsSearch, smsThreads } from '@/lib/smsStore.server'
 
 // WHATSAPP HUB — a janela da tela /whatsapp sobre o espelho (whatsapp_messages
-// + whatsapp_chats, os DOIS números). Só sessão logada (requireUser): o espelho
-// é a vida inteira do Márcio em mensagens — jamais aberto.
+// + whatsapp_chats, os DOIS números) e, desde 14/set/2026, os SMS do iPhone US
+// (sms_messages — «inclua os SMSs nas pesquisas, em tudo!»). Só sessão logada
+// (requireUser): o espelho é a vida inteira do Márcio em mensagens — jamais aberto.
+// A tela não lê sms_messages direto (RLS, só service role): passa por aqui.
 //
-//   ?view=chats     &app=ALL|US|BR &q=            → chats + última mensagem
+//   ?view=chats     &app=ALL|US|BR|SMS &q=        → chats + última mensagem
 //   ?view=messages  &app=US|BR &chatId= &limit= &before=  → uma conversa (asc)
-//   ?view=search    &q= &app= &limit=             → busca no corpo das mensagens
+//                   chatId=sms:<remetente> (app ignorado) → a conversa de SMS
+//   ?view=search    &q= &app=ALL|US|BR|SMS &limit= → busca no corpo das mensagens
+//
+// app=ALL traz WhatsApp + SMS juntos; US/BR = só o WhatsApp daquele número; SMS =
+// só os SMS. Se a leitura dos SMS falhar, o WhatsApp sai assim mesmo e a resposta
+// leva `smsError` — nunca some calado.
 //
 // POST { chatId, app, policy } muda a POLÍTICA do chat (ordem do Márcio,
 // 24/ago/2026): há grupos em que só é pauta dele se ele for MARCADO.
@@ -28,6 +36,8 @@ export async function POST(req: NextRequest) {
   if (!readKeyOk(req, { allowQuery: true }) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const chatId = String(b.chatId || '').trim()
+  // Conversa de SMS não tem política nem marca d'água (moram em whatsapp_chats).
+  if (isSmsChat(chatId)) return NextResponse.json({ error: 'SMS conversations have no policy or processed state' }, { status: 400 })
   if (!chatId.includes('@')) return NextResponse.json({ error: 'chatId required' }, { status: 400 })
   const db = waDb()
 
@@ -101,35 +111,38 @@ export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
   const view = p.get('view') || 'chats'
   const app = (p.get('app') || 'ALL').toUpperCase()
+  const wantWa = app !== SMS_APP
+  const wantSms = app === 'ALL' || app === SMS_APP
 
   try {
     if (view === 'chats') {
       const q = (p.get('q') || '').trim()
-      let sel = db.from('whatsapp_chats').select('*').neq('policy', 'IGNORE').order('last_at', { ascending: false, nullsFirst: false }).limit(120)
-      if (app === 'US' || app === 'BR') sel = sel.eq('app', app)
-      if (q) sel = sel.ilike('name', `%${q}%`)
-      const { data: chats, error } = await sel
-      if (error) throw error
+      let waChats: any[] = []
+      if (wantWa) {
+        let sel = db.from('whatsapp_chats').select('*').neq('policy', 'IGNORE').order('last_at', { ascending: false, nullsFirst: false }).limit(120)
+        if (app === 'US' || app === 'BR') sel = sel.eq('app', app)
+        if (q) sel = sel.ilike('name', `%${q}%`)
+        const { data: chats, error } = await sel
+        if (error) throw error
 
-      // Última mensagem por chat numa query só — reduz no servidor.
-      const ids = (chats || []).map((c: any) => c.chat_id)
-      const last: Record<string, any> = {}
-      if (ids.length) {
-        let msel = db.from('whatsapp_messages')
-          .select('app, chat_id, from_me, type, body, media_url, sent_at')
-          .in('chat_id', ids.slice(0, 120))
-          .order('sent_at', { ascending: false })
-          .limit(600)
-        if (app === 'US' || app === 'BR') msel = msel.eq('app', app)
-        const { data: msgs } = await msel
-        for (const m of msgs || []) {
-          const k = `${m.app}|${m.chat_id}`
-          if (!last[k]) last[k] = m
+        // Última mensagem por chat numa query só — reduz no servidor.
+        const ids = (chats || []).map((c: any) => c.chat_id)
+        const last: Record<string, any> = {}
+        if (ids.length) {
+          let msel = db.from('whatsapp_messages')
+            .select('app, chat_id, from_me, type, body, media_url, sent_at')
+            .in('chat_id', ids.slice(0, 120))
+            .order('sent_at', { ascending: false })
+            .limit(600)
+          if (app === 'US' || app === 'BR') msel = msel.eq('app', app)
+          const { data: msgs } = await msel
+          for (const m of msgs || []) {
+            const k = `${m.app}|${m.chat_id}`
+            if (!last[k]) last[k] = m
+          }
         }
-      }
 
-      return NextResponse.json({
-        chats: (chats || []).map((c: any) => {
+        waChats = (chats || []).map((c: any) => {
           const lm = last[`${c.app}|${c.chat_id}`] || null
           return {
             app: c.app, chatId: c.chat_id, name: c.name, isGroup: c.is_group,
@@ -140,12 +153,37 @@ export async function GET(req: NextRequest) {
             lastType: lm?.type || null,
             lastBody: lm ? String(lm.body || (lm.media_url ? '[media]' : '')).slice(0, 140) : null,
           }
-        }),
-      })
+        })
+      }
+
+      if (!wantSms) return NextResponse.json({ chats: waChats })
+
+      // SMS: uma conversa por remetente. Sem marca d'água nem resposta capturada —
+      // pending false e lastFromMe null (= sem dado), pra não inflar NO ROUND nem
+      // AWAITING REPLY com conversa que ninguém consegue fechar.
+      let smsChats: any[] = []
+      let smsError: string | undefined
+      try {
+        smsChats = (await smsThreads(db, { q })).slice(0, 120).map(t => ({
+          app: SMS_APP, chatId: t.chatId, name: t.sender, isGroup: false,
+          lastAt: t.lastAt, unread: null, policy: 'ALL', processedThrough: null,
+          pending: false, lastFromMe: null, lastType: 'sms',
+          lastBody: t.lastBody.slice(0, 140),
+        }))
+      } catch (e) { smsError = String((e as Error).message || e) }
+
+      // Juntos, pela hora da última mensagem (sem hora vai pro fim).
+      const merged = [...waChats, ...smsChats].sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')))
+      return NextResponse.json({ chats: merged, ...(smsError ? { smsError } : {}) })
     }
 
     if (view === 'messages') {
       const chatId = (p.get('chatId') || '').trim()
+      if (isSmsChat(chatId)) {
+        const limit = Math.min(parseInt(p.get('limit') || '100') || 100, 300)
+        const rows = await smsOfChat(db, chatId, { limit, before: p.get('before') })
+        return NextResponse.json({ chatId, app: SMS_APP, note: SMS_NOTE, messages: rows.map(smsAsMessage).reverse() })
+      }
       if (!chatId.includes('@') || (app !== 'US' && app !== 'BR')) {
         return NextResponse.json({ error: 'chatId + app=US|BR required' }, { status: 400 })
       }
@@ -165,26 +203,39 @@ export async function GET(req: NextRequest) {
       const q = (p.get('q') || '').trim()
       if (q.length < 2) return NextResponse.json({ hits: [] })
       const limit = Math.min(parseInt(p.get('limit') || '40') || 40, 100)
-      let sel = db.from('whatsapp_messages')
-        .select('app, chat_id, from_me, pushname, type, body, media_url, sent_at')
-        .ilike('body', `%${q}%`)
-        .order('sent_at', { ascending: false }).limit(limit)
-      // Preso a uma instância, (app, message_id) já é único; solto, a busca
-      // mostraria o mesmo recado duas vezes.
-      if (app === 'US' || app === 'BR') sel = sel.eq('app', app)
-      else sel = sel.is('duplicate_of', null)
-      const { data, error } = await sel
-      if (error) throw error
-      // Nome do chat pra rotular o hit.
-      const ids = Array.from(new Set((data || []).map((m: any) => m.chat_id)))
-      const names: Record<string, string> = {}
-      if (ids.length) {
-        const { data: cs } = await db.from('whatsapp_chats').select('app, chat_id, name').in('chat_id', ids)
-        for (const c of cs || []) names[`${c.app}|${c.chat_id}`] = c.name || ''
+      let waHits: any[] = []
+      if (wantWa) {
+        let sel = db.from('whatsapp_messages')
+          .select('app, chat_id, from_me, pushname, type, body, media_url, sent_at')
+          .ilike('body', `%${q}%`)
+          .order('sent_at', { ascending: false }).limit(limit)
+        // Preso a uma instância, (app, message_id) já é único; solto, a busca
+        // mostraria o mesmo recado duas vezes.
+        if (app === 'US' || app === 'BR') sel = sel.eq('app', app)
+        else sel = sel.is('duplicate_of', null)
+        const { data, error } = await sel
+        if (error) throw error
+        // Nome do chat pra rotular o hit.
+        const ids = Array.from(new Set((data || []).map((m: any) => m.chat_id)))
+        const names: Record<string, string> = {}
+        if (ids.length) {
+          const { data: cs } = await db.from('whatsapp_chats').select('app, chat_id, name').in('chat_id', ids)
+          for (const c of cs || []) names[`${c.app}|${c.chat_id}`] = c.name || ''
+        }
+        waHits = (data || []).map((m: any) => ({ ...m, chat_name: names[`${m.app}|${m.chat_id}`] || null }))
       }
-      return NextResponse.json({
-        hits: (data || []).map((m: any) => ({ ...m, chat_name: names[`${m.app}|${m.chat_id}`] || null })),
-      })
+      if (!wantSms) return NextResponse.json({ hits: waHits })
+
+      // SMS no mesmo balaio, mais novo primeiro; o nome da conversa é o remetente.
+      let smsHits: any[] = []
+      let smsError: string | undefined
+      try {
+        smsHits = (await smsSearch(db, q, limit)).map(r => ({ ...smsAsMessage(r), chat_name: r.sender }))
+      } catch (e) { smsError = String((e as Error).message || e) }
+      const hits = [...waHits, ...smsHits]
+        .sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at)))
+        .slice(0, limit)
+      return NextResponse.json({ hits, ...(smsError ? { smsError } : {}) })
     }
 
     return NextResponse.json({ error: 'unknown view' }, { status: 400 })

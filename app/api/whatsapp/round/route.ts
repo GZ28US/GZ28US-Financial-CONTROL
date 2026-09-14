@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 import { waDb } from '@/lib/waStore.server'
+import { SMS_APP, SMS_NOTE, smsThreads } from '@/lib/smsStore.server'
 
 // WHATSAPP HUB — O ROUND, no app (ordem do Márcio, 24/ago/2026: "Você aqui tem
 // que ser só UMA INTERFACE do APP; tudo que puder ficar lá tem que ficar").
@@ -18,6 +19,12 @@ import { waDb } from '@/lib/waStore.server'
 //     depois da marca d'água (mentioned_ids — o texto @<LID> não serve)
 //   • fuso pelo ASSUNTO: grupo "GZ28US …" é Orlando mesmo lido pela cópia BR
 //   • self-chats e grupos de report automático nunca são pauta
+//   • SMS do iPhone US (14/set/2026, «inclua os SMSs … em tudo!») vêm no bloco
+//     `sms`, À PARTE da fila: toda conversa de SMS com mensagem na janela, a mais
+//     nova primeiro. Fica fora de remaining/next/queue porque SMS não tem marca
+//     d'água (whatsapp_chats é do WhatsApp) nem resposta capturada — na fila, viraria
+//     pauta que nunca fecha. Falha na leitura do SMS não derruba o round: vai em
+//     `sms.error`.
 
 export const dynamic = 'force-dynamic'
 
@@ -152,11 +159,27 @@ export async function GET(req: NextRequest) {
       processedThrough: c.processed_through,
     })
 
+    // SMS da janela, à parte (ver o cabeçalho).
+    let sms: { note: string; total: number; threads: any[]; error?: string }
+    try {
+      const threads = await smsThreads(db, { since })
+      sms = {
+        note: SMS_NOTE, total: threads.length,
+        threads: threads.slice(0, 25).map(t => ({
+          app: SMS_APP, chatId: t.chatId, name: t.sender, isGroup: false, zone: 'US',
+          lastAt: t.lastAt, count: t.count, last: t.lastBody.slice(0, 300),
+        })),
+      }
+    } catch (e) {
+      sms = { note: SMS_NOTE, total: 0, threads: [], error: String((e as Error).message || e) }
+    }
+
     if (listOnly || !eligible.length) {
       return NextResponse.json({
         remaining: eligible.length,
         next: eligible.length ? summary(eligible[0]) : null,
         queue: eligible.slice(0, 25).map(summary),
+        sms,
       })
     }
 
@@ -172,6 +195,7 @@ export async function GET(req: NextRequest) {
       remaining: eligible.length,
       next: { ...summary(c), newCount: (msgs || []).length, messages: (msgs || []).reverse() },
       queue: eligible.slice(1, 6).map(summary),
+      sms,
     })
   } catch (e) {
     console.error('[whatsapp-round]', e)

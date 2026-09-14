@@ -10,10 +10,15 @@ import { sessionHeaders } from '@/components/BankReconcileCard'
 // permanent mirror (whatsapp_messages / whatsapp_chats in the US project).
 // Times follow the subject's zone (Orlando for US, Brasília for BR) — never
 // raw UTC. Replies go out from here: US via /api/whatsapp, BR via the relay.
+// Since 14/set/2026 the US iPhone's SMS/iMessage are here too (app 'SMS', chat
+// `sms:<sender>`, Orlando time), served by the same inbox route — read-only: the
+// iPhone only reports what ARRIVES, so SMS has no reply box, no policy and no
+// processed mark.
 
+type App = 'US' | 'BR' | 'SMS'
 type Policy = 'ALL' | 'MENTION_ONLY' | 'IGNORE'
 type Chat = {
-  app: 'US' | 'BR'; chatId: string; name: string | null; isGroup: boolean
+  app: App; chatId: string; name: string | null; isGroup: boolean
   lastAt: string | null; unread: number | null; policy: Policy
   processedThrough: string | null; pending: boolean
   lastFromMe: boolean | null; lastType: string | null; lastBody: string | null
@@ -28,17 +33,21 @@ const POLICY_CHIP: Record<Policy, string> = {
   IGNORE: 'bg-red-950 text-red-400 border-red-900',
 }
 type Msg = {
-  id: number; from_me: boolean; author: string | null; pushname: string | null
+  id: number | string; from_me: boolean; author: string | null; pushname: string | null
   type: string; body: string; media_url: string | null; sent_at: string
 }
 type Hit = {
-  app: 'US' | 'BR'; chat_id: string; chat_name: string | null; from_me: boolean
+  app: App; chat_id: string; chat_name: string | null; from_me: boolean
   pushname: string | null; type: string; body: string; media_url: string | null; sent_at: string
 }
 
-const ZONE: Record<'US' | 'BR', string> = { US: 'America/New_York', BR: 'America/Sao_Paulo' }
+// SMS lands on the US iPhone → Orlando.
+const ZONE: Record<App, string> = { US: 'America/New_York', BR: 'America/Sao_Paulo', SMS: 'America/New_York' }
 
-function fmtTime(iso: string | null, app: 'US' | 'BR', withDate = true): string {
+const chatLabel = (name: string | null, chatId: string) =>
+  name || (chatId.startsWith('sms:') ? (chatId.slice(4) || '(no sender)') : chatId.replace(/@.*/, ''))
+
+function fmtTime(iso: string | null, app: App, withDate = true): string {
   if (!iso) return ''
   const d = new Date(iso)
   const opts: Intl.DateTimeFormatOptions = withDate
@@ -47,19 +56,20 @@ function fmtTime(iso: string | null, app: 'US' | 'BR', withDate = true): string 
   return new Intl.DateTimeFormat('en-US', opts).format(d)
 }
 
-const APP_CHIP: Record<'US' | 'BR', string> = {
+const APP_CHIP: Record<App, string> = {
   US: 'bg-blue-950 text-blue-300 border-blue-800',
   BR: 'bg-green-950 text-green-300 border-green-800',
+  SMS: 'bg-purple-950 text-purple-300 border-purple-800',
 }
 
 const isImage = (t: string | null) => t === 'image' || t === 'sticker'
 
 export default function WhatsAppPage() {
   const [chats, setChats] = useState<Chat[] | null>(null)
-  const [appFilter, setAppFilter] = useState<'ALL' | 'US' | 'BR'>('ALL')
+  const [appFilter, setAppFilter] = useState<'ALL' | App>('ALL')
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[] | null>(null)
-  const [active, setActive] = useState<{ app: 'US' | 'BR'; chatId: string; name: string | null } | null>(null)
+  const [active, setActive] = useState<{ app: App; chatId: string; name: string | null } | null>(null)
   const [msgs, setMsgs] = useState<Msg[] | null>(null)
   const [reply, setReply] = useState('')
   const [personal, setPersonal] = useState(true)
@@ -75,11 +85,11 @@ export default function WhatsAppPage() {
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       setChats(d.chats || [])
-      setErr('')
+      setErr(d.smsError ? `SMS failed to load: ${d.smsError}` : '')
     } catch (e) { setErr(String((e as Error).message || e)); setChats(prev => prev ?? []) }
   }, [appFilter])
 
-  const loadMsgs = useCallback(async (c: { app: 'US' | 'BR'; chatId: string }, scroll = true) => {
+  const loadMsgs = useCallback(async (c: { app: App; chatId: string }, scroll = true) => {
     const r = await fetch(`${BASE_PATH}/api/whatsapp/inbox?view=messages&app=${c.app}&chatId=${encodeURIComponent(c.chatId)}&limit=100`, { headers: await sessionHeaders() })
     const d = await r.json().catch(() => ({}))
     if (r.ok) {
@@ -132,7 +142,7 @@ export default function WhatsAppPage() {
     void loadChats()
   }
 
-  function openChat(app: 'US' | 'BR', chatId: string, name: string | null) {
+  function openChat(app: App, chatId: string, name: string | null) {
     setActive({ app, chatId, name })
     setMsgs(null)
     setHits(null)
@@ -140,7 +150,8 @@ export default function WhatsAppPage() {
   }
 
   async function send() {
-    if (!active || !reply.trim() || sending) return
+    // SMS is read-only here: there is no route that sends SMS.
+    if (!active || active.app === 'SMS' || !reply.trim() || sending) return
     setSending(true)
     setErr('')
     try {
@@ -175,10 +186,10 @@ export default function WhatsAppPage() {
         <h1 className="text-4xl font-bold">INTERCOM</h1>
         <WaBadge />
       </div>
-      <p className="text-gray-400 mb-6 max-w-3xl">Both numbers in one inbox — the permanent mirror of every message. US times in Orlando, BR times in Brasília.</p>
+      <p className="text-gray-400 mb-6 max-w-3xl">Both numbers in one inbox — the permanent mirror of every message — plus the SMS that arrive on the US iPhone. US and SMS times in Orlando, BR times in Brasília.</p>
 
       <div className="flex gap-2 flex-wrap items-center mb-4">
-        {(['ALL', 'US', 'BR'] as const).map(f => (
+        {(['ALL', 'US', 'BR', 'SMS'] as const).map(f => (
           <button key={f} onClick={() => { setAppFilter(f); setChats(null); void loadChats(f) }}
             className={`px-4 py-2 rounded-full text-sm font-bold border ${appFilter === f ? 'bg-white text-black border-white' : 'bg-gray-900 text-gray-300 border-gray-700 hover:bg-gray-800'}`}>
             {f}
@@ -213,7 +224,7 @@ export default function WhatsAppPage() {
                   className="w-full text-left px-4 py-3 border-b border-gray-900 hover:bg-gray-900">
                   <div className="flex items-center gap-2 text-sm">
                     <span className={`px-1.5 rounded text-[10px] font-bold border ${APP_CHIP[h.app]}`}>{h.app}</span>
-                    <span className="font-bold truncate">{h.chat_name || h.chat_id.replace(/@.*/, '')}</span>
+                    <span className="font-bold truncate">{chatLabel(h.chat_name, h.chat_id)}</span>
                     <span className="ml-auto text-gray-500 text-xs shrink-0">{fmtTime(h.sent_at, h.app)}</span>
                   </div>
                   <div className="text-xs text-gray-400 truncate mt-0.5">{h.from_me ? '→ ' : ''}{h.body || '[media]'}</div>
@@ -230,9 +241,9 @@ export default function WhatsAppPage() {
                   className={`w-full text-left px-4 py-3 border-b border-gray-900 hover:bg-gray-900 ${active?.chatId === c.chatId && active?.app === c.app ? 'bg-gray-900' : ''}`}>
                   <div className="flex items-center gap-2 text-sm">
                     <span className={`px-1.5 rounded text-[10px] font-bold border ${APP_CHIP[c.app]}`}>{c.app}</span>
-                    <span className="font-bold truncate">{c.name || c.chatId.replace(/@.*/, '')}</span>
+                    <span className="font-bold truncate">{chatLabel(c.name, c.chatId)}</span>
                     {c.isGroup && <span className="text-[10px] text-gray-500">GROUP</span>}
-                    {!c.pending && <span className="text-emerald-500 text-[10px] shrink-0" title="processada">✓</span>}
+                    {!c.pending && c.app !== 'SMS' && <span className="text-emerald-500 text-[10px] shrink-0" title="processada">✓</span>}
                     {c.policy !== 'ALL' && <span className={`px-1.5 rounded text-[9px] font-bold border shrink-0 ${POLICY_CHIP[c.policy]}`}>{POLICY_LABEL[c.policy]}</span>}
                     {!c.isGroup && c.lastFromMe === false && <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Awaiting reply" />}
                     <span className="ml-auto text-gray-500 text-xs shrink-0">{fmtTime(c.lastAt, c.app)}</span>
@@ -255,10 +266,10 @@ export default function WhatsAppPage() {
             <>
               <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-2">
                 <span className={`px-1.5 rounded text-[10px] font-bold border ${APP_CHIP[active.app]}`}>{active.app}</span>
-                <span className="font-bold">{active.name || active.chatId.replace(/@.*/, '')}</span>
+                <span className="font-bold">{chatLabel(active.name, active.chatId)}</span>
                 {(() => {
                   const c = (chats || []).find(x => x.chatId === active.chatId && x.app === active.app)
-                  if (!c) return null
+                  if (!c || c.app === 'SMS') return null
                   return (
                     <select
                       value={c.policy} onChange={e => void setPolicy(c, e.target.value as Policy)}
@@ -273,7 +284,7 @@ export default function WhatsAppPage() {
                 })()}
                 {(() => {
                   const c = (chats || []).find(x => x.chatId === active.chatId && x.app === active.app)
-                  if (!c) return null
+                  if (!c || c.app === 'SMS') return null
                   return (
                     <button onClick={() => void markProcessed(c, c.pending)}
                       title={c.pending ? 'Marcar tudo até a última mensagem como tratado' : 'Reabrir esta conversa no round'}
@@ -282,7 +293,7 @@ export default function WhatsAppPage() {
                     </button>
                   )
                 })()}
-                <span className="ml-auto text-xs text-gray-500">{active.app === 'US' ? 'Orlando time' : 'horário de Brasília'}</span>
+                <span className="ml-auto text-xs text-gray-500">{active.app === 'BR' ? 'horário de Brasília' : 'Orlando time'}</span>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
                 {msgs === null ? (
@@ -296,7 +307,7 @@ export default function WhatsAppPage() {
                       {m.media_url && (isImage(m.type)
                         ? <a href={m.media_url} target="_blank" rel="noopener noreferrer"><img src={m.media_url} alt="" className="max-h-60 rounded-lg mb-1" /></a>
                         : <a href={m.media_url} target="_blank" rel="noopener noreferrer" className="block text-blue-400 hover:underline mb-1">📎 {m.type}</a>)}
-                      {!m.media_url && m.type !== 'chat' && <span className="text-gray-500">[{m.type}] </span>}
+                      {!m.media_url && m.type !== 'chat' && m.type !== 'sms' && <span className="text-gray-500">[{m.type}] </span>}
                       <span className="whitespace-pre-wrap break-words">{m.body}</span>
                     </div>
                     <div className={`text-[10px] text-gray-600 mt-0.5 ${m.from_me ? 'text-right' : ''}`}>{fmtTime(m.sent_at, active.app)}</div>
@@ -304,6 +315,11 @@ export default function WhatsAppPage() {
                 ))}
                 <div ref={bottomRef} />
               </div>
+              {active.app === 'SMS' ? (
+              <div className="border-t border-gray-800 p-3 text-xs text-gray-500">
+                SMS is read-only here — reply from the iPhone. Only incoming texts are captured; what you send by SMS does not show up.
+              </div>
+              ) : (
               <div className="border-t border-gray-800 p-3 flex gap-2 items-end">
                 <textarea
                   value={reply} onChange={e => setReply(e.target.value)}
@@ -319,6 +335,7 @@ export default function WhatsAppPage() {
                   {sending ? '…' : 'SEND'}
                 </button>
               </div>
+              )}
             </>
           )}
         </div>
