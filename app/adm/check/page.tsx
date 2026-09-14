@@ -1052,6 +1052,35 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
+  // ESTORNADO FORA DA CONTA (DC 1.58.0, 14/set/2026). lib/estorno.ts tira do dinheiro a linha REFUNDED cujo estorno não foi lançado
+  // em linha negativa (lei 8.10) — e o carimbo pode ter vindo do robô do e-mail (lib/mailToItem.server.ts). O que saiu da conta aparece
+  // aqui para gente conferir: carimbo certo = VISTO; estorno parcial = lance a negativa e tire o carimbo.
+  {
+    const hrefDe = (tabela: string, r: any): string => {
+      if (tabela === 'invoice_expenses' || tabela === 'invoice_items') {
+        const inv = d.invoices.find((i: any) => i.id === r.invoice_id)
+        return inv && inv.ride_id ? '/rides/' + inv.ride_id + '/invoices/' + inv.id : '/invoices'
+      }
+      return tabela === 'inputs' ? '/supplies' : tabela === 'inventory' ? '/inventory' : tabela === 'staff_expenses' ? '/staff' : '/goods'
+    }
+    const nome: Record<string, string> = { invoice_expenses: 'DESPESA', invoice_items: 'ITEM', inputs: 'SUPPLY', inventory: 'ESTOQUE', assets: 'GOODS', assets_expenses: 'GOODS' }
+    const estItems: Item[] = (d.estornadas || []).map((x: any) => {
+      const r = x.linha
+      const inv = r.invoice_id ? d.invoices.find((i: any) => i.id === r.invoice_id) : null
+      const texto = String(r.item || r.description || r.supplier || '').replace(/\s+/g, ' ').slice(0, 70)
+      return {
+        href: hrefDe(x.tabela, r), code: 'ESTORNO',
+        label: `${nome[x.tabela] || x.tabela}${inv ? ' · ' + (inv.invoice_code || '') : ''} · ${texto}${r.order_number ? ' · pedido ' + r.order_number : ''} · ${String(r.id).slice(0, 8)}`,
+        extra: 'REFUNDED sem linha negativa do estorno — fora do total, do custo e do DFC', amount: Math.abs(Number(x.valor) || 0),
+      }
+    }).sort((a: Item, b: Item) => (b.amount || 0) - (a.amount || 0))
+    checks.push({
+      group: 'FINANCIAL', key: 'refunded-out', title: 'Estornado fora da conta: o carimbo está certo?', blocks: 'o dinheiro dessas linhas saiu de toda conta (invoice, pending, DRE/DFC/Balanço, BR deve ao US)',
+      why: 'Márcio, 14/09/2026: «deixe nas invoices como estornado, e faça os controles financeiros». A linha REFUNDED fica na invoice, riscada, e sai do dinheiro — a não ser que o estorno já esteja lançado como linha NEGATIVA do mesmo pedido (lei 8.10 do AutoBook), quando as duas se anulam. O carimbo pode ter sido posto pelo robô do e-mail: se o estorno foi PARCIAL, lance a negativa do que voltou e tire o carimbo (a linha volta a contar); se foi inteiro, VISTO.',
+      items: estItems, impact: estItems.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+  }
+
   // 9c · CAIXA NÃO BATE — o saldo que o BANCO diz (Plaid, agora) contra o que as
   // linhas do Bank Link implicam (último extrato lançado + linhas desde então).
   // Diferença maior que o que ainda está pendente = linha faltando ou sobrando

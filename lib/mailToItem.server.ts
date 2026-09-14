@@ -57,6 +57,7 @@ import {
   extractTrackings, carrierFromText, isPurchaseConfirmation, type MailMsg, type MailAuth,
 } from './streamMail.server'
 import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from './itemTracking.server'
+import { valorDespesa, valorItem } from './estorno'
 
 // A lista de tabelas NÃO mora aqui: vem de ITEM_TABLES. Desde 03/set/2026 ela
 // inclui staff_expenses (lei do dono: compra pessoal entra no STREAM e tem rastreio),
@@ -133,7 +134,31 @@ export const PEDIDO_NOVO = [
   /\b[Oo]rder\s*(?:[Nn]umber|#|[Nn]o\.?)?\s*[:#]?\s*#?([A-Z]{1,3}\d{4,12})\b(?!-\d)/g, // Aeromotive A13706
 ]
 
-type Linha = { tabela: ItemTable; id: string; order_number: string; tracking_number: string | null; carrier: string | null; delivered_at: string | null; cancel_status: string | null }
+type Linha = { tabela: ItemTable; id: string; order_number: string; tracking_number: string | null; carrier: string | null; delivered_at: string | null; cancel_status: string | null; valor: number }
+
+// O VALOR DA LINHA (14/set/2026): desde a FIN 0.17.0 o carimbo REFUNDED tira a linha do dinheiro (lib/estorno.ts) quando o estorno
+// não foi lançado em linha negativa. O robô passou a conferir QUANTO o vendedor devolveu antes de carimbar — ver valorDoEstorno.
+const VALOR_COLS: Record<ItemTable, string> = {
+  invoice_expenses: 'price, quantity, tax, extra', inputs: 'unit_price, quantity', inventory: 'unit_price, quantity',
+  assets: 'unit_price, quantity', assets_expenses: 'amount', staff_expenses: 'amount',
+}
+const valorDaLinha = (tabela: ItemTable, r: any): number => (tabela === 'inputs' || tabela === 'inventory' || tabela === 'assets') ? valorItem(r) : valorDespesa(r)
+
+// QUANTO O VENDEDOR DEVOLVEU (14/set/2026 — revisão do estorno). Antes o robô carimbava REFUNDED no pedido INTEIRO sempre que o
+// e-mail dizia «refunded», e o estorno parcial virava estorno total (Temu PO-211-09539381883512437: linha de 25,96 carimbada por um
+// estorno de 8,38). Agora: valor em dólar colado à palavra do estorno ("refund of $8.38", "$8.38 has been refunded"); sem isso, só vale
+// quando o e-mail traz UM valor só. Nada lido = null — e null NÃO carimba.
+const DOLAR = String.raw`(?:US\$|USD\s?|\$)\s?(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2})`
+export function valorDoEstorno(texto: string): number | null {
+  const t = String(texto || '').replace(/\s+/g, ' ')
+  const num = (v: string) => parseFloat(v.replace(/,/g, ''))
+  const perto: number[] = []
+  for (const m of t.matchAll(new RegExp(String.raw`refund(?:ed|s)?(?: amount| total| of)?[^$\d]{0,40}?` + DOLAR, 'gi'))) perto.push(num(m[1]))
+  for (const m of t.matchAll(new RegExp(DOLAR + String.raw`[^$\d]{0,30}?(?:has been|was|will be|is being)\s+refunded`, 'gi'))) perto.push(num(m[1]))
+  if (perto.length) return Math.max(...perto)
+  const todos = [...new Set([...t.matchAll(new RegExp(DOLAR, 'g'))].map(m => num(m[1])))]
+  return todos.length === 1 ? todos[0] : null
+}
 
 export type MailToItemResult = {
   varridas: number                 // e-mails que casaram com algum pedido
@@ -166,7 +191,7 @@ async function carregarLinhas(db: SupabaseClient): Promise<Map<string, Linha[]>>
   const porPedido = new Map<string, Linha[]>()
   for (const tabela of ITEM_TABLES) {
     let q = db.from(tabela)
-      .select('id, order_number, tracking_number, carrier, delivered_at, cancel_status, picked_up')
+      .select('id, order_number, tracking_number, carrier, delivered_at, cancel_status, picked_up, ' + VALOR_COLS[tabela])
       .not('order_number', 'is', null)
     // staff_expenses: folha (WEEKLY/Zelle/mensal) nunca sai do banco — mesmo gate dos
     // três consumidores (03/set/2026). O order_number acima já basta, mas o
@@ -178,7 +203,7 @@ async function carregarLinhas(db: SupabaseClient): Promise<Map<string, Linha[]>>
       const pedido = String(r.order_number || '').trim()
       if (pedido.length < MIN_PEDIDO) continue
       const arr = porPedido.get(pedido) || []
-      arr.push({ tabela, id: r.id, order_number: pedido, tracking_number: r.tracking_number ?? null, carrier: r.carrier ?? null, delivered_at: r.delivered_at ?? null, cancel_status: r.cancel_status ?? null })
+      arr.push({ tabela, id: r.id, order_number: pedido, tracking_number: r.tracking_number ?? null, carrier: r.carrier ?? null, delivered_at: r.delivered_at ?? null, cancel_status: r.cancel_status ?? null, valor: valorDaLinha(tabela, r) })
       porPedido.set(pedido, arr)
     }
   }
@@ -253,11 +278,25 @@ export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailT
       if (!numeros.length && !entregou && !estornou) continue
 
       for (const pedido of pedidos) {
+        // ── 3a. O ESTORNO COBRE O PEDIDO? (14/set/2026) — só o estorno INTEIRO carimba. Parcial ou sem valor legível vira dúvida:
+        // o jeito certo é a linha NEGATIVA do valor devolvido (lei 8.10), e carimbar o pedido inteiro tiraria dinheiro que não voltou.
+        let estornoInteiro = false
+        if (estornou) {
+          const linhasDoPedido = dicionario.get(pedido) || []
+          const total = linhasDoPedido.reduce((s, l) => s + (l.valor > 0 ? l.valor : 0), 0)
+          const devolvido = valorDoEstorno(texto)
+          const folga = Math.max(1, 0.01 * total)
+          estornoInteiro = devolvido != null && total > 0 && devolvido + folga >= total
+          // Negativa do pedido já lançada (lei 8.10) = o estorno já está na conta: nada a perguntar.
+          if (!estornoInteiro && linhasDoPedido.some(l => !l.cancel_status) && !linhasDoPedido.some(l => l.valor < 0)) {
+            out.duvidas.push(`${pedido} — o vendedor diz que estornou ${devolvido == null ? '(valor não lido no e-mail)' : 'US$ ' + devolvido.toFixed(2)} de um pedido de US$ ${total.toFixed(2)}: NÃO carimbei REFUNDED — lance a linha negativa do que voltou (lei 8.10) — "${msg.subject.slice(0, 50)}"`)
+          }
+        }
         for (const linha of (dicionario.get(pedido) || [])) {
           const onde = `${linha.tabela}:${pedido}`
 
           // ── 3. ESTORNO — passa por cima de tudo, então vem primeiro ───────
-          if (estornou && !linha.cancel_status) {
+          if (estornoInteiro && !linha.cancel_status) {
             const { error } = await db.from(linha.tabela).update({ cancel_status: 'REFUNDED' }).eq('id', linha.id)
             if (error) { out.duvidas.push(`${onde} — falhou ao gravar estorno: ${error.message}`); continue }
             linha.cancel_status = 'REFUNDED'
