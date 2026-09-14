@@ -391,6 +391,7 @@ export default function EditInvoicePage() {
   const [editingPurchaseSupplier, setEditingPurchaseSupplier] = useState('')
   const [editingPurchaseDate, setEditingPurchaseDate] = useState('')
   const [editingPurchaseSource, setEditingPurchaseSource] = useState(DEFAULT_SOURCE)
+  const [openedPurchasePayer, setOpenedPurchasePayer] = useState('')
   // ORDER NUMBER é dado da COMPRA (um pedido = um grupo), então se edita aqui,
   // no diálogo do grupo, e vale para todas as linhas dele.
   const [editingPurchaseOrderNumber, setEditingPurchaseOrderNumber] = useState('')
@@ -1244,6 +1245,7 @@ export default function EditInvoicePage() {
     // campo novo está vazio). Antes lia só o SOURCE e caía em GZ28US: um pedido gravado
     // GZ28BR em paid_from abria como GZ28US e o SAVE o reescrevia calado. Vazio fica vazio.
     setEditingPurchaseSource(first.paid_from || '')
+    setOpenedPurchasePayer(first.paid_from || '')
     setEditingPurchaseOrderNumber(first.order_number || '')
   }
 
@@ -1258,6 +1260,10 @@ export default function EditInvoicePage() {
     // nenhum (fabricar GZ28US aqui era o app respondendo por ninguém, caso Drácula).
     const payer = editingPurchaseSource
     const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
+    // O pagador do diálogo abriu com o da 1ª linha. Só muda linha que estava com ESSE pagador ou vazia (revisão 14/set):
+    // salvar só pra trocar o pedido não pode virar GZ28US uma linha GZ28BR do mesmo grupo.
+    const openedPayer = openedPurchasePayer
+    const takesPayer = (e: { paid_from?: string | null }) => !!payer && (!e.paid_from || String(e.paid_from) === openedPayer)
     // PAID TO escondido, linha a linha (hiddenPayers): nasce GZ28US quando este diálogo dá
     // o pagamento a uma linha que estava sem e o campo está vazio; linha ainda não salva
     // nasce com ele no insert. Calculado UMA vez e usado no banco E no estado da tela —
@@ -1265,7 +1271,7 @@ export default function EditInvoicePage() {
     const hiddenOf = new Map(groupExpenses.filter(e => e.id).map(e => [e.id!, hiddenPayers('invoice_expenses', { paid: isValidDate(e.payment_date), paid_to: e.paid_to }, !!payDate)] as const))
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, ...(payer ? { source: payer, paid_from: payer } : {}), ...((e.id && hiddenOf.get(e.id)) || {}), order_number: orderNo }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, ...(takesPayer(e) ? { source: payer, paid_from: payer } : {}), ...((e.id && hiddenOf.get(e.id)) || {}), order_number: orderNo }
         : e
     ))
     for (const exp of groupExpenses) {
@@ -1274,7 +1280,7 @@ export default function EditInvoicePage() {
           supplier: editingPurchaseSupplier || null,
           expense_date: payDate || null,
           payment_date: payDate || null,
-          ...(payer ? { source: payer, paid_from: payer } : {}),
+          ...(takesPayer(exp) ? { source: payer, paid_from: payer } : {}),
           ...(hiddenOf.get(exp.id) || {}),
           order_number: orderNo || null,
         }).eq('id', exp.id)

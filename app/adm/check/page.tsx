@@ -2476,13 +2476,18 @@ export default function DataCheckPage() {
     setSaving(true)
     const newValue = fix.kind === 'received' ? new Date().toISOString() : fix.kind === 'flag' ? fix.value : fix.kind === 'number' ? (parseFloat(value) || 0) : value
     const field = fixField(fix)
+    // O pagador escondido só nasce quando o PAGAMENTO nasce aqui: lê antes se a linha já tinha data (revisão 14/set —
+    // o card de data impossível conserta linha já paga, e ali o escondido entraria sem trilha).
+    const hadPayment = fix.kind === 'date' && field === 'payment_date'
+      ? !!((await supabase.from(fix.table).select('payment_date').eq('id', fix.rowId).maybeSingle()).data as { payment_date?: string | null } | null)?.payment_date
+      : true
     const { error: err } = await supabase.from(fix.table).update({ [field]: newValue }).eq('id', fix.rowId)
     if (err) { setSaving(false); alert(err.message); return }
     // FIX de data de PAGAMENTO numa linha que não tinha (os cards de data só listam linha sem
     // payment_date): o pagamento nasce aqui, e o pagador escondido da régua nasce junto — GZ28US
     // só onde estiver vazio, estoque doado fora (lib/payerRule). Quem pagou, quando é escolha,
     // continua sendo pergunta do «Quem pagou esta conta?».
-    if (fix.kind === 'date' && field === 'payment_date' && typeof newValue === 'string' && /^\d{4}-\d{2}-\d{2}/.test(newValue)) {
+    if (!hadPayment && fix.kind === 'date' && field === 'payment_date' && typeof newValue === 'string' && /^\d{4}-\d{2}-\d{2}/.test(newValue)) {
       const t = tabelaAtual(fix.table)
       if (t in PAYER_RULE && t !== 'invoice_incomes' && t !== 'inventory_donated') {
         const hErr = await fillHiddenPayers(supabase, t as Parameters<typeof fillHiddenPayers>[1], [fix.rowId])

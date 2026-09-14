@@ -35,6 +35,8 @@ export const stockPayerTable = (sourceType: string | null | undefined): PayerTab
   sourceType === 'DONATED' ? 'inventory_donated' : 'inventory'
 
 const blank = (v: unknown) => !String(v ?? '').trim()
+// O whoPaid (auditPayer/closeScore) só lê do SOURCE os valores GZ28US/GZ28BR/REGIONS; texto de cartão («Visa ••••7666») não é pagador.
+const isOtherPayerSource = (v: unknown) => String(v ?? '').trim().toUpperCase() === 'GZ28BR'
 
 // ESCONDIDO GRAVA — na linha nova, e na hora em que o pagamento nasce; nunca por cima.
 // `before` = a linha como estava ANTES deste salvamento (null = linha nova).
@@ -50,13 +52,16 @@ const blank = (v: unknown) => !String(v ?? '').trim()
 // Escolha nunca sai daqui: quem grava escolha é a tela que a mostra.
 export function hiddenPayers(
   table: PayerTable,
-  before: { paid: boolean; paid_from?: string | null; paid_to?: string | null } | null,
+  before: { paid: boolean; paid_from?: string | null; paid_to?: string | null; source?: string | null } | null,
   paidNow: boolean,
 ): { paid_from?: string; paid_to?: string } {
   const rule: { paidFrom: PayerMode; paidTo: PayerMode } = PAYER_RULE[table]
   const out: { paid_from?: string; paid_to?: string } = {}
   const born = (stored: unknown) => before === null || (!before.paid && paidNow && blank(stored))
-  if (rule.paidFrom === 'house' && born(before?.paid_from)) out.paid_from = HOUSE_PAYER
+  // SOURCE legado conta como resposta (revisão 14/set): whoPaid lê o source quando paid_from está vazio, então
+  // um source GZ28BR é pagador gravado — o escondido não o vira GZ28US por baixo.
+  const legacyOther = !!before && isOtherPayerSource(before.source)
+  if (rule.paidFrom === 'house' && !legacyOther && born(before?.paid_from)) out.paid_from = HOUSE_PAYER
   if (rule.paidTo === 'house' && born(before?.paid_to)) out.paid_to = HOUSE_PAYER
   return out
 }
@@ -74,9 +79,22 @@ export async function fillHiddenPayers(db: Db, table: Exclude<PayerTable, 'inven
   const rule: { paidFrom: PayerMode; paidTo: PayerMode } = PAYER_RULE[table]
   const cols = [rule.paidFrom === 'house' ? 'paid_from' : null, rule.paidTo === 'house' ? 'paid_to' : null].filter((c): c is string => !!c)
   const errors: string[] = []
-  for (const col of cols) {
+  // SOURCE legado conta como pagador gravado (revisão 14/set): linha com source GZ28BR não recebe PAID FROM
+  // escondido — whoPaid a lê pelo source e o saldo US vs BR mudaria calado.
+  let fromIds = list
+  if (cols.includes('paid_from')) {
+    const keep: string[] = []
     for (let i = 0; i < list.length; i += 200) {
-      const slice = list.slice(i, i + 200)
+      const { data, error } = await db.from(table).select('id, source').in('id', list.slice(i, i + 200))
+      if (error) { errors.push(table + '.source: ' + error.message); continue }
+      for (const r of (data || []) as { id: string; source: string | null }[]) if (!isOtherPayerSource(r.source)) keep.push(r.id)
+    }
+    fromIds = keep
+  }
+  for (const col of cols) {
+    const ids = col === 'paid_from' ? fromIds : list
+    for (let i = 0; i < ids.length; i += 200) {
+      const slice = ids.slice(i, i + 200)
       // Vazio é NULL ou '' — duas escritas, cada uma condicionada no banco. O corte do
       // doado é o único .or() da consulta (source_type é anulável: nulo não é doado).
       for (const empty of [null, ''] as const) {

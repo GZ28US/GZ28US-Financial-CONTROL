@@ -210,7 +210,10 @@ export default function FixedCostSupplierViewPage() {
     // PAID FROM e PAID TO de custo fixo são GZ28US, escondidos (Márcio, 11/set): gravam
     // quando o pagamento nasce aqui (+ PAY numa conta em aberto); no conserto de um
     // pagamento que já existia, ficam como estão — e o SOURCE legado acompanha o PAID FROM.
-    const payer = payerToRow(payPayment, 'fixed_cost_expenses', isValidDate(payDate))
+    const payerRaw = payerToRow(payPayment, 'fixed_cost_expenses', isValidDate(payDate))
+    // SOURCE legado GZ28BR sem PAID FROM já é pagador gravado (revisão 14/set): o escondido não o vira GZ28US.
+    const bySourceBR = String(paying.source || '').trim().toUpperCase() === 'GZ28BR' && !paying.paid_from
+    const payer: typeof payerRaw = bySourceBR ? { ...(payerRaw.paid_to !== undefined ? { paid_to: payerRaw.paid_to } : {}) } : payerRaw
     const legacySource = payer.paid_from !== undefined ? { source: payer.paid_from || DEFAULT_SOURCE } : {}
     const { error } = await supabase.from('fixed_cost_expenses').update({
       payment_date: isValidDate(payDate) ? payDate : null,

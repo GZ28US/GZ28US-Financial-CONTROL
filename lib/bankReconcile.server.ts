@@ -1439,7 +1439,7 @@ async function bookAssessment(db: any, l: any, home: AssessmentHome, batch: stri
     if (prev && (String(prev.supplier_id) !== String(home.row.supplier_id) || !String(prev.description || '').includes(MARKER_REPASSE))) throw new Error('a tarifa já tem lançamento de outra rodada no custo fixo — confira o ÓRFÃO no Data Checker')
     rowId = prev?.id || ''
     if (!rowId) {
-      const { data: row, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: home.row.supplier_id, type: 'SINGLE', description: marked(pct + '«' + String(home.row.description || '').slice(0, 90) + '» · ' + String(l.name || '').trim()), amount: fee, source: 'GZ28US', expense_date: day, payment_date: day, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id }).select('id').single()
+      const { data: row, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: home.row.supplier_id, type: 'SINGLE', description: marked(pct + '«' + String(home.row.description || '').slice(0, 90) + '» · ' + String(l.name || '').trim()), amount: fee, source: 'GZ28US', expense_date: day, payment_date: day, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id }).select('id').single()
       if (error || !row) throw new Error('fixed_cost_expenses: ' + (error?.message || 'insert falhou'))
       rowId = row.id; inserted = true
       undo = async () => { await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id).ilike('description', '%' + MARKER_REPASSE + '%') }
