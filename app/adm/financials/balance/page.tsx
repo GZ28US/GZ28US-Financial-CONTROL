@@ -13,10 +13,16 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData, brAccount } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
+import { countsOnUsSide, type CrossingBalance } from '@/lib/crossingBalance'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { downloadStatementPdf } from '@/lib/statementPdf'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
+
+// CONTA CORRENTE GZ28BR = SHOPPING INVOICES (FIN 0.16.0, 14/set/2026): o número vem da rota /api/crossing/balance
+// (lib/crossingBalance — o mesmo do GZ-FLOW e do card do Data Checker). Sem o sinal, a linha fica «?» e FORA dos totais.
+type CxSignal = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ok'; data: CrossingBalance }
 
 // Barra de composição: cada fatia proporcional ao peso na soma, com legenda.
 const COMP_COLORS = ['bg-emerald-600', 'bg-sky-600', 'bg-amber-500', 'bg-purple-500', 'bg-rose-500', 'bg-teal-500', 'bg-orange-600', 'bg-indigo-500']
@@ -47,11 +53,23 @@ function Composition({ items }: { items: [string, number][] }) {
 export default function BalancePage() {
   const [d, setD] = useState<FinData | null>(null)
   const [error, setError] = useState('')
+  const [cx, setCx] = useState<CxSignal>({ state: 'loading' })
   useEffect(() => { loadFinancials().then(setD).catch(e => setError(String(e?.message || e))) }, [])
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await fetch(`${BASE_PATH}/api/crossing/balance`, { headers: await sessionHeaders(), cache: 'no-store' })
+        const j = await r.json().catch(() => ({}))
+        if (alive) setCx(r.ok && j.ok ? { state: 'ok', data: j as CrossingBalance } : { state: 'error', error: String(j.error || `HTTP ${r.status}`) })
+      } catch (e) { if (alive) setCx({ state: 'error', error: String((e as Error)?.message || e) }) }
+    })()
+    return () => { alive = false }
+  }, [])
 
   const m = useMemo(() => {
     if (!d) return null
-    let ar = 0, advances = 0, wip = 0, wipCars = 0, fleetOwn = 0, fleetTool = 0, donorCost = 0, flPayable = 0
+    let ar = 0, advances = 0, wip = 0, wipCars = 0, fleetOwn = 0, fleetTool = 0, donorCost = 0, flPayable = 0, crossingOpen = 0, crossingN = 0
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
       const scope = rideScope(d, inv)
@@ -62,7 +80,10 @@ export default function BalancePage() {
       // pelo nosso próprio carro; linha de preço em invoice nossa é display.
       if (!ours) {
         const bal = t.grand - t.received
-        if (bal > 0) ar += bal; else advances += -bal
+        // SHOPPING INVOICE DA GZ28BR (006.N — countsOnUsSide, a régua da conta) não é A/R de cliente: o aberto dela está
+        // DENTRO da conta corrente GZ28BR, líquido das 085.N do app BR. Contar aqui também seria o mesmo dinheiro duas vezes.
+        if (countsOnUsSide(inv)) { crossingOpen += bal; crossingN++ }
+        else if (bal > 0) ar += bal; else advances += -bal
         if (t.flTax > 0 && !inv.fl_tax_expense_date) flPayable += t.flTax
       }
       if (scope === 'OWN') fleetOwn += t.cost
@@ -83,15 +104,16 @@ export default function BalancePage() {
     fleetOwn = Math.max(0, fleetOwn - depOwn)
     fleetTool = Math.max(0, fleetTool - depTool)
 
-    // Conta corrente GZ28BR: UMA conta só (lib/financials brAccount, FIN 0.15.0) — a mesma do card «Conta corrente
-    // GZ28BR» do Data Checker, na régua do GZ-FLOW (whoPaid: paid_from manda, SOURCE legado conta). GOT = receita
-    // nossa que entrou lá (+ conta da BR que nós pagamos); PAID = conta nossa que ela pagou. Só linha PAGA (sem
-    // payment_date está em Fornecedores a Pagar; contar aqui também seria o mesmo passivo duas vezes).
+    // Conta corrente GZ28BR = SHOPPING INVOICES (FIN 0.16.0 — Márcio, 13/set: «TODA E QUALQUER movimentação financeira
+    // entre o US e o BR tem que estar nas shopping invoices» · «EU PRECISO SABER QUANTO O BR DEVE PRO US»). O saldo é o
+    // da rota /api/crossing/balance: aberto nas 006.N do app US − aberto nas 085.N do app BR, em US$ — o MESMO número
+    // do GZ-FLOW e do card do Data Checker. Até 14/set era lib/financials brAccount (paid_from/paid_to soltos nas sete
+    // tabelas), que dava outro número; brAccount continua existindo para o CEGO do Data Checker, não para o saldo.
+    // Sem o sinal (lendo ou falhou) o saldo é null: a linha mostra «?» e fica FORA dos totais — nunca um número velho.
     // «Empréstimo de sócio — Beto» e «— Heraldo» saíram do passivo em 11/set: as duas linhas nasciam de paid_from
     // BETO/HERALDO, que o Márcio tirou do app US, e as duas sempre valeram US$ 0,00 (medido). Empréstimo de sócio
     // de verdade continua em «Empréstimos e financiamentos», pelo LEDGERS — é lá que moram os do Heraldo.
-    const acc = brAccount(d)
-    const got = acc.got, paid = acc.paid
+    const brNet: number | null = cx.state === 'ok' ? cx.data.brOwesUs : null
 
     const stockPurch = d.inventory.filter(s => s.source_type === 'PURCHASED').reduce((s, r) => s + qtyLine(r), 0)
     const stockDon = d.inventory.filter(s => s.source_type === 'DONATED').reduce((s, r) => s + qtyLine(r), 0)
@@ -101,18 +123,25 @@ export default function BalancePage() {
     // Decisão dos sócios (26/ago): pessoal é custo de equipe — retirada aqui é
     // SÓ a formal do LEDGERS (lt.capDraws). draws de expenses morreu.
     const draws = 0
-    const brNet = got - paid
     const lt = ledgerTotals(d)
     const cash = lt ? lt.cashTotal : 0
     const loans = lt ? lt.loanBalance : 0
-    const totalAtivo = cash + ar + Math.max(brNet, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn + donorCost
-    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-brNet, 0) + Math.max(loans, 0)
+    const totalAtivo = cash + ar + Math.max(brNet ?? 0, 0) + wip + stockPurch + stockDon + equip + fleetTool + fleetOwn + donorCost
+    const totalPassivo = unpaid.total + advances + flPayable + Math.max(-(brNet ?? 0), 0) + Math.max(loans, 0)
     // Residual = ativo − passivo − capital líquido. É o resultado acumulado
     // MAIS tudo que ainda não foi lançado — vai convergindo conforme os
     // livros e o DATA CHECK zeram. Só existe com os livros vivos.
     const residual = lt ? totalAtivo - totalPassivo - (lt.contributions - lt.capDraws - draws) : null
-    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, depOwn, depTool, donorCost, flPayable, brNet, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
-  }, [d])
+    return { ar, advances, wip, wipCars, fleetOwn, fleetTool, depOwn, depTool, donorCost, flPayable, brNet, crossingOpen, crossingN, stockPurch, stockDon, equip, unpaid, draws, totalAtivo, totalPassivo, lt, residual }
+  }, [d, cx])
+
+  // O texto da conta corrente, igual na tela e no PDF: de onde vem o número, ou por que não há número.
+  const cxNote = cx.state === 'ok'
+    ? `shopping invoices: 006.N em aberto no app US ${usd(cx.data.usSide.totals.open)} − 085.N em aberto no app BR ${usd(cx.data.brSide.totals.open)} · o mesmo número do GZ-FLOW · as ${m?.crossingN ?? 0} 006.N saíram de Contas a receber (estão aqui dentro)`
+      // As duas leituras (este dataset e a rota) têm de ver as MESMAS 006.N; se não baterem, a tela diz em vez de esconder.
+      + (m && Math.abs(m.crossingOpen - cx.data.usSide.totals.open) > 0.02 ? ` · ATENÇÃO: neste dataset as 006.N somam ${usd(m.crossingOpen)} em aberto — as duas leituras não bateram, recarregue` : '')
+    : cx.state === 'loading' ? 'lendo as shopping invoices dos dois apps…'
+    : `sinal das shopping invoices indisponível — fora dos totais, e as 006.N junto (${cx.error.slice(0, 120)})`
 
   async function downloadPdf() {
     if (!m) return
@@ -124,7 +153,7 @@ export default function BalancePage() {
       kpis: [
         [m.lt ? 'Total do ativo' : 'Total do ativo (ex-caixa)', usd(m.totalAtivo)],
         ['Passivo conhecido', usd(m.totalPassivo)],
-        ['Conta corrente GZ28BR', usd(m.brNet)],
+        ['Conta corrente GZ28BR', m.brNet === null ? '? (sem sinal)' : usd(m.brNet)],
         ['Frota própria', usd(m.fleetOwn + m.fleetTool)],
       ],
       tables: [
@@ -132,7 +161,7 @@ export default function BalancePage() {
           title: 'ATIVO', head: ['', 'HOJE'], rows: [
             { cells: ['Caixa e equivalentes', m.lt ? usd(m.lt.cashTotal) : `? (${na} — G5)`] },
             { cells: ['Contas a receber', usd(m.ar)] },
-            ...(m.brNet > 0 ? [{ cells: ['Conta corrente GZ28BR', usd(m.brNet)] }] : []),
+            ...(m.brNet === null ? [{ cells: ['Conta corrente GZ28BR (shopping invoices)', '? (sem sinal — fora do total)'] }] : m.brNet > 0 ? [{ cells: ['Conta corrente GZ28BR (shopping invoices)', usd(m.brNet)] }] : []),
             { cells: [m.wipCars > 0 ? `Obras em andamento (WIP) — oficina ${usd(m.wip - m.wipCars)} + carros export ${usd(m.wipCars)}` : 'Obras em andamento (WIP)', usd(m.wip)] },
             { cells: ['Estoque de peças', usd(m.stockPurch)] },
             { cells: ['Estoque doado', usd(m.stockDon)] },
@@ -147,7 +176,7 @@ export default function BalancePage() {
             { cells: ['Fornecedores a pagar', usd(m.unpaid.total)] },
             { cells: ['Adiantamentos de clientes', usd(m.advances)] },
             { cells: ['FL sales tax a recolher', usd(m.flPayable)] },
-            ...(m.brNet < 0 ? [{ cells: ['Devido à GZ28BR', usd(-m.brNet)] }] : []),
+            ...(m.brNet !== null && m.brNet < 0 ? [{ cells: ['Devido à GZ28BR (shopping invoices)', usd(-m.brNet)] }] : []),
             { cells: ['Empréstimos e financiamentos', m.lt ? usd(m.lt.loanBalance) : `? (${na} — G3)`] },
             { cells: ['TOTAL DO PASSIVO (conhecido)', usd(m.totalPassivo)], bold: true },
           ],
@@ -164,6 +193,7 @@ export default function BalancePage() {
         'Balanço parcial: caixa (G5), capital (G2) e empréstimos (G3) ainda não têm registro no Control App — sem eles a equação não fecha.',
         'CAR DESTINY separa dono de papelada: carro de cliente (USA/EXPORT/CLIENT) nunca é ativo da LLC, mesmo titulado no nosso nome; OWN/TOOL são nossos e capitalizam.',
         'Fornecedores a pagar inclui linhas sem payment_date que podem estar só sem preencher (G6).',
+        'Conta corrente GZ28BR — ' + cxNote + '.',
       ],
     })
   }
@@ -198,11 +228,11 @@ export default function BalancePage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">
         {[[m.lt ? 'TOTAL DO ATIVO' : 'TOTAL DO ATIVO (EX-CAIXA)', m.totalAtivo, 'text-gray-200'],
           ['PASSIVO CONHECIDO', m.totalPassivo, 'text-red-400'],
-          ['CONTA CORRENTE GZ28BR', m.brNet, m.brNet < 0 ? 'text-red-400' : 'text-emerald-400'],
+          ['CONTA CORRENTE GZ28BR', m.brNet, m.brNet === null ? 'text-gray-600' : m.brNet < 0 ? 'text-red-400' : 'text-emerald-400'],
           ['FROTA PRÓPRIA (OWN+TOOL)', m.fleetOwn + m.fleetTool, 'text-amber-300']].map(([label, v, cls]) => (
           <div key={label as string} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
             <p className="text-xs font-bold text-gray-500 mb-1">{label}</p>
-            <p className={`text-2xl font-bold tabular-nums ${cls}`}>{usd(v as number)}</p>
+            <p className={`text-2xl font-bold tabular-nums ${cls}`}>{v === null ? (cx.state === 'loading' ? '…' : '?') : usd(v as number)}</p>
           </div>
         ))}
       </div>
@@ -228,7 +258,7 @@ export default function BalancePage() {
             ['Contas a receber', m.ar],
             ['WIP — oficina', m.wip - m.wipCars],
             ['WIP — carros de export', m.wipCars],
-            ['Conta corrente GZ28BR', Math.max(m.brNet, 0)],
+            ['Conta corrente GZ28BR', Math.max(m.brNet ?? 0, 0)],
             ['Frota de marketing & desenvolvimento (OWN)', m.fleetOwn],
             ['Estoque (comprado + doado)', m.stockPurch + m.stockDon],
             ['Equipamento', m.equip],
@@ -242,7 +272,7 @@ export default function BalancePage() {
             ['Fornecedores a pagar', m.unpaid.total],
             ['Adiantamentos de clientes', m.advances],
             ['FL sales tax a recolher', m.flPayable],
-            ['Devido à GZ28BR', Math.max(-m.brNet, 0)],
+            ['Devido à GZ28BR', Math.max(-(m.brNet ?? 0), 0)],
           ]} />
         </div>
       </div>
@@ -254,8 +284,10 @@ export default function BalancePage() {
             ? <Row label="Caixa e equivalentes" value={m.lt.cashTotal} chip={<Chip kind="ok" label="LEDGERS" />}
                 note={m.lt.cashAccounts.length ? m.lt.cashAccounts.map(a => `${a.account}: ${usd(a.balance)} em ${a.date}`).join(' · ') : 'nenhum saldo lançado ainda — LEDGERS → SALDOS DE CAIXA'} />
             : <Row label="Caixa e equivalentes" value={null} chip={<Chip kind="gap" label="G5" />} note="rode MIGRATION_financial_ledgers.sql e lance os saldos em LEDGERS" />}
-          <Row label="Contas a receber" value={m.ar} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado − recebido, por invoice" />
-          {m.brNet > 0 && <Row label="Conta corrente GZ28BR" value={m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} note="receita nossa na conta deles − contas nossas que eles pagaram" />}
+          <Row label="Contas a receber" value={m.ar} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado − recebido, por invoice — fora as 006.N da GZ28BR, que moram na conta corrente" />
+          {m.brNet === null
+            ? <Row label="Conta corrente GZ28BR" value={null} chip={<Chip kind="gap" label={cx.state === 'loading' ? 'LENDO' : 'SEM SINAL'} />} note={cxNote} />
+            : m.brNet > 0 && <Row label="Conta corrente GZ28BR" value={m.brNet} chip={<Chip kind="ok" label="SHOPPING INVOICES" />} note={cxNote} />}
           <Row label="Obras em andamento (WIP)" value={m.wip} chip={<Chip kind="dec" label="D2/D3" />} note="custo de jobs abertos de clientes — carro EXPORTED já saiu daqui" />
           <Row label="Estoque de peças" value={m.stockPurch} chip={<Chip kind="ok" label="AO VIVO" />} />
           <Row label="Estoque doado" value={m.stockDon} chip={<Chip kind="dec" label="D6" />} note="valor creditado ao job doador" />
@@ -272,7 +304,7 @@ export default function BalancePage() {
               note={`projetos ${usd(m.unpaid.inv)} · fixos ${usd(m.unpaid.fixed)} · folha ${usd(m.unpaid.staff)} · compras ${usd(m.unpaid.purchases)} — sem payment_date pode ser devido OU só sem preencher`} />
             <Row label="Adiantamentos de clientes" value={m.advances} chip={<Chip kind="dec" label="D9" />} note="recebido > faturado — inclui os jobs legados sem linhas" />
             <Row label="FL sales tax a recolher" value={m.flPayable} chip={<Chip kind="ok" label="AO VIVO" />} note="faturado com fl_tax_expense_date vazio" />
-            {m.brNet < 0 && <Row label="Devido à GZ28BR" value={-m.brNet} chip={<Chip kind="ok" label="GZ-FLOW" />} />}
+            {m.brNet !== null && m.brNet < 0 && <Row label="Devido à GZ28BR" value={-m.brNet} chip={<Chip kind="ok" label="SHOPPING INVOICES" />} note={cxNote} />}
             {m.lt
               ? <Row label="Empréstimos e financiamentos" value={m.lt.loanBalance} chip={<Chip kind="ok" label="LEDGERS" />} note="saldo devedor: recebido − amortizado, por contrato" />
               : <Row label="Empréstimos e financiamentos" value={null} chip={<Chip kind="gap" label="G3" />} note="rode a migration e lance os contratos em LEDGERS" />}

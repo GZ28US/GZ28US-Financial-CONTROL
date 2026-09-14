@@ -33,6 +33,7 @@ import { brAccount, whoPaid } from '@/lib/financials'
 import type { EnginesAudit } from '@/lib/enginesAudit.server'   // só o tipo: o sinal vem pela rota
 import type { AuditItem as AuditItemT } from '@/lib/auditWires.server'   // só os tipos (DC 1.51.0): o sinal vem por /api/data-check/audit
 import type { CloseScore, CloseMonth } from '@/lib/closeScore.server'
+import type { CrossingBalance } from '@/lib/crossingBalance'   // só o tipo (DC 1.56.0): o saldo das shopping invoices vem por /api/crossing/balance
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US')
 // Relógio do app = Orlando (regra de 20/08): depois das 20h o UTC já é amanhã.
@@ -127,6 +128,8 @@ type AuditPart = { items: AuditItemT[]; summary: Record<string, number | string>
 type ClosePart = (Omit<CloseScore, 'items'> & { items_n?: number }) | { error: string }
 type AuditPayload = { wires: AuditPart; bucketOrders: AuditPart; payer: AuditPart; discount: AuditPart; noBank: AuditPart; close: ClosePart; open_bank_ids: string[] | null; live_proof_until: string | null }
 type AuditSignal = { state: 'loading' | 'error' | 'ok'; data: AuditPayload | null; error?: string }
+// CONTA CORRENTE GZ28BR = SHOPPING INVOICES (DC 1.56.0): o mesmo saldo do GZ-FLOW e do Balanço, pela rota /api/crossing/balance.
+type CrossingSignal = { state: 'loading' | 'error' | 'ok'; data: CrossingBalance | null; error?: string }
 // Sugestões da fila A ATRIBUIR (?bucket=1) e as invoices com o estado FECHADA — o card do balde fala por fornecedor.
 type BucketSig = { state: 'loading' | 'error' | 'ok'; sug: Map<string, { invoice_id: string; code: string; car: string; why: string; score: number }>; invoices: { id: string; code: string; ride_code: string; ride_name: string; closed: boolean }[] }
 const REGIONS_OPENED = '2025-11-10'
@@ -277,7 +280,7 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
     return { ...c, items }
   })
 }
-function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal, engines: EnginesSignal, audit: AuditSignal, staffRate: StaffRateSignal): Check[] {
+function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal, engines: EnginesSignal, audit: AuditSignal, staffRate: StaffRateSignal, crossing: CrossingSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const checks: Check[] = []
@@ -646,12 +649,14 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
-  // ── CONTA CORRENTE GZ28BR (DC 1.48.0 — João, 9/set: «BR nos deve o lucro das operações processadas lá; aconteceu depois também, e ao contrário») ──
-  // Card BOM (notícia, não pendência): a MESMA conta do Balanço (lib/financials brAccount — uma régua, whoPaid; GZ-FLOW na mesma régua):
-  // o que a BR recebeu por nós, o que ela pagou por nós, o que nós pagamos por ela, o saldo. E o que o fluxo NÃO enxerga:
-  // linha paga sem pagador nenhum (o DFC assume Regions até alguém dizer).
+  // ── CONTA CORRENTE GZ28BR (DC 1.48.0 — João, 9/set; DC 1.56.0 — Márcio, 13/set: «TODA E QUALQUER movimentação financeira entre o US
+  // e o BR tem que estar nas shopping invoices» · «EU PRECISO SABER QUANTO O BR DEVE PRO US») ──
+  // Card BOM (notícia, não pendência). O SALDO é o das SHOPPING INVOICES, pela rota /api/crossing/balance (lib/crossingBalance — a mesma
+  // função do GZ-FLOW e do Balanço): aberto nas 006.N do app US − aberto nas 085.N do app BR, em US$. Os três números de antes (RECEBEU,
+  // PAGOU, NÓS) somavam paid_from/paid_to SOLTOS (brAccount) e davam outro saldo — saíram em 14/set. Fica o CEGO, que não é saldo:
+  // linha paga sem pagador nenhum, que o DFC assume Regions até alguém dizer.
   {
-    const acc = brAccount(d)
+    const acc = brAccount(d)   // só para o CEGO — o saldo não lê mais brAccount
     // CEGO nas tabelas SEM escolha (12/set/2026): SUPPLIES, ESTOQUE e CUSTO FIXO saíram do
     // «Quem pagou esta conta?» — lá os pagadores são GZ28US pela régua. As linhas pagas sem
     // pagador desses três continuam no CEGO (brAccount não mudou), então o item separa: as
@@ -667,14 +672,29 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const donatedBlind = blindOf(d.inventory.filter((r: any) => r.source_type === 'DONATED'), qtyLine)
     const sumV = (v: number[]) => v.reduce((s, x) => s + x, 0)
     const otherBlind = acc.blindN - houseBlind.length - donatedBlind.length
+    const cx = crossing.state === 'ok' ? crossing.data : null
+    const warnText = (w: CrossingBalance['warnings'][number]) =>
+      w.kind === 'not_counted_with_money' ? `${w.code} fora da conta (${w.reason === 'CAR_INVOICE' ? 'invoice de carro' : 'quote'}) com ${usd(w.total)} faturado e ${usd(w.received)} recebido`
+      : w.kind === 'br_outside_engine_rule' ? `${w.code}: serviço, FL tax ou desconto fora da régua (só linhas × quantidade)`
+      : w.kind === 'br_no_usd' ? `${w.code}: ${w.lines} linha(s) sem US$ gravado e sem taxa — contam US$ 0`
+      : `${w.lines} linha(s) do BR sem US$ gravado, convertidas pela usd_rate da invoice`
+    const saldo: Item[] = cx
+      ? [
+          { href: '/gz-flow', code: 'SALDO', label: (cx.brOwesUs >= 0 ? 'a BR nos deve ' : 'nós devemos à BR ') + usd(Math.abs(cx.brOwesUs)), amount: Math.abs(cx.brOwesUs), extra: 'só shopping invoices: 006.N em aberto no app US − 085.N em aberto no app BR, em US$ · o mesmo número do GZ-FLOW e da linha «Conta corrente GZ28BR» do Balanço (lib/crossingBalance)', link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } },
+          { href: '/gz-flow', code: '006.N', label: `a BR deve nas invoices dela no app US: ${usd(cx.usSide.totals.open)} (${cx.usSide.totals.invoices} invoices · faturado ${usd(cx.usSide.totals.total)} − recebido ${usd(cx.usSide.totals.received)})`, amount: cx.usSide.totals.open, extra: 'cliente GZ28 V8 SpeedShop BR Ltda, fora QUOTE e fora invoice de carro · a direção 1 já traz o +10% dentro dos itens', link: { href: BASE_PATH + '/gz-flow', label: 'LISTA ↗' } },
+          { href: '/gz-flow', code: '085.N', label: `nós devemos nas invoices do app BR: ${usd(cx.brSide.totals.open)} (${cx.brSide.totals.invoices} invoices · faturado ${usd(cx.brSide.totals.totalUsd)} − pago ${usd(cx.brSide.totals.receivedUsd)})`, amount: cx.brSide.totals.open, extra: 'cliente GZ28 V8 SpeedShop USA LLC no app BR, sem markup · US$ gravado prevalece' + (cx.brSide.totals.convertedByInvoiceRate ? ` · ${cx.brSide.totals.convertedByInvoiceRate} linha(s) sem US$ gravado, convertidas pela usd_rate da invoice` : ''), link: { href: BASE_PATH + '/gz-flow', label: 'LISTA ↗' } },
+          // DECISÕES PENDENTES: à parte do saldo — nada delas entra ou sai do número até o Márcio decidir (lista e valores no GZ-FLOW).
+          ...(cx.pending.decisions.length ? [{ href: '/gz-flow', code: 'DECIDIR', label: `${cx.pending.decisions.length} decisão(ões) pendente(s) fora do saldo: ele pode descer ${usd(cx.pending.couldLower)} e subir ${usd(cx.pending.couldRaise)} se as suspeitas se confirmarem` + (cx.pending.undetermined ? ` · ${cx.pending.undetermined} ainda sem valor` : ''), extra: cx.pending.decisions.map(p => p.refs.filter(r => r.side === (p.kind === 'duplicate_in_us' ? 'US' : 'BR')).map(r => r.code).join(' × ') + (p.atStake != null ? ' ' + usd(p.atStake) : ' (sem valor)')).join(' · '), link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } }] : []),
+          ...(cx.warnings.length ? [{ href: '/gz-flow', code: 'CONFERIR', label: `${cx.warnings.length} aviso(s) da conta das shopping invoices`, extra: cx.warnings.map(warnText).join(' · '), link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } }] : []),
+        ]
+      : [crossing.state === 'loading'
+          ? { href: '/adm/check', code: 'SINAL', label: 'lendo as shopping invoices dos dois apps… o saldo ainda não saiu', extra: 'se persistir, o sinal de /api/crossing/balance não chegou — recarregue' }
+          : { href: '/adm/check', code: 'SINAL', label: 'saldo das shopping invoices indisponível — NÃO calculado', extra: String(crossing.error || 'recarregue').slice(0, 160) }]
     const items: Item[] = [
-      { href: '/gz-flow', code: 'RECEBEU', label: 'a BR recebeu por nós ' + usd(acc.gotIncome) + ' (receita nossa que entrou lá)', amount: acc.gotIncome, link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } },
-      { href: '/gz-flow', code: 'PAGOU', label: 'a BR pagou contas nossas: ' + usd(acc.paid), amount: acc.paid },
-      { href: '/gz-flow', code: 'NÓS', label: 'nós pagamos contas da BR: ' + usd(acc.usPaidBr), amount: acc.usPaidBr },
-      { href: '/adm/financials/balance', code: 'SALDO', label: (acc.net >= 0 ? 'a BR nos deve ' : 'nós devemos à BR ') + usd(Math.abs(acc.net)), amount: Math.abs(acc.net), extra: 'saldo = recebeu por nós + contas da BR que pagamos − contas nossas que ela pagou · o mesmo número da linha «Conta corrente GZ28BR» do Balanço', link: { href: BASE_PATH + '/adm/financials/balance', label: 'BALANÇO ↗' } },
-      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions e este saldo não as vê' + (otherBlind > 0 ? ` — as ${otherBlind} de invoice, asset e staff se decidem no card «Quem pagou esta conta?»` : '') + (houseBlind.length ? ` — ${houseBlind.length} (${usd(sumV(houseBlind))}) são de SUPPLIES, ESTOQUE comprado ou CUSTO FIXO, onde não há escolha: o card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO» grava a régua (GZ28US)` : '') + (donatedBlind.length ? ` — ${donatedBlind.length} (${usd(sumV(donatedBlind))}) são estoque DOADO, que não tem pagador: não há o que decidir` : ''), link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
+      ...saldo,
+      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions (o saldo acima lê só shopping invoice, não estas linhas)' + (otherBlind > 0 ? ` — as ${otherBlind} de invoice, asset e staff se decidem no card «Quem pagou esta conta?»` : '') + (houseBlind.length ? ` — ${houseBlind.length} (${usd(sumV(houseBlind))}) são de SUPPLIES, ESTOQUE comprado ou CUSTO FIXO, onde não há escolha: o card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO» grava a régua (GZ28US)` : '') + (donatedBlind.length ? ` — ${donatedBlind.length} (${usd(sumV(donatedBlind))}) são estoque DOADO, que não tem pagador: não há o que decidir` : ''), link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
     ]
-    checks.push({ group: 'FINANCIAL', key: 'br-account', good: true, title: 'Conta corrente GZ28BR', blocks: 'o saldo entre as duas empresas — notícia, não pendência; a pendência mora em «Quem pagou esta conta?»', why: 'João, 9/set: antes da Regions a BR recebia e pagava tudo, e o lucro é da GZ28US — a BR nos deve esse lucro; depois aconteceu também, e ao contrário (nós pagando conta da BR). A conta é UMA (lib/financials brAccount): o Balanço e este card leem a mesma função, na régua do GZ-FLOW (paid_to GZ28BR = ela recebeu por nós; paid_from GZ28BR = ela pagou por nós; nós pagando conta paid_to GZ28BR = ela nos deve mais; sócio sai do saldo e vira empréstimo de sócio). O que este card mostra de novo é o CEGO: linha paga sem pagador nenhum não entra no saldo e o DFC a conta como Regions.', items })
+    checks.push({ group: 'FINANCIAL', key: 'br-account', good: true, title: 'Conta corrente GZ28BR', blocks: (cx ? (cx.brOwesUs >= 0 ? 'a BR nos deve ' : 'nós devemos à BR ') + usd(Math.abs(cx.brOwesUs)) : crossing.state === 'loading' ? 'lendo o saldo…' : 'saldo NÃO calculado') + ' — só pelas shopping invoices; notícia, não pendência', why: 'Márcio, 13/set: «TODA E QUALQUER movimentação financeira entre o US e o BR tem que estar nas shopping invoices» · «EU PRECISO SABER QUANTO O BR DEVE PRO US, é o foco do momento!». O saldo é UM (lib/crossingBalance, rota /api/crossing/balance): o que a GZ28BR deve nas invoices dela no app US (cliente GZ28 V8 SpeedShop BR Ltda, as 006.N, com o +10% da direção 1 dentro dos itens) menos o que a GZ28US deve nas invoices dela no app BR (cliente GZ28 V8 SpeedShop USA LLC, as 085.N, sem markup), em US$ — valor gravado prevalece. O GZ-FLOW e o Balanço leem a mesma função. Até 14/set este card somava paid_from/paid_to soltos (brAccount: RECEBEU, PAGOU, NÓS) e dava outro número; esses três saíram. O CEGO continua: linha paga sem pagador nenhum, que o DFC conta como Regions.', items })
   }
 
   // ── QUEM PAGOU DE VERDADE? e DESCONTO SÓ NO CAMPO (DC 1.51.0 — lib/auditPayer.server.ts, lib/auditDiscount.server.ts; só leitura) ──
@@ -2106,6 +2126,7 @@ export default function DataCheckPage() {
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
   const [wa, setWa] = useState<WaSignal>({ state: 'loading', fails: [] })  // falhas de envio do WhatsApp (wa_send_log)
   const [staffRate, setStaffRate] = useState<StaffRateSignal>({ state: 'loading', rows: [] })   // taxa de staff sem data (12/set/2026)
+  const [crossing, setCrossing] = useState<CrossingSignal>({ state: 'loading', data: null })   // saldo das shopping invoices US ⇄ BR (DC 1.56.0)
   const [nature, setNature] = useState<NatureSignal>({ state: 'loading', needsMigration: false, totals: null, groups: [] })   // "o que é esta linha?" agrupado por fornecedor
   const [receipt, setReceipt] = useState<ReceiptSignal>({ state: 'loading', readings: {} })   // o que os recibos disseram (DC 1.47.0)
 
@@ -2114,6 +2135,9 @@ export default function DataCheckPage() {
     // O rastro do pagamento (DC 1.55.1) vem junto e em paralelo: falha dele é SINAL no card «Paga no app, sem linha no banco», nunca erro da página.
     Promise.all([loadFinancials(), loadPayTrail().catch(e => ({ error: String((e as Error)?.message || e) }))])
       .then(([fin, payTrail]) => setD(Object.assign(fin, { payTrail }))).catch(e => setError(String(e?.message || e)))
+    // CONTA CORRENTE GZ28BR (DC 1.56.0): o saldo das shopping invoices, a mesma rota do GZ-FLOW e do Balanço. Falha vira SINAL no card.
+    setCrossing({ state: 'loading', data: null })
+    sessionHeaders().then(h => fetch(`${BASE_PATH}/api/crossing/balance`, { headers: h, cache: 'no-store' })).then(async r => { const j = await r.json().catch(() => ({})); setCrossing(r.ok && j.ok ? { state: 'ok', data: j as CrossingBalance } : { state: 'error', data: null, error: String(j.error || 'HTTP ' + r.status) }) }).catch(e => setCrossing({ state: 'error', data: null, error: String((e as Error)?.message || e) }))
     // WA SEND LOG (caso Gui, 31/ago): falhas de envio dos últimos 14 dias.
     ;(async () => {
       try {
@@ -2246,7 +2270,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate])
+  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate, crossing), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate, crossing])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
   // O chip BANK conta o que PERGUNTA a gente (BL 1.5.0 · DC 1.50.0): pergunta linha a linha + UMA por fornecedor, do mesmo plano do
   // cron (lib/bankLineState.server) — pendente, «vai casar», maturando e teto esperam o AUTO-LINK e não contam.

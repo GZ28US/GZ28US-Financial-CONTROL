@@ -1,270 +1,319 @@
 'use client'
-/* eslint-disable @typescript-eslint/no-unused-vars */
 
-// GZ28US vs GZ28BR Flow — the inter-company ledger. Reads GZ28US data (USD):
-//   GZ28BR GOT  = incomes PAID TO GZ28BR   (invoice_incomes.paid_to = 'GZ28BR')  → money GZ28BR holds for us
-//   GZ28BR PAID = every expense PAID FROM GZ28BR (source = 'GZ28BR' across the seven
-//                 spend tables this page reads: invoice_expenses, assets,
-//                 assets_expenses, inputs, inventory, fixed_cost_expenses and
-//                 staff_expenses — assets / assets_expenses / staff_expenses being
-//                 wave 2's new names for goods / good_expenses / expenses)
-// This page is identical in both apps; BR reads the same GZ28US project via supabaseUS.
+// GZ28US vs GZ28BR Flow — QUANTO O BR DEVE AO US (14/set/2026).
+//
+// LEI (Márcio, 13/set/2026): «TODA E QUALQUER movimentação financeira entre o US e o BR tem que estar nas shopping
+// invoices» · «EU PRECISO SABER QUANTO O BR DEVE PRO US, é o foco do momento!». Esta tela lê SÓ as shopping invoices
+// dos dois apps, pela rota GET /api/crossing/balance (lib/crossingBalance.ts — a mesma régua da manchete do motor
+// lib/crossing.server.ts):
+//   BR deve ao US = aberto nas invoices do cliente GZ28BR no app US (006.N)  −  aberto nas invoices do cliente
+//                   GZ28US no app BR (085.N), em US$.
+// O mesmo número aparece no Balanço («Conta corrente GZ28BR») e no card do Data Checker — uma função, uma rota.
+//
+// O QUE SAIU DAQUI (14/set): o gráfico ALL HISTORY, os cartões GZ28BR GOT / GZ28BR PAID / BALANCE e a lista por mês.
+// Todos somavam paid_from / paid_to / source SOLTOS nas sete tabelas de gasto e na renda — o número deles
+// contradizia o das shopping invoices, e a lei manda ler só as shopping invoices. A cópia desta tela no app BR ainda
+// roda a régua velha até o porte de lá.
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
-import { supabase } from '@/lib/supabase'
-import { formatShortDate } from '@/lib/utils'
-import { whoPaid } from '@/lib/financials'
+import { BASE_PATH } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
+import type { CrossingBalance, CrossingWarning, NotCountedReason, PendingDecision, UsInvoice, BrInvoice } from '@/lib/crossingBalance'
 
-const US_BASE = 'https://www.gz28us.com/ca'
-function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
-type Row = { id: string; date: string; amount: number; code: string; label: string; href: string; tip?: string }
+const formatUSD = (v: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
+const formatBRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
+// O relógio: a rota devolve UTC; a tela mostra Orlando, com o fuso escrito.
+const fmtNY = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+const whenNY = (s: string) => fmtNY.format(new Date(s)).replace(',', '') + ' (Orlando)'
+// O DIA da baixa, no fuso do assunto (renda do US → Orlando; pagamento do BR → Brasília). Meia-noite UTC EXATA é data de
+// calendário gravada crua, não instante (a régua de lib/paidNoBank.ts orlandoDay): o dia é o que está escrito.
+function paidDay(ts: string, timeZone: string): string {
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ts
+  const iso = d.toISOString()
+  const ymd = iso.endsWith('T00:00:00.000Z') ? iso.slice(0, 10) : d.toLocaleDateString('en-CA', { timeZone })
+  return `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}/${ymd.slice(0, 4)}`
+}
+const moneyColor = (v: number) => v > 0.004 ? 'text-emerald-400' : v < -0.004 ? 'text-red-400' : 'text-gray-400'
+
+const REASON: Record<NotCountedReason, string> = {
+  QUOTE: 'quote — not money yet',
+  CAR_INVOICE: 'car invoice on the GZ28BR client — the balance counts only the invoices without a car (006.N)',
+}
+function warningText(w: CrossingWarning): string {
+  switch (w.kind) {
+    case 'not_counted_with_money': return `${w.code} (${w.side} app) is out of the balance — ${REASON[w.reason]} — but carries ${formatUSD(w.total)} billed and ${formatUSD(w.received)} received. Check whether it is a US ⇄ BR crossing.`
+    case 'br_outside_engine_rule': return `${w.code}: services ${formatBRL(w.servicesBrl)}, FL tax ${w.flTaxPct}%, discount ${w.discountPct}% — the balance sums only line × quantity on the BR side, so these are NOT in the number.`
+    case 'br_no_usd': return `${w.code}: ${w.lines} line(s) with no recorded US$ and no usd_rate on the invoice — they count as $0.00.`
+    case 'br_converted_by_invoice_rate': return `${w.lines} BR line(s)/payment(s) have no recorded US$ and were converted by the invoice's own usd_rate (marked on each 085.N).`
+  }
+}
+
+type State = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ok'; data: CrossingBalance }
 
 export default function GzFlowPage() {
-  const [gotRows, setGotRows] = useState<Row[]>([])
-  const [paidRows, setPaidRows] = useState<Row[]>([])
-  const [loading, setLoading] = useState(true)
+  const [s, setS] = useState<State>({ state: 'loading' })
+  const [openRow, setOpenRow] = useState<string | null>(null)
 
-  useEffect(() => { void load() }, [])
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await fetch(`${BASE_PATH}/api/crossing/balance`, { headers: await sessionHeaders(), cache: 'no-store' })
+        const j = await r.json().catch(() => ({}))
+        if (!alive) return
+        if (r.ok && j.ok) setS({ state: 'ok', data: j as CrossingBalance })
+        else setS({ state: 'error', error: String(j.error || `HTTP ${r.status}`) })
+      } catch (e) { if (alive) setS({ state: 'error', error: String((e as Error)?.message || e) }) }
+    })()
+    return () => { alive = false }
+  }, [])
 
-  async function load() {
-    const GZ = 'GZ28BR'
-    // Universal fields (01/ago/2026): paid_from = quem pagou, paid_to = de quem
-    // é a conta. A linha entra no flow quando GZ28BR aparece em qualquer lado:
-    //   paid_from GZ28BR + conta do US  → GZ28BR PAID (abate a dívida)
-    //   paid_from US/…  + paid_to GZ28BR → GZ28US pagou conta do BR (aumenta)
-    //   paid_from GZ28BR + paid_to GZ28BR → interna do BR, fora do flow.
-    // `source` continua no filtro para linhas legadas/automatizadas sem paid_from.
-    // O apelido RAFA saiu em 11/set com o resto do vocabulário: ZERO linhas com RAFA em
-    // paid_from ou source, em todas as sete tabelas (medido pela REST) — o filtro não perde nada.
-    const FLOW = `paid_from.eq.${GZ},source.eq.${GZ},paid_to.eq.${GZ}`   // SOURCE legado conta (whoPaid)
-    const [
-      { data: pays }, { data: invExps }, { data: goods }, { data: goodExps },
-      { data: inputs }, { data: inventory }, { data: fixed }, { data: staff },
-    ] = await Promise.all([
-      supabase.from('invoice_incomes').select('id, invoice_id, amount, payment_date, paid_at, description').eq('paid_to', GZ),
-      supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, payment_date, expense_date, item, paid_from, paid_to, source').or(FLOW),
-      supabase.from('assets').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('assets_expenses').select('id, good_id, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('inventory').select('id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date, expense_date, paid_from, paid_to, source').or(FLOW),
-      supabase.from('staff_expenses').select('id, type, description, amount, expense_date, paid_from, paid_to, source').or(FLOW),
-    ])
-    // Classify one expense row: 'PAID' (BR paid a non-BR bill), 'GOT' (someone
-    // else paid a BR bill — BR owes us more), or null (BR internal / unrelated).
-    const flowSide = (r: any): 'PAID' | 'GOT' | null => {
-      const by = whoPaid(r) || ''   // FIN 0.15.0: a mesma régua do DFC e do Balanço (SOURCE legado conta)
-      const bill = r.paid_to || ''
-      if (bill === GZ && by !== GZ) return 'GOT'
-      if (by === GZ && bill !== GZ) return 'PAID'
-      return null
-    }
-    const invoiceIds = [...new Set([...(pays || []).map((p: any) => p.invoice_id), ...(invExps || []).map((e: any) => e.invoice_id)])].filter(Boolean)
-    let invs: any[] = []
-    if (invoiceIds.length) { const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id').in('id', invoiceIds); invs = data || [] }
-    const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
-    const rideIds = [...new Set(invs.map((i: any) => i.ride_id).filter(Boolean))]
-    let rides: any[] = []
-    if (rideIds.length) { const { data } = await supabase.from('rides').select('id, project_name, model, version').in('id', rideIds); rides = data || [] }
-    const rideById = new Map<string, any>(); rides.forEach((r: any) => rideById.set(r.id, r))
-    const meta = (invId: string) => {
-      const inv = invById.get(invId)
-      const ride = inv?.ride_id ? rideById.get(inv.ride_id) : null
-      const car = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
-      const code = inv?.invoice_code || '—'
-      const ownerSeg = inv?.ride_id ? `rides/${inv.ride_id}` : `clients/${inv?.client_id}`
-      const href = inv ? `${US_BASE}/${ownerSeg}/invoices/${inv.id}` : '#'
-      return { code, car, href }
-    }
-    const num = (v: any) => parseFloat(v) || 0
-    // GOT side — money GZ28BR holds for us (incomes paid TO GZ28BR).
-    const got: Row[] = (pays || []).map((p: any) => {
-      const m = meta(p.invoice_id)
-      const date = p.payment_date || (p.paid_at || '').slice(0, 10) || ''
-      return { id: `got-${p.id}`, date, amount: num(p.amount), code: m.code, label: m.car || p.description || '', href: m.href, tip: [m.car, p.description].filter(Boolean).join(' — ') }
-    }).filter((r: Row) => r.date)
-    // Expense rows land on PAID (BR paid our bill) or GOT (we paid a BR bill).
-    const paid: Row[] = []
-    const push = (r: any, row: Row) => {
-      const side = flowSide(r)
-      if (side === 'PAID') paid.push(row)
-      else if (side === 'GOT') got.push({ ...row, id: `us-${row.id}`, label: `US paid BR bill · ${row.label}`, tip: `GZ28US paid a GZ28BR bill — ${row.tip || row.label}` })
-    }
-    for (const e of (invExps || [])) {
-      const m = meta(e.invoice_id)
-      const date = e.payment_date || e.expense_date || ''
-      const amt = num(e.price) * (num(e.quantity) || 1) + num(e.tax) + num(e.extra)
-      push(e, { id: `ie-${e.id}`, date, amount: amt, code: m.code, label: m.car ? `${m.car} · ${e.item}` : (e.item || ''), href: m.href, tip: [m.car, e.item].filter(Boolean).join(' — ') })
-    }
-    for (const g of (goods || [])) push(g, { id: `gd-${g.id}`, date: g.purchase_date || '', amount: num(g.unit_price) * (num(g.quantity) || 1), code: 'GOODS', label: g.description || '', href: `${US_BASE}/goods/${g.id}`, tip: `GOODS — ${g.description || ''}` })
-    for (const x of (goodExps || [])) push(x, { id: `ge-${x.id}`, date: x.expense_date || '', amount: num(x.amount), code: 'GOODS', label: x.description || '', href: `${US_BASE}/goods/${x.good_id}`, tip: `GOODS expense — ${x.description || ''}` })
-    for (const x of (inputs || [])) push(x, { id: `in-${x.id}`, date: x.purchase_date || '', amount: num(x.unit_price) * (num(x.quantity) || 1), code: 'INPUT', label: x.description || '', href: `${US_BASE}/inputs`, tip: `INPUT — ${x.description || ''}` })
-    for (const x of (inventory || [])) push(x, { id: `iv-${x.id}`, date: x.purchase_date || '', amount: num(x.unit_price) * (num(x.quantity) || 1), code: 'STOCK', label: x.description || '', href: `${US_BASE}/inventory`, tip: `STOCK — ${x.description || ''}` })
-    for (const x of (fixed || [])) push(x, { id: `fx-${x.id}`, date: x.payment_date || x.expense_date || '', amount: num(x.amount), code: 'FIXED', label: x.description || '', href: x.supplier_id ? `${US_BASE}/costs/fixed/${x.supplier_id}` : `${US_BASE}/costs`, tip: `FIXED COST — ${x.description || ''}` })
-    for (const x of (staff || [])) push(x, { id: `st-${x.id}`, date: x.expense_date || '', amount: num(x.amount), code: 'STAFF', label: x.description || x.type || '', href: `${US_BASE}/staff`, tip: `STAFF — ${x.description || x.type || ''}` })
-    const paidF = paid.filter((r: Row) => r.date)
-    setGotRows(got.filter((r: Row) => r.date).sort((a, b) => b.date.localeCompare(a.date)))
-    setPaidRows(paidF.sort((a, b) => b.date.localeCompare(a.date)))
-    setLoading(false)
-  }
-
-  const gotTotal = gotRows.reduce((s, r) => s + r.amount, 0)
-  const paidTotal = paidRows.reduce((s, r) => s + r.amount, 0)
-  const balance = gotTotal - paidTotal
-  const byMonth = (rows: Row[]) => { const m = new Map<string, Row[]>(); rows.forEach(r => { const k = (r.date || '').slice(0, 7); if (!k) return; if (!m.has(k)) m.set(k, []); m.get(k)!.push(r) }); return m }
-  const sum = (rows: Row[]) => rows.reduce((s, r) => s + r.amount, 0)
-  const gByM = byMonth(gotRows), pByM = byMonth(paidRows)
-  const allKeys = [...new Set([...gByM.keys(), ...pByM.keys()])].sort()
-  const months = [...allKeys].sort((a, b) => b.localeCompare(a))
-  // Chart: every month from first to last (filling gaps), oldest -> newest.
-  const chartSeries = (() => {
-    if (allKeys.length === 0) return [] as { mk: string; inc: number; exp: number; bal: number }[]
-    const [y0, m0] = allKeys[0].split('-').map(Number)
-    const [y1, m1] = allKeys[allKeys.length - 1].split('-').map(Number)
-    const out: { mk: string; inc: number; exp: number; bal: number }[] = []
-    for (let d = new Date(y0, m0 - 1, 1); d <= new Date(y1, m1 - 1, 1); d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
-      const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-      const inc = sum(gByM.get(mk) || []); const exp = sum(pByM.get(mk) || [])
-      out.push({ mk, inc, exp, bal: inc - exp })
-    }
-    return out
-  })()
+  const toggle = (id: string) => setOpenRow(o => (o === id ? null : id))
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-1">GZ28US vs GZ28BR Flow</h1>
-      <p className="text-gray-400 mb-6">All money GZ28BR holds for us + GZ28US-paid GZ28BR bills (GOT) vs everything GZ28BR paid for us (PAID) — invoices, goods, inputs, stock, fixed costs &amp; staff.</p>
-      {loading ? (
+      <p className="text-gray-400 mb-6 max-w-4xl">Shopping invoices only: every money movement between GZ28US and GZ28BR lives on a shopping invoice in the other company&apos;s app. Loose PAID FROM / PAID TO fields are not read here.</p>
+      {s.state === 'loading' ? (
         <p className="text-gray-400 text-xl">Loading…</p>
-      ) : (
-        <div className="max-w-3xl">
-          {chartSeries.length > 0 && (
-            <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
-              <p className="text-sm font-bold text-gray-400 mb-2">ALL HISTORY</p>
-              <CashFlowChart series={chartSeries} />
-            </div>
-          )}
-          <div className="grid grid-cols-3 gap-4 mb-3">
-            <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3">
-              <p className="text-xs font-bold text-gray-400">GZ28BR GOT</p>
-              <p className="text-xl font-bold text-blue-400">{formatUSD(gotTotal)}</p>
-            </div>
-            <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3">
-              <p className="text-xs font-bold text-gray-400">GZ28BR PAID</p>
-              <p className="text-xl font-bold text-red-400">{formatUSD(paidTotal)}</p>
-            </div>
-            <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3">
-              <p className="text-xs font-bold text-gray-400">BALANCE (BR owes us)</p>
-              <p className={`text-xl font-bold ${balance >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatUSD(balance)}</p>
-            </div>
-          </div>
-          {months.length === 0 ? (
-            <p className="text-gray-400 text-xl">No GZ28BR money movement yet.</p>
-          ) : months.map((mk) => {
-            const gM = gByM.get(mk) || []
-            const pM = pByM.get(mk) || []
-            const gSub = sum(gM); const pSub = sum(pM); const bal = gSub - pSub
-            const balColor = bal > 0.005 ? 'text-green-400' : bal < -0.005 ? 'text-red-400' : 'text-gray-400'
-            return (
-              <div key={mk} className="bg-gray-900 border border-gray-700 rounded-2xl p-4 mb-3">
-                <div className="flex justify-between items-baseline border-b border-gray-700 pb-1 mb-2 gap-3">
-                  <p className="text-sm font-bold text-gray-300 uppercase">{monthLabel(mk)}</p>
-                  <p className="text-sm font-bold whitespace-nowrap"><span className="text-blue-400">{formatUSD(gSub)}</span><span className="text-gray-600"> · </span><span className="text-red-400">{formatUSD(pSub)}</span><span className="text-gray-600"> &nbsp;·&nbsp; </span><span className={balColor}>{formatUSD(bal)}</span></p>
-                </div>
-                <div className="grid grid-cols-2 gap-4 mt-1">
-                  <Side rows={gM} color="text-blue-400" />
-                  <Side rows={pM} color="text-red-400" />
-                </div>
-              </div>
-            )
-          })}
+      ) : s.state === 'error' ? (
+        <div className="bg-red-950/50 border border-red-900 rounded-2xl p-4 max-w-3xl">
+          <p className="font-bold text-red-300">Balance NOT computed — no number is shown rather than a wrong one.</p>
+          <p className="text-sm text-red-200 mt-1 break-words">{s.error}</p>
         </div>
+      ) : (
+        <Body data={s.data} openRow={openRow} toggle={toggle} />
       )}
     </main>
   )
 }
 
-function Side({ rows, color }: { rows: Row[]; color: string }) {
+function Body({ data, openRow, toggle }: { data: CrossingBalance; openRow: string | null; toggle: (id: string) => void }) {
+  const us = data.usSide, br = data.brSide
+  const owes = data.brOwesUs
   return (
-    <div>
-      {rows.length === 0 ? (
-        <p className="text-xs text-gray-600 py-1">—</p>
-      ) : rows.map((r) => (
-        <div key={r.id} className="flex justify-between gap-2 py-1 text-sm border-b border-gray-800/60 last:border-0">
-          <span className="text-gray-300 truncate" title={r.tip || undefined}>
-            {formatShortDate(r.date)} · <a href={r.href} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a>{r.label ? ` · ${r.label}` : ''}
-          </span>
-          <span className={`font-bold shrink-0 ${color}`}>{formatUSD(r.amount)}</span>
+    <div className="max-w-6xl">
+      {/* A MANCHETE */}
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 mb-4">
+        <p className="text-sm font-bold text-gray-400">HOW MUCH GZ28BR OWES GZ28US</p>
+        <p className={`text-5xl font-bold tabular-nums mt-1 ${moneyColor(owes)}`}>{formatUSD(owes)}</p>
+        <p className="text-sm text-gray-400 mt-2">
+          {owes < -0.004 ? <>Negative: today <span className="font-bold text-red-300">GZ28US owes GZ28BR {formatUSD(-owes)}</span>.</> : owes > 0.004 ? <>GZ28BR owes GZ28US {formatUSD(owes)}.</> : <>Even.</>}
+        </p>
+        <p className="text-sm text-gray-300 mt-3 tabular-nums">
+          <span className="text-blue-300">{formatUSD(us.totals.open)}</span> open on GZ28BR&apos;s invoices in the US app
+          <span className="text-gray-500"> − </span>
+          <span className="text-amber-300">{formatUSD(br.totals.open)}</span> open on GZ28US&apos;s invoices in the BR app
+          <span className="text-gray-500"> = </span><span className={`font-bold ${moneyColor(owes)}`}>{formatUSD(owes)}</span>
+        </p>
+        <p className="text-xs text-gray-500 mt-2">Read {whenNY(data.generatedAt)} · the same number as the Balance sheet («Conta corrente GZ28BR») and the Data Checker card.</p>
+      </div>
+
+      {/* DECISÕES PENDENTES — à parte da manchete: nada daqui entra ou sai do número até o Márcio decidir */}
+      {data.pending.decisions.length > 0 && <PendingBlock pending={data.pending} />}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3">
+          <p className="text-xs font-bold text-gray-400">US APP · CLIENT GZ28 V8 SPEEDSHOP BR LTDA · {us.totals.invoices} INVOICES</p>
+          <p className="text-sm text-gray-300 mt-1 tabular-nums">billed {formatUSD(us.totals.total)} − received {formatUSD(us.totals.received)}</p>
+          <p className="text-xl font-bold text-blue-300 tabular-nums">{formatUSD(us.totals.open)} <span className="text-xs text-gray-500 font-normal">GZ28BR owes us</span></p>
         </div>
-      ))}
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3">
+          <p className="text-xs font-bold text-gray-400">BR APP · CLIENT GZ28 V8 SPEEDSHOP USA LLC · {br.totals.invoices} INVOICES</p>
+          <p className="text-sm text-gray-300 mt-1 tabular-nums">billed {formatUSD(br.totals.totalUsd)} ({formatBRL(br.totals.totalBrl)}) − paid {formatUSD(br.totals.receivedUsd)}</p>
+          <p className="text-xl font-bold text-amber-300 tabular-nums">{formatUSD(br.totals.open)} <span className="text-xs text-gray-500 font-normal">we owe GZ28BR</span></p>
+        </div>
+      </div>
+
+      {data.warnings.length > 0 && (
+        <div className="bg-amber-950/40 border border-amber-900 rounded-2xl p-4 mb-6 text-sm text-amber-200">
+          <p className="font-bold mb-1">CHECK</p>
+          <ul className="list-disc pl-5 space-y-1">{data.warnings.map((w, i) => <li key={i}>{warningText(w)}</li>)}</ul>
+        </div>
+      )}
+
+      {/* LADO US: 006.N */}
+      <section className="mb-8">
+        <h2 className="text-2xl font-bold mb-1">GZ28BR owes on its invoices in the US app <span className="text-gray-500 text-lg">(006.N)</span></h2>
+        <p className="text-xs text-gray-500 mb-2">Total = items × qty + FL tax + services − discount (the BR US$ with the +10% is already inside the items). Received = incomes with a PAID date. A «Pending balance» row without a paid date is not money and is not counted.</p>
+        <div className="overflow-x-auto border border-gray-800 rounded-2xl">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-900 text-gray-400 text-xs">
+              <tr><th className="text-left px-3 py-2">INVOICE</th><th className="text-left px-3 py-2">DESCRIPTION</th><th className="text-right px-3 py-2">TOTAL</th><th className="text-right px-3 py-2">RECEIVED</th><th className="text-right px-3 py-2">OPEN</th></tr>
+            </thead>
+            <tbody>
+              {us.invoices.map(inv => <UsRow key={inv.id} inv={inv} open={openRow === inv.id} toggle={() => toggle(inv.id)} />)}
+              <tr className="bg-gray-900 font-bold border-t border-gray-700 tabular-nums">
+                <td className="px-3 py-2" colSpan={2}>TOTAL · {us.totals.invoices} invoices</td>
+                <td className="px-3 py-2 text-right">{formatUSD(us.totals.total)}</td>
+                <td className="px-3 py-2 text-right">{formatUSD(us.totals.received)}</td>
+                <td className="px-3 py-2 text-right text-blue-300">{formatUSD(us.totals.open)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {us.notCounted.length > 0 && (
+          <div className="mt-3 text-sm">
+            <p className="text-xs font-bold text-gray-500 mb-1">SAME CLIENT, NOT IN THE BALANCE</p>
+            {us.notCounted.map(inv => (
+              <p key={inv.id} className="text-gray-400">
+                <a href={`${BASE_PATH}${inv.path}`} className="text-gray-300 hover:text-blue-400 hover:underline font-bold">{inv.code}</a>
+                {inv.label ? ` · ${inv.label}` : ''} · billed {formatUSD(inv.total)} · received {formatUSD(inv.received)} — <span className="text-gray-500">{inv.reason ? REASON[inv.reason] : ''}</span>
+              </p>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* LADO BR: 085.N */}
+      <section className="mb-8">
+        <h2 className="text-2xl font-bold mb-1">GZ28US owes on its invoices in the BR app <span className="text-gray-500 text-lg">(085.N)</span></h2>
+        <p className="text-xs text-gray-500 mb-2">No markup. US$ = the US$ recorded on each BR line and payment; only where none is recorded, R$ ÷ the invoice&apos;s usd_rate (marked). Paid = BR payments with a PAID date.</p>
+        <div className="overflow-x-auto border border-gray-800 rounded-2xl">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-900 text-gray-400 text-xs">
+              <tr><th className="text-left px-3 py-2">INVOICE</th><th className="text-left px-3 py-2">DESCRIPTION</th><th className="text-right px-3 py-2">TOTAL R$</th><th className="text-right px-3 py-2">TOTAL US$</th><th className="text-right px-3 py-2">PAID US$</th><th className="text-right px-3 py-2">OPEN US$</th></tr>
+            </thead>
+            <tbody>
+              {br.invoices.map(inv => <BrRow key={inv.id} inv={inv} open={openRow === inv.id} toggle={() => toggle(inv.id)} />)}
+              <tr className="bg-gray-900 font-bold border-t border-gray-700 tabular-nums">
+                <td className="px-3 py-2" colSpan={2}>TOTAL · {br.totals.invoices} invoices{br.totals.convertedByInvoiceRate ? ` · ${br.totals.convertedByInvoiceRate} converted by invoice rate` : ''}</td>
+                <td className="px-3 py-2 text-right">{formatBRL(br.totals.totalBrl)}</td>
+                <td className="px-3 py-2 text-right">{formatUSD(br.totals.totalUsd)}</td>
+                <td className="px-3 py-2 text-right">{formatUSD(br.totals.receivedUsd)}</td>
+                <td className="px-3 py-2 text-right text-amber-300">{formatUSD(br.totals.open)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {br.notCounted.length > 0 && (
+          <div className="mt-3 text-sm">
+            <p className="text-xs font-bold text-gray-500 mb-1">SAME CLIENT, NOT IN THE BALANCE</p>
+            {br.notCounted.map(inv => (
+              <p key={inv.id} className="text-gray-400">
+                <a href={inv.url} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-blue-400 hover:underline font-bold">{inv.code} ↗</a>
+                {inv.label ? ` · ${inv.label}` : ''} · billed {formatUSD(inv.totalUsd)} · paid {formatUSD(inv.receivedUsd)} — <span className="text-gray-500">{inv.reason ? REASON[inv.reason] : ''}</span>
+              </p>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
 
-function monthLabel(mk: string): string {
-  return new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+const POSITION: Record<PendingDecision['position'], { label: string; cls: string }> = {
+  inside: { label: 'INSIDE THE NUMBER', cls: 'text-amber-300 border-amber-800' },
+  outside: { label: 'NOT IN THE NUMBER', cls: 'text-sky-300 border-sky-800' },
+  undetermined: { label: 'NO AMOUNT TO DECIDE YET', cls: 'text-gray-400 border-gray-700' },
 }
-
-// Compact USD for axis labels: $254k, $1.5k, $300, -$2k.
-function compactUSD(v: number): string {
-  const a = Math.abs(v)
-  if (a >= 1000) return `${v < 0 ? '-' : ''}$${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k`
-  return `${v < 0 ? '-' : ''}$${a.toFixed(0)}`
-}
-function niceStep(x: number): number {
-  if (x <= 0) return 1
-  const p = Math.pow(10, Math.floor(Math.log10(x)))
-  const f = x / p
-  const n = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10
-  return n * p
-}
-
-// 3-line cashflow chart: RED expenses (PAID), BLUE incomes (GOT), GREEN balance.
-function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: number; bal: number }[] }) {
-  const W = 760, H = 300, padR = 14, padT = 30, padB = 56
-  const vals = series.flatMap(s => [s.inc, s.exp, s.bal])
-  const rawMax = Math.max(1, ...vals), rawMin = Math.min(0, ...vals)
-  const step = niceStep((rawMax - rawMin) / 4 || 1)
-  const maxV = Math.ceil(rawMax / step) * step
-  const minV = Math.floor(rawMin / step) * step
-  const padL = 16 + Math.max(compactUSD(maxV).length, compactUSD(minV).length) * 7
-  const x0 = padL, x1 = W - padR, yTop = padT, yBot = H - padB
-  const xFor = (i: number) => series.length <= 1 ? (x0 + x1) / 2 : x0 + (i / (series.length - 1)) * (x1 - x0)
-  const yFor = (v: number) => yBot - ((v - minV) / (maxV - minV || 1)) * (yBot - yTop)
-  const line = (k: 'inc' | 'exp' | 'bal') => series.map((s, i) => `${i ? 'L' : 'M'}${xFor(i).toFixed(1)},${yFor(s[k]).toFixed(1)}`).join(' ')
-  const ticks: number[] = []
-  for (let v = minV; v <= maxV + 0.001; v += step) ticks.push(v)
-  const mLabel = (mk: string) => new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'short' })
+function PendingBlock({ pending }: { pending: CrossingBalance['pending'] }) {
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
-      <g fontSize="12" fontWeight="bold">
-        <rect x={x0} y={4} width="14" height="4" fill="#f87171" /><text x={x0 + 18} y={12} fill="#f87171">PAID</text>
-        <rect x={x0 + 70} y={4} width="14" height="4" fill="#60a5fa" /><text x={x0 + 88} y={12} fill="#60a5fa">GOT</text>
-        <rect x={x0 + 134} y={4} width="14" height="4" fill="#4ade80" /><text x={x0 + 152} y={12} fill="#4ade80">BALANCE</text>
-      </g>
-      {ticks.map((t, i) => (
-        <g key={`t${i}`}>
-          <line x1={x0} y1={yFor(t)} x2={x1} y2={yFor(t)} stroke={Math.abs(t) < 0.001 ? '#4b5563' : '#1f2937'} strokeWidth="1" />
-          <text x={x0 - 6} y={yFor(t) + 4} textAnchor="end" fontSize="11" fill="#6b7280">{compactUSD(t)}</text>
-        </g>
-      ))}
-      {series.map((s, i) => (
-        <g key={`x${i}`}>
-          <text x={xFor(i)} y={yBot + 18} textAnchor="middle" fontSize="11" fill="#6b7280">{mLabel(s.mk)}</text>
-          <text x={xFor(i)} y={yBot + 33} textAnchor="middle" fontSize="10.5" fontWeight="bold" fill={s.bal >= 0 ? '#60a5fa' : '#f87171'}>{compactUSD(s.bal)}</text>
-        </g>
-      ))}
-      <path d={line('exp')} fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d={line('inc')} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d={line('bal')} fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinejoin="round" />
-      {series.map((s, i) => (
-        <g key={`d${i}`}>
-          <circle cx={xFor(i)} cy={yFor(s.exp)} r="2.4" fill="#f87171" />
-          <circle cx={xFor(i)} cy={yFor(s.inc)} r="2.4" fill="#60a5fa" />
-          <circle cx={xFor(i)} cy={yFor(s.bal)} r="2.4" fill="#4ade80" />
-        </g>
-      ))}
-    </svg>
+    <div className="bg-gray-950 border border-amber-900/70 rounded-2xl p-4 mb-6">
+      <p className="text-sm font-bold text-amber-300">PENDING DECISIONS — {pending.decisions.length} · not applied to the number above</p>
+      <p className="text-xs text-gray-400 mt-1 tabular-nums">
+        If every suspicion is confirmed, the number could go down by <span className="text-red-300 font-bold">{formatUSD(pending.couldLower)}</span> and up by <span className="text-emerald-300 font-bold">{formatUSD(pending.couldRaise)}</span>{pending.undetermined ? <> · {pending.undetermined} still without an amount</> : null}.
+      </p>
+      <div className="mt-3 space-y-3">
+        {pending.decisions.map(p => (
+          <div key={p.key} className="border-t border-gray-800 pt-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm text-gray-200">
+                <span className={`text-[10px] font-bold border rounded-full px-2 py-0.5 mr-2 align-middle ${POSITION[p.position].cls}`}>{POSITION[p.position].label}</span>
+                {p.note}
+              </p>
+              <p className="text-sm font-bold tabular-nums whitespace-nowrap">
+                {p.atStake == null ? <span className="text-gray-500">amount not recorded</span> : <>{formatUSD(p.atStake)} at stake</>}
+                {p.effectIfConfirmed != null && <span className={`ml-2 text-xs ${p.effectIfConfirmed < 0 ? 'text-red-300' : 'text-emerald-300'}`}>({p.effectIfConfirmed < 0 ? '−' : '+'}{formatUSD(Math.abs(p.effectIfConfirmed))} if confirmed)</span>}
+              </p>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-400">
+              {p.refs.map((r, i) => (
+                <span key={i} className="tabular-nums">
+                  {r.exists && r.href
+                    ? <a href={r.external ? r.href : `${BASE_PATH}${r.href}`} target={r.external ? '_blank' : undefined} rel={r.external ? 'noopener noreferrer' : undefined} className="font-bold text-gray-300 hover:text-blue-400 hover:underline">{r.side} {r.code}{r.external ? ' ↗' : ''}</a>
+                    : <span className="font-bold text-gray-500">{r.side} {r.code}</span>}
+                  {r.label ? <span className="text-gray-500"> · {r.label.length > 60 ? r.label.slice(0, 59) + '…' : r.label}</span> : null}
+                  {r.usd != null ? <span> · {formatUSD(r.usd)}</span> : null}
+                </span>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-600 mt-0.5">open since {p.since.slice(5, 7)}/{p.since.slice(8, 10)}/{p.since.slice(0, 4)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function UsRow({ inv, open, toggle }: { inv: UsInvoice; open: boolean; toggle: () => void }) {
+  // «Pending balance» que não bate com o aberto: aviso visual (o motor da travessia é quem acerta a linha).
+  const pendingOff = inv.pendingN > 0 && Math.abs(inv.pending - Math.max(inv.open, 0)) > 0.02
+  return (
+    <>
+      <tr className="border-t border-gray-800 tabular-nums hover:bg-gray-900/60">
+        <td className="px-3 py-2 whitespace-nowrap">
+          <button onClick={toggle} className="text-gray-500 hover:text-white mr-1" aria-label="lines">{open ? '▾' : '▸'}</button>
+          <a href={`${BASE_PATH}${inv.path}`} className="font-bold text-gray-200 hover:text-blue-400 hover:underline">{inv.code}</a>
+        </td>
+        <td className="px-3 py-2 text-gray-400 max-w-md truncate" title={inv.label}>{inv.label || '—'}{inv.status === 'CLOSED' ? <span className="ml-2 text-xs text-gray-600">CLOSED</span> : null}</td>
+        <td className="px-3 py-2 text-right">{formatUSD(inv.total)}</td>
+        <td className="px-3 py-2 text-right">{formatUSD(inv.received)}</td>
+        <td className={`px-3 py-2 text-right font-bold ${moneyColor(inv.open)}`}>
+          {formatUSD(inv.open)}
+          {pendingOff && <span className="block text-xs font-normal text-amber-400" title="the unpaid «Pending balance» row(s) on this invoice differ from the open amount — not counted either way">pending row {formatUSD(inv.pending)}</span>}
+        </td>
+      </tr>
+      {open && (
+        <tr className="bg-gray-950">
+          <td colSpan={5} className="px-6 py-2 text-xs text-gray-400">
+            {inv.items.map(l => <Line key={l.id} left={`item · ${l.description || '—'}${l.quantity !== 1 ? ` · ${l.quantity} × ${formatUSD(l.unitPrice)}` : ''}`} right={formatUSD(l.usd)} />)}
+            {inv.serviceLines.map(l => <Line key={l.id} left={`service · ${l.description || '—'}`} right={formatUSD(l.usd)} />)}
+            {inv.flTaxPct ? <Line left={`FL tax ${inv.flTaxPct}%`} right="" /> : null}
+            {inv.discountPct ? <Line left={`discount ${inv.discountPct}%`} right="" /> : null}
+            {inv.incomes.map(p => <Line key={p.id} dim={!p.counted} left={`income · ${p.paidAt ? 'paid ' + paidDay(p.paidAt, 'America/New_York') : 'NOT PAID (not counted)'} · ${p.description || '—'}`} right={formatUSD(p.usd)} />)}
+            {!inv.items.length && !inv.serviceLines.length && !inv.incomes.length && <p>no lines</p>}
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function BrRow({ inv, open, toggle }: { inv: BrInvoice; open: boolean; toggle: () => void }) {
+  return (
+    <>
+      <tr className="border-t border-gray-800 tabular-nums hover:bg-gray-900/60">
+        <td className="px-3 py-2 whitespace-nowrap">
+          <button onClick={toggle} className="text-gray-500 hover:text-white mr-1" aria-label="lines">{open ? '▾' : '▸'}</button>
+          <a href={inv.url} target="_blank" rel="noopener noreferrer" className="font-bold text-gray-200 hover:text-blue-400 hover:underline">{inv.code} ↗</a>
+        </td>
+        <td className="px-3 py-2 text-gray-400 max-w-md truncate" title={inv.label}>{inv.label || '—'}</td>
+        <td className="px-3 py-2 text-right">{formatBRL(inv.totalBrl)}</td>
+        <td className="px-3 py-2 text-right">{formatUSD(inv.totalUsd)}{inv.convertedByInvoiceRate ? <span className="block text-xs text-amber-400">{inv.convertedByInvoiceRate} by rate {inv.usdRate ?? '—'}</span> : null}</td>
+        <td className="px-3 py-2 text-right">{formatUSD(inv.receivedUsd)}</td>
+        <td className={`px-3 py-2 text-right font-bold ${inv.open > 0.004 ? 'text-amber-300' : moneyColor(inv.open)}`}>{formatUSD(inv.open)}</td>
+      </tr>
+      {open && (
+        <tr className="bg-gray-950">
+          <td colSpan={6} className="px-6 py-2 text-xs text-gray-400">
+            {inv.lines.map(l => <Line key={l.id} left={`line · ${l.description || '—'} · ${formatBRL(l.brl)}${l.usdFrom === 'invoice_usd_rate' ? ` ÷ rate ${inv.usdRate}` : l.usdFrom === 'none' ? ' · NO US$ AND NO RATE' : ' · recorded US$'}`} right={formatUSD(l.usd)} />)}
+            {inv.payments.map(p => <Line key={p.id} dim={!p.counted} left={`payment · ${p.paidAt ? 'paid ' + paidDay(p.paidAt, 'America/Sao_Paulo') : 'NOT PAID (not counted)'} · ${formatBRL(p.brl)}${p.usdFrom === 'invoice_usd_rate' ? ` ÷ rate ${inv.usdRate}` : p.usdFrom === 'none' ? ' · NO US$ AND NO RATE' : ' · recorded US$'} · ${p.description || '—'}`} right={formatUSD(p.usd)} />)}
+            {!inv.lines.length && !inv.payments.length && <p>no lines</p>}
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function Line({ left, right, dim }: { left: string; right: string; dim?: boolean }) {
+  return (
+    <div className={`flex justify-between gap-3 py-0.5 border-b border-gray-900 last:border-0 ${dim ? 'text-gray-600' : ''}`}>
+      <span className="truncate" title={left}>{left}</span>
+      <span className="tabular-nums shrink-0">{right}</span>
+    </div>
   )
 }
