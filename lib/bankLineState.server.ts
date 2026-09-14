@@ -10,7 +10,7 @@
 //   ESPERANDO  o AUTO-LINK cuida: PENDENTE, VAI CASAR, MATURANDO, TETO (vai pro balde), IRMÃ PENDENTE, TO BOOK recente
 // Só PERGUNTA e FORNECEDOR contam no Data Checker. Esperar não é pendência — mas aparece, com a frase (silêncio é promessa).
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { nameHit, shortNameHit, classify, num, signedDays, RULE_AGE_DAYS, type Cand, type PlanDoubt, type PlanItem } from './bankReconcile.server'
+import { nameHit, shortNameHit, classify, num, signedDays, RULE_AGE_DAYS, ASSESSMENT_RE, type Cand, type PlanDoubt, type PlanItem } from './bankReconcile.server'
 
 export type LineStateCode = 'PENDENTE' | 'VAI CASAR' | 'É ESTA?' | 'DISPUTA' | 'QUASE' | 'NA FOLHA' | 'DINHEIRO' | 'QUEM É?' | 'SEM REGRA' | 'AGENDADA≠' | 'MATURANDO' | 'TETO' | 'IRMÃ PENDENTE' | 'TO BOOK' | 'DUPLICADA' | 'PARADA'
 export type LinePile = 'PERGUNTA' | 'FORNECEDOR' | 'ESPERANDO'
@@ -31,7 +31,8 @@ export const isMoneyLine = (l: any) => { const k = classify(l).klass; return k =
 function itemSentence(it: PlanItem): string {
   const rule = it.rule ? '«' + String((it.rule as any).label || (it.rule as any).key || it.rule.pattern || 'regra').slice(0, 60) + '»' : 'a regra'
   switch (it.engine) {
-    case 'FEE': return it.create ? 'O AUTO-LINK lança como tarifa da Regions na próxima rodada (até 6 h).' : `O AUTO-LINK casa na próxima rodada com a tarifa já lançada ${lab(it.cand)}.`
+    // Tarifa internacional (BL 1.7.0, Livro 14.22): a rodada decide na hora, lendo o banco — a frase diz as duas saídas.
+    case 'FEE': return it.create ? (ASSESSMENT_RE.test(String(it.line?.name || '')) ? 'O AUTO-LINK lança esta tarifa internacional de 3% na próxima rodada (até 6 h): junto da compra que a causou, se ela for única e já estiver casada com um registro de invoice, season ou custo fixo; senão, como tarifa da Regions.' : 'O AUTO-LINK lança como tarifa da Regions na próxima rodada (até 6 h).') : `O AUTO-LINK casa na próxima rodada com a tarifa já lançada ${lab(it.cand)}.`
     case 'EXACT': return `O AUTO-LINK casa na próxima rodada (até 6 h) com ${lab(it.cand)} — mesmo valor, nome e data. Se não é essa, diga NÃO antes.`
     case 'NAME': return `O AUTO-LINK casa na próxima rodada (até 6 h) com ${lab(it.cand)} — o nome desempatou. Se não é essa, diga NÃO antes.`
     case 'SET': return `Série: o AUTO-LINK casa esta cobrança em conjunto com ${lab(it.cand)} na próxima rodada.`

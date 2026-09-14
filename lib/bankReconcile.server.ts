@@ -169,9 +169,21 @@ export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[] }
 // `o` = valor ANTERIOR do campo (undefined nos registros antigos = volta pra null).
 // Integridade do DESFAZER (10/set/2026): linha casada guarda SEMPRE o array ([] = o casamento não escreveu nada no app);
 // NULL numa linha casada = casamento antigo, sem registro — o DESFAZER não reverte data nenhuma por palpite, só avisa.
-// price/extra: o WIRE + TAXA (match_wire) já gravava esses campos.
-export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference' | 'price' | 'extra'; v: string; o?: string | null }
+// price/extra: o WIRE + TAXA (match_wire) já gravava esses campos. paid_to (BL 1.7.0): a renda casada ganha PAID TO GZ28US onde está vazio.
+export type Backfill = { t: string; id: string; f: 'payment_date' | 'paid_at' | 'amount' | 'paid_from' | 'paid_to' | 'payment_method' | 'bank_transaction_id' | 'description' | 'invoice_id' | 'source' | 'payment_reference' | 'price' | 'extra'; v: string; o?: string | null }
 export const DATE_TABLES = new Set(['invoice_expenses', 'fixed_cost_expenses', 'staff_expenses', 'assets', 'assets_expenses', 'inputs', 'inventory', 'invoice_items'])
+// ── LEI DO PLAID (Márcio, 13/set/2026 — Livro 14.21; BL 1.7.0) ──
+// «tudo que tem no Regions é PAID FROM (expenses) e PAID TO (incomes) GZ28US! Claro que só onde existe este campo no app… isso
+// não pode ficar pra trás de jeito nenhum» · «tudo que está no PLAID é PAID FROM GZ28US, o que não está no PLAID, não é, temos que
+// designar». Casar registro que JÁ existe não cravava o campo (medido em 13/09: 23 registros casados com PAID FROM vazio, consertados
+// por dado pela sessão do AutoBook com a trilha abaixo). Desde a BL 1.7.0 o funil único (writeMatch) crava na hora do casamento, em
+// todo registro que o casamento cobre, só onde o campo está vazio — e recusa o registro que diz GZ28BR (esse nunca passou na Regions).
+// Tabela sem o campo (aporte, empréstimo, invoice_items) não ganha nada: «só onde existe este campo no app».
+export const PAYER_FROM_TABLES = new Set(['invoice_expenses', 'inputs', 'inventory', 'assets', 'assets_expenses', 'staff_expenses', 'fixed_cost_expenses'])
+export const PAYER_TO_TABLES = new Set(['invoice_incomes'])
+export const payerFieldOf = (t: string): 'paid_from' | 'paid_to' | null => { const x = tabelaAtual(String(t || '')); return PAYER_FROM_TABLES.has(x) ? 'paid_from' : PAYER_TO_TABLES.has(x) ? 'paid_to' : null }
+// A trilha que o DESFAZER (writeUnmatch) lê: check_key 'paid-from', new_value GZ28US, label começando por 'CERTO (Regions)'.
+export const PLAID_LAW_LABEL = 'CERTO (Regions) · lei do Plaid 13/09'
 
 // AUTO-LINK (o motor do Bank Link; até 10/set/2026 chamado «AUTO-BOOK», nome que hoje é só do robô de e-mail do Márcio) — constantes de doutrina (3/set/2026; donos podem mover):
 export const RULE_AGE_DAYS = 7            // maturidade: RULE/LEARN só criam depois de 7 dias (o humano ainda lança atrasado)
@@ -1153,7 +1165,66 @@ async function mixedClash(db: any, line: any, cand: { table: string; id: string;
   return ''
 }
 
+// Os registros que um casamento COBRE (BL 1.7.0 — a lei do Plaid anda por eles): o alvo simples, ou os membros do pedido
+// (purchase_group), da folha (expense_group), do misto e do kit. Pedido sem membros (diário antigo, antes da BL 0.3.0) acha os itens
+// pelo purchase_group — a mesma leitura do DESFAZER. Nome de tabela sempre o de hoje (JSON gravado — ver lib/tableRenames).
+export async function matchRecords(db: any, cand: { table: string; id: string; members?: Member[] }): Promise<Member[]> {
+  const t = tabelaAtual(String(cand.table || ''))
+  if (t === 'purchase_group' || t === 'expense_group' || t === 'kit_group' || t === MIXED_GROUP) {
+    const ms = (cand.members || []).filter((m: any) => m && m.table && m.id).map(m => ({ table: tabelaAtual(String(m.table)), id: String(m.id) }))
+    if (ms.length || t !== 'purchase_group') return ms
+    const out: Member[] = []
+    for (const g of ['assets', 'inputs', 'inventory', 'invoice_expenses']) {
+      const { data, error } = await db.from(g).select('id').eq('purchase_group', cand.id)
+      if (error) throw new Error(g + ': ' + error.message)
+      for (const r of data || []) out.push({ table: g, id: String(r.id) })
+    }
+    return out
+  }
+  return [{ table: t, id: String(cand.id) }]
+}
+// A recusa DURA (BL 1.7.0): registro cujo pagador diz GZ28BR nunca casa com linha da Regions. O pool (brPaid) já tira esse registro de
+// todo caminho que passa por ele (MATCH, TROCAR, misto, plano do motor, SIM do Data Checker), mas o RESTAURAR DIÁRIO simples e o WIRE +
+// TAXA leem o registro direto — e o diário é antigo: o pagador pode ter virado GZ28BR depois. A régua é a do candidatePool: gasto com
+// paid_from OU paid_to GZ28BR; renda com paid_to GZ28BR. '' = ninguém. CASAR COM AJUSTE e ADOTAR trocam o pagador ANTES (decisão de
+// gente, com backfill e trilha próprios) e chegam aqui já GZ28US.
+export async function brPaidAmong(db: any, records: Member[]): Promise<string> {
+  const byTable = new Map<string, string[]>()
+  for (const m of records) { const t = tabelaAtual(m.table); if (payerFieldOf(t)) byTable.set(t, [...(byTable.get(t) || []), String(m.id)]) }
+  for (const [t, ids] of byTable) {
+    const { data, error } = await db.from(t).select(PAYER_TO_TABLES.has(t) ? 'id, paid_to' : 'id, paid_from, paid_to').in('id', ids)
+    if (error) throw new Error(t + ': ' + error.message)
+    const hit = (data || []).find((r: any) => String(r.paid_to || '') === 'GZ28BR' || (!PAYER_TO_TABLES.has(t) && String(r.paid_from || '') === 'GZ28BR'))
+    if (hit) return t + ':' + hit.id
+  }
+  return ''
+}
+// CRAVA o pagador (BL 1.7.0): PAID FROM GZ28US nas sete tabelas de gasto, PAID TO GZ28US na renda — só onde o campo está NULL ou ''.
+// Nunca sobrescreve pagador escrito (nem GZ28US, nem outro). Estoque só PURCHASED (o DONATED não tem linha no banco; a régua do pool).
+// Cada campo cravado entra no `backfill` com o valor anterior fiel (null ou '') — o DESFAZER devolve exatamente isso.
+async function stampPayers(db: any, records: Member[], backfill: Backfill[]): Promise<Backfill[]> {
+  const byTable = new Map<string, string[]>()
+  for (const m of records) { const t = tabelaAtual(m.table); if (payerFieldOf(t)) byTable.set(t, [...(byTable.get(t) || []), String(m.id)]) }
+  const stamped: Backfill[] = []
+  for (const [t, ids] of byTable) {
+    const f = payerFieldOf(t)!
+    for (const empty of [null, ''] as const) {
+      let q = db.from(t).update({ [f]: 'GZ28US' }).in('id', ids)
+      q = empty === null ? q.is(f, null) : q.eq(f, '')
+      if (t === 'inventory') q = q.eq('source_type', 'PURCHASED')
+      const { data, error } = await q.select('id')
+      if (error) throw new Error(`${t}: ${error.message}`)
+      for (const r of data || []) { const b: Backfill = { t, id: String(r.id), f, v: 'GZ28US', o: empty }; backfill.push(b); stamped.push(b) }
+    }
+  }
+  return stamped
+}
+
 export async function writeMatch(db: any, line: any, cand: Cand | { table: string; id: string; members?: Member[] }, extra: Record<string, unknown>, pre: Backfill[] = []): Promise<{ backfill: Backfill[] }> {
+  // LEI DO PLAID (BL 1.7.0): antes de trancar a linha, os registros cobertos — registro pago pela GZ28BR é recusado aqui, com nada escrito.
+  const covered = await matchRecords(db, cand)
+  const br = await brPaidAmong(db, covered)
+  if (br) throw new Error('recusado: ' + br + ' diz que quem pagou foi a GZ28BR — o que a GZ28BR paga nunca passa na Regions; mude o pagador antes de casar (lei do Plaid, 13/09)')
   // Linha MISTA: os membros vão no MESMO claim (o chamador passa matched_members; o RESTAURAR DIÁRIO não passa e eles saem de
   // cand.members). Claim que falha não escreveu nada — nem ponteiro, nem membros. Sem a migration o claim falha inteiro.
   const mixedPatch = cand.table === MIXED_GROUP && !('matched_members' in extra) ? { matched_members: (cand.members || []).map(m => ({ table: tabelaAtual(m.table), id: String(m.id) })) } : {}
@@ -1222,13 +1293,15 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
     try { await save(); return } catch (e) {
       const stuck: string[] = []
       for (const b of backfill.slice(pre.length)) {
-        const { error } = await db.from(b.t).update({ [b.f]: null }).eq('id', b.id).eq(b.f, b.v)
+        // O valor anterior fiel (BL 1.7.0): o PAID TO da renda é NOT NULL — o vazio que era volta vazio, nunca null.
+        const { error } = await db.from(b.t).update({ [b.f]: b.o === undefined ? null : b.o }).eq('id', b.id).eq(b.f, b.v)
         if (error) stuck.push(b.t + '.' + b.f + ':' + b.id)
       }
       backfill.splice(pre.length)
-      throw new Error(String((e as Error).message || e) + (stuck.length ? ' · NÃO revertido (confira): ' + stuck.join(', ') : ' · datas preenchidas revertidas'))
+      throw new Error(String((e as Error).message || e) + (stuck.length ? ' · NÃO revertido (confira): ' + stuck.join(', ') : ' · datas e pagador preenchidos revertidos'))
     }
   }
+  let stamped: Backfill[] = []
   try {
     if (DATE_TABLES.has(cand.table)) await fill(cand.table, [cand.id], 'payment_date', line.date)
     else if (cand.table === 'invoice_incomes') await fill('invoice_incomes', [cand.id], 'paid_at', paidAtFor(line.date))
@@ -1246,12 +1319,21 @@ export async function writeMatch(db: any, line: any, cand: Cand | { table: strin
       // (o previsto). O fill só escreve onde está nulo e registra no backfill: o DESFAZER devolve só o que este casamento preencheu.
       for (const [t, ids] of byTable) { if (t === 'invoice_incomes') await fill(t, ids, 'paid_at', paidAtFor(line.date)); else await fill(t, ids, 'payment_date', line.date) }
     }
+    // LEI DO PLAID (BL 1.7.0): o pagador de cada registro coberto, onde está vazio — no mesmo backfill das datas.
+    stamped = await stampPayers(db, covered, backfill)
   } catch (e) {
     // Falhou no meio: o que JÁ foi preenchido entra no backfill da linha antes de relançar — senão o DESFAZER não o acha.
     if (backfill.length > pre.length) await persist().catch(() => undefined)
     throw e
   }
   if (backfill.length > pre.length) await persist()   // o claim já gravou o `pre`
+  // A trilha do pagador cravado, DEPOIS do backfill gravado (persist que falha reverte o campo e relança antes daqui — trilha sem
+  // escrita nunca fica). É a mesma trilha do conserto por dado de 13/09: o DESFAZER (writeUnmatch) a lê como «prova do casamento».
+  if (stamped.length) {
+    const who = extra.match_engine ? 'motor ' + String(extra.match_engine) : 'casamento de gente'
+    const ctx = who + ' · linha ' + String(line.date || '').slice(0, 10) + ' $' + Math.abs(num(line.amount)).toFixed(2) + ' · ' + String(line.merchant || line.name || '')
+    await db.from('data_fixes').insert(stamped.map(b => ({ check_key: 'paid-from', table_name: b.t, row_id: b.id, field: b.f, old_value: b.o ?? null, new_value: 'GZ28US', label: (PLAID_LAW_LABEL + ' · ' + ctx).slice(0, 200) }))).then(() => undefined, () => undefined)
+  }
   return { backfill }
 }
 
@@ -1277,6 +1359,122 @@ async function wireInvoiceFor(db: any, l: any): Promise<{ invoice_id: string; co
   if (!src?.invoice_id) return null
   const { data: inv } = await db.from('invoices').select('id, invoice_code, is_quote').eq('id', src.invoice_id).maybeSingle()
   return inv && !inv.is_quote ? { invoice_id: inv.id, code: inv.invoice_code || '' } : null
+}
+
+// ── A TARIFA INTERNACIONAL VAI COM A COMPRA (Livro 14.22, Márcio, 13/set/2026; BL 1.7.0) ──
+// Compra em moeda estrangeira gera na Regions uma SEGUNDA linha, «INTERNATIONAL SERVICE ASSESSMENT <comerciante>», de 3%: é custo da
+// mesma compra, não tarifa do banco. O motor FEE a mandava inteira pro custo fixo da Regions; a sessão do AutoBook tirou 5 linhas de lá
+// à mão (REMATCH, 13/09: passagens → season de quem viajou). O REPASSE abaixo espelha o do wire (wireInvoiceFor): acha a compra que
+// CAUSOU a tarifa e, se ela é única e já está casada com UM registro, lança a tarifa no mesmo lugar. Ambíguo = destino padrão.
+// A régua saiu dos dados (19 linhas de tarifa medidas em 14/09, da Regions de mai a set/2026):
+//   · a compra é do MESMO dia (todas as 19) — a janela é ±2 dias;
+//   · a tarifa é EXATAMENTE 3% da compra arredondado ao centavo, meio centavo pra cima (541,50 → 16,245 → 16,25) — conta em centavos
+//     inteiros, nunca em float (541.5*0.03 = 16.244999… viraria 16,24). As 19 batem sem tolerância nenhuma; o «±$0,01» deixava a
+//     Microsoft de $0,99 disputar a tarifa de $0,03 da Skywork, e 3% de $0,03 é tolerância de 33%;
+//   · o nome da tarifa carrega o comerciante da compra («… ASSESSMENT COPA AIRLINES W» ⇄ «COPA AIRLINES W 3219 SAO PAULO…»), em todas.
+// Única = exatamente uma compra que bate (valor + nome + janela, qualquer status que não REMOVED — compra ainda NEW/pendente conta e
+// deixa a tarifa sem dono) e nenhuma tarifa irmã igual na janela (duas tarifas iguais pra duas compras iguais: não se sabe qual é qual).
+// Destino só quando a compra casou com UM registro destas tabelas: invoice_expenses (invoice real, aberta, fora do balde), staff_expenses
+// (a mesma season, a mesma origem) e fixed_cost_expenses (o mesmo fornecedor, que não seja o próprio banco). Pedido, misto, folha em par
+// (expense_group), insumo, estoque, bem: destino padrão — dividir a tarifa entre registros é decisão de gente (as passagens BLTISL e AZPYJG).
+export const ASSESSMENT_RE = /INTERNATIONAL SERVICE ASSESSMENT/i
+export const MARKER_REPASSE = 'repasse (auto Bank Link)'   // o marcador do repasse do wire (BL 0.5.4): o DESFAZER apaga só linha com ele
+const upperWords = (s: unknown) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()
+export const assessmentTail = (name: unknown): string => { const m = /INTERNATIONAL SERVICE ASSESSMENT\s+(.+)$/.exec(upperWords(name)); return m ? m[1].trim() : '' }
+// 3% em centavos inteiros, meio centavo pra cima.
+export const assessmentCents = (amount: unknown): number => Math.floor((Math.round(Math.abs(num(amount)) * 100) * 3 + 50) / 100)
+export type AssessmentHome = { table: 'invoice_expenses' | 'staff_expenses' | 'fixed_cost_expenses'; row: any; parent: any; where: string }
+export async function assessmentParentFor(db: any, l: any): Promise<AssessmentHome | null> {
+  if (!ASSESSMENT_RE.test(String(l.name || ''))) return null
+  const tail = assessmentTail(l.name)
+  const feeCents = Math.round(Math.abs(num(l.amount)) * 100)
+  const d = Date.parse(String(l.date || '').slice(0, 10))
+  if (tail.length < 3 || !(feeCents > 0) || !d) return null
+  const d0 = new Date(d - 2 * 864e5).toISOString().slice(0, 10), d1 = new Date(d + 2 * 864e5).toISOString().slice(0, 10)
+  const { data, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, pending, match_status, matched_table, matched_id').gte('date', d0).lte('date', d1).gt('amount', 0).neq('match_status', 'REMOVED')
+  if (error) return null   // leitura que falha não prova dono: destino padrão
+  const rows = (data || []).filter((r: any) => String(r.id) !== String(l.id))
+  const siblings = rows.filter((r: any) => ASSESSMENT_RE.test(String(r.name || '')) && assessmentTail(r.name) === tail && Math.round(Math.abs(num(r.amount)) * 100) === feeCents)
+  const parents = rows.filter((r: any) => !ASSESSMENT_RE.test(String(r.name || '')) && !FEE_RE.test(String(r.name || '')) && assessmentCents(r.amount) === feeCents && (' ' + upperWords(r.merchant) + ' ' + upperWords(r.name)).includes(' ' + tail))
+  if (siblings.length || parents.length !== 1) return null
+  const p = parents[0]
+  const t = tabelaAtual(String(p.matched_table || ''))
+  if (p.match_status !== 'MATCHED' || !p.matched_id || !['invoice_expenses', 'staff_expenses', 'fixed_cost_expenses'].includes(t)) return null
+  const brPaidRow = (r: any) => String(r.paid_from || '') === 'GZ28BR' || String(r.paid_to || '') === 'GZ28BR'
+  if (t === 'invoice_expenses') {
+    const { data: row } = await db.from('invoice_expenses').select('id, invoice_id, item, supplier, paid_from, paid_to').eq('id', p.matched_id).maybeSingle()
+    if (!row || brPaidRow(row)) return null
+    const { data: inv } = await db.from('invoices').select('id, invoice_code, is_quote, origin, live_status').eq('id', row.invoice_id).maybeSingle()
+    // Orçamento, balde A ATRIBUIR (a compra ainda não tem dono) e job FECHADO (o período não reabre sozinho): destino padrão.
+    if (!inv || inv.is_quote || inv.origin === BUCKET_ORIGIN || inv.live_status === 'CLOSED') return null
+    return { table: 'invoice_expenses', row, parent: p, where: String(inv.invoice_code || 'invoice') }
+  }
+  if (t === 'staff_expenses') {
+    const { data: row } = await db.from('staff_expenses').select('id, season_id, origin, description, paid_from, paid_to').eq('id', p.matched_id).maybeSingle()
+    if (!row || !row.season_id || brPaidRow(row)) return null
+    const { data: se } = await db.from('seasons').select('id, season_code').eq('id', row.season_id).maybeSingle()
+    return { table: 'staff_expenses', row, parent: p, where: 'season ' + String(se?.season_code || String(row.season_id).slice(0, 8)) }
+  }
+  const { data: row } = await db.from('fixed_cost_expenses').select('id, supplier_id, description, paid_from, paid_to').eq('id', p.matched_id).maybeSingle()
+  if (!row || !row.supplier_id || brPaidRow(row)) return null
+  const { data: sup } = await db.from('fixed_cost_suppliers').select('id, company, cost_type').eq('id', row.supplier_id).maybeSingle()
+  if (!sup || sup.cost_type === 'BANK') return null
+  return { table: 'fixed_cost_expenses', row, parent: p, where: 'FIXO ' + String(sup.company || '') }
+}
+// Lança a tarifa no lugar da compra e casa — idempotente no retry (o elo de cada casa), e o que ESTA chamada inseriu morre se o casamento
+// não pegar. Valor = o do banco; pagador GZ28US (saiu da Regions); UMA DATA (a do banco), como tudo que o motor cria.
+async function bookAssessment(db: any, l: any, home: AssessmentHome, batch: string): Promise<string> {
+  const fee = Math.abs(num(l.amount))
+  const day = String(l.date).slice(0, 10)
+  const marked = (label: string) => String(label || '').replace(/\s+/g, ' ').slice(0, 200 - MARKER_REPASSE.length - 1).trim() + ' ' + MARKER_REPASSE
+  const pct = 'Tarifa internacional 3% da Regions sobre '
+  const stillOurs = async (table: string, rowId: string) => { const { data } = await db.from('bank_transactions').select('matched_table, matched_id').eq('id', l.id).maybeSingle(); return !(data && data.matched_table === table && String(data.matched_id) === String(rowId)) }
+  let rowId = '', inserted = false
+  let undo: () => Promise<void> = async () => undefined
+  if (home.table === 'fixed_cost_expenses') {
+    const { data: prev } = await db.from('fixed_cost_expenses').select('id, supplier_id, description').eq('bank_transaction_id', l.id).maybeSingle()
+    if (prev && (String(prev.supplier_id) !== String(home.row.supplier_id) || !String(prev.description || '').includes(MARKER_REPASSE))) throw new Error('a tarifa já tem lançamento de outra rodada no custo fixo — confira o ÓRFÃO no Data Checker')
+    rowId = prev?.id || ''
+    if (!rowId) {
+      const { data: row, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: home.row.supplier_id, type: 'SINGLE', description: marked(pct + '«' + String(home.row.description || '').slice(0, 90) + '» · ' + String(l.name || '').trim()), amount: fee, source: 'GZ28US', expense_date: day, payment_date: day, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id }).select('id').single()
+      if (error || !row) throw new Error('fixed_cost_expenses: ' + (error?.message || 'insert falhou'))
+      rowId = row.id; inserted = true
+      undo = async () => { await db.from('fixed_cost_expenses').delete().eq('id', rowId).eq('bank_transaction_id', l.id).ilike('description', '%' + MARKER_REPASSE + '%') }
+    }
+  } else if (home.table === 'staff_expenses') {
+    // Elo = payment_reference bank:<id>, o mesmo do PESSOAL que o motor cria (sem depender da coluna da folha).
+    const { data: prev } = await db.from('staff_expenses').select('id, season_id, description').eq('payment_reference', 'bank:' + l.id).maybeSingle()
+    if (prev && (String(prev.season_id) !== String(home.row.season_id) || !String(prev.description || '').includes(MARKER_REPASSE))) throw new Error('a tarifa já tem despesa de staff de outra rodada — confira no Data Checker')
+    rowId = prev?.id || ''
+    if (!rowId) {
+      const { data: row, error } = await db.from('staff_expenses').insert({ season_id: home.row.season_id, type: 'SINGLE', origin: home.row.origin || 'GZ28US', description: marked(pct + '«' + String(home.row.description || '').slice(0, 90) + '»'), amount: fee, source: 'Regions Bank', supplier: 'Regions Bank — International Service Assessment', expense_date: day, payment_date: day, paid_from: 'GZ28US', paid_to: 'GZ28US', payment_method: 'BANK ACCOUNT', payment_reference: 'bank:' + l.id }).select('id').single()
+      if (error || !row) throw new Error('staff_expenses: ' + (error?.message || 'insert falhou'))
+      rowId = row.id; inserted = true
+      undo = async () => { await db.from('staff_expenses').delete().eq('id', rowId).eq('payment_reference', 'bank:' + l.id).ilike('description', '%' + MARKER_REPASSE + '%') }
+    }
+  } else {
+    // invoice_expenses não tem elo com o banco (o purchase_group é do pedido/balde): o retry reaproveita a linha de repasse desta tarifa
+    // (mesma invoice, dia, valor, marcador) só se nenhuma linha do banco a aponta.
+    const { data: prevs } = await db.from('invoice_expenses').select('id').eq('invoice_id', home.row.invoice_id).eq('payment_date', day).eq('price', fee).ilike('item', '%' + MARKER_REPASSE + '%').limit(5)
+    for (const pv of prevs || []) {
+      const { data: ptr } = await db.from('bank_transactions').select('id').eq('match_status', 'MATCHED').eq('matched_table', 'invoice_expenses').eq('matched_id', pv.id).limit(1)
+      if (!ptr || !ptr.length) { rowId = pv.id; break }
+    }
+    if (!rowId) {
+      // nature CHARGE (lib/itemNature): «imposto, frete, handling, seguro, taxa — preço da compra», nunca uma segunda compra.
+      const { data: row, error } = await db.from('invoice_expenses').insert({ invoice_id: home.row.invoice_id, item: marked(pct + '«' + String(home.row.item || '').slice(0, 90) + '»'), supplier: 'Regions Bank', price: fee, quantity: 1, tax: 0, extra: 0, item_discount: 0, expense_date: day, payment_date: day, paid_from: 'GZ28US', paid_to: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', export_status: 'FRESH', picked_up: false, nature: 'CHARGE' }).select('id').single()
+      if (error || !row) throw new Error('invoice_expenses: ' + (error?.message || 'insert falhou'))
+      rowId = row.id; inserted = true
+      undo = async () => { await db.from('invoice_expenses').delete().eq('id', rowId).eq('invoice_id', home.row.invoice_id).ilike('item', '%' + MARKER_REPASSE + '%') }
+    }
+  }
+  try {
+    await writeMatch(db, l, { table: home.table, id: rowId }, { matched_note: ('AUTO · FEE · TARIFA 3% · repasse → ' + home.where + ' · ' + String(l.name || '').trim()).slice(0, 150), match_engine: 'FEE', match_batch: batch, reviewed_at: new Date().toISOString() })
+  } catch (e) {
+    if (inserted && await stillOurs(home.table, rowId)) await undo()
+    throw e
+  }
+  return rowId
 }
 
 // DESFAZER: reverte só o que `backfill` diz que escrevemos (valor igual ⇒ ninguém
@@ -1381,6 +1579,12 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       if (error) throw new Error('invoice_expenses: ' + error.message)
       if (r && r.length) changed.push('repasse criado pelo motor apagado')
     }
+    if (line.match_engine === 'FEE' && t === 'staff_expenses') {
+      // TARIFA INTERNACIONAL na season (BL 1.7.0): só a linha que o motor criou — marcador + elo desta linha do banco; a compra fica.
+      const { data: r, error } = await db.from('staff_expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).ilike('description', '%' + MARKER_REPASSE + '%').select('id')
+      if (error) throw new Error('staff_expenses: ' + error.message)
+      if (r && r.length) changed.push('repasse da tarifa internacional apagado da season')
+    }
     // PESSOAL da PERGUNTA (engine nulo, sem backfill): a despesa da season que o motor criou
     // morre com o DESFAZER — marcador + elo + origem, nunca linha de gente (revisão 4/set).
     // CASAR COM AJUSTE sem o elo no backfill (restore/reset — o claim grava [] quando nada foi escrito): solta o elo da folha pela coluna.
@@ -1418,19 +1622,27 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
   // desfazer o casamento desfaz a prova (revisão #20).
   if (line.match_status === 'MATCHED' && line.matched_table && line.matched_id) {
     // Grupo não é tabela: o pedido acha os itens pelo purchase_group; o misto anda pelos membros gravados na linha.
-    // Renda não tem PAID FROM (quem paga é o cliente; a coluna sai do banco na onda 9): membro renda do misto fica fora.
-    const targets: { t: string; id: string }[] = line.matched_table === 'purchase_group' ? [] : line.matched_table === MIXED_GROUP ? mixedMembers(line).filter(m => m.table !== 'invoice_incomes').map(m => ({ t: m.table, id: m.id })) : [{ t: line.matched_table, id: line.matched_id }]
+    // BL 1.7.0 (lei do Plaid): a RENDA entra também, pelo PAID TO — a renda casada ganha PAID TO GZ28US onde estava vazio, e a trilha
+    // dela volta do mesmo jeito. Renda não tem PAID FROM (a coluna saiu do banco na onda 9). Tabela sem pagador (aporte, empréstimo,
+    // kit) fica fora. A folha do CASAR COM AJUSTE (expense_group) volta pelo backfill: o elo já foi solto acima, não há por onde achá-la.
+    const targets: { t: string; id: string }[] = (line.matched_table === 'purchase_group' ? [] : line.matched_table === MIXED_GROUP ? mixedMembers(line).map(m => ({ t: m.table, id: m.id })) : [{ t: tabelaAtual(String(line.matched_table)), id: String(line.matched_id) }])
     if (line.matched_table === 'purchase_group') for (const g of ['assets', 'inputs', 'inventory', 'invoice_expenses']) {
       const { data: ms } = await db.from(g).select('id').eq('purchase_group', line.matched_id)
       for (const m of ms || []) targets.push({ t: g, id: m.id })
     }
     for (const tg of targets) {
-      const { data: fx } = await db.from('data_fixes').select('id').eq('check_key', 'paid-from').in('table_name', nomesHistoricos(tg.t)).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'CERTO (Regions)%').limit(1)
+      const f = payerFieldOf(tg.t)
+      if (!f) continue
+      // A trilha da renda é só a do PAID TO (a de PAID FROM de renda é de antes da onda 9 e a coluna não existe mais).
+      const trail = (label: string) => { let q = db.from('data_fixes').select('id, old_value').eq('check_key', 'paid-from').in('table_name', nomesHistoricos(tg.t)).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', label); if (f === 'paid_to') q = q.eq('field', 'paid_to'); return q.limit(1) }
+      const { data: fx } = await trail('CERTO (Regions)%')
       // O preenchimento automático (AUTO · linhas já casadas…) é a mesma prova do casamento: também volta.
-      const { data: fx2 } = fx && fx.length ? { data: fx } : await db.from('data_fixes').select('id').eq('check_key', 'paid-from').in('table_name', nomesHistoricos(tg.t)).eq('row_id', tg.id).eq('new_value', 'GZ28US').ilike('label', 'AUTO ·%').limit(1)
+      const { data: fx2 } = fx && fx.length ? { data: fx } : await trail('AUTO ·%')
       if (fx2 && fx2.length) {
-        const { data: r } = await db.from(tg.t).update({ paid_from: null }).eq('id', tg.id).eq('paid_from', 'GZ28US').select('id')
-        if (r && r.length) changed.push(tg.t + '.paid_from→null (era prova do casamento)')
+        // PAID FROM volta a vazio (null), como sempre. PAID TO é NOT NULL (default GZ28US): volta ao valor que a trilha guardou, ou ''.
+        const back = f === 'paid_to' ? (fx2[0].old_value ?? '') : null
+        const { data: r } = await db.from(tg.t).update({ [f]: back }).eq('id', tg.id).eq(f, 'GZ28US').select('id')
+        if (r && r.length) changed.push(tg.t + '.' + f + '→' + (back === null ? 'null' : "'" + back + "'") + ' (era prova do casamento)')
       }
     }
   }
@@ -1523,6 +1735,13 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
       return !(data && data.matched_table === table && String(data.matched_id) === String(rowId))
     }
     try {
+      // TARIFA INTERNACIONAL (BL 1.7.0): onde a compra que a causou está casada. Tarifa que já tem lançamento no custo fixo por esta
+      // linha (retry de rodada anterior) fica no caminho padrão, que o reaproveita — nunca duas casas pra mesma tarifa.
+      let home: AssessmentHome | null = null
+      if (it.engine === 'FEE' && it.create && ASSESSMENT_RE.test(String(l.name || ''))) {
+        const { data: prevFee } = await db.from('fixed_cost_expenses').select('id').eq('bank_transaction_id', l.id).maybeSingle()
+        if (!prevFee) home = await assessmentParentFor(db, l)
+      }
       if (it.ignore && it.rule) {
         const r = it.rule
         await writeStatus(db, l, 'IGNORED', { note: ('AUTO · RULE · IGNORE · ' + (r.label || l.merchant || l.name || '')).slice(0, 150), engine: 'RULE', batch, rule: r.id })
@@ -1533,6 +1752,11 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         await writeStatus(db, l, 'TRANSFER', { note: ('AUTO · RULE · TRANSFER · ' + (r.label || l.merchant || l.name || '')).slice(0, 150), engine: 'RULE', batch, rule: r.id })
         res.transfer++
         fixes.push(fix(l.id, 'RULE → TRANSFER · ' + lineLabel(l), 'TRANSFER'))
+      } else if (it.engine === 'FEE' && it.create && home) {
+        // TARIFA INTERNACIONAL (Livro 14.22, BL 1.7.0): a compra que a causou é única e casada com UM registro — a tarifa vai junto dela.
+        await bookAssessment(db, l, home, batch)
+        res.fee_create++
+        fixes.push(fix(l.id, 'FEE tarifa internacional 3% junto da compra → ' + home.where + ' (compra ' + String(home.parent.date || '').slice(0, 10) + ' $' + Math.abs(num(home.parent.amount)).toFixed(2) + ' · ' + home.table + ') · ' + lineLabel(l)))
       } else if (it.engine === 'FEE' && it.create) {
         // BOOKKEEPING, não cobrança (João, 26/ago, 2º ato): cobrar o cliente
         // DEPOIS do wire é ideia morta — o preço cobre a tarifa ANTES, na

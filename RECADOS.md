@@ -6,6 +6,31 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 14/set/2026 (00h38 Orlando) · da sessão do Márcio para a sessão do João — LEI DO PLAID NO FUNIL + TARIFA INTERNACIONAL (BL 1.7.0)
+
+Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO: o Bank Link é módulo do João, e o Márcio autorizou terminar este trabalho
+(Livro 14.21 e 14.22). Branch de trabalho, sem push nem deploy; nada foi escrito no banco (medições só de leitura).
+
+- **`writeMatch` crava o pagador.** Todo registro que o casamento cobre (alvo simples, membros de purchase_group, expense_group e
+  mixed_group) ganha PAID FROM GZ28US (sete tabelas de gasto; estoque só PURCHASED) ou, na renda, PAID TO GZ28US — **só onde o
+  campo está NULL ou ''**. Vai no backfill (valor anterior fiel) e em `data_fixes` (`paid-from`, label
+  `CERTO (Regions) · lei do Plaid 13/09 · …`). O `writeUnmatch` já lia essa trilha pro PAID FROM e agora lê também o PAID TO da
+  renda (volta ao `old_value`, nunca null — a coluna é NOT NULL). Helpers novos exportados: `matchRecords`, `brPaidAmong`,
+  `payerFieldOf`, `PAYER_FROM_TABLES`, `PAYER_TO_TABLES`, `PLAID_LAW_LABEL`.
+- **Recusa dura de GZ28BR no funil**, antes do claim (409 «recusado»). Caminhos que alcançavam registro GZ28BR sem passar pelo pool:
+  RESTAURAR DIÁRIO e WIRE + TAXA (fechados pelo funil); ADOTAR da fila A ATRIBUIR/FIXO (agora pula agendada GZ28BR); CARRO recusa
+  linha do balde marcada GZ28BR. No CASAR COM AJUSTE a rota só troca pagador ESCRITO; o vazio ficou com o funil (uma trilha por campo).
+- **Tarifa internacional (motor FEE):** a «INTERNATIONAL SERVICE ASSESSMENT» vai junto da compra que a causou quando há UMA compra
+  (±2 dias, 3% exato em centavos meio-pra-cima, comerciante no nome) casada com UM registro de invoice_expenses (invoice aberta),
+  staff_expenses (mesma season/origem) ou fixed_cost_expenses (mesmo fornecedor); senão, Regions Bank como sempre. Marcador
+  `repasse (auto Bank Link)`; o DESFAZER apaga só essa linha. Régua medida nas 19 tarifas reais (`assessmentParentFor`).
+- **Pro Data Checker, se servir:** a linha de repasse numa invoice ou season é `invoice_expenses`/`staff_expenses` nova e paga —
+  a rede de report do grupo (`expenseReportNet`) a reporta se o dinheiro é recente, como qualquer linha. O card de ÓRFÃO só vê
+  `staff_expenses` PESSOAL; a despesa de tarifa numa season GZ28US não aparece lá se ficar sem linha apontando.
+- **Achado de tempo:** o FEE lança a tarifa na hora, e as passagens costumam ser casadas por gente dias depois — nesses casos a tarifa
+  continua caindo na Regions (a regra só vale se a compra já está casada). Esperar a compra (ex.: 7 dias, como o balde) seria decisão
+  de vocês e do Márcio; não entrou.
+
 ## 13/set/2026 (23h40 Orlando) · da sessão do Márcio para a sessão do João — AS CHAVES FORAM TROCADAS
 
 O Márcio colou as envs novas na Vercel e os apps foram redeployados; conferido por fora. **A chave de leitura velha não abre

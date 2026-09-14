@@ -662,7 +662,10 @@ export async function POST(req: NextRequest) {
         const oldAmt = Math.round(num(r.amount) * 100) / 100
         const patch: Record<string, unknown> = { bank_transaction_id: line.id }
         if (Math.abs(newAmt - oldAmt) >= 0.005) patch.amount = newAmt
-        if (String(r.paid_from || '') !== 'GZ28US') patch.paid_from = 'GZ28US'
+        // Pagador ESCRITO e diferente (GZ28BR no papel, a Regions provou GZ28US): a correção é daqui, com trilha própria. Pagador VAZIO
+        // não é correção, é a lei do Plaid (BL 1.7.0): o funil (writeMatch) crava depois do claim, com a trilha CERTO (Regions) que o
+        // DESFAZER lê — uma escrita e uma trilha por campo, nunca as duas.
+        if (r.paid_from && String(r.paid_from) !== 'GZ28US') patch.paid_from = 'GZ28US'
         if (r.paid_from && r.source === r.paid_from) patch.source = 'GZ28US'
         // Uma escrita por registro, guardada pelo elo vazio e pelo valor antigo: 0 linhas = alguém mexeu.
         const { data: ok, error } = await db.from('staff_expenses').update(patch).eq('id', r.id).is('bank_transaction_id', null).eq('amount', r.amount).select('id')
@@ -1032,6 +1035,8 @@ export async function POST(req: NextRequest) {
         if (line.match_status !== 'MATCHED' || line.match_engine !== ENGINE_BUCKET || line.reviewed_at || line.matched_table !== 'invoice_expenses') throw new Error('linha não está no balde — recarregue')
         const { data: row } = await db.from('invoice_expenses').select('*').eq('id', line.matched_id).maybeSingle()
         if (!row || row.invoice_id !== bucketId || String(row.purchase_group) !== String(line.id) || !String(row.item || '').includes(MARKER_BUCKET)) throw new Error('linha não está no balde — recarregue')
+        // LEI DO PLAID (BL 1.7.0): a linha do balde nasce GZ28US; se alguém a marcou GZ28BR no editor, ela não sai do balde casada com a Regions.
+        if (String(row.paid_from || '') === 'GZ28BR' || String(row.paid_to || '') === 'GZ28BR') throw new Error('recusado: a linha do balde diz que quem pagou foi a GZ28BR — o que a GZ28BR paga nunca passa na Regions; corrija o pagador ou DESFAZER')
         const amt = Math.abs(num(line.amount))
         if (Math.abs(expLine(row) - amt) >= 0.011) throw new Error('valor da linha mudou (Plaid) — DESFAZER e deixe o motor recriar')
         const clean = String(row.item || '').replace(MARKER_BUCKET, '').trim()
@@ -1115,8 +1120,9 @@ export async function POST(req: NextRequest) {
           const { data: sup } = await db.from('fixed_cost_suppliers').select('id, company, cost_type').eq('id', supplierId).maybeSingle()
           if (!sup || sup.cost_type === 'BANK') throw new Error('fornecedor de custo fixo inválido')
           // ADOTA a agendada do mês (±20 d, ±50% ou ≤ $100) ou cria SINGLE paga.
-          const { data: open } = await db.from('fixed_cost_expenses').select('id, expense_date, amount, description, paid_from').eq('supplier_id', supplierId).is('payment_date', null).is('bank_transaction_id', null)
-          const near = (open || []).filter((a: any) => a.expense_date && Math.abs(signedDays(String(a.expense_date), String(line.date))) <= ADOPT_WINDOW_DAYS && Math.abs(num(a.amount) - amt) <= Math.max(100, 0.5 * num(a.amount)))
+          const { data: open } = await db.from('fixed_cost_expenses').select('id, expense_date, amount, description, paid_from, paid_to').eq('supplier_id', supplierId).is('payment_date', null).is('bank_transaction_id', null)
+          // Agendada paga pela GZ28BR nunca é adotada pela Regions (BL 1.7.0 — a régua do sched/brPaid do pool): sobrescrever o pagador era casar registro da BR.
+          const near = (open || []).filter((a: any) => String(a.paid_from || '') !== 'GZ28BR' && String(a.paid_to || '') !== 'GZ28BR' && a.expense_date && Math.abs(signedDays(String(a.expense_date), String(line.date))) <= ADOPT_WINDOW_DAYS && Math.abs(num(a.amount) - amt) <= Math.max(100, 0.5 * num(a.amount)))
             .sort((a: any, x: any) => Math.abs(signedDays(String(a.expense_date), String(line.date))) - Math.abs(signedDays(String(x.expense_date), String(line.date))))
           let backfill: any[] | null = null
           if (near.length) {
