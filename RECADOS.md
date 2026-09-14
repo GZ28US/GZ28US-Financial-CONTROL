@@ -6,6 +6,32 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 14/set/2026 (01h20 Orlando) · da sessão do Márcio para a sessão do João — NO AR: BL 1.7.0–1.7.2, DC 1.55.0–1.55.1 E COLUNAS NOVAS DA TRAVESSIA
+
+Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. O recado de 00h38, logo abaixo, dizia «sem push nem deploy»: **agora está
+tudo no ar** (master 4fddd2b, deploy READY 01:13 Orlando, conferido no código servido).
+
+- **BL 1.7.0** (lei do Plaid no funil + tarifa internacional com a compra): o recado de baixo continua valendo, só que em produção.
+- **BL 1.7.1:** as linhas que o Bank Link cria nascem com PAID TO GZ28US escondido (onda 10). A tarifa internacional em
+  `fixed_cost_expenses` também, igual às de staff e invoice.
+- **BL 1.7.2:** `GET /api/bank/reconcile?matched=1` devolve também `inflows`, as entradas não pendentes e não REMOVED com valor
+  absoluto. É só acréscimo: `outflows` não mudou.
+- **DC 1.55.0 (onda 10):** regra do pagador em `lib/payerRule.ts` (PAYER_RULE, hiddenPayers, fillHiddenPayers).
+  - SUPPLIES, ESTOQUE e CUSTO FIXO têm PAID FROM e PAID TO GZ28US escondidos. Invoice, asset, despesa de asset e staff escondem só o PAID TO.
+  - Card novo `house-payer`. O escondido nunca passa por cima de pagador gravado, nem de `source` legado GZ28BR.
+  - O conserto de data só grava o pagador em linha que não tinha `payment_date`.
+- **DC 1.55.1:** o card «Paga no app, sem linha no banco» cobre as sete tabelas de gasto mais a renda. A regra está em `lib/paidNoBank.ts`.
+  - Medido às 01:08: 318 registros, $750.206.
+  - Dúvidas abertas: sobreposição com «Dinheiro no app que a Regions não mostra» (lá aparece como NÃO CONTA; o VISTO de lá segue no placar) e TEMU CREDIT/PIX como «designar».
+- **Travessia US ⇄ BR (shopping invoices), colunas criadas às 01:15 nos dois bancos:**
+  - `invoices.mirror_key`; `mirror_src` nas linhas.
+  - US: `invoice_incomes.br_payment_id`. BR: `invoice_payments.amount_usd` e `us_income_id`.
+  - Índice único (client_id, invoice_code) nos dois. Criar invoice com código repetido no mesmo cliente passa a dar 23505, de propósito.
+  - Os elos das despesas das 006.N (US, 58) e das 085.N (BR, 68) foram preenchidos, com trilha `shopping-invoice-elos`.
+  - O motor (`lib/crossing.server.ts`) ainda NÃO rodou.
+- **Achado de passagem (não consertado):** `lib/closeScore.server.ts` tira o dia do `paid_at` do UTC cru. Renda baixada depois das
+  20h de Orlando cai no dia seguinte (lei O RELÓGIO). O card novo usa o dia de Orlando (`orlandoDay` em lib/paidNoBank.ts).
+
 ## 14/set/2026 (00h38 Orlando) · da sessão do Márcio para a sessão do João — LEI DO PLAID NO FUNIL + TARIFA INTERNACIONAL (BL 1.7.0)
 
 Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO: o Bank Link é módulo do João, e o Márcio autorizou terminar este trabalho
