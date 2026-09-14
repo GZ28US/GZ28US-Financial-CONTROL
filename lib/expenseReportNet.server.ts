@@ -10,6 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enviaUltra } from '@/lib/waSend.server'
 import { semMarcacao } from '@/lib/waMentions'
+import { fillHiddenPayers } from '@/lib/payerRule'
 
 // Só linhas criadas após a entrada da rede — histórico não é re-reportado.
 const EPOCH = '2026-07-26T16:00:00Z'
@@ -100,13 +101,22 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
     e.expense_date || String(e.created_at || '').slice(0, 10)
   const patch = (e: { expense_date?: string | null }, d: string) =>
     e.expense_date ? { payment_date: d } : { payment_date: d, expense_date: d }
+  // PAGADOR ESCONDIDO (onda 10, 14/set/2026): toda linha abaixo estava sem payment_date e acabou
+  // de ganhar um — o pagamento nasce aqui, e com ele o campo escondido da régua (lib/payerRule:
+  // PAID TO nas despesas, os dois no custo fixo), só onde vazio. Falha vira log: não desfaz a baixa.
+  const hidden = async (t: 'staff_expenses' | 'invoice_expenses' | 'fixed_cost_expenses', id: string) => {
+    const hErr = await fillHiddenPayers(db, t, [id])
+    if (hErr) console.error('[receipt-paid] pagador escondido não gravou:', hErr)
+  }
 
   const { data: se } = await db.from('staff_expenses')
     .select('id, expense_date, created_at').not('receipt_url', 'is', null).is('payment_date', null)
   for (const e of (se || []) as any[]) {
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('staff_expenses').update(patch(e, d)).eq('id', e.id)
-    if (!error) fixed++
+    // O pagamento nasceu agora: o PAID TO escondido nasce junto (GZ28US, só se vazio —
+    // lib/payerRule). Quem pagou é escolha e não se deduz do comprovante aqui.
+    if (!error) { fixed++; await hidden('staff_expenses', e.id) }
   }
 
   const { data: ie } = await db.from('invoice_expenses')
@@ -138,7 +148,7 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
     if (e.receipt_proves_payment === false) continue
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('invoice_expenses').update(patch(e, d)).eq('id', e.id)
-    if (!error) fixed++
+    if (!error) { fixed++; await hidden('invoice_expenses', e.id) }
   }
 
   const { data: fc } = await db.from('fixed_cost_expenses')
@@ -146,7 +156,8 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
   for (const e of (fc || []) as any[]) {
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('fixed_cost_expenses').update({ payment_date: d }).eq('id', e.id)
-    if (!error) fixed++
+    // Custo fixo não escolhe pagador: PAID FROM e PAID TO nascem GZ28US com o pagamento, só se vazios.
+    if (!error) { fixed++; await hidden('fixed_cost_expenses', e.id) }
   }
 
   return { fixed }

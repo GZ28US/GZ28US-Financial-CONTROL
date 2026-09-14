@@ -15,11 +15,9 @@ export function matchSource(payer: string | null | undefined): string {
   return DEFAULT_SOURCE
 }
 
-export default function SourceSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
-  return (
-    <select value={value || DEFAULT_SOURCE} onChange={(e) => onChange(e.target.value)} className={className}>
-      {EXPENSE_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
-      {value && !EXPENSE_SOURCES.includes(value) && <option value={value}>{value}</option>}
-    </select>
-  )
-}
+// O SELETOR <SourceSelect> SAIU em 14/set/2026 (onda 10 do pacote PAID FROM/TO). Ele gravava só o
+// SOURCE legado e mostrava GZ28US no lugar do vazio — em SUPPLIES era um segundo PAID FROM ao lado
+// do bloco de pagamento (lei «campo duplicado: nunca»), e na despesa extra de asset e nos diálogos
+// de compra o paid_from, que é quem manda, ficava de fora. Pagador à mostra agora é só o bloco
+// (components/PaymentFields) ou o PaidFromSelect de lá, pela régua de lib/payerRule.ts. Aqui ficam
+// as constantes do SOURCE, que ainda é gravado como espelho e lido como pagador reserva (whoPaid).

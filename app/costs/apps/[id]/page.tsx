@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, payerToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, payerToRow, hiddenPayers } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -85,7 +85,8 @@ export default function AppViewPage() {
       // One row per month is enough for an app; months that already have a real
       // (paid) receipt row or a scheduled one are left alone.
       if (pd >= today && !(end && pd > end) && !existingMonths.has(key.slice(0, 7))) {
-        toInsert.push({ supplier_id: id, type: 'SINGLE', description: sup.description || sup.company || 'App', amount: Number(sup.amount_1) || 0, source: DEFAULT_SOURCE, expense_date: key })
+        // Linha NOVA de custo fixo: PAID FROM e PAID TO nascem GZ28US, escondidos (Márcio, 11/set).
+        toInsert.push({ supplier_id: id, type: 'SINGLE', description: sup.description || sup.company || 'App', amount: Number(sup.amount_1) || 0, source: DEFAULT_SOURCE, expense_date: key, ...hiddenPayers('fixed_cost_expenses', null, false) })
         existingMonths.add(key.slice(0, 7))
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)

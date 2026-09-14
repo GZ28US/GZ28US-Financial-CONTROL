@@ -95,8 +95,8 @@ export default function NewInputPage() {
   const [tracking, setTracking] = useState('')
   const [carrier, setCarrier] = useState('')
   const [notes, setNotes] = useState('')
-  const [source] = useState(DEFAULT_SOURCE)
-  // Universal payment block (inputs keep their own `source` field — no write-through).
+  // Universal payment block. Em SUPPLIES/ESTOQUE ele só mostra PAYMENT METHOD: não há pagador à
+  // mostra (nem PAID FROM, nem o antigo seletor do SOURCE) — os dois nascem GZ28US no insert.
   const [payment, setPayment] = useState<PaymentInfo>(defaultPayment())
   const [receiptUrls, setReceiptUrls] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -185,7 +185,9 @@ export default function NewInputPage() {
       tracking_number: tracking.trim() || null,
       carrier: carrier.trim() || null,
       notes: notes.trim() || null,
-      source,
+      // SOURCE legado (ainda lido como pagador reserva pelo whoPaid): espelha o PAID FROM
+      // escondido, que nesta tabela nasce sempre GZ28US.
+      source: DEFAULT_SOURCE,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       // Registered = paid (Comprovante = PAGA); payment_date is a mirror of the
       // single DATE — never a second date. No date yet → both stay empty.

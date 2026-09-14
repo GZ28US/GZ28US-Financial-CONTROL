@@ -7,6 +7,7 @@ import { sendStreamWhatsApp } from '@/lib/stream.server'
 // texto de fora. `semMarcacao` quebra o `@numero` desses pedaços para que um
 // e-mail de cobrança não escolha quem o app marca no grupo. Ver lib/waMentions.
 import { semMarcacao } from '@/lib/waMentions'
+import { hiddenPayers, fillHiddenPayers } from '@/lib/payerRule'
 
 // APPS watcher — TODAS as caixas do Márcio são fonte das assinaturas de apps
 // (regra 2026-07-25: "caça em todos os emails, todas as pastas, inclusive junk,
@@ -409,10 +410,18 @@ async function registerReceipt(
   if (settle.id) {
     const { error: eUp } = await db.from('fixed_cost_expenses').update({ amount, payment_date: info.payDate, description: desc, receipt_url: info.link }).eq('id', settle.id)
     if (eUp) throw new Error(`baixa da linha ${settle.id}: ${eUp.message}`)
+    // A linha em aberto acabou de ser paga: PAID FROM e PAID TO nascem GZ28US, escondidos (custo
+    // fixo não escolhe pagador — Márcio, 11/set), só onde estiverem vazios. Falhar aqui não
+    // desfaz a baixa: fica no log, e o card do Data Checker pega a linha paga sem PAID FROM.
+    const hErr = await fillHiddenPayers(db, 'fixed_cost_expenses', [settle.id])
+    if (hErr) console.error('[apps-mail] pagador escondido não gravou:', hErr)
   } else {
+    // Linha NOVA de custo fixo: PAID FROM e PAID TO nascem GZ28US, escondidos (Márcio, 11/set).
+    // Antes nascia só com o SOURCE — o recibo da Anthropic e cia virava linha paga sem PAID FROM.
     const { error: eIns } = await db.from('fixed_cost_expenses').insert({
       supplier_id: row.id, type: 'SINGLE', description: desc, amount,
       source: 'GZ28US', expense_date: info.payDate, payment_date: info.payDate, receipt_url: info.link,
+      ...hiddenPayers('fixed_cost_expenses', null, true),
     })
     if (eIns) throw new Error(`inserir o pagamento: ${eIns.message}`)
   }
@@ -459,6 +468,7 @@ async function handleFailure(
         supplier_id: row.id, type: 'SINGLE', description: desc,
         amount: amount ?? (Number(row.amount_1) || 0), source: 'GZ28US',
         expense_date: date, payment_date: null,
+        ...hiddenPayers('fixed_cost_expenses', null, false),   // linha nova de custo fixo: os dois GZ28US, escondidos
       })
       if (eIns) throw new Error(`inserir a recusa: ${eIns.message}`)
     }

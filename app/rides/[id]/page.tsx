@@ -9,6 +9,7 @@ import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, c
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
+import { hiddenPayers } from '@/lib/payerRule'
 
 type Ride = {
   id: string
@@ -77,6 +78,7 @@ type FleetExp = DeliverChipRow & {
   id: string; item: string | null; supplier: string | null
   price: number; quantity: number; tax: number; extra: number; item_discount: number
   expense_date: string | null; payment_date: string | null
+  paid_to?: string | null   // o EDIT precisa saber se o PAID TO escondido está vazio antes de marcar PAID
   // ORDER NUMBER é SAGRADO (29/ago/2026): a despesa da frota também nasce com
   // o pedido. E o RASTREIO mora na MESMA linha desde a virada de chave do mesmo
   // dia — "o tracking, carrier e o que quer que seja necessario pra rastrear
@@ -91,7 +93,9 @@ const expLine = (e: FleetExp) =>
   // régua em invoices/edit:1384. `price` já é o custo líquido; subtrair o percentual
   // aqui tirava reais do custo e inflava o lucro.
   (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0)
-const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '' }
+// wasPaid/paidTo: como a despesa estava ANTES do EDIT — decidem se o PAID TO escondido nasce
+// neste salvamento (hiddenPayers). Linha nova não usa: nasce com ele no insert.
+const emptyExpForm = { id: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '', wasPaid: false, paidTo: '' }
 
 type Stats = {
   currentProfit: number
@@ -227,7 +231,7 @@ export default function ViewRidePage() {
     // roda, o PostgREST devolve 400/42703, não lista vazia. Sem este desvio, esta
     // tela jurava "EXPENSES (0) · $0.00" em cima de US$ 202.087 de frota, e ainda
     // recarregava depois de salvar, fazendo a despesa recém-lançada sumir.
-    const COLS = 'id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, order_number, stock_source_type, ' + DELIVER_COLUMNS
+    const COLS = 'id, item, supplier, price, quantity, tax, extra, item_discount, expense_date, payment_date, paid_to, order_number, stock_source_type, ' + DELIVER_COLUMNS
     let { data, error } = await supabase.from('invoice_expenses').select(COLS).in('invoice_id', invoiceIds)
     if (error?.code === '42703' && /\bnature\b/.test(String(error.message || ''))) {
       ({ data, error } = await supabase.from('invoice_expenses').select(COLS.replace(/,\s*nature\b/, '')).in('invoice_id', invoiceIds))
@@ -270,13 +274,18 @@ export default function ViewRidePage() {
     setSavingExp(true)
     try {
       if (expForm.id) {
-        const { error } = await supabase.from('invoice_expenses').update(row).eq('id', expForm.id)
+        // EDIT que marca PAID numa despesa que estava sem pagamento: o PAID TO escondido nasce
+        // junto (GZ28US, só se vazio — hiddenPayers). Fora disso a edição não mexe em pagador.
+        const hidden = hiddenPayers('invoice_expenses', { paid: expForm.wasPaid, paid_to: expForm.paidTo }, !!row.payment_date)
+        const { error } = await supabase.from('invoice_expenses').update({ ...row, ...hidden }).eq('id', expForm.id)
         if (error) { alert(error.message); return }
       } else {
         // Sem invoice não há onde pendurar o gasto — o carro da frota sempre tem
         // a sua (a mais antiga é a conta do carro).
         if (!invoices.length) { alert('Este carro não tem invoice para receber a despesa.'); return }
-        const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: invoices[0].id }])
+        // Linha NOVA de invoice: PAID TO nasce GZ28US, escondido (Márcio, 11/set) — o mesmo
+        // formulário da frota em /goods. Sem PAID FROM aqui: quem pagou segue pergunta do Data Checker.
+        const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: invoices[0].id, ...hiddenPayers('invoice_expenses', null, !!row.payment_date) }])
         if (error) { alert(error.message); return }
       }
       setExpForm(null)
@@ -627,7 +636,7 @@ export default function ViewRidePage() {
                         </>
                       ) : (
                         <>
-                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                          <button onClick={() => setExpForm({ id: e.id, item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || e.expense_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '', wasPaid: !!e.payment_date, paidTo: e.paid_to || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                           <button onClick={() => setConfirmExpId(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                         </>
                       )}

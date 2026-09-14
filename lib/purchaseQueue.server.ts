@@ -28,6 +28,7 @@ import { semMarcacao } from '@/lib/waMentions'
 import { bucketInvoiceId, logMatchEvent, MARKER_BUCKET, MARKER_ASSIGNED, ENGINE_BUCKET } from '@/lib/bankReconcile.server'
 import { normSup } from '@/lib/supplierMatch'
 import { normNature } from '@/lib/itemNature'
+import { hiddenPayers } from '@/lib/payerRule'
 
 const SIGNATURE = 'Sent by GZ28US Control App®'
 // 31/ago/2026: era o cel US do Márcio — que é o número da PRÓPRIA instância. A
@@ -197,7 +198,9 @@ async function place(db: SupabaseClient, r: StreamRow, dest: string, out: string
       const { data: ins } = await db.from('inputs').insert({
         description: titleOf(r), category, quantity: 1, unit_price: amt,
         purchase_date: today, payment_date: today, supplier: r.supplier,
-        order_number: r.order_number, payment_method: methodOf(r), paid_from: 'GZ28US',
+        order_number: r.order_number, payment_method: methodOf(r),
+        // SUPPLIES não escolhe pagador: PAID FROM e PAID TO nascem GZ28US, escondidos (lib/payerRule).
+        ...hiddenPayers('inputs', null, true),
         nature,   // O QUE É ESTA LINHA — lido na triagem, gravado na origem
       }).select('id').single()
       if (ins?.id) {

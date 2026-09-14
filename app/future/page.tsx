@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import { hiddenPayers } from '@/lib/payerRule'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -55,7 +56,8 @@ async function ensureFixedCostPayments() {
         const key = ymd(pd)
         const mk = sup.id + '|' + key.slice(0, 7)
         if (!(end && pd > end) && pd <= targetEnd && !has.has(key) && (countBySupMonth.get(mk) || 0) < slots.length) {
-          toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key })
+          // Linha NOVA de custo fixo: PAID FROM e PAID TO nascem GZ28US, escondidos (Márcio, 11/set).
+          toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key, ...hiddenPayers('fixed_cost_expenses', null, false) })
           has.add(key)
           countBySupMonth.set(mk, (countBySupMonth.get(mk) || 0) + 1)
         }
@@ -112,7 +114,8 @@ async function ensureStaffPayments() {
       for (; cursor <= limit; cursor.setDate(cursor.getDate() + 7)) {
         const key = ymd(cursor)
         if (has.has(`${s.id}|WEEKLY|${key}`)) continue
-        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto` })
+        // Linha NOVA de staff: o PAID TO nasce GZ28US, escondido; quem pagou nasce no pagamento.
+        toInsert.push({ season_id: s.id, type: 'WEEKLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, description: `Semanal (sexta ${key.slice(8, 10)}/${key.slice(5, 7)}) — previsto`, ...hiddenPayers('staff_expenses', null, false) })
       }
     } else if (s.pay_type === 'MONTHLY') {
       // Uma linha por mês, no dia escolhido (sem escolha, no último dia). Mês
@@ -126,7 +129,7 @@ async function ensureStaffPayments() {
       for (; c <= limit; c = diaDoMes(c.getFullYear(), c.getMonth() + 1)) {
         const key = ymd(c)
         if (has.has(`${s.id}|MONTHLY|${key}`)) continue
-        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto` })
+        toInsert.push({ season_id: s.id, type: 'MONTHLY', amount: valor, amount_brl: brl, expense_date: key, payment_date: null, description: `Mensal ${key.slice(5, 7)}/${key.slice(0, 4)} — previsto`, ...hiddenPayers('staff_expenses', null, false) })
       }
     }
   }

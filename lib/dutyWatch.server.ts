@@ -23,6 +23,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken, listMailAuths, listGmailIds } from './streamMail.server'
 import { enviaUltra } from './waSend.server'
 import { semMarcacao } from './waMentions'
+import { hiddenPayers } from './payerRule'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const GM = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -249,6 +250,9 @@ export async function runDutyWatch(db: SupabaseClient): Promise<{ booked: string
         expense_date: msg.dateStr || runStart.slice(0, 10),
         payment_date: paid ? (msg.dateStr || runStart.slice(0, 10)) : null,
         order_number: invNo,
+        // Linha NOVA de invoice: PAID TO nasce GZ28US, escondido (lib/payerRule). Quem pagou o
+        // imposto é escolha — o e-mail do carrier não diz, e segue pergunta do Data Checker.
+        ...hiddenPayers('invoice_expenses', null, paid),
       })
     }
     booked.push(`${carrier} ${usd(amount)} → ${invoiceIds.map(codeOf).join(' + ')}`)

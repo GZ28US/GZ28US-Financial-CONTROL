@@ -1,6 +1,7 @@
 'use client'
 
 import DatePicker from '@/components/DatePicker'
+import { PAYER_RULE, HOUSE_PAYER, hiddenPayers, type PayerMode, type PayerTable } from '@/lib/payerRule'
 
 // ── UNIVERSAL PAYMENT BLOCK (Márcio, 01/ago/2026) ────────────────────────────
 // Every expense/income enrollment area of the system shows THE SAME payment
@@ -39,34 +40,11 @@ export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
 // ── QUEM PAGA E QUEM RECEBE, TABELA POR TABELA (Márcio, 11/set/2026) ─────────
-// A régua dele: tabela que é movimentação de dinheiro grava os dois campos, no mínimo
-// com GZ28US escondido («isso é movimentação de $, então tem que ter GZ28US escondido
-// pra paid to e paid from»). ESCOLHA só existe em cinco tabelas («nenhuma outra do app»):
-//   · nas despesas (invoice_expenses, assets, assets_expenses, staff_expenses) o PAID
-//     FROM escolhe GZ28US ou GZ28BR, e o PAID TO fica «SEMPRE como GZ28US, pra todas,
-//     só não mostre na tela»;
-//   · nas incomes é ao contrário: o PAID TO escolhe e o PAID FROM SAI — renda não tem
-//     quem-pagou, e a coluna cai no banco numa onda própria. 'none' = nunca vai no payload.
-// Em inputs, inventory e fixed_cost_expenses não há escolha: os dois são GZ28US, escondidos.
-// SEM CHECK no banco, de propósito: «qualquer empresa pode pagar pra qualquer empresa, o
-// importante é o Flow reportar» — um cadeado fecharia essa porta para sempre; a regra
-// mora aqui, e a tela e a gravação leem a MESMA linha desta tabela (por isso o
-// componente e o paymentToRow pedem o nome da tabela, e não dois booleanos soltos que
-// uma página poderia esconder de um lado e esquecer do outro).
-// invoice_items não aparece: «não existe movimentação financeira no ITEMS».
-export type PayerMode = 'choice' | 'house' | 'none'
-export const HOUSE_PAYER = 'GZ28US'
-export const PAYER_RULE = {
-  invoice_expenses: { paidFrom: 'choice', paidTo: 'house' },
-  invoice_incomes: { paidFrom: 'none', paidTo: 'choice' },
-  assets: { paidFrom: 'choice', paidTo: 'house' },
-  assets_expenses: { paidFrom: 'choice', paidTo: 'house' },
-  staff_expenses: { paidFrom: 'choice', paidTo: 'house' },
-  inputs: { paidFrom: 'house', paidTo: 'house' },
-  inventory: { paidFrom: 'house', paidTo: 'house' },
-  fixed_cost_expenses: { paidFrom: 'house', paidTo: 'house' },
-} as const satisfies Record<string, { paidFrom: PayerMode; paidTo: PayerMode }>
-export type PayerTable = keyof typeof PAYER_RULE
+// A régua mora em lib/payerRule.ts (módulo puro, lido também pelos robôs do servidor).
+// A tela e a gravação leem a MESMA linha dela: por isso o componente e o paymentToRow
+// pedem o nome da tabela, e não dois booleanos soltos que uma página poderia esconder
+// de um lado e esquecer do outro.
+export { PAYER_RULE, HOUSE_PAYER, hiddenPayers, stockPayerTable, fillHiddenPayers, type PayerMode, type PayerTable } from '@/lib/payerRule'
 
 export type PaymentInfo = {
   method: string
@@ -75,37 +53,24 @@ export type PaymentInfo = {
   paid: boolean
   paymentDate: string // YYYY-MM-DD; meaningful when paid
   // Como a linha estava ANTES do formulário: null = linha nova (defaultPayment);
-  // true/false = linha do banco com ou sem payment_date (paymentFromRow). É o que
-  // decide quando o campo escondido grava — ver hiddenPayerBorn.
+  // true/false = linha do banco com ou sem payment_date (paymentFromRow). Com o
+  // paidFrom/paidTo carregados, é o que decide quando o campo escondido grava
+  // (hiddenPayers, em lib/payerRule.ts).
   wasPaid: boolean | null
-}
-
-// ESCONDIDO GRAVA — na hora em que o pagador nasce, e só nela.
-// Campo escondido que não grava é pior que campo à mostra. Mas campo escondido que
-// reescreve linha velha a cada salvamento apaga a diferença entre «é GZ28US» e
-// «ninguém olhou» — medido em 12/set/2026: PAID TO vazio em 1.133 invoice_expenses (764
-// de invoice real), 30 assets, 9 assets_expenses e 56 staff_expenses, e o DFC já lê vazio
-// como GZ28US — e moveria calado o que foi gravado diferente de propósito (o seguro de
-// viagem do Jeferson, PAID TO GZ28BR, US$ 89,09). Então:
-//   · linha NOVA → GZ28US, sempre, paga ou não;
-//   · linha que já existe e cujo pagamento é registrado NESTE salvamento (estava sem
-//     payment_date e sai com) → GZ28US: «o paid_from nasce na hora do pagamento»;
-//   · fora isso → a chave nem vai no payload, e o banco fica com o que tem.
-export function hiddenPayerBorn(wasPaid: boolean | null, paidNow: boolean): boolean {
-  return wasPaid === null || (!wasPaid && paidNow)
 }
 
 // Só as colunas de pagador, pela régua da tabela. `paidNow` = o registro sai deste
 // salvamento com payment_date. Use direto nos modais que montam o update à mão
 // (RECORD PAYMENT); os formulários comuns passam pelo paymentToRow, que chama isto.
+// Escolha grava o que a tela mostra; escondido segue hiddenPayers (linha nova, ou
+// pagamento nascendo agora com o campo vazio — nunca por cima de um valor gravado).
 export function payerToRow(p: PaymentInfo, table: PayerTable, paidNow: boolean): { paid_from?: string | null; paid_to?: string | null } {
   const rule: { paidFrom: PayerMode; paidTo: PayerMode } = PAYER_RULE[table]
-  const born = hiddenPayerBorn(p.wasPaid, paidNow)
-  const out: { paid_from?: string | null; paid_to?: string | null } = {}
+  const out: { paid_from?: string | null; paid_to?: string | null } = {
+    ...hiddenPayers(table, p.wasPaid === null ? null : { paid: p.wasPaid, paid_from: p.paidFrom, paid_to: p.paidTo }, paidNow),
+  }
   if (rule.paidFrom === 'choice') out.paid_from = p.paidFrom || null
-  else if (rule.paidFrom === 'house' && born) out.paid_from = HOUSE_PAYER
   if (rule.paidTo === 'choice') out.paid_to = p.paidTo || null
-  else if (rule.paidTo === 'house' && born) out.paid_to = HOUSE_PAYER
   return out
 }
 
@@ -138,7 +103,8 @@ export function paymentFromRow(row: { payment_method?: string | null; paid_from?
 // PaymentInfo → DB columns. `expenseDate` (when given and valid) wins over the
 // picker as the paid date ("lancei = paguei na data da despesa").
 // Os pagadores saem pela régua da tabela (payerToRow): escolha grava o que a tela
-// mostra; escondido grava GZ28US quando o pagador nasce e, fora disso, não entra.
+// mostra; escondido grava GZ28US na linha nova, ou quando o pagamento nasce com o
+// campo vazio, e fora disso não entra.
 // Quem precisa de linha SEM pagamento passa `paid: false` — nunca anula o
 // payment_date depois, senão a régua já teria decidido achando que pagou.
 export function paymentToRow(p: PaymentInfo, table: PayerTable, expenseDate?: string | null) {
@@ -165,14 +131,14 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
   const showFrom = rule.paidFrom === 'choice'
   const showTo = rule.paidTo === 'choice'
   // A tela nunca esconde o que está gravado FORA da régua: campo escondido com valor
-  // que não é GZ28US (nem vazio) ganha uma linha dizendo o que está lá e o que o
-  // salvamento faz com ele — o mesmo espírito da opção-fantasma dos seletores.
+  // que não é GZ28US (nem vazio) ganha uma linha dizendo o que está lá — o mesmo
+  // espírito da opção-fantasma dos seletores. Salvar não o troca (hiddenPayers só
+  // preenche vazio): mudar um pagador fora da régua é conversa com o Márcio.
   const offRule = (mode: PayerMode, stored: string, label: string) => (
-    mode === 'house' && stored && stored !== HOUSE_PAYER
+    mode !== 'choice' && stored && stored !== HOUSE_PAYER
       ? (
         <p className="sm:col-span-full text-sm text-amber-300">
-          {label} gravado nesta linha: {stored} — fora da régua desta tabela (aqui é sempre {HOUSE_PAYER}).{' '}
-          {value.wasPaid ? 'O campo não aparece e este salvamento não mexe nele.' : `Se este salvamento registrar o pagamento, vira ${HOUSE_PAYER}.`}
+          {label} gravado nesta linha: {stored} — fora da régua desta tabela ({mode === 'house' ? `aqui é sempre ${HOUSE_PAYER}` : 'aqui não há pagador'}). O campo não aparece e salvar não o muda.
         </p>
       )
       : null
@@ -230,5 +196,23 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
         </div>
       )}
     </div>
+  )
+}
+
+// O SELETOR DE PAID FROM DAS LINHAS SOLTAS (14/set/2026) — diálogos e sub-formulários
+// que não usam o bloco inteiro (despesa extra de asset, REVIEW/EDIT PURCHASE). É o
+// MESMO seletor do bloco: dois pagadores, opção-fantasma para valor legado e, na linha
+// que já existe, vazio aparece «— quem pagou? —» em âmbar (Caso Drácula). O antigo
+// SourceSelect mostrava GZ28US no lugar do vazio e gravava só o SOURCE: o paid_from, que
+// é o campo que o Data Checker e a conta corrente leem, ficava de fora. Quem usa este
+// seletor grava o valor em paid_from (e espelha no SOURCE legado) — e, com ele vazio,
+// não grava pagador nenhum.
+export function PaidFromSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={(className || selectClass) + (!value ? ' border-amber-500 text-amber-300' : '')}>
+      {!value && <option value="">— quem pagou? —</option>}
+      {PAID_FROM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+      {value && !(PAID_FROM_OPTIONS as readonly string[]).includes(value) && <option value={value}>{value}</option>}
+    </select>
   )
 }

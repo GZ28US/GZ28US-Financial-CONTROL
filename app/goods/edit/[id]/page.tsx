@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow, HOUSE_PAYER } from '@/components/PaymentFields'
+import { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow, HOUSE_PAYER, hiddenPayers, PaidFromSelect } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -19,7 +19,13 @@ type Expense = {
   amount: string
   expense_date: string
   supplier: string
+  // O PAID FROM da despesa extra (o nome `source` ficou do tempo em que só existia o campo
+  // legado). Grava em paid_from E espelha no SOURCE; vazio = ninguém disse, não grava pagador.
   source: string
+  // Como a linha do banco estava ao carregar (linha nova não tem): decidem se o PAID TO
+  // escondido nasce no salvamento (hiddenPayers).
+  wasPaid?: boolean
+  paid_to?: string
   receipt_urls: string[]
   // Despesa extra pode ter pedido PRÓPRIO (frete comprado à parte, imposto de outra
   // loja) — assets_expenses.order_number existe desde a migration de 29/ago/2026.
@@ -168,7 +174,11 @@ export default function EditGoodPage() {
     if (expensesData) setExpenses(expensesData.map(e => ({
       id: e.id, description: e.description, amount: String(e.amount),
       expense_date: e.expense_date || '', supplier: e.supplier || '',
-      source: e.source || DEFAULT_SOURCE,
+      // O pagador que vale é o paid_from (o SOURCE legado só quando o novo está vazio, como no
+      // próprio asset acima). Antes lia só o SOURCE e caía em GZ28US: vazio aparecia preenchido
+      // e o salvamento gravava o fabricado (caso Drácula).
+      source: e.paid_from || e.source || '',
+      wasPaid: !!e.payment_date, paid_to: e.paid_to || '',
       order_number: e.order_number || '',
       picked_up: !!e.picked_up,
       tracking_number: e.tracking_number || '',
@@ -274,13 +284,21 @@ export default function EditGoodPage() {
     if (!editingExpense.description || !editingExpense.amount) { alert('Please enter description and amount'); return }
     await ensureSupplier(editingExpense.supplier)
     const exp = expenses[editingExpenseIndex!]
+    // O seletor PAID FROM desta linha é o ÚNICO pagador dela: grava paid_from (o campo que o Data
+    // Checker e a conta corrente leem) e espelha no SOURCE. Antes gravava só o SOURCE — mudar para
+    // GZ28BR não mudava o paid_from, que é quem manda. Vazio não grava pagador nenhum.
+    const payer = editingExpense.source
+    // PAID TO escondido: nasce GZ28US quando esta edição dá o pagamento a uma linha que estava sem
+    // e o campo está vazio (hiddenPayers); fora disso não vai no payload.
+    const hidden: { paid_from?: string; paid_to?: string } = exp.id ? hiddenPayers('assets_expenses', { paid: !!exp.wasPaid, paid_to: exp.paid_to }, isValidDate(editingExpense.expense_date)) : {}
     if (exp.id) {
       const { error } = await supabase.from('assets_expenses').update({
         description: editingExpense.description, amount: parseFloat(editingExpense.amount),
         expense_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null,
         payment_date: isValidDate(editingExpense.expense_date) ? editingExpense.expense_date : null, // espelho
         supplier: editingExpense.supplier.trim() || null,
-        source: editingExpense.source || DEFAULT_SOURCE,
+        ...(payer ? { paid_from: payer, source: payer } : {}),
+        ...hidden,
         // A despesa extra carrega o número do SEU pedido (pode divergir do good)
         // — e o SEU próprio status de entrega, pela mesma razão.
         order_number: editingExpense.order_number.trim() || null,
@@ -291,7 +309,8 @@ export default function EditGoodPage() {
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id }; setExpenses(updated)
+    // O estado segue o banco: o que foi pago agora conta como pago num próximo EDIT, com o PAID TO que acabou de nascer.
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, id: exp.id, ...(exp.id ? { wasPaid: isValidDate(editingExpense.expense_date), paid_to: hidden.paid_to ?? exp.paid_to } : {}) }; setExpenses(updated)
     setEditingExpenseIndex(null); setEditingExpense({ description: '', amount: '', expense_date: '', supplier: '', source: DEFAULT_SOURCE, receipt_urls: [], order_number: '', picked_up: false, tracking_number: '', carrier: '' })
   }
 
@@ -339,9 +358,9 @@ export default function EditGoodPage() {
         payment_date: isValidDate(ex.expense_date) ? ex.expense_date : null, // espelho
         supplier: ex.supplier.trim() || null,
         source: ex.source || DEFAULT_SOURCE,
-        // Linha NOVA: o PAID FROM do seletor vai também pro paid_from (o campo que o Data
-        // Checker e a conta corrente leem) e o PAID TO nasce GZ28US, escondido (Márcio, 11/set).
-        // A edição de uma linha que já existe (saveEditExpense) não mexe em pagador nenhum.
+        // Linha NOVA: o PAID FROM do seletor vai pro paid_from (o campo que o Data Checker e a
+        // conta corrente leem) e pro SOURCE legado, e o PAID TO nasce GZ28US, escondido (Márcio,
+        // 11/set). A edição de uma linha que já existe (saveEditExpense) grava o mesmo seletor.
         paid_from: ex.source || DEFAULT_SOURCE,
         paid_to: HOUSE_PAYER,
         order_number: ex.order_number.trim() || null,
@@ -467,7 +486,7 @@ export default function EditGoodPage() {
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-              <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
+              <PaidFromSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
@@ -499,7 +518,7 @@ export default function EditGoodPage() {
                         </div>
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-                          <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
+                          <PaidFromSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
                         </div>
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>

@@ -8,8 +8,8 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
-import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
-import { HOUSE_PAYER } from '@/components/PaymentFields'
+import { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+import { HOUSE_PAYER, hiddenPayers, fillHiddenPayers, PaidFromSelect } from '@/components/PaymentFields'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
@@ -40,11 +40,13 @@ const ASSET_CATEGORIES = ['FLEET', 'MACHINERY', 'ELECTRONICS', 'GOODS'] as const
 // chave, 29/ago: "o tracking, carrier e o que quer que seja necessario pra
 // rastrear agora vive como coluna nova da tabela dos itens comprados, na
 // origem") — nada de join com part_streams para saber se a peça chegou.
-type FleetExpense = DeliverChipRow & { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; order_number: string | null; receipt_url: string | null }
+type FleetExpense = DeliverChipRow & { id: string; item: string | null; supplier: string | null; price: number; quantity: number; tax: number; extra: number; item_discount: number; payment_date: string | null; paid_to?: string | null; order_number: string | null; receipt_url: string | null }
 // pickedUp/tracking/carrier: a despesa da frota é item comprado como qualquer
 // outro. Desde 30/ago/2026 não há SELETOR de status — "sem campo pra isso, e
 // uma INTERPRETACAO". Guarda-se só o fato que nenhuma conta produz: balcão.
-const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '', receiptUrl: '' }
+// wasPaid/paidTo: como a despesa estava ANTES do EDIT — decidem se o PAID TO escondido nasce
+// neste salvamento (hiddenPayers). Linha nova não usa: nasce com ele no insert.
+const emptyFleetForm = { id: '', carId: '', invoiceId: '', item: '', supplier: '', amount: '', date: '', paid: true, orderNumber: '', pickedUp: false, cancelStatus: null as CancelStatus | null, tracking: '', carrier: '', receiptUrl: '', wasPaid: false, paidTo: '' }
 // Duas coisas diferentes se chamam "nota" num carro:
 //   titleNotes  — rides.title_notes, o DOSSIÊ do documento. Bloco único, escrito
 //                 em TITLE & DOCS na tela do ride. Aqui só se lê.
@@ -257,13 +259,16 @@ export default function GoodsPage() {
     setSavingFleetExp(true)
     try {
       if (fleetForm.id) {
-        const { error } = await supabase.from('invoice_expenses').update(row).eq('id', fleetForm.id)
+        // EDIT que marca PAID numa despesa que estava sem pagamento: o PAID TO escondido nasce
+        // junto (GZ28US, só se vazio — hiddenPayers). Fora disso a edição não mexe em pagador.
+        const hidden = hiddenPayers('invoice_expenses', { paid: fleetForm.wasPaid, paid_to: fleetForm.paidTo }, !!row.payment_date)
+        const { error } = await supabase.from('invoice_expenses').update({ ...row, ...hidden }).eq('id', fleetForm.id)
         if (error) { alert(error.message); return }
       } else {
         if (!fleetForm.invoiceId) { alert('Este carro nao tem invoice para receber a despesa.'); return }
-        // Linha NOVA de invoice: PAID TO nasce GZ28US, escondido (Márcio, 11/set). A edição
-        // (update acima) não mexe em pagador. Este formulário não tem PAID FROM — quem pagou
-        // a despesa da frota segue sendo pergunta do Data Checker quando ela for paga.
+        // Linha NOVA de invoice: PAID TO nasce GZ28US, escondido (Márcio, 11/set). Este
+        // formulário não tem PAID FROM — quem pagou a despesa da frota segue sendo pergunta do
+        // Data Checker quando ela for paga.
         const { error } = await supabase.from('invoice_expenses').insert([{ ...row, invoice_id: fleetForm.invoiceId, paid_to: HOUSE_PAYER }])
         if (error) { alert(error.message); return }
       }
@@ -290,7 +295,8 @@ export default function GoodsPage() {
     // da frota apareciam com $0 — e ainda eram ORDENADOS por esse zero.
     // receipt_url entra na leitura porque o EDIT precisa devolvê-lo ao form: sem
     // isso, editar uma despesa escaneada apagaria o documento do vendedor.
-    const GCOLS = 'id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, stock_source_type, order_number, receipt_url, ' + DELIVER_COLUMNS
+    // paid_to entra pra o EDIT saber se o PAID TO escondido está vazio antes de marcar PAID.
+    const GCOLS = 'id, invoice_id, item, supplier, price, quantity, tax, extra, item_discount, payment_date, paid_to, stock_source_type, order_number, receipt_url, ' + DELIVER_COLUMNS
     let expsRes: any = invIds.length
       ? await supabase.from('invoice_expenses').select(GCOLS).in('invoice_id', invIds)
       : { data: [] as any[], error: null }
@@ -376,6 +382,14 @@ export default function GoodsPage() {
       payment_date: isValidDate(editingPurchaseDate) ? editingPurchaseDate : null,
     }).eq('purchase_group', editingPurchaseGroupId)
     if (error) { alert(error.message); return }
+    // Os itens do pedido que estavam SEM pagamento acabaram de ganhar um: o PAID TO escondido
+    // nasce junto (GZ28US, só onde vazio — a condição mora na escrita). Quem pagou é escolha
+    // do asset e não se fabrica aqui.
+    if (isValidDate(editingPurchaseDate)) {
+      const born = goods.filter(g => g.purchase_group === editingPurchaseGroupId && !g.payment_date).map(g => g.id)
+      const hErr = await fillHiddenPayers(supabase, 'assets', born)
+      if (hErr) console.error('[goods] PAID TO escondido não gravou:', hErr)
+    }
     setEditingPurchaseGroupId(null)
     loadGoods()
   }
@@ -837,7 +851,8 @@ export default function GoodsPage() {
               </div>
               <div className="flex-1 min-w-[10rem]">
                 <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-                <SourceSelect value={scannedPurchase.source} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
+                {/* O único pagador do pedido: vira paid_from (e o SOURCE legado) de cada asset e das linhas de imposto/frete. */}
+                <PaidFromSelect value={scannedPurchase.source} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
               </div>
               <div className="flex-1 min-w-[10rem]">
                 <DatePicker label="DATE" value={scannedPurchase.date} onChange={(v) => setScannedPurchase({ ...scannedPurchase, date: v })} />
@@ -1201,7 +1216,7 @@ export default function GoodsPage() {
                             </>
                           ) : (
                             <>
-                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '', receiptUrl: e.receipt_url || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
+                              <button onClick={() => setFleetForm({ id: e.id, carId: car.id, invoiceId: car.invoiceId || '', item: e.item || '', supplier: e.supplier || '', amount: String(e.price ?? ''), date: e.payment_date || '', paid: !!e.payment_date, orderNumber: e.order_number || '', pickedUp: !!e.picked_up, cancelStatus: normCancelStatus(e.cancel_status), tracking: e.tracking_number || '', carrier: e.carrier || '', receiptUrl: e.receipt_url || '', wasPaid: !!e.payment_date, paidTo: e.paid_to || '' })} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>
                               <button onClick={() => setConfirmFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">REMOVE</button>
                             </>
                           )}

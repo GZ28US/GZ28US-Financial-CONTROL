@@ -57,6 +57,7 @@ import { PEDIDO_NOVO, ESTORNOU } from './mailToItem.server'
 import { matchSupplier, supplierDirectoryFrom, type SupplierEntry } from './supplierMatch'
 import { cacaNaPasta, respostaUnica, type PastaHit } from './dropboxHunt.server'
 import { tabelaAtual } from './tableRenames'
+import { hiddenPayers } from './payerRule'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
 export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
@@ -731,6 +732,10 @@ export async function lancar(
   const { data: sups } = await db.from('suppliers').select('name,aliases,is_dealership')
   const casado = matchSupplier(dados.vendor, supplierDirectoryFrom(sups || []))
   const base: Record<string, unknown> = { supplier: casado?.name || dados.vendor, order_number: dados.order, source: 'GZ28US' }
+  // PAGADOR ESCONDIDO (onda 10, 14/set/2026): a linha nasce com o campo escondido da régua da
+  // tabela (lib/payerRule) — PAID TO GZ28US nas despesas; PAID FROM e PAID TO GZ28US em SUPPLIES.
+  // Vem ANTES do alvo: se a regra ou a resposta humana trouxer pagador, é ela que vale.
+  if (t === 'invoice_expenses' || t === 'staff_expenses' || t === 'inputs') Object.assign(base, hiddenPayers(t, null, false))
   for (const [k, v] of Object.entries(target)) if (k !== 'table') base[k] = v
   if (t === 'invoice_expenses') Object.assign(base, { item: dados.desc, price: dados.amount, quantity: 1, expense_date: dados.date })
   else if (t === 'staff_expenses') Object.assign(base, { description: dados.desc, amount: dados.amount, expense_date: dados.date, type: base.type || 'SINGLE' })

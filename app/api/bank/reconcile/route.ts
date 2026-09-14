@@ -6,6 +6,9 @@ import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { groupSupplierDoubts, moneyDoubts, driftRows, spendAnomalies, bounceLines, nearExpenseMatches, adjustTol, type NearCand } from '@/lib/bankDoubt.server'
 import { tabelaAtual } from '@/lib/tableRenames'
+// PAID TO escondido (onda 10, 14/set/2026): toda linha que o ATRIBUIR/PESSOAL/DIVIDIR CRIA nasce com
+// ele GZ28US (lib/payerRule). Só nos inserts — o claim/backfill das adoções e dos casamentos não muda.
+import { HOUSE_PAYER } from '@/lib/payerRule'
 
 // Rota fina da CONCILIAÇÃO BANCÁRIA — regras, pool e motores vivem em
 // lib/bankReconcile.server.ts (v0.3.0). Tudo exige sessão (JWT no header).
@@ -860,7 +863,7 @@ export async function POST(req: NextRequest) {
             // Retry idempotente: UMA despesa pessoal por linha do banco (elo payment_reference).
             const { data: prevE } = await db.from('staff_expenses').select('id').eq('payment_reference', 'bank:' + l.id).eq('origin', 'PERSONAL').maybeSingle()
             let c: any = prevE || null
-            if (!c) { const { data: ins, error } = await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: desc, amount: amt, source: String(l.merchant || l.name || name).slice(0, 120), expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_reference: 'bank:' + l.id }).select('id').single(); if (error || !ins) throw new Error('staff_expenses: ' + (error?.message || 'insert falhou')); c = ins }
+            if (!c) { const { data: ins, error } = await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: desc, amount: amt, source: String(l.merchant || l.name || name).slice(0, 120), expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_reference: 'bank:' + l.id }).select('id').single(); if (error || !ins) throw new Error('staff_expenses: ' + (error?.message || 'insert falhou')); c = ins }
             try { await writeMatch(db, l, { table: 'staff_expenses', id: c.id }, { matched_note: ('PESSOAL · ' + name + ' · season ' + (se.season_code || String(se.id).slice(0, 6))).slice(0, 150), match_engine: null, match_batch: null, match_rule: null, reviewed_at: new Date().toISOString() }) }
             catch (e) { await db.from('staff_expenses').delete().eq('id', c.id).eq('payment_reference', 'bank:' + l.id); throw e }
             booked++
@@ -1087,7 +1090,7 @@ export async function POST(req: NextRequest) {
         } else if (dest === 'STOCK' || dest === 'SUPPLIES') {
           const table = dest === 'STOCK' ? 'inventory' : 'inputs'
           const category = dest === 'STOCK' ? 'STOCK' : (INPUT_CATEGORIES.includes(String(b.category)) ? String(b.category) : 'CONSUMPTION')
-          const ins: any = { description: mark(label, MARKER_ASSIGNED), category, quantity: 1, unit_price: amt, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: null, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, order_number: b.order_number ? String(b.order_number).slice(0, 120) : null, picked_up: false, nature }
+          const ins: any = { description: mark(label, MARKER_ASSIGNED), category, quantity: 1, unit_price: amt, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, order_number: b.order_number ? String(b.order_number).slice(0, 120) : null, picked_up: false, nature }
           if (dest === 'STOCK') { ins.source_type = 'PURCHASED'; ins.part_id = null }
           const { data: created, error } = await (db.from(table) as any).insert(ins).select('id').single()
           if (error || !created) throw new Error(table + ': ' + (error?.message || 'insert falhou'))
@@ -1105,7 +1108,7 @@ export async function POST(req: NextRequest) {
           const seasonId = String(b.season_id || '')
           const { data: se } = await db.from('seasons').select('id, staff_id, season_code').eq('id', seasonId).maybeSingle()
           if (!se) throw new Error('season inválida')
-          const { data: created, error } = await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: mark(label, MARKER_ASSIGNED), amount: amt, source: supplier.slice(0, 120), expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', payment_reference: 'bank:' + line.id }).select('id').single()
+          const { data: created, error } = await db.from('staff_expenses').insert({ season_id: se.id, type: 'SINGLE', origin: 'PERSONAL', description: mark(label, MARKER_ASSIGNED), amount: amt, source: supplier.slice(0, 120), expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_reference: 'bank:' + line.id }).select('id').single()
           if (error || !created) throw new Error('staff_expenses: ' + (error?.message || 'insert falhou'))
           newId = created.id
           const note = 'ATRIBUÍDA · PESSOAL ' + (se.season_code || '') + ' · ' + label
@@ -1139,7 +1142,7 @@ export async function POST(req: NextRequest) {
             }
           }
           if (!newId) {
-            const { data: created, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: supplierId, type: 'SINGLE', description: mark(label, MARKER_ASSIGNED), amount: amt, source: 'GZ28US', expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id }).select('id').single()
+            const { data: created, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: supplierId, type: 'SINGLE', description: mark(label, MARKER_ASSIGNED), amount: amt, source: 'GZ28US', expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id }).select('id').single()
             if (error || !created) throw new Error('fixed_cost_expenses: ' + (error?.message || 'insert falhou'))
             newId = created.id
           }
@@ -1174,12 +1177,12 @@ export async function POST(req: NextRequest) {
               } else if (x.dest === 'STOCK' || x.dest === 'SUPPLIES') {
                 const table = x.dest === 'STOCK' ? 'inventory' : 'inputs'
                 const category = x.dest === 'STOCK' ? 'STOCK' : (INPUT_CATEGORIES.includes(String(x.category)) ? String(x.category) : 'CONSUMPTION')
-                const ins: any = { description: mark(pl, MARKER_ASSIGNED), category, quantity: 1, unit_price: pa, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: null, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, picked_up: false, nature }
+                const ins: any = { description: mark(pl, MARKER_ASSIGNED), category, quantity: 1, unit_price: pa, supplier: supplier.slice(0, 120), purchase_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', source: 'GZ28US', purchase_group: line.id, picked_up: false, nature }
                 if (x.dest === 'STOCK') { ins.source_type = 'PURCHASED'; ins.part_id = null }
                 const { data: c, error } = await (db.from(table) as any).insert(ins).select('id').single()
                 if (error || !c) throw new Error(table + ': ' + (error?.message || 'insert falhou')); members.push({ table, id: c.id })
               } else {
-                const { data: c, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: String(x.supplier_id), type: 'SINGLE', description: mark(pl, MARKER_ASSIGNED), amount: pa, source: 'GZ28US', expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id }).select('id').single()
+                const { data: c, error } = await db.from('fixed_cost_expenses').insert({ supplier_id: String(x.supplier_id), type: 'SINGLE', description: mark(pl, MARKER_ASSIGNED), amount: pa, source: 'GZ28US', expense_date: line.date, payment_date: line.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', bank_transaction_id: line.id }).select('id').single()
                 if (error || !c) throw new Error('fixed_cost_expenses: ' + (error?.message || 'insert falhou')); members.push({ table: 'fixed_cost_expenses', id: c.id })
               }
             }

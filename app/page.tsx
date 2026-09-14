@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL, PLATE_RENEWAL_COUNTY_URL, type PlateStatus } from '@/lib/plateExpiry'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import { hiddenPayers } from '@/lib/payerRule'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
@@ -69,7 +70,8 @@ async function ensureFixedCostPayments() {
         const monthTaken = isApp && hasMonth.has(key.slice(0, 7))
         const mk = sup.id + '|' + key.slice(0, 7)
         if (!(end && pd > end) && pd <= targetEnd && !has.has(key) && !(isApp && pd < today) && !monthTaken && (countBySupMonth.get(mk) || 0) < slots.length) {
-          toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key })
+          // Linha NOVA de custo fixo: PAID FROM e PAID TO nascem GZ28US, escondidos (Márcio, 11/set).
+          toInsert.push({ supplier_id: sup.id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: key, ...hiddenPayers('fixed_cost_expenses', null, false) })
           has.add(key)
           hasMonth.add(key.slice(0, 7))
           countBySupMonth.set(mk, (countBySupMonth.get(mk) || 0) + 1)

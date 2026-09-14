@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, payerToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, payerToRow, hiddenPayers } from '@/components/PaymentFields'
 import SendToDialog, { type SendTarget } from '@/components/SendToDialog'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
@@ -125,7 +125,8 @@ export default function FixedCostSupplierViewPage() {
         const pd = clampDay(cursor.getFullYear(), cursor.getMonth(), slot.day)
         const m = ymd(pd).slice(0, 7)
         if (!(end && pd > end) && pd <= targetEnd && !existingDates.has(ymd(pd)) && (monthCount.get(m) || 0) < slots.length) {
-          toInsert.push({ supplier_id: id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: ymd(pd) })
+          // Linha NOVA de custo fixo: PAID FROM e PAID TO nascem GZ28US, escondidos (Márcio, 11/set).
+          toInsert.push({ supplier_id: id, type: 'SINGLE', description: supName, amount: slot.amount, source: DEFAULT_SOURCE, expense_date: ymd(pd), ...hiddenPayers('fixed_cost_expenses', null, false) })
           monthCount.set(m, (monthCount.get(m) || 0) + 1)
         }
       }

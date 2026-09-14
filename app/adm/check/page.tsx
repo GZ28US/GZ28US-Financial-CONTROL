@@ -21,6 +21,7 @@ import PartPicker from '@/components/PartPicker'
 import { tabelaAtual } from '@/lib/tableRenames'
 import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCard'
 import { PAID_FROM_OPTIONS } from '@/components/PaymentFields'
+import { HOUSE_PAYER, PAYER_RULE, fillHiddenPayers } from '@/lib/payerRule'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
@@ -72,6 +73,7 @@ type Item = { href: string; code: string; label: string; extra?: string; amount?
 // a legenda da Regions aparecia até nos cards de peças).
 const CERTAIN_PROOF: Record<string, string> = {
   'paid-from': 'linhas já casadas com a Regions → GZ28US, a irmã do mesmo pedido ou o recibo dizendo quem pagou (prova, não palpite)',
+  'house-payer': 'régua GZ28US confirmada pela própria linha: casada com a Regions, a irmã do mesmo pedido ou o SOURCE antigo dizendo GZ28US',
   'parts-identity': 'o PN da peça está no próprio texto — o número não mente',
   'parts-suppliers': 'nome, apelido ou identidade dura batendo com o fornecedor oficial',
   'inputs-category': 'identidade da loja (mercado/lanchonete → TEAM, pet → CATS, ferragem → oficina) ou loja e texto concordando',
@@ -136,7 +138,7 @@ type ReceiptSignal = { state: 'loading' | 'error' | 'ok'; readings: Record<strin
 const isBulkCertain = (i: Item) => !!(i.certain && i.suggest && i.fix && i.fix.kind === 'select')
 let AUTO_RAN = false          // níveis CERTOS dos cards: uma rodada por abertura
 // Cards cujos itens CERTOS o app resolve sozinho (com trilha «AUTO ·» e DESFAZER no card SOZINHO).
-const AUTO_KEYS = new Set(['paid-from', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled', 'inputs-category', 'inv-no-supplier', 'undated-inv'])
+const AUTO_KEYS = new Set(['paid-from', 'house-payer', 'parts-suppliers', 'admission-mileage', 'bank-drift', 'paid-no-bank', 'sub-ended-scheduled', 'inputs-category', 'inv-no-supplier', 'undated-inv'])
 // Cards que aceitam «visto, está certo» (dispensa com memória — nunca mais pergunta a mesma linha).
 const DISMISSABLE = new Set(['out-of-pattern', 'parts-suppliers', 'destiny-review', 'fixed-dup-month', 'inputs-category'])   // legado: a dispensa vale em todo card fora dos PROOF_GATED
 // Cards de PROVA (a régua do caixa, o que o app fez sozinho, o painel do motor, a bancada de natureza, as contagens do motor): sem VISTO — não há o que dispensar.
@@ -160,22 +162,18 @@ const waKind = (f: WaFail): WaKind => {
   return 'delivery'
 }
 const waProbe = (f: WaFail) => /^__.*__$/.test(String(f.group_name || f.destination || '').trim())
-// TAXA DE STAFF SEM DATA (12/set/2026). Até o commit b1f2248 (28/jul/2026, 09:43 de Orlando —
-// «STAFF: pagamento recorrente vira lançamento com data»), uma linha DAILY/WEEKLY/MONTHLY de
-// staff_expenses era TAXA: o total da season fazia valor × dias e nunca lia expense_date, então
-// o campo ficava vazio sem ninguém notar. Das 103 recorrentes do US, só cinco ficaram assim, todas
-// de antes da virada (medido em 12/set/2026). A MESMA função decide o card novo e tira essas linhas
-// do «vencido».
+// TAXA DE STAFF SEM DATA (12/set/2026). Até o commit b1f2248 («STAFF: pagamento recorrente vira
+// lançamento com data»), uma linha DAILY/WEEKLY/MONTHLY de staff_expenses era TAXA: o total da
+// season fazia valor × dias e nunca lia expense_date, então o campo ficava vazio sem ninguém notar.
+// Linha recorrente sem data nascida antes da virada é essa taxa; nascida depois, é outra coisa
+// (a tela ainda deixa gravar recorrente sem data) — o card diz qual é qual, linha a linha, e nunca
+// um número guardado de uma medição. A MESMA função decide o card e tira essas linhas do «vencido».
 const isStaffRateUndated = (e: { type?: string | null; expense_date?: string | null }) => !!e.type && e.type !== 'SINGLE' && !e.expense_date
-const STAFF_RATE_MODEL_END = '2026-07-28'   // último dia (em Orlando) em que a linha recorrente ainda era taxa
-type StaffRateRow = { id: string; season_id: string | null; type: string; description: string | null; amount: number | string | null; paid_from: string | null; created_at: string; season_code: string | null; staff_id: string | null; staff_name: string | null }
+// A virada é um INSTANTE, não um dia: o commit b1f2248 é de 28/jul/2026 09:43:21 em Orlando (EDT,
+// −04:00). Comparar só a data chamaria de TAXA uma linha criada no mesmo dia, depois da virada.
+const STAFF_RATE_MODEL_END_MS = Date.parse('2026-07-28T09:43:21-04:00')
+type StaffRateRow = { id: string; season_id: string | null; type: string; description: string | null; amount: number | string | null; paid_from: string | null; created_at: string; season_code: string | null; staff_id: string | null; staff_name: string | null; season_pay_type: string | null; season_pay_rate: number | string | null; season_pay_currency: string | null; season_pay_day: number | null }
 type StaffRateSignal = { state: 'loading' | 'error' | 'ok'; rows: StaffRateRow[] }
-// Quanto valeria como taxa, pelo modelo de hoje — só onde a conta foi feita (sessão do Márcio,
-// 11/set/2026, pelas datas das seasons). Nas três de Food ninguém fez a conta, e o card diz isso.
-const STAFF_RATE_WORTH: Record<string, string> = {
-  be59504a: 'US$ 100/dia × 7–8 dias = US$ 700–800',
-  e50b30c7: 'US$ 2.250/mês × 3 meses = US$ 6.750',
-}
 // O QUE É ESTA LINHA? (04/set/2026) — o sinal de /api/item-nature: as linhas sem
 // natureza, AGRUPADAS POR FORNECEDOR canonizado. O card tem corpo próprio (o
 // grupo é a unidade de trabalho, não a linha) — ver <NatureWorkbench> lá embaixo.
@@ -621,21 +619,25 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     const acc = brAccount(d)
     // CEGO nas tabelas SEM escolha (12/set/2026): SUPPLIES, ESTOQUE e CUSTO FIXO saíram do
     // «Quem pagou esta conta?» — lá os pagadores são GZ28US pela régua. As linhas pagas sem
-    // pagador desses três continuam no CEGO (brAccount não mudou), então o item diz quantas
-    // são e que a pergunta delas não existe mais, em vez de mandar a pessoa a um card que
-    // não as mostra.
+    // pagador desses três continuam no CEGO (brAccount não mudou), então o item separa: as
+    // compradas se gravam no card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO»; o estoque
+    // DOADO não tem pagador e só aparece contado, para o CEGO não parecer pendência de alguém.
     // A mesma régua do brAccount: linha com payment_date e whoPaid vazio, de qualquer valor.
+    const blindOf = (rows: any[], amt: (r: any) => number) => rows.filter((r: any) => r.payment_date && !whoPaid(r)).map(amt)
     const houseBlind = [
-      ...d.inputs.map((r: any) => r.payment_date && !whoPaid(r) ? qtyLine(r) : null),
-      ...d.inventory.map((r: any) => r.payment_date && !whoPaid(r) ? qtyLine(r) : null),
-      ...d.fixedExpenses.map((r: any) => r.payment_date && !whoPaid(r) ? (parseFloat(r.amount) || 0) : null),
-    ].filter((v): v is number => v !== null)
+      ...blindOf(d.inputs, qtyLine),
+      ...blindOf(d.inventory.filter((r: any) => r.source_type !== 'DONATED'), qtyLine),
+      ...blindOf(d.fixedExpenses, (r: any) => parseFloat(r.amount) || 0),
+    ]
+    const donatedBlind = blindOf(d.inventory.filter((r: any) => r.source_type === 'DONATED'), qtyLine)
+    const sumV = (v: number[]) => v.reduce((s, x) => s + x, 0)
+    const otherBlind = acc.blindN - houseBlind.length - donatedBlind.length
     const items: Item[] = [
       { href: '/gz-flow', code: 'RECEBEU', label: 'a BR recebeu por nós ' + usd(acc.gotIncome) + ' (receita nossa que entrou lá)', amount: acc.gotIncome, link: { href: BASE_PATH + '/gz-flow', label: 'GZ-FLOW ↗' } },
       { href: '/gz-flow', code: 'PAGOU', label: 'a BR pagou contas nossas: ' + usd(acc.paid), amount: acc.paid },
       { href: '/gz-flow', code: 'NÓS', label: 'nós pagamos contas da BR: ' + usd(acc.usPaidBr), amount: acc.usPaidBr },
       { href: '/adm/financials/balance', code: 'SALDO', label: (acc.net >= 0 ? 'a BR nos deve ' : 'nós devemos à BR ') + usd(Math.abs(acc.net)), amount: Math.abs(acc.net), extra: 'saldo = recebeu por nós + contas da BR que pagamos − contas nossas que ela pagou · o mesmo número da linha «Conta corrente GZ28BR» do Balanço', link: { href: BASE_PATH + '/adm/financials/balance', label: 'BALANÇO ↗' } },
-      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions e este saldo não as vê' + (acc.blindN - houseBlind.length > 0 ? ` — as ${acc.blindN - houseBlind.length} de invoice, asset e staff se decidem no card «Quem pagou esta conta?»` : '') + (houseBlind.length ? ` — ${houseBlind.length} (${usd(houseBlind.reduce((s, v) => s + v, 0))}) são de SUPPLIES, ESTOQUE ou CUSTO FIXO, onde não há escolha (GZ28US pela régua, 11/set) e o card não pergunta mais` : ''), link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
+      { href: '/adm/check', code: 'CEGO', label: acc.blindN + ' linha(s) paga(s) sem pagador nenhum: ' + usd(acc.blind), extra: 'nem paid_from nem SOURCE: o DFC assume Regions e este saldo não as vê' + (otherBlind > 0 ? ` — as ${otherBlind} de invoice, asset e staff se decidem no card «Quem pagou esta conta?»` : '') + (houseBlind.length ? ` — ${houseBlind.length} (${usd(sumV(houseBlind))}) são de SUPPLIES, ESTOQUE comprado ou CUSTO FIXO, onde não há escolha: o card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO» grava a régua (GZ28US)` : '') + (donatedBlind.length ? ` — ${donatedBlind.length} (${usd(sumV(donatedBlind))}) são estoque DOADO, que não tem pagador: não há o que decidir` : ''), link: { href: BASE_PATH + '/adm/check', label: 'QUEM PAGOU ↗' } },
     ]
     checks.push({ group: 'FINANCIAL', key: 'br-account', good: true, title: 'Conta corrente GZ28BR', blocks: 'o saldo entre as duas empresas — notícia, não pendência; a pendência mora em «Quem pagou esta conta?»', why: 'João, 9/set: antes da Regions a BR recebia e pagava tudo, e o lucro é da GZ28US — a BR nos deve esse lucro; depois aconteceu também, e ao contrário (nós pagando conta da BR). A conta é UMA (lib/financials brAccount): o Balanço e este card leem a mesma função, na régua do GZ-FLOW (paid_to GZ28BR = ela recebeu por nós; paid_from GZ28BR = ela pagou por nós; nós pagando conta paid_to GZ28BR = ela nos deve mais; sócio sai do saldo e vira empréstimo de sócio). O que este card mostra de novo é o CEGO: linha paga sem pagador nenhum não entra no saldo e o DFC a conta como Regions.', items })
   }
@@ -672,10 +674,10 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     // banco não recebe o fix de data (endureceria a dupla) — vai pro card 5b.
     const linkedMonth = new Set(d.fixedExpenses.filter((e: any) => e.bank_transaction_id).map((e: any) => e.supplier_id + '|' + String(e.expense_date || e.payment_date || '').slice(0, 7)))
     const fx = d.fixedExpenses.filter((e: any) => !e.payment_date && (!due(e) || due(e) <= TODAY) && !(supEnd(e) && due(e) && due(e) > supEnd(e)!) && !(due(e) && linkedMonth.has(e.supplier_id + '|' + due(e).slice(0, 7))))
-    // Linha RECORRENTE de staff sem data nenhuma não entra aqui (12/set/2026): as que existem
-    // são TAXA do modelo anterior a 28/jul, não conta vencida — e o FIX de data deste card daria
-    // a ela um payment_date com o valor da taxa, que ninguém sabe se foi o pago. Mora no card
-    // STAFF «Taxa de staff sem data», que pede a data E o valor.
+    // Linha RECORRENTE de staff sem data nenhuma não entra aqui (12/set/2026): a de antes de 28/jul
+    // é TAXA do modelo antigo, não conta vencida — e o FIX de data deste card daria a ela um
+    // payment_date com o valor da taxa, que ninguém sabe se foi o pago. Mora no card STAFF «Taxa de
+    // staff sem data», que pede a data E o valor (e separa a de depois da virada).
     const st = d.expenses.filter((e: any) => !e.payment_date && e.origin !== 'PERSONAL' && (!due(e) || due(e) <= TODAY) && !isStaffRateUndated(e))
     const items: Item[] = [
       ...fx.map((e: any) => {
@@ -693,7 +695,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     ].sort((a, b) => (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'undated-fixed', title: 'Custo fixo ou folha vencido (ou sem data nenhuma)', blocks: 'ou o pagamento atrasou, ou foi pago e o DFC não sabe quando',
-      why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer. A linha DAILY/WEEKLY/MONTHLY de staff sem data não é conta vencida (as que existem são taxa do modelo anterior a 28/jul/2026): mora no card «Taxa de staff sem data» (STAFF), que pede a data e o valor.',
+      why: 'Conta futura agendada é o fluxo normal (Future Flow) — não entra aqui. Entra a VENCIDA (a data prevista passou sem pagamento lançado: se pagou, registre; se atrasou, é cobrança) e a SEM DATA NENHUMA, que nem no mês certo consegue aparecer. A linha DAILY/WEEKLY/MONTHLY de staff sem data não entra aqui (antes de 28/jul/2026 ela era a taxa, não uma conta): mora no card «Taxa de staff sem data» (STAFF), que pede a data e o valor.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
@@ -946,9 +948,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     // nas incomes a escolha é o PAID TO, que não é pergunta deste card). SUPPLIES (inputs),
     // ESTOQUE (inventory) e CUSTO FIXO (fixed_cost_expenses) têm os dois pagadores GZ28US,
     // escondidos — perguntar «quem pagou?» onde a tela nem oferece a escolha era pedir a
-    // alguém uma resposta que a régua já deu. Saíram 68 perguntas (31 + 15 + 22, medido em
-    // 12/set). As linhas continuam no banco como estão; o CEGO da conta corrente e o placar
-    // do fechamento ainda as contam (ver o item CEGO lá em cima).
+    // alguém uma resposta que a régua já deu. Essas linhas não ficaram sem caminho: moram no
+    // card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO» logo abaixo, que GRAVA a régua.
     const items: Item[] = [
       // Auditoria do João (25/ago): 310 das 937 eram linhas NÃO PAGAS — quem pagou?
       // ninguém ainda. O paid_from nasce na hora do pagamento; só linha PAGA entra.
@@ -959,8 +960,40 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
       group: 'FINANCIAL', key: 'paid-from', title: 'Quem pagou esta conta?', blocks: 'o caixa por banco sai errado e a conciliação não fecha',
-      why: 'Quem pagou define a conta corrente com a GZ28BR no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. São dois pagadores, e só: GZ28US e GZ28BR (o Márcio tirou CLIENT, RAFA, BETO e HERALDO em 11/set — conta paga do bolso de sócio vai morar em outra área do app quando existir). Só pergunta onde existe ESCOLHA: despesa de invoice, asset, despesa de asset e staff (Márcio, 11/set). SUPPLIES, ESTOQUE e CUSTO FIXO saíram daqui em 12/set — lá os dois pagadores são GZ28US, escondidos, e a tela nem oferece a escolha. Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia, então não foi GZ28US (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
+      why: 'Quem pagou define a conta corrente com a GZ28BR no Balanço — e sem isso o motor do Bank Link trata a linha como possível Regions. São dois pagadores, e só: GZ28US e GZ28BR (o Márcio tirou CLIENT, RAFA, BETO e HERALDO em 11/set — conta paga do bolso de sócio vai morar em outra área do app quando existir). Só pergunta onde existe ESCOLHA: despesa de invoice, asset, despesa de asset e staff (Márcio, 11/set). SUPPLIES, ESTOQUE e CUSTO FIXO não perguntam — lá os dois pagadores são GZ28US, escondidos, e a tela nem oferece a escolha; a linha paga sem PAID FROM dessas três mora no card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO». Só linha PAGA entra (o paid_from nasce na hora do pagamento; não paga não tem quem-pagou). Provas do PREENCHER CERTOS, por linha: casada com a Regions (o banco) ou o campo antigo SOURCE com valor limpo (o quem-pagou da época). Antes de 10/nov/2025 a conta nem existia, então não foi GZ28US (sem palpite — decidam); "fora da Regions" = provavelmente não foi GZ28US; banco × SOURCE discordando = conflito, um a um. Use o filtro de SINAL + texto e marque os filtrados de uma vez.',
       items, impact: items.reduce((s, i) => s + (i.amount || 0), 0),
+    })
+
+    // PAID FROM DE SUPPLIES, ESTOQUE E CUSTO FIXO (14/set/2026 — revisão da onda 10). Tirar essas
+    // três tabelas do «Quem pagou?» deixou a linha JÁ PAGA e sem PAID FROM sem caminho nenhum: a
+    // tela não mostra o campo e o escondido só nasce junto com o pagamento (hiddenPayers), e o
+    // AUTO-RUN, que preenchia as certas, perdeu a chave. Aqui não há PERGUNTA — a régua do Márcio
+    // (11/set) já respondeu GZ28US; o card GRAVA a resposta, com trilha. A mesma prova de sempre
+    // (mk: Regions, irmã do pedido, SOURCE limpo) decide o que entra sozinho no AUTO-RUN; o resto
+    // espera um clique (FIX ou MARCAR FILTRADOS). Prova que aponta GZ28BR vira CONFLITO, sem
+    // certo: pagador fora da régua é conversa com o Márcio, não um GZ28US calado por cima.
+    // Estoque DOADO fica fora — peça doada não foi comprada e não tem pagador. Chave própria na
+    // trilha ('house-payer'), de propósito: DESFAZER um casamento no Bank Link não devolve este
+    // GZ28US a vazio (o writeUnmatch só procura a trilha 'paid-from') — aqui quem responde é a
+    // régua, e o banco só decidiu se a linha entrava sozinha.
+    const HOUSE_SELECT =[{ value: HOUSE_PAYER, label: HOUSE_PAYER + ' (régua)' }]
+    const house = (it: Item, table: string): Item => {
+      const fix = it.fix && it.fix.kind === 'select' ? { ...it.fix, options: HOUSE_SELECT } : it.fix
+      const saysBr = (!!it.suggest && it.suggest !== HOUSE_PAYER) || (it.signal === 'conflict' && /GZ28BR/.test(it.extra || ''))
+      if (saysBr) return { ...it, fix, certain: false, suggest: undefined, signal: 'conflict', extra: `a prova da linha aponta GZ28BR (${it.extra || 'sinal'}), mas ${table} não tem escolha de pagador — fale com o Márcio antes de gravar` }
+      if (it.signal === 'pre-open') return { ...it, fix, suggest: HOUSE_PAYER, certain: false, extra: 'antes da Regions abrir — a régua desta tabela diz GZ28US; se quem pagou foi a GZ28BR, fale com o Márcio (aqui não há escolha)' }
+      if (it.signal === 'absent') return { ...it, fix, suggest: HOUSE_PAYER, certain: false, extra: 'fora da Regions (±10d) — a régua desta tabela diz GZ28US; se quem pagou não foi a GZ28US, fale com o Márcio' }
+      return { ...it, fix, suggest: HOUSE_PAYER, certain: !!it.certain && it.suggest === HOUSE_PAYER, extra: [it.extra, 'régua: GZ28US'].filter(Boolean).join(' · ') }
+    }
+    const houseItems: Item[] = [
+      ...d.inputs.filter((x: any) => !x.paid_from && x.payment_date).map((x: any) => house(mk('inputs', x, 'INPUT', '/supplies', [x.description, x.category].filter(Boolean).join(' · '), qtyLine(x)), 'SUPPLIES')),
+      ...d.inventory.filter((x: any) => x.source_type !== 'DONATED' && !x.paid_from && x.payment_date).map((x: any) => house(mk('inventory', x, 'STOCK', '/inventory', x.description || '', qtyLine(x)), 'ESTOQUE')),
+      ...d.fixedExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => house(mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0), 'CUSTO FIXO')),
+    ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
+    checks.push({
+      group: 'FINANCIAL', key: 'house-payer', title: 'PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO: gravar a régua', blocks: 'sem PAID FROM gravado, a linha paga depende do SOURCE antigo ou fica CEGA na conta corrente GZ28BR (o DFC a lê como Regions sem ninguém ter dito)',
+      why: 'SUPPLIES, ESTOQUE e CUSTO FIXO não têm escolha de pagador (Márcio, 11/set/2026: PAID FROM e PAID TO sempre GZ28US, escondidos). A tela grava os dois quando a linha nasce e quando o pagamento nasce com o campo vazio — mas a linha que JÁ estava paga sem PAID FROM não passa por nenhum desses momentos, e editar não inventa pagador. Este card é o caminho dela: o FIX grava GZ28US (a única opção), com trilha. Entram sozinhas (AUTO-RUN, com DESFAZER no card verde «O app preencheu sozinho») só as que têm prova da própria linha — casada com a Regions, a irmã do mesmo pedido já diz GZ28US, ou o SOURCE antigo limpo dizendo GZ28US; o resto espera um clique. Prova apontando GZ28BR aparece como CONFLITO e não tem certo: pagador fora da régua é conversa com o Márcio. Estoque DOADO não entra — peça doada não foi comprada e não tem pagador.',
+      items: houseItems, impact: houseItems.reduce((s, i) => s + (i.amount || 0), 0),
     })
   }
 
@@ -1143,41 +1176,55 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
-  // STAFF · TAXA DE STAFF SEM DATA (12/set/2026). Cinco linhas de staff_expenses sem data —
-  // 3× «Food» US$ 20 (a6dc29c9, 1df93652, 79dbc678), «Labor» US$ 100 (be59504a) e «Monthly
-  // Payments» US$ 2.250 (e50b30c7) — que não são pagamento: são a TAXA do modelo anterior a
-  // 28/jul. Decisão da sessão do Márcio em 12/set: ficam FORA da conta corrente BR vs US e viram
-  // PERGUNTA, porque lançar US$ 2.250 ou US$ 6.750 como dívida seria inventar o número. Nenhum
-  // conserto automático: o item não tem FIX, só o caminho até a linha (e o VISTO, se a resposta
-  // for «deixa assim»). A régua é isStaffRateUndated; a leitura é própria (precisa de created_at,
-  // season e nome), e sinal que não veio aparece como SINAL, nunca como card vazio.
+  // STAFF · TAXA DE STAFF SEM DATA (12/set/2026, reescrito em 14/set). Linha recorrente de
+  // staff_expenses (DAILY/WEEKLY/MONTHLY) sem data nenhuma. A que nasceu antes da virada de
+  // 28/jul é a TAXA do modelo antigo, não pagamento: ninguém sabe quanto saiu nem quando, e
+  // tratar o valor gravado como o pago seria inventar o número. Por isso o card é PERGUNTA — pede
+  // a DATA e o VALOR — e não tem conserto automático: o item não tem FIX, só o caminho até a linha
+  // (e o VISTO, se a resposta for «deixa assim»). O card não promete o que outra tela fará com a
+  // resposta; diz só o que o app faz HOJE com a linha sem data. A régua é isStaffRateUndated; a
+  // leitura é própria (created_at, season com pay_type/pay_rate/pay_day, nome), e sinal que não
+  // veio aparece como SINAL, nunca como card vazio. Contagem e valor saem da leitura desta
+  // abertura — nunca de uma medição guardada no texto.
   {
-    const ymdNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
-    const dmyNY = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit', year: 'numeric' })
+    const dmyNY = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
     const PER: Record<string, string> = { DAILY: '/dia', WEEKLY: '/semana', MONTHLY: '/mês' }
-    const usdBr = (v: number) => 'US$ ' + v.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+    const usdBr = (v: number) => 'US$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     const items: Item[] = []
     if (staffRate.state === 'loading') items.push({ href: '/staff', code: 'SINAL', label: 'lendo as linhas de staff sem data… esta conferência ainda não rodou' })
     if (staffRate.state === 'error') items.push({ href: '/staff', code: 'SINAL', label: 'sinal das linhas de staff sem data indisponível — esta conferência NÃO rodou', extra: 'recarregue a página' })
+    const isOld = (r: StaffRateRow) => { const ms = Date.parse(r.created_at); return Number.isFinite(ms) && ms < STAFF_RATE_MODEL_END_MS }
     for (const r of staffRate.rows) {
-      const born = new Date(r.created_at)
-      const antiga = ymdNY.format(born) <= STAFF_RATE_MODEL_END
+      const bornMs = Date.parse(r.created_at)
+      // O instante inteiro contra o instante da virada (os dois são absolutos; o fuso só entra na hora de mostrar).
+      const antiga = isOld(r)
+      const bornTxt = Number.isFinite(bornMs) ? dmyNY.format(new Date(bornMs)).replace(',', '') + ' (Orlando)' : 'em data ilegível'
       const amt = Number(r.amount) || 0
       const where = r.staff_id && r.season_id ? `/staff/${r.staff_id}/seasons/${r.season_id}` : null
+      // pay_day tem valor PADRÃO na coluna: sem pay_type e pay_rate na season, o dia que aparece lá não prova nada.
+      const hasRate = !!r.season_pay_type && r.season_pay_rate != null && String(r.season_pay_rate).trim() !== ''
+      const seasonNote = hasRate
+        ? `a season tem taxa cadastrada: ${r.season_pay_type} ${r.season_pay_currency === 'BRL' ? 'R$ ' + (Number(r.season_pay_rate) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : usdBr(Number(r.season_pay_rate) || 0)}`
+        : r.season_pay_day != null ? `a season não tem pay_type/pay_rate — o pay_day ${r.season_pay_day} dela é o padrão da coluna, não data de pagamento` : null
       items.push({
         href: where ? `${where}/expenses/edit/${r.id}` : '/staff',
         code: antiga ? 'TAXA' : 'SEM DATA',
         label: [r.staff_name, r.season_code, `${r.description || r.type} — ${usdBr(amt)}${PER[r.type] || ''} (${r.type})`].filter(Boolean).join(' · '),
-        extra: antiga
-          ? `taxa do modelo antigo, nascida em ${dmyNY.format(born)} (Orlando) · PAID FROM ${r.paid_from || 'vazio'} · como taxa hoje: ${STAFF_RATE_WORTH[r.id.slice(0, 8)] || 'a conta não foi feita'} · diga a DATA e o VALOR que de fato saíram`
-          : `nasceu em ${dmyNY.format(born)} (Orlando), DEPOIS da virada de 28/jul — não é taxa antiga: a tela NEW EXPENSE da season ainda grava linha DAILY/WEEKLY/MONTHLY sem data · diga a DATA e o VALOR`,
+        extra: [
+          antiga ? `taxa do modelo antigo, nascida ${bornTxt}, antes da virada` : `nascida ${bornTxt}, DEPOIS da virada — não é a taxa do modelo antigo: é recorrente gravada sem data`,
+          `PAID FROM ${r.paid_from || 'vazio'}`,
+          seasonNote,
+          'diga a DATA e o VALOR que de fato saíram',
+        ].filter(Boolean).join(' · '),
         link: where ? { href: BASE_PATH + where + '/expenses', label: 'SEASON ↗' } : undefined,
       })
     }
+    const oldN = staffRate.rows.filter(isOld).length
+    const newN = staffRate.rows.length - oldN
     if (items.length) checks.push({
       group: 'STAFF', key: 'staff-rate-undated', title: 'Taxa de staff sem data: quanto saiu, e quando?',
-      blocks: 'o total da season soma a taxa como se fosse um pagamento, e a conta corrente BR vs US fica sem estas linhas até alguém dizer o valor real',
-      why: 'Até 28/jul/2026 (commit «STAFF: pagamento recorrente vira lançamento com data»), a linha DAILY, WEEKLY ou MONTHLY de uma season era a TAXA do funcionário, não um pagamento: o total da season fazia valor × dias e nunca lia a data — por isso o campo de data destas linhas ficou vazio. Desde então a taxa mora na season e cada pagamento é uma linha com data; das 103 recorrentes do US, em 12/set só cinco estavam sem data, todas nascidas antes da virada. Como taxa, pelo modelo de hoje, elas valeriam outra coisa: o «Labor» do Marcelo (US$ 100/dia) daria US$ 700–800 pelos 7–8 dias, e o «Monthly Payments» do Jeferson (US$ 2.250/mês) daria US$ 6.750 pelos 3 meses — não os US$ 100 e US$ 2.250 gravados. Ninguém sabe qual número é a verdade, e por isso elas NÃO entram na conta corrente BR vs US (decisão de 12/set): as duas pagas pela GZ28BR virariam dívida do US com um valor inventado. O que o card pede é a DATA e o VALOR do que de fato saiu. Não há conserto automático, e a data não sai de seasons.pay_day: o 5 que aparece lá é o padrão da coluna (pay_type e pay_rate estão vazios nas três seasons), e gerar 05/abr, 05/mai… fabricaria data com cara de prova. A resposta se lança na própria linha (ABRIR REGISTRO: com TYPE = SINGLE aparecem DATE e o PAID) ou em pagamentos novos na season. Enquanto isso, o total da season em STAFF ▸ SEASONS soma o valor gravado de cada uma, uma vez, como se tivesse sido pago.',
+      blocks: 'sem data, a linha não é pagamento nem previsão: o total da season a soma como se tivesse sido paga e o Balanço a conta em Fornecedores a Pagar',
+      why: 'Até o commit «STAFF: pagamento recorrente vira lançamento com data» (28/jul/2026, 09:43 em Orlando), a linha DAILY, WEEKLY ou MONTHLY de uma season era a TAXA do funcionário, não um pagamento: o total da season fazia valor × dias e nunca lia a data — por isso o campo de data dessas linhas ficou vazio. Desde então a taxa mora na season e cada pagamento é uma linha com data. Nesta leitura: ' + oldN + ' linha(s) recorrente(s) sem data nascida(s) antes da virada (TAXA) e ' + newN + ' depois (SEM DATA). O valor gravado numa TAXA é o preço por dia, semana ou mês — não o que saiu: se a season durou mais que um período, o pago de verdade é outro número, e ninguém anotou qual. O card pede a DATA e o VALOR do que de fato saiu. Não há conserto automático, e a data não sai de seasons.pay_day: a coluna tem valor padrão, então sem pay_type e pay_rate na season o dia que aparece lá não prova nada (cada item diz como está a season dele) — gerar datas a partir dele fabricaria prova. A resposta se lança na própria linha (ABRIR REGISTRO: com TYPE = SINGLE aparecem DATE e o PAID) ou em pagamentos novos na season. Enquanto isso, o total da season em STAFF ▸ SEASONS soma o valor gravado de cada uma, uma vez, como se tivesse sido pago, e o Balanço a conta como devida (sem data = a pagar).',
       items,
     })
   }
@@ -1532,7 +1579,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   }
   // ── O APP PREENCHEU SOZINHO (DC 1.44.0): tudo que entrou sem clique nos últimos 7 dias, com DESFAZER ──
   {
-    const KEY_LABEL: Record<string, string> = { 'paid-from': 'QUEM PAGOU', 'parts-suppliers': 'FORNECEDOR', 'parts-category': 'CATEGORIA', 'item-nature': 'NATUREZA', 'admission-mileage': 'MILHAGEM', 'sub-ended-scheduled': 'ASSINATURA', 'bank-drift': 'ADOTADA', 'paid-no-bank': 'CASADA', 'bank-auto': 'BANCO', 'sub-reopen': 'REABERTO', 'inputs-category': 'INSUMO', 'inv-no-supplier': 'FORNECEDOR', 'undated-inv': 'DATA', 'inv-date-impossible': 'DATA' }
+    const KEY_LABEL: Record<string, string> = { 'paid-from': 'QUEM PAGOU', 'house-payer': 'PAGADOR (RÉGUA)','parts-suppliers': 'FORNECEDOR', 'parts-category': 'CATEGORIA', 'item-nature': 'NATUREZA', 'admission-mileage': 'MILHAGEM', 'sub-ended-scheduled': 'ASSINATURA', 'bank-drift': 'ADOTADA', 'paid-no-bank': 'CASADA', 'bank-auto': 'BANCO', 'sub-reopen': 'REABERTO', 'inputs-category': 'INSUMO', 'inv-no-supplier': 'FORNECEDOR', 'undated-inv': 'DATA', 'inv-date-impossible': 'DATA' }
     // Linha que a regra marcou IGNORED/TRANSFER não está casada: a rota do card verde recusa (409) — o DESFAZER dela é o LOTE no Bank Link.
     const bankMark = (a: AutoRow) => a.table_name === 'bank_transactions' && (a.new_value === 'IGNORED' || a.new_value === 'TRANSFER')
     const items: Item[] = auto.state === 'error' ? [{ href: '/adm/check', code: 'SINAL', label: 'sinal de /api/data-check/auto indisponível — a lista do que o app fez sozinho NÃO carregou', extra: 'recarregue' }]
@@ -1990,14 +2037,15 @@ export default function DataCheckPage() {
         if (ee) { setStaffRate({ state: 'error', rows: [] }); return }
         const exps = (er || []) as { id: string; season_id: string | null; type: string; description: string | null; amount: number | string | null; paid_from: string | null; created_at: string }[]
         const seasonIds = [...new Set(exps.map(e => e.season_id).filter((x): x is string => !!x))]
-        const { data: ss, error: se } = seasonIds.length ? await supabase.from('seasons').select('id, season_code, staff_id').in('id', seasonIds) : { data: [], error: null }
+        // pay_type/pay_rate/pay_day: o card diz, item a item, se a season tem taxa cadastrada ou só o pay_day padrão.
+        const { data: ss, error: se } = seasonIds.length ? await supabase.from('seasons').select('id, season_code, staff_id, pay_type, pay_rate, pay_currency, pay_day').in('id', seasonIds) : { data: [], error: null }
         if (se) { setStaffRate({ state: 'error', rows: [] }); return }
-        const seasons = new Map(((ss || []) as { id: string; season_code: string | null; staff_id: string | null }[]).map(s => [s.id, s]))
+        const seasons = new Map(((ss || []) as { id: string; season_code: string | null; staff_id: string | null; pay_type: string | null; pay_rate: number | string | null; pay_currency: string | null; pay_day: number | null }[]).map(s => [s.id, s]))
         const staffIds = [...new Set([...seasons.values()].map(s => s.staff_id).filter((x): x is string => !!x))]
         const { data: st, error: te } = staffIds.length ? await supabase.from('staff').select('id, name').in('id', staffIds) : { data: [], error: null }
         if (te) { setStaffRate({ state: 'error', rows: [] }); return }
         const names = new Map(((st || []) as { id: string; name: string | null }[]).map(p => [p.id, p.name]))
-        setStaffRate({ state: 'ok', rows: exps.map(e => { const s = e.season_id ? seasons.get(e.season_id) : undefined; return { ...e, season_code: s?.season_code ?? null, staff_id: s?.staff_id ?? null, staff_name: (s?.staff_id && names.get(s.staff_id)) || null } }) })
+        setStaffRate({ state: 'ok', rows: exps.map(e => { const s = e.season_id ? seasons.get(e.season_id) : undefined; return { ...e, season_code: s?.season_code ?? null, staff_id: s?.staff_id ?? null, staff_name: (s?.staff_id && names.get(s.staff_id)) || null, season_pay_type: s?.pay_type ?? null, season_pay_rate: s?.pay_rate ?? null, season_pay_currency: s?.pay_currency ?? null, season_pay_day: s?.pay_day ?? null } }) })
       } catch { setStaffRate({ state: 'error', rows: [] }) }
     })()
     // NATUREZA DA LINHA (04/set): o que ainda ninguém disse, agrupado por
@@ -2430,6 +2478,17 @@ export default function DataCheckPage() {
     const field = fixField(fix)
     const { error: err } = await supabase.from(fix.table).update({ [field]: newValue }).eq('id', fix.rowId)
     if (err) { setSaving(false); alert(err.message); return }
+    // FIX de data de PAGAMENTO numa linha que não tinha (os cards de data só listam linha sem
+    // payment_date): o pagamento nasce aqui, e o pagador escondido da régua nasce junto — GZ28US
+    // só onde estiver vazio, estoque doado fora (lib/payerRule). Quem pagou, quando é escolha,
+    // continua sendo pergunta do «Quem pagou esta conta?».
+    if (fix.kind === 'date' && field === 'payment_date' && typeof newValue === 'string' && /^\d{4}-\d{2}-\d{2}/.test(newValue)) {
+      const t = tabelaAtual(fix.table)
+      if (t in PAYER_RULE && t !== 'invoice_incomes' && t !== 'inventory_donated') {
+        const hErr = await fillHiddenPayers(supabase, t as Parameters<typeof fillHiddenPayers>[1], [fix.rowId])
+        if (hErr) console.error('[data-check] pagador escondido não gravou:', hErr)
+      }
+    }
     // Trilha — melhor esforço: sem a migration do data_fixes o conserto vale igual.
     await supabase.from('data_fixes').insert({
       check_key: check.key, table_name: fix.table, row_id: fix.rowId, field,
@@ -2467,7 +2526,7 @@ export default function DataCheckPage() {
     const items = check.items.filter(isBulkCertain)
     if (!items.length) return
     // LINKER/R1: cada linha tem o SEU valor certo — bulk um a um.
-    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'parts-category' || check.key === 'inputs-category' || check.key === 'inv-no-supplier') {
+    if (check.key === 'parts-identity' || check.key === 'parts-suppliers' || check.key === 'paid-from' || check.key === 'house-payer' || check.key === 'parts-category' || check.key === 'inputs-category' || check.key === 'inv-no-supplier') {
       const msg = check.key === 'inv-no-supplier'
         ? `Preencher ${items.length} fornecedor(es)? Prova por linha: a irmã do mesmo pedido ou o comerciante da linha do banco resolvido no cadastro. Cada linha recebe o SEU fornecedor. Tudo na trilha.`
         : check.key === 'inputs-category'
@@ -2478,6 +2537,8 @@ export default function DataCheckPage() {
         ? `Linkar ${items.length} peças ao fornecedor oficial? Todas batem pelo nome/apelido exato. Tudo na trilha.`
         : check.key === 'paid-from'
         ? `Preencher ${items.length} "quem pagou?"? Prova por linha: casada com a Regions (o banco) ou o campo antigo SOURCE (o app já sabia). Cada linha recebe o SEU valor. Tudo na trilha.`
+        : check.key === 'house-payer'
+        ? `Gravar GZ28US no PAID FROM de ${items.length} linha(s) de SUPPLIES, ESTOQUE ou CUSTO FIXO? É a régua dessas tabelas, e cada uma tem prova própria (Regions, irmã do pedido ou SOURCE antigo). Só linha ainda vazia é escrita. Tudo na trilha.`
         : `Linkar ${items.length} linhas ao catálogo? Todas têm o PN da peça no próprio texto — o número não mente. Tudo na trilha.`
       if (!confirm(msg)) return
       setSaving(true)
@@ -2702,7 +2763,7 @@ export default function DataCheckPage() {
                     <span className="text-xs text-gray-500">{CERTAIN_PROOF[c.key] || 'itens com prova, não palpite'}</span>
                   </div>
                 )}
-                {c.key === 'paid-from' && c.items.length > 0 && (
+                {(c.key === 'paid-from' || c.key === 'house-payer') && c.items.length > 0 && (
                   <div className="flex items-center gap-2 mb-3 flex-wrap">
                     <select value={sigFilter[c.key] || ''} onChange={e => setSigFilter({ ...sigFilter, [c.key]: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm">
                       <option value="">sinal: todos</option>
@@ -2710,13 +2771,14 @@ export default function DataCheckPage() {
                       <option value="pre-open">antes da Regions abrir</option>
                       <option value="absent">fora da Regions</option>
                       <option value="present">encontrada na Regions</option>
-                      <option value="conflict">conflito com SOURCE</option>
+                      <option value="conflict">{c.key === 'house-payer' ? 'conflito (prova aponta GZ28BR ou SOURCE diverge)' : 'conflito com SOURCE'}</option>
                       <option value="source">só SOURCE</option>
                     </select>
                     <input value={filter[c.key] || ''} onChange={e => setFilter({ ...filter, [c.key]: e.target.value })} placeholder="filtrar: 2025-09, US.013, High Horse…" className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm w-72" />
                     <select value={bulkValue[c.key] || ''} onChange={e => setBulkValue({ ...bulkValue, [c.key]: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm">
                       <option value="">— marcar como —</option>
-                      {PAID_FROM_SELECT.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {/* Sem escolha nas três tabelas da régua: a única marca é GZ28US. */}
+                      {(c.key === 'house-payer' ? [{ value: HOUSE_PAYER, label: HOUSE_PAYER + ' (régua)' }] : PAID_FROM_SELECT).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                     <button disabled={saving || !((filter[c.key] || '').trim() || sigFilter[c.key]) || !bulkValue[c.key]} onClick={() => applyFiltered(c)} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded-xl font-bold text-sm">
                       {bulk ? `MARCANDO ${bulk}…` : `MARCAR OS ${filtered(c).length} FILTRADOS`}

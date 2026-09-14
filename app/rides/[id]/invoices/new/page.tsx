@@ -5,6 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { hiddenPayers } from '@/lib/payerRule'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 
@@ -416,6 +417,9 @@ export default function NewInvoicePage() {
         purchase_group: purchaseGroup,
         kit_group: e.kit_group || null,
         kit_name: e.kit_name || null,
+        // Linha NOVA de invoice: PAID TO nasce GZ28US, escondido (Márcio, 11/set). Quem pagou
+        // nasce no pagamento — o pack é previsão, ainda não saiu dinheiro.
+        ...hiddenPayers('invoice_expenses', null, false),
       }
     })
     if (expenseRows.length > 0) await supabase.from('invoice_expenses').insert(expenseRows)

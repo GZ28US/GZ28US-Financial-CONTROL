@@ -13,8 +13,8 @@ import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { mirrorBrShoppingInvoice, brMirrorFailureCause, type BrMirrorItem } from '@/lib/brShoppingMirror'
-import SourceSelect, { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
-import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, HOUSE_PAYER, hiddenPayerBorn, methodsFor } from '@/components/PaymentFields'
+import { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
+import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, HOUSE_PAYER, hiddenPayers, stockPayerTable, PaidFromSelect, methodsFor } from '@/components/PaymentFields'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, type DeliverChipRow } from '@/components/DeliverChip'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
@@ -1240,7 +1240,10 @@ export default function EditInvoicePage() {
     setEditingPurchaseSupplier(first.supplier)
     // A data da compra É a data em que foi paga (lei de 18/ago/2026).
     setEditingPurchaseDate(first.payment_date || '')
-    setEditingPurchaseSource(first.source || DEFAULT_SOURCE)
+    // O PAID FROM do diálogo é o paid_from da linha (que já carrega o SOURCE legado quando o
+    // campo novo está vazio). Antes lia só o SOURCE e caía em GZ28US: um pedido gravado
+    // GZ28BR em paid_from abria como GZ28US e o SAVE o reescrevia calado. Vazio fica vazio.
+    setEditingPurchaseSource(first.paid_from || '')
     setEditingPurchaseOrderNumber(first.order_number || '')
   }
 
@@ -1250,26 +1253,29 @@ export default function EditInvoicePage() {
     const payDate = isValidDate(editingPurchaseDate) ? editingPurchaseDate : ''
     // Um pedido = um grupo: o ORDER NUMBER editado aqui vale pra TODAS as linhas.
     const orderNo = editingPurchaseOrderNumber.trim()
-    // O seletor deste diálogo é o SOURCE (GZ28US/GZ28BR) e ele vale como PAID FROM do
-    // grupo. Havia aqui uma guarda que preservava paid_from='CLIENT' pra não apagar a
-    // marcação do cliente; CLIENT saiu do app US em 11/set e nenhuma linha o usava.
+    // O seletor deste diálogo é o PAID FROM do grupo (uma compra = um pagador): grava
+    // paid_from e espelha no SOURCE legado. Vazio = ninguém disse — não grava pagador
+    // nenhum (fabricar GZ28US aqui era o app respondendo por ninguém, caso Drácula).
+    const payer = editingPurchaseSource
+    const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
+    // PAID TO escondido, linha a linha (hiddenPayers): nasce GZ28US quando este diálogo dá
+    // o pagamento a uma linha que estava sem e o campo está vazio; linha ainda não salva
+    // nasce com ele no insert. Calculado UMA vez e usado no banco E no estado da tela —
+    // antes o banco recebia GZ28US e a tela seguia com '' até recarregar.
+    const hiddenOf = new Map(groupExpenses.filter(e => e.id).map(e => [e.id!, hiddenPayers('invoice_expenses', { paid: isValidDate(e.payment_date), paid_to: e.paid_to }, !!payDate)] as const))
     setExpenses(prev => prev.map(e =>
       e.purchase_group === editingPurchaseGroupId
-        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, source: editingPurchaseSource, paid_from: editingPurchaseSource, order_number: orderNo }
+        ? { ...e, supplier: editingPurchaseSupplier, expense_date: payDate, payment_date: payDate, ...(payer ? { source: payer, paid_from: payer } : {}), ...((e.id && hiddenOf.get(e.id)) || {}), order_number: orderNo }
         : e
     ))
-    const groupExpenses = expenses.filter(e => e.purchase_group === editingPurchaseGroupId)
     for (const exp of groupExpenses) {
       if (exp.id) {
         await supabase.from('invoice_expenses').update({
           supplier: editingPurchaseSupplier || null,
           expense_date: payDate || null,
           payment_date: payDate || null,
-          source: editingPurchaseSource || DEFAULT_SOURCE,
-          paid_from: editingPurchaseSource || DEFAULT_SOURCE,
-          // PAID TO escondido (12/set/2026): GZ28US quando este diálogo dá o pagamento a
-          // uma linha do pedido que estava sem; linha já paga fica com o que tem.
-          ...(hiddenPayerBorn(isValidDate(exp.payment_date), !!payDate) ? { paid_to: HOUSE_PAYER } : {}),
+          ...(payer ? { source: payer, paid_from: payer } : {}),
+          ...(hiddenOf.get(exp.id) || {}),
           order_number: orderNo || null,
         }).eq('id', exp.id)
       }
@@ -1345,6 +1351,12 @@ export default function EditInvoicePage() {
         notes: note,
         receipt_url: receiptUrlsJson,
         source_type: sourceType,
+        // ESTOQUE não escolhe pagador (Márcio, 11/set): a linha NOVA comprada nasce com
+        // PAID FROM e PAID TO GZ28US escondidos; doada não tem pagador (stockPayerTable).
+        // Se a despesa de origem diz que a GZ28BR pagou, o GZ28US não é escrito por cima
+        // dessa resposta: o PAID FROM fica vazio — pagador fora da régua é conversa com o
+        // Márcio, não um default calado.
+        ...(() => { const h = hiddenPayers(stockPayerTable(sourceType), null, false); if ((exp.paid_from || '').toUpperCase() === 'GZ28BR') delete h.paid_from; return h })(),
       }])
       if (error) { alert(error.message); return }
     } else {
@@ -1361,6 +1373,12 @@ export default function EditInvoicePage() {
         picked_up: !!exp.picked_up,
         tracking_number: (exp.tracking_number || '').trim() || null,
         carrier: (exp.carrier || '').trim() || null,
+        // ASSET escolhe quem pagou: o pagador da despesa de origem VIAJA com a peça (paid_from +
+        // o SOURCE legado); sem resposta lá, fica sem resposta aqui. PAID TO nasce GZ28US
+        // escondido (Márcio, 11/set).
+        paid_from: exp.paid_from || null,
+        source: exp.paid_from || null,
+        ...hiddenPayers('assets', null, false),
       }])
       if (error) { alert(error.message); return }
     }
@@ -2044,11 +2062,16 @@ export default function EditInvoicePage() {
     if (kind === 'expense') {
       const e = expenses[index]
       const payDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr()
+      // O pagamento NASCE aqui: o PAID TO escondido vem junto (GZ28US, só se vazio —
+      // hiddenPayers). Quem pagou NÃO: o PAID IN? não pergunta, e fabricar GZ28US seria
+      // o app respondendo por ninguém; a linha sem PAID FROM segue no «Quem pagou esta conta?».
+      // Linha ainda não salva nasce com o PAID TO no insert.
+      const hidden = e.id ? hiddenPayers('invoice_expenses', { paid: isValidDate(e.payment_date), paid_to: e.paid_to }, true) : {}
       if (e.id) {
-        const { error } = await supabase.from('invoice_expenses').update({ payment_date: payDate, expense_date: payDate }).eq('id', e.id)
+        const { error } = await supabase.from('invoice_expenses').update({ payment_date: payDate, expense_date: payDate, ...hidden }).eq('id', e.id)
         if (error) { alert(error.message); return }
       }
-      const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: payDate, expense_date: payDate }; setExpenses(updated)
+      const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: payDate, expense_date: payDate, ...hidden }; setExpenses(updated)
       setPaidInConfirm(null)
       // An expense's report goes out when it's PAID (user rule 2026-07-23): the
       // moment it flips to paid, offer the WhatsApp report for it.
@@ -2256,8 +2279,9 @@ export default function EditInvoicePage() {
     if ((editingExpense.supplier || '').trim() !== (exp?.supplier || '').trim()) {
       await ensureSupplier(editingExpense.supplier)
     }
-    // Linha já salva: o pagador escondido nasce só se ESTA edição dá o pagamento a ela.
-    const paidToBorn = hiddenPayerBorn(isValidDate(exp.payment_date), isValidDate(editingExpense.payment_date))
+    // Linha já salva: o PAID TO escondido só nasce se ESTA edição dá o pagamento a ela e
+    // ele estiver vazio (hiddenPayers) — nunca por cima do que está gravado.
+    const hidden = exp.id ? hiddenPayers('invoice_expenses', { paid: isValidDate(exp.payment_date), paid_to: exp.paid_to }, isValidDate(editingExpense.payment_date)) : {}
     if (exp.id) {
       const { error } = await supabase.from('invoice_expenses').update({
         // Espelho: a única data é a do pagamento; o formulário edita payment_date.
@@ -2273,10 +2297,10 @@ export default function EditInvoicePage() {
         payment_method: editingExpense.payment_method || 'CASH',
         paid_from: editingExpense.paid_from || null,
         // PAID TO escondido (12/set/2026): só grava — GZ28US — quando esta edição registra o
-        // pagamento de uma linha que estava sem; fora isso a chave nem vai e o banco fica com o
-        // que tem. O `|| 'GZ28US'` de antes preenchia a linha velha a cada salvamento, e com o
-        // campo fora da tela seria o app respondendo por ninguém (hiddenPayerBorn).
-        ...(paidToBorn ? { paid_to: HOUSE_PAYER } : {}),
+        // pagamento de uma linha que estava sem e o campo está vazio; fora isso a chave nem vai
+        // e o banco fica com o que tem. O `|| 'GZ28US'` de antes preenchia a linha velha a cada
+        // salvamento, e com o campo fora da tela seria o app respondendo por ninguém.
+        ...hidden,
         // ORDER NUMBER sagrado: a edição da linha persiste o pedido também.
         order_number: (editingExpense.order_number || '').trim() || null,
         // PICKED UP / TRACKING / CARRIER: colunas desta linha. Linha não paga
@@ -2303,7 +2327,7 @@ export default function EditInvoicePage() {
       }).eq('id', exp.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', ...(exp.id && paidToBorn ? { paid_to: HOUSE_PAYER } : {}), id: exp.id }; setExpenses(updated)
+    const updated = [...expenses]; updated[editingExpenseIndex!] = { ...editingExpense, expense_date: isValidDate(editingExpense.payment_date) ? editingExpense.payment_date : '', source: editingExpense.paid_from || editingExpense.source || '', ...hidden, id: exp.id }; setExpenses(updated)
     setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY })
   }
   function cancelEditExpense() { setEditingExpenseIndex(null); setEditingExpense({ supplier: '', item: '', amount: '', tax: '0', extra: '0', quantity: '1', expense_date: '', payment_date: '', receipt_urls: [], export_status: 'FRESH', item_discount: '0', source: DEFAULT_SOURCE, payment_method: 'CASH', paid_from: DEFAULT_SOURCE, paid_to: 'GZ28US', order_number: '', ...FRESH_DELIVERY }) }
@@ -3149,7 +3173,8 @@ export default function EditInvoicePage() {
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-              <SourceSelect value={scannedPurchase.source || DEFAULT_SOURCE} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
+              {/* O único pagador do pedido escaneado: vira paid_from (e o SOURCE legado) de toda linha. */}
+              <PaidFromSelect value={scannedPurchase.source || DEFAULT_SOURCE} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
             </div>
             <div className="overflow-y-auto flex-1 space-y-2">
               {scannedPurchase.items.some(it => it.cost_derived) && (
@@ -3227,7 +3252,7 @@ export default function EditInvoicePage() {
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-              <SourceSelect value={editingPurchaseSource} onChange={setEditingPurchaseSource} className={inputClass} />
+              <PaidFromSelect value={editingPurchaseSource} onChange={setEditingPurchaseSource} className={inputClass} />
             </div>
             <DatePicker label="PAID DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
             <button onClick={confirmEditPurchase} className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold text-lg">SAVE</button>
@@ -3761,9 +3786,10 @@ export default function EditInvoicePage() {
                                 </select>
                               </div>
                               {/* A tela nunca esconde o que está gravado FORA da régua: PAID TO diferente
-                                  de GZ28US (e não vazio) aparece como aviso, dizendo o que o salvamento faz. */}
+                                  de GZ28US (e não vazio) aparece como aviso. Salvar não o troca — o
+                                  escondido só preenche vazio (hiddenPayers). */}
                               {editingExpense.paid_to && editingExpense.paid_to !== HOUSE_PAYER && (
-                                <p className="basis-full text-xs text-amber-300">PAID TO gravado nesta linha: {editingExpense.paid_to} — fora da régua (despesa de invoice é sempre {HOUSE_PAYER}). {isValidDate(expenses[editingExpenseIndex!]?.payment_date || '') ? 'O campo não aparece e salvar não o muda.' : `Se este salvamento registrar o pagamento, vira ${HOUSE_PAYER}.`}</p>
+                                <p className="basis-full text-xs text-amber-300">PAID TO gravado nesta linha: {editingExpense.paid_to} — fora da régua (despesa de invoice é sempre {HOUSE_PAYER}). O campo não aparece e salvar não o muda.</p>
                               )}
                             </div>
                             <div className="flex gap-4 items-start flex-wrap">

@@ -15,6 +15,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { hiddenPayers, fillHiddenPayers } from '@/lib/payerRule'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
@@ -266,6 +267,12 @@ export default function InputsPage() {
       ? await supabase.from('inputs').update(patch).eq('purchase_group', editPurchase.groupId)
       : await supabase.from('inputs').update(patch).eq('id', editPurchase.items[0].id)
     if (error) { alert(error.message); return }
+    // Os itens que estavam SEM pagamento acabaram de ganhar um: PAID FROM e PAID TO nascem
+    // GZ28US, escondidos (SUPPLIES não escolhe pagador — Márcio, 11/set), só onde vazios.
+    if (patch.payment_date) {
+      const hErr = await fillHiddenPayers(supabase, 'inputs', editPurchase.items.filter(i => !i.payment_date).map(i => i.id))
+      if (hErr) console.error('[supplies] pagador escondido não gravou:', hErr)
+    }
     setEditPurchase(null)
     load()
   }
@@ -358,6 +365,10 @@ export default function InputsPage() {
         carrier: scanned.carrier || null,
         receipt_url: JSON.stringify([scanned.receiptUrl]),
         purchase_group: groupId,
+        // SUPPLIES não tem escolha de pagador (Márcio, 11/set): a compra que nasce do scan grava
+        // PAID FROM e PAID TO GZ28US — escondidos, como no scan do estoque. Antes nascia sem
+        // nenhum dos dois e virava linha paga CEGA.
+        ...hiddenPayers('inputs', null, true),
       }))
     )
     if (error) { alert(error.message); return }

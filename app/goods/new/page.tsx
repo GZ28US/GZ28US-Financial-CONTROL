@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import SourceSelect, { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow, HOUSE_PAYER } from '@/components/PaymentFields'
+import { DEFAULT_SOURCE } from '@/components/SourceSelect'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow, HOUSE_PAYER, PaidFromSelect } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -507,7 +507,7 @@ export default function NewGoodPage() {
               onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
             <div>
               <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-              <SourceSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
+              <PaidFromSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
             </div>
             <div>
               <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>
@@ -544,7 +544,7 @@ export default function NewGoodPage() {
                           onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
-                          <SourceSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
+                          <PaidFromSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
                         </div>
                         <div>
                           <label className="block mb-1 text-sm text-gray-400">AMOUNT</label>

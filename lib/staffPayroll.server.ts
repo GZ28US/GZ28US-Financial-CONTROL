@@ -33,6 +33,7 @@
 // Idempotente: nunca cria duas linhas pro mesmo período.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { hiddenPayers } from './payerRule'
 
 type Season = {
   id: string
@@ -124,6 +125,8 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
       season_id: s.id, type: s.pay_type, amount: usd, amount_brl: brl,
       expense_date: periodo, payment_date: null,
       description: `${label}${nota} — gerado pelo app, aguardando pagamento`,
+      // Linha NOVA de staff: o PAID TO nasce GZ28US, escondido (lib/payerRule); quem pagou nasce no pagamento.
+      ...hiddenPayers('staff_expenses', null, false),
     })
     if (!error) created.push(`${s.season_code || s.id.slice(0, 6)} ${periodo} $${usd}`)
   }

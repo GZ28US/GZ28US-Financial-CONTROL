@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow, stockPayerTable } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
@@ -206,6 +206,11 @@ export default function EditInputPage() {
     if (!description) { alert('Please enter a description'); return }
     await ensureSupplier(supplier)
 
+    // SUPPLIES e ESTOQUE não têm escolha de pagador (Márcio, 11/set): PAID FROM e PAID TO são
+    // GZ28US escondidos e só gravam se este salvamento dá a data de pagamento a uma linha que
+    // não tinha e o campo está vazio (hiddenPayers); linha já paga fica com o que o banco tem.
+    // Estoque DOADO não tem pagador nenhum — nem na hora de ganhar data.
+    const payCols = paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, table === 'inventory' ? stockPayerTable(donated ? 'DONATED' : 'PURCHASED') : table, purchaseDate)
     const { error } = await supabase.from(table).update({
       description, category,
       quantity: qty || 1,
@@ -230,14 +235,13 @@ export default function EditInputPage() {
       // para coluna inexistente, não lista vazia).
       ...(nature ? { nature } : {}),
       notes: notes.trim() || null,
-      source: source || null,
+      // O SOURCE legado ainda é lido como pagador reserva (whoPaid): faz ida e volta e, quando o
+      // PAID FROM escondido nasce neste salvamento, acompanha ele se estava vazio.
+      source: source || payCols.paid_from || null,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
       // Registered = paid (Comprovante = PAGA); payment_date is a mirror of the
       // single DATE — never a second date. No date yet → both stay empty.
-      // SUPPLIES e ESTOQUE não têm escolha de pagador (Márcio, 11/set): os dois campos
-      // são GZ28US escondidos e só gravam se este salvamento dá a data de pagamento a
-      // uma linha que não tinha; linha já paga fica com o que o banco tem.
-      ...paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, table, purchaseDate),
+      ...payCols,
       updated_at: new Date().toISOString(),
     }).eq('id', inputId)
     if (error) { alert(error.message); return }

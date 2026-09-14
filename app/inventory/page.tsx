@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
-import { HOUSE_PAYER } from '@/components/PaymentFields'
+import { HOUSE_PAYER, fillHiddenPayers } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -224,6 +224,13 @@ export default function InventoryPage() {
       ? await supabase.from('inventory').update(patch).eq('purchase_group', editPurchase.groupId)
       : await supabase.from('inventory').update(patch).eq('id', editPurchase.items[0].id)
     if (error) { alert(error.message); return }
+    // Os itens COMPRADOS que estavam sem pagamento acabaram de ganhar um: PAID FROM e PAID TO
+    // nascem GZ28US, escondidos (ESTOQUE não escolhe pagador — Márcio, 11/set), só onde vazios.
+    // DOADO não tem pagador (o corte mora também dentro do fillHiddenPayers).
+    if (patch.payment_date) {
+      const hErr = await fillHiddenPayers(supabase, 'inventory', editPurchase.items.filter(i => !i.payment_date && i.source_type !== 'DONATED').map(i => i.id))
+      if (hErr) console.error('[inventory] pagador escondido não gravou:', hErr)
+    }
     setEditPurchase(null)
     load()
   }

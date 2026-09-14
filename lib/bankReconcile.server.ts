@@ -1,5 +1,8 @@
 import { classifyInput } from './inputsCategory'
 import { tabelaAtual, nomesHistoricos } from './tableRenames'
+// PAID TO escondido (onda 10, 14/set/2026): toda linha que o motor CRIA nasce com ele GZ28US
+// (lib/payerRule). Só nos inserts — o claim/backfill dos casamentos e das adoções não muda.
+import { HOUSE_PAYER } from './payerRule'
 // lib/bankReconcile.server.ts — pool, ranking e motores da conciliação bancária.
 // Só servidor (service key). A rota app/api/bank/reconcile/route.ts é fina e usa isto.
 //
@@ -1772,7 +1775,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
         if (!rowId) {
           const { data: row, error } = await db.from('fixed_cost_expenses').insert({
             supplier_id: supplierId, type: 'SINGLE', description: desc.slice(0, 200), amount: Math.abs(num(l.amount)), source: 'GZ28US',
-            expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id,
+            expense_date: l.date, payment_date: l.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id,
           }).select('id').single()
           if (error || !row) throw new Error(error?.message || 'insert falhou')
           rowId = row.id
@@ -1831,7 +1834,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
           if (!rowId) {
             const { data: row, error } = await db.from('fixed_cost_expenses').insert({
               supplier_id: r.supplier_id, type: 'SINGLE', description: (canon + ' — ' + bankName.slice(0, 80) + ' ' + MARKER_CREATED).slice(0, 200), amount: amtAbs, source: 'GZ28US',
-              expense_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id,
+              expense_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', bank_transaction_id: l.id,
             }).select('id').single()
             if (error || !row) throw new Error(error?.message || 'insert falhou')
             rowId = row.id; inserted = true
@@ -1858,7 +1861,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
             const { data: row, error } = await db.from('inputs').insert({
               description: (canon + ' — ' + bankName.slice(0, 80) + ' ' + MARKER_CREATED).slice(0, 200), category: inputCat,
               quantity: 1, unit_price: amtAbs, supplier: canon,
-              purchase_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', payment_method: 'BANK ACCOUNT', source: 'GZ28US', order_number: linkRef,
+              purchase_date: bookDate, payment_date: l.date, paid_from: 'GZ28US', paid_to: HOUSE_PAYER, payment_method: 'BANK ACCOUNT', source: 'GZ28US', order_number: linkRef,
               // Mesma tradução do balde: a regra cria o insumo JÁ classificado.
               nature: natureFromKlass(clsRule.klass),
             }).select('id').single()
