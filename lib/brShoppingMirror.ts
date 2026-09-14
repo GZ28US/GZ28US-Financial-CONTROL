@@ -16,7 +16,7 @@ import { sessionHeaders } from '@/lib/sessionHeaders'
 // o Pending balance — e nunca apaga nem recria linha espelhada. Vale para a invoice comum do US
 // (direções 3 + 4 → 085.N) e para a 006.N aberta no US (direções 1 + 2, origem no BR).
 
-export type TravessiaChave = { mirror_key: string; resultado: 'aplicada' | 'pulada' | 'recusada' | 'erro'; motivo: string | null; codigo: string | null; escritas: number }
+export type TravessiaChave = { mirror_key: string; resultado: 'aplicada' | 'pulada' | 'recusada' | 'erro'; motivo: string | null; codigo: string | null; escritas: number; erro_tipo?: 'conflito' | 'banco' }
 export type TravessiaResumo = { banco: 'US' | 'BR'; id: string; codigo: string; moeda: 'USD' | 'BRL'; custo: number; grand: number; recebido: number; pendente: number; vencimento: string | null }
 export type TravessiaResposta = {
   ok: boolean
@@ -78,6 +78,8 @@ export async function sincronizarTravessia(invoiceId: string): Promise<Travessia
 export function avisoDaTravessia(r: TravessiaResposta): string | null {
   const c = r.resultado?.chaves.find(x => x.mirror_key === r.chave) || r.resultado?.chaves[0]
   if (!c) return null
+  // Conflito (revisão 14/set/2026): o banco mudou desde o plano — nada ou quase nada foi gravado, e salvar de novo refaz o plano.
+  if (c.resultado === 'erro' && c.erro_tipo === 'conflito') return `A travessia desta invoice NÃO gravou (${c.codigo || c.mirror_key}): o banco mudou desde o plano. Salvar de novo refaz a conta; o cron também tenta de hora em hora.\n${c.motivo || ''}`
   if (c.resultado === 'erro') return `A GRAVAÇÃO PAROU no meio (${c.codigo || c.mirror_key}) — o que já foi gravado fica, e o próximo save ou o cron continuam de onde parou.\n${c.motivo || ''}`
   if (c.resultado === 'pulada' && c.motivo && !/^nada a fazer|^sem travessia/.test(c.motivo)) {
     const motivos = c.motivo.split(' · ')

@@ -17,8 +17,9 @@ import { bancosDoServidor, ErroTravessia, sincronizar } from '@/lib/crossing.ser
 // fazer não escreve nada — nem trilha. Toda escrita deixa a sua linha em data_fixes
 // (check_key 'shopping-invoice-travessia') no banco onde aconteceu; é o motor que grava, não o cron.
 //
-// FALHA FECHADA: a primeira chave que erra para a rodada (contrato do motor). Erro que se repete trava o
-// cron naquela chave até alguém olhar — de propósito: dinheiro com dúvida não anda sozinho. O motivo sai
+// FALHA FECHADA, SEM TRAVAR O CRON (revisão 14/set/2026): chave que erra por CONFLITO (a origem mudou desde
+// o plano, elo já em outra linha, trava de outra rodada) para só ela — as outras seguem e a próxima hora
+// refaz o plano. Erro de BANCO (rede, permissão, trilha que não gravou) para a rodada inteira. O motivo sai
 // na resposta e no log da Vercel. Chave em CONFLITO no plano (as travas do dono) nunca grava.
 //
 // TRAVESSIA_PAUSADA=1 no ambiente segura as escritas (o cron só conta o que faria).
@@ -39,13 +40,14 @@ export async function GET(req: NextRequest) {
   try {
     const r = await sincronizar(bancos, { limiteMs: LIMITE_MS, maxChaves: LOTE, origem: 'cron' })
     const gravadas = r.chaves.filter(c => c.escritas > 0)
-    const erro = r.chaves.find(c => c.resultado === 'erro')
-    if (erro) console.error('[cron crossing] parou em', erro.mirror_key, '—', erro.motivo)
+    const erros = r.chaves.filter(c => c.resultado === 'erro')
+    for (const e of erros) console.error(`[cron crossing] ${e.erro_tipo === 'banco' ? 'PAROU' : 'pulou'} em`, e.mirror_key, '—', e.motivo)
     return NextResponse.json({
       ok: r.ok,
       pausada: r.pausada,
       tempo_ms: r.tempo_ms,
       chaves_aplicadas: r.chaves.filter(c => c.resultado === 'aplicada').length,
+      chaves_com_conflito_na_escrita: erros.filter(e => e.erro_tipo === 'conflito').length,
       escritas: gravadas.reduce((s, c) => s + c.escritas, 0),
       conflitos_no_plano: r.conflitos,
       restantes: r.restantes,

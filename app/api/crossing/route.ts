@@ -10,9 +10,11 @@ import { applyPlan, bancosDoServidor, chaveDaInvoice, ErroTravessia, planCrossin
 //          classe (b) proposta à parte e a manchete «quanto o BR deve ao US» antes e depois.
 //          Não escreve nada.
 //   POST { confirm: true, impressoes: { [mirror_key]: impressao }, keys? }
-//        → a aplicação CONFERIDA: refaz o plano na hora e só grava a chave cuja impressão digital
-//          bate com a do GET que alguém leu. Sem confirm:true, 400 e nada escrito.
-//   POST { confirm: true, keys?: string[] }                       → sincronizar(): planeja uma vez e grava
+//        → a aplicação CONFERIDA: refaz o plano na hora e só grava as chaves QUE ESTÃO em impressoes,
+//          cada uma só se a impressão digital bate com a do GET que alguém leu ({} = nada). Passa por
+//          cima de TRAVESSIA_PAUSADA. Sem confirm:true, 400 e nada escrito.
+//   POST { confirm: true, keys?: string[], origem?: 'manual' | 'cron' | 'editor' }
+//        → sincronizar(): planeja uma vez e grava. Sem origem vale 'editor' (obedece a pausa).
 //   POST { confirm: true, invoice: { banco: 'US'|'BR', id }, origem: 'editor' }
 //        → O GANCHO DOS EDITORES (14/set): a chave é lida do BANCO pela invoice (o navegador só diz
 //          qual invoice) e só ela é gravada; a resposta traz o resumo da shopping invoice-alvo.
@@ -59,14 +61,17 @@ export async function POST(req: NextRequest) {
   if (!body || body.confirm !== true) return falha(400, 'bad-request', 'POST grava — mande { confirm: true }. Para só ver o plano, use GET.')
   let keys = Array.isArray(body.keys) ? body.keys.map((k: unknown) => String(k)).filter(Boolean) : undefined
   const impressoes = body.impressoes && typeof body.impressoes === 'object' ? Object.fromEntries(Object.entries(body.impressoes).map(([k, v]) => [k, String(v)])) : undefined
-  const origem: OrigemSincronia = body.origem === 'editor' || body.origem === 'cron' ? body.origem : 'manual'
+  // TRAVESSIA_PAUSADA (revisão 14/set/2026): só a chamada EXPLICITAMENTE manual — com impressoes, ou com
+  // origem: 'manual' — passa por cima da pausa. Sem origem, vale 'editor', que obedece.
+  const origem: OrigemSincronia = impressoes || body.origem === 'manual' ? 'manual' : body.origem === 'cron' ? 'cron' : 'editor'
   const bancos = bancosDoServidor()
   if ('erro' in bancos) return falha(503, 'service-key', bancos.erro)
   try {
-    // A aplicação conferida contra um GET lido por alguém: o caminho do autor do motor, intacto.
+    // A aplicação conferida contra um GET lido por alguém: só as chaves que estão em `impressoes` gravam
+    // ({} = nada), com o mesmo relógio de 240 s.
     if (impressoes) {
       const plano = await planCrossings(bancos)
-      const resultado = await applyPlan(bancos, plano, { confirm: true, keys, impressoes })
+      const resultado = await applyPlan(bancos, plano, { confirm: true, keys, impressoes, limiteMs: LIMITE_MS })
       return NextResponse.json({ ok: resultado.ok, resultado }, { status: resultado.ok ? 200 : 502 })
     }
     // O gancho do editor: a chave sai do banco, pela invoice.
