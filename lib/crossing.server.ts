@@ -76,7 +76,6 @@ const ALVO = '$alvo'        // o id da invoice-alvo, resolvido na hora de gravar
 // grava nada neles até o dono decidir. As regras gerais já travariam quase todos; a lista deixa o
 // motivo legível. Chave = código da invoice NO BR.
 export const FORA_DE_ESCOPO_BR: Readonly<Record<string, string>> = {
-  'BR.496.1': 'classe (c) — 006.2 + 006.16 Armageddon: duas 006.N para a mesma BR (fora deste passo)',
 }
 
 // A MESMA TRAVA DO LADO DAS 085.N — chave = código da invoice NO US (14/set/2026). As regras gerais já
