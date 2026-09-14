@@ -621,7 +621,10 @@ function planejarPendente(m: Montador, a: {
   // conta do outro passa do que a shopping invoice cobra: aí quem deve inverte — 085.3, 085.10, BR.537.1). A
   // assinatura da contagem dobrada é outra: a invoice JÁ estava quitada por baixa própria (recebido existente
   // ≥ grand) e a renda da origem ainda entraria por cima.
-  const jaRecebido = r2(pagas.reduce((s, p) => s + num(p.amount), 0))
+  // «Baixa PRÓPRIA» é renda paga que NÃO veio da origem: renda já espelhada (mirror_src ou elo com a renda do outro lado) é a própria
+  // travessia, não conta dobrada (achado da sessão Auto Book, 14/set 19:50 — BR.484.2 venda da MasterPiece: invoice só da direção 2,
+  // grand 0, a 1ª renda de 41.000 já espelhada travava a 2ª de 1.000).
+  const jaRecebido = r2(pagas.filter(p => !p.mirror_src && !p[a.elo]).reduce((s, p) => s + num(p.amount), 0))
   if (a.novas > 0 && devido < -a.tol && jaRecebido > a.tol && r2(a.grand - jaRecebido) <= a.tol) { m.conflito(`a shopping invoice já estava quitada por baixa própria (recebido ${a.moeda} ${jaRecebido} ≥ grand ${a.moeda} ${r2(a.grand)}) e as rendas novas da origem levariam o recebido a ${a.moeda} ${r2(a.recebido)} — o mesmo dinheiro contado duas vezes? ligue a baixa à renda da origem (${a.elo})`); return }
   const marcada = abertas.find(p => p.mirror_src === pendKey) || null
   const adotaveis = marcada ? [] : abertas.filter(p => !p.mirror_src && !p[a.elo] && /^pending balance$/i.test(String(p.description || '').trim()))
