@@ -76,7 +76,6 @@ const ALVO = '$alvo'        // o id da invoice-alvo, resolvido na hora de gravar
 // grava nada neles até o dono decidir. As regras gerais já travariam quase todos; a lista deixa o
 // motivo legível. Chave = código da invoice NO BR.
 export const FORA_DE_ESCOPO_BR: Readonly<Record<string, string>> = {
-  'BR.289.1': 'classe (c) — 006.8 ColtPython: valores e linhas não batem com a BR (fora deste passo)',
   'BR.496.1': 'classe (c) — 006.2 + 006.16 Armageddon: duas 006.N para a mesma BR (fora deste passo)',
 }
 
