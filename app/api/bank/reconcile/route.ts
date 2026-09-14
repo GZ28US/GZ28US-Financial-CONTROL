@@ -742,6 +742,11 @@ export async function POST(req: NextRequest) {
       const dirTxt = inflow ? 'ENTRADA ($' + bank.toFixed(2) + ' que entrou)' : 'SAÍDA ($' + bank.toFixed(2) + ' que saiu)'
       if (!mn.onSide || !(mn.plus > 0.005)) return NextResponse.json({ error: 'a linha do banco é ' + dirTxt + ' e nenhum registro está do lado dela — todos são ' + (inflow ? 'SAÍDA (gasto, ou estorno de renda)' : 'ENTRADA (renda, ou crédito/estorno de gasto)') + '; o lado oposto só desconta, então o misto precisa de pelo menos um registro que ' + (inflow ? 'entrou' : 'saiu') }, { status: 409 })
       if (Math.abs(mn.net - bank) >= 0.011) return NextResponse.json({ error: 'os registros dão, com sinal, +$' + mn.plus.toFixed(2) + (mn.minus ? ' −$' + mn.minus.toFixed(2) : '') + ' = $' + mn.net.toFixed(2) + ' e o banco ' + (inflow ? 'recebeu' : 'cobrou') + ' $' + bank.toFixed(2) + ' — o líquido tem que bater exatamente com o valor da linha' }, { status: 409 })
+      // O LADO QUE DESCONTA É MENOR QUE A LINHA (cético da BL 1.6.1, 13/set): sem esta trava, dinheiro sem relação se cancela
+      // e passa — $115,44 = pessoal 90,15 + cerveja 25,29 + despesa $50.000 − renda $50.000 casava, a renda ganhava baixa e as
+      // duas saíam do pool pra sempre. A Stripe passa (desconta 56,16 numa linha de 1.318,84). Custo aceito: fatura netada por
+      // crédito MAIOR que a linha (US$ 1.000 − 900) é recusada — casa cada uma com a sua linha.
+      if (mn.minus >= bank - 0.005) return NextResponse.json({ error: 'o lado que desconta ($' + mn.minus.toFixed(2) + ') não pode ser maior ou igual ao valor da linha ($' + bank.toFixed(2) + ') — isso cancela dinheiro sem relação; case os registros grandes com as linhas deles' }, { status: 409 })
       // FOLHA/PESSOAL: elo gravado (bank_transaction_id) com QUALQUER linha recusa — a outra ponta pode ser um CASAR COM AJUSTE no meio
       // (linha ainda NEW, elo escrito antes do claim), e sobrescrever um elo "morto" contaria o registro duas vezes. Elo velho de linha
       // removida/resetada se limpa no SOLTAR do Data Checker (ELO SOLTO / SUBSTITUÍDA). payment_reference bank: segue a régua do pool (linha viva).
@@ -1306,7 +1311,10 @@ export async function POST(req: NextRequest) {
               const mkeys = members.map((m: any) => m.table + ':' + String(m?.id || ''))
               const shapeOk = members.length >= 2 && members.length <= 10 && new Set(mkeys).size === mkeys.length && Math.abs(num(l.amount)) >= 0.005 && members.every((m: any) => m.table && m.id && mixable(m.table))
               const fp = shapeOk ? mixedFromPool(mixedPool, num(l.amount), members.map((m: any) => ({ table: m.table, id: String(m.id) }))) : null
-              if (!fp || fp.missing.length || fp.both.length || !fp.net.ok) { gone++; continue }
+              // Líquido que deixou de bater NÃO derruba o restauro (cético, 13/set): o casamento volta e o «VALOR MUDOU» do
+              // ?autobook=1 acusa a diferença, como já faz no casamento simples. Largar a linha NEW deixava a regra do motor
+              // lançá-la de novo — gasto em dobro. Só não volta sem registro do lado da linha.
+              if (!fp || fp.missing.length || fp.both.length || !fp.net.onSide || !(fp.net.plus > 0.005)) { gone++; continue }
               for (const m of members.filter((x: any) => x.table === 'staff_expenses')) {
                 const { data: ok, error } = await db.from('staff_expenses').update({ bank_transaction_id: l.id }).eq('id', m.id).is('bank_transaction_id', null).select('id')
                 if (error || !ok || !ok.length) { await unlink(); throw new Error('elo da folha') }
