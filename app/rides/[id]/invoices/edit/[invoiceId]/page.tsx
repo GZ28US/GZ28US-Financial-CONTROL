@@ -1901,10 +1901,14 @@ export default function EditInvoicePage() {
     const base = f !== 0 ? ((parseFloat(editingPart.unit_price) || 0) / f).toFixed(2) : editingPart.unit_price
     if (part.id) {
       // cancel_status vai junto (14/set/2026): marcar CANCELLED/REFUNDED grava SÓ o carimbo — o preço fica como está, riscado na tela.
-      const { error } = await supabase.from('invoice_items').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0, cancel_status: normCancelStatus(editingPart.cancel_status) }).eq('id', part.id)
+      // Item espelho da travessia (mirror_src): o preço é o gravado na origem — o SAVE daqui grava SÓ o carimbo (revisão 14/set: antes
+      // reescrevia descrição/preço e recalculava base_cost pela margem viva, e o motor acusava base_cost divergente).
+      const { error } = part.mirror_src
+        ? await supabase.from('invoice_items').update({ cancel_status: normCancelStatus(editingPart.cancel_status) }).eq('id', part.id)
+        : await supabase.from('invoice_items').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0, cancel_status: normCancelStatus(editingPart.cancel_status) }).eq('id', part.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id, base_cost: base }; setParts(updated)
+    const updated = [...parts]; updated[editingPartIndex!] = part.mirror_src ? { ...part, cancel_status: normCancelStatus(editingPart.cancel_status) } : { ...editingPart, id: part.id, base_cost: base }; setParts(updated)
     setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' })
   }
   function cancelEditPart() { setEditingPartIndex(null); setEditingPart({ description: '', unit_price: '', quantity: '1' }) }
@@ -4062,7 +4066,7 @@ export default function EditInvoicePage() {
                           <p className={`text-base font-bold truncate ${partFora.has(part) ? 'text-gray-500' : (isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{partFora.has(part) || isQuote || isValidDate(part.payment_date || '') ? '' : ' — PENDING'}</p>
                           {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                           <p className={`text-sm text-gray-400 ${partFora.has(part) ? 'line-through' : ''}`}>{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
-                          {partFora.has(part) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} /><span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span></div>}
+                          {(partFora.has(part) || !!part.cancel_status) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} />{partFora.has(part) && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}</div>}
                         </div>
                         <div className="flex gap-2 shrink-0">
                           {!isQuote && <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>}

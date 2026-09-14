@@ -36,7 +36,7 @@ do $$ begin
 end $$;
 
 comment on column public.invoice_items.cancel_status is
-  'ESTORNO (14/set/2026, Márcio: «deixe nas invoices como estornado, e faça os controles financeiros»): null = item vivo; CANCELLED = cancelado, aguardando estorno; REFUNDED = estornado. O item FICA na invoice, riscado, e sai de todo total (grand total, pending balance, DRE/DFC/Balanço, conta US⇄BR). Régua única em lib/estorno.ts.';
+  'ESTORNO (14/set/2026, Márcio: «deixe nas invoices como estornado, e faça os controles financeiros»): null = item vivo; CANCELLED = cancelado, aguardando estorno; REFUNDED = estornado. O item FICA na invoice; o REFUNDED sem linha negativa do estorno sai de todo total (grand total, pending balance, DRE/DFC/Balanço, conta US⇄BR); o CANCELLED continua contando. Régua única em lib/estorno.ts.';
 
 notify pgrst, 'reload schema';
 

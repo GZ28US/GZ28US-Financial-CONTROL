@@ -843,6 +843,11 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
       m.conflito(`despesa sem origem no BR: ${limpa(e.item).slice(0, 40)} US$ ${r2(custoUS(e))} (${uInv.get(e.invoice_id)?.invoice_code})`)
     }
     for (const i of sobraI) m.conflito(`item sem origem no BR: ${limpa(i.description).slice(0, 40)} US$ ${r2(linhaItem(i))}`)
+    // ESTORNADA SEM ELO × ORIGEM SEM PAR (revisão 14/set): o robô do e-mail carimba REFUNDED pelo pedido, inclusive em linha da 006.N que
+    // nunca ganhou mirror_src. Essa linha sai do casamento (foto.us.estornadas) e a origem do BR, ainda PAID FROM GZ28US, ficaria sem par —
+    // o motor criaria de novo, cobrando o GZ28BR pelo dinheiro que voltou. Com as duas coisas na mesma chave, trava e pergunta.
+    const estSemElo = [...estDesp, ...estItens].filter(l => !fonteDoElo(l))
+    if (sobraS.length && estSemElo.length) m.conflito(`${estSemElo.length} linha(s) ESTORNADA(S) sem elo na ${cands.map(i => i.invoice_code).join(' + ') || '006.N'} e ${sobraS.length} linha(s) do BR sem par — confira se não é a mesma compra antes de o motor criar (estornada: ${limpa(estSemElo[0].item || estSemElo[0].description).slice(0, 40)})`)
     for (const s of sobraS) {
       if (E.length) m.c.sem_par.push({ direcao: 1, lado: 'fonte', tabela: 'invoice_expenses', id: s.id, usd: Rs(s) == null ? null : r2(Rs(s) as number), rotulo: limpa(s.item).slice(0, 80), motivo: a.ambiguas.includes(s) || bq.ambiguas.includes(s) ? 'mais de um candidato no US com o mesmo valor' : 'nenhuma despesa do US com o valor desta linha' })
     }

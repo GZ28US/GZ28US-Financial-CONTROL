@@ -971,7 +971,7 @@ export default function ViewInvoicePage() {
                                   <p className={`text-base truncate ${mOut ? 'text-gray-500' : (invoice.is_quote || mPaid) ? '' : 'text-yellow-400'}`} title={m.description}>{m.description}{mOut || invoice.is_quote || mPaid ? '' : ' — PENDING'}</p>
                                   {showPartNumbers && pnFor(m) && <p className="text-xs text-gray-500">PN: {pnFor(m)}</p>}
                                   <p className={`text-sm text-gray-400 ${mOut ? 'line-through' : ''}`}>{m.unit_price === 0 ? 'COURTESY' : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
-                                  {mOut && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={m.cancel_status} /><span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span></div>}
+                                  {(mOut || !!m.cancel_status) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={m.cancel_status} />{mOut && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}</div>}
                                   {!invoice.is_quote && !mOut && <p className="text-sm text-gray-500">{mPaid ? `Paid: ${formatDate(m.payment_date)}` : 'Not paid yet'}</p>}
                                 </div>
                               </div>
@@ -991,7 +991,7 @@ export default function ViewInvoicePage() {
                       <p className={`text-sm text-gray-400 ${partOut ? 'line-through' : ''}`}>
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
-                      {partOut && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} /><span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span></div>}
+                      {(partOut || !!part.cancel_status) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} />{partOut && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}</div>}
                     </div>
                   </div>
                   )
