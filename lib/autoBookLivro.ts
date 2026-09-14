@@ -603,6 +603,11 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'Destinos aprendidos casando a Regions: E85 do dyno vai na invoice do carro que está no dyno (não no Frota); lanche e comida do time vão em insumos TEAM; cerveja, em insumos CONSUMPTION; cigarro do Márcio é gasto pessoal na season dele; compra para o apartamento é APARTMENT; ferramenta e peça comprada para um carro vão na invoice dele.',
         fala: 'comida pro team, como os demais',
         nota: 'Casos de 13/09: RaceTrac 586 (US$ 114,43) e os galões de E85 de 01, 02 e 05/09 → Colossus US.003.1 (os de 01 e 02/09 saíram do Frota); Steak n Shake, McDonald\'s e Wawa 19,47 → TEAM; Coronita ×2 → CONSUMPTION; BP 30,45 e Newport ×10 → season US.008; Ross → APARTMENT; mangueira 5/8" → Colossus; Little Trees → WorkTruck.' },
+      { id: '14.17', estado: 'EM CONSTRUÇÃO', desde: '13/09/2026',
+        texto: 'Dinheiro que cruza as empresas — PAID FROM ou PAID TO entre GZ28US e GZ28BR, nos dois apps e nas duas direções — só casa com o income ou a despesa que está dentro da SHOPPING INVOICE da empresa no app da outra. Cliente do BR que paga na conta do US vira income numa shopping invoice do GZ28BR no app US, abatendo a dívida; despesa do US paga com dinheiro do BR vira despesa numa shopping invoice do US no app BR. Enquanto a shopping invoice não existe, a linha do banco espera — nunca fecha como transferência nem como ignorada.',
+        fala: 'TODA E QUALQUER movimentação financeira entre o US e o BR tem que estar nas shopping invoices · Sempre que os recursos PAID FROM & TO entre US e BR são usados, tem que ter a shopping invoice no app da outra · ISSO É SAGRADO',
+        onde: 'shopping invoices 006.xx (US) e a série espelho no BR · página US vs BR Flow',
+        nota: 'Pedido ao App development em 13/09. Caso que ensinou: ACH de US$ 1.402,00 da New Times Agency em 25/08 = Corvette C8 do Gabriel (BR.537.1), com o income no app BR e PAID TO GZ28US — a linha segue NEW até a shopping invoice do GZ28BR existir no app US.' },
     ],
   },
 ]
