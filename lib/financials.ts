@@ -8,6 +8,7 @@
 // Fonte de custo é SEMPRE invoice_expenses — invoice_items.base_cost é campo de
 // exibição (espelha o preço de venda nos car deals) e não entra em conta nenhuma.
 import { supabase } from '@/lib/supabase'
+import { foraDoDinheiro } from '@/lib/estorno'
 
 const num = (v: unknown) => parseFloat(String(v)) || 0
 const okDate = (d: string | null | undefined) => !!d && /^\d{4}-\d{2}-\d{2}/.test(d)
@@ -56,6 +57,11 @@ export type FinData = {
   rides: Map<string, any>
   clients: Map<string, any>
   invoiceById: Map<string, any>
+  // ESTORNO (FIN 0.17.0 — Márcio, 14/09: «deixe nas invoices como estornado, e faça os controles financeiros»): as linhas
+  // com cancel_status que NÃO contam dinheiro pela régua de lib/estorno.ts. Saem de TODAS as listas acima já no
+  // carregamento — DRE, DFC, Balanço e os cards do Data Checker leem o mesmo dataset e nenhum precisa lembrar da regra.
+  // Ficam aqui, à parte, para quem quiser mostrar o que saiu (a linha continua na invoice, riscada).
+  estornadas: { tabela: string; linha: any; valor: number }[]
   dataFixes: any[] | null       // trilha do DATA CHECK (null até MIGRATION_data_fixes.sql)
   // Fase 2 — os três livros (null até MIGRATION_financial_ledgers.sql rodar)
   capitalEvents: any[] | null
@@ -85,15 +91,15 @@ async function fetchAll(table: string, select: string): Promise<any[]> {
 }
 
 export async function loadFinancials(): Promise<FinData> {
-  const [invoices, payments, invExpenses, invParts, invServices, expenses,
-    fixedExpenses, fixedSuppliers, goods, goodExpenses, inputs, inventory, rides, clients] = await Promise.all([
+  const [invoices, payments, invExpensesAll, invPartsAll, invServices, expensesAll,
+    fixedExpenses, fixedSuppliers, goodsAll, goodExpensesAll, inputsAll, inventoryAll, rides, clients] = await Promise.all([
     fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
     // mirror_expense_id é a cicatriz do espelho do cliente, que saiu do app US em
     // 11/set: a máquina que criava essas linhas morreu, a COLUNA fica até a onda que
     // a derruba no banco. Está preenchida em 0 de 220 linhas (medido) — o corte
     // abaixo continua de pé só pra nenhuma linha teimosa virar caixa.
     fetchAll('invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
-    fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at, receipt_url'),
+    fetchAll('invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, purchase_group, created_at, receipt_url, order_number, cancel_status'),
     // base_tributavel é a base do imposto e do desconto (coluna GERADA, o Postgres
     // calcula). O paid_from do ITEM sai do select: ele só existia pra zerar a linha
     // do cliente, e sem CLIENT no app US a coluna é vazia nas 804 linhas (medido) —
@@ -103,17 +109,18 @@ export async function loadFinancials(): Promise<FinData> {
     // o cascade levaria a GERADA junto (e a view-ponte), e este select, que pede
     // base_tributavel pelo nome, faria o fetchAll estourar: Balanço, DFC, DRE e Data
     // Checker fora do ar.
-    fetchAll('invoice_items', 'id, invoice_id, description, unit_price, quantity, base_tributavel, mirror_expense_id'),
+    // cancel_status do ITEM nasce na MIGRATION_invoice_items_cancel_status.sql (14/set) — roda ANTES deste deploy.
+    fetchAll('invoice_items', 'id, invoice_id, description, unit_price, quantity, base_tributavel, mirror_expense_id, cancel_status'),
     fetchAll('invoice_services', 'id, invoice_id, description, price'),
-    fetchAll('staff_expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id'),
+    fetchAll('staff_expenses', 'id, type, description, amount, expense_date, payment_date, origin, paid_from, paid_to, source, season_id, order_number, cancel_status'),
     fetchAll('fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, bank_transaction_id'),
     fetchAll('fixed_cost_suppliers', 'id, company, description, cost_type, date_conclusion, periodicity, payment_day_1, payment_day_2'),
-    fetchAll('assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
-    fetchAll('assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source'),
+    fetchAll('assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, order_number, cancel_status'),
+    fetchAll('assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, order_number, cancel_status'),
     // order_number entra no select (29/ago/2026): o MOVE pra estoque do Data
     // Checker leva o pedido junto — ORDER NUMBER é sagrado e não se perde.
-    fetchAll('inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, order_number'),
-    fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group'),
+    fetchAll('inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, order_number, cancel_status'),
+    fetchAll('inventory', 'id, description, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, order_number, cancel_status'),
     // rides via '*': tabela pequena e é a que mais ganha coluna nova — select
     // explícito derrubava o dataset inteiro quando o deploy chegava antes da
     // migration (caso rides.exported). Com '*', coluna ausente vira undefined.
@@ -125,6 +132,25 @@ export async function loadFinancials(): Promise<FinData> {
     fetchOpt('financing_events', '*'), fetchOpt('cash_balances', '*'),
     fetchOpt('data_fixes', '*'),
   ])
+  // ── ESTORNO: a linha que não conta dinheiro sai AQUI, uma vez, para todo mundo (régua em lib/estorno.ts) ──
+  // Despesa e item casam a negativa sem pedido DENTRO da invoice; as tabelas soltas só pelo pedido. Custo fixo não tem
+  // cancel_status (não é item comprado) e renda não se estorna por carimbo — dinheiro devolvido ao cliente é renda negativa.
+  const estornadas: FinData['estornadas'] = []
+  const tira = (tabela: string, rows: any[], valor: (r: any) => number, grupo?: (r: any) => unknown) => {
+    const fora = foraDoDinheiro(rows, valor, grupo)
+    if (!fora.size) return rows
+    for (const r of fora) estornadas.push({ tabela, linha: r, valor: valor(r) })
+    return rows.filter(r => !fora.has(r))
+  }
+  const porInvoice = (r: any) => r.invoice_id
+  const invExpenses = tira('invoice_expenses', invExpensesAll, expLine, porInvoice)
+  const invParts = tira('invoice_items', invPartsAll, qtyLine, porInvoice)
+  const expenses = tira('staff_expenses', expensesAll, (r: any) => num(r.amount))
+  const goods = tira('assets', goodsAll, qtyLine)
+  const goodExpenses = tira('assets_expenses', goodExpensesAll, (r: any) => num(r.amount))
+  const inputs = tira('inputs', inputsAll, qtyLine)
+  const inventory = tira('inventory', inventoryAll, qtyLine)
+
   // A pseudo-invoice A ATRIBUIR (origin BUCKET) sai do dataset: as linhas dela
   // viram `bucket` e nunca entram em invExpenses (realIds não a contém).
   const bucketInvs = invoices.filter(isBucketInvoice)
@@ -146,6 +172,7 @@ export async function loadFinancials(): Promise<FinData> {
     rides: new Map(rides.map((r: any) => [r.id, r])),
     clients: new Map(clients.map((c: any) => [c.id, c])),
     invoiceById: new Map(real.map((i: any) => [i.id, i])),
+    estornadas,
     dataFixes,
     capitalEvents, financing: financingRows, financingEvents, cashBalances,
     ledgersReady: !!(capitalEvents && financingRows && financingEvents && cashBalances),

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
+import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL, PLATE_RENEWAL_COUNTY_URL, type PlateStatus } from '@/lib/plateExpiry'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { hiddenPayers } from '@/lib/payerRule'
@@ -146,11 +147,16 @@ export default function HomePage() {
     // As invoices vêm primeiro; as filhas só das invoices que passaram (ver childRows).
     const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
     const invIds = (invs || []).map((i: any) => String(i.id))
-    const [pays, exps, parts] = await Promise.all([
+    const [pays, expsTodas, partsTodos] = await Promise.all([
       childRows('invoice_incomes', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
-      childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier', invIds),
-      childRows('invoice_items', 'id, invoice_id, unit_price, quantity', invIds),
+      childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier, order_number, cancel_status', invIds),
+      childRows('invoice_items', 'id, invoice_id, unit_price, quantity, cancel_status', invIds),
     ])
+    // ESTORNO (14/set/2026 — lib/estorno.ts): despesa e item estornados não são dinheiro devido nem a receber — saem daqui
+    // antes de qualquer soma ou lista (a despesa estornada sem pagamento aparecia como conta a pagar).
+    const porInvoice = (r: { invoice_id: string }) => r.invoice_id
+    const exps = soOQueConta(expsTodas, valorDespesa, porInvoice)
+    const parts = soOQueConta(partsTodos, valorItem, porInvoice)
 
 
     const group = <T extends { invoice_id: string }>(rs: T[] | null) => {

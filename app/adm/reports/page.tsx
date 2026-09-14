@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { soOQueConta, valorDespesa } from '@/lib/estorno'
 
 const money = (n: number) => `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -66,9 +67,10 @@ export default function ReportsPage() {
     // TO PAY — unpaid supplier expenses on report-ready invoices.
     const { data: exps } = await supabase
       .from('invoice_expenses')
-      .select('invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date')
+      .select('invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, order_number, cancel_status')
       .is('payment_date', null)
-    const pay: Row[] = (exps || []).filter((e: any) => invMap.has(e.invoice_id)).map((e: any) => {
+    // ESTORNO (14/set/2026 — lib/estorno.ts): compra estornada/cancelada não é conta a pagar (a 006.27 do HHP 382526 aparecia aqui).
+    const pay: Row[] = soOQueConta((exps || []).filter((e: any) => invMap.has(e.invoice_id)), valorDespesa, e => e.invoice_id).map((e: any) => {
       const inv = invMap.get(e.invoice_id)
       const amt = (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0)
       return { date: e.expense_date || jobDate(inv), code: inv.invoice_code || '', who: e.supplier || whoFor(inv), detail: e.item || '', amount: amt }

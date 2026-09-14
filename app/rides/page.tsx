@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 
 type Ride = {
   id: string
@@ -179,8 +180,9 @@ export default function RidesPage() {
 
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_incomes').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
-          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', invoiceIds),
-          supabase.from('invoice_items').select('invoice_id, unit_price, quantity').in('invoice_id', invoiceIds),
+          // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
+          supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, order_number, cancel_status').in('invoice_id', invoiceIds),
+          supabase.from('invoice_items').select('invoice_id, unit_price, quantity, cancel_status').in('invoice_id', invoiceIds),
           supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', invoiceIds),
         ])
 
@@ -193,8 +195,8 @@ export default function RidesPage() {
           return m
         }
         const paymentsBy = byInvoice(paymentsRes.data)
-        const expensesBy = byInvoice(expensesRes.data)
-        const partsBy = byInvoice(partsRes.data)
+        const expensesBy = byInvoice(soOQueConta(expensesRes.data || [], valorDespesa, r => r.invoice_id))
+        const partsBy = byInvoice(soOQueConta(partsRes.data || [], valorItem, r => r.invoice_id))
         const servicesBy = byInvoice(servicesRes.data)
 
         // Per-item expense line including Tax + Extra Costs, matching the edit page.

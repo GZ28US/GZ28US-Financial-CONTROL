@@ -73,7 +73,8 @@ export async function readCrossingRows(dbs: CrossingDbs): Promise<CrossingRows> 
   const brRideIds = [...new Set(brInvoices.map(i => i.ride_id).filter(Boolean))] as string[]
   const pend = pendingIds()
   const [usItems, usServices, usIncomes, usRides, brParts, brServices, brPayments, brRides, usOrigins, brExpenses] = await Promise.all([
-    readByInvoice(dbs.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity', usIds),
+    // cancel_status: o item estornado sai da conta (lib/estorno.ts). A coluna nasce na MIGRATION_invoice_items_cancel_status.sql.
+    readByInvoice(dbs.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity, cancel_status', usIds),
     readByInvoice(dbs.us, 'US', 'invoice_services', 'id, invoice_id, description, price', usIds),
     readByInvoice(dbs.us, 'US', 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, description', usIds),
     readByIds(dbs.us, 'US', 'rides', 'id, project_code, project_name', usRideIds),

@@ -30,6 +30,15 @@
 // de medição e para as telas, que só importam tipos, as constantes e a régua countsOnUsSide (o Balanço tira as 006.N
 // das Contas a receber: elas estão DENTRO da conta corrente — contar nos dois lugares seria o mesmo dinheiro duas vezes).
 
+//
+// ESTORNO (14/set/2026 — Márcio, sobre o HHP 382526 da 006.27: «deixe nas invoices como estornado, e faça os controles
+// financeiros»): item da 006.N com cancel_status que não conta dinheiro pela régua de lib/estorno.ts SAI do total (e da
+// manchete do motor, que usa a mesma régua). Ele continua na lista da invoice, com counted = false e o carimbo, para a
+// tela riscar. A régua é a mesma do loadFinancials e das telas de invoice.
+
+import { foraDoDinheiro, cancelOf } from '@/lib/estorno'
+import type { CancelStatus } from '@/lib/deliverStatus'
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
 
@@ -62,7 +71,8 @@ export type CrossingWarning =
   | { kind: 'br_no_usd'; code: string; lines: number }
   | { kind: 'br_converted_by_invoice_rate'; lines: number }
 
-export type UsItemLine = { id: string; description: string; unitPrice: number; quantity: number; usd: number }
+// counted = false: item estornado/cancelado (lib/estorno.ts) — aparece riscado e fica fora de parts/total.
+export type UsItemLine = { id: string; description: string; unitPrice: number; quantity: number; usd: number; cancelStatus: CancelStatus | null; counted: boolean }
 export type UsServiceLine = { id: string; description: string; usd: number }
 export type UsIncomeLine = { id: string; description: string; usd: number; paidAt: string | null; paymentDate: string | null; counted: boolean }
 export type UsInvoice = {
@@ -192,7 +202,10 @@ export function computeCrossingBalance(rows: CrossingRows): CrossingBalance {
   const usRides = new Map(rows.us.rides.map(r => [r.id, r]))
   const usAll = rows.us.invoices.filter(i => i.client_id === US_CLIENT_GZ28BR)
   const usIds = new Set(usAll.map(i => i.id))
-  const itemsBy = groupBy(rows.us.items.filter(i => usIds.has(i.invoice_id)), 'invoice_id')
+  const usItems = rows.us.items.filter(i => usIds.has(i.invoice_id))
+  const itemFora = foraDoDinheiro(usItems, lineValue, i => i.invoice_id)   // estornado: fica na lista, sai da conta
+  const allItemsBy = groupBy(usItems, 'invoice_id')
+  const itemsBy = groupBy(usItems.filter(i => !itemFora.has(i)), 'invoice_id')
   const servBy = groupBy(rows.us.services.filter(s => usIds.has(s.invoice_id)), 'invoice_id')
   const incBy = groupBy(rows.us.incomes.filter(p => usIds.has(p.invoice_id)), 'invoice_id')
   const usRow = (inv: Row): UsInvoice => {
@@ -208,7 +221,7 @@ export function computeCrossingBalance(rows: CrossingRows): CrossingBalance {
       parts: r2(g.base), services: r2(g.serv), flTaxPct: num(inv.florida_taxes), discountPct: num(inv.global_discount),
       total: r2(g.grand), received: r2(received), open: r2(g.grand - received),
       pending: r2(pend.reduce((s, p) => s + num(p.amount), 0)), pendingN: pend.length,
-      items: items.map(i => ({ id: i.id, description: String(i.description || ''), unitPrice: num(i.unit_price), quantity: qty(i), usd: r2(lineValue(i)) })),
+      items: (allItemsBy.get(inv.id) || []).map(i => ({ id: i.id, description: String(i.description || ''), unitPrice: num(i.unit_price), quantity: qty(i), usd: r2(lineValue(i)), cancelStatus: cancelOf(i), counted: !itemFora.has(i) })),
       serviceLines: serv.map(x => ({ id: x.id, description: String(x.description || ''), usd: r2(num(x.price)) })),
       incomes: inc.map(p => ({ id: p.id, description: String(p.description || ''), usd: r2(num(p.amount)), paidAt: p.paid_at ?? null, paymentDate: p.payment_date ?? null, counted: counted && !!p.paid_at })),
     }

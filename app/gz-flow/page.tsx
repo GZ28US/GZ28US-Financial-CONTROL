@@ -269,7 +269,8 @@ function UsRow({ inv, open, toggle }: { inv: UsInvoice; open: boolean; toggle: (
       {open && (
         <tr className="bg-gray-950">
           <td colSpan={5} className="px-6 py-2 text-xs text-gray-400">
-            {inv.items.map(l => <Line key={l.id} left={`item · ${l.description || '—'}${l.quantity !== 1 ? ` · ${l.quantity} × ${formatUSD(l.unitPrice)}` : ''}`} right={formatUSD(l.usd)} />)}
+            {/* Item estornado/cancelado (lib/estorno.ts): fica na lista, apagado e riscado, fora do total. */}
+            {inv.items.map(l => <Line key={l.id} dim={!l.counted} left={`item · ${l.counted ? '' : `${l.cancelStatus || 'CANCELLED'} (not counted) · `}${l.description || '—'}${l.quantity !== 1 ? ` · ${l.quantity} × ${formatUSD(l.unitPrice)}` : ''}`} right={formatUSD(l.usd)} strike={!l.counted} />)}
             {inv.serviceLines.map(l => <Line key={l.id} left={`service · ${l.description || '—'}`} right={formatUSD(l.usd)} />)}
             {inv.flTaxPct ? <Line left={`FL tax ${inv.flTaxPct}%`} right="" /> : null}
             {inv.discountPct ? <Line left={`discount ${inv.discountPct}%`} right="" /> : null}
@@ -309,11 +310,11 @@ function BrRow({ inv, open, toggle }: { inv: BrInvoice; open: boolean; toggle: (
   )
 }
 
-function Line({ left, right, dim }: { left: string; right: string; dim?: boolean }) {
+function Line({ left, right, dim, strike }: { left: string; right: string; dim?: boolean; strike?: boolean }) {
   return (
     <div className={`flex justify-between gap-3 py-0.5 border-b border-gray-900 last:border-0 ${dim ? 'text-gray-600' : ''}`}>
       <span className="truncate" title={left}>{left}</span>
-      <span className="tabular-nums shrink-0">{right}</span>
+      <span className={`tabular-nums shrink-0 ${strike ? 'line-through' : ''}`}>{right}</span>
     </div>
   )
 }

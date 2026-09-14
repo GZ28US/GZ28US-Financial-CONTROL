@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
+import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null) {
@@ -84,11 +85,13 @@ export default function InvoicesPage() {
     if (ids.length) {
       const [pRes, eRes, prRes, sRes] = await Promise.all([
         supabase.from('invoice_incomes').select('invoice_id, amount, paid_at').in('invoice_id', ids),
-        supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra').in('invoice_id', ids),
-        supabase.from('invoice_items').select('invoice_id, unit_price, quantity').in('invoice_id', ids),
+        // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
+        supabase.from('invoice_expenses').select('invoice_id, price, quantity, payment_date, tax, extra, order_number, cancel_status').in('invoice_id', ids),
+        supabase.from('invoice_items').select('invoice_id, unit_price, quantity, cancel_status').in('invoice_id', ids),
         supabase.from('invoice_services').select('invoice_id, price').in('invoice_id', ids),
       ])
-      paysBy = group(pRes.data); expsBy = group(eRes.data); partsBy = group(prRes.data); svcsBy = group(sRes.data)
+      const porInvoice = (r: { invoice_id: string }) => r.invoice_id
+      paysBy = group(pRes.data); expsBy = group(soOQueConta(eRes.data || [], valorDespesa, porInvoice)); partsBy = group(soOQueConta(prRes.data || [], valorItem, porInvoice)); svcsBy = group(sRes.data)
     }
     const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
 

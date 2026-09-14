@@ -24,6 +24,7 @@
 // Erro de leitura NÃO é engolido: só tabela opcional ausente (migration) vira null.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { fetchAll, fetchBankLines, pointerKeys, mixedMembers, MIXED_GROUP, num, expensesRows, BUCKET_ORIGIN, BUCKET_CODE } from './bankReconcile.server'
+import { foraDoDinheiro } from './estorno'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
 export type AuditItem = { key: string; kind: string; title: string; amount: number; date: string | null; refs: AuditRef[]; evidence: string }
@@ -363,13 +364,22 @@ export function computeCloseScore(d: CloseData, opts: CloseOpts = {}): CloseScor
   type Paid = { key: string; table: string; r: any; amount: number; date: string; label: string; href: string; group: string }
   const paidRows: Paid[] = []
   const P = (table: string, r: any, amount: number, label: string, href: string, group: unknown) => paidRows.push({ key: table + ':' + r.id, table, r, amount, date: day(r.payment_date), label, href, group: normKey(group) })
-  for (const r of d.invoiceExpenses) if (realInv(r.invoice_id)) P('invoice_expenses', r, expLine(r), ['EXPENSE', invCode(r.invoice_id), cut(r.item, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), invHref(r.invoice_id), r.supplier)
+  // ESTORNO (DC 1.57.0 — Márcio, 14/09: «deixe nas invoices como estornado, e faça os controles financeiros»): a linha que o
+  // DFC não conta (lib/estorno.ts, a mesma régua do loadFinancials) também não pede linha no banco. Sai daqui, contada em
+  // skipped.estornada_paid. O BALDE e os ELOS acima continuam lendo todas: linha casada com registro estornado não é elo morto.
+  const vivas = (table: string, rows: any[], valor: (r: any) => number, grupo?: (r: any) => unknown) => {
+    const fora = foraDoDinheiro(rows, valor, grupo)
+    if (!fora.size) return rows
+    for (const r of fora) if (okDay(r.payment_date)) skip('estornada_paid', valor(r))
+    return rows.filter(r => !fora.has(r))
+  }
+  for (const r of vivas('invoice_expenses', d.invoiceExpenses, expLine, r => r.invoice_id)) if (realInv(r.invoice_id)) P('invoice_expenses', r, expLine(r), ['EXPENSE', invCode(r.invoice_id), cut(r.item, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), invHref(r.invoice_id), r.supplier)
   for (const r of d.fixedExpenses) { const s = supById.get(String(r.supplier_id)); const tarifa = s?.cost_type === 'BANK'; P('fixed_cost_expenses', r, num(r.amount), [tarifa ? 'TARIFA' : 'FIXO', cut(s?.company, 30), cut(r.description, 60)].filter(Boolean).join(' · '), tarifa ? '/costs/bank' : r.supplier_id ? '/costs/fixed/' + r.supplier_id : '/costs/fixed', s?.company) }
-  for (const r of d.expenses) P('staff_expenses', r, num(r.amount), [r.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', cut(r.description || r.type, 60)].filter(Boolean).join(' · '), '/staff', '')
-  for (const r of d.goods) P('assets', r, qtyLine(r), ['GOODS', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/goods', r.supplier)
-  for (const r of d.goodExpenses) P('assets_expenses', r, num(r.amount), ['GOODS', cut(r.description, 60)].filter(Boolean).join(' · '), '/goods', '')
-  for (const r of d.inputs) P('inputs', r, qtyLine(r), ['SUPPLY', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/supplies', r.supplier)
-  for (const r of d.inventory) if (r.source_type === 'PURCHASED') P('inventory', r, qtyLine(r), ['STOCK', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/inventory', r.supplier)
+  for (const r of vivas('staff_expenses', d.expenses, r => num(r.amount))) P('staff_expenses', r, num(r.amount), [r.origin === 'PERSONAL' ? 'PESSOAL' : 'FOLHA', cut(r.description || r.type, 60)].filter(Boolean).join(' · '), '/staff', '')
+  for (const r of vivas('assets', d.goods, qtyLine)) P('assets', r, qtyLine(r), ['GOODS', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/goods', r.supplier)
+  for (const r of vivas('assets_expenses', d.goodExpenses, r => num(r.amount))) P('assets_expenses', r, num(r.amount), ['GOODS', cut(r.description, 60)].filter(Boolean).join(' · '), '/goods', '')
+  for (const r of vivas('inputs', d.inputs, qtyLine)) P('inputs', r, qtyLine(r), ['SUPPLY', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/supplies', r.supplier)
+  for (const r of vivas('inventory', d.inventory, qtyLine)) if (r.source_type === 'PURCHASED') P('inventory', r, qtyLine(r), ['STOCK', cut(r.description, 60), cut(r.supplier, 30)].filter(Boolean).join(' · '), '/inventory', r.supplier)
   const paidOpen: Paid[] = []
   for (const p of paidRows) {
     if (!okDay(p.date)) continue
@@ -585,13 +595,13 @@ export async function closeScore(db: any, opts: CloseOpts = {}): Promise<CloseSc
   const [bank, accounts, invoiceExpenses, fixedExpenses, expenses, goods, goodExpenses, inputs, inventory, payments, invoices, fixedSuppliers, cashBalances, financingEvents, capitalEvents] = await Promise.all([
     fetchBankLines(db, 'id, item_id, date, amount, name, merchant, pending, plaid_id, match_status, match_engine, matched_table, matched_id'),
     fetchAll(db, 'bank_accounts', 'id, institution, display_name, status'),   // NUNCA o token
-    fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number'),
+    fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number, cancel_status'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method, bank_transaction_id'),
-    expensesRows(db, 'id, description, type, amount, expense_date, payment_date, origin, paid_from, paid_to, source, payment_method, payment_reference'),   // + bank_transaction_id quando a migration rodou
-    fetchAll(db, 'assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group'),
-    fetchAll(db, 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method'),
-    fetchAll(db, 'inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number'),
-    fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group'),
+    expensesRows(db, 'id, description, type, amount, expense_date, payment_date, origin, paid_from, paid_to, source, payment_method, payment_reference, order_number, cancel_status'),   // + bank_transaction_id quando a migration rodou
+    fetchAll(db, 'assets', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number, cancel_status'),
+    fetchAll(db, 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, payment_method, order_number, cancel_status'),
+    fetchAll(db, 'inputs', 'id, description, supplier, category, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number, cancel_status'),
+    fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, payment_method, purchase_group, order_number, cancel_status'),
     fetchAll(db, 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, source, paid_to, description, mirror_expense_id'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, is_quote, origin'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, cost_type'),

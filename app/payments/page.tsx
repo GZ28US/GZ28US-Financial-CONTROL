@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
+import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 
@@ -51,15 +52,16 @@ export default function PaymentsPage() {
       // PAID by CLIENTS — income received (paid_at in window).
       supabase.from('invoice_incomes').select('id, invoice_id, amount, paid_at, source').not('paid_at', 'is', null).gte('paid_at', cutoffISO),
       // PAID by GZ28US — invoice expenses paid (payment_date in window). Paginado (ver pageAll).
-      pageAll(() => supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group').not('payment_date', 'is', null).gte('payment_date', cutoffDate)),
+      // order_number + cancel_status: estornada sai do que a casa pagou (lib/estorno.ts, 14/set/2026) — a régua do DFC.
+      pageAll(() => supabase.from('invoice_expenses').select('id, invoice_id, price, quantity, tax, extra, item, supplier, payment_date, purchase_group, order_number, cancel_status').not('payment_date', 'is', null).gte('payment_date', cutoffDate)),
       // PAGO pela GZ28 — pagamento de staff. Desde 28/jul/2026 cada linha é um
       // pagamento com data própria e `payment_date` só existe quando o dinheiro
       // saiu — então o PAST lista pelo PAGAMENTO, nunca pela previsão (antes
       // qualquer linha contava como gasta, e a semana futura entraria aqui).
       supabase.from('staff_expenses').select('id, season_id, type, description, amount, expense_date, payment_date, paid_via').not('payment_date', 'is', null).gte('payment_date', cutoffDate),
       // PAID by GZ28US — inputs & goods are always paid; use purchase_date.
-      supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
-      supabase.from('assets').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
+      supabase.from('inputs').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group, order_number, cancel_status').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
+      supabase.from('assets').select('id, description, unit_price, quantity, purchase_date, supplier, purchase_group, order_number, cancel_status').not('purchase_date', 'is', null).gte('purchase_date', cutoffDate),
     ])
     // PAID by GZ28 — fixed-cost supplier payments (payment_date in window).
     const { data: fixedCostD } = await supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, payment_date').not('payment_date', 'is', null).gte('payment_date', cutoffDate)
@@ -124,7 +126,7 @@ export default function PaymentsPage() {
     // carry a payment_date and would otherwise leak in).
     const notQuote = (invId: string) => !invById.get(invId)?.is_quote
     const paysReal = (pays || []).filter((p: any) => notQuote(p.invoice_id))
-    const expsReal = (exps || []).filter((e: any) => notQuote(e.invoice_id))
+    const expsReal = soOQueConta((exps || []).filter((e: any) => notQuote(e.invoice_id)), valorDespesa, e => e.invoice_id)
 
     const payRows: PayRow[] = paysReal.map((p: any) => {
       const m = invMeta(p.invoice_id)
@@ -186,7 +188,7 @@ export default function PaymentsPage() {
       href: `${BASE_PATH}/costs/fixed/${e.supplier_id}`,
     }))
 
-    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(inputsD || [], 'INPUT', '/supplies'), ...purchaseRows(goodsD || [], 'GOOD', '/goods'), ...fixedCostRows, ...saleExpenseRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    const gRows = [...invExpRows, ...staffRows, ...purchaseRows(soOQueConta(inputsD || [], valorItem), 'INPUT', '/supplies'), ...purchaseRows(soOQueConta(goodsD || [], valorItem), 'GOOD', '/goods'), ...fixedCostRows, ...saleExpenseRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
     setClientRows(cRows)
     setGzRows(gRows)

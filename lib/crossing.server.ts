@@ -52,6 +52,7 @@
 import { createHash, randomUUID } from 'crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
+import { foraDoDinheiro, soOQueConta } from '@/lib/estorno'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -106,6 +107,12 @@ const chaveSegura = (key: string): string | null => { for (const [p, motivo] of 
 // ficam fora. Qualquer OUTRA linha de folha PAID FROM GZ28BR sem data nenhuma trava a season dela
 // («sem data»), em vez de sumir calada sob o rótulo de taxa.
 const TAXAS_SEM_DATA = new Set(['be59504a-de77-4347-9e23-fb1cae7d59de', 'e50b30c7-b1da-4210-a4c7-3899f02f4e60'])
+
+// ESTORNO (14/set/2026 — Márcio: «deixe nas invoices como estornado, e faça os controles financeiros»). Linha do US com
+// cancel_status que não conta dinheiro pela régua de lib/estorno.ts não é pagamento: não atravessa para a 085.N. Se já
+// atravessou, o espelho no BR trava a chave com o motivo (quem desfaz a 085.N é gente, no app do BR).
+// O motor não tem arquivo de versão: a mudança mora neste comentário e no APP_CHANGELOG (lib/appVersion.ts, 14/set).
+const ESTORNADA_US = 'linha do US cancelada/estornada (cancel_status, lib/estorno.ts) — dinheiro que voltou não atravessa'
 
 // ── pequenas réguas ─────────────────────────────────────────────────────────
 const num = (v: unknown) => parseFloat(String(v ?? '')) || 0
@@ -180,8 +187,9 @@ const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
 export type Foto = {
   lida_em: string
   faltando: { US: string[]; BR: string[] }
-  us: { invoices: Row[]; rides: Row[]; despesas: Row[]; itens: Row[]; rendas: Row[]; servicos: Row[]; assets: Row[]; assetsExp: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; semOpcao: { tabela: string; linha: Row }[]; ponteirosBanco: Set<string> }
-  br: { clientes: Row[]; invoices: Row[]; rides: Row[]; despesas: Row[]; partes: Row[]; pagamentos: Row[]; servicos: Row[] }
+  // estornadas: as linhas com cancel_status que NÃO contam dinheiro (lib/estorno.ts) — os PRÓPRIOS objetos das listas acima.
+  us: { invoices: Row[]; rides: Row[]; despesas: Row[]; itens: Row[]; rendas: Row[]; servicos: Row[]; assets: Row[]; assetsExp: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; semOpcao: { tabela: string; linha: Row }[]; ponteirosBanco: Set<string>; estornadas: Set<Row> }
+  br: { clientes: Row[]; invoices: Row[]; rides: Row[]; despesas: Row[]; partes: Row[]; pagamentos: Row[]; servicos: Row[]; estornadas: Set<Row> }
 }
 
 async function temColuna(db: SupabaseClient, tabela: string, coluna: string): Promise<boolean> {
@@ -225,13 +233,14 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
   ] = await Promise.all([
     lerTudo(b.us, 'US', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, br_invoice_id, service, florida_taxes, import_margin, global_discount, origin, live_status, hiring_date, created_at' + x('US.invoices')),
     lerTudo(b.us, 'US', 'rides', 'id, project_code, project_name'),
-    lerTudo(b.us, 'US', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, paid_from, paid_to, source, order_number, part_number, position, br_expense_id, created_at' + x('US.invoice_expenses')),
-    lerTudo(b.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity, base_cost, position, payment_date' + x('US.invoice_items')),
+    lerTudo(b.us, 'US', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, paid_from, paid_to, source, order_number, part_number, position, br_expense_id, created_at, cancel_status' + x('US.invoice_expenses')),
+    // cancel_status do item: MIGRATION_invoice_items_cancel_status.sql (14/set) — roda ANTES deste deploy.
+    lerTudo(b.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity, base_cost, position, payment_date, cancel_status' + x('US.invoice_items')),
     lerTudo(b.us, 'US', 'invoice_incomes', 'id, invoice_id, amount, amount_brl, payment_date, paid_at, paid_to, description, source' + x('US.invoice_incomes')),
     lerTudo(b.us, 'US', 'invoice_services', 'id, invoice_id, price'),
-    lerTudo(b.us, 'US', 'assets', 'id, description, quantity, unit_price, purchase_date, payment_date, supplier, source, paid_from, paid_to, order_number'),
-    lerTudo(b.us, 'US', 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, supplier, source, paid_from, paid_to, order_number'),
-    lerTudo(b.us, 'US', 'staff_expenses', 'id, season_id, type, amount, amount_brl, expense_date, payment_date, description, supplier, source, origin, paid_from, paid_to, order_number'),
+    lerTudo(b.us, 'US', 'assets', 'id, description, quantity, unit_price, purchase_date, payment_date, supplier, source, paid_from, paid_to, order_number, cancel_status'),
+    lerTudo(b.us, 'US', 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, supplier, source, paid_from, paid_to, order_number, cancel_status'),
+    lerTudo(b.us, 'US', 'staff_expenses', 'id, season_id, type, amount, amount_brl, expense_date, payment_date, description, supplier, source, origin, paid_from, paid_to, order_number, cancel_status'),
     lerTudo(b.us, 'US', 'seasons', 'id, season_code, staff_id, date_entry'),
     lerTudo(b.us, 'US', 'staff', 'id, name'),
     lerTudo(b.us, 'US', 'inputs', 'id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source', q => q.or(GZBR)),
@@ -241,7 +250,7 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     lerTudo(b.br, 'BR', 'clients', 'id, client_number, name, is_quote'),
     lerTudo(b.br, 'BR', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, us_invoice_id, usd_rate, service, florida_taxes, import_margin, global_discount, hiring_date, created_at' + x('BR.invoices')),
     lerTudo(b.br, 'BR', 'rides', 'id, project_code, project_name'),
-    lerTudo(b.br, 'BR', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, amount_usd, payment_date, expense_date, due_date, paid_from, paid_to, source, order_number, part_number, position, us_expense_id' + x('BR.invoice_expenses')),
+    lerTudo(b.br, 'BR', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, amount_usd, payment_date, expense_date, due_date, paid_from, paid_to, source, order_number, part_number, position, us_expense_id, cancel_status' + x('BR.invoice_expenses')),
     lerTudo(b.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, unit_price_usd, position, payment_date' + x('BR.invoice_parts')),
     lerTudo(b.br, 'BR', 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, paid_to, paid_from, description, source' + x('BR.invoice_payments')),
     lerTudo(b.br, 'BR', 'invoice_services', 'id, invoice_id, price'),
@@ -252,15 +261,22 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     if (t.matched_table && t.matched_id) ponteirosBanco.add(`${t.matched_table}:${t.matched_id}`)
     for (const m of Array.isArray(t.matched_members) ? t.matched_members : []) if (m?.table && m?.id) ponteirosBanco.add(`${m.table}:${m.id}`)
   }
+  // ESTORNO (14/set/2026 — Márcio: «deixe nas invoices como estornado, e faça os controles financeiros»). A régua única de
+  // lib/estorno.ts, calculada UMA vez por foto: despesa e item casam a negativa sem pedido dentro da invoice; assets, despesa
+  // de asset e folha só pelo pedido. No BR só a despesa tem cancel_status (invoice_parts não tem).
+  const porInvoice = (r: Row) => r.invoice_id
+  const estornadasUS = new Set<Row>([...foraDoDinheiro(uExp, custoUS, porInvoice), ...foraDoDinheiro(uItens, linhaItem, porInvoice),
+    ...foraDoDinheiro(uAssets, linhaItem), ...foraDoDinheiro(uAssetsExp, l => num(l.amount)), ...foraDoDinheiro(uStaffExp, l => num(l.amount))])
+  const estornadasBR = foraDoDinheiro(bExp, brlBR, porInvoice)
   return {
     lida_em: new Date().toISOString(),
     faltando,
     us: {
       invoices: uInv, rides: uRides, despesas: uExp, itens: uItens, rendas: uRendas, servicos: uServ, assets: uAssets, assetsExp: uAssetsExp,
-      staffExp: uStaffExp, seasons: uSeasons, staff: uStaff, ponteirosBanco,
+      staffExp: uStaffExp, seasons: uSeasons, staff: uStaff, ponteirosBanco, estornadas: estornadasUS,
       semOpcao: [...uInputs.map(l => ({ tabela: 'inputs', linha: l })), ...uInventory.map(l => ({ tabela: 'inventory', linha: l })), ...uFixed.map(l => ({ tabela: 'fixed_cost_expenses', linha: l }))],
     },
-    br: { clientes: bCli, invoices: bInv, rides: bRides, despesas: bExp, partes: bPartes, pagamentos: bPag, servicos: bServ },
+    br: { clientes: bCli, invoices: bInv, rides: bRides, despesas: bExp, partes: bPartes, pagamentos: bPag, servicos: bServ, estornadas: estornadasBR },
   }
 }
 
@@ -405,16 +421,17 @@ export type Op =
 export type Conferencia = { banco: Banco; tabela: string; id: string; campos: Record<string, string | number | null> }
 const confere = (banco: Banco, tabela: string, linha: Row, cols: string[]): Conferencia =>
   ({ banco, tabela, id: String(linha.id), campos: Object.fromEntries(cols.map(c => [c, linha[c] ?? null])) })
-// Os campos que cada conta usa, por tabela de origem.
+// Os campos que cada conta usa, por tabela de origem. cancel_status (14/set/2026): linha estornada entre o plano e a escrita
+// não atravessa — a conferência pega o carimbo novo como «mudou desde o plano».
 const COLS = {
-  brDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'amount_usd', 'expense_date', 'payment_date', 'paid_from', 'source', 'us_markup_pct'],
+  brDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'amount_usd', 'expense_date', 'payment_date', 'paid_from', 'source', 'us_markup_pct', 'cancel_status'],
   brPagamento: ['invoice_id', 'amount', 'amount_usd', 'paid_at', 'paid_to', 'payment_date'],
-  usDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'payment_date', 'paid_from', 'paid_to', 'source'],
+  usDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
   usRenda: ['invoice_id', 'amount', 'amount_brl', 'paid_at', 'paid_to', 'payment_date'],
-  assets: ['unit_price', 'quantity', 'payment_date', 'paid_from', 'paid_to', 'source'],
-  assets_expenses: ['amount', 'payment_date', 'paid_from', 'paid_to', 'source'],
-  staff_expenses: ['season_id', 'amount', 'amount_brl', 'payment_date', 'expense_date', 'origin', 'paid_from', 'paid_to', 'source'],
-  espelho: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'mirror_src'],
+  assets: ['unit_price', 'quantity', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
+  assets_expenses: ['amount', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
+  staff_expenses: ['season_id', 'amount', 'amount_brl', 'payment_date', 'expense_date', 'origin', 'paid_from', 'paid_to', 'source', 'cancel_status'],
+  espelho: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'mirror_src', 'cancel_status'],
 } as const
 const colsFonte3 = (tabela: string): string[] => [...(tabela === 'invoice_expenses' ? COLS.usDespesa : tabela === 'assets' ? COLS.assets : tabela === 'assets_expenses' ? COLS.assets_expenses : COLS.staff_expenses)]
 
@@ -648,6 +665,7 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     }
     if (FL_TAX.test(String(e.item || ''))) { excluidos.push({ ...base, motivo: 'linha de Florida tax nunca atravessa (lei 22/ago/2026)' }); continue }
     if (B.is_quote) { excluidos.push({ ...base, motivo: 'invoice do BR ainda é QUOTE — quote não é dinheiro de ninguém' }); continue }
+    if (foto.br.estornadas.has(e)) { excluidos.push({ ...base, motivo: 'linha do BR cancelada/estornada (cancel_status, lib/estorno.ts) — dinheiro que voltou não atravessa' }); continue }
     fontes1.push(e)
   }
   // As fontes da direção 2: renda do BR que caiu na conta do GZ28US.
@@ -716,18 +734,41 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     const invAlvo = cands.map(i => i.id)
 
     // ── as linhas: elo gravado → valor exato (custo × 1,10) → classe (b) (valor = custo cru) ──
-    const E = foto.us.despesas.filter(e => invAlvo.includes(e.invoice_id))
-    const I = foto.us.itens.filter(i => invAlvo.includes(i.invoice_id))
+    // ESTORNO (14/set/2026 — Márcio, HHP 382526 da 006.27: «deixe nas invoices como estornado, e faça os controles
+    // financeiros»). Despesa e item do US que não contam dinheiro (foto.us.estornadas, lib/estorno.ts) NÃO são linha viva:
+    // não casam, não contam no grand total do pendente, não viram «sem origem» nem «elo aponta para linha fora da fonte».
+    // Ficam na 006.N como estão. A única pergunta que sobra é quando o BR DISCORDA: a origem ainda é PAID FROM GZ28US e o
+    // espelho dela no US está estornado — aí a chave trava (criar de novo cobraria o que voltou; ignorar esconderia a dívida).
+    const Etodas = foto.us.despesas.filter(e => invAlvo.includes(e.invoice_id))
+    const Itodos = foto.us.itens.filter(i => invAlvo.includes(i.invoice_id))
+    const E = Etodas.filter(e => !foto.us.estornadas.has(e))
+    const I = Itodos.filter(i => !foto.us.estornadas.has(i))
     const R = foto.us.rendas.filter(p => invAlvo.includes(p.invoice_id))
     const Rs = (s: Row) => usdBR(s, B.usd_rate)
+    const fonteDoElo = (l: Row): string | null => { const src = parseSrc(l.mirror_src); return src ? (src.banco === 'BR' && src.tabela === 'invoice_expenses' ? src.id : null) : (l.br_expense_id || null) }
+    const estDesp = Etodas.filter(e => foto.us.estornadas.has(e)), estItens = Itodos.filter(i => foto.us.estornadas.has(i))
+    // A origem viva cujo espelho (despesa ou item) está estornado no US: sai do casamento — nunca é recriada.
+    const fonteEstornadaNoUS = new Set<string>()
+    for (const l of [...estDesp, ...estItens]) {
+      const idFonte = fonteDoElo(l)
+      const s = idFonte ? S.find(x => x.id === idFonte) : null
+      if (!s || fonteEstornadaNoUS.has(s.id)) continue   // não é mais fonte (o BR concorda: não foi dinheiro do GZ28US) — ou já perguntada
+      fonteEstornadaNoUS.add(s.id)
+      m.conflito(`o espelho no US de ${limpa(s.item).slice(0, 40)} está estornado (cancel_status ${String(l.cancel_status).toUpperCase()}), mas a linha do BR ainda é PAID FROM GZ28US — tire o pagador da origem no BR ou desfaça o estorno no US (nada gravado nesta chave)`)
+    }
+    if (estDesp.length || estItens.length) {
+      const usdEst = r2(estItens.reduce((s, i) => s + linhaItem(i), 0))
+      m.aviso(`${estDesp.length} despesa(s) e ${estItens.length} item(ns) ESTORNADOS nas ${cands.map(i => i.invoice_code).join(' + ') || '006.N'} — ficam na invoice, fora da conta (itens US$ ${usdEst})`)
+    }
     const pares: { s: Row; e: Row; como: Par['como'] }[] = []
-    let SE = [...S], EE = [...E]
+    let SE = S.filter(s => !fonteEstornadaNoUS.has(s.id)), EE = [...E]
     for (const e of E) {
       const src = parseSrc(e.mirror_src)
       const idFonte = src ? (src.banco === 'BR' && src.tabela === 'invoice_expenses' ? src.id : null) : e.br_expense_id
       if (!idFonte) continue
       const s = SE.find(x => x.id === idFonte)
       if (s) { pares.push({ s, e, como: src ? 'mirror_src' : 'elo' }); SE = SE.filter(x => x !== s); EE = EE.filter(x => x !== e) }
+      else if (fonteEstornadaNoUS.has(idFonte)) EE = EE.filter(x => x !== e)   // o item irmão está estornado: a trava já foi escrita acima
       else {
         const onde = foto.br.despesas.find(x => x.id === idFonte)
         m.c.sem_par.push({ direcao: 1, lado: 'alvo', tabela: 'invoice_expenses', id: e.id, usd: r2(custoUS(e)), rotulo: limpa(e.item).slice(0, 80), motivo: onde ? `o elo aponta para linha do BR que não é fonte desta invoice (${docBR(bInv.get(onde.invoice_id) || {})}, pagador ${quemPagou(onde) || 'vazio'})` : 'o elo aponta para linha do BR que não existe mais' })
@@ -808,7 +849,7 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     if (sobraS.length && sobraE.length) m.conflito(`${sobraS.length} linha(s) do BR e ${sobraE.length} do US sem par na mesma invoice — criar duplicaria a mesma compra`)
 
     // ── o que falta: despesa (custo) + item (US$ gravado no BR) ──
-    let pos = maxPos(E), posItem = maxPos(I)
+    let pos = maxPos(Etodas), posItem = maxPos(Itodos)   // a posição conta as estornadas: elas continuam na lista
     let latest: string | null = null
     for (const s of S) { const d = ymd(s.expense_date) || ymd(s.payment_date); m.data(d); if (d && (!latest || d > latest)) latest = d }
     const novosItens: Row[] = []
@@ -940,6 +981,7 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
 type Fonte3 = { tabela: 'invoice_expenses' | 'assets' | 'assets_expenses' | 'staff_expenses'; linha: Row; usd: number; brl: number | null; q: number; unitUsd: number; taxUsd: number; extraUsd: number; dia: string; item: string; supplier: string | null; order: string | null; part: string | null }
 
 function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlano[] {
+  const idsEstornadosUS = new Set([...foto.us.estornadas].map(r => String(r.id)))
   const uInv = new Map(foto.us.invoices.map(i => [i.id, i]))
   const uRide = new Map(foto.us.rides.map(r => [r.id, r]))
   const bInv = new Map(foto.br.invoices.map(i => [i.id, i]))
@@ -970,6 +1012,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     if (U.client_id === US_CLIENTE_GZ28BR) { exclui('invoice_expenses', e, docUS(U), rot, usd, null, 'linha PAID FROM GZ28BR dentro de invoice do cliente GZ28BR — pergunta'); continue }
     if (U.is_quote) { exclui('invoice_expenses', e, docUS(U), rot, usd, null, 'invoice do US ainda é QUOTE'); continue }
     if (U.origin === 'BUCKET') { exclui('invoice_expenses', e, docUS(U), rot, usd, null, 'compra no balde (a atribuir) — atravessa quando tiver dono'); continue }
+    if (foto.us.estornadas.has(e)) { exclui('invoice_expenses', e, docUS(U), rot, usd, null, ESTORNADA_US); continue }
     const dia = ymd(e.payment_date)
     if (!dia) { exclui('invoice_expenses', e, docUS(U), rot, usd, null, 'sem payment_date — ainda não é pagamento'); continue }
     const q = num(e.quantity) || 1
@@ -988,6 +1031,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
   for (const a of foto.us.assets) {
     const q = num(a.quantity) || 1, usd = r2(num(a.unit_price) * q), rot = String(a.description || 'asset')
     if (!cruzaBR(a, 'assets', 'ASSETS', rot, usd)) continue
+    if (foto.us.estornadas.has(a)) { exclui('assets', a, 'ASSETS', rot, usd, null, ESTORNADA_US); continue }
     const dia = ymd(a.payment_date)
     if (!dia) { exclui('assets', a, 'ASSETS', rot, usd, null, 'sem payment_date — ainda não é pagamento'); continue }
     grupo(`US:assets:${dia.slice(0, 7)}`, 'assets', dia.slice(0, 7)).fontes.push({ tabela: 'assets', linha: a, usd, brl: null, q, unitUsd: num(a.unit_price), taxUsd: 0, extraUsd: 0, dia, item: rot, supplier: a.supplier || null, order: String(a.order_number || '').trim() || null, part: null })
@@ -995,6 +1039,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
   for (const a of foto.us.assetsExp) {
     const usd = r2(num(a.amount)), rot = `${assetsById.get(a.good_id)?.description ? assetsById.get(a.good_id)!.description + ' · ' : ''}${a.description || 'despesa de asset'}`
     if (!cruzaBR(a, 'assets_expenses', 'ASSETS', rot, usd)) continue
+    if (foto.us.estornadas.has(a)) { exclui('assets_expenses', a, 'ASSETS', rot, usd, null, ESTORNADA_US); continue }
     const dia = ymd(a.payment_date)
     if (!dia) { exclui('assets_expenses', a, 'ASSETS', rot, usd, null, 'sem payment_date — ainda não é pagamento'); continue }
     grupo(`US:assets:${dia.slice(0, 7)}`, 'assets', dia.slice(0, 7)).fontes.push({ tabela: 'assets_expenses', linha: a, usd, brl: null, q: 1, unitUsd: usd, taxUsd: 0, extraUsd: 0, dia, item: rot, supplier: a.supplier || null, order: String(a.order_number || '').trim() || null, part: null })
@@ -1005,6 +1050,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     if (!cruzaBR(s, 'staff_expenses', doc, rot, usd)) continue
     const brl = s.amount_brl == null || String(s.amount_brl) === '' ? null : r2(num(s.amount_brl))
     if (String(s.origin || '').toUpperCase() === 'PERSONAL') { exclui('staff_expenses', s, doc, rot, usd, brl, 'gasto PESSOAL pago pelo BR — pergunta antes de cruzar'); continue }
+    if (foto.us.estornadas.has(s)) { exclui('staff_expenses', s, doc, rot, usd, brl, ESTORNADA_US); continue }
     const rotLinha = `${nome} · ${s.type || ''}${s.description ? ` — ${s.description}` : ''}`
     if (!ymd(s.payment_date) && !ymd(s.expense_date)) {
       if (TAXAS_SEM_DATA.has(s.id)) { exclui('staff_expenses', s, doc, rot, usd, brl, 'TAXA sem data (RATE de antes de 28/jul), não é pagamento — decisão 14/set'); continue }
@@ -1098,8 +1144,16 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       if (f) { pares.push({ f, e, como: src ? 'mirror_src' : 'elo' }); FF = FF.filter(x => x !== f); EE = EE.filter(x => x !== e) }
       else if (src || e.us_expense_id) {
         EE = EE.filter(x => x !== e)
-        m.c.sem_par.push({ direcao: 3, lado: 'alvo', tabela: 'invoice_expenses', id: e.id, usd: usdBR(e, taxaInv) == null ? null : r2(usdBR(e, taxaInv) as number), rotulo: limpa(e.item).slice(0, 80), motivo: 'o elo aponta para linha do US que não é mais fonte desta 085.N' })
-        m.conflito(`despesa ${limpa(e.item).slice(0, 40)} da ${bInv.get(e.invoice_id)?.invoice_code} tem elo para linha do US que não cruza mais`)
+        // ESTORNO: a origem no US está estornada. Com a despesa espelho no BR também estornada os dois lados concordam sobre
+        // ela (a PARTE da 085.N não tem carimbo no BR: se ainda cobrar, cai em «item sem origem» logo abaixo); senão a 085.N
+        // ainda cobra o que voltou, e só gente, no app do BR, desfaz.
+        const idUS = src ? src.id : String(e.us_expense_id)
+        const origemEstornada = idsEstornadosUS.has(idUS)
+        if (origemEstornada && foto.br.estornadas.has(e)) continue
+        m.c.sem_par.push({ direcao: 3, lado: 'alvo', tabela: 'invoice_expenses', id: e.id, usd: usdBR(e, taxaInv) == null ? null : r2(usdBR(e, taxaInv) as number), rotulo: limpa(e.item).slice(0, 80), motivo: origemEstornada ? 'a linha do US está estornada (cancel_status) e o espelho na 085.N não' : 'o elo aponta para linha do US que não é mais fonte desta 085.N' })
+        m.conflito(origemEstornada
+          ? `despesa ${limpa(e.item).slice(0, 40)} da ${bInv.get(e.invoice_id)?.invoice_code}: a origem no US está ESTORNADA — marque a despesa como estornada e tire o item da 085.N no app do BR`
+          : `despesa ${limpa(e.item).slice(0, 40)} da ${bInv.get(e.invoice_id)?.invoice_code} tem elo para linha do US que não cruza mais`)
       }
     }
     const c3 = casar(FF, EE, (f, e) => perto(usdBR(e, taxaInv), f.usd), f => chaveTexto(f.item), e => chaveTexto(e.item))
@@ -1267,7 +1321,8 @@ function impressao(c: ChavePlano): string {
 export function manchete(foto: Foto): Manchete {
   const us006 = foto.us.invoices.filter(i => i.client_id === US_CLIENTE_GZ28BR && !i.is_quote && !i.ride_id)
   const ids = new Set(us006.map(i => i.id))
-  const itens = agrupar(foto.us.itens.filter(i => ids.has(i.invoice_id)), i => i.invoice_id)
+  // Item estornado sai da manchete (lib/estorno.ts) — a mesma régua de lib/crossingBalance.ts, para os dois números baterem.
+  const itens = agrupar(foto.us.itens.filter(i => ids.has(i.invoice_id) && !foto.us.estornadas.has(i)), i => i.invoice_id)
   const serv = agrupar(foto.us.servicos.filter(s => ids.has(s.invoice_id)), s => s.invoice_id)
   let gU = 0, rU = 0
   for (const i of us006) gU += grandTotal(itens.get(i.id) || [], serv.get(i.id) || [], i, linhaItem)
@@ -1504,9 +1559,10 @@ export async function resumoAlvo(b: Bancos, key: string): Promise<ResumoAlvo | n
   const { data: inv, error } = await db.from('invoices').select('id, invoice_code, florida_taxes, global_discount').eq('mirror_key', key).maybeSingle()
   if (error) throw new ErroTravessia('db', `ler a shopping invoice de ${key}: ${error.message}`)
   if (!inv) return null
+  // ESTORNO (lib/estorno.ts): despesa e item estornados ficam fora do custo e do grand total. No BR só a despesa tem o carimbo.
   const [exp, itens, serv, rendas] = await Promise.all([
-    db.from('invoice_expenses').select('price, quantity, tax, extra').eq('invoice_id', inv.id),
-    db.from(banco === 'US' ? 'invoice_items' : 'invoice_parts').select('unit_price, quantity').eq('invoice_id', inv.id),
+    db.from('invoice_expenses').select('price, quantity, tax, extra, order_number, cancel_status').eq('invoice_id', inv.id),
+    db.from(banco === 'US' ? 'invoice_items' : 'invoice_parts').select(banco === 'US' ? 'unit_price, quantity, cancel_status' : 'unit_price, quantity').eq('invoice_id', inv.id),
     db.from('invoice_services').select('price').eq('invoice_id', inv.id),
     db.from(banco === 'US' ? 'invoice_incomes' : 'invoice_payments').select('amount, paid_at, payment_date').eq('invoice_id', inv.id),
   ])
@@ -1515,8 +1571,8 @@ export async function resumoAlvo(b: Bancos, key: string): Promise<ResumoAlvo | n
   const abertas = (rendas.data || []).filter((p: Row) => !p.paid_at)
   return {
     banco, id: inv.id, codigo: inv.invoice_code, moeda: banco === 'US' ? 'USD' : 'BRL',
-    custo: r2((exp.data || []).reduce((s: number, e: Row) => s + custoUS(e), 0)),   // preço × qtd + tax + extra: a mesma conta nos dois bancos
-    grand: r2(grandTotal(itens.data || [], serv.data || [], inv, linhaItem)),
+    custo: r2(soOQueConta((exp.data || []) as Row[], custoUS, () => inv.id).reduce((s: number, e: Row) => s + custoUS(e), 0)),   // preço × qtd + tax + extra: a mesma conta nos dois bancos
+    grand: r2(grandTotal(soOQueConta((itens.data || []) as Row[], linhaItem, () => inv.id), serv.data || [], inv, linhaItem)),
     recebido: r2((rendas.data || []).filter((p: Row) => p.paid_at).reduce((s: number, p: Row) => s + num(p.amount), 0)),
     pendente: r2(abertas.reduce((s: number, p: Row) => s + num(p.amount), 0)),
     vencimento: abertas.map((p: Row) => ymd(p.payment_date)).filter(Boolean).sort()[0] || null,

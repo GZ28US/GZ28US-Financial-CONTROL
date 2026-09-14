@@ -15,7 +15,8 @@ import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
 import { sincronizarTravessia, avisoDaTravessia, brMirrorFailureCause } from '@/lib/brShoppingMirror'
 import { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, HOUSE_PAYER, hiddenPayers, stockPayerTable, PaidFromSelect, methodsFor } from '@/components/PaymentFields'
-import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, type DeliverChipRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, DeliverFields, CancelChip, CancelSelect, hasDeliverChip, normCancelStatus, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
+import { foraDoDinheiro } from '@/lib/estorno'
 import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
@@ -23,7 +24,9 @@ import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 
 // mirror_src (14/set/2026): o item é espelho da travessia US ⇄ BR — o US$ dele é o gravado na origem,
 // e a margem viva do editor NUNCA o reprecifica (lib/crossing.server.ts).
-type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string; mirror_src?: string }
+// cancel_status (14/set/2026 — Márcio: «deixe nas invoices como estornado, e faça os controles financeiros»): o item cobrado
+// também se estorna. Fica na lista, riscado, e sai de todo total (lib/estorno.ts). Coluna: MIGRATION_invoice_items_cancel_status.sql.
+type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string; mirror_src?: string; cancel_status?: CancelStatus | null }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 // date_label: a milestone marker ("ARRIVAL" / "CONCLUSION") used
@@ -555,7 +558,7 @@ export default function EditInvoicePage() {
     const savedMargin = parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0
     const savedFactor = 1 + savedMargin / 100
     const { data: partsData } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined, mirror_src: p.mirror_src || undefined })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined, mirror_src: p.mirror_src || undefined, cancel_status: normCancelStatus(p.cancel_status) })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price), payment_date: s.payment_date ?? null })))
@@ -1468,8 +1471,11 @@ export default function EditInvoicePage() {
     const factor = 1 + margin / 100
     const sourceMap = new Map<string, { description: string; base: number; fixedPrice?: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string; payment_date: string | null }>()
     const importedIndices: number[] = []
+    // ESTORNO (14/set/2026 — lib/estorno.ts): despesa estornada/cancelada não vira item — importá-la cobraria do cliente o que voltou.
+    const foraImport = foraDoDinheiro(expenses, (x: Expense) => (parseFloat(x.amount) || 0) * (parseFloat(x.quantity) || 1) + (parseFloat(x.tax) || 0) + (parseFloat(x.extra) || 0), () => invoiceId)
     expenses.forEach((e, idx) => {
       if (isCostLine(e.item)) return
+      if (foraImport.has(e)) return
       if ((e.export_status || 'FRESH') !== 'FRESH') return
       const desc = (e.item || '').trim()
       if (!desc) return
@@ -1679,7 +1685,14 @@ export default function EditInvoicePage() {
     setEditingExpense({ ...editingExpense, receipt_urls: editingExpense.receipt_urls.filter((_, i) => i !== urlIndex) })
   }
 
-  const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
+  // ESTORNO (14/set/2026 — lib/estorno.ts): item e despesa que não contam dinheiro ficam nas listas, riscados, e saem de TODO
+  // total desta tela — sub-total, FL tax, grand total, pending balance (a trava do ONLINE/CLOSED), custo, cash flow e markup.
+  const expTotalOf = (e: Expense) => (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
+  const partFora = foraDoDinheiro(parts, getPartTotal, () => invoiceId)
+  const expFora = foraDoDinheiro(expenses, expTotalOf, () => invoiceId)
+  const partsVivos = parts.filter(p => !partFora.has(p))
+  const expensesVivas = expenses.filter(e => !expFora.has(e))
+  const partsSubTotal = partsVivos.reduce((sum, p) => sum + getPartTotal(p), 0)
   const floridaTaxesPct = parseFloat(floridaTaxes) || 0
   const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
   const partsTotal = partsSubTotal + floridaTaxesAmount
@@ -1713,8 +1726,8 @@ export default function EditInvoicePage() {
   const feedOnline = !isQuote && (liveStatus === 'REALTIME' || liveStatus === 'CLOSED')
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(flTaxExpenseDate)
-  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
-  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
+  const expensesTotalGlobal = flTaxExpenseAmount + expensesVivas.reduce((sum, e) => sum + expTotalOf(e), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expensesVivas.filter(e => isValidDate(e.payment_date)).reduce((sum, e) => sum + expTotalOf(e), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -1887,7 +1900,8 @@ export default function EditInvoicePage() {
     const f = 1 + (parseFloat(importMargin) || 0) / 100
     const base = f !== 0 ? ((parseFloat(editingPart.unit_price) || 0) / f).toFixed(2) : editingPart.unit_price
     if (part.id) {
-      const { error } = await supabase.from('invoice_items').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0 }).eq('id', part.id)
+      // cancel_status vai junto (14/set/2026): marcar CANCELLED/REFUNDED grava SÓ o carimbo — o preço fica como está, riscado na tela.
+      const { error } = await supabase.from('invoice_items').update({ description: editingPart.description, unit_price: parseFloat(editingPart.unit_price), quantity: parseFloat(editingPart.quantity), base_cost: parseFloat(base) || 0, cancel_status: normCancelStatus(editingPart.cancel_status) }).eq('id', part.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...parts]; updated[editingPartIndex!] = { ...editingPart, id: part.id, base_cost: base }; setParts(updated)
@@ -2576,6 +2590,7 @@ export default function EditInvoicePage() {
           kit_group: p.kit_group || null,
           kit_name: p.kit_name || null,
           source_item: p.source_item || null,
+          cancel_status: normCancelStatus(p.cancel_status),
         })
       } else {
         const upd: any = { position: i, payment_date: isValidDate(p.payment_date || '') ? p.payment_date : null }
@@ -3638,7 +3653,7 @@ export default function EditInvoicePage() {
                       (isCostLine(a.expense.item) ? 1 : 0) - (isCostLine(b.expense.item) ? 1 : 0)
                     )
                     const firstItem = groupItems[0].expense
-                    const groupTotal = groupItems.reduce((s, { expense: e }) => s + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
+                    const groupTotal = groupItems.filter(({ expense: e }) => !expFora.has(e)).reduce((s, { expense: e }) => s + expTotalOf(e), 0)
                     const isExpanded = expandedGroups.has(groupId)
                     const receiptUrl = firstItem.receipt_urls[0]
                     // O status de pagamento é DA COMPRA (ordem do usuário, 18/ago/2026): um
@@ -3727,7 +3742,7 @@ export default function EditInvoicePage() {
                                       <p className={`text-sm font-bold truncate ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}</p>
                                       {dbRefLine(exp.part_number, exp.item)}
                                       {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
-                                      <p className={`text-sm ${isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                      <p className={`text-sm ${expFora.has(exp) ? 'text-gray-500 line-through' : isValidDate(exp.payment_date) ? 'text-blue-300' : 'text-red-400'}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                       {!isQuote && isValidDate(exp.payment_date) !== groupPaid && <p className={`text-xs font-bold ${isValidDate(exp.payment_date) ? 'text-blue-400' : 'text-red-400'}`}>{isValidDate(exp.payment_date) ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                       {/* LEI 29/ago/2026: chip do pedido + badge de entrega SEMPRE na
                                           linha do item — repetir em todos os itens da compra é o certo.
@@ -3735,10 +3750,11 @@ export default function EditInvoicePage() {
                                           PICKUP / entregou? DELIVERED / tem rastreio? SHIPPED / pagou?
                                           BOUGHT. Linha não paga e peça DOADA vinda do estoque não
                                           acendem — a derivação as corta no degrau 1. */}
-                                      {((exp.order_number || '').trim() || hasDeliverChip(exp)) && exp.stock_source_type !== 'DONATED' && (
+                                      {((exp.order_number || '').trim() || hasDeliverChip(exp) || expFora.has(exp)) && exp.stock_source_type !== 'DONATED' && (
                                         <div className="flex items-center gap-2 mt-1 flex-wrap">
                                           {(exp.order_number || '').trim() ? <OrderChip order={(exp.order_number || '').trim()} /> : null}
-                                          <DeliverChip row={exp} />
+                                          {hasDeliverChip(exp) ? <DeliverChip row={exp} /> : expFora.has(exp) ? <CancelChip status={exp.cancel_status} /> : null}
+                                          {expFora.has(exp) && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}
                                         </div>
                                       )}
                                       {exportStatusLine(exp, index)}
@@ -3765,7 +3781,8 @@ export default function EditInvoicePage() {
                     const index = row.index
                     const exp = row.expense
                     const isPaid = isValidDate(exp.payment_date)
-                    const rowColor = isPaid ? 'text-blue-400' : 'text-red-400'
+                    const expOut = expFora.has(exp)
+                    const rowColor = expOut ? 'text-gray-500' : isPaid ? 'text-blue-400' : 'text-red-400'
                     return (
                       <div key={index} className={rowIdx < expenseRows.length - 1 ? 'border-b border-gray-700' : ''}>
                         {editingExpenseIndex === index ? (
@@ -3884,16 +3901,17 @@ export default function EditInvoicePage() {
                               <div className="flex-1 min-w-0">
                                 <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{aliasFor(exp.item) ? ` (${aliasFor(exp.item)})` : ''}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
                                 {(() => { const on = orderNowFor(exp); return on ? <a href={on.url} {...(on.kind === 'ONLINE' ? { target: '_blank', rel: 'noopener noreferrer' } : {})} className="inline-block text-sm font-bold text-amber-400 hover:text-amber-300">🛒 ORDER NOW {on.kind === 'ONLINE' ? '↗' : '✉️'}</a> : null })()}
-                                <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
+                                <p className={`text-sm ${rowColor} ${expOut ? 'line-through' : ''}`}>Qty: {exp.quantity || '1'} × {formatUSD(parseFloat(exp.amount))} = {formatUSD((parseFloat(exp.amount) || 0) * (parseFloat(exp.quantity) || 1))}{(parseFloat(exp.tax) || 0) > 0 ? ` · Tax: ${formatUSD(parseFloat(exp.tax))}` : ''}{(parseFloat(exp.extra) || 0) > 0 ? ` · Extra Costs: ${formatUSD(parseFloat(exp.extra))}` : ''}</p>
                                 {!isQuote && <p className={`text-sm font-bold ${rowColor}`}>{isPaid ? `Paid: ${formatDate(exp.payment_date)}` : 'Not paid yet'}</p>}
                                 {/* ORDER NUMBER sagrado + BADGE DE ENTREGA — os dois lidos da
                                     PRÓPRIA linha. Linha não paga não acende porque a derivação
                                     começa no "pagou"; peça DOADA vinda do estoque também não.
                                     Nenhum status é lido do banco: não existe mais. */}
-                                {((exp.order_number || '').trim() || hasDeliverChip(exp)) && exp.stock_source_type !== 'DONATED' && (
+                                {((exp.order_number || '').trim() || hasDeliverChip(exp) || expOut) && exp.stock_source_type !== 'DONATED' && (
                                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                                     {(exp.order_number || '').trim() ? <OrderChip order={(exp.order_number || '').trim()} /> : null}
-                                    <DeliverChip row={exp} />
+                                    {hasDeliverChip(exp) ? <DeliverChip row={exp} /> : expOut ? <CancelChip status={exp.cancel_status} /> : null}
+                                    {expOut && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}
                                   </div>
                                 )}
                                 {exportStatusLine(exp, index)}
@@ -3997,7 +4015,7 @@ export default function EditInvoicePage() {
                   const downDisabled = kitMembers ? index === kitMembers[kitMembers.length - 1] : index === parts.length - 1
                   return (
                   <div key={index}>
-                    {firstOfKit && (() => { const members = parts.filter(x => x.kit_group === part.kit_group); const total = members.reduce((s, x) => s + getPartTotal(x), 0); return (
+                    {firstOfKit && (() => { const members = parts.filter(x => x.kit_group === part.kit_group); const total = members.filter(x => !partFora.has(x)).reduce((s, x) => s + getPartTotal(x), 0); return (
                       <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/50 border-b border-gray-700">
                         <button onClick={() => togglePartKit(part.kit_group!)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                           <span className="text-gray-300">{partExpandedKits.has(part.kit_group!) ? '▾' : '▸'}</span>
@@ -4028,6 +4046,11 @@ export default function EditInvoicePage() {
                             <div className={`${smallInputClass} w-full opacity-50`}>{formatUSD((parseFloat(editingPart.unit_price || '0')) * (parseFloat(editingPart.quantity || '0')))}</div>
                           </div>
                         </div>
+                        {/* ESTORNO DO ITEM (14/set/2026): o mesmo seletor da despesa. Marcar grava SÓ cancel_status — o
+                            item fica na invoice, riscado, e sai do sub-total, do grand total e do pending balance. */}
+                        <div className="flex gap-3 max-w-md">
+                          <CancelSelect value={editingPart.cancel_status || null} onChange={(v) => setEditingPart({ ...editingPart, cancel_status: v })} />
+                        </div>
                         <div className="flex gap-3">
                           <button onClick={saveEditPart} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                           <button onClick={cancelEditPart} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -4036,9 +4059,10 @@ export default function EditInvoicePage() {
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-base font-bold truncate ${(isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(isQuote || isValidDate(part.payment_date || '')) ? '' : ' — PENDING'}</p>
+                          <p className={`text-base font-bold truncate ${partFora.has(part) ? 'text-gray-500' : (isQuote || isValidDate(part.payment_date || '')) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{partFora.has(part) || isQuote || isValidDate(part.payment_date || '') ? '' : ' — PENDING'}</p>
                           {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
-                          <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
+                          <p className={`text-sm text-gray-400 ${partFora.has(part) ? 'line-through' : ''}`}>{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
+                          {partFora.has(part) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} /><span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span></div>}
                         </div>
                         <div className="flex gap-2 shrink-0">
                           {!isQuote && <button onClick={() => togglePartPaid(index)} className={`${isValidDate(part.payment_date || '') ? 'bg-green-700 hover:bg-green-600' : 'bg-yellow-700 hover:bg-yellow-600'} px-3 py-1 rounded-xl font-bold text-sm`} title="Toggle paid">{isValidDate(part.payment_date || '') ? 'PAID' : 'PENDING'}</button>}

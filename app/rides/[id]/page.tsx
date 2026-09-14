@@ -10,6 +10,7 @@ import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
 import { hiddenPayers } from '@/lib/payerRule'
+import { soOQueConta, foraDoDinheiro, valorDespesa, valorItem } from '@/lib/estorno'
 
 type Ride = {
   id: string
@@ -323,12 +324,15 @@ export default function ViewRidePage() {
       await Promise.all(invoicesData.map(async (inv) => {
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_incomes').select('amount, payment_date, paid_at').eq('invoice_id', inv.id),
-          supabase.from('invoice_expenses').select('price, quantity, payment_date, tax, extra').eq('invoice_id', inv.id),
-          supabase.from('invoice_items').select('unit_price, quantity').eq('invoice_id', inv.id),
+          // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
+          supabase.from('invoice_expenses').select('price, quantity, payment_date, tax, extra, order_number, cancel_status').eq('invoice_id', inv.id),
+          supabase.from('invoice_items').select('unit_price, quantity, cancel_status').eq('invoice_id', inv.id),
           supabase.from('invoice_services').select('price').eq('invoice_id', inv.id),
         ])
 
-        const partsSubTotal = (partsRes.data || []).reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
+        const partsVivos = soOQueConta(partsRes.data || [], valorItem, () => inv.id)
+        const expensesVivas = soOQueConta(expensesRes.data || [], valorDespesa, () => inv.id)
+        const partsSubTotal = partsVivos.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
         const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
         const partsTotal = partsSubTotal + floridaTaxesAmount
         const servicesTotal = (servicesRes.data || []).reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
@@ -344,8 +348,8 @@ export default function ViewRidePage() {
         const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
         const flTaxAmount = floridaTaxesAmount
         const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
-        const expensesTotalGlobal = flTaxAmount + (expensesRes.data || []).reduce((s, e) => s + expenseLine(e), 0)
-        const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + (expensesRes.data || []).filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
+        const expensesTotalGlobal = flTaxAmount + expensesVivas.reduce((s, e) => s + expenseLine(e), 0)
+        const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + expensesVivas.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expenseLine(e), 0)
 
         const currentProfit = totalPaid - expensesTotalPaid
         const finalProfit = totalIncomeAll - expensesTotalGlobal
@@ -398,6 +402,7 @@ export default function ViewRidePage() {
   const rowClass = 'flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700 last:border-0'
   const labelClass = 'text-gray-400 font-bold'
   const sectionClass = 'bg-gray-900 border border-gray-700 rounded-2xl overflow-hidden'
+  const fleetFora = foraDoDinheiro(fleetExps, expLine, () => ride.id)   // estornada: riscada e fora do total (lib/estorno.ts)
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -552,7 +557,8 @@ export default function ViewRidePage() {
           <div>
             <div className="flex items-baseline justify-between gap-4 mb-3">
               <label className="block text-lg font-bold">EXPENSES ({fleetExps.length})</label>
-              <span className="text-xl font-bold">{formatUSD(fleetExps.reduce((a, e) => a + expLine(e), 0))}</span>
+              {/* Estornada (lib/estorno.ts, 14/set/2026) fica na lista, riscada, e sai do total. Todas as despesas são do MESMO carro. */}
+              <span className="text-xl font-bold">{formatUSD(soOQueConta(fleetExps, expLine, () => ride.id).reduce((a, e) => a + expLine(e), 0))}</span>
             </div>
 
             {expForm && (
@@ -628,7 +634,7 @@ export default function ViewRidePage() {
                       )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="font-bold">{formatUSD(expLine(e))}</span>
+                      <span className={`font-bold ${fleetFora.has(e) ? 'line-through text-gray-500' : ''}`}>{formatUSD(expLine(e))}</span>
                       {confirmExpId === e.id ? (
                         <>
                           <button onClick={() => removeFleetExp(e.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-sm">CONFIRM</button>

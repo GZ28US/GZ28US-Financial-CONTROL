@@ -9,7 +9,8 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
-import { OrderChip, DeliverChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
+import { OrderChip, DeliverChip, CancelChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
+import { foraDoDinheiro, cancelOf } from '@/lib/estorno'
 
 type Invoice = {
   id: string
@@ -49,7 +50,8 @@ type Client = {
 // conta do que o cliente pagou direto, e o CLIENT saiu do app US. A coluna sai do banco
 // na onda 9 (MIGRATION_pacote_onda9_regra_dos_campos.sql); o tipo não promete mais um
 // campo que a tela não usa.
-type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; mirror_expense_id?: string | null }
+// cancel_status (14/set/2026, MIGRATION_invoice_items_cancel_status.sql): o item estornado fica na lista, riscado, e sai dos totais.
+type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; mirror_expense_id?: string | null; cancel_status?: string | null }
 type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
@@ -448,7 +450,16 @@ export default function ViewInvoicePage() {
 
   const showPartNumbers = !!invoice.show_part_numbers
   const pnFor = (p: { source_item?: string | null; description: string }) => pnByItem.get(((p.source_item || p.description) || '').trim().toLowerCase()) || ''
-  const partsSubTotal = parts.reduce((s, p) => s + p.unit_price * p.quantity, 0)
+  // ESTORNO (14/set/2026 — Márcio, sobre o HHP 382526 da 006.27: «deixe nas invoices como estornado, e faça os controles
+  // financeiros»). Item e despesa que não contam dinheiro pela régua de lib/estorno.ts CONTINUAM nas listas (tela e papel),
+  // marcados e riscados, e saem de TODO total desta página: sub-total, FL tax, grand total, balance, custo, cash flow e markup.
+  const partLine = (p: Part) => p.unit_price * p.quantity
+  const expLineOf = (e: Expense) => e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0)
+  const partFora = foraDoDinheiro(parts, partLine, () => invoiceId)
+  const expFora = foraDoDinheiro(expenses, expLineOf, () => invoiceId)
+  const partsVivos = parts.filter(p => !partFora.has(p))
+  const expensesVivas = expenses.filter(e => !expFora.has(e))
+  const partsSubTotal = partsVivos.reduce((s, p) => s + partLine(p), 0)
   const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
   const partsTotal = partsSubTotal + floridaTaxesAmount
   const servicesTotal = services.reduce((s, sv) => s + sv.price, 0)
@@ -473,8 +484,8 @@ export default function ViewInvoicePage() {
   const totalPaidBrl = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (Number(p.amount_brl) || 0), 0)
   const flTaxExpenseAmount = floridaTaxesAmount
   const flTaxExpensePaid = isValidDate(invoice.fl_tax_expense_date)
-  const expensesTotalGlobal = flTaxExpenseAmount + expenses.reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
-  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expenses.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+  const expensesTotalGlobal = flTaxExpenseAmount + expensesVivas.reduce((s, e) => s + expLineOf(e), 0)
+  const expensesTotalPaid = (flTaxExpensePaid ? flTaxExpenseAmount : 0) + expensesVivas.filter(e => isValidDate(e.payment_date)).reduce((s, e) => s + expLineOf(e), 0)
   const expensesBalance = expensesTotalPaid - expensesTotalGlobal
   const currentProfit = totalPaid - expensesTotalPaid
   const currentProfitPct = expensesTotalPaid > 0 ? (currentProfit / expensesTotalPaid) * 100 : 0
@@ -508,6 +519,7 @@ export default function ViewInvoicePage() {
     services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
     payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
     notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA',
+    REFUNDED: 'ESTORNADO', CANCELLED: 'CANCELADO',
   } : {
     quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery',
     clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail', noClient: 'No client linked',
@@ -516,6 +528,7 @@ export default function ViewInvoicePage() {
     services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
     payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
     notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY',
+    REFUNDED: 'REFUNDED', CANCELLED: 'CANCELLED',
   }
 
   return (
@@ -649,21 +662,27 @@ export default function ViewInvoicePage() {
                     parts.forEach(p => {
                       if (p.kit_group && !seen.has(p.kit_group)) {
                         seen.add(p.kit_group)
-                        const members = parts.filter(x => x.kit_group === p.kit_group)
-                        const kitTotal = members.reduce((s, x) => s + x.unit_price * x.quantity, 0)
+                        const members = partsVivos.filter(x => x.kit_group === p.kit_group)
+                        const kitTotal = members.reduce((s, x) => s + partLine(x), 0)
+                        // Kit com TODOS os itens estornados não é cortesia: diz o carimbo.
+                        const kitEst = members.length === 0 ? (cancelOf(parts.find(x => x.kit_group === p.kit_group)) || 'REFUNDED') : null
                         rows.push(
                           <tr key={`k-${p.kit_group}`} style={{ background: '#eef2f2' }}>
                             <td colSpan={3} style={{ fontWeight: 700 }}>📦 {p.kit_name || 'Kit'}</td>
-                            <td className="r" style={{ fontWeight: 700 }}>{kitTotal === 0 ? T.courtesy : formatUSD(kitTotal)}</td>
+                            <td className="r" style={{ fontWeight: 700 }}>{kitEst ? T[kitEst] : kitTotal === 0 ? T.courtesy : formatUSD(kitTotal)}</td>
                           </tr>
                         )
                       }
+                      // PAPEL (14/set/2026): o item estornado APARECE no documento — riscado, com ESTORNADO/REFUNDED no
+                      // lugar do total — e fica fora do sub-total. Mesma régua da tela; nada some do papel que o cliente recebe.
+                      const est = partFora.has(p) ? cancelOf(p) : null
+                      const strike = est ? { textDecoration: 'line-through', color: '#999' } : undefined
                       rows.push(
                         <tr key={p.id}>
-                          <td style={p.kit_group ? { paddingLeft: '16px' } : undefined}>{p.description}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
-                          <td className="r">{p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price)}</td>
-                          <td className="r">{p.quantity}</td>
-                          <td className="r">{p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price * p.quantity)}</td>
+                          <td style={{ ...(p.kit_group ? { paddingLeft: '16px' } : {}), ...(est ? { color: '#999' } : {}) }}>{p.description}{est && <span style={{ fontWeight: 700, color: '#cc0000' }}> ({T[est]})</span>}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
+                          <td className="r" style={strike}>{p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price)}</td>
+                          <td className="r" style={strike}>{p.quantity}</td>
+                          <td className="r" style={est ? { fontWeight: 700, color: '#cc0000' } : undefined}>{est ? T[est] : p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price * p.quantity)}</td>
                         </tr>
                       )
                     })
@@ -935,7 +954,7 @@ export default function ViewInvoicePage() {
                     if (seen.has(part.kit_group)) return null
                     seen.add(part.kit_group)
                     const members = parts.filter((x: any) => x.kit_group === part.kit_group)
-                    const total = members.reduce((s: number, m: any) => s + m.unit_price * m.quantity, 0)
+                    const total = members.filter(m => !partFora.has(m)).reduce((s: number, m: any) => s + m.unit_price * m.quantity, 0)
                     return (
                       <div key={part.id} className="border-b border-gray-700">
                         <div className="flex items-center justify-between gap-4 px-4 py-2 bg-teal-900/30">
@@ -945,13 +964,15 @@ export default function ViewInvoicePage() {
                         <div className="pl-4 border-l-2 border-teal-800 ml-3">
                           {members.map((m: any) => {
                             const mPaid = isValidDate(m.payment_date)
+                            const mOut = partFora.has(m)
                             return (
                               <div key={m.id} className="flex items-center justify-between gap-4 px-4 py-2">
                                 <div className="flex-1 min-w-0">
-                                  <p className={`text-base truncate ${(invoice.is_quote || mPaid) ? '' : 'text-yellow-400'}`} title={m.description}>{m.description}{(invoice.is_quote || mPaid) ? '' : ' — PENDING'}</p>
+                                  <p className={`text-base truncate ${mOut ? 'text-gray-500' : (invoice.is_quote || mPaid) ? '' : 'text-yellow-400'}`} title={m.description}>{m.description}{mOut || invoice.is_quote || mPaid ? '' : ' — PENDING'}</p>
                                   {showPartNumbers && pnFor(m) && <p className="text-xs text-gray-500">PN: {pnFor(m)}</p>}
-                                  <p className="text-sm text-gray-400">{m.unit_price === 0 ? 'COURTESY' : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
-                                  {!invoice.is_quote && <p className="text-sm text-gray-500">{mPaid ? `Paid: ${formatDate(m.payment_date)}` : 'Not paid yet'}</p>}
+                                  <p className={`text-sm text-gray-400 ${mOut ? 'line-through' : ''}`}>{m.unit_price === 0 ? 'COURTESY' : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
+                                  {mOut && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={m.cancel_status} /><span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span></div>}
+                                  {!invoice.is_quote && !mOut && <p className="text-sm text-gray-500">{mPaid ? `Paid: ${formatDate(m.payment_date)}` : 'Not paid yet'}</p>}
                                 </div>
                               </div>
                             )
@@ -961,14 +982,16 @@ export default function ViewInvoicePage() {
                     )
                   }
                   const partPaid = isValidDate(part.payment_date)
+                  const partOut = partFora.has(part)
                   return (
                   <div key={part.id} className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-700">
                     <div className="flex-1 min-w-0">
-                      <p className={`text-base font-bold truncate ${(invoice.is_quote || partPaid) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{(invoice.is_quote || partPaid) ? '' : ' — PENDING'}</p>
+                      <p className={`text-base font-bold truncate ${partOut ? 'text-gray-500' : (invoice.is_quote || partPaid) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{partOut || invoice.is_quote || partPaid ? '' : ' — PENDING'}</p>
                       {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
-                      <p className="text-sm text-gray-400">
+                      <p className={`text-sm text-gray-400 ${partOut ? 'line-through' : ''}`}>
                         {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
+                      {partOut && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} /><span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span></div>}
                     </div>
                   </div>
                   )
@@ -1076,14 +1099,15 @@ export default function ViewInvoicePage() {
                   const seen = new Set<string>()
                   const renderRow = (exp: any, index: number, inKit: boolean) => {
                     const isPaid = isValidDate(exp.payment_date)
-                    const rowColor = invoice.is_quote ? '' : (isPaid ? 'text-blue-400' : 'text-red-400')
+                    const expOut = expFora.has(exp)
+                    const rowColor = expOut ? 'text-gray-500' : invoice.is_quote ? '' : (isPaid ? 'text-blue-400' : 'text-red-400')
                     const receiptUrls = parseReceiptUrls(exp.receipt_url)
                     return (
                     <div key={exp.id} className={inKit ? 'px-4 py-2' : 'px-4 py-3 border-b border-gray-700'}>
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${rowColor}`} title={exp.item}>{exp.item}{exp.supplier ? ` — ${exp.supplier}` : ''}</p>
-                          <p className={`text-sm ${rowColor}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}{((exp.tax || 0) > 0 || (exp.extra || 0) > 0) ? ` · TOTAL: ${formatUSD(exp.price * (exp.quantity || 1) + (exp.tax || 0) + (exp.extra || 0))}` : ''}</p>
+                          <p className={`text-sm ${rowColor} ${expOut ? 'line-through' : ''}`}>Qty: {exp.quantity || 1} × {formatUSD(exp.price)} = {formatUSD(exp.price * (exp.quantity || 1))}{(exp.tax || 0) > 0 ? ` · Tax: ${formatUSD(exp.tax)}` : ''}{(exp.extra || 0) > 0 ? ` · Extra Costs: ${formatUSD(exp.extra)}` : ''}{((exp.tax || 0) > 0 || (exp.extra || 0) > 0) ? ` · TOTAL: ${formatUSD(exp.price * (exp.quantity || 1) + (exp.tax || 0) + (exp.extra || 0))}` : ''}</p>
                           {/* Uma data só (lei 18/ago/2026): a da expense é a do PAGAMENTO.
                               Quem pagou aparece como está gravado (vazio não vira GZ28US). O PAID TO
                               saiu da tela em 12/set/2026 — é sempre GZ28US, escondido (Márcio, 11/set) —
@@ -1100,10 +1124,12 @@ export default function ViewInvoicePage() {
                               não tem status: some o chip. Peça vinda do estoque DOADA
                               (stock_source_type DONATED) não foi comprada — fica sem
                               chip, como manda a lei anterior. */}
-                          {(String(exp.order_number || '').trim() || hasDeliverChip(exp)) && exp.stock_source_type !== 'DONATED' && (
+                          {(String(exp.order_number || '').trim() || hasDeliverChip(exp) || expOut) && exp.stock_source_type !== 'DONATED' && (
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                               {String(exp.order_number || '').trim() ? <OrderChip order={String(exp.order_number || '').trim()} /> : null}
-                              <DeliverChip row={exp} />
+                              {/* O carimbo aparece mesmo quando a cascata do chip não acende (linha sem natureza de viagem). */}
+                              {hasDeliverChip(exp) ? <DeliverChip row={exp} /> : expOut ? <CancelChip status={exp.cancel_status} /> : null}
+                              {expOut && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}
                             </div>
                           )}
                         </div>
@@ -1130,7 +1156,7 @@ export default function ViewInvoicePage() {
                       if (seen.has(exp.purchase_group)) return null
                       seen.add(exp.purchase_group)
                       const memberIdx = expenses.map((e: any, i: number) => ({ e, i })).filter(({ e }) => e.purchase_group === exp.purchase_group)
-                      const total = memberIdx.reduce((s: number, { e }: any) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
+                      const total = memberIdx.filter(x => !expFora.has(x.e)).reduce((s: number, { e }: any) => s + e.price * (e.quantity || 1) + (e.tax || 0) + (e.extra || 0), 0)
                       return (
                         <div key={exp.id} className="border-b border-gray-700">
                           <div className="flex items-center justify-between gap-4 px-4 py-2 bg-teal-900/30">

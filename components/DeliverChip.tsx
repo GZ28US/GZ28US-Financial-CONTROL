@@ -168,18 +168,44 @@ export function DeliverFields({
         <label className={label}>CARRIER</label>
         <input type="text" value={carrier} onChange={(e) => onCarrier(e.target.value)} placeholder="UPS / FedEx / USPS" className={box} />
       </div>
-      <div className="flex-1 min-w-[10rem]">
-        <label className={label}>CANCELLED?</label>
-        <select
-          value={cancelStatus || ''}
-          onChange={(e) => onCancelStatus(normCancelStatus(e.target.value))}
-          className={`${box} ${cancelStatus === 'CANCELLED' ? 'text-amber-300 border-amber-700' : cancelStatus === 'REFUNDED' ? 'text-gray-500' : ''}`}
-        >
-          <option value="">—</option>
-          <option value="CANCELLED">{CANCEL_LABEL.CANCELLED}</option>
-          <option value="REFUNDED">{CANCEL_LABEL.REFUNDED}</option>
-        </select>
-      </div>
+      <CancelSelect size={size} value={cancelStatus} onChange={onCancelStatus} />
+    </div>
+  )
+}
+
+// ── O CARIMBO SOZINHO (14/set/2026) ─────────────────────────────────────────
+// Márcio, sobre o HHP 382526 da 006.27: «deixe nas invoices como estornado, e faça os controles financeiros».
+// O ITEM de invoice (invoice_items, a linha que COBRA) também ganhou cancel_status — mas item não viaja: não tem
+// rastreio, balcão nem entrega. Então ele usa só o degrau do carimbo, com o MESMO rótulo e a MESMA cor do chip de
+// cima, e o MESMO seletor. Quem decide se o dinheiro sai da conta é lib/estorno.ts, nunca a tela.
+export function CancelChip({ status }: { status: string | null | undefined }) {
+  const s = normCancelStatus(status)
+  if (!s) return null
+  return <span className={`px-2.5 py-0.5 rounded-lg text-sm font-bold border whitespace-nowrap ${TONE[s]}`}>{CANCEL_LABEL[s]}</span>
+}
+
+export function CancelSelect({ value, onChange, size = 'sm', className = '' }: {
+  value: CancelStatus | null
+  onChange: (v: CancelStatus | null) => void
+  size?: 'lg' | 'sm'
+  className?: string
+}) {
+  const box = size === 'lg'
+    ? 'w-full bg-gray-800 border border-gray-700 rounded-2xl px-5 py-3 text-lg'
+    : 'w-full bg-gray-900 border border-gray-700 rounded-2xl px-3 py-2 text-sm'
+  const label = size === 'lg' ? 'block mb-2 text-lg font-bold' : 'block mb-1 text-xs text-gray-400'
+  return (
+    <div className={`flex-1 min-w-[10rem] ${className}`}>
+      <label className={label}>CANCELLED?</label>
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(normCancelStatus(e.target.value))}
+        className={`${box} ${value === 'CANCELLED' ? 'text-amber-300 border-amber-700' : value === 'REFUNDED' ? 'text-gray-500' : ''}`}
+      >
+        <option value="">—</option>
+        <option value="CANCELLED">{CANCEL_LABEL.CANCELLED}</option>
+        <option value="REFUNDED">{CANCEL_LABEL.REFUNDED}</option>
+      </select>
     </div>
   )
 }

@@ -35,6 +35,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { fetchAll, fetchBankLines, pointerKeys, mixedMembers, MIXED_GROUP, num, nameHit, expensesRows } from './bankReconcile.server'
 import { normSup } from './supplierMatch'
+import { foraDoDinheiro } from './estorno'
 
 export type AuditRef = { table: string; id: string; label: string; href?: string | null }
 export type AuditItem = { key: string; kind: string; title: string; amount: number; date: string | null; refs: AuditRef[]; evidence: string }
@@ -230,7 +231,10 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
   const icIds = new Set(icClients.map((c: any) => String(c.id)))
   // O carimbo da invoice manda; o dono do ride é só o reserva (app/rides/[id]/invoices/[invoiceId]/page.tsx: ownerClientId).
   const ownerOf = (inv: any) => String(inv?.client_id || rideById.get(String(inv?.ride_id))?.client_id || '')
-  const icRows = rows.filter(x => x.table === 'invoice_expenses' && x.inv && icIds.has(ownerOf(x.inv)))
+  // ESTORNO (DC 1.57.0 · lib/estorno.ts): despesa e item estornados não são cobrança — não entram no par «cobrado duas vezes».
+  const despEstornadas = foraDoDinheiro(d.invoiceExpenses, expLine, (r: any) => r.invoice_id)
+  const itensEstornados = foraDoDinheiro(d.invoiceParts, qtyLine, (r: any) => r.invoice_id)
+  const icRows = rows.filter(x => x.table === 'invoice_expenses' && x.inv && icIds.has(ownerOf(x.inv)) && !despEstornadas.has(x.r))
   type IcRow = AppRow & { ids: string[]; order: string; text: string }
   const ic: IcRow[] = icRows.map(x => ({ ...x, ids: paypalIds(x.r.item, x.r.order_number, x.r.source), order: orderKey(x.r.order_number), text: textKey(x.r.item) }))
   const orderSum = new Map<string, number>(), idSum = new Map<string, number>()
@@ -240,7 +244,7 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
     for (const id of paypalIds(x.r.item, x.r.order_number, x.r.source)) idSum.set(id, (idSum.get(id) || 0) + x.amount)
   }
   const billOf = (x: AppRow): number | null => {
-    const parts = d.invoiceParts.filter((p: any) => String(p.invoice_id) === String(x.r.invoice_id))
+    const parts = d.invoiceParts.filter((p: any) => String(p.invoice_id) === String(x.r.invoice_id) && !itensEstornados.has(p))
     const hit = parts.find((p: any) => Math.abs(num(p.base_cost) - x.amount) < 0.021) || (parts.length === 1 ? parts[0] : null)
     return hit ? r2(num(hit.unit_price) * (num(hit.quantity) || 1)) : null
   }
@@ -332,7 +336,7 @@ export function computePayerAudit(d: PayerAuditData): PayerAudit {
 
 export async function auditPayer(db: any): Promise<PayerAudit> {
   const [invoiceExpenses, fixedExpenses, fixedSuppliers, expenses, goods, goodExpenses, inputs, inventory, invoices, invoiceParts, rides, clients, bank] = await Promise.all([
-    fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, order_number, purchase_group, created_at'),
+    fetchAll(db, 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, expense_date, payment_date, paid_from, paid_to, source, order_number, purchase_group, created_at, cancel_status'),
     fetchAll(db, 'fixed_cost_expenses', 'id, supplier_id, description, amount, expense_date, payment_date, paid_from, paid_to, source, bank_transaction_id, created_at'),
     fetchAll(db, 'fixed_cost_suppliers', 'id, company, description'),
     // expenses.bank_transaction_id vem da MIGRATION_expenses_bank_link — expensesRows lê sem a coluna se ela faltar.
@@ -342,7 +346,7 @@ export async function auditPayer(db: any): Promise<PayerAudit> {
     fetchAll(db, 'inputs', 'id, description, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, order_number, purchase_group, created_at'),
     fetchAll(db, 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, purchase_group, created_at'),
     fetchAll(db, 'invoices', 'id, invoice_code, ride_id, client_id, is_quote, origin, service'),
-    fetchAll(db, 'invoice_items', 'id, invoice_id, unit_price, quantity, base_cost'),
+    fetchAll(db, 'invoice_items', 'id, invoice_id, unit_price, quantity, base_cost, cancel_status'),   // cancel_status: MIGRATION_invoice_items_cancel_status.sql
     fetchAll(db, 'rides', 'id, project_name, client_id'),
     fetchAll(db, 'clients', 'id, name, client_number, is_quote, country'),
     // authorized_date = data da autorização do cartão (raw do Plaid; nula nas linhas de extrato). date = data POSTADA.
