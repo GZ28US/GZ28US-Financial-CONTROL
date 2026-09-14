@@ -77,7 +77,6 @@ const ALVO = '$alvo'        // o id da invoice-alvo, resolvido na hora de gravar
 // motivo legível. Chave = código da invoice NO BR.
 export const FORA_DE_ESCOPO_BR: Readonly<Record<string, string>> = {
   'BR.289.1': 'classe (c) — 006.8 ColtPython: valores e linhas não batem com a BR (fora deste passo)',
-  'BR.502.1': 'classe (c) — 006.13 HellKong: item US 236,00 ≠ BR 227,24 (extra dobrado por quantidade; fora deste passo)',
   'BR.1009.1': 'classe (c) — 006.28 ScatPack NOVO BR: 1 linha no US, 5 no BR (fora deste passo)',
   'BR.496.1': 'classe (c) — 006.2 + 006.16 Armageddon: duas 006.N para a mesma BR (fora deste passo)',
 }
