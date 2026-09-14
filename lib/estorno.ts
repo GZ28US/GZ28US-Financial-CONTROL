@@ -9,16 +9,16 @@
 //
 // O CAMPO: cancel_status (null | CANCELLED | REFUNDED), o mesmo das 6 tabelas de item comprado (lib/deliverStatus.ts). Desde
 // MIGRATION_invoice_items_cancel_status.sql, invoice_items também tem: é a linha que COBRA o cliente.
-// CANCELLED entra junto com REFUNDED (ordem de 14/09): compra cancelada não é custo nem venda, mesmo com o dinheiro ainda na
-// mão do vendedor.
+// SÓ REFUNDED sai do dinheiro (revisão da sessão principal, 14/09): a decisão do Márcio é sobre ESTORNO — o dinheiro voltou. CANCELLED
+// continua contando como sempre: compra cancelada e já paga tem o dinheiro ainda na mão do vendedor, e tirá-la do DFC desalinharia a
+// linha da Regions que a pagou (ex.: inputs Harbor Freight 0318353, US$ 107,49, pago em 09/07). O chip CANCELADO continua na tela.
 //
 // A ARMADILHA: A LEI 8.10 DO AUTOBOOK (lib/autoBookLivro.ts). «Estorno é uma linha NEGATIVA espelhando a original — mesmo
 // pedido, mesmo comprovante, mesma categoria —, com a data do e-mail do estorno. A linha original nunca é editada para baixo.»
 // E o robô do e-mail (lib/mailToItem.server.ts) carimba REFUNDED na linha ORIGINAL quando o vendedor afirma o estorno. Então
 // um estorno aparece no banco de DOIS jeitos, e os dois existem hoje (medido em 14/09, só leitura):
-//   (a) SÓ O CARIMBO — a original com cancel_status e nenhuma linha negativa: 006.27 (HHP 382526, 4 despesas); assets
-//       Harbor Freight 129168 (US$ 63,89); inputs Amazon 111-2300452-3523426 (US$ 10,63); inputs Harbor Freight 0318353
-//       (US$ 107,49, CANCELLED). Aqui o carimbo É o estorno: a linha sai da conta.
+//   (a) SÓ O CARIMBO — a original REFUNDED e nenhuma linha negativa: 006.27 (HHP 382526, 4 despesas); assets
+//       Harbor Freight 129168 (US$ 63,89); inputs Amazon 111-2300452-3523426 (US$ 10,63). Aqui o carimbo É o estorno: a linha sai da conta.
 //   (b) A NEGATIVA LANÇADA — US.008.2 Texas Speed (duas originais REFUNDED de US$ 8.534,14 e 8.032,48 com tax/extra, e duas
 //       negativas SEM pedido e SEM carimbo do mesmo valor); US.014.1 AutoZone 1585884 (+111,29 e −111,29, as duas REFUNDED);
 //       inputs Temu PO-211-09539381883512437 (+25,96 REFUNDED e −8,38 REFUNDED — estorno PARCIAL) e PO-211-12975478892152437
@@ -52,6 +52,8 @@ export const cancelOf = (row: Estornavel | null | undefined): CancelStatus | nul
 export const isCancelled = (row: Estornavel | null | undefined): boolean => cancelOf(row) !== null
 
 const CENTAVO = 0.005
+/** Só o ESTORNO (REFUNDED) tira dinheiro; CANCELLED conta (ver o cabeçalho). */
+const estornada = (row: Estornavel) => cancelOf(row) === 'REFUNDED'
 const pedidoDe = (v: unknown) => String(v ?? '').trim().toUpperCase().replace(/^#/, '').replace(/\s+/g, '')
 
 /**
@@ -61,7 +63,7 @@ const pedidoDe = (v: unknown) => String(v ?? '').trim().toUpperCase().replace(/^
  */
 export function foraDoDinheiro<T extends Estornavel>(rows: readonly T[], valor: (r: T) => number, grupo?: (r: T) => unknown): Set<T> {
   const fora = new Set<T>()
-  if (!rows.some(isCancelled)) return fora
+  if (!rows.some(estornada)) return fora
   const negativas = rows.filter(r => valor(r) < -CENTAVO)
   const pedidosEstornados = new Set(negativas.map(n => pedidoDe(n.order_number)).filter(Boolean))
   // Negativas sem pedido, por grupo — cada uma cobre UMA original de valor igual.
@@ -72,7 +74,7 @@ export function foraDoDinheiro<T extends Estornavel>(rows: readonly T[], valor: 
     const a = soltas.get(k); if (a) a.push(n); else soltas.set(k, [n])
   }
   for (const r of rows) {
-    if (!isCancelled(r)) continue
+    if (!estornada(r)) continue
     const v = valor(r)
     if (v <= CENTAVO) continue                                   // 1. negativa (ou zero): é o dinheiro voltando
     const p = pedidoDe(r.order_number)

@@ -121,12 +121,6 @@ export const PENDING_DECISIONS: readonly PendingDecisionDef[] = [
     note: 'Possible duplicate inside the US total: 006.25 (no description) × 006.34. If confirmed, one of them comes out — the smaller amount is shown as at stake.' },
   { key: 'hold-kit-motor-085.6', since: '2026-09-14', kind: 'on_hold_line', brInvoiceCodes: ['085.6'], brPartIds: ['c679605d-ec7f-4c2f-9d28-095705841f22'], originUsInvoiceIds: ['39da0374-af2c-4d01-b8bc-9dd6cc1ef5c1'],
     note: '085.6 «kit motor» (US.003.1 Colossus) has no origin in the US app. It is inside the number; if GZ28US does not owe it, it comes out.' },
-  { key: 'br-lines-BR.1009.1', since: '2026-09-14', kind: 'br_lines_without_006',
-    brExpenseIds: ['8caedd50-0754-483c-b15b-500a543562f1', '5dfe9b67-a4cd-40b5-8ad7-3363262d3b31', 'f49a878a-1790-417c-9a8e-b390eca57c00', '0f8222c1-1b20-4c80-af9c-33ceee5d5cf1'],
-    note: 'BR.1009.1 ScatPack NOVO BR: 4 of its 5 lines paid by GZ28US are in no 006.N yet (006.28 carries only 1). If they belong, GZ28BR owes this too.' },
-  { key: 'br-lines-eibach', since: '2026-09-14', kind: 'br_lines_without_006',
-    brExpenseIds: ['83ae1eb9-1447-4aba-a7c2-262c38e47fcf', '7cd8dcb1-048c-481b-a2e9-292b283a67ea', 'c33f9a33-385a-42c9-87b2-99d6b72b00f2'],
-    note: 'Eibach Pro-Kits paid by GZ28US on BR invoices US.004.1, US.005.1 and US.006.2 — in no 006.N yet. If they belong, GZ28BR owes this too.' },
   // A US.007.1 Panther ainda NÃO tem 085.N (travada no motor): o código que ela vai ganhar só existe quando o Márcio liberar — o
   // 085.21 que o plano de 14/set 01:47 previa foi para uma season do Jeferson na aplicação de 14/set 10:30. Referência por id, nunca por código futuro.
   { key: 'hold-085.1-panther', since: '2026-09-14', kind: 'possible_double_count', brInvoiceCodes: ['085.1'], originUsInvoiceIds: ['15b95131-0e21-4b01-b7bf-504b2448af9f', '828e9c2f-6d48-4beb-aef4-e7f8b9050d82'],
