@@ -6,13 +6,13 @@ import { readKeyOk, requireUser } from '@/lib/apiAuth.server'
 // UltraMsg credentials ever leaving the server.
 //
 // Gate (audit of 11/set/2026): it used to answer anyone. Now only a logged-in
-// screen (requireUser) or the read key — header x-read-key, or ?key= like the
-// other read routes — gets the list; a missing env var lets nobody in.
+// screen (requireUser) or the read key in the x-read-key header (never ?key=,
+// since 14/set/2026) gets the list; a missing env var lets nobody in.
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  if (!readKeyOk(req, { allowQuery: true }) && !(await requireUser(req))) {
+  if (!readKeyOk(req) && !(await requireUser(req))) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const instance = process.env.ULTRAMSG_INSTANCE

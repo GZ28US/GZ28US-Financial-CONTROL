@@ -13,8 +13,11 @@
 //   sendKeyOk   → servidor ou script que MANDA mensagem (header x-send-key)
 //
 // Chave na URL (`?key=`) grava o segredo em todo log de acesso — medido no log da
-// Vercel em 11/set. Só vale onde a rota pede `allowQuery`: quem chama não tem como
-// mandar header (webhook da UltraMsg, atalho do iPhone) ou ainda está na transição.
+// Vercel em 11/set. Desde 14/set/2026 (último passo da troca de chaves) a chave de
+// LEITURA não vale mais na URL em rota nenhuma: só no header. Na URL andam apenas os
+// segredos PRÓPRIOS de quem não tem como mandar header — o webhook da UltraMsg
+// (`ULTRAMSG_WEBHOOK_SECRET`) e o SMS (`SMS_WEBHOOK_SECRET`) — e cada um abre só a
+// porta dele.
 import { timingSafeEqual } from 'crypto'
 import type { NextRequest } from 'next/server'
 import { requireUser } from '@/lib/auth.server'
@@ -36,12 +39,12 @@ export function cronOk(req: NextRequest): boolean {
 
 /**
  * Chave de LEITURA (`WHATSAPP_READ_KEY`) no header `x-read-key` (o antigo `x-wa-key` também vale).
- * `allowQuery` aceita `?key=` e `bodyKey` aceita a chave vinda no JSON — só onde a rota já recebia assim.
+ * `bodyKey` aceita a chave vinda no JSON — só onde a rota já recebia assim (corpo não vai para log de acesso).
+ * NUNCA na URL: o `allowQuery` que aceitava `?key=` saiu em 14/set/2026, com a transição da troca de chaves.
  */
-export function readKeyOk(req: NextRequest, opts: { allowQuery?: boolean; bodyKey?: unknown } = {}): boolean {
+export function readKeyOk(req: NextRequest, opts: { bodyKey?: unknown } = {}): boolean {
   const need = process.env.WHATSAPP_READ_KEY
   if (mesmoSegredo(req.headers.get('x-read-key') || req.headers.get('x-wa-key'), need)) return true
-  if (opts.allowQuery && mesmoSegredo(req.nextUrl.searchParams.get('key'), need)) return true
   if (typeof opts.bodyKey === 'string' && mesmoSegredo(opts.bodyKey, need)) return true
   return false
 }
@@ -64,14 +67,15 @@ export function brSendKeyValue(): string | undefined {
  * não manda header: o segredo anda na URL cadastrada no painel dela, então ele não
  * pode ser a mesma chave que abre e-mail, espelho e o `webhook/setup` — vazou a URL,
  * vazou tudo. Aqui ele abre SÓ esta porta.
- * TRANSIÇÃO: enquanto o painel da UltraMsg estiver na URL velha, a chave de leitura
- * também abre. A queda dessa linha é o último passo da troca de chaves, depois que a
- * URL nova estiver salva no painel (memory/troca-de-chaves-11set.md).
+ * Só o segredo PRÓPRIO entra — em `?key=` (a URL do painel) ou no header `x-webhook-key`.
+ * A chave de leitura NÃO abre mais: a linha de TRANSIÇÃO caiu em 14/set/2026, depois
+ * que as duas instâncias passaram a chamar com o segredo novo (conferido em 13/set) —
+ * último passo da troca de chaves (memory/troca-de-chaves-11set.md). Falha fechada:
+ * sem a variável no ambiente, ninguém entra.
  */
 function segredoDeUrlOk(req: NextRequest, proprio: string | undefined): boolean {
   if (mesmoSegredo(req.nextUrl.searchParams.get('key'), proprio)) return true
-  if (mesmoSegredo(req.headers.get('x-webhook-key'), proprio)) return true
-  return readKeyOk(req, { allowQuery: true })   // TRANSIÇÃO — cai quando as duas URLs estiverem trocadas
+  return mesmoSegredo(req.headers.get('x-webhook-key'), proprio)
 }
 
 export function webhookKeyValue(): string | undefined {
@@ -86,6 +90,7 @@ export function webhookKeyOk(req: NextRequest): boolean {
  * O ATALHO DE SMS DO iPHONE, mesma história: a URL fica salva no Atalhos e leva o
  * segredo na query. Segredo próprio (`SMS_WEBHOOK_SECRET`) pra que trocar a chave de
  * leitura não exija mexer no telefone — e pra que a URL do telefone não abra mais nada.
+ * Desde 14/set/2026 só esse segredo abre (a chave de leitura parou de valer aqui).
  */
 export function smsKeyValue(): string | undefined {
   return process.env.SMS_WEBHOOK_SECRET

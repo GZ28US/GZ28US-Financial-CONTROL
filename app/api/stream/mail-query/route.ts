@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken, mailProvider, listGmailIds } from '@/lib/streamMail.server'
 import { pastaDoProvedor, termoDeBuscaGraph } from '@/lib/mailFolders'
@@ -254,10 +255,10 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
 
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
-  const need = process.env.WHATSAPP_READ_KEY
-  // A chave também vale no header `x-read-key` (10/set/2026): na query string ela
-  // fica gravada em todo log de acesso. Quem já chama com `?key=` continua igual.
-  if (!need || (req.headers.get('x-read-key') || p.get('key')) !== need) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // A chave de leitura só no header `x-read-key`, pelo portão único (tempo constante,
+  // falha fechada). `?key=` parou de valer em 14/set/2026: na query string ela fica
+  // gravada em todo log de acesso.
+  if (!readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const slot = Math.max(1, parseInt(p.get('slot') || '1') || 1)
   const db = streamDb()

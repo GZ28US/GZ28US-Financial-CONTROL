@@ -3,8 +3,8 @@ import { requireUser, sendKeyOk, webhookKeyValue } from '@/lib/apiAuth.server'
 
 // Registra (ou confere) o webhook da instância UltraMsg — sem que o token saia
 // daqui. Chamar uma vez depois do deploy:
-//   POST /ca/api/whatsapp/webhook/setup  { key, url? }
-//   GET  /ca/api/whatsapp/webhook/setup?key=…   → mostra as settings atuais
+//   POST /ca/api/whatsapp/webhook/setup  { url? }   header x-send-key (ou sessão)
+//   GET  /ca/api/whatsapp/webhook/setup             → mostra as settings atuais
 //
 // Liga `webhook_message_received` (mensagem de terceiro) e
 // `webhook_message_create` (mensagem nossa) — os dois importam no FINANCEIRO:

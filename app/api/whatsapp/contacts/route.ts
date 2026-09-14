@@ -3,13 +3,13 @@ import { readKeyOk } from '@/lib/apiAuth.server'
 
 // US-instance UltraMsg contact search by name (?q=), returning only id + name —
 // lets the assistant resolve a recipient without the credentials leaving the
-// server. Read key in header x-read-key or ?key=, failing closed when the env
+// server. Read key in header x-read-key (never ?key=, since 14/set/2026), failing closed when the env
 // var is missing. Mirror of the BR app's route.
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  if (!readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const instance = process.env.ULTRAMSG_INSTANCE
   const token = process.env.ULTRAMSG_TOKEN
   if (!instance || !token) return NextResponse.json({ error: 'UltraMsg not configured' }, { status: 503 })

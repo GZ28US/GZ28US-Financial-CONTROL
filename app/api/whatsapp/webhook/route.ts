@@ -14,8 +14,8 @@ import { waNormalize, waStore, waTouchChat, waDb } from '@/lib/waStore.server'
 // min (lib/financeiroBot.server.ts) processa a fila: baixa o comprovante,
 // entende o destino, lança no app, reporta nos dois grupos e reage ✅.
 //
-// Configurar na UltraMsg (Instance → Webhook) ou via /instance/settings:
-//   https://www.gz28us.com/ca/api/whatsapp/webhook?key=<WHATSAPP_READ_KEY>
+// Configurar na UltraMsg (Instance → Webhook) ou via /api/whatsapp/webhook/setup:
+//   https://www.gz28us.com/ca/api/whatsapp/webhook?key=<ULTRAMSG_WEBHOOK_SECRET>
 // Responde 200 sempre — webhook que falha vira tempestade de retry.
 
 export const dynamic = 'force-dynamic'
@@ -31,9 +31,9 @@ function db() {
 export async function POST(req: NextRequest) {
   // A UltraMsg não manda header: o segredo vem em ?key= (a URL cadastrada acima).
   // Desde 11/set é segredo PRÓPRIO do webhook (ULTRAMSG_WEBHOOK_SECRET) — vazar a
-  // URL do painel não abre mais o resto do app. A chave de leitura ainda vale
-  // enquanto a URL velha estiver salva lá. Falha fechada: sem segredo nenhum no
-  // ambiente, nada entra.
+  // URL do painel não abre mais o resto do app. A chave de leitura parou de valer
+  // aqui em 14/set/2026 (as duas instâncias já chamam com o segredo novo). Falha
+  // fechada: sem o segredo no ambiente, nada entra.
   if (!webhookKeyOk(req)) {
     return NextResponse.json({ error: 'bad key' }, { status: 401 })
   }

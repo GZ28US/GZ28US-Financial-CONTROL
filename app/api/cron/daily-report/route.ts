@@ -24,7 +24,7 @@ const usd = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimu
 export async function GET(req: NextRequest) {
   // PORTÃO (11/set/2026): cada chamada manda o report de novo no grupo REPORTS, sem dedupe — e a rota
   // atendia qualquer anônimo. Só entra o cron da Vercel (Bearer CRON_SECRET) ou a chave de leitura.
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const db = streamDb()
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
   const sinceDay = since.slice(0, 10)

@@ -21,11 +21,11 @@ import { requireUser, readKeyOk } from '@/lib/apiAuth.server'
 // PORTÃO (11/set/2026): até aqui respondia a qualquer um — todas as regras da
 // caixa e, de brinde, um refresh do token (que rotaciona). Agora só entra admin
 // logado (Authorization: Bearer <sessão>) ou quem tem a chave de leitura (header
-// x-read-key; ?key= ainda vale na transição). Nada de token sem prova.
+// x-read-key; ?key= parou de valer em 14/set/2026). Nada de token sem prova.
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  if (!(await requireUser(req)) && !readKeyOk(req, { allowQuery: true })) {
+  if (!(await requireUser(req)) && !readKeyOk(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const slot = Math.max(1, parseInt(req.nextUrl.searchParams.get('slot') || '1') || 1)

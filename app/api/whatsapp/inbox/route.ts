@@ -31,9 +31,9 @@ const POLICIES = new Set(['ALL', 'MENTION_ONLY', 'IGNORE'])
 export async function POST(req: NextRequest) {
   // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente fechando a
   // conversa no round) — mesma porta que as outras rotas de WhatsApp usam. A
-  // chave vale em ?key= ou no header (x-read-key, ou o antigo x-wa-key), pela
-  // comparação única de lib/apiAuth.server.ts.
-  if (!readKeyOk(req, { allowQuery: true }) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // chave vale só no header (x-read-key, ou o antigo x-wa-key; `?key=` parou em
+  // 14/set/2026), pela comparação única de lib/apiAuth.server.ts.
+  if (!readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const chatId = String(b.chatId || '').trim()
   // Conversa de SMS não tem política nem marca d'água (moram em whatsapp_chats).

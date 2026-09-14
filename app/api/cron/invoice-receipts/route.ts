@@ -36,7 +36,7 @@ function db() {
 export async function GET(req: NextRequest) {
   // PORTÃO (11/set/2026): a comparação antiga deixava entrar quem mandasse "Bearer undefined" se
   // CRON_SECRET sumisse do ambiente. Agora falha fechada: cron da Vercel (Bearer CRON_SECRET) ou chave de leitura.
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) {
+  if (!cronOk(req) && !readKeyOk(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const d = db()

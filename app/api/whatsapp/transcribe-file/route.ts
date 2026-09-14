@@ -9,7 +9,7 @@ import { readKeyOk } from '@/lib/apiAuth.server'
 // sobre a documentação de um carro ficou inaudível dentro de um zip de 10 GB.
 // A fila do cron não alcança esses; este endpoint alcança.
 //
-//   POST /ca/api/whatsapp/transcribe-file?key=<WHATSAPP_READ_KEY>
+//   POST /ca/api/whatsapp/transcribe-file   header x-read-key: <WHATSAPP_READ_KEY>
 //   multipart/form-data, campo `file` (ogg/opus, mp3, m4a, wav, webm, mp4)
 //
 // Não grava nada: recebe bytes, devolve texto. Quem chama decide onde guardar.
@@ -18,9 +18,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function POST(req: NextRequest) {
-  // Chave em ?key= ou no header x-read-key — falha fechada: sem
-  // WHATSAPP_READ_KEY no ambiente, nada entra (11/set/2026).
-  if (!readKeyOk(req, { allowQuery: true })) {
+  // Chave no header x-read-key — falha fechada: sem WHATSAPP_READ_KEY no
+  // ambiente, nada entra (11/set/2026). `?key=` parou de valer em 14/set/2026.
+  if (!readKeyOk(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 

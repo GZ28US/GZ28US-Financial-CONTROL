@@ -47,8 +47,8 @@ async function save(sender: string, body: string) {
 export async function POST(req: NextRequest) {
   // O Atalhos do iPhone manda o segredo em ?key=. Desde 11/set é segredo PRÓPRIO
   // (SMS_WEBHOOK_SECRET): a URL guardada no telefone não abre mais o resto do app, e
-  // trocar a chave de leitura não pede mexer no Atalhos. A chave de leitura ainda
-  // vale enquanto o atalho estiver na URL velha. Falha fechada.
+  // trocar a chave de leitura não pede mexer no Atalhos. A chave de leitura parou de
+  // valer aqui em 14/set/2026. Falha fechada.
   if (!smsKeyOk(req)) {
     return NextResponse.json({ error: 'bad key' }, { status: 401 })
   }

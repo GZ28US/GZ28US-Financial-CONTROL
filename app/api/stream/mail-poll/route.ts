@@ -165,14 +165,14 @@ async function run(force: boolean): Promise<NextResponse> {
 
 // PORTÃO (11/set/2026): esta batida mexe nas caixas de e-mail, lança dinheiro, manda WhatsApp e acorda
 // o robô financeiro do BR — e respondia a qualquer pedido anônimo. Só entra o cron da Vercel (Bearer
-// CRON_SECRET) ou a chave de leitura (header x-read-key; `?key=` ainda vale na transição). Nenhuma
+// CRON_SECRET) ou a chave de leitura (header x-read-key; `?key=` parou de valer em 14/set/2026). Nenhuma
 // tela do app chama esta rota (procurado no repositório em 11/set).
 export async function POST(req: NextRequest) {
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   return run(false)
 }
 // Vercel cron calls GET every 5 min (vercel.json); force past the throttle.
 export async function GET(req: NextRequest) {
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   return run(true)
 }

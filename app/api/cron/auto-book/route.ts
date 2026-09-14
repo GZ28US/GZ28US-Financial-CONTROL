@@ -32,14 +32,13 @@ export async function GET(req: NextRequest) {
   // as seis caixas, arquiva e-mail e lança linha (achado da sessão do João).
   // Passam só o cron da Vercel (Authorization: Bearer CRON_SECRET) e quem tem a
   // chave de leitura — é a chave que mantém possível a rodada humana de `?horas=N`
-  // (header `x-read-key`, ou `?key=` para quem já chama assim). O `!!` impede que
-  // um CRON_SECRET ausente vire a senha "Bearer undefined".
+  // (header `x-read-key`). O `!!` impede que um CRON_SECRET ausente vire a senha
+  // "Bearer undefined".
   // PORTÃO ÚNICO (11/set/2026): a checagem à mão virou lib/apiAuth.server.ts, pra
   // troca de chave mexer num lugar só. Aceita o cron da Vercel (Bearer CRON_SECRET)
-  // ou a chave de leitura no header x-read-key; `?key=` segue valendo enquanto os
-  // scripts das sessões e o atalho do iPhone não migram (a chave na URL vai parar
-  // em todo log de acesso). As duas comparações falham fechadas.
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // ou a chave de leitura no header x-read-key. `?key=` parou de valer em 14/set/2026
+  // (a chave na URL vai parar em todo log de acesso). As duas comparações falham fechadas.
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const db = streamDb()
   const h = Math.min(168, Math.max(1, parseInt(req.nextUrl.searchParams.get('horas') || '3') || 3))

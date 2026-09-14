@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 
 // QUAIS CHAVES ESTE APP PRECISA, E QUAIS ESTÃO PUBLICADAS.
 //
@@ -96,11 +97,10 @@ const olhar = (nomes: Record<string, string>) => {
 }
 
 export async function GET(req: NextRequest) {
-  const need = process.env.WHATSAPP_READ_KEY
-  // A chave também vale no header `x-read-key`: na query string ela fica gravada
-  // em todo log de acesso. Quem já chama com `?key=` continua funcionando.
-  const veio = req.headers.get('x-read-key') || req.nextUrl.searchParams.get('key')
-  if (!need || veio !== need) {
+  // A chave de leitura só no header `x-read-key`, pelo portão único (tempo constante,
+  // falha fechada). `?key=` parou de valer em 14/set/2026: na query string ela fica
+  // gravada em todo log de acesso.
+  if (!readKeyOk(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const ess = olhar(ESSENCIAIS)

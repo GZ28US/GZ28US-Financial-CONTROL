@@ -34,9 +34,9 @@ export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
   // PORTÃO (11/set/2026): cada passada gasta cota do 17TRACK e escreve nas linhas de item — nunca para
-  // anônimo. Só entra o cron da Vercel (Bearer CRON_SECRET) ou a chave de leitura (x-read-key; `?key=`
-  // ainda vale na transição, é assim que as sessões rodam o robô à mão).
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // anônimo. Só entra o cron da Vercel (Bearer CRON_SECRET) ou a chave de leitura (header x-read-key —
+  // é assim que as sessões rodam o robô à mão; `?key=` parou de valer em 14/set/2026).
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const t0 = Date.now()
   try {
     const r = await refreshItemTracking(itemsDb())

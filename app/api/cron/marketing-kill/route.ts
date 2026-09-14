@@ -9,7 +9,7 @@ import { runMarketingKill } from '@/lib/marketingKill.server'
 // Temu 27h na caixa). Aqui só existe uma tarefa, e ela sempre roda.
 //
 // QUEM PODE DISPARAR (10/set/2026): o cron da Vercel (Authorization: Bearer CRON_SECRET)
-// ou quem tem a chave de leitura (header `x-read-key`, ou `?key=`). A rota estava
+// ou quem tem a chave de leitura (header `x-read-key`; `?key=` só até 14/set/2026). A rota estava
 // aberta. O estrago possível era pequeno — ela só faz o que o cron já faz de 5 em 5
 // minutos —, mas robô que APAGA e-mail não fica com a porta aberta. Fechada junto com a
 // do auto-book, com o aval do Márcio. O `!!` impede que um CRON_SECRET ausente vire a
@@ -21,10 +21,9 @@ export const maxDuration = 60
 export async function GET(req: NextRequest) {
   // PORTÃO ÚNICO (11/set/2026): a checagem à mão virou lib/apiAuth.server.ts, pra
   // troca de chave mexer num lugar só. Aceita o cron da Vercel (Bearer CRON_SECRET)
-  // ou a chave de leitura no header x-read-key; `?key=` segue valendo enquanto os
-  // scripts das sessões e o atalho do iPhone não migram (a chave na URL vai parar
-  // em todo log de acesso). As duas comparações falham fechadas.
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // ou a chave de leitura no header x-read-key. `?key=` parou de valer em 14/set/2026
+  // (a chave na URL vai parar em todo log de acesso). As duas comparações falham fechadas.
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const t0 = Date.now()
   try {

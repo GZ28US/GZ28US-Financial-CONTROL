@@ -9,7 +9,7 @@ import { waDb, waSyncInstance } from '@/lib/waStore.server'
 // o UNIQUE (app, message_id) não deixa duplicar.
 //
 // Backfill manual (uma vez, depois do deploy):
-//   GET /ca/api/cron/whatsapp-sync?key=<WHATSAPP_READ_KEY>&deep=1[&start=N]
+//   GET /ca/api/cron/whatsapp-sync?deep=1[&start=N]   header x-read-key: <WHATSAPP_READ_KEY>
 // deep varre TODOS os chats (200 msgs cada) + 6 páginas do log; se estourar o
 // tempo devolve nextStart — repetir com &start=<nextStart> até nextStart: null.
 
@@ -19,10 +19,9 @@ export const maxDuration = 300
 export async function GET(req: NextRequest) {
   // PORTÃO ÚNICO (11/set/2026): a checagem à mão virou lib/apiAuth.server.ts, pra
   // troca de chave mexer num lugar só. Aceita o cron da Vercel (Bearer CRON_SECRET)
-  // ou a chave de leitura no header x-read-key; `?key=` segue valendo enquanto os
-  // scripts das sessões e o atalho do iPhone não migram (a chave na URL vai parar
-  // em todo log de acesso). As duas comparações falham fechadas.
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // ou a chave de leitura no header x-read-key. `?key=` parou de valer em 14/set/2026
+  // (a chave na URL vai parar em todo log de acesso). As duas comparações falham fechadas.
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const instance = process.env.ULTRAMSG_INSTANCE
   const token = process.env.ULTRAMSG_TOKEN

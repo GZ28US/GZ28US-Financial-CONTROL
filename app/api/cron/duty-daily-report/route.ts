@@ -89,7 +89,7 @@ async function sendToGroup(body: string) {
 export async function GET(req: NextRequest) {
   // PORTÃO (11/set/2026): cada chamada manda o resumo de novo no grupo STAFF — e a rota atendia
   // qualquer anônimo. Só entra o cron da Vercel (Bearer CRON_SECRET) ou a chave de leitura.
-  if (!cronOk(req) && !readKeyOk(req, { allowQuery: true })) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!cronOk(req) && !readKeyOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) return NextResponse.json({ error: 'no service key' }, { status: 500 })

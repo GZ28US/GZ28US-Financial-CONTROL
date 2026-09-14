@@ -65,10 +65,10 @@ async function pageAll<T>(build: () => any, size = 1000, max = 120000): Promise<
 export async function GET(req: NextRequest) {
   // Sessão do /ca (a tela) OU a WHATSAPP_READ_KEY (a assistente), igual às
   // demais rotas de leitura do WhatsApp — é a mesma informação que elas servem.
-  // A chave em ?key= ou no header x-read-key, pela comparação única de
-  // lib/apiAuth.server.ts.
+  // A chave só no header x-read-key (na URL parou de valer em 14/set/2026), pela
+  // comparação única de lib/apiAuth.server.ts.
   const p = req.nextUrl.searchParams
-  if (!readKeyOk(req, { allowQuery: true }) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const db = waDb()
   const listOnly = p.get('view') === 'list'
   // Janela do round. Padrão 3 dias: é o que o round trata de fato — conversa

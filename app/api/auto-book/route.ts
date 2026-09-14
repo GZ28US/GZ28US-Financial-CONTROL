@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { lancar } from '@/lib/autoBookMail.server'
 import { cacaNaPasta, respostaUnica } from '@/lib/dropboxHunt.server'
@@ -16,14 +17,14 @@ import { tabelaAtual } from '@/lib/tableRenames'
 //           nunca mais é perguntado. É assim que a fila encolhe sozinha.
 //
 // Autenticação: a mesma chave de leitura das outras rotas de assistente
-// (WHATSAPP_READ_KEY). A service key nunca sai do servidor.
+// (WHATSAPP_READ_KEY), pelo portão único — header `x-read-key` (GET e POST) ou
+// `key` no corpo do POST. A service key nunca sai do servidor.
+// 14/set/2026: `?key=` parou de valer (a chave na URL fica em todo log de acesso),
+// e o header, que esta rota não lia, passou a valer.
 
 export const dynamic = 'force-dynamic'
 
-const auth = (req: NextRequest, key?: string | null) => {
-  const need = process.env.WHATSAPP_READ_KEY
-  return !!need && (key || req.nextUrl.searchParams.get('key')) === need
-}
+const auth = (req: NextRequest, key?: string | null) => readKeyOk(req, { bodyKey: key })
 
 export async function GET(req: NextRequest) {
   if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
