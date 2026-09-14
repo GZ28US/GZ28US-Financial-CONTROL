@@ -286,12 +286,37 @@ const cacheLido = new Set<string>()          // dia FECHADO já coberto por uma 
 // uma data nova recebia o bid de um dia mais velho. Agora cada data é resolvida no dia EXATO: só está
 // resolvida quando, voltando dela até achar pregão, todo dia do caminho já foi lido; o que falta é
 // buscado (a faixa [data − 10, data] de cada uma, juntas quando se encostam).
-export async function carregarCotacoes(datas: string[]): Promise<Cotacoes> {
+// O BID DIÁRIO GUARDADO NO BANCO (public.fx_usd_brl_daily, 14/set): dia FECHADO nunca muda de cotação, então é lido uma vez
+// e fica. bid null = dia lido sem pregão. Em produção a AwesomeAPI devolve HTTP 429 para o IP compartilhado da Vercel: com a
+// tabela, o motor só pede à API os dias que ainda faltam (poucos, os mais novos). Ler ou gravar a tabela nunca derruba o plano.
+const FX_TABELA = 'fx_usd_brl_daily'
+async function lerCotacoesGuardadas(db: SupabaseClient, de: string, ate: string, hoje: string): Promise<void> {
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from(FX_TABELA).select('dia, bid').gte('dia', de).lte('dia', ate).order('dia').range(from, from + 999)
+    if (error || !data) return
+    for (const r of data as { dia: string; bid: string | number | null }[]) {
+      const dia = String(r.dia).slice(0, 10)
+      if (dia >= hoje) continue
+      cacheLido.add(dia)
+      const bid = parseFloat(String(r.bid ?? '')) || 0
+      if (bid > 0) cacheBid.set(dia, bid)
+    }
+    if (data.length < 1000) return
+  }
+}
+async function guardarCotacoes(db: SupabaseClient, de: string, fim: string, hoje: string, porDia: Map<string, { ts: number; bid: number }>): Promise<void> {
+  const linhas: { dia: string; bid: number | null; ts: number | null }[] = []
+  for (let x = de; x <= fim && x < hoje; x = addDias(x, 1)) { const v = porDia.get(x); linhas.push({ dia: x, bid: v ? v.bid : null, ts: v ? v.ts : null }) }
+  if (linhas.length) await db.from(FX_TABELA).upsert(linhas, { onConflict: 'dia', ignoreDuplicates: true }).then(() => undefined, () => undefined)
+}
+
+export async function carregarCotacoes(datas: string[], db?: SupabaseClient): Promise<Cotacoes> {
   const validas = [...new Set(datas.filter(d => YMD.test(d)))].sort()
   const bids = new Map<string, number>()
   const junta = () => ({ bids: new Map([...cacheBid, ...bids]), lidos: new Set(cacheLido) })
   if (!validas.length) return { ...junta(), falha: null }
   const hoje = hojeEm('America/Sao_Paulo')
+  if (db) await lerCotacoesGuardadas(db, addDias(validas[0], -10), validas[validas.length - 1], hoje)
   const resolvida = (d: string) => {
     for (let k = 0; k <= 10; k++) {
       const x = addDias(d, -k)
@@ -333,6 +358,7 @@ export async function carregarCotacoes(datas: string[]): Promise<Cotacoes> {
             if (!ja || ts > ja.ts) porDia.set(dia, { ts, bid })
           }
           for (const [dia, v] of porDia) if (dia < hoje) cacheBid.set(dia, v.bid); else bids.set(dia, v.bid)
+          if (db) await guardarCotacoes(db, de, fim, hoje, porDia)
           // A resposta inteira chegou: todo dia FECHADO da janela está LIDO (dia sem registro = sem pregão).
           // Hoje não: pregão que ainda não saiu não é feriado — a data de hoje sem bid fica sem número e o
           // cron tenta de novo.
@@ -1314,7 +1340,7 @@ export type OpcoesPlano = { cotacoes?: Cotacoes }
 /** Lê os dois bancos e devolve o DIFF por mirror_key. NÃO ESCREVE NADA. */
 export async function planCrossings(b: Bancos, opcoes: OpcoesPlano = {}): Promise<Plano> {
   const foto = await lerFoto(b)
-  return montarPlano(foto, opcoes.cotacoes ?? await carregarCotacoes(datasDaFoto(foto)))
+  return montarPlano(foto, opcoes.cotacoes ?? await carregarCotacoes(datasDaFoto(foto), b.us))
 }
 
 // Toda data que pode precisar de câmbio: rendas das direções 2 e 4 e linhas da direção 3.
