@@ -102,7 +102,7 @@ export const RENDA_BR_DECIDIDA: Readonly<Record<string, { usd: number; motivo: s
 export const CHAVES_SEGURAS: Readonly<Record<string, string>> = {
   'US:invoice:982ccd2b': 'US.001.1 GoldenEye → 085.2: o R$ real das 6 rendas de Sidney Penna está na planilha dele (câmbio 5,50; R$ 158.650,47 registrados) e a regra do app carimbaria R$ 166.524,59 — carimbo não se corrige depois; segura até o Márcio responder (14/set)',
   'US:invoice:15b95131': 'US.009.1 Poltergeist → 085.1: possível contagem dobrada com a US.007.1 Panther — segura até o Márcio responder (14/set)',
-  'US:invoice:828e9c2f': 'US.007.1 Panther → 085.21: possível contagem dobrada com a US.009.1 Poltergeist — segura até o Márcio responder (14/set)',
+  'US:invoice:828e9c2f': 'US.007.1 Panther (ainda sem 085.N): possível contagem dobrada com a US.009.1 Poltergeist — segura até o Márcio responder (14/set)',
 }
 const chaveSegura = (key: string): string | null => { for (const [p, motivo] of Object.entries(CHAVES_SEGURAS)) if (key.startsWith(p)) return motivo; return null }
 

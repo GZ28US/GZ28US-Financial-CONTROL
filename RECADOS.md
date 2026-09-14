@@ -6,6 +6,32 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 14/set/2026 (10h40 Orlando) · da sessão do Márcio para a sessão do João — A CONTA BR × US PASSA A LER SÓ AS SHOPPING INVOICES (FIN 0.16.0, DC 1.56.0)
+
+Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. A decisão é do Márcio (13/set): «TODA E QUALQUER movimentação financeira entre o
+US e o BR tem que estar nas shopping invoices», e a conta US vs BR lê SÓ delas.
+
+- **Motor da travessia no ar:** `lib/crossing.server.ts`, `app/api/crossing` e o cron `/api/cron/crossing` (minuto 47 de cada hora,
+  em lotes). Todo PAID FROM/TO que cruza as empresas vira linha na 006.N (US, cliente GZ28BR) ou na 085.N (BR, cliente GZ28 USA).
+  - Idempotente por `invoices.mirror_key` e `mirror_src` da linha.
+  - Trilha `shopping-invoice-travessia` em `data_fixes`.
+  - Emergência: `TRAVESSIA_PAUSADA=1` na Vercel do US segura editor e cron.
+- **Os editores de invoice dos dois apps pararam de espelhar sozinhos.** O save chama o motor só para a chave daquela invoice.
+  - Linha com elo não é apagada nem recriada; remover pede confirmação.
+  - Item com `mirror_src` sai do re-precificador de margem.
+- **Número único:** `lib/crossingBalance(.server).ts` + `GET /api/crossing/balance`. A página GZ-FLOW, a linha «Conta corrente GZ28BR» do
+  Balanço e o card do Data Checker mostram o MESMO número. Os antigos GOT/PAID/NÓS saíram.
+  - `brAccount` ficou só para o CEGO.
+  - As 006.N saíram de «Contas a receber» e «Adiantamentos» do Balanço, porque já estão dentro da conta corrente (contariam duas vezes).
+- **História aplicada em 14/09 10:30 Orlando:** 53 chaves (trilha: 59 registros no US, 311 no BR). O saldo lido é **US$ 79.871,18 (BR deve ao US)**,
+  igual ao do motor ao centavo. A cotação diária USD-BRL mora em `fx_usd_brl_daily` (621 dias), porque a AwesomeAPI devolve 429 para a Vercel.
+- **Travadas até o Márcio responder** (aparecem na página como «pendente de decisão», fora do número): US.001.1/085.2 (BRL do Sidney),
+  US.007.1 Panther × US.009.1 Poltergeist (possível contagem dupla), US.003.1/085.6 («kit motor»), duplicatas 006.6 × 006.21 e 006.25 × 006.34,
+  BR.1009.1 e os kits Eibach de US.004.1/005.1/006.2.
+- **Dado mexido nesta madrugada, com trilha:**
+  - 21 linhas de staff pagas pelo GZ28BR ganharam `amount_brl` com o BRL que estava escrito na descrição (R$ 43.060,72, `staff-brl-do-texto`).
+  - Elos das despesas das 006.N (58) e 085.N (68), trilha `shopping-invoice-elos`.
+
 ## 14/set/2026 (01h20 Orlando) · da sessão do Márcio para a sessão do João — NO AR: BL 1.7.0–1.7.2, DC 1.55.0–1.55.1 E COLUNAS NOVAS DA TRAVESSIA
 
 Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. O recado de 00h38, logo abaixo, dizia «sem push nem deploy»: **agora está
