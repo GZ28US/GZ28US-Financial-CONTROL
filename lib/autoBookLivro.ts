@@ -594,7 +594,7 @@ export const SEQUENCIA: Etapa[] = [
       { id: '14.14', estado: 'FURO', desde: '13/09/2026',
         texto: 'Posto pago no CAIXA (MCC 5541) não é combustível: na casa é cigarro do Márcio (pessoal, season US.008), cerveja (insumo CONSUMPTION) ou comida do time (insumo TEAM). Combustível é a BOMBA (MCC 5542). Sem recibo, a linha de caixa vira pergunta, não Frota.',
         onde: 'bank_merchant_rules · def:fuel (lib/bankReconcile.server.ts, RULE_AGE_DAYS)',
-        nota: 'Hoje a regra def:fuel manda toda linha de posto para o custo fixo Frota depois de 7 dias, inclusive as de caixa. Medido em 13/09: das cobranças de caixa com recibo, nenhuma era combustível; e no Frota ainda estão BP 30,45 (29/08), Wawa 48,10 (31/08) e BP 105,65 (03/09), provavelmente cigarro ou cerveja — perguntar ao Márcio.' },
+        nota: 'Hoje a regra def:fuel manda toda linha de posto para o custo fixo Frota depois de 7 dias, inclusive as de caixa. Medido em 13/09: das cobranças de caixa com recibo, nenhuma era combustível; BP 30,45 (29/08), Wawa 48,10 (31/08) e BP 105,65 (03/09) estavam no Frota: eram cigarro do Márcio (resposta dele, 13/09) — movidos para a season US.008 e recasados.' },
       { id: '14.15', estado: 'EM CONSTRUÇÃO', desde: '13/09/2026',
         texto: 'Cobrança que mistura gasto pessoal e custo da empresa (cigarro + cerveja no mesmo caixa) casa com as duas partes: a pessoal na season da pessoa e a da empresa na tabela dela, somando o valor da linha.',
         onde: 'Bank Link · assign SPLIT (hoje só CAR, STOCK, SUPPLIES e FIXO, e só linha do balde)',
