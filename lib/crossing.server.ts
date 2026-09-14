@@ -37,7 +37,17 @@
 // 11/set); no BR continuam invoice_parts / invoice_payments. Todo `br.from(...)` daqui usa o nome
 // do BR de propósito.
 //
-// Ainda NÃO está ligado a cron nem a editor (o gancho dos editores é o passo seguinte).
+// QUEM CHAMA (14/set/2026, o passo dos ganchos):
+//   · os EDITORES dos dois apps, depois do save de uma invoice que cruza — só a chave daquela invoice
+//     (US: app/rides/[id]/invoices/edit → /api/crossing; BR: o editor → /api/invoice/crossing do BR →
+//     /api/crossing do US, servidor a servidor). Os espelhos velhos (lib/usShoppingMirror.ts do BR e
+//     app/api/br-mirror/shopping do US), que apagavam e recriavam item e pendente e recalculavam o R$
+//     a cada save, se aposentaram: quem escreve a travessia agora é SÓ este motor;
+//   · o cron /api/cron/crossing, de hora em hora, em lotes com relógio (sincronizar()), para o que
+//     não passa por tela nenhuma (robôs, Bank Link, folha, assets);
+//   · a rota /api/crossing à mão (GET = plano; POST com impressoes = a aplicação conferida).
+// TRAVESSIA_PAUSADA=1 no ambiente do US segura as escritas AUTOMÁTICAS (editor e cron); a aplicação à
+// mão continua valendo.
 
 import { createHash } from 'crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
@@ -71,6 +81,36 @@ export const FORA_DE_ESCOPO_BR: Readonly<Record<string, string>> = {
   'US.006.1': 'classe (b) — 006.19 HellNessey: BR digitada como custo cru (correção BR proposta à parte, não aplicada)',
   'BR.472.1': 'classe (b) — 006.26 Vintage SRT8: BR digitada como custo cru (correção BR proposta à parte, não aplicada)',
 }
+
+// A MESMA TRAVA DO LADO DAS 085.N — chave = código da invoice NO US (14/set/2026). As regras gerais já
+// travam a US.003.1 (a linha «kit motor» da 085.6 não tem origem no US); a lista deixa a trava de pé
+// mesmo que alguém mexa nas linhas antes de o dono decidir.
+export const FORA_DE_ESCOPO_US: Readonly<Record<string, string>> = {
+  'US.003.1': '085.6 «kit motor» (US$ 5.606,13 / R$ 31.114,02) sem origem no US — travada até o Márcio decidir (14/set)',
+}
+
+// RENDA DO BR COM O US$ DECIDIDO PELO DONO (14/set/2026, noite). Chave = id da linha em invoice_payments
+// do BR. Vale ANTES da usd_rate da invoice porque a usd_rate de uma invoice do BR que não está CLOSED é
+// regravada com o dólar do dia a cada save do editor de lá — o número decidido é o que bate com o banco.
+export const RENDA_BR_DECIDIDA: Readonly<Record<string, { usd: number; motivo: string }>> = {
+  'f3c7943c-2c8f-4972-ad69-8ba77ec8f0bb': { usd: 1402.00, motivo: 'BR.537.1 New Times Agency LLC — decisão do Márcio 14/set: vale a usd_rate gravada na invoice (R$ 7.510,79 ÷ 5,3572 = US$ 1.402,00), que bate com a linha da Regions' },
+}
+
+// CHAVES SEGURAS (auditoria da noite de 14/set/2026). Prefixo da mirror_key → o motivo. A chave inteira
+// fica em CONFLITO com o motivo escrito — o plano mostra os números que ela gravaria (manchete.bloqueadas),
+// e nada é escrito até o dono responder. A resposta do Márcio vira a remoção de UMA linha daqui.
+export const CHAVES_SEGURAS: Readonly<Record<string, string>> = {
+  'US:invoice:982ccd2b': 'US.001.1 GoldenEye → 085.2: o R$ real das 6 rendas de Sidney Penna está na planilha dele (câmbio 5,50; R$ 158.650,47 registrados) e a regra do app carimbaria R$ 166.524,59 — carimbo não se corrige depois; segura até o Márcio responder (14/set)',
+  'US:invoice:15b95131': 'US.009.1 Poltergeist → 085.1: possível contagem dobrada com a US.007.1 Panther — segura até o Márcio responder (14/set)',
+  'US:invoice:828e9c2f': 'US.007.1 Panther → 085.21: possível contagem dobrada com a US.009.1 Poltergeist — segura até o Márcio responder (14/set)',
+}
+const chaveSegura = (key: string): string | null => { for (const [p, motivo] of Object.entries(CHAVES_SEGURAS)) if (key.startsWith(p)) return motivo; return null }
+
+// AS DUAS TAXAS SEM DATA DA FOLHA (decisão de 14/set/2026): «Labor» US$ 100 (Marcelo Vanzela, US.002) e
+// «Monthly Payments» US$ 2.250 (Jeferson Ferreira, US.002) são a TAXA de antes de 28/jul, não pagamento —
+// ficam fora. Qualquer OUTRA linha de folha PAID FROM GZ28BR sem data nenhuma trava a season dela
+// («sem data»), em vez de sumir calada sob o rótulo de taxa.
+const TAXAS_SEM_DATA = new Set(['be59504a-de77-4347-9e23-fb1cae7d59de', 'e50b30c7-b1da-4210-a4c7-3899f02f4e60'])
 
 // ── pequenas réguas ─────────────────────────────────────────────────────────
 const num = (v: unknown) => parseFloat(String(v ?? '')) || 0
@@ -232,47 +272,78 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
 // (bid da AwesomeAPI no dia do pagamento + R$ 0,20) × 1,0638. Fim de semana e feriado não têm
 // pregão: vale o último bid ATÉ aquele dia (nunca um posterior), olhando no máximo 10 dias para
 // trás. Sem bid = sem número: a chave vira conflito, nunca um câmbio inventado.
-export type Cotacoes = { bids: Map<string, number>; falha: string | null }
-const cacheBid = new Map<string, number>()   // só dia FECHADO entra (o de hoje ainda muda)
+// `lidos` = todo dia coberto por uma resposta INTEIRA da AwesomeAPI (com ou sem pregão). O recuo de fim de
+// semana/feriado só atravessa dia LIDO: dia que ninguém leu não é feriado, é buraco — sem número.
+export type Cotacoes = { bids: Map<string, number>; falha: string | null; lidos?: Set<string> }
+const cacheBid = new Map<string, number>()   // bid de dia FECHADO (o de hoje ainda muda)
+const cacheLido = new Set<string>()          // dia FECHADO já coberto por uma resposta inteira
 
+// O CONSERTO DE 14/SET/2026 (auditoria): antes, a busca era pulada sempre que QUALQUER um dos 10 dias
+// anteriores já estivesse no cache — num processo que fica de pé (o cron, a função quente da Vercel),
+// uma data nova recebia o bid de um dia mais velho. Agora cada data é resolvida no dia EXATO: só está
+// resolvida quando, voltando dela até achar pregão, todo dia do caminho já foi lido; o que falta é
+// buscado (a faixa [data − 10, data] de cada uma, juntas quando se encostam).
 export async function carregarCotacoes(datas: string[]): Promise<Cotacoes> {
   const validas = [...new Set(datas.filter(d => YMD.test(d)))].sort()
   const bids = new Map<string, number>()
-  if (!validas.length) return { bids, falha: null }
+  const junta = () => ({ bids: new Map([...cacheBid, ...bids]), lidos: new Set(cacheLido) })
+  if (!validas.length) return { ...junta(), falha: null }
   const hoje = hojeEm('America/Sao_Paulo')
-  const precisa = validas.some(d => ![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].some(k => cacheBid.has(addDias(d, -k))))
-  if (precisa) {
+  const resolvida = (d: string) => {
+    for (let k = 0; k <= 10; k++) {
+      const x = addDias(d, -k)
+      if (x >= hoje || !cacheLido.has(x)) return false
+      if (cacheBid.has(x)) return true
+    }
+    return true   // 11 dias lidos sem pregão: sem número — buscar de novo não muda isso
+  }
+  const faixas: [string, string][] = []
+  for (const d of validas.filter(x => !resolvida(x))) {
+    const ini = addDias(d, -10), ult = faixas[faixas.length - 1]
+    if (ult && ini <= addDias(ult[1], 1)) { if (d > ult[1]) ult[1] = d } else faixas.push([ini, d])
+  }
+  if (faixas.length) {
     const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' })
-    let de = addDias(validas[0], -10)
-    const ate = validas[validas.length - 1]
     try {
-      while (de <= ate) {
-        const fim = addDias(de, 119) < ate ? addDias(de, 119) : ate
-        const r = await fetch(`https://economia.awesomeapi.com.br/json/daily/USD-BRL/200?start_date=${de.replace(/-/g, '')}&end_date=${fim.replace(/-/g, '')}`, { cache: 'no-store' })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const j = await r.json()
-        if (!Array.isArray(j)) throw new Error('resposta sem lista')
-        // Mais de um registro no mesmo dia: fica o de timestamp mais tarde (o fechamento).
-        const porDia = new Map<string, { ts: number; bid: number }>()
-        for (const q of j) {
-          const ts = Number(q?.timestamp) || 0, bid = parseFloat(q?.bid) || 0
-          if (!(ts > 0 && bid > 0)) continue
-          const dia = fmt.format(new Date(ts * 1000))
-          const ja = porDia.get(dia)
-          if (!ja || ts > ja.ts) porDia.set(dia, { ts, bid })
+      for (const [inicio, ate] of faixas) {
+        let de = inicio
+        while (de <= ate) {
+          const fim = addDias(de, 119) < ate ? addDias(de, 119) : ate
+          const r = await fetch(`https://economia.awesomeapi.com.br/json/daily/USD-BRL/200?start_date=${de.replace(/-/g, '')}&end_date=${fim.replace(/-/g, '')}`, { cache: 'no-store' })
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          const j = await r.json()
+          if (!Array.isArray(j)) throw new Error('resposta sem lista')
+          // Mais de um registro no mesmo dia: fica o de timestamp mais tarde (o fechamento).
+          const porDia = new Map<string, { ts: number; bid: number }>()
+          for (const q of j) {
+            const ts = Number(q?.timestamp) || 0, bid = parseFloat(q?.bid) || 0
+            if (!(ts > 0 && bid > 0)) continue
+            const dia = fmt.format(new Date(ts * 1000))
+            const ja = porDia.get(dia)
+            if (!ja || ts > ja.ts) porDia.set(dia, { ts, bid })
+          }
+          for (const [dia, v] of porDia) if (dia < hoje) cacheBid.set(dia, v.bid); else bids.set(dia, v.bid)
+          // A resposta inteira chegou: todo dia FECHADO da janela está LIDO (dia sem registro = sem pregão).
+          // Hoje não: pregão que ainda não saiu não é feriado — a data de hoje sem bid fica sem número e o
+          // cron tenta de novo.
+          for (let x = de; x <= fim && x < hoje; x = addDias(x, 1)) cacheLido.add(x)
+          de = addDias(fim, 1)
         }
-        for (const [dia, v] of porDia) if (dia < hoje) cacheBid.set(dia, v.bid); else bids.set(dia, v.bid)
-        de = addDias(fim, 1)
       }
     } catch (e) {
-      return { bids: new Map([...cacheBid, ...bids]), falha: 'AwesomeAPI (json/daily/USD-BRL) não respondeu: ' + (e instanceof Error ? e.message : String(e)) }
+      return { ...junta(), falha: 'AwesomeAPI (json/daily/USD-BRL) não respondeu: ' + (e instanceof Error ? e.message : String(e)) }
     }
   }
-  return { bids: new Map([...cacheBid, ...bids]), falha: null }
+  return { ...junta(), falha: null }
 }
 
+// O último pregão ATÉ o dia (nunca um posterior), recuando no máximo 10 dias e só por dia LIDO.
 function bidAte(cot: Cotacoes, dia: string): { dia: string; bid: number } | null {
-  for (let k = 0; k <= 10; k++) { const d = addDias(dia, -k); const bid = cot.bids.get(d); if (bid) return { dia: d, bid } }
+  for (let k = 0; k <= 10; k++) {
+    const d = addDias(dia, -k), bid = cot.bids.get(d)
+    if (bid) return { dia: d, bid }
+    if (cot.lidos && !cot.lidos.has(d)) return null
+  }
   return null
 }
 function regraApp(cot: Cotacoes, dia: string | null): { taxa: number; texto: string; usdRate: number } | null {
@@ -313,8 +384,19 @@ export type ChavePlano = {
   avisos: string[]
   pares: Par[]
   sem_par: SemPar[]
-  numeros: { linhas_criar: number; linhas_vincular: number; usd_criar: number; brl_criar: number; rendas_criar: number; renda_usd: number; renda_brl: number; carimbos: number; pendente_de: number | null; pendente_para: number | null }
+  // itens_usd / itens_brl: o que os ITENS novos cobrariam na shopping invoice (na 006.N já com o +10%).
+  numeros: { linhas_criar: number; linhas_vincular: number; usd_criar: number; brl_criar: number; itens_usd: number; itens_brl: number; rendas_criar: number; renda_usd: number; renda_brl: number; carimbos: number; pendente_de: number | null; pendente_para: number | null }
   impressao: string
+}
+// O DINHEIRO PARADO (auditoria de 14/set/2026): cada chave travada, com o que ela gravaria se o dono
+// liberasse. A manchete ANTES/DEPOIS só conta o que já está nas shopping invoices e o que o plano
+// grava — sem esta lista, uma 085.N existente aparece com os itens contados e as rendas que a
+// abateriam de fora, calada (a 085.6: itens na conta, US$ 50 mil de rendas não).
+export type Bloqueada = {
+  mirror_key: string; origem: string; alvo: string | null; banco_alvo: Banco; direcoes: Direcao[]
+  alvo_ja_na_manchete: boolean     // a shopping invoice-alvo já existe: as linhas dela JÁ contam no ANTES
+  itens_usd: number; itens_brl: number; despesas_usd: number; despesas_brl: number; rendas_usd: number; rendas_brl: number
+  motivos: string[]
 }
 export type Excluido = { direcao: Direcao; banco: Banco; tabela: string; id: string; documento: string; rotulo: string; usd: number | null; brl: number | null; motivo: string }
 export type CorrecaoB = { br_invoice: string; us_invoice: string; br_expense_id: string; us_expense_id: string; item: string; custo_usd: number; amount_usd_de: number; amount_usd_para: number; price_de: number; price_para: number; quantidade: number; fator_linha: number; fator_invoice: number; delta_usd: number; sql: string }
@@ -331,7 +413,10 @@ export type Plano = {
   chaves: ChavePlano[]
   excluidos: Excluido[]
   correcoes_b: CorrecaoB[]
-  manchete: { antes: Manchete; depois: Manchete }
+  manchete: {
+    antes: Manchete; depois: Manchete
+    bloqueadas: { chaves: Bloqueada[]; total: { itens_usd: number; despesas_usd: number; rendas_usd: number; rendas_brl: number } }
+  }
 }
 
 class Montador {
@@ -340,7 +425,7 @@ class Montador {
     this.c = {
       mirror_key, direcoes: [], banco_alvo, origem, alvo: { id: null, codigo: null, como: null }, primeira_data: null, status: 'nada',
       ops: [], conflitos: [], avisos: [], pares: [], sem_par: [],
-      numeros: { linhas_criar: 0, linhas_vincular: 0, usd_criar: 0, brl_criar: 0, rendas_criar: 0, renda_usd: 0, renda_brl: 0, carimbos: 0, pendente_de: null, pendente_para: null },
+      numeros: { linhas_criar: 0, linhas_vincular: 0, usd_criar: 0, brl_criar: 0, itens_usd: 0, itens_brl: 0, rendas_criar: 0, renda_usd: 0, renda_brl: 0, carimbos: 0, pendente_de: null, pendente_para: null },
       impressao: '',
     }
   }
@@ -354,6 +439,7 @@ class Montador {
     if (o.tipo === 'criar_linha') {
       if (o.papel === 'renda') { n.rendas_criar++; n.renda_usd = r2(n.renda_usd + o.usd); n.renda_brl = r2(n.renda_brl + (o.brl || 0)) }
       else if (o.papel === 'despesa') { n.linhas_criar++; n.usd_criar = r2(n.usd_criar + o.usd); n.brl_criar = r2(n.brl_criar + (o.brl || 0)) }
+      else if (o.papel === 'item') { n.itens_usd = r2(n.itens_usd + o.usd); n.itens_brl = r2(n.itens_brl + (o.brl || 0)) }
     }
     if (o.tipo === 'vincular_linha') n.linhas_vincular++
     if (o.tipo === 'carimbo') n.carimbos++
@@ -474,6 +560,8 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     if (P2.length) m.dir(2)
     const bloqueio = FORA_DE_ESCOPO_BR[B.invoice_code]
     if (bloqueio) m.conflito(bloqueio)
+    const segura = chaveSegura(key)
+    if (segura) m.conflito(`SEGURA — ${segura}`)
 
     // ── a 006.N-alvo: mirror_key → ponteiro us_invoice_id → texto do SERVICE ──
     const porKey = us006.filter(i => i.mirror_key === key)
@@ -620,18 +708,24 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
       let regra = ''
       const src0 = `BR:invoice_payments:${p.id}`
       const jaElo = RR.find(r => r.mirror_src === src0 || r.br_payment_id === p.id)
-      // O US$ já gravado na renda espelhada também é valor gravado: prevalece sobre a regra.
+      const decidida = RENDA_BR_DECIDIDA[p.id]
+      // A ORDEM DO VALOR GRAVADO (decisão do Márcio, 14/set/2026): amount_usd da própria renda →
+      // o US$ já gravado na renda espelhada → o US$ decidido pelo dono → a usd_rate GRAVADA na invoice
+      // do BR → só então a regra do app (bid + 0,20) × 1,0638. Até 14/set a usd_rate e a regra
+      // discordando viravam conflito; o dono respondeu que a usd_rate gravada prevalece.
       if (!gravado && jaElo) { usd = r2(num(jaElo.amount)); regra = `US$ já gravado na renda espelhada ${jaElo.id.slice(0, 8)}` }
+      else if (!gravado && decidida) {
+        usd = decidida.usd; regra = `US$ decidido pelo dono — ${decidida.motivo}`
+        if (num(B.usd_rate) > 0 && !perto(r2(num(p.amount) / num(B.usd_rate)), usd)) m.aviso(`renda ${String(p.description || '').slice(0, 30)}: a usd_rate da ${B.invoice_code} agora é ${num(B.usd_rate)} (dá US$ ${r2(num(p.amount) / num(B.usd_rate))}) — vale o US$ ${usd} decidido`)
+      }
+      else if (!gravado && num(B.usd_rate) > 0) {
+        usd = r2(num(p.amount) / num(B.usd_rate))
+        regra = `R$ ${num(p.amount)} ÷ usd_rate gravada na ${B.invoice_code} (${num(B.usd_rate)}, sem IOF)`
+      }
       else if (!gravado) {
         const rg = regraApp(cot, dia)
         if (!rg) { m.conflito(`sem cotação para ${dia || 'data vazia'} — renda ${String(p.description || '').slice(0, 30)} não tem US$`); continue }
         usd = r2(num(p.amount) / rg.taxa); regra = rg.texto
-        // A usd_rate da invoice é câmbio GRAVADO daquele documento. Se ela e a regra do app discordam,
-        // o motor não escolhe: renda que caiu em conta do US tem US$ de verdade no extrato.
-        if (num(B.usd_rate) > 0) {
-          const pelaInvoice = r2(num(p.amount) / num(B.usd_rate))
-          if (!perto(pelaInvoice, usd)) m.conflito(`renda ${String(p.description || '').slice(0, 30)} sem US$ gravado: R$ ${num(p.amount)} ÷ regra do app (${rg.texto}) = US$ ${usd}; ÷ usd_rate gravada na invoice (${num(B.usd_rate)}, sem IOF) = US$ ${pelaInvoice} — qual vale?`)
-        }
       }
       const src = src0
       const ja = jaElo || (() => { const c = RR.filter(r => !r.mirror_src && !r.br_payment_id && perto(num(r.amount), usd) && ymd(r.payment_date) === dia); return c.length === 1 ? c[0] : null })()
@@ -659,18 +753,25 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     const pendKey = `pendente:${key}`
     const abertas = alvo ? R.filter(p => p.invoice_id === alvo!.id && !p.paid_at) : []
     const pend = abertas.find(p => p.mirror_src === pendKey) || (abertas.length === 1 ? abertas[0] : null)
+    // AS OUTRAS RENDAS EM ABERTO CONTAM (14/set/2026). O app mede o saldo como soma de TODAS as rendas
+    // (pagas ou agendadas) − grand total. Com o Pending balance do motor ao lado de outra renda em aberto
+    // (uma parcela agendada, ou uma renda paga que alguém desmarcou), o pendente é o devido MENOS as
+    // outras abertas — senão a 006.N passaria a cobrar duas vezes o mesmo dinheiro.
+    const outrasAbertas = pend ? r2(abertas.filter(p => p !== pend).reduce((s, p) => s + num(p.amount), 0)) : 0
+    const devidoPend = r2(devido - outrasAbertas)
     m.c.numeros.pendente_de = abertas.length ? r2(abertas.reduce((s, p) => s + num(p.amount), 0)) : null
-    m.c.numeros.pendente_para = devido > 0.005 ? devido : 0
+    m.c.numeros.pendente_para = (pend ? devidoPend : devido) > 0.005 ? (pend ? devidoPend : devido) : 0
     if (abertas.length > 1 && !abertas.some(p => p.mirror_src === pendKey)) {
       const soma = r2(abertas.reduce((s, p) => s + num(p.amount), 0))
       if (perto(soma, Math.max(devido, 0))) m.aviso(`${abertas.length} rendas em aberto somam US$ ${soma} = o devido; ficam como estão`)
       else m.conflito(`${abertas.length} rendas em aberto somam US$ ${soma}, o devido é US$ ${Math.max(devido, 0)} — qual é o pendente?`)
     } else if (pend) {
-      if (devido > 0.005) {
-        if (!perto(num(pend.amount), devido, 0.005)) m.op({ tipo: 'pendente_atualizar', banco: 'US', tabela: 'invoice_incomes', id: pend.id, de: num(pend.amount), para: devido, mirror_src: pendKey, rotulo: `Pending balance US$ ${num(pend.amount)} → ${devido}` })
+      if (outrasAbertas > 0.005 && devidoPend < -0.005) m.conflito(`as outras rendas em aberto somam US$ ${outrasAbertas}, mais que o devido US$ ${Math.max(devido, 0)} — qual vale?`)
+      else if (devidoPend > 0.005) {
+        if (!perto(num(pend.amount), devidoPend, 0.005)) m.op({ tipo: 'pendente_atualizar', banco: 'US', tabela: 'invoice_incomes', id: pend.id, de: num(pend.amount), para: devidoPend, mirror_src: pendKey, rotulo: `Pending balance US$ ${num(pend.amount)} → ${devidoPend}` })
         else if (pend.mirror_src !== pendKey) m.op({ tipo: 'vincular_linha', banco: 'US', tabela: 'invoice_incomes', id: pend.id, mirror_src: pendKey, elo: null, direcao: 1, rotulo: 'Pending balance' })
       } else if (foto.us.ponteirosBanco.has(`invoice_incomes:${pend.id}`) || foto.us.ponteirosBanco.has(`invoice_payments:${pend.id}`)) m.conflito('o Pending balance em aberto tem elo de banco e a conta diz que nada é devido')
-      else m.op({ tipo: 'pendente_apagar', banco: 'US', tabela: 'invoice_incomes', id: pend.id, de: num(pend.amount), rotulo: `Pending balance US$ ${num(pend.amount)} sai: nada mais é devido (grand ${r2(grand)} − recebido ${r2(recebido)})` })
+      else m.op({ tipo: 'pendente_apagar', banco: 'US', tabela: 'invoice_incomes', id: pend.id, de: num(pend.amount), rotulo: `Pending balance US$ ${num(pend.amount)} sai: nada mais é devido (grand ${r2(grand)} − recebido ${r2(recebido)}${outrasAbertas ? ` − outras em aberto ${outrasAbertas}` : ''})` })
     } else if (devido > 0.005) {
       m.op({ tipo: 'pendente_criar', banco: 'US', tabela: 'invoice_incomes', mirror_src: pendKey, rotulo: `Pending balance US$ ${devido}`, campos: {
         invoice_id: ALVO, amount: devido, paid_at: null, payment_date: addDias(latest || hojeEm('America/New_York'), 30), source: null, description: 'Pending balance', paid_to: 'GZ28US', mirror_src: pendKey,
@@ -707,8 +808,11 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
   const assetsById = new Map(foto.us.assets.map(a => [a.id, a]))
   const br085 = foto.br.invoices.filter(i => i.client_id === BR_CLIENTE_GZ28US)
   const docUS = (i: Row | undefined) => i?.invoice_code || '?'
-  const grupos = new Map<string, { tipo: 'invoice' | 'season' | 'assets'; id: string; fontes: Fonte3[]; rendas: Row[] }>()
-  const grupo = (key: string, tipo: 'invoice' | 'season' | 'assets', id: string) => { let g = grupos.get(key); if (!g) { g = { tipo, id, fontes: [], rendas: [] }; grupos.set(key, g) } return g }
+  // bloqueios: linha que cruza mas não pode ser gravada sem resposta do dono (sem data, valor a confirmar) —
+  // trava a chave inteira, com o motivo, em vez de sumir da conta calada.
+  type Bloqueio = { linha: Row; usd: number | null; rotulo: string; motivo: string }
+  const grupos = new Map<string, { tipo: 'invoice' | 'season' | 'assets'; id: string; fontes: Fonte3[]; rendas: Row[]; bloqueios: Bloqueio[] }>()
+  const grupo = (key: string, tipo: 'invoice' | 'season' | 'assets', id: string) => { let g = grupos.get(key); if (!g) { g = { tipo, id, fontes: [], rendas: [], bloqueios: [] }; grupos.set(key, g) } return g }
   const exclui = (tabela: string, l: Row, documento: string, rotulo: string, usd: number | null, brl: number | null, motivo: string, direcao: Direcao = 3) => excluidos.push({ direcao, banco: 'US', tabela, id: l.id, documento, rotulo: rotulo.slice(0, 80), usd, brl, motivo })
 
   // Linha GZ28BR: quem pagou é o BR e a conta NÃO é do BR (PAID TO GZ28BR dos dois lados é interna do BR).
@@ -761,11 +865,18 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     if (!cruzaBR(s, 'staff_expenses', doc, rot, usd)) continue
     const brl = s.amount_brl == null || String(s.amount_brl) === '' ? null : r2(num(s.amount_brl))
     if (String(s.origin || '').toUpperCase() === 'PERSONAL') { exclui('staff_expenses', s, doc, rot, usd, brl, 'gasto PESSOAL pago pelo BR — pergunta antes de cruzar'); continue }
-    if (!ymd(s.payment_date) && !ymd(s.expense_date)) { exclui('staff_expenses', s, doc, rot, usd, brl, 'TAXA sem data (RATE de antes de 28/jul), não é pagamento — decisão 14/set'); continue }
+    const rotLinha = `${nome} · ${s.type || ''}${s.description ? ` — ${s.description}` : ''}`
+    if (!ymd(s.payment_date) && !ymd(s.expense_date)) {
+      if (TAXAS_SEM_DATA.has(s.id)) { exclui('staff_expenses', s, doc, rot, usd, brl, 'TAXA sem data (RATE de antes de 28/jul), não é pagamento — decisão 14/set'); continue }
+      grupo(`US:season:${s.season_id}`, 'season', s.season_id).bloqueios.push({ linha: s, usd, rotulo: rotLinha, motivo: 'sem data (nem payment_date nem expense_date) — pagamento ou taxa? pergunta' })
+      continue
+    }
     const dia = ymd(s.payment_date)
     if (!dia) { exclui('staff_expenses', s, doc, rot, usd, brl, `sem payment_date (só expense_date ${ymd(s.expense_date)}) — ainda não é pagamento; pergunta`); continue }
-    if (!usd && !brl) { exclui('staff_expenses', s, doc, rot, usd, brl, 'valor zero — nada a cruzar'); continue }
-    grupo(`US:season:${s.season_id}`, 'season', s.season_id).fontes.push({ tabela: 'staff_expenses', linha: s, usd, brl, q: 1, unitUsd: usd, taxUsd: 0, extraUsd: 0, dia, item: `${nome} · ${s.type || ''}${s.description ? ` — ${s.description}` : ''}`, supplier: s.supplier || nome, order: String(s.order_number || '').trim() || null, part: null })
+    // Valor zero numa linha PAGA PAID FROM GZ28BR é pagamento de valor desconhecido («VALOR A CONFIRMAR»):
+    // a season inteira espera, porque a 085.N dela nasceria sem a linha e o Pending balance mentiria.
+    if (!usd && !brl) { grupo(`US:season:${s.season_id}`, 'season', s.season_id).bloqueios.push({ linha: s, usd, rotulo: rotLinha, motivo: 'valor a confirmar (US$ 0 e sem R$)' }); continue }
+    grupo(`US:season:${s.season_id}`, 'season', s.season_id).fontes.push({ tabela: 'staff_expenses', linha: s, usd, brl, q: 1, unitUsd: usd, taxUsd: 0, extraUsd: 0, dia, item: rotLinha, supplier: s.supplier || nome, order: String(s.order_number || '').trim() || null, part: null })
   }
   for (const { tabela, linha } of foto.us.semOpcao) {
     if (quemPagou(linha) !== 'GZ28BR' && empresa(linha.paid_to) !== 'GZ28BR') continue
@@ -802,6 +913,14 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     if (g.fontes.length) m.dir(3)
     if (g.rendas.length) m.dir(4)
     if (g.tipo === 'invoice' && !U) { m.conflito('a 085.N tem mirror_key de uma invoice do US que não existe mais — espelho órfão'); continue }
+    const bloqueioUS = U ? FORA_DE_ESCOPO_US[U.invoice_code] : undefined
+    if (bloqueioUS) m.conflito(bloqueioUS)
+    const segura = chaveSegura(key)
+    if (segura) m.conflito(`SEGURA — ${segura}`)
+    for (const bl of g.bloqueios) {
+      m.conflito(`BLOQUEADA — ${bl.motivo}: ${bl.rotulo.slice(0, 60)}`)
+      m.c.sem_par.push({ direcao: 3, lado: 'fonte', tabela: 'staff_expenses', id: bl.linha.id, usd: bl.usd, rotulo: bl.rotulo.slice(0, 80), motivo: bl.motivo })
+    }
 
     // ── a 085.N-alvo ──
     const porKey = br085.filter(i => i.mirror_key === key)
@@ -941,8 +1060,11 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     const pendKey = `pendente:${key}`
     const abertas = alvo ? Pg.filter(p => p.invoice_id === alvo!.id && !p.paid_at) : []
     const pend = abertas.find(p => p.mirror_src === pendKey) || (abertas.length === 1 ? abertas[0] : null)
+    // As outras abertas contam, pela mesma régua do lado do US (ver planejarUS).
+    const outrasAbertas = pend ? r2(abertas.filter(p => p !== pend).reduce((s, p) => s + num(p.amount), 0)) : 0
+    const devidoPend = r2(devido - outrasAbertas)
     m.c.numeros.pendente_de = abertas.length ? r2(abertas.reduce((s, p) => s + num(p.amount), 0)) : null
-    m.c.numeros.pendente_para = devido > 0.005 ? devido : 0
+    m.c.numeros.pendente_para = (pend ? devidoPend : devido) > 0.005 ? (pend ? devidoPend : devido) : 0
     let latestAll: string | null = null
     for (const f of g.fontes) if (!latestAll || f.dia > latestAll) latestAll = f.dia
     if (abertas.length > 1 && !abertas.some(p => p.mirror_src === pendKey)) {
@@ -950,10 +1072,11 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       if (perto(soma, Math.max(devido, 0), 0.05)) m.aviso(`${abertas.length} pagamentos em aberto somam R$ ${soma} = o devido; ficam como estão`)
       else m.conflito(`${abertas.length} pagamentos em aberto somam R$ ${soma}, o devido é R$ ${Math.max(devido, 0)} — qual é o pendente?`)
     } else if (pend) {
-      if (devido > 0.005) {
-        if (!perto(num(pend.amount), devido, 0.005)) m.op({ tipo: 'pendente_atualizar', banco: 'BR', tabela: 'invoice_payments', id: pend.id, de: num(pend.amount), para: devido, mirror_src: pendKey, rotulo: `Pending balance R$ ${num(pend.amount)} → ${devido}` })
+      if (outrasAbertas > 0.005 && devidoPend < -0.05) m.conflito(`os outros pagamentos em aberto somam R$ ${outrasAbertas}, mais que o devido R$ ${Math.max(devido, 0)} — qual vale?`)
+      else if (devidoPend > 0.005) {
+        if (!perto(num(pend.amount), devidoPend, 0.005)) m.op({ tipo: 'pendente_atualizar', banco: 'BR', tabela: 'invoice_payments', id: pend.id, de: num(pend.amount), para: devidoPend, mirror_src: pendKey, rotulo: `Pending balance R$ ${num(pend.amount)} → ${devidoPend}` })
         else if (pend.mirror_src !== pendKey) m.op({ tipo: 'vincular_linha', banco: 'BR', tabela: 'invoice_payments', id: pend.id, mirror_src: pendKey, elo: null, direcao: 3, rotulo: 'Pending balance' })
-      } else m.op({ tipo: 'pendente_apagar', banco: 'BR', tabela: 'invoice_payments', id: pend.id, de: num(pend.amount), rotulo: `Pending balance R$ ${num(pend.amount)} sai: o GZ28US não deve mais nada nesta 085.N (grand R$ ${r2(grand)} − pago R$ ${r2(pago)})` })
+      } else m.op({ tipo: 'pendente_apagar', banco: 'BR', tabela: 'invoice_payments', id: pend.id, de: num(pend.amount), rotulo: `Pending balance R$ ${num(pend.amount)} sai: o GZ28US não deve mais nada nesta 085.N (grand R$ ${r2(grand)} − pago R$ ${r2(pago)}${outrasAbertas ? ` − outros em aberto R$ ${outrasAbertas}` : ''})` })
     } else if (devido > 0.005) {
       m.op({ tipo: 'pendente_criar', banco: 'BR', tabela: 'invoice_payments', mirror_src: pendKey, rotulo: `Pending balance R$ ${devido}`, campos: {
         invoice_id: ALVO, amount: devido, paid_at: null, payment_date: latestAll || hojeEm('America/Sao_Paulo'), source: null, description: 'Pending balance', paid_from: 'GZ28US', paid_to: 'GZ28BR', mirror_src: pendKey,
@@ -989,7 +1112,11 @@ function numerar(chaves: ChavePlano[], foto: Foto) {
 
 function impressao(c: ChavePlano): string {
   const semCodigo = c.ops.map(o => o.tipo === 'criar_invoice' ? { ...o, codigo_previsto: undefined } : o)
-  return createHash('sha256').update(JSON.stringify({ k: c.mirror_key, s: c.status, a: c.alvo.id, ops: semCodigo, x: c.conflitos })).digest('hex').slice(0, 16)
+  // Os PARES entram na impressão (14/set/2026): como cada linha foi casada (mirror_src, elo, valor) é o
+  // estado das colunas de elo — um plano lido antes do backfill ou de um save não bate com o de agora.
+  const pares = c.pares.map(p => [p.fonte_tabela, p.fonte_id, p.alvo_id, p.como, p.classe])
+  const semPar = c.sem_par.map(s => [s.lado, s.tabela, s.id])
+  return createHash('sha256').update(JSON.stringify({ k: c.mirror_key, s: c.status, a: c.alvo.id, ac: c.alvo.como, ops: semCodigo, x: c.conflitos, p: pares, sp: semPar })).digest('hex').slice(0, 16)
 }
 
 export function manchete(foto: Foto): Manchete {
@@ -1021,6 +1148,19 @@ export function manchete(foto: Foto): Manchete {
     br_085: { invoices: b085.length, grand_usd: r2(gBu), grand_brl: r2(gB), pago_usd: r2(pBu), pago_brl: r2(pB), saldo_usd: saldoBR, convertidos_pela_taxa_da_invoice: conv },
     br_deve_ao_us_usd: r2(saldoUS - saldoBR),
   }
+}
+
+export function dinheiroParado(chaves: ChavePlano[]): Plano['manchete']['bloqueadas'] {
+  const lista: Bloqueada[] = chaves.filter(c => c.status === 'conflito').map(c => ({
+    mirror_key: c.mirror_key, origem: c.origem.rotulo, alvo: c.alvo.codigo, banco_alvo: c.banco_alvo, direcoes: c.direcoes,
+    alvo_ja_na_manchete: !!c.alvo.id,
+    itens_usd: c.numeros.itens_usd, itens_brl: c.numeros.itens_brl,
+    despesas_usd: c.numeros.usd_criar, despesas_brl: c.numeros.brl_criar,
+    rendas_usd: c.numeros.renda_usd, rendas_brl: c.numeros.renda_brl,
+    motivos: c.conflitos.slice(0, 5),
+  }))
+  const soma = (f: (b: Bloqueada) => number) => r2(lista.reduce((s, b) => s + f(b), 0))
+  return { chaves: lista, total: { itens_usd: soma(b => b.itens_usd), despesas_usd: soma(b => b.despesas_usd), rendas_usd: soma(b => b.rendas_usd), rendas_brl: soma(b => b.rendas_brl) } }
 }
 
 // A foto como ficaria depois do plano (só chaves criar/atualizar) — para a manchete do DEPOIS.
@@ -1076,7 +1216,7 @@ export function montarPlano(foto: Foto, cot: Cotacoes): Plano {
     migrado: { US: !foto.faltando.US.length, BR: !foto.faltando.BR.length, faltando: foto.faltando },
     cotacao: { fonte: 'AwesomeAPI json/daily/USD-BRL (bid) · (bid + 0,20) × 1,0638', falha: cot.falha },
     chaves, excluidos, correcoes_b: correcoes,
-    manchete: { antes: manchete(foto), depois: manchete(simular(foto, chaves)) },
+    manchete: { antes: manchete(foto), depois: manchete(simular(foto, chaves)), bloqueadas: dinheiroParado(chaves) },
   }
 }
 
@@ -1110,6 +1250,116 @@ export async function applyPlan(b: Bancos, plano: Plano, opcoes: { confirm: bool
     if (r.resultado === 'erro') return { ok: false, chaves: out, parou_em: chave.mirror_key }
   }
   return { ok: true, chaves: out, parou_em: null }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// OS GANCHOS — EDITOR E CRON (14/set/2026)
+// ════════════════════════════════════════════════════════════════════════════
+
+export type OrigemSincronia = 'editor' | 'cron' | 'manual'
+export type OpcoesSincronia = {
+  keys?: string[]            // só estas chaves (o editor manda uma); vazio = o plano inteiro
+  limiteMs?: number          // não COMEÇA chave nova depois disto (a que está no meio termina)
+  maxChaves?: number         // no máximo N chaves com escrita por rodada
+  origem?: OrigemSincronia   // editor e cron obedecem TRAVESSIA_PAUSADA; manual não
+}
+export type ResultadoSincronia = ResultadoAplicacao & {
+  gerado_em: string
+  tempo_ms: number
+  pausada: boolean
+  conflitos: number          // chaves travadas no plano (nada gravado nelas)
+  restantes: number          // chaves com escrita que ficaram para a próxima rodada
+  parou_por: 'erro' | 'tempo' | 'lote' | null
+}
+
+/** A trava de emergência das escritas automáticas: TRAVESSIA_PAUSADA=1 no ambiente do servidor do US. */
+export const travessiaPausada = () => /^(1|true|sim|on)$/i.test(String(process.env.TRAVESSIA_PAUSADA || '').trim())
+
+/**
+ * Planeja UMA vez e grava as chaves com escrita, em ordem do plano (a mesma que numera as 085.N/006.N
+ * novas por data). Sem a segunda leitura do applyPlan: o plano acabou de ser lido, não há impressão de
+ * outra pessoa para conferir. Conflito e «nada» não gravam. A primeira chave que ERRA para a rodada —
+ * falha fechada, o contrato do motor; a próxima rodada refaz o plano e continua de onde parou.
+ * Chave pedida que não está no plano = invoice que não cruza: resposta, não erro.
+ */
+export async function sincronizar(b: Bancos, opcoes: OpcoesSincronia = {}): Promise<ResultadoSincronia> {
+  const t0 = Date.now()
+  const plano = await planCrossings(b)
+  if (!plano.migrado.US || !plano.migrado.BR) throw new ErroTravessia('schema', `As migrations da travessia não rodaram — faltam: US [${plano.migrado.faltando.US.join(', ')}] · BR [${plano.migrado.faltando.BR.join(', ')}]. Nada foi escrito.`)
+  const pedidas = opcoes.keys?.length ? new Set(opcoes.keys) : null
+  const pausada = (opcoes.origem === 'editor' || opcoes.origem === 'cron') && travessiaPausada()
+  const out: ResultadoChave[] = []
+  if (pedidas) for (const k of pedidas) if (!plano.chaves.some(c => c.mirror_key === k)) out.push({ mirror_key: k, resultado: 'pulada', motivo: 'sem travessia: nada nesta invoice cruza entre as empresas', codigo: null, escritas: 0 })
+  let aplicadas = 0, restantes = 0, conflitos = 0
+  let parou_por: ResultadoSincronia['parou_por'] = null, parou_em: string | null = null
+  for (const c of plano.chaves) {
+    if (pedidas && !pedidas.has(c.mirror_key)) continue
+    const base = { mirror_key: c.mirror_key, codigo: c.alvo.codigo, escritas: 0 }
+    if (c.status === 'conflito') { conflitos++; if (pedidas) out.push({ ...base, resultado: 'pulada', motivo: c.conflitos.join(' · ') }); continue }
+    if (c.status === 'nada') { if (pedidas) out.push({ ...base, resultado: 'pulada', motivo: 'nada a fazer' + (c.avisos.length ? ` (${c.avisos.join(' · ')})` : '') }); continue }
+    if (pausada) { restantes++; out.push({ ...base, resultado: 'pulada', motivo: 'TRAVESSIA_PAUSADA no ambiente do US — nada gravado' }); continue }
+    if (parou_por) { restantes++; continue }
+    if (opcoes.maxChaves && aplicadas >= opcoes.maxChaves) { parou_por = 'lote'; restantes++; continue }
+    if (opcoes.limiteMs && Date.now() - t0 > opcoes.limiteMs) { parou_por = 'tempo'; restantes++; continue }
+    const r = await executarChave(b, c)
+    aplicadas++
+    out.push({ ...base, ...r, motivo: r.motivo ?? (c.avisos.length ? c.avisos.join(' · ') : null) })
+    if (r.resultado === 'erro') { parou_por = 'erro'; parou_em = c.mirror_key }
+  }
+  return { ok: parou_por !== 'erro', chaves: out, parou_em, gerado_em: plano.gerado_em, tempo_ms: Date.now() - t0, pausada, conflitos, restantes, parou_por }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A mirror_key da invoice que o editor acabou de salvar — lida do BANCO, nunca dita pelo navegador.
+ *   invoice comum do US → 'US:invoice:<id>' (direções 3 + 4) · 006.N → a origem no BR (mirror_key, ou a
+ *   invoice do BR que aponta para ela) · invoice comum do BR → 'BR:invoice:<id>' (direções 1 + 2) ·
+ *   085.N → a origem no US. Sem origem gravada, `key` volta null com o motivo: o cron cuida.
+ */
+export async function chaveDaInvoice(b: Bancos, banco: Banco, invoiceId: string): Promise<{ key: string | null; motivo: string | null }> {
+  if (!UUID.test(invoiceId)) throw new ErroTravessia('bad-request', `id de invoice inválido: ${invoiceId.slice(0, 40)}`)
+  const casa = banco === 'US' ? b.us : b.br
+  const outra = banco === 'US' ? b.br : b.us
+  const clienteEspelho = banco === 'US' ? US_CLIENTE_GZ28BR : BR_CLIENTE_GZ28US
+  const { data: inv, error } = await casa.from('invoices').select('id, client_id, mirror_key').eq('id', invoiceId).maybeSingle()
+  if (error) throw new ErroTravessia('db', `ler a invoice ${invoiceId} no ${banco}: ${error.message}`)
+  if (!inv) return { key: null, motivo: `a invoice não existe no banco do ${banco}` }
+  if (inv.client_id !== clienteEspelho) return { key: `${banco}:invoice:${inv.id}`, motivo: null }
+  if (inv.mirror_key) return { key: String(inv.mirror_key), motivo: null }
+  const ponteiro = banco === 'US' ? 'us_invoice_id' : 'br_invoice_id'
+  const { data: origens, error: e2 } = await outra.from('invoices').select('id').eq(ponteiro, inv.id)
+  if (e2) throw new ErroTravessia('db', `procurar a origem da shopping invoice no ${banco === 'US' ? 'BR' : 'US'}: ${e2.message}`)
+  if (origens?.length === 1) return { key: `${banco === 'US' ? 'BR' : 'US'}:invoice:${origens[0].id}`, motivo: null }
+  return { key: null, motivo: origens?.length ? `${origens.length} invoices do outro app apontam para esta shopping invoice` : 'esta shopping invoice não tem origem gravada (mirror_key / ponteiro) — o cron da travessia cuida' }
+}
+
+export type ResumoAlvo = { banco: Banco; id: string; codigo: string; moeda: 'USD' | 'BRL'; custo: number; grand: number; recebido: number; pendente: number; vencimento: string | null }
+
+/** Os números da shopping invoice-alvo de uma chave, lidos DEPOIS da escrita (para o aviso e o report da tela). */
+export async function resumoAlvo(b: Bancos, key: string): Promise<ResumoAlvo | null> {
+  const banco: Banco = key.startsWith('BR:') ? 'US' : 'BR'
+  const db = banco === 'US' ? b.us : b.br
+  const { data: inv, error } = await db.from('invoices').select('id, invoice_code, florida_taxes, global_discount').eq('mirror_key', key).maybeSingle()
+  if (error) throw new ErroTravessia('db', `ler a shopping invoice de ${key}: ${error.message}`)
+  if (!inv) return null
+  const [exp, itens, serv, rendas] = await Promise.all([
+    db.from('invoice_expenses').select('price, quantity, tax, extra').eq('invoice_id', inv.id),
+    db.from(banco === 'US' ? 'invoice_items' : 'invoice_parts').select('unit_price, quantity').eq('invoice_id', inv.id),
+    db.from('invoice_services').select('price').eq('invoice_id', inv.id),
+    db.from(banco === 'US' ? 'invoice_incomes' : 'invoice_payments').select('amount, paid_at, payment_date').eq('invoice_id', inv.id),
+  ])
+  const falhou = exp.error || itens.error || serv.error || rendas.error
+  if (falhou) throw new ErroTravessia('db', `ler as linhas da ${inv.invoice_code}: ${falhou.message}`)
+  const abertas = (rendas.data || []).filter((p: Row) => !p.paid_at)
+  return {
+    banco, id: inv.id, codigo: inv.invoice_code, moeda: banco === 'US' ? 'USD' : 'BRL',
+    custo: r2((exp.data || []).reduce((s: number, e: Row) => s + custoUS(e), 0)),   // preço × qtd + tax + extra: a mesma conta nos dois bancos
+    grand: r2(grandTotal(itens.data || [], serv.data || [], inv, linhaItem)),
+    recebido: r2((rendas.data || []).filter((p: Row) => p.paid_at).reduce((s: number, p: Row) => s + num(p.amount), 0)),
+    pendente: r2(abertas.reduce((s: number, p: Row) => s + num(p.amount), 0)),
+    vencimento: abertas.map((p: Row) => ymd(p.payment_date)).filter(Boolean).sort()[0] || null,
+  }
 }
 
 async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoChave, 'mirror_key'>> {

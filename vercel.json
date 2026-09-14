@@ -47,6 +47,10 @@
     {
       "path": "/ca/api/cron/invoice-receipts",
       "schedule": "23 */2 * * *"
+    },
+    {
+      "path": "/ca/api/cron/crossing",
+      "schedule": "47 * * * *"
     }
   ],
   "rewrites": [

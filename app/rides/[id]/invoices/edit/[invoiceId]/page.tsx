@@ -12,7 +12,7 @@ import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } f
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { mirrorUsInvoicePaidToBR } from '@/lib/brPaidMirror'
-import { mirrorBrShoppingInvoice, brMirrorFailureCause, type BrMirrorItem } from '@/lib/brShoppingMirror'
+import { sincronizarTravessia, avisoDaTravessia, brMirrorFailureCause } from '@/lib/brShoppingMirror'
 import { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
 import { PAYMENT_METHODS, PAID_FROM_OPTIONS, PAID_TO_OPTIONS, HOUSE_PAYER, hiddenPayers, stockPayerTable, PaidFromSelect, methodsFor } from '@/components/PaymentFields'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, type DeliverChipRow } from '@/components/DeliverChip'
@@ -21,7 +21,9 @@ import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 
-type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string }
+// mirror_src (14/set/2026): o item é espelho da travessia US ⇄ BR — o US$ dele é o gravado na origem,
+// e a margem viva do editor NUNCA o reprecifica (lib/crossing.server.ts).
+type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string; mirror_src?: string }
 type Service = { id?: string; description: string; price: string; payment_date?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 // date_label: a milestone marker ("ARRIVAL" / "CONCLUSION") used
@@ -258,6 +260,25 @@ function syncInvoiceReceipts(invoiceId: string) {
     method: 'POST', headers,
     body: JSON.stringify({ action: 'invoice-receipts', zone: 'US', invoiceId }),
   })).catch(() => { /* Dropbox fora do ar não derruba a invoice */ })
+}
+
+// A TRAVESSIA NÃO SE APAGA CALADA (14/set/2026). Linha com elo da travessia US ⇄ BR — mirror_src, ou o
+// elo br_expense_id / br_payment_id — é espelho de uma linha do app do BR (ou o Pending balance que o
+// motor mantém). O editor não a apaga sem perguntar: apagar aqui não apaga a origem, e o motor grava o
+// espelho de novo enquanto a origem existir. Conferido no BANCO na hora de gravar, e não no estado da
+// tela, porque são sete caminhos de REMOVE diferentes (linha, grupo, kit, scan que substitui, SEND TO).
+const ELOS_DA_TRAVESSIA: Record<'invoice_expenses' | 'invoice_items' | 'invoice_incomes', string[]> = {
+  invoice_expenses: ['mirror_src', 'br_expense_id'],
+  invoice_items: ['mirror_src'],
+  invoice_incomes: ['mirror_src', 'br_payment_id'],
+}
+async function linhasDaTravessia(tabela: keyof typeof ELOS_DA_TRAVESSIA, ids: string[]): Promise<{ ids: string[]; falha: string | null }> {
+  if (!ids.length) return { ids: [], falha: null }
+  const cols = ELOS_DA_TRAVESSIA[tabela]
+  const { data, error } = await supabase.from(tabela).select(['id', ...cols].join(', ')).in('id', ids)
+  if (error) return { ids: [], falha: `${tabela}: ${error.message}` }
+  if (!Array.isArray(data)) return { ids: [], falha: `${tabela}: a leitura voltou sem lista` }
+  return { ids: (data as any[]).filter(r => cols.some(c => r[c] != null && r[c] !== '')).map(r => String(r.id)), falha: null }
 }
 
 async function syncInvoiceFolder(rideId: string, invoiceCode: string, service: string | null, oldInvoiceCode?: string) {
@@ -534,7 +555,7 @@ export default function EditInvoicePage() {
     const savedMargin = parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0
     const savedFactor = 1 + savedMargin / 100
     const { data: partsData } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
+    if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined, mirror_src: p.mirror_src || undefined })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price), payment_date: s.payment_date ?? null })))
@@ -1327,6 +1348,13 @@ export default function EditInvoicePage() {
     const totalQty = parseFloat(exp.quantity) || 1
     if (qtyToSend <= 0) { alert('Quantity must be greater than zero.'); return }
     if (qtyToSend > totalQty) { alert(`Only ${totalQty} available.`); return }
+    // Despesa espelho da travessia US ⇄ BR (14/set/2026): mandar para o estoque apagaria a linha ou mudaria a
+    // quantidade — valor que é da origem no BR. Muda-se na origem.
+    if (exp.id) {
+      const t = await linhasDaTravessia('invoice_expenses', [exp.id])
+      if (t.falha) { alert('Não deu para conferir se esta despesa é da travessia US ⇄ BR — nada foi enviado.\n' + t.falha); return }
+      if (t.ids.length) { alert('Esta despesa é espelho da TRAVESSIA US ⇄ BR (a linha de origem mora no app do BR). Mandar para o estoque mexeria na quantidade de uma linha que é da origem — mude lá.'); return }
+    }
 
     const receiptUrlsJson = exp.receipt_urls.length > 0 ? JSON.stringify(exp.receipt_urls) : null
 
@@ -1717,6 +1745,8 @@ export default function EditInvoicePage() {
       let changed = false
       const next = prev.map(p => {
         if (p.base_cost == null || p.base_cost === '') return p
+        // Item espelho da travessia (14/set/2026): o US$ é o gravado na linha de origem do BR, nunca recalculado.
+        if (p.mirror_src) return p
         const base = parseFloat(p.base_cost) || 0
         if (!(base > 0)) return p // donated stock (cost 0) is priced at MSRP, not by margin
         const newPrice = (base * factor).toFixed(2)
@@ -2026,6 +2056,25 @@ export default function EditInvoicePage() {
     }
   }
 
+  // ESTA INVOICE CRUZA COM O BR? (14/set/2026) — só então o save chama o motor da travessia: a 006.N
+  // (cliente 6, GZ28 V8 SpeedShop BR Ltda), a invoice que já tem 085.N no BR, ou qualquer despesa PAID
+  // FROM GZ28BR / renda PAID TO GZ28BR na tela. O resto é o cron que varre.
+  const cruzaComBR = () =>
+    !!brInvoiceId || clientNumber === 6 ||
+    expenses.some(e => (e.paid_from || e.source || '').toUpperCase() === 'GZ28BR') ||
+    payments.some(p => (p.paid_to || '').toUpperCase() === 'GZ28BR')
+
+  // PAID / UNPAID gravado direto no banco, sem SAVE: o motor roda SOLTO para esta invoice (renda PAID TO
+  // GZ28BR que virou paga atravessa; o Pending balance da shopping invoice se refaz). Nunca segura a tela;
+  // `depois` é a escrita que tem de terminar antes (o espelho do PAID na 006.N).
+  const travessiaSolta = (depois?: Promise<unknown>) => {
+    if (isQuote || !cruzaComBR()) return
+    void Promise.resolve(depois)
+      .then(() => sincronizarTravessia(invoiceId))
+      .then(r => { const aviso = avisoDaTravessia(r); if (aviso) console.warn('[travessia]', aviso) })
+      .catch(e => console.error('[travessia]', brMirrorFailureCause(e)))
+  }
+
   async function togglePaid(index: number) {
     const p = payments[index]
     if (p.paid_at) {
@@ -2036,7 +2085,7 @@ export default function EditInvoicePage() {
         // On a GZ28BR shopping invoice (US.006), the bill is owed again in BR — unless
         // what's still marked paid covers the grand total on its own.
         const paidAfter = payments.reduce((s, x, i) => s + ((i !== index && x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0)
-        if (paidAfter < grandTotal - 0.005) void mirrorUsInvoicePaidToBR(invoiceId, null)
+        travessiaSolta(paidAfter < grandTotal - 0.005 ? mirrorUsInvoicePaidToBR(invoiceId, null) : undefined)
       }
       const updated = [...payments]
       updated[index] = { ...updated[index], paid_at: '' }
@@ -2055,6 +2104,7 @@ export default function EditInvoicePage() {
       if (e.id) {
         const { error } = await supabase.from('invoice_expenses').update({ payment_date: null, expense_date: null }).eq('id', e.id)
         if (error) { alert(error.message); return }
+        travessiaSolta()
       }
       const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: '', expense_date: '' }; setExpenses(updated)
     } else {
@@ -2076,6 +2126,7 @@ export default function EditInvoicePage() {
       if (e.id) {
         const { error } = await supabase.from('invoice_expenses').update({ payment_date: payDate, expense_date: payDate, ...hidden }).eq('id', e.id)
         if (error) { alert(error.message); return }
+        travessiaSolta()
       }
       const updated = [...expenses]; updated[index] = { ...updated[index], payment_date: payDate, expense_date: payDate, ...hidden }; setExpenses(updated)
       setPaidInConfirm(null)
@@ -2106,7 +2157,7 @@ export default function EditInvoicePage() {
       // line is paid or not, it can't be half paid. No-op on any non-mirrored invoice.
       const paidAfter = payments.reduce((s, x, i) => s + ((i === index || x.paid_at) ? (parseFloat(x.amount) || 0) : 0), 0)
       const settled = paidAfter >= grandTotal - 0.005
-      void mirrorUsInvoicePaidToBR(invoiceId, settled ? (/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr()) : null)
+      travessiaSolta(mirrorUsInvoicePaidToBR(invoiceId, settled ? (/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr()) : null))
     }
     const updated = [...payments]
     updated[index] = { ...updated[index], paid_at: paidAt }
@@ -2528,7 +2579,8 @@ export default function EditInvoicePage() {
         })
       } else {
         const upd: any = { position: i, payment_date: isValidDate(p.payment_date || '') ? p.payment_date : null }
-        if (p.base_cost != null && p.base_cost !== '') {
+        // Item espelho da travessia: o save só mexe na posição e na data — o valor é da origem.
+        if (p.base_cost != null && p.base_cost !== '' && !p.mirror_src) {
           upd.unit_price = parseFloat(p.unit_price) || 0
           upd.base_cost = parseFloat(p.base_cost) || 0
         }
@@ -2673,55 +2725,48 @@ export default function EditInvoicePage() {
 
     // Commit staged REMOVEs now (not at click time) so CANCEL leaves them intact.
     // Batch each table's removals into one .in() delete, all run concurrently.
+    // Linha da travessia US ⇄ BR não sai calada (14/set/2026 — ver linhasDaTravessia): pergunta antes,
+    // e se a conferência no banco falhar, as remoções daquela tabela ficam para o próximo save.
+    let partIdsToDelete = removedPartIds, paymentIdsToDelete = removedPaymentIds, expenseIdsToDelete = removedExpenseIds
+    {
+      const [lp, li, le] = await Promise.all([
+        linhasDaTravessia('invoice_items', removedPartIds),
+        linhasDaTravessia('invoice_incomes', removedPaymentIds),
+        linhasDaTravessia('invoice_expenses', removedExpenseIds),
+      ])
+      const falhas = [lp, li, le].map(x => x.falha).filter(Boolean)
+      if (lp.falha) partIdsToDelete = []
+      if (li.falha) paymentIdsToDelete = []
+      if (le.falha) expenseIdsToDelete = []
+      if (falhas.length) alert('Não deu para conferir se as linhas removidas são da travessia US ⇄ BR — elas NÃO foram apagadas (salve de novo):\n' + falhas.join('\n'))
+      const ligadas = new Set([...lp.ids, ...li.ids, ...le.ids])
+      if (ligadas.size && !confirm(`${ligadas.size} linha(s) que você removeu são da TRAVESSIA US ⇄ BR — espelho de uma linha do app do BR, ou o Pending balance que o motor da travessia mantém.\n\nApagar aqui NÃO apaga a origem: enquanto a linha de origem existir no BR, o motor grava o espelho de novo.\n\nOK = apagar mesmo assim · Cancelar = manter essas linhas`)) {
+        partIdsToDelete = partIdsToDelete.filter(id => !ligadas.has(id))
+        paymentIdsToDelete = paymentIdsToDelete.filter(id => !ligadas.has(id))
+        expenseIdsToDelete = expenseIdsToDelete.filter(id => !ligadas.has(id))
+      }
+    }
     await Promise.all([
-      removedPartIds.length ? supabase.from('invoice_items').delete().in('id', removedPartIds) : null,
+      partIdsToDelete.length ? supabase.from('invoice_items').delete().in('id', partIdsToDelete) : null,
       removedServiceIds.length ? supabase.from('invoice_services').delete().in('id', removedServiceIds) : null,
-      removedPaymentIds.length ? supabase.from('invoice_incomes').delete().in('id', removedPaymentIds) : null,
+      paymentIdsToDelete.length ? supabase.from('invoice_incomes').delete().in('id', paymentIdsToDelete) : null,
       removedNoteIds.length ? supabase.from('invoice_notes').delete().in('id', removedNoteIds) : null,
-      removedExpenseIds.length ? supabase.from('invoice_expenses').delete().in('id', removedExpenseIds) : null,
+      expenseIdsToDelete.length ? supabase.from('invoice_expenses').delete().in('id', expenseIdsToDelete) : null,
     ].filter(Boolean))
     setRemovedPartIds([]); setRemovedServiceIds([]); setRemovedPaymentIds([]); setRemovedNoteIds([]); setRemovedExpenseIds([])
 
-    // ESPELHO NO BR (lei 25/ago/2026): toda despesa PAID FROM GZ28BR é o BR pagando
-    // uma conta nossa — vira SAÍDA numa SHOPPING INVOICE do cliente BR.085 no app
-    // brasileiro, a custo puro e pelo dólar do dia de cada pagamento. Sem isso o
-    // evento só existiria de um lado e os dois Flows nunca bateriam.
-    if (!nextIsQuote) {
+    // A TRAVESSIA US ⇄ BR (lei 25/ago/2026, sagrada desde 13/set; motor desde 14/set/2026): despesa
+    // PAID FROM GZ28BR e renda PAID TO GZ28BR viram a SHOPPING INVOICE do cliente BR.085 no app
+    // brasileiro — e a 006.N aberta aqui é o espelho do que o GZ28US pagou pelo BR. Quem escreve é o
+    // MOTOR (lib/crossing.server.ts), só para a chave desta invoice: grava o que falta, carimba câmbio
+    // uma vez, refaz o Pending balance, e nunca apaga nem recria linha espelhada. O ponteiro
+    // br_invoice_id também é dele — a tela não grava mais (o reload do leaveOrStay traz o novo).
+    if (!nextIsQuote && cruzaComBR()) {
       try {
-        const brItems: BrMirrorItem[] = expenses
-          .filter((e) => (e.paid_from || e.source || '') === 'GZ28BR')
-          .map((e) => {
-            const qty = parseFloat(e.quantity) || 1
-            return {
-              item: e.item,
-              supplier: e.supplier || null,
-              usdPrice: parseFloat(e.amount) || 0,
-              usdTax: parseFloat(e.tax) || 0,
-              usdExtra: parseFloat(e.extra) || 0,
-              quantity: qty,
-              paymentDate: isValidDate(e.payment_date) ? e.payment_date : null,
-              // ORDER NUMBER viaja no espelho US→BR (lei 29/ago/2026).
-              orderNumber: (e.order_number || '').trim() || null,
-            }
-          })
-        const res = await mirrorBrShoppingInvoice({
-          // O servidor lê a invoice, o elo e as despesas do banco do US por este id.
-          usInvoiceId: invoiceId,
-          usInvoiceCode: invoiceCode,
-          rideName: projectCode + (projectName ? ` — ${projectName}` : ''),
-          usService: service,
-          existingBrInvoiceId: brInvoiceId,
-          items: brItems,
-        })
-        if (res.brInvoiceId !== brInvoiceId) {
-          setBrInvoiceId(res.brInvoiceId)
-          await supabase.from('invoices').update({ br_invoice_id: res.brInvoiceId }).eq('id', invoiceId)
-        }
-        if (res.keptPaid) {
-          alert(`A invoice do GZ28US foi salva. Nenhuma despesa está mais PAID FROM GZ28BR, mas a SHOPPING INVOICE ${res.code || ''} do BR (cliente BR.085) NAO foi apagada: o GZ28US já pagou parte dela, e dinheiro que se moveu só o app BR desfaz.`)
-        }
+        const aviso = avisoDaTravessia(await sincronizarTravessia(invoiceId))
+        if (aviso) alert('A invoice do GZ28US foi salva.\n\n' + aviso)
       } catch (err) {
-        alert('A invoice do GZ28US foi salva, mas a SHOPPING INVOICE do BR (cliente BR.085) NAO foi gravada.\n\nCausa — ' + brMirrorFailureCause(err) + '\n\nAbra e salve de novo para tentar outra vez.')
+        alert('A invoice do GZ28US foi salva, mas a TRAVESSIA para o BR (shopping invoice do cliente BR.085) NÃO rodou.\n\nCausa — ' + brMirrorFailureCause(err) + '\n\nSalvar de novo tenta outra vez; o cron da travessia também tenta de hora em hora.')
       }
     }
 

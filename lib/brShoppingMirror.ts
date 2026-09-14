@@ -1,66 +1,35 @@
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 
-// ── GZ28BR-paid US expenses  ->  a BR SHOPPING INVOICE (client BR.085) ─────────
-// Lei do usuário (25/ago/2026): quando uma despesa de invoice de RIDE do GZ28US é
-// marcada PAID FROM = GZ28BR, o GZ28BR pagou uma conta nossa — e isso tem que
-// existir como SAÍDA no app brasileiro, senão o Flow dos dois apps nunca bate.
-// Então, no save, o app US espelha essas linhas numa SHOPPING INVOICE do cliente
-// BR.085 — "GZ28 V8 SpeedShop USA LLC" — no projeto BR:
-//   • EXPENSES = as linhas que o BR pagou (a saída de caixa, em R$ + o US$ original)
-//   • ITEMS    = as mesmas linhas a CUSTO PURO (0% de margem — é reembolso, não venda)
-//   • INCOME   = um PENDING BALANCE do total: o que o GZ28US ainda deve ao BR
-// É o espelho exato do caminho inverso (lib/usShoppingMirror.ts no app BR, que
-// cria a US.006.N quando o GZ28US paga peça de carro brasileiro).
+// ── A TRAVESSIA US ⇄ BR, VISTA DO EDITOR DO US (14/set/2026) ────────────────────
+// Lei do usuário (25/ago/2026), virada lei sagrada em 13/set: quando uma despesa do GZ28US é
+// PAID FROM GZ28BR (ou uma renda cai PAID TO GZ28BR), o dinheiro cruzou as empresas — e isso tem que
+// existir no app brasileiro, numa SHOPPING INVOICE do cliente BR.085 «GZ28 V8 SpeedShop USA LLC».
 //
-// A REGRA E A ESCRITA MORAM NO SERVIDOR (11/set/2026):
-// app/api/br-mirror/shopping/route.ts, com a chave de serviço do BR — câmbio do dia,
-// numeração 085.N, reconciliação linha a linha e a guarda do dinheiro já pago.
-// Até aqui tudo isso rodava no navegador pelo cliente `supabaseBR` anon: a ponte
-// respondia 503, o RLS do BR devolvia [] mudo, o erro dizia "cliente não
-// encontrado" e o apagar respondia deleted:true sem apagar nada.
+// ATÉ 14/SET ESTE ARQUIVO ERA O ESPELHO VELHO: mandava a invoice para app/api/br-mirror/shopping, que
+// apagava e recriava os itens e o pendente da 085.N a cada save e recalculava o R$ de TODA linha pelo
+// dólar do dia — por cima do que o motor da travessia grava (lib/crossing.server.ts). Aposentado.
 //
-// O SERVIDOR LÊ A INVOICE DO BANCO DO US. Deste lado só viaja `usInvoiceId`: código,
-// carro, serviço, o elo br_invoice_id e as despesas PAID FROM GZ28BR (com o id de
-// cada linha, que alimenta o elo us_expense_id) são lidos lá. Os outros campos de
-// BrMirrorInput ficam no tipo para a tela não mudar, mas não são enviados — rota que
-// segura a chave do BR não obedece a id de invoice do BR vindo do navegador.
+// AGORA ELE SÓ CHAMA O MOTOR, para a chave desta invoice: POST /api/crossing com
+// { confirm: true, invoice: { banco: 'US', id }, origem: 'editor' }. O servidor lê a chave do banco
+// (o navegador só diz qual invoice), grava só o que falta — linha nova, elo, carimbo de câmbio UMA vez,
+// o Pending balance — e nunca apaga nem recria linha espelhada. Vale para a invoice comum do US
+// (direções 3 + 4 → 085.N) e para a 006.N aberta no US (direções 1 + 2, origem no BR).
 
-export type BrMirrorItem = {
-  item: string
-  supplier: string | null
-  usdPrice: number             // custo UNITÁRIO em US$
-  usdTax: number               // tax TOTAL da linha em US$ (como o app soma)
-  usdExtra: number             // frete/extra TOTAL da linha em US$
-  quantity: number
-  paymentDate: string | null   // YYYY-MM-DD — o dia em que o BR pagou
-  // ORDER NUMBER é SAGRADO (29/ago/2026): o pedido da loja viaja com o espelho
-  // — é ele que liga a linha espelhada no BR ao STREAM da remessa.
-  orderNumber?: string | null
-  // O ELO DA LINHA (04/set/2026). A invoice já tinha o dela (br_invoice_id /
-  // us_invoice_id); a LINHA não tinha — e sem ele o espelho apagava todas as
-  // linhas do outro lado e recriava, matando rastreio, recibo, part_number,
-  // picked_up e o escudo receipt_proves_payment. O servidor preenche com o id da
-  // despesa do US.
-  srcId?: string | null
+export type TravessiaChave = { mirror_key: string; resultado: 'aplicada' | 'pulada' | 'recusada' | 'erro'; motivo: string | null; codigo: string | null; escritas: number }
+export type TravessiaResumo = { banco: 'US' | 'BR'; id: string; codigo: string; moeda: 'USD' | 'BRL'; custo: number; grand: number; recebido: number; pendente: number; vencimento: string | null }
+export type TravessiaResposta = {
+  ok: boolean
+  chave: string | null            // null = esta invoice não cruza (ou a shopping invoice não tem origem gravada)
+  motivo?: string | null
+  escreveu?: boolean
+  resultado: { chaves: TravessiaChave[]; pausada: boolean; parou_por: string | null } | null
+  resumo: TravessiaResumo | null
 }
-
-export type BrMirrorInput = {
-  usInvoiceId: string          // a invoice do US — é o que o servidor lê
-  usInvoiceCode: string
-  rideName: string             // "<project_code> — <project_name>"
-  usService: string
-  existingBrInvoiceId: string | null
-  items: BrMirrorItem[]
-}
-
-// keptPaid: não havia mais linha PAID FROM GZ28BR, mas a shopping invoice do BR
-// FICOU porque o GZ28US já pagou parte dela — o elo continua (brInvoiceId).
-export type BrMirrorResult = { brInvoiceId: string | null; code: string | null; totalBrl: number; totalUsd: number; deleted: boolean; keptPaid?: boolean }
 
 // A CAUSA DA FALHA, para a tela dizer o que houve de verdade.
-export type BrMirrorFailureKind = 'auth' | 'service-key' | 'network' | 'not-found' | 'conflict' | 'rate' | 'bad-request' | 'db'
-const KINDS: BrMirrorFailureKind[] = ['auth', 'service-key', 'network', 'not-found', 'conflict', 'rate', 'bad-request', 'db']
+export type BrMirrorFailureKind = 'auth' | 'service-key' | 'network' | 'not-found' | 'conflict' | 'rate' | 'bad-request' | 'db' | 'schema'
+const KINDS: BrMirrorFailureKind[] = ['auth', 'service-key', 'network', 'not-found', 'conflict', 'rate', 'bad-request', 'db', 'schema']
 
 export class BrMirrorError extends Error {
   kind: BrMirrorFailureKind
@@ -85,29 +54,37 @@ function kindFor(status: number, kind: unknown, hasJson: boolean): BrMirrorFailu
   return hasJson ? 'db' : 'network'
 }
 
-export async function mirrorBrShoppingInvoice(input: BrMirrorInput): Promise<BrMirrorResult> {
-  const usInvoiceId = String(input?.usInvoiceId || '').trim()
-  if (!usInvoiceId) throw new BrMirrorError('bad-request', 'usInvoiceId ausente — o espelho não sabe qual invoice do US ler.')
+/** Roda o motor da travessia para a chave desta invoice do US. Estoura BrMirrorError quando o servidor falha. */
+export async function sincronizarTravessia(invoiceId: string): Promise<TravessiaResposta> {
+  const id = String(invoiceId || '').trim()
+  if (!id) throw new BrMirrorError('bad-request', 'invoiceId ausente — o motor não sabe qual invoice ler.')
   let res: Response
   try {
-    res = await fetch(`${BASE_PATH}/api/br-mirror/shopping`, {
-      method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ usInvoiceId }),
+    res = await fetch(`${BASE_PATH}/api/crossing`, {
+      method: 'POST', headers: await sessionHeaders(),
+      body: JSON.stringify({ confirm: true, invoice: { banco: 'US', id }, origem: 'editor' }),
     })
   } catch (e) {
     throw new BrMirrorError('network', 'Sem resposta do servidor do app: ' + (e instanceof Error ? e.message : String(e)))
   }
   const data = await res.json().catch(() => null)
-  if (!res.ok || !data?.ok) {
-    throw new BrMirrorError(kindFor(res.status, data?.kind, !!data), data?.error || `HTTP ${res.status}`, res.status)
+  // 502 com `resultado` = uma chave errou no meio da escrita: é resposta do motor, a tela mostra o motivo.
+  if (data?.resultado && Array.isArray(data.resultado.chaves)) return data as TravessiaResposta
+  if (!res.ok || !data?.ok) throw new BrMirrorError(kindFor(res.status, data?.kind, !!data), data?.error || `HTTP ${res.status}`, res.status)
+  return data as TravessiaResposta
+}
+
+/** O que a tela precisa dizer depois do motor: null quando está tudo certo (gravou ou não havia nada). */
+export function avisoDaTravessia(r: TravessiaResposta): string | null {
+  const c = r.resultado?.chaves.find(x => x.mirror_key === r.chave) || r.resultado?.chaves[0]
+  if (!c) return null
+  if (c.resultado === 'erro') return `A GRAVAÇÃO PAROU no meio (${c.codigo || c.mirror_key}) — o que já foi gravado fica, e o próximo save ou o cron continuam de onde parou.\n${c.motivo || ''}`
+  if (c.resultado === 'pulada' && c.motivo && !/^nada a fazer|^sem travessia/.test(c.motivo)) {
+    const motivos = c.motivo.split(' · ')
+    return `A travessia desta invoice está TRAVADA — nada foi gravado no outro app:\n• ${motivos.slice(0, 3).join('\n• ')}${motivos.length > 3 ? `\n(+${motivos.length - 3} motivo(s) no plano da travessia)` : ''}`
   }
-  return {
-    brInvoiceId: data.brInvoiceId ?? null,
-    code: data.code ?? null,
-    totalBrl: Number(data.totalBrl) || 0,
-    totalUsd: Number(data.totalUsd) || 0,
-    deleted: !!data.deleted,
-    keptPaid: !!data.keptPaid,
-  }
+  if (c.resultado === 'recusada') return `A travessia recusou a gravação: ${c.motivo || ''}`
+  return null
 }
 
 // O texto do alerta: a causa primeiro, o detalhe do servidor depois.
@@ -122,6 +99,7 @@ export function brMirrorFailureCause(err: unknown): string {
     case 'not-found': return `NÃO ENCONTRADO${http}: ${detail}`
     case 'rate': return `CÂMBIO${http}: ${detail}`
     case 'conflict': return `CONFLITO${http}: ${detail}`
+    case 'schema': return `BANCO SEM AS COLUNAS DA TRAVESSIA${http}: ${detail}`
     case 'bad-request': return `PEDIDO INVÁLIDO${http}: ${detail}`
     case 'db': return `BANCO${http}: ${detail}`
     default: return detail
