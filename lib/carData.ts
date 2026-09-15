@@ -463,6 +463,9 @@ Object.assign(specialEditions, {
 })
 
 // ── BMW M5 E60 (S85 5.0 V10, 2006–2010 — sedan E60 + touring E61) ───────────────
+// A carroceria saiu da versão em 14/set/2026 («prefiro o body separado»): o código do
+// chassi fica (E60 / E61 são carros diferentes), a palavra Sedan/Touring vai para
+// rides.body_style — ver a seção CARROCERIA.
 const bmwM5E60Colors = ['Silverstone II', 'Interlagos Blue', 'Sepang Bronze', 'Indianapolis Red', 'Carbon Black', 'Jet Black', 'Alpine White', 'Titanium Silver', 'Space Grey', 'Monaco Blue', 'Mineral Silver', 'Stratus Grey']
 for (let y = 2006; y <= 2010; y++) {
   if (!years.includes(y)) years.push(y)
@@ -474,7 +477,7 @@ for (let y = 2006; y <= 2010; y++) {
   modelsByBrandAndYear['BMW'][y] = ['M5']
   versionsByModelAndYear['M5'] = versionsByModelAndYear['M5'] || {}
   // E60 sedan from 2006; E61 touring added from 2007.
-  versionsByModelAndYear['M5'][y] = y >= 2007 ? ['E60 Sedan 5.0 V10', 'E61 Touring 5.0 V10'] : ['E60 Sedan 5.0 V10']
+  versionsByModelAndYear['M5'][y] = y >= 2007 ? ['E60 5.0 V10', 'E61 5.0 V10'] : ['E60 5.0 V10']
 }
 years.sort((a, b) => a - b)
 
@@ -494,15 +497,15 @@ for (let y = 2011; y <= 2016; y++) {
   // M5 generations don't overlap by year, so each year maps to exactly one M5.
   modelsByBrandAndYear['BMW'][y] = ['M5']
   versionsByModelAndYear['M5'] = versionsByModelAndYear['M5'] || {}
-  versionsByModelAndYear['M5'][y] = ['F10 Sedan 4.4 TT V8']
+  versionsByModelAndYear['M5'][y] = ['F10 4.4 TT V8']   // sedã (body_style), o único F10 M5
 }
 years.sort((a, b) => a - b)
 // F10 M5 limited editions + the Competition Package — special editions on the base trim.
 Object.assign(specialEditions, {
-  '2013-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package'],
-  '2014-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package', '30 Jahre M5'],
-  '2015-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package', 'Pure Metal Silver Edition'],
-  '2016-M5-F10 Sedan 4.4 TT V8': ['None', 'Competition Package', 'Competition Edition'],
+  '2013-M5-F10 4.4 TT V8': ['None', 'Competition Package'],
+  '2014-M5-F10 4.4 TT V8': ['None', 'Competition Package', '30 Jahre M5'],
+  '2015-M5-F10 4.4 TT V8': ['None', 'Competition Package', 'Pure Metal Silver Edition'],
+  '2016-M5-F10 4.4 TT V8': ['None', 'Competition Package', 'Competition Edition'],
 })
 
 // ── BMW M3 G80 (S58 3.0 TT I6, 2021– — sedan; CS from 2024) ─────────────────────
@@ -575,6 +578,8 @@ years.sort((a, b) => a - b)
 // ── Porsche 911 (997.1) Turbo (2007–2009) ───────────────────────────────────────
 // 3.6L twin-turbo flat-6 (480 hp). Coupe from 2007, Cabriolet added 2008. There is no
 // 997.1 Turbo S (the Turbo S arrives with the 997.2). Era's Porsche colour palette.
+// Carroceria fora da versão desde 14/set/2026: um trim só, 'Turbo 3.6 H6', e Coupe /
+// Cabriolet em rides.body_style (seção CARROCERIA).
 const porsche997TurboColors = ['Black', 'Basalt Black Metallic', 'Arctic Silver Metallic', 'GT Silver Metallic', 'Meteor Grey Metallic', 'Atlas Grey Metallic', 'Carrara White', 'Guards Red', 'Speed Yellow', 'Cobalt Blue Metallic', 'Midnight Blue Metallic', 'Malachite Green Metallic', 'Macadamia Metallic']
 for (let y = 2007; y <= 2009; y++) {
   if (!years.includes(y)) years.push(y)
@@ -585,7 +590,7 @@ for (let y = 2007; y <= 2009; y++) {
   modelsByBrandAndYear['PORSCHE'] = modelsByBrandAndYear['PORSCHE'] || {}
   modelsByBrandAndYear['PORSCHE'][y] = ['911']
   versionsByModelAndYear['911'] = versionsByModelAndYear['911'] || {}
-  versionsByModelAndYear['911'][y] = y >= 2008 ? ['Turbo Coupe 3.6 H6', 'Turbo Cabriolet 3.6 H6'] : ['Turbo Coupe 3.6 H6']
+  versionsByModelAndYear['911'][y] = ['Turbo 3.6 H6']
 }
 years.sort((a, b) => a - b)
 
@@ -598,6 +603,9 @@ years.sort((a, b) => a - b)
 // o câmbio (AMG SPEEDSHIFT MCT 7G → 9G) e o nome da tração (4MATIC → 4MATIC+). Por isso
 // a geração rende SEIS versões: 3 carrocerias × 2 fases de motor, e não um "modelo
 // facelift" separado.
+// CARROCERIA FORA DA VERSÃO (14/set/2026, Márcio: «prefiro o body separado»): o código do
+// chassi continua na versão (V222 / C217 / A217 são carros diferentes, com peça diferente),
+// mas a palavra Sedan / Coupe / Cabriolet foi para rides.body_style — ver CARROCERIA.
 // As janelas de ano-modelo americanas NÃO batem entre as carrocerias, e é isso que o
 // mapa por ano resolve: sedã 2014–2020 (não existe S63 sedã 2021 — o W223 assumiu),
 // cupê 2015–2021, conversível 2017–2021. Um loop único 2014–2021 para as três criaria
@@ -617,15 +625,15 @@ const mercedesS63W222Colors = ['Black', 'Obsidian Black Metallic', 'Magnetite Bl
 const mercedesS63W222Versions = (y: number): string[] => {
   const v: string[] = []
   // Sedã V222 (batalha longa): entra no MY2014 e MORRE no MY2020.
-  if (y <= 2017) v.push('V222 Sedan 5.5 TT V8 4MATIC')
-  else if (y <= 2020) v.push('V222 Sedan 4.0 TT V8 4MATIC+')
+  if (y <= 2017) v.push('V222 5.5 TT V8 4MATIC')
+  else if (y <= 2020) v.push('V222 4.0 TT V8 4MATIC+')
   // Cupê C217: estreia MY2015 e segue até MY2021, um ano além do sedã.
-  if (y >= 2015 && y <= 2017) v.push('C217 Coupe 5.5 TT V8 4MATIC')
-  if (y >= 2018) v.push('C217 Coupe 4.0 TT V8 4MATIC+')
+  if (y >= 2015 && y <= 2017) v.push('C217 5.5 TT V8 4MATIC')
+  if (y >= 2018) v.push('C217 4.0 TT V8 4MATIC+')
   // Conversível A217: o ano-modelo americano da S63 cabrio só começa em 2017 — o M157
   // pega um único ano antes de o facelift trocar o motor.
-  if (y === 2017) v.push('A217 Cabriolet 5.5 TT V8 4MATIC')
-  if (y >= 2018) v.push('A217 Cabriolet 4.0 TT V8 4MATIC+')
+  if (y === 2017) v.push('A217 5.5 TT V8 4MATIC')
+  if (y >= 2018) v.push('A217 4.0 TT V8 4MATIC+')
   return v
 }
 for (let y = 2014; y <= 2021; y++) {
@@ -654,11 +662,11 @@ years.sort((a, b) => a - b)
 // Edition' aparece em um único blog e a descrição é a da S65 Final Edition (V12, outro
 // carro) — tratada como confusão. 'Grand Edition' é acabamento de S 560 e SL, não da S63.
 Object.assign(specialEditions, {
-  '2015-S63 AMG-C217 Coupe 5.5 TT V8 4MATIC': ['None', 'Edition 1'],
-  '2017-S63 AMG-A217 Cabriolet 5.5 TT V8 4MATIC': ['None', 'Edition 130'],
+  '2015-S63 AMG-C217 5.5 TT V8 4MATIC': ['None', 'Edition 1'],
+  '2017-S63 AMG-A217 5.5 TT V8 4MATIC': ['None', 'Edition 130'],
   // Yellow Night Edition: janela de pedido de seis meses, abriu o facelift do cupê. Só
   // se achou preço em euro — a confirmação de venda nos EUA segue pendente.
-  '2018-S63 AMG-C217 Coupe 4.0 TT V8 4MATIC+': ['None', 'Yellow Night Edition'],
+  '2018-S63 AMG-C217 4.0 TT V8 4MATIC+': ['None', 'Yellow Night Edition'],
 })
 
 // ── F-body 4th Gen — Camaro Z28/SS + Firebird Formula/Trans Am (1993–2002, V8 only) ──
@@ -805,7 +813,7 @@ specialEditions['1983-FIREBIRD-Trans Am Cross-Fire 5.0 V8'] = ['None', 'Recaro E
 specialEditions['1983-FIREBIRD-Trans Am H.O. 5.0 V8'] = ['None', 'Recaro Edition']
 specialEditions['1984-FIREBIRD-Trans Am 5.0 V8'] = ['None', 'Recaro Edition']
 specialEditions['1984-FIREBIRD-Trans Am H.O. 5.0 V8'] = ['None', 'Recaro Edition', '15th Anniversary']
-specialEditions['1988-FIREBIRD-Trans Am GTA 5.7 V8'] = ['None', 'GTA Notchback']
+// GTA Notchback (1988): é CARROCERIA — rides.body_style 'Notchback' desde 14/set/2026.
 // Every one of the 1,555 Turbo Trans Ams WAS the 20th Anniversary Indy Pace Car.
 specialEditions['1989-FIREBIRD-Trans Am Turbo 3.8 V6'] = ['20th Anniversary Pace Car']
 years.sort((a, b) => a - b)
@@ -938,9 +946,9 @@ for (let y = 1999; y <= 2004; y++) {
 years.sort((a, b) => a - b)
 
 // ── Cadillac CTS-V, 2nd Gen (2009–2015) ─────────────────────────────────────────
-// One trim — the LSA 6.2 supercharged V8 (556 hp). Body styles live in specialEditions
-// per the special-editions rule ('None' = the Sedan). Sedan 2009–2015; Coupe 2011–2015;
-// Wagon 2011–2014.
+// One trim — the LSA 6.2 supercharged V8 (556 hp). Sedan 2009–2015; Coupe 2011–2015;
+// Wagon 2011–2014. As carrocerias moravam em specialEditions ('None' = sedã); desde
+// 14/set/2026 moram em rides.body_style (seção CARROCERIA) e o CTS-V não tem edição.
 const ctsV2Colors = ['Black Raven', 'Radiant Silver Metallic', 'Thunder Gray ChromaFlair', 'Crystal Red Tintcoat', 'White Diamond Tricoat', 'Black Diamond Tricoat', 'Mocha Steel Metallic', 'Opulent Blue Metallic', 'Phantom Gray Metallic']
 for (let y = 2009; y <= 2015; y++) {
   if (!years.includes(y)) years.push(y)
@@ -955,13 +963,6 @@ for (let y = 2009; y <= 2015; y++) {
   versionsByModelAndYear['CTS-V'][y] = ['CTS-V 6.2 V8 SC']
 }
 years.sort((a, b) => a - b)
-Object.assign(specialEditions, {
-  '2011-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
-  '2012-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
-  '2013-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
-  '2014-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe', 'Wagon'],
-  '2015-CTS-V-CTS-V 6.2 V8 SC': ['None', 'Coupe'],
-})
 
 // ── Cadillac Escalade-V (2023+) ─────────────────────────────────────────────────
 // One trim — the 6.2L supercharged V8 (682 hp). The ESV long wheelbase lives in
@@ -1068,8 +1069,8 @@ for (let y = 2007; y <= 2013; y++) {
 
 // ── Mitsubishi Eclipse Turbo, 2nd Gen (2G, 1995–1999) ───────────────────────────
 // TURBO models only — the 4G63T 2.0L turbo: GS-T (FWD, 210 hp) and GSX (AWD).
-// The Spyder GS-T convertible (1996+) lives in specialEditions per the
-// special-editions rule; the GSX never got a Spyder.
+// The Spyder GS-T convertible (1996+) is a BODY STYLE — rides.body_style 'Spyder' since
+// 14/set/2026 (seção CARROCERIA), no longer a special edition; the GSX never got a Spyder.
 const eclipse2gColors = ['Kalapana Black', 'Northstar White', 'Saronno Red', 'Caracas Red', 'Cayenne Red Pearl', 'Monarch Green Pearl', 'Polynesian Green Pearl', 'Magnetic Blue Pearl', 'Titanium Pearl', 'Minden Silver Pearl']
 for (let y = 1995; y <= 1999; y++) {
   if (!years.includes(y)) years.push(y)
@@ -1085,9 +1086,6 @@ for (let y = 1995; y <= 1999; y++) {
   versionsByModelAndYear['ECLIPSE'][y] = ['GS-T 2.0 Turbo', 'GSX 2.0 Turbo AWD']
 }
 years.sort((a, b) => a - b)
-for (let y = 1996; y <= 1999; y++) {
-  Object.assign(specialEditions, { [`${y}-ECLIPSE-GS-T 2.0 Turbo`]: ['None', 'Spyder'] })
-}
 
 // ── Jeep Grand Cherokee — Hemi (WK 2005–2010 + WK2 2011–2021) ────────────────────
 // Hemi-powered Grand Cherokees only. Trims = the engine/performance variants (per the
@@ -1530,6 +1528,41 @@ Object.assign(bodyStylesByEdition, {
   '2015-MUSTANG-GT 5.0-50 Years Limited Edition': ['Fastback'],
 })
 
+// OS PRECEDENTES (14/set/2026, Márcio: «prefiro o body separado») — carroceria que antes
+// vinha costurada na versão ou na edição especial e agora mora só aqui. Os rides que já
+// existiam com o nome antigo são reescritos por MIGRATION_body_style_precedentes.sql.
+//   Porsche 911 997.1   'Turbo Coupe/Cabriolet 3.6 H6' → 'Turbo 3.6 H6' + Coupe/Cabriolet
+//   BMW M5              'E60 Sedan' / 'E61 Touring' / 'F10 Sedan' → 'E60' / 'E61' / 'F10'
+//   Mercedes-AMG S63    'V222 Sedan' / 'C217 Coupe' / 'A217 Cabriolet' → só o chassi
+//   Cadillac CTS-V      edições 'Coupe' / 'Wagon' ('None' era o sedã) → carroceria
+//   Mitsubishi Eclipse  edição 'Spyder' do GS-T → carroceria 'Spyder' (nome da Mitsubishi)
+//   Firebird GTA 1988   edição 'GTA Notchback' → carroceria 'Notchback' (RPO AA8, 1988)
+// Ficam de fora de propósito: WideBody (Charger/Challenger — é trim, muda motor de roda,
+// para-lama e peça), ESV (Escalade-V — entre-eixos) e 90/110/130 (Defender — entre-eixos).
+bodyStyles['2007-911-Turbo 3.6 H6'] = ['Coupe']
+for (const y of [2008, 2009]) bodyStyles[`${y}-911-Turbo 3.6 H6`] = ['Coupe', 'Cabriolet']
+for (let y = 2006; y <= 2010; y++) {
+  bodyStyles[`${y}-M5-E60 5.0 V10`] = ['Sedan']
+  if (y >= 2007) bodyStyles[`${y}-M5-E61 5.0 V10`] = ['Touring']
+}
+for (let y = 2011; y <= 2016; y++) bodyStyles[`${y}-M5-F10 4.4 TT V8`] = ['Sedan']
+for (const [y, versions] of Object.entries(versionsByModelAndYear['S63 AMG'])) {
+  for (const v of versions) {
+    const b = v.startsWith('V222') ? 'Sedan' : v.startsWith('C217') ? 'Coupe' : v.startsWith('A217') ? 'Cabriolet' : null
+    if (b) bodyStyles[`${y}-S63 AMG-${v}`] = [b]
+  }
+}
+for (let y = 2009; y <= 2015; y++) {
+  bodyStyles[`${y}-CTS-V-CTS-V 6.2 V8 SC`] = y <= 2010 ? ['Sedan'] : y <= 2014 ? ['Sedan', 'Coupe', 'Wagon'] : ['Sedan', 'Coupe']
+}
+for (let y = 1995; y <= 1999; y++) {
+  bodyStyles[`${y}-ECLIPSE-GS-T 2.0 Turbo`] = y >= 1996 ? ['Coupe', 'Spyder'] : ['Coupe']
+  bodyStyles[`${y}-ECLIPSE-GSX 2.0 Turbo AWD`] = ['Coupe']
+}
+// GTA Notchback: vidro traseiro fixo no lugar da tampa — opção de 1988 (718 carros; a
+// Pontiac cancelou em ago/1988, sobraram poucos 1989 que o catálogo não tem).
+bodyStyles['1988-FIREBIRD-Trans Am GTA 5.7 V8'] = ['Coupe', 'Notchback']
+
 // Cor restrita pela CARROCERIA: chave 'ANO-MODELO-versão-carroceria'. Lida depois das
 // cores amarradas de edição (a edição manda) e antes da paleta geral do ano.
 const colorsByBodyStyle: Record<string, string[]> = {
@@ -1839,9 +1872,9 @@ const colorsByConfiguration: Record<string, string[]> = {
   // Alubeam Silver (alto brilho, capota de lona vermelha) é EXCLUSIVA da Edition 130 e
   // por isso não existe na paleta geral; as outras duas restringem cores que a linha
   // normal também oferecia.
-  '2015-S63 AMG-C217 Coupe 5.5 TT V8 4MATIC-Edition 1': ['designo Alanite Grey Magno'],
-  '2017-S63 AMG-A217 Cabriolet 5.5 TT V8 4MATIC-Edition 130': ['Alubeam Silver'],
-  '2018-S63 AMG-C217 Coupe 4.0 TT V8 4MATIC+-Yellow Night Edition': ['designo Selenite Grey Magno', 'designo Night Black Magno'],
+  '2015-S63 AMG-C217 5.5 TT V8 4MATIC-Edition 1': ['designo Alanite Grey Magno'],
+  '2017-S63 AMG-A217 5.5 TT V8 4MATIC-Edition 130': ['Alubeam Silver'],
+  '2018-S63 AMG-C217 4.0 TT V8 4MATIC+-Yellow Night Edition': ['designo Selenite Grey Magno', 'designo Night Black Magno'],
 }
 
 export function getAvailableColors(year: number, brand: string, model: string, version: string, specialEdition: string, bodyStyle?: string | null): string[] {
