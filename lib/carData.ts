@@ -1460,6 +1460,76 @@ Object.assign(bodyStylesByEdition, {
   '2013-CORVETTE-Z06 7.0-427 Collector Edition': ['Convertible'],
 })
 
+// CAMARO, FIREBIRD e MUSTANG — só as carrocerias de FÁBRICA (camaros.org, thirdgen.org,
+// 3rdgenformula, LSX Mag, Wikipedia, MustangSpecs, Ford Authority; 14/set/2026).
+// Conversível feito por fora (ASC nos Firebird 87–90, os L98 convertidos) não conta.
+// Mustang S550/S650: a Ford chama o cupê de "Fastback" — nome do fabricante; o S197 ela
+// ainda chamava de "Coupe".
+const camaroBodyStyles = (y: number, v: string): string[] | null => {
+  if (y >= 1967 && y <= 1969) return v.startsWith('Z/28') || v.startsWith('COPO') ? ['Coupe'] : ['Coupe', 'Convertible']
+  // 3ª geração: conversível só a partir de 1987, e nunca com o 350 L98.
+  if (y >= 1985 && y <= 1992) return y >= 1987 && v === 'Z28 5.0 V8' ? ['Coupe', 'Convertible'] : ['Coupe']
+  // 4ª geração: conversível a partir de 1994 (SS SLP 96–97 e de fábrica 98–02 também).
+  if (y >= 1993 && y <= 2002) return y >= 1994 ? ['Coupe', 'Convertible'] : ['Coupe']
+  // 5ª geração: SS conversível desde 2011, ZL1 desde 2013; 1LE e Z/28 só cupê.
+  if (y >= 2010 && y <= 2015) {
+    if (v.includes('1LE') || v.startsWith('Z/28')) return ['Coupe']
+    if (v.startsWith('ZL1')) return y >= 2013 ? ['Coupe', 'Convertible'] : ['Coupe']
+    return y >= 2011 ? ['Coupe', 'Convertible'] : ['Coupe']
+  }
+  // 6ª geração: LT1, SS e ZL1 cupê e conversível; os dois 1LE só cupê.
+  if (y >= 2016 && y <= 2024) return v.includes('1LE') ? ['Coupe'] : ['Coupe', 'Convertible']
+  return null
+}
+const firebirdBodyStyles = (y: number, v: string): string[] | null => {
+  // Trans Am 1969: 8 conversíveis, todos Ram Air III; o Ram Air IV só cupê.
+  if (y === 1969) return v.includes('Ram Air III') ? ['Coupe', 'Convertible'] : ['Coupe']
+  if (y >= 1970 && y <= 1990) return ['Coupe']
+  // 1991–92: conversível de fábrica no Trans Am 5.0 TPI; o GTA só cupê.
+  if (y === 1991 || y === 1992) return v.includes('GTA') ? ['Coupe'] : ['Coupe', 'Convertible']
+  if (y === 1993) return ['Coupe']
+  // 4ª geração: Trans Am conversível 1994–2002; o Formula só 1994–97 (caiu por falta de pedido).
+  if (y >= 1994 && y <= 2002) return v.startsWith('Formula') && y >= 1998 ? ['Coupe'] : ['Coupe', 'Convertible']
+  return null
+}
+const mustangBodyStyles = (y: number, v: string): string[] | null => {
+  if (y >= 2005 && y <= 2014) {
+    if (v.startsWith('Boss 302')) return ['Coupe']
+    if (v.startsWith('Shelby GT ')) return y === 2008 ? ['Coupe', 'Convertible'] : ['Coupe']   // Shelby GT conversível só 2008
+    return ['Coupe', 'Convertible']                                                           // GT e Shelby GT500, todo ano
+  }
+  if (y >= 2015) {
+    if (v.startsWith('GT 5.0')) return ['Fastback', 'Convertible']
+    if (v.startsWith('GTD')) return ['Coupe']
+    return ['Fastback']   // GT350/GT350R, Bullitt, Mach 1, GT500, Dark Horse, Dark Horse SC
+  }
+  return null
+}
+for (const [model, rule] of [['CAMARO', camaroBodyStyles], ['FIREBIRD', firebirdBodyStyles], ['MUSTANG', mustangBodyStyles]] as const) {
+  for (const [y, versions] of Object.entries(versionsByModelAndYear[model] || {})) {
+    for (const v of versions) {
+      const b = rule(Number(y), v)
+      if (b) bodyStyles[`${y}-${model}-${v}`] = b
+    }
+  }
+}
+Object.assign(bodyStylesByEdition, {
+  // Pace Cars do Camaro 1ª geração: 1967 RS/SS conversível; 1969 Z11 = "Indy Sport Convertible".
+  '1967-CAMARO-SS 5.7 V8 (L48)-Indy 500 Pace Car': ['Convertible'],
+  '1967-CAMARO-SS 6.5 V8 (L35)-Indy 500 Pace Car': ['Convertible'],
+  '1969-CAMARO-SS 5.7 V8 (L48)-Indy Pace Car (Z11)': ['Convertible'],
+  '1969-CAMARO-SS 6.5 V8 (L35)-Indy Pace Car (Z11)': ['Convertible'],
+  // Neiman Marcus Edition 2011: 100 carros, todos conversíveis (catálogo de Natal da loja).
+  '2011-CAMARO-SS 6.2-Neiman Marcus Edition': ['Convertible'],
+  // Bullitt 2008–09 e GT500KR 2008–09: só cupê. 50 Years Limited Edition 2015: só fastback
+  // (o único conversível foi rifado para caridade, não vendido).
+  '2008-MUSTANG-GT 4.6-Bullitt': ['Coupe'],
+  '2009-MUSTANG-GT 4.6-Bullitt': ['Coupe'],
+  '2008-MUSTANG-Shelby GT500 5.4 SC-GT500KR': ['Coupe'],
+  '2009-MUSTANG-Shelby GT500 5.4 SC-GT500KR': ['Coupe'],
+  '2015-MUSTANG-GT 5.0-50 Years Limited Edition': ['Fastback'],
+})
+
 // Cor restrita pela CARROCERIA: chave 'ANO-MODELO-versão-carroceria'. Lida depois das
 // cores amarradas de edição (a edição manda) e antes da paleta geral do ano.
 const colorsByBodyStyle: Record<string, string[]> = {
