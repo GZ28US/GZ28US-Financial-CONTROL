@@ -1233,6 +1233,42 @@ Object.assign(specialEditions, {
   '1982-CORVETTE-L83 5.7 V8 Cross-Fire (350)': ['None', 'Collector Edition'],
 })
 
+// ── Corvette C5 (1997–2004) ─────────────────────────────────────────────────────
+// Dois trims, os dois "5.7" como no C4: Base = LS1 (todos os anos) e Z06 = LS6
+// (2001–2004). A CARROCERIA não é trim nem edição — mora no campo body_style (ver
+// bodyStylesFor, na seção CARROCERIA): 1997 só cupê; 1998 cupê e conversível; 1999–2000
+// cupê, conversível e o Hardtop (FRC, só manual); 2001–2004 cupê e conversível no Base;
+// o Z06 só existiu Hardtop.
+// As três edições da geração vivem em specialEditions do trim em que foram feitas, sem
+// carroceria no nome (conferido em vettefacts.com, corvsport.com, 14/set/2026):
+//   1998  Indy 500 Pace Car (RPO Z4Z) — só conversível, 1.163 feitos, Radar Blue com
+//         rodas amarelas; automático ou manual.
+//   2003  50th Anniversary (RPO 1SC) — cupê e conversível (4.085 + 7.547 = 11.632),
+//         Anniversary Red; NÃO existiu no Z06.
+//   2004  Commemorative Edition — cupê (2.215), conversível (2.659) e Z06 (2.025),
+//         Le Mans Blue (6.899 = a soma exata dos três).
+// ANEXA em vez de atribuir: 1997–2002 já carregam o Camaro/Firebird de 4ª geração, e a
+// faixa toda o Defender, o Eclipse, a Lightning e a Grand Cherokee ZJ nos mapas por ano.
+const c5CorvetteVersions = (y: number): string[] => (y >= 2001 ? ['Base 5.7', 'Z06 5.7'] : ['Base 5.7'])
+for (let y = 1997; y <= 2004; y++) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('CHEVROLET')) brandsByManufacturerAndYear['GM'][y].push('CHEVROLET')
+  modelsByBrandAndYear['CHEVROLET'][y] = modelsByBrandAndYear['CHEVROLET'][y] || []
+  if (!modelsByBrandAndYear['CHEVROLET'][y].includes('CORVETTE')) modelsByBrandAndYear['CHEVROLET'][y].push('CORVETTE')
+  const c5Existing = versionsByModelAndYear['CORVETTE'][y] || []
+  versionsByModelAndYear['CORVETTE'][y] = [...c5Existing, ...c5CorvetteVersions(y).filter((v) => !c5Existing.includes(v))]
+}
+years.sort((a, b) => a - b)
+Object.assign(specialEditions, {
+  '1998-CORVETTE-Base 5.7': ['None', 'Indy 500 Pace Car'],
+  '2003-CORVETTE-Base 5.7': ['None', '50th Anniversary'],
+  '2004-CORVETTE-Base 5.7': ['None', 'Commemorative Edition'],
+  '2004-CORVETTE-Z06 5.7': ['None', 'Commemorative Edition'],
+})
+
 // ── Camaro 3rd Gen — Z28 / IROC-Z (1985–1992) ───────────────────────────────────
 // The 3rd-gen performance Camaro. Trims by engine: Z28 5.0 V8 (305 — LB9 TPI; L69 HO
 // in '85) and Z28 5.7 V8 (350 L98 TPI, automatic, '87+). The IROC-Z (1985–1990) and
@@ -1349,6 +1385,91 @@ for (let y = 1995; y <= 1996; y++) {
 }
 years.sort((a, b) => a - b)
 
+// ── CARROCERIA (body style) — campo próprio do ride desde 14/set/2026 ────────────
+// Márcio: «crie um campo novo pra body: Convertible, HardTop, etc., for the cars that
+// have these options» e «prefiro o body separado». Carroceria NÃO é versão nem edição
+// especial: vai para rides.body_style (MIGRATION_rides_body_style.sql).
+// Chave = 'ANO-MODELO-versão', a mesma de specialEditions, porque a carroceria muda por
+// versão (o Z06 C5 só existiu Hardtop; o Base do mesmo ano teve cupê e conversível).
+//   sem chave     → o catálogo não sabe: sem seletor, nada gravado;
+//   uma opção     → sem seletor, mas a tela GRAVA (o dado fica completo);
+//   duas ou mais  → seletor BODY na tela do ride.
+// Vocabulário aberto, em inglês como o resto do catálogo: 'Coupe', 'Convertible',
+// 'Hardtop' — e o que o fabricante chamar quando vier: 'Cabriolet', 'Spyder', 'Sedan',
+// 'Wagon', 'Targa'... Use o nome do fabricante (o Z06 C5 é o "Z06 Hardtop", 1YY37).
+export const bodyStyles: Record<string, string[]> = {}
+// Edição que só saiu numa carroceria FECHA a lista (Pace Car 1998 = só conversível):
+// chave 'ANO-MODELO-versão-edição'. Sem entrada aqui, vale a lista da versão.
+const bodyStylesByEdition: Record<string, string[]> = {}
+
+// Carrocerias de fábrica para a combinação escolhida. A marca entra na assinatura por
+// simetria com transmissionOptionsFor (hoje nenhum MODELO se repete entre marcas).
+export function bodyStylesFor(
+  year: string | number | null | undefined,
+  brand: string | null | undefined,
+  model: string | null | undefined,
+  version: string | null | undefined,
+  specialEdition?: string | null,
+): string[] {
+  const key = `${Number(year) || 0}-${model || ''}-${version || ''}`
+  if (specialEdition && specialEdition !== 'None' && bodyStylesByEdition[`${key}-${specialEdition}`]) {
+    return bodyStylesByEdition[`${key}-${specialEdition}`]
+  }
+  return bodyStyles[key] || []
+}
+
+// CORVETTE, todas as gerações do catálogo (vettefacts, corvetteactioncenter, corvsport,
+// Wikipedia C3–C8, produção por carroceria; conferido 14/set/2026). T-top / targa
+// removível é CUPÊ, não carroceria à parte.
+//   C3 1968–1975  cupê e conversível em todo motor (até o ZL1 69: um de cada); 1975 foi
+//                 o último conversível — 1976–1982 só cupê.
+//   C4 1992–1996  Base cupê e conversível; ZR-1 só cupê.
+//   C5 1997       só cupê · 1998 cupê e conversível (o conversível voltou) · 1999–2000
+//                 + o Hardtop (FRC, só manual) · 2001–2004 Base cupê e conversível; o
+//                 Z06 (LS6) é sempre o "Z06 Hardtop" (1YY37).
+//   C6 2005–2013  Base e Grand Sport cupê e conversível; Z06 e ZR1 só cupê.
+//   C7/C8 2014+   cupê e conversível em TODAS as versões (Z06 C7 conversível desde 2015,
+//                 ZR1 2019, Z06/E-Ray/ZR1 C8) — o teto rígido retrátil do C8 a GM chama
+//                 de "Convertible".
+const corvetteBodyStyles = (y: number, v: string): string[] | null => {
+  if (y >= 1968 && y <= 1975) return ['Coupe', 'Convertible']
+  if (y >= 1976 && y <= 1982) return ['Coupe']
+  if (y >= 1992 && y <= 1996) return v.startsWith('ZR-1') ? ['Coupe'] : ['Coupe', 'Convertible']
+  if (y === 1997) return ['Coupe']
+  if (y === 1998) return ['Coupe', 'Convertible']
+  if (y === 1999 || y === 2000) return ['Coupe', 'Convertible', 'Hardtop']
+  if (y >= 2001 && y <= 2004) return v.startsWith('Z06') ? ['Hardtop'] : ['Coupe', 'Convertible']
+  if (y >= 2005 && y <= 2013) return v.startsWith('Z06') || v.startsWith('ZR1') ? ['Coupe'] : ['Coupe', 'Convertible']
+  if (y >= 2014) return ['Coupe', 'Convertible']
+  return null
+}
+for (const [y, versions] of Object.entries(versionsByModelAndYear['CORVETTE'])) {
+  for (const v of versions) {
+    const b = corvetteBodyStyles(Number(y), v)
+    if (b) bodyStyles[`${y}-CORVETTE-${v}`] = b
+  }
+}
+// Edições que só saíram numa carroceria. As outras seguem a lista da versão: 40th (93),
+// Grand Sport e Collector (96), 50th (2003), Commemorative (2004, cupê/conversível no
+// Base e Hardtop no Z06), Centennial (2012), 60th (2013) e 70th (2023).
+Object.assign(bodyStylesByEdition, {
+  '1995-CORVETTE-Base 5.7-Indy 500 Pace Car': ['Convertible'],   // 527 feitos, todos conversíveis
+  '1998-CORVETTE-Base 5.7-Indy 500 Pace Car': ['Convertible'],   // 1.163, todos conversíveis
+  // O 427 Collector Edition de 2013 é o "Corvette 427 Convertible": motor LS7 do Z06, mas
+  // vendido como conversível (2.552) — nunca houve Z06 conversível no C6.
+  '2013-CORVETTE-Z06 7.0-427 Collector Edition': ['Convertible'],
+})
+
+// Cor restrita pela CARROCERIA: chave 'ANO-MODELO-versão-carroceria'. Lida depois das
+// cores amarradas de edição (a edição manda) e antes da paleta geral do ano.
+const colorsByBodyStyle: Record<string, string[]> = {
+  // Hardtop C5 — cinco cores. 2000: corvsport, explícito («all colors except Millennium
+  // Yellow, Dark Bowling Green, Navy Blue, Sebring Silver and Magnetic Red»). 1999: a
+  // produção por cor do FRC soma 4.025 dos 4.031 nas mesmas cinco — best-effort.
+  '1999-CORVETTE-Base 5.7-Hardtop': ['Arctic White', 'Black', 'Light Pewter Metallic', 'Nassau Blue Metallic', 'Torch Red'],
+  '2000-CORVETTE-Base 5.7-Hardtop': ['Arctic White', 'Black', 'Light Pewter Metallic', 'Nassau Blue Metallic', 'Torch Red'],
+}
+
 const viperColorsByYear: Record<number, string[]> = {
   1992: ['Red'],
   1993: ['Red', 'Black', 'White'],
@@ -1462,7 +1583,25 @@ const corvetteColorsByYear: Record<number, string[]> = {
   1994: ['White', 'Torch Red', 'Admiral Blue', 'Black', 'Competition Yellow', 'Copper Metallic', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Black Rose Metallic', 'Dark Red Metallic'],
   1995: ['White', 'Torch Red', 'Admiral Blue', 'Black', 'Competition Yellow', 'Dark Purple Metallic', 'Bright Aqua Metallic', 'Polo Green Metallic', 'Dark Red Metallic'],
   1996: ['White', 'Torch Red', 'Admiral Blue', 'Black', 'Competition Yellow', 'Dark Purple Metallic', 'Sebring Silver Metallic', 'Bright Aqua Metallic', 'Polo Green Metallic'],
-  2005: ['Arctic White', 'Black', 'Daytona Sunset Orange', 'LeMans Blue', 'Machine Silver', 'Magnetic Red', 'Millennium Yellow', 'Precision Red'],
+  // C5 — paleta de fábrica ano a ano (vettefacts.com com a produção por cor, cruzado com
+  // Corvette Central e corvsport, 14/set/2026). As três cores EXCLUSIVAS de edição não
+  // entram aqui, só em colorsByConfiguration: Radar Blue (1.163 = os Pace Cars de 1998),
+  // Anniversary Red (11.632 = os 50th de 2003) e LeMans Blue (6.899 = os Commemorative
+  // de 2004). O Hardtop 1999–2000 e o Z06 tinham lista curta — ver colorsByConfiguration
+  // e colorsByBodyStyle.
+  1997: ['Arctic White', 'Black', 'Fairway Green Metallic', 'Light Carmine Red Metallic', 'Nassau Blue Metallic', 'Sebring Silver Metallic', 'Torch Red'],
+  // 1998: Aztec Gold (15 carros) e Navy Blue Metallic (14) foram cores EXPERIMENTAIS —
+  // saíram de Bowling Green e foram vendidas como usadas; entram porque os carros existem.
+  1998: ['Arctic White', 'Aztec Gold', 'Black', 'Fairway Green Metallic', 'Light Carmine Red Metallic', 'Light Pewter Metallic', 'Medium Purple Pearl Metallic', 'Nassau Blue Metallic', 'Navy Blue Metallic', 'Sebring Silver Metallic', 'Torch Red'],
+  // 86U: corvsport e Corvette Central chamam de Magnetic Red (Metallic) até 2002 e de
+  // "II" só em 2004; a vettefacts já escreve "II" desde 1999 — best-effort, confirmar.
+  1999: ['Arctic White', 'Black', 'Light Pewter Metallic', 'Magnetic Red Metallic', 'Nassau Blue Metallic', 'Navy Blue Metallic', 'Sebring Silver Metallic', 'Torch Red'],
+  2000: ['Arctic White', 'Black', 'Dark Bowling Green Metallic', 'Light Pewter Metallic', 'Magnetic Red Metallic', 'Millennium Yellow', 'Nassau Blue Metallic', 'Navy Blue Metallic', 'Sebring Silver Metallic', 'Torch Red'],
+  2001: ['Black', 'Dark Bowling Green Metallic', 'Light Pewter Metallic', 'Magnetic Red Metallic', 'Millennium Yellow', 'Navy Blue Metallic', 'Quicksilver Metallic', 'Speedway White', 'Torch Red'],
+  2002: ['Black', 'Electron Blue Metallic', 'Light Pewter Metallic', 'Magnetic Red Metallic', 'Millennium Yellow', 'Quicksilver Metallic', 'Speedway White', 'Torch Red'],
+  2003: ['Black', 'Electron Blue Metallic', 'Medium Spiral Gray Metallic', 'Millennium Yellow', 'Quicksilver Metallic', 'Speedway White', 'Torch Red'],
+  2004: ['Arctic White', 'Black', 'Machine Silver', 'Magnetic Red II Metallic', 'Medium Spiral Gray Metallic', 'Millennium Yellow', 'Torch Red'],
+  2005:['Arctic White', 'Black', 'Daytona Sunset Orange', 'LeMans Blue', 'Machine Silver', 'Magnetic Red', 'Millennium Yellow', 'Precision Red'],
   2006: ['Arctic White', 'Black', 'Daytona Sunset Orange', 'LeMans Blue', 'Machine Silver', 'Monterey Red', 'Velocity Yellow', 'Victory Red'],
   2007: ['Arctic White', 'Atomic Orange', 'Black', 'LeMans Blue', 'Machine Silver', 'Monterey Red', 'Velocity Yellow', 'Victory Red'],
   2008: ['Arctic White', 'Atomic Orange', 'Black', 'Crystal Red', 'Jetstream Blue', 'Machine Silver', 'Velocity Yellow', 'Victory Red'],
@@ -1575,6 +1714,21 @@ const colorsByConfiguration: Record<string, string[]> = {
   '1995-CORVETTE-Base 5.7-Indy 500 Pace Car': ['Dark Purple Metallic'],
   '1996-CORVETTE-Base 5.7-Grand Sport': ['Admiral Blue'],
   '1996-CORVETTE-Base 5.7-Collector Edition': ['Sebring Silver Metallic'],
+  // Corvette C5 — cores amarradas das três edições, e a lista curta do Z06 por ano.
+  // Pace Car 1998: a Chevrolet anunciou "Radar Blue"; o adesivo de janela diz "Pace Car
+  // Purple Metallic" (é um roxo) — best-effort no nome, a cor é uma só. Rodas amarelas.
+  '1998-CORVETTE-Base 5.7-Indy 500 Pace Car': ['Radar Blue (Pace Car Purple)'],
+  '2003-CORVETTE-Base 5.7-50th Anniversary': ['Anniversary Red Metallic'],
+  '2004-CORVETTE-Base 5.7-Commemorative Edition': ['LeMans Blue'],
+  '2004-CORVETTE-Z06 5.7-Commemorative Edition': ['LeMans Blue'],
+  // Z06 sem edição: só as cores que o Z06 teve (produção por cor da vettefacts 2001–2002;
+  // 2003 pela lista de 5 cores do Z06; 2004 por corvsport + CorvetteForum — a vettefacts
+  // diz "todas menos Magnetic Red II e Medium Spiral Gray", o que incluiria o Arctic
+  // White; ficou de fora: best-effort, confirmar).
+  '2001-CORVETTE-Z06 5.7-None': ['Black', 'Millennium Yellow', 'Quicksilver Metallic', 'Speedway White', 'Torch Red'],
+  '2002-CORVETTE-Z06 5.7-None': ['Black', 'Electron Blue Metallic', 'Millennium Yellow', 'Quicksilver Metallic', 'Torch Red'],
+  '2003-CORVETTE-Z06 5.7-None': ['Black', 'Electron Blue Metallic', 'Millennium Yellow', 'Quicksilver Metallic', 'Torch Red'],
+  '2004-CORVETTE-Z06 5.7-None': ['Black', 'Machine Silver', 'Millennium Yellow', 'Torch Red'],
   '2023-CORVETTE-Stingray 6.2-70th Anniversary': ['White Pearl', 'Carbon Flash'],
   '2023-CORVETTE-Z06 5.5-70th Anniversary': ['White Pearl', 'Carbon Flash'],
   // Corvette C6 special-edition forced colors.
@@ -1620,9 +1774,10 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2018-S63 AMG-C217 Coupe 4.0 TT V8 4MATIC+-Yellow Night Edition': ['designo Selenite Grey Magno', 'designo Night Black Magno'],
 }
 
-export function getAvailableColors(year: number, brand: string, model: string, version: string, specialEdition: string): string[] {
+export function getAvailableColors(year: number, brand: string, model: string, version: string, specialEdition: string, bodyStyle?: string | null): string[] {
   const key = `${year}-${model}-${version}-${specialEdition}`
   if (colorsByConfiguration[key]) return colorsByConfiguration[key]
+  if (bodyStyle && colorsByBodyStyle[`${year}-${model}-${version}-${bodyStyle}`]) return colorsByBodyStyle[`${year}-${model}-${version}-${bodyStyle}`]
   if (model === 'DEFENDER') return landRoverDefenderColors
   if (model === 'M5') return year >= 2011 ? bmwM5F10Colors : bmwM5E60Colors
   if (model === 'M3') return specialEdition === 'CS' ? bmwM3CSColors : bmwM3G80Colors

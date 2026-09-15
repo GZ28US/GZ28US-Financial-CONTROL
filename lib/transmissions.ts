@@ -7,6 +7,9 @@ export function transmissionOptionsFor(
   brand: string | null | undefined,
   model: string | null | undefined,
   version: string | null | undefined,
+  // Carroceria (rides.body_style, 14/set/2026) — só pesa onde a caixa dependia dela
+  // (o Hardtop C5 1999–2000 saiu só manual). Quem não passa continua como antes.
+  bodyStyle?: string | null,
 ): string[] {
   const y = Number(yearS) || 0
   const b = (brand || '').toUpperCase().trim()
@@ -104,6 +107,13 @@ export function transmissionOptionsFor(
     if (y >= 1992 && y <= 1996) {
       if (has('ZR-1') || has('ZR1')) return ['ZF S6-40 (Manual6)']
       return [y >= 1994 ? 'GM4L60E (Auto4)' : 'GM4L60 (Auto4)', 'ZF S6-40 (Manual6)']
+    }
+    // C5 (1997–2004): Base = 4L60-E automática ou T56 manual de 6 (transaxle traseira).
+    // O Z06 (2001–04) só manual — a T56 de relações próprias, RPO M12 — e o Hardtop
+    // (FRC) 1999–2000 também só saiu manual (vettefacts/corvsport, 14/set/2026).
+    if (y >= 1997 && y <= 2004) {
+      if (has('Z06') || bodyStyle === 'Hardtop') return ['T56 (Manual6)']
+      return ['GM4L60E (Auto4)', 'T56 (Manual6)']
     }
     return []
   }

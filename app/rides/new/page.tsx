@@ -15,6 +15,7 @@ import {
   versionsByModelAndYear,
   specialEditions,
   getAvailableColors,
+  bodyStylesFor,
 } from '@/lib/carData'
 import { transmissionOptionsFor } from '@/lib/transmissions'
 
@@ -69,6 +70,7 @@ export default function NewRidePage() {
   const [model, setModel] = useState('')
   const [version, setVersion] = useState('')
   const [specialEdition, setSpecialEdition] = useState('')
+  const [bodyStyle, setBodyStyle] = useState('')
   const [color, setColor] = useState('')
   const [transmission, setTransmission] = useState('')
 
@@ -220,29 +222,37 @@ export default function NewRidePage() {
     ? ensureIncluded(catalogSpecialEditions, specialEdition)
     : (specialEdition ? [specialEdition] : null)
 
+  // BODY (carroceria, rides.body_style): o seletor só aparece com 2+ carrocerias de
+  // fábrica; com uma só ela é gravada sem perguntar; sem entrada no catálogo, nada.
+  const bodyStyleOptions = bodyStylesFor(yearNum, brand, model, version, specialEdition)
+  const bodyStyleValue = bodyStyleOptions.length === 1 ? bodyStyleOptions[0] : (bodyStyle || null)
+
   const availableColors = ensureIncluded((yearNum && brand && model && version)
-    ? getAvailableColors(yearNum, brand, model, version, specialEdition || 'None')
+    ? getAvailableColors(yearNum, brand, model, version, specialEdition || 'None', bodyStyleValue)
     : [], color)
 
   // Cascading resets: changing any level wipes everything below it so the
   // user can't end up with an impossible combination.
   function changeYear(v: string) {
-    setYear(v); setManufacturer(''); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setColor('')
+    setYear(v); setManufacturer(''); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setBodyStyle(''); setColor('')
   }
   function changeManufacturer(v: string) {
-    setManufacturer(v); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setColor('')
+    setManufacturer(v); setBrand(''); setModel(''); setVersion(''); setSpecialEdition(''); setBodyStyle(''); setColor('')
   }
   function changeBrand(v: string) {
-    setBrand(v); setModel(''); setVersion(''); setSpecialEdition(''); setColor('')
+    setBrand(v); setModel(''); setVersion(''); setSpecialEdition(''); setBodyStyle(''); setColor('')
   }
   function changeModel(v: string) {
-    setModel(v); setVersion(''); setSpecialEdition(''); setColor('')
+    setModel(v); setVersion(''); setSpecialEdition(''); setBodyStyle(''); setColor('')
   }
   function changeVersion(v: string) {
-    setVersion(v); setSpecialEdition(''); setColor('')
+    setVersion(v); setSpecialEdition(''); setBodyStyle(''); setColor('')
   }
   function changeSpecialEdition(v: string) {
-    setSpecialEdition(v); setColor('')
+    setSpecialEdition(v); setBodyStyle(''); setColor('')
+  }
+  function changeBodyStyle(v: string) {
+    setBodyStyle(v); setColor('')
   }
 
   async function uploadPhoto(file: File) {
@@ -257,7 +267,7 @@ export default function NewRidePage() {
   }
 
   // Factory transmission options for the currently selected car (empty = unknown → no picker).
-  const transmissionOptions = transmissionOptionsFor(year, brand, model, version)
+  const transmissionOptions = transmissionOptionsFor(year, brand, model, version, bodyStyleValue)
 
   async function saveRide() {
     if (!projectCode.trim()) { alert('Please enter a project code'); return }
@@ -275,6 +285,8 @@ export default function NewRidePage() {
       model: model || null,
       version: version || null,
       special_edition: seValue,
+      // Carroceria: uma opção de fábrica → gravada sozinha; 2+ → a do seletor.
+      body_style: bodyStyleValue,
       // Single factory option → stamped automatically; multi-option cars use the picker.
       transmission: transmissionOptions.length === 1 ? transmissionOptions[0] : (transmission || null),
       color: color || null,
@@ -467,6 +479,17 @@ export default function NewRidePage() {
             <select value={specialEdition} onChange={(e) => changeSpecialEdition(e.target.value)} className={selectClass}>
               <option value="">— Select —</option>
               {availableSpecialEditions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* BODY renders only when the car had 2+ factory body styles (a single one is saved automatically). */}
+        {bodyStyleOptions.length > 1 && (
+          <div>
+            <label className="block mb-2 text-lg font-bold">BODY</label>
+            <select value={bodyStyle} onChange={(e) => changeBodyStyle(e.target.value)} className={selectClass}>
+              <option value="">— Select —</option>
+              {ensureIncluded(bodyStyleOptions, bodyStyle).map(b => <option key={b} value={b}>{b}</option>)}
             </select>
           </div>
         )}
