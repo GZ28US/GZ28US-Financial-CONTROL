@@ -171,16 +171,20 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
     2025: ['SRT HellCat 6.2'], 2026: ['SRT HellCat 6.2'],
   },
   CAMARO: {
-    2010: ['SS 6.2', 'SS 1LE 6.2'],
-    2011: ['SS 6.2', 'SS 1LE 6.2'],
-    2012: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC'],
+    // Anos conferidos em 14/set/2026 (GM Authority, LSX Mag, Wikipedia 5ª/6ª geração):
+    // o 1LE voltou na 5ª geração só em 2013 (até 2015) e na 6ª só em 2017; o ZL1 da 6ª
+    // geração nasceu 2017 (2016 foi só SS); o ZL1 1LE é de 2018; o LT1 (V8 de entrada) é
+    // de 2020. Nenhum ride dos 2 apps usava as combinações que saíram.
+    2010: ['SS 6.2'],
+    2011: ['SS 6.2'],
+    2012: ['SS 6.2', 'ZL1 6.2 SC'],
     2013: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC'],
     2014: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0'],
     2015: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2 SC', 'Z/28 7.0'],
-    2016: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2'],
-    2017: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
+    2016: ['SS 6.2'],
+    2017: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2'],
     2018: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
-    2019: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
+    2019: ['SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
     2020: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
     2021: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
     2022: ['LT1 6.2', 'SS 6.2', 'SS 1LE 6.2', 'ZL1 6.2', 'ZL1 1LE 6.2'],
@@ -266,11 +270,8 @@ export const versionsByModelAndYear: Record<string, Record<number, string[]>> = 
 
 export const specialEditions: Record<string, string[]> = {
   '2010-CAMARO-SS 6.2': ['None', 'Synergy Green Edition', 'Transformers Edition', 'Indy Pace Car Edition'],
-  '2010-CAMARO-SS 1LE 6.2': ['None', 'Synergy Green Edition', 'Transformers Edition', 'Indy Pace Car Edition'],
   '2011-CAMARO-SS 6.2': ['None', 'Neiman Marcus Edition', 'Synergy Series'],
-  '2011-CAMARO-SS 1LE 6.2': ['None', 'Synergy Series'],
   '2012-CAMARO-SS 6.2': ['None', '45th Anniversary', 'Transformers Edition', 'Honor and Valor Edition'],
-  '2012-CAMARO-SS 1LE 6.2': ['None', '45th Anniversary'],
   '2012-CAMARO-ZL1 6.2 SC': ['None', '45th Anniversary'],
   '2013-CAMARO-SS 6.2': ['None', 'Dusk Edition', 'Hot Wheels Edition'],
   '2013-CAMARO-SS 1LE 6.2': ['None', 'Hot Wheels Edition'],
@@ -322,6 +323,9 @@ export const specialEditions: Record<string, string[]> = {
   // Corvette C6 (2005-2013) special editions.
   '2007-CORVETTE-Z06 7.0': ['None', 'Ron Fellows ALMS GT1 Edition'],
   '2008-CORVETTE-Z06 7.0': ['None', '427 Limited Edition'],
+  // GT1 Championship Edition (2009, 125 carros): 53 cupês e 17 conversíveis 4LT no Base e
+  // 55 Z06 3LZ — Velocity Yellow ou Black (corvsport, conceptcarz; conferido 14/set/2026).
+  '2009-CORVETTE-Base 6.2': ['None', 'GT1 Championship Edition'],
   '2009-CORVETTE-Z06 7.0': ['None', 'GT1 Championship Edition'],
   '2011-CORVETTE-Z06 7.0': ['None', 'Carbon Limited Edition'],
   '2012-CORVETTE-Base 6.2': ['None', 'Centennial Edition'],
@@ -462,10 +466,12 @@ Object.assign(specialEditions, {
   '2018-DEFENDER-110 V8 5.0': ['None', 'Works V8 70th'],
 })
 
-// ── BMW M5 E60 (S85 5.0 V10, 2006–2010 — sedan E60 + touring E61) ───────────────
+// ── BMW M5 E60 (S85 5.0 V10, 2006–2010 — sedã) ────────────────────────────────────
 // A carroceria saiu da versão em 14/set/2026 («prefiro o body separado»): o código do
-// chassi fica (E60 / E61 são carros diferentes), a palavra Sedan/Touring vai para
-// rides.body_style — ver a seção CARROCERIA.
+// chassi fica, a palavra Sedan vai para rides.body_style — ver a seção CARROCERIA.
+// O M5 Touring E61 (2007–2010, 1.025 feitos) SAIU do catálogo em 14/set/2026: nunca foi
+// vendido nos EUA (bmwblog, Jalopnik), de onde vêm os carros dos 2 apps, e nenhum ride o
+// usava. Se um aparecer, volta.
 const bmwM5E60Colors = ['Silverstone II', 'Interlagos Blue', 'Sepang Bronze', 'Indianapolis Red', 'Carbon Black', 'Jet Black', 'Alpine White', 'Titanium Silver', 'Space Grey', 'Monaco Blue', 'Mineral Silver', 'Stratus Grey']
 for (let y = 2006; y <= 2010; y++) {
   if (!years.includes(y)) years.push(y)
@@ -476,8 +482,7 @@ for (let y = 2006; y <= 2010; y++) {
   modelsByBrandAndYear['BMW'] = modelsByBrandAndYear['BMW'] || {}
   modelsByBrandAndYear['BMW'][y] = ['M5']
   versionsByModelAndYear['M5'] = versionsByModelAndYear['M5'] || {}
-  // E60 sedan from 2006; E61 touring added from 2007.
-  versionsByModelAndYear['M5'][y] = y >= 2007 ? ['E60 5.0 V10', 'E61 5.0 V10'] : ['E60 5.0 V10']
+  versionsByModelAndYear['M5'][y] = ['E60 5.0 V10']
 }
 years.sort((a, b) => a - b)
 
@@ -1532,7 +1537,7 @@ Object.assign(bodyStylesByEdition, {
 // vinha costurada na versão ou na edição especial e agora mora só aqui. Os rides que já
 // existiam com o nome antigo são reescritos por MIGRATION_body_style_precedentes.sql.
 //   Porsche 911 997.1   'Turbo Coupe/Cabriolet 3.6 H6' → 'Turbo 3.6 H6' + Coupe/Cabriolet
-//   BMW M5              'E60 Sedan' / 'E61 Touring' / 'F10 Sedan' → 'E60' / 'E61' / 'F10'
+//   BMW M5              'E60 Sedan' / 'F10 Sedan' → 'E60' / 'F10' (o E61 Touring saiu do catálogo)
 //   Mercedes-AMG S63    'V222 Sedan' / 'C217 Coupe' / 'A217 Cabriolet' → só o chassi
 //   Cadillac CTS-V      edições 'Coupe' / 'Wagon' ('None' era o sedã) → carroceria
 //   Mitsubishi Eclipse  edição 'Spyder' do GS-T → carroceria 'Spyder' (nome da Mitsubishi)
@@ -1541,10 +1546,7 @@ Object.assign(bodyStylesByEdition, {
 // para-lama e peça), ESV (Escalade-V — entre-eixos) e 90/110/130 (Defender — entre-eixos).
 bodyStyles['2007-911-Turbo 3.6 H6'] = ['Coupe']
 for (const y of [2008, 2009]) bodyStyles[`${y}-911-Turbo 3.6 H6`] = ['Coupe', 'Cabriolet']
-for (let y = 2006; y <= 2010; y++) {
-  bodyStyles[`${y}-M5-E60 5.0 V10`] = ['Sedan']
-  if (y >= 2007) bodyStyles[`${y}-M5-E61 5.0 V10`] = ['Touring']
-}
+for (let y = 2006; y <= 2010; y++) bodyStyles[`${y}-M5-E60 5.0 V10`] = ['Sedan']
 for (let y = 2011; y <= 2016; y++) bodyStyles[`${y}-M5-F10 4.4 TT V8`] = ['Sedan']
 for (const [y, versions] of Object.entries(versionsByModelAndYear['S63 AMG'])) {
   for (const v of versions) {
@@ -1789,15 +1791,11 @@ const colorsByConfiguration: Record<string, string[]> = {
   '2023-1500-TRX 6.2 SC-Lunar Edition': ['Ceramic Grey'],
   '2024-1500-TRX 6.2 SC-Final Edition': ['Delmonico Red Pearl', 'Night Edge Blue', 'Harvest Sunrise'],
   '2010-CAMARO-SS 6.2-Synergy Green Edition': ['Synergy Green'],
-  '2010-CAMARO-SS 1LE 6.2-Synergy Green Edition': ['Synergy Green'],
   '2010-CAMARO-SS 6.2-Transformers Edition': ['Rally Yellow'],
-  '2010-CAMARO-SS 1LE 6.2-Transformers Edition': ['Rally Yellow'],
   '2010-CAMARO-SS 6.2-Indy Pace Car Edition': ['Silver Ice', 'Inferno Orange'],
   '2011-CAMARO-SS 6.2-Neiman Marcus Edition': ['Deep Bordeaux'],
   '2011-CAMARO-SS 6.2-Synergy Series': ['Summit White', 'Black', 'Victory Red'],
-  '2011-CAMARO-SS 1LE 6.2-Synergy Series': ['Summit White', 'Black', 'Victory Red'],
   '2012-CAMARO-SS 6.2-45th Anniversary': ['Carbon Flash'],
-  '2012-CAMARO-SS 1LE 6.2-45th Anniversary': ['Carbon Flash'],
   '2012-CAMARO-ZL1 6.2 SC-45th Anniversary': ['Carbon Flash'],
   '2012-CAMARO-SS 6.2-Transformers Edition': ['Rally Yellow'],
   '2012-CAMARO-SS 6.2-Honor and Valor Edition': ['Summit White', 'Black'],
@@ -1837,6 +1835,7 @@ const colorsByConfiguration: Record<string, string[]> = {
   // Corvette C6 special-edition forced colors.
   '2007-CORVETTE-Z06 7.0-Ron Fellows ALMS GT1 Edition': ['Arctic White'],
   '2008-CORVETTE-Z06 7.0-427 Limited Edition': ['Crystal Red', 'Arctic White', 'Black'],
+  '2009-CORVETTE-Base 6.2-GT1 Championship Edition': ['Velocity Yellow', 'Black'],
   '2009-CORVETTE-Z06 7.0-GT1 Championship Edition': ['Velocity Yellow', 'Black'],
   '2011-CORVETTE-Z06 7.0-Carbon Limited Edition': ['Supersonic Blue', 'Inferno Orange'],
   '2012-CORVETTE-Base 6.2-Centennial Edition': ['Carbon Flash'],
