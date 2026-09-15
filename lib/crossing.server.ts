@@ -125,6 +125,10 @@ const ESTORNADA_US = 'linha do US cancelada/estornada (cancel_status, lib/estorn
 // até 3 dias de distância) TRAVA a chave com o motivo. Quem decide é o dono — e a resposta vira UMA linha aqui: id da linha em
 // `expenses` do BR → o motivo de criar mesmo assim (o balde será resolvido no Bank Link).
 export const BALDE_CONFERIDO: Readonly<Record<string, string>> = {
+  // Márcio, 14/09/2026 ~20:35 Orlando: «Pode, ajeita» — a 006.N nasce e a compra sai do balde (Booksy 911e6032 vira a linha da 006.N do Rafa;
+  // «The Tun» d99a9dd6 US$ 2.555,84 sai e a linha da Regions casa misto: 006.N do Heraldo 1.500 + folha do Heraldo no US 3d614abf 1.055,84).
+  'bc520103-c30c-4bc8-a90b-ea2a15badd16': 'Rafa · Booksy US$ 68 — o balde 911e6032 sai e a linha da Regions casa com a 006.N (14/09)',
+  'c9505f63-26a3-444e-8a53-96a9a3512b42': 'Heraldo · The Tuning School US$ 1.500 — o balde d99a9dd6 (2.555,84) sai e a Regions casa misto com a folha do US (14/09)',
 }
 
 // ── pequenas réguas ─────────────────────────────────────────────────────────
