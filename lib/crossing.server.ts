@@ -14,6 +14,9 @@
 //        invoice_expenses → a 085.N da invoice · staff_expenses → uma 085.N por SEASON ·
 //        assets / assets_expenses → uma 085.N por MÊS · sem markup
 //   4. renda do US PAID TO GZ28BR ............. a MESMA 085.N daquela invoice do US, sem markup
+//   1'. folha do BR (tabela `expenses`) PAID FROM GZ28US → US 006.N, UMA POR SEASON DO BR (mirror_key
+//        'BR:season:<id>'), SEM os 10% (Márcio, 14/set/2026 ~19:58): despesa = item = expenses.amount_usd, o US$ que a
+//        Regions pagou — nunca derivado do R$. O espelho da folha do US que a direção 3 já faz (US season → 085.N).
 //
 // DECISÕES DO DONO QUE ESTE ARQUIVO OBEDECE (14/set/2026):
 //   · uma shopping invoice por DOCUMENTO DE ORIGEM, com as duas pernas juntas;
@@ -114,6 +117,16 @@ const TAXAS_SEM_DATA = new Set(['be59504a-de77-4347-9e23-fb1cae7d59de', 'e50b30c
 // O motor não tem arquivo de versão: a mudança mora neste comentário e no APP_CHANGELOG (lib/appVersion.ts, 14/set).
 const ESTORNADA_US = 'linha do US cancelada/estornada (cancel_status, lib/estorno.ts) — dinheiro que voltou não atravessa'
 
+// A MESMA COMPRA NO BALDE «A ATRIBUIR» (14/set/2026, folha do BR → 006.N). A Regions que pagou a linha da folha do BR já
+// entrou no US pelo Bank Link, e quase sempre cai no balde (invoice origin BUCKET) ligada ao extrato — medido em 14/09: Booksy
+// US$ 68,00 (911e6032) e «The Tun» US$ 2.555,84 (d99a9dd6, que junta os US$ 1.500 do BR e os US$ 1.055,84 da season US.001 do
+// Heraldo). Criar a linha na 006.N com a do balde de pé conta o mesmo dinheiro duas vezes no US (o balde entra no DRE e no
+// DFC). Então a linha do BR que acha compra parecida no balde (mesmo valor, ou valor maior de fornecedor com o mesmo nome,
+// até 3 dias de distância) TRAVA a chave com o motivo. Quem decide é o dono — e a resposta vira UMA linha aqui: id da linha em
+// `expenses` do BR → o motivo de criar mesmo assim (o balde será resolvido no Bank Link).
+export const BALDE_CONFERIDO: Readonly<Record<string, string>> = {
+}
+
 // ── pequenas réguas ─────────────────────────────────────────────────────────
 const num = (v: unknown) => parseFloat(String(v ?? '')) || 0
 const r2 = (n: number) => Math.round((n + (n >= 0 ? 1e-9 : -1e-9)) * 100) / 100
@@ -181,7 +194,8 @@ export function bancosDoServidor(): Bancos | { erro: string } {
 // nenhuma escrita sai, porque duas rodadas da mesma chave se entrelaçariam.
 const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
   US: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_items', 'mirror_src'], ['invoice_incomes', 'mirror_src'], ['invoice_incomes', 'br_payment_id'], ['crossing_locks', 'mirror_key']],
-  BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct']],
+  // expenses.amount_usd (14/set/2026): o US$ gravado da folha do BR paga pelo GZ28US — sem ela a folha do BR não atravessa.
+  BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct'], ['expenses', 'amount_usd']],
 }
 
 export type Foto = {
@@ -189,7 +203,8 @@ export type Foto = {
   faltando: { US: string[]; BR: string[] }
   // estornadas: as linhas com cancel_status que NÃO contam dinheiro (lib/estorno.ts) — os PRÓPRIOS objetos das listas acima.
   us: { invoices: Row[]; rides: Row[]; despesas: Row[]; itens: Row[]; rendas: Row[]; servicos: Row[]; assets: Row[]; assetsExp: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; semOpcao: { tabela: string; linha: Row }[]; ponteirosBanco: Set<string>; estornadas: Set<Row> }
-  br: { clientes: Row[]; invoices: Row[]; rides: Row[]; despesas: Row[]; partes: Row[]; pagamentos: Row[]; servicos: Row[]; estornadas: Set<Row> }
+  // staffExp / seasons / staff: a folha do BR (tabela `expenses`, sem cancel_status — não entra no estorno).
+  br: { clientes: Row[]; invoices: Row[]; rides: Row[]; despesas: Row[]; partes: Row[]; pagamentos: Row[]; servicos: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; estornadas: Set<Row> }
 }
 
 async function temColuna(db: SupabaseClient, tabela: string, coluna: string): Promise<boolean> {
@@ -229,7 +244,7 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
   const GZBR = 'paid_from.ilike.gz28br,source.ilike.gz28br,paid_to.ilike.gz28br'
   const [
     uInv, uRides, uExp, uItens, uRendas, uServ, uAssets, uAssetsExp, uStaffExp, uSeasons, uStaff, uInputs, uInventory, uFixed, uBanco,
-    bCli, bInv, bRides, bExp, bPartes, bPag, bServ,
+    bCli, bInv, bRides, bExp, bPartes, bPag, bServ, bStaffExp, bSeasons, bStaff,
   ] = await Promise.all([
     lerTudo(b.us, 'US', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, br_invoice_id, service, florida_taxes, import_margin, global_discount, origin, live_status, hiring_date, created_at' + x('US.invoices')),
     lerTudo(b.us, 'US', 'rides', 'id, project_code, project_name'),
@@ -254,6 +269,9 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     lerTudo(b.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, unit_price_usd, position, payment_date' + x('BR.invoice_parts')),
     lerTudo(b.br, 'BR', 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, paid_to, paid_from, description, source' + x('BR.invoice_payments')),
     lerTudo(b.br, 'BR', 'invoice_services', 'id, invoice_id, price'),
+    lerTudo(b.br, 'BR', 'expenses', 'id, season_id, staff_id, type, amount, expense_date, payment_date, paid, description, supplier, source, origin, paid_from, paid_to, order_number' + x('BR.expenses')),
+    lerTudo(b.br, 'BR', 'seasons', 'id, season_code, staff_id, date_entry'),
+    lerTudo(b.br, 'BR', 'staff', 'id, name, staff_code'),
   ])
   const ponteirosBanco = new Set<string>()
   for (const t of uBanco) {
@@ -276,7 +294,7 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
       staffExp: uStaffExp, seasons: uSeasons, staff: uStaff, ponteirosBanco, estornadas: estornadasUS,
       semOpcao: [...uInputs.map(l => ({ tabela: 'inputs', linha: l })), ...uInventory.map(l => ({ tabela: 'inventory', linha: l })), ...uFixed.map(l => ({ tabela: 'fixed_cost_expenses', linha: l }))],
     },
-    br: { clientes: bCli, invoices: bInv, rides: bRides, despesas: bExp, partes: bPartes, pagamentos: bPag, servicos: bServ, estornadas: estornadasBR },
+    br: { clientes: bCli, invoices: bInv, rides: bRides, despesas: bExp, partes: bPartes, pagamentos: bPag, servicos: bServ, staffExp: bStaffExp, seasons: bSeasons, staff: bStaff, estornadas: estornadasBR },
   }
 }
 
@@ -432,6 +450,7 @@ const COLS = {
   assets_expenses: ['amount', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
   staff_expenses: ['season_id', 'amount', 'amount_brl', 'payment_date', 'expense_date', 'origin', 'paid_from', 'paid_to', 'source', 'cancel_status'],
   espelho: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'mirror_src', 'cancel_status'],
+  brStaff: ['season_id', 'amount', 'amount_usd', 'payment_date', 'expense_date', 'paid_from', 'paid_to', 'source', 'origin'],
 } as const
 const colsFonte3 = (tabela: string): string[] => [...(tabela === 'invoice_expenses' ? COLS.usDespesa : tabela === 'assets' ? COLS.assets : tabela === 'assets_expenses' ? COLS.assets_expenses : COLS.staff_expenses)]
 
@@ -985,6 +1004,217 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
   return chaves
 }
 
+// ── DIREÇÃO 1, A FOLHA DO BR → US 006.N POR SEASON (14/set/2026) ───────────────
+// A tabela `expenses` do BR (a folha: season_id, staff_id, amount em R$) com PAID FROM GZ28US — ou SOURCE legado GZ28US/REGIONS —
+// é o GZ28US pagando conta de gente do BR. Vira UMA 006.N por season do BR (mirror_key 'BR:season:<id>'), o espelho do que a
+// direção 3 faz com a season do US → 085.N. Decisão do Márcio (14/09 ~19:58): SEM os 10% — custo exato.
+//   · o US$ é expenses.amount_usd, o que a Regions pagou. Sem ele a chave TRAVA («sem US$ gravado»): nunca derivado do R$ pela
+//     regra do câmbio;
+//   · linha no US: despesa = item = amount_usd (qtd 1), mirror_src 'BR:expenses:<id>'. br_expense_id NÃO é usado: ele aponta para
+//     invoice_expenses do BR, e a folha é outra tabela — o mirror_src basta;
+//   · só atravessa o que é pagamento: payment_date (no app do BR `paid` = !!payment_date; a mensalidade nasce agendada sem ela);
+//   · casamento com o que já existe na 006.N: mirror_src → valor exato (sem markup) com o texto do fornecedor desempatando;
+//     sobra dos dois lados trava, como na direção 1; estornada no US (lib/estorno.ts) sai da conta e trava se ainda tem origem viva;
+//   · a mesma compra no balde «A ATRIBUIR» trava (ver BALDE_CONFERIDO);
+//   · o Pending balance segue planejarPendente; não há ponteiro de volta (a season do BR não tem us_invoice_id).
+// `origin` PERSONAL NÃO trava aqui (a direção 3 pergunta): o dono mandou atravessar a linha do Rafa (Booksy, origin PERSONAL) — vira aviso.
+const rotuloStaffBR = (s: Row, nome: string) => `${nome} · ${s.type || ''}${s.description ? ` — ${s.description}` : ''}`
+
+function planejarStaffBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
+  const uInv = new Map(foto.us.invoices.map(i => [i.id, i]))
+  const us006 = foto.us.invoices.filter(i => i.client_id === US_CLIENTE_GZ28BR)
+  const seasons = new Map(foto.br.seasons.map(s => [s.id, s]))
+  const staff = new Map(foto.br.staff.map(s => [s.id, s]))
+  const usdStaff = (s: Row): number | null => s.amount_usd == null || String(s.amount_usd) === '' ? null : r2(num(s.amount_usd))
+  const elosUS = mapaDeElos({ invoice_expenses: foto.us.despesas, invoice_items: foto.us.itens, invoice_incomes: foto.us.rendas })
+  const codigoUS = (id: string) => uInv.get(id)?.invoice_code || '?'
+  const balde = foto.us.despesas.filter(e => uInv.get(e.invoice_id)?.origin === 'BUCKET' && !foto.us.estornadas.has(e))
+  const nomeDe = (s: Row) => { const se = s.season_id ? seasons.get(s.season_id) : null; return staff.get(se?.staff_id || s.staff_id)?.name || '?' }
+
+  const grupos = new Map<string, { seasonId: string; fontes: Row[] }>()
+  for (const s of foto.br.staffExp) {
+    if (quemPagou(s) !== 'GZ28US') continue
+    const se = s.season_id ? seasons.get(s.season_id) : null
+    const nome = nomeDe(s)
+    const base = { direcao: 1 as Direcao, banco: 'BR' as Banco, tabela: 'expenses', id: s.id, documento: se ? `SEASON ${se.season_code} ${nome}` : `STAFF ${nome}`, rotulo: rotuloStaffBR(s, nome).slice(0, 80), usd: usdStaff(s), brl: r2(num(s.amount)) }
+    if (!se) { excluidos.push({ ...base, motivo: s.season_id ? 'a season desta linha da folha não existe mais no BR — pergunta' : 'linha da folha do BR sem season — a shopping invoice é uma por season; pergunta' }); continue }
+    if (!ymd(s.payment_date)) { excluidos.push({ ...base, motivo: 'sem payment_date — ainda não é pagamento' }); continue }
+    const key = `BR:season:${se.id}`
+    let g = grupos.get(key); if (!g) { g = { seasonId: se.id, fontes: [] }; grupos.set(key, g) }
+    g.fontes.push(s)
+  }
+  // Espelho que já existe no US sem fonte hoje também entra, para aparecer (nunca sumir calado).
+  for (const i of us006) { const src = parseSrc(i.mirror_key); if (src?.banco === 'BR' && src.tabela === 'season' && !grupos.has(i.mirror_key)) grupos.set(i.mirror_key, { seasonId: src.id, fontes: [] }) }
+
+  const chaves: ChavePlano[] = []
+  for (const [key, g] of grupos) {
+    const se = seasons.get(g.seasonId)
+    const nome = staff.get(se?.staff_id)?.name || '?'
+    const codigo = se?.season_code || '?'
+    const textoService = `GZ28BR Season ${codigo} — ${nome}`
+    const m = new Montador(key, 'US', { banco: 'BR', tipo: 'season', id: g.seasonId, codigo, rotulo: `SEASON ${codigo} — ${nome}` })
+    if (g.fontes.length) m.dir(1)
+    if (!se) { m.conflito('a 006.N tem mirror_key de uma season do BR que não existe mais — espelho órfão, decisão humana'); chaves.push(m.fechar()); continue }
+    const segura = chaveSegura(key)
+    if (segura) m.conflito(`SEGURA — ${segura}`)
+    for (const s of g.fontes) { m.data(ymd(s.payment_date)); if (String(s.origin || '').toUpperCase() === 'PERSONAL') m.aviso(`${String(s.supplier || s.description || 'linha').slice(0, 40)}: origin PERSONAL no BR — atravessa por ordem do dono (14/09)`) }
+
+    // ── a 006.N-alvo: mirror_key → texto do SERVICE ──
+    const porKey = us006.filter(i => i.mirror_key === key)
+    const porTexto = us006.filter(i => String(i.service || '').startsWith(textoService))
+    const candidatos = new Map<string, Row>()
+    for (const i of [...porKey, ...porTexto]) candidatos.set(i.id, i)
+    const cands = [...candidatos.values()]
+    let alvo: Row | null = null
+    if (porKey.length > 1) m.conflito(`${porKey.length} invoices do US com a mesma mirror_key`)
+    if (cands.length > 1) m.conflito(`mais de uma 006.N para a mesma season do BR: ${cands.map(i => i.invoice_code).join(' + ')}`)
+    else if (cands.length === 1) {
+      alvo = cands[0]
+      if (alvo.is_quote) m.conflito(`a ${alvo.invoice_code} do US é QUOTE`)
+      if (alvo.mirror_key && alvo.mirror_key !== key) m.conflito(`a ${alvo.invoice_code} já é espelho de outra origem (${alvo.mirror_key})`)
+      m.c.alvo = { id: alvo.id, codigo: alvo.invoice_code, como: porKey.length ? 'mirror_key' : 'texto' }
+      if (String(alvo.live_status || '') === 'CLOSED') m.aviso(`${alvo.invoice_code} está CLOSED no US — linha nova entra numa invoice fechada`)
+    } else m.c.alvo = { id: null, codigo: null, como: 'criar' }
+    const invAlvo = cands.map(i => i.id)
+
+    // ── as linhas ──
+    const Etodas = foto.us.despesas.filter(e => invAlvo.includes(e.invoice_id))
+    const Itodos = foto.us.itens.filter(i => invAlvo.includes(i.invoice_id))
+    const E = Etodas.filter(e => !foto.us.estornadas.has(e)), I = Itodos.filter(i => !foto.us.estornadas.has(i))
+    const R = foto.us.rendas.filter(p => invAlvo.includes(p.invoice_id))
+    const srcDe = (s: Row) => `BR:expenses:${s.id}`
+    const idDoSrc = (l: Row): string | null => { const p = parseSrc(l.mirror_src); return p?.banco === 'BR' && p.tabela === 'expenses' ? p.id : null }
+    const vivos = new Set(g.fontes.map(s => s.id))
+    const fonteEstornada = new Set<string>()
+    for (const l of [...Etodas, ...Itodos].filter(x => foto.us.estornadas.has(x))) {
+      const id = idDoSrc(l)
+      if (!id || !vivos.has(id) || fonteEstornada.has(id)) continue
+      fonteEstornada.add(id)
+      m.conflito(`o espelho no US de ${String(l.item || l.description || '').slice(0, 40)} está estornado (cancel_status ${String(l.cancel_status).toUpperCase()}), mas a linha da folha do BR ainda é PAID FROM GZ28US — tire o pagador no BR ou desfaça o estorno no US (nada gravado nesta chave)`)
+    }
+    const txtFonte = (s: Row) => chaveTexto(s.supplier || s.description), txtUS = (l: Row) => chaveTexto(l.supplier || l.item || l.description)
+    const pares: { s: Row; e: Row; como: Par['como'] }[] = []
+    let SS = g.fontes.filter(s => !fonteEstornada.has(s.id)), EE = [...E]
+    for (const e of E) {
+      if (!e.mirror_src && !e.br_expense_id) continue
+      const id = idDoSrc(e)
+      const s = id ? SS.find(x => x.id === id) : null
+      if (s) { pares.push({ s, e, como: 'mirror_src' }); SS = SS.filter(x => x !== s); EE = EE.filter(x => x !== e); continue }
+      EE = EE.filter(x => x !== e)
+      if (id && fonteEstornada.has(id)) continue
+      m.c.sem_par.push({ direcao: 1, lado: 'alvo', tabela: 'invoice_expenses', id: e.id, usd: r2(custoUS(e)), rotulo: limpa(e.item).slice(0, 80), motivo: id ? 'o elo aponta para linha da folha do BR que não é fonte desta season' : `o elo aponta para outra origem (${e.mirror_src || `br_expense_id ${String(e.br_expense_id).slice(0, 8)}`})` })
+      m.conflito(`despesa ${limpa(e.item).slice(0, 40)} (${codigoUS(e.invoice_id)}) tem elo para linha fora desta season do BR`)
+    }
+    const cv = casar(SS, EE, (s, e) => perto(usdStaff(s), custoUS(e)), txtFonte, txtUS)
+    cv.pares.forEach(p => pares.push({ s: p.s, e: p.t, como: 'valor' }))
+    const sobraS = cv.restoS, sobraE = cv.restoT
+
+    let II = [...I]
+    const itemDe = new Map<string, Row>()
+    for (const i of I) {
+      const id = idDoSrc(i)
+      if (id && g.fontes.some(s => s.id === id)) { itemDe.set(id, i); II = II.filter(x => x !== i) }
+      else if (i.mirror_src) { II = II.filter(x => x !== i); if (!(id && fonteEstornada.has(id))) m.conflito(`item ${limpa(i.description).slice(0, 40)} da ${codigoUS(i.invoice_id)} tem elo para outra origem (${i.mirror_src})`) }
+    }
+    const ci = casar(pares.filter(p => !itemDe.has(p.s.id)), II, (p, i) => perto(linhaItem(i), usdStaff(p.s)), p => txtFonte(p.s), txtUS)
+    ci.pares.forEach(x => itemDe.set(x.s.s.id, x.t))
+    const ci2 = casar(sobraS, ci.restoT, (s, i) => perto(linhaItem(i), usdStaff(s)), txtFonte, txtUS)
+    ci2.pares.forEach(x => itemDe.set(x.s.id, x.t))
+    const sobraI = ci2.restoT
+
+    const faltaItem: { s: Row; e: Row; usd: number }[] = []
+    for (const p of pares) {
+      const C = custoUS(p.e), usd = usdStaff(p.s), it = itemDe.get(p.s.id)
+      const ok = perto(usd, C)
+      m.c.pares.push({ direcao: 1, fonte_tabela: 'expenses', fonte_id: p.s.id, alvo_tabela: 'invoice_expenses', alvo_id: p.e.id, alvo_invoice: codigoUS(p.e.invoice_id), como: p.como, classe: ok ? 'ok' : 'divergente', usd_fonte: usd, usd_alvo: r2(C), rotulo: String(p.s.supplier || p.s.description || '').slice(0, 80) })
+      if (!ok) m.conflito(`valor divergente: ${String(p.s.supplier || p.s.description || '').slice(0, 40)} — BR US$ ${usd == null ? 'sem amount_usd' : usd} × US custo ${r2(C)} (sem markup)`)
+      if (!it) {
+        if (p.como === 'mirror_src' && ok && usd != null) faltaItem.push({ s: p.s, e: p.e, usd })
+        else m.conflito(`a despesa ${limpa(p.e.item).slice(0, 40)} não tem item correspondente na ${codigoUS(p.e.invoice_id)}`)
+      } else if (!perto(linhaItem(it), usd)) m.conflito(`item divergente: ${limpa(it.description).slice(0, 40)} US$ ${r2(linhaItem(it))} × BR US$ ${usd == null ? '?' : usd}`)
+      if (!p.e.mirror_src) m.op({ tipo: 'vincular_linha', banco: 'US', tabela: 'invoice_expenses', id: p.e.id, mirror_src: srcDe(p.s), elo: null, direcao: 1, rotulo: `despesa ${limpa(p.e.item).slice(0, 50)} ⇄ folha BR ${p.s.id.slice(0, 8)} (${p.como})` })
+      if (it && !it.mirror_src) m.op({ tipo: 'vincular_linha', banco: 'US', tabela: 'invoice_items', id: it.id, mirror_src: srcDe(p.s), elo: null, direcao: 1, rotulo: `item ${limpa(it.description).slice(0, 50)}` })
+    }
+    for (const e of sobraE) {
+      m.c.sem_par.push({ direcao: 1, lado: 'alvo', tabela: 'invoice_expenses', id: e.id, usd: r2(custoUS(e)), rotulo: limpa(e.item).slice(0, 80), motivo: cv.ambiguas.length ? 'mais de um candidato na folha do BR com o mesmo valor' : 'nenhuma linha da folha do BR com este US$' })
+      m.conflito(`despesa sem origem na folha do BR: ${limpa(e.item).slice(0, 40)} US$ ${r2(custoUS(e))} (${codigoUS(e.invoice_id)})`)
+    }
+    for (const i of sobraI) m.conflito(`item sem origem na folha do BR: ${limpa(i.description).slice(0, 40)} US$ ${r2(linhaItem(i))}`)
+    const estSemElo = [...Etodas, ...Itodos].filter(l => foto.us.estornadas.has(l) && !l.mirror_src)
+    if (sobraS.length && estSemElo.length) m.conflito(`${estSemElo.length} linha(s) ESTORNADA(S) sem elo na ${cands.map(i => i.invoice_code).join(' + ') || '006.N'} e ${sobraS.length} linha(s) da folha do BR sem par — confira se não é a mesma compra antes de o motor criar`)
+    for (const s of sobraS) if (E.length) m.c.sem_par.push({ direcao: 1, lado: 'fonte', tabela: 'expenses', id: s.id, usd: usdStaff(s), rotulo: String(s.supplier || s.description || '').slice(0, 80), motivo: cv.ambiguas.includes(s) ? 'mais de um candidato no US com o mesmo valor' : 'não está na 006.N — linha a criar' })
+    if (sobraS.length && sobraE.length) m.conflito(`${sobraS.length} linha(s) da folha do BR e ${sobraE.length} do US sem par na mesma invoice — criar duplicaria a mesma compra`)
+
+    // ── o que falta ──
+    let pos = maxPos(Etodas), posItem = maxPos(Itodos), latest: string | null = null
+    const novosItens: Row[] = []
+    for (const x of faltaItem) {
+      const dia = ymd(x.s.payment_date) || ymd(x.e.payment_date)
+      const item = { invoice_id: ALVO, description: limpa(x.e.item), unit_price: x.usd, base_cost: x.usd, quantity: 1, payment_date: dia, position: ++posItem, mirror_src: srcDe(x.s) }
+      novosItens.push(item)
+      m.op({ tipo: 'criar_linha', banco: 'US', tabela: 'invoice_items', mirror_src: srcDe(x.s), direcao: 1, papel: 'item', usd: x.usd, brl: null, rotulo: `item ${limpa(x.e.item).slice(0, 50)} (a rodada anterior parou antes dele)`, campos: item,
+        confere: [confere('BR', 'expenses', x.s, [...COLS.brStaff]), confere('US', 'invoice_expenses', x.e, [...COLS.espelho])] })
+    }
+    for (const s of [...sobraS].sort((a, b) => String(a.payment_date).localeCompare(String(b.payment_date)))) {
+      const usd = usdStaff(s), dia = ymd(s.payment_date) as string
+      const rot = rotuloStaffBR(s, nome)
+      if (usd == null) { m.conflito(`linha da folha do BR sem US$ gravado (expenses.amount_usd): ${String(s.supplier || s.description || '').slice(0, 40)} R$ ${r2(num(s.amount))} — o US$ é o que a Regions pagou; nunca derivado do R$`); continue }
+      if (!(usd > 0)) { m.conflito(`linha da folha do BR com US$ gravado ${usd}: ${String(s.supplier || s.description || '').slice(0, 40)} — valor a confirmar`); continue }
+      if (!BALDE_CONFERIDO[s.id]) {
+        const fornecedor = txtFonte(s)
+        const noBalde = balde.filter(b => {
+          const d = ymd(b.payment_date) || ymd(b.expense_date)
+          if (!d || Math.abs(new Date(d + 'T12:00:00Z').getTime() - new Date(dia + 'T12:00:00Z').getTime()) > 3 * 86_400_000) return false
+          const tb = chaveTexto(b.supplier || b.item), mesmoNome = fornecedor.length >= 5 && tb.length >= 5 && (fornecedor.startsWith(tb) || tb.startsWith(fornecedor))
+          return perto(custoUS(b), usd) || (mesmoNome && custoUS(b) > usd + TOL)
+        })
+        if (noBalde.length) {
+          // Sem `continue`: as ops continuam planejadas só para a manchete mostrar o dinheiro parado — o conflito zera a chave no fechar().
+          m.conflito(`a compra ${String(s.supplier || s.description || '').slice(0, 30)} US$ ${usd} (${dia}) parece já estar no balde A ATRIBUIR do US: ${noBalde.map(b => `${limpa(b.item).slice(0, 30)} US$ ${r2(custoUS(b))} em ${ymd(b.payment_date) || ymd(b.expense_date)} (${String(b.id).slice(0, 8)}${foto.us.ponteirosBanco.has(`invoice_expenses:${b.id}`) ? ', ligada ao extrato' : ''})`).join(' · ')} — criar na 006.N contaria o mesmo dinheiro duas vezes no US; o dono decide (BALDE_CONFERIDO)`)
+        }
+      } else m.aviso(`balde conferido pelo dono: ${BALDE_CONFERIDO[s.id]}`)
+      if (!latest || dia > latest) latest = dia
+      const src = srcDe(s)
+      const conf = [confere('BR', 'expenses', s, [...COLS.brStaff])]
+      m.op({ tipo: 'criar_linha', banco: 'US', tabela: 'invoice_expenses', mirror_src: src, direcao: 1, papel: 'despesa', usd, brl: r2(num(s.amount)), rotulo: `despesa ${rot.slice(0, 60)}`, confere: conf, campos: {
+        invoice_id: ALVO, item: rot, supplier: s.supplier || nome, order_number: String(s.order_number || '').trim() || null,
+        price: usd, quantity: 1, tax: 0, extra: 0, payment_date: dia, expense_date: dia, source: 'GZ28US', paid_from: 'GZ28US', paid_to: 'GZ28US', item_discount: 0,
+        position: ++pos, mirror_src: src,
+      } })
+      const item = { invoice_id: ALVO, description: rot, unit_price: usd, base_cost: usd, quantity: 1, payment_date: dia, position: ++posItem, mirror_src: src }
+      novosItens.push(item)
+      m.op({ tipo: 'criar_linha', banco: 'US', tabela: 'invoice_items', mirror_src: src, direcao: 1, papel: 'item', usd, brl: null, rotulo: `item ${rot.slice(0, 60)}`, campos: item, confere: conf })
+    }
+
+    // ── o Pending balance: grand total − o que já entrou ──
+    if (!alvo && !m.c.ops.length) { conferirElos(m, elosUS, codigoUS); chaves.push(m.fechar()); continue }
+    const itensDepois = [...(alvo ? I.filter(i => i.invoice_id === alvo!.id) : []), ...novosItens]
+    const servicos = alvo ? foto.us.servicos.filter(s => s.invoice_id === alvo!.id) : []
+    const grand = grandTotal(itensDepois, servicos, alvo || { florida_taxes: 0, global_discount: null }, linhaItem)
+    const recebido = (alvo ? R.filter(p => p.invoice_id === alvo!.id && p.paid_at) : []).reduce((s, p) => s + num(p.amount), 0)
+    planejarPendente(m, {
+      banco: 'US', tabela: 'invoice_incomes', key, moeda: 'US$', tol: TOL, elo: 'br_payment_id',
+      rendasAlvo: alvo ? R.filter(p => p.invoice_id === alvo!.id) : [], grand, recebido, novas: 0,
+      ligadoAoBanco: id => foto.us.ponteirosBanco.has(`invoice_incomes:${id}`) || foto.us.ponteirosBanco.has(`invoice_payments:${id}`),
+      camposNovo: valor => ({ invoice_id: ALVO, amount: valor, paid_at: null, payment_date: addDias(latest || hojeEm('America/New_York'), 30), source: null, description: 'Pending balance', paid_to: 'GZ28US', mirror_src: `pendente:${key}` }),
+    })
+
+    // ── a invoice: adotar (gravar a mirror_key) ou criar a próxima 006.N ──
+    const temEscrita = m.c.ops.length > 0
+    if (alvo && alvo.mirror_key !== key && temEscrita) m.op({ tipo: 'vincular_invoice', banco: 'US', id: alvo.id, codigo: alvo.invoice_code, como: 'texto', rotulo: `adota ${alvo.invoice_code}` })
+    if (!alvo && temEscrita) {
+      m.op({ tipo: 'criar_invoice', banco: 'US', serie: '006', codigo_previsto: '', rotulo: `nova 006.N para ${textoService}`, campos: {
+        client_id: US_CLIENTE_GZ28BR, ride_id: null, is_quote: false, live_status: 'REALTIME', feed_status: 'REAL_TIME', global_discount: null,
+        service: textoService, florida_taxes: 0, import_margin: 0,
+        hiring_date: ymd(se.date_entry), client_hiring_date: ymd(se.date_entry), mirror_key: key,
+      } })
+    }
+    conferirElos(m, elosUS, codigoUS)
+    chaves.push(m.fechar())
+  }
+  return chaves
+}
+
 // ── DIREÇÕES 3 + 4 → BR 085.N ───────────────────────────────────────────────
 type Fonte3 = { tabela: 'invoice_expenses' | 'assets' | 'assets_expenses' | 'staff_expenses'; linha: Row; usd: number; brl: number | null; q: number; unitUsd: number; taxUsd: number; extraUsd: number; dia: string; item: string; supplier: string | null; order: string | null; part: string | null }
 
@@ -1414,7 +1644,7 @@ export function datasDaFoto(foto: Foto): string[] {
 
 export function montarPlano(foto: Foto, cot: Cotacoes): Plano {
   const excluidos: Excluido[] = [], correcoes: CorrecaoB[] = []
-  const chaves = [...planejarUS(foto, cot, excluidos, correcoes), ...planejarBR(foto, cot, excluidos)]
+  const chaves = [...planejarUS(foto, cot, excluidos, correcoes), ...planejarStaffBR(foto, excluidos), ...planejarBR(foto, cot, excluidos)]
   numerar(chaves, foto)
   for (const c of chaves) c.impressao = impressao(c)
   chaves.sort((a, b) => a.banco_alvo.localeCompare(b.banco_alvo) || String(a.alvo.codigo || 'zzz').localeCompare(String(b.alvo.codigo || 'zzz'), 'en', { numeric: true }) || a.mirror_key.localeCompare(b.mirror_key))
@@ -1540,6 +1770,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  *   invoice comum do US → 'US:invoice:<id>' (direções 3 + 4) · 006.N → a origem no BR (mirror_key, ou a
  *   invoice do BR que aponta para ela) · invoice comum do BR → 'BR:invoice:<id>' (direções 1 + 2) ·
  *   085.N → a origem no US. Sem origem gravada, `key` volta null com o motivo: o cron cuida.
+ *   SEASON DO BR (14/set/2026): no banco do BR, id que não é invoice mas é season → 'BR:season:<id>' (a folha do BR →
+ *   006.N). A tela da folha do BR ainda não chama o motor; até chamar, o cron cobre — a 006.N dela cai no caso da mirror_key.
  */
 export async function chaveDaInvoice(b: Bancos, banco: Banco, invoiceId: string): Promise<{ key: string | null; motivo: string | null }> {
   if (!UUID.test(invoiceId)) throw new ErroTravessia('bad-request', `id de invoice inválido: ${invoiceId.slice(0, 40)}`)
@@ -1548,6 +1780,11 @@ export async function chaveDaInvoice(b: Bancos, banco: Banco, invoiceId: string)
   const clienteEspelho = banco === 'US' ? US_CLIENTE_GZ28BR : BR_CLIENTE_GZ28US
   const { data: inv, error } = await casa.from('invoices').select('id, client_id, mirror_key').eq('id', invoiceId).maybeSingle()
   if (error) throw new ErroTravessia('db', `ler a invoice ${invoiceId} no ${banco}: ${error.message}`)
+  if (!inv && banco === 'BR') {
+    const { data: se, error: eSe } = await casa.from('seasons').select('id').eq('id', invoiceId).maybeSingle()
+    if (eSe) throw new ErroTravessia('db', `ler a season ${invoiceId} no BR: ${eSe.message}`)
+    if (se) return { key: `BR:season:${se.id}`, motivo: null }
+  }
   if (!inv) return { key: null, motivo: `a invoice não existe no banco do ${banco}` }
   if (inv.client_id !== clienteEspelho) return { key: `${banco}:invoice:${inv.id}`, motivo: null }
   if (inv.mirror_key) return { key: String(inv.mirror_key), motivo: null }
