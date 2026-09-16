@@ -6,6 +6,37 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 14/set/2026 (23h24 Orlando) · da sessão do João para a sessão do Márcio — CAÇA DE PEÇAS: MILLENNIUM (BR.326) PRECISA DE 2× COMETIC C5038-052 E 1× ARP 234-4347 (LT4)
+
+Escrito pelo Claude da sessão do João, a pedido do João, 14/set/2026, 23h24 Orlando. **Atualizado em 14/set/2026 (23h35 Orlando)** com peças, preços e estoque
+conferidos ao vivo; **espessura cravada pelo João em 14/set/2026 (23h41 Orlando): .052" (C5038-052)**. É PEDIDO DE CAÇA, não ordem. Não há sessão do Márcio alcançável desta máquina, por isso o pedido vem por aqui.
+Este recado não escreveu nada no banco e nada foi comprado.
+
+- **Carro:** BR.326 Millennium — Chevrolet Camaro SS 6.2 2017, 50th Anniversary, Nightfall Gray, GM8L90 (Auto8). Cliente Humberto Gonçalves Jr.
+  (BR.007). Invoice aberta BR.326.1 (entrada 29/jul/2026). Conferido no banco BR do app em 14/set/2026 (23h24 Orlando). O João diz: carro de
+  MUITA pressão de turbina/compressor, e as peças são URGENTES (ASAP).
+- **Peça 1 — Junta de cabeçote Cometic MLX, Gen V LT1/LT4, furo 4,100" (série C5038).** É o furo da Cometic para bloco de fábrica (cilindro do
+  LT4 = 4,065"); 4,150" e 4,200" são para bloco retificado. Vendida por unidade: quantidade **2**. **Espessura CRAVADA pelo João em 14/set/2026 (23h41 Orlando): .052" — Cometic C5038-052** (5 camadas; a própria Cometic anota «ideal para turbo ou
+  supercharger»; mantém a taxa de fábrica). Comprar 2 unidades desta e só desta. (.064"/.066" ficaram de fora: baixariam ~0,3 ponto de taxa.)
+  - RETAIL (preço em que os dealers convergem): C5038-052 US$ 118,74 · C5038-064 US$ 124,07 · C5038-066 US$ 124,07 · C5038-051 US$ 113,09
+    (lista da Cometic: 131,93 / 137,84 / 137,84 / 125,65).
+  - Estoque conferido em 14/set/2026 (23h35 Orlando): **C5038-052 — LSXceleration (Memphis, TN, 901-646-6465) «Current Stock: 5», US$ 118,74, envia no
+    mesmo dia se pedido até 16h30 CT.** Summit = drop-ship, previsão 28/set. Cometic direto = fabricado sob encomenda, 2–4 semanas. eBay só
+    vendedor da Austrália. C5038-064: ninguém com estoque físico (Summit prevê 22/set do Texas; LSXceleration «ships from manufacturer»).
+    C5038-066: LSXceleration «Current Stock: 2», US$ 124,07. C5038-051: LSXceleration estoque 4, US$ 113,09; vários vendedores US no eBay, 2–4 dias.
+- **Peça 2 — ARP 234-4347, Pro Series Custom Age 625+, 12 pontas, kit com prisioneiros M8 dos cantos, Gen V LT1/LT4 6.2.** Quantidade: 1 kit.
+  - RETAIL convergente US$ 1.224,99 (Summit, JEGS, Fast Track; lista ARP 1.278,10).
+  - Estoque conferido em 14/set/2026 (23h35 Orlando): Summit «Not Available At This Time, future availability unknown»; JEGS «Ships on 09/23/2026»;
+    **Fast Track Auto (Tallmadge, OH) «In stock» em shopfasttrack.com e no eBay (vendedor carpartsretailer, item 316740239013, US$ 1.224,99,
+    frete grátis 2–4 dias, entrega prevista 16–18/set para Orlando).** CSP Racing, JCE Racing, Automotive Stuff, Elite Race Fab e Eurosport = sem
+    estoque/backorder. Michigan Motorsports 1.118,99, ACE 1.129,00 e MAPerformance 1.182,99 sem texto de estoque. eBay = canal, fornecedor real
+    = Fast Track Auto.
+  - **Aviso de fitment (não decidido por nós):** o kit é «w/ M8 corner studs» — conferir se os cabeçotes do Millennium têm os furos M8 dos cantos;
+    dealers avisam que cabeçote OEM Gen V pode precisar de furação. Quem decide é quem monta o motor.
+  - Alternativa NÃO pedida (só se o João aprovar): ARP2000 234-4343.
+- **Regra da casa:** conferir o AutoZonePro primeiro (o login está na sessão do Márcio); nada nesta lista é parceiro, então paga-se RETAIL.
+- **O que o João precisa de volta:** OUR COST entregue, fonte e prazo. Dúvidas para o João pelo WhatsApp ou aqui mesmo.
+
 ## 14/set/2026 (19h20 Orlando) · da sessão do Márcio para a sessão do João — ESTORNO SAI DO DINHEIRO (FIN 0.17.0, DC 1.57–1.58) E BL 1.7.3
 
 Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. Tudo no ar e conferido no código servido.
