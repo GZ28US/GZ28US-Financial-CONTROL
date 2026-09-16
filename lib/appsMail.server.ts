@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken, listMailAuths, mailProvider, maySweep } from '@/lib/streamMail.server'
 import { sendStreamWhatsApp } from '@/lib/stream.server'
+import { claimReport } from '@/lib/reportedAt'
 // 11/set/2026: `sendStreamWhatsApp` passou a mandar o report pelo caminho único
 // (lib/waSend.server.ts), onde `@numero` no texto vira marcação de verdade no
 // grupo. Estes avisos ecoam ASSUNTO, FORNECEDOR e NOME DE APP lidos do e-mail —
@@ -407,6 +408,9 @@ async function registerReceipt(
   // Escrita recusada pelo banco LANÇA: o e-mail não é arquivado e volta na próxima
   // passada (antes o erro era ignorado e o recibo saía da caixa sem nada lançado).
   const desc = `${row.description || appName}${info.receiptNo ? ` #${info.receiptNo}` : ''}`
+  // REPORTED NA LINHA (16/set/2026, lib/reportedAt.ts): o balão APP EXPENSE sai só para a linha que ESTA passada
+  // reservou — o mesmo recibo lido de novo (outra caixa, reprocessamento) não repete o report.
+  let reportar = false
   if (settle.id) {
     const { error: eUp } = await db.from('fixed_cost_expenses').update({ amount, payment_date: info.payDate, description: desc, receipt_url: info.link }).eq('id', settle.id)
     if (eUp) throw new Error(`baixa da linha ${settle.id}: ${eUp.message}`)
@@ -415,6 +419,9 @@ async function registerReceipt(
     // desfaz a baixa: fica no log, e o card do Data Checker pega a linha paga sem PAID FROM.
     const hErr = await fillHiddenPayers(db, 'fixed_cost_expenses', [settle.id])
     if (hErr) console.error('[apps-mail] pagador escondido não gravou:', hErr)
+    const r = await claimReport(db, 'fixed_cost_expenses', [settle.id])
+    if (r.error) console.error('[apps-mail] reserva do report não gravou:', r.error)
+    reportar = r.claimed.has(settle.id)
   } else {
     // Linha NOVA de custo fixo: PAID FROM e PAID TO nascem GZ28US, escondidos (Márcio, 11/set).
     // Antes nascia só com o SOURCE — o recibo da Anthropic e cia virava linha paga sem PAID FROM.
@@ -422,11 +429,14 @@ async function registerReceipt(
       supplier_id: row.id, type: 'SINGLE', description: desc, amount,
       source: 'GZ28US', expense_date: info.payDate, payment_date: info.payDate, receipt_url: info.link,
       ...hiddenPayers('fixed_cost_expenses', null, true),
+      // Linha nova: o report (balão logo abaixo, ou o resumo da varredura inteira) sai agora.
+      reported_at: new Date().toISOString(),
     })
     if (eIns) throw new Error(`inserir o pagamento: ${eIns.message}`)
+    reportar = true
   }
   out.payments.push({ app: row.description || appName, amount, date: info.payDate, box: info.box })
-  if (notifyEach) {
+  if (notifyEach && reportar) {
     await sendStreamWhatsApp([
       `💵 *APP EXPENSE — ${semMarcacao(row.description || appName)}*`,
       info.vendor && info.vendor !== row.description ? semMarcacao(info.vendor) : null,

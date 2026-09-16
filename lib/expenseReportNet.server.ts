@@ -1,29 +1,34 @@
 // SERVER-ONLY — EXPENSE REPORT SAFETY NET (ordem do Márcio, 26/jul/2026):
 // "NUNCA pode passar nenhuma expense sem report no grupo." Toda linha nova de
 // invoice_expenses / invoice_incomes / staff_expenses — venha da UI, de
-// scripts ou de qualquer automação — é reportada no grupo REPORTS. Dedup em
-// stream_mail_moves (message_id = 'ern:<uuid>', sem FK). Para não duplicar o
+// scripts ou de qualquer automação — é reportada no grupo REPORTS. Para não duplicar o
 // report que a própria UI já mandou, consulta o log de ENVIADAS do UltraMsg:
 // se uma mensagem recente já carrega o mesmo valor formatado, só marca como
 // reportada. Roda no mail-poll (cron 5min) — PC desligado incluso.
+//
+// O «JÁ REPORTEI» MORA NA LINHA (16/set/2026, lib/reportedAt.ts): a coluna reported_at. Antes era uma marca
+// em stream_mail_moves ('ern:<tipo>:<id>'), que continua lá como histórico e foi copiada para a coluna na
+// MIGRATION_reported_at.sql. A rede lê só linha sem data e RESERVA antes de mandar (claimReport): a rede e o
+// cron de staff rodam juntos às 15:00 UTC e nenhum dos dois manda o que o outro pegou.
+// E dinheiro que o BANCO já anunciou no grupo (💸 ZELLE ENVIADO / 💰 ZELLE RECEBIDO) não vira balão de novo
+// quando a linha é lançada depois — caso Raydn 003598: US$ 329,56 no ZELLE ENVIADO de 15/09 e outra vez dentro
+// do EXPENSE PAID de US$ 408,81 de 16/09.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enviaUltra } from '@/lib/waSend.server'
 import { semMarcacao } from '@/lib/waMentions'
 import { fillHiddenPayers } from '@/lib/payerRule'
+import { claimReport } from '@/lib/reportedAt'
 
 // Só linhas criadas após a entrada da rede — histórico não é re-reportado.
 const EPOCH = '2026-07-26T16:00:00Z'
 const usd = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const SIGNATURE = 'Sent by GZ28US Control App®'
-// O mesmo remetente em toda marca desta rede — é por ele que a rede acha o que já reportou.
-const NET_FROM = 'expense-report-net'
 
 // LEITURA PAGINADA (AUTO-BOOK fase B, 4/set/2026). O supabase-js corta em 1.000
 // linhas EM SILÊNCIO. Com o balde A ATRIBUIR criando centenas de despesas
-// pagas, tanto as marcas (stream_mail_moves) quanto invoice_expenses desde a
-// EPOCH passam do corte — e linha que não chega aqui é linha que a rede não
-// marca e vai REPORTAR de novo quando a marca correspondente ficar de fora.
+// pagas, invoice_expenses desde a EPOCH passa do corte — e linha que não chega
+// aqui é linha que a rede não trata.
 // Loop de .range() até vir página curta. `build` devolve um builder NOVO a
 // cada chamada (com a ordem dentro — ordem estável é o que faz página valer).
 // Erro no meio corta a leitura no que já veio (o mesmo que `data ?? []` de antes).
@@ -41,10 +46,41 @@ async function pageAll(build: () => any): Promise<any[]> {
   return out
 }
 
-// A marca de "já reportada" — uma forma só, gravada por quem quer que reporte
-// (a rede e a atribuição do Bank Link), pra dedup nunca depender de quem escreveu.
-async function markReported(db: SupabaseClient, key: string, label: string): Promise<void> {
-  await db.from('stream_mail_moves').insert({ message_id: key, subject: label.slice(0, 120), from_addr: NET_FROM, folder_name: 'reported', state: 'REPORTED' })
+// O que o BANCO já anunciou no grupo nos últimos dias: cada 💸 ZELLE ENVIADO / 💰 ZELLE RECEBIDO do
+// lib/zelleWatch.server.ts, com o valor e o dia de Orlando em que saiu. Lido do espelho do WhatsApp
+// (whatsapp_messages, as duas instâncias gravam o mesmo balão — por isso o dedup por hora + texto).
+// Cada anúncio cala UMA linha só (`usado`), de valor igual ao centavo e com o pagamento entre a véspera e
+// três dias antes do anúncio — um Zelle de US$ 500 não silencia duas semanas de staff.
+type Anuncio = { valor: number; dia: string; sentido: 'OUT' | 'IN'; usado: boolean }
+const diaOrlando = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+async function anunciosDoBanco(db: SupabaseClient, dias = 10): Promise<Anuncio[]> {
+  const groupId = process.env.ULTRAMSG_GROUP_ID
+  if (!groupId) return []
+  const desde = new Date(Date.now() - dias * 86400e3).toISOString()
+  const { data, error } = await db.from('whatsapp_messages').select('body, sent_at')
+    .eq('chat_id', groupId).eq('from_me', true).gte('sent_at', desde).ilike('body', '%ZELLE%').order('sent_at', { ascending: false }).limit(500)
+  if (error || !data) return []
+  const vistos = new Set<string>()
+  const out: Anuncio[] = []
+  for (const m of data as { body: string | null; sent_at: string }[]) {
+    const b = String(m.body || '')
+    const k = `${m.sent_at}|${b.slice(0, 80)}`
+    if (vistos.has(k)) continue
+    vistos.add(k)
+    const x = b.match(/\*ZELLE (ENVIADO|RECEBIDO)[^*]*\*\s*\$([0-9][0-9,]*\.[0-9]{2})/)
+    if (!x) continue
+    out.push({ valor: parseFloat(x[2].replace(/,/g, '')), dia: diaOrlando(m.sent_at), sentido: x[1] === 'ENVIADO' ? 'OUT' : 'IN', usado: false })
+  }
+  return out
+}
+const somaDias = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400e3).toISOString().slice(0, 10)
+function jaAnunciado(anuncios: Anuncio[], sentido: 'OUT' | 'IN', valor: number, dia: string | null | undefined): boolean {
+  const d = String(dia || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false
+  const a = anuncios.find(x => !x.usado && x.sentido === sentido && Math.abs(x.valor - valor) < 0.005 && x.dia >= somaDias(d, -1) && x.dia <= somaDias(d, 3))
+  if (!a) return false
+  a.usado = true
+  return true
 }
 
 // Valor da linha e dono da invoice — os mesmos da rede e do balão de atribuição.
@@ -57,11 +93,10 @@ const ownerOf = (inv: any) => inv?.rides?.project_name || inv?.rides?.project_co
 // O `true` daqui é o critério da rota — HTTP ok E a UltraMsg confirmando que
 // mandou —, não só o HTTP. HTTP 200 com `sent: "false"` (instância fora do ar,
 // número inválido) é recusa, e dizer "reportado" nesse caso seria mentira dita
-// pro Bank Link. ATENÇÃO ao que isto NÃO muda: a marca de "já reportada" continua
-// sendo gravada mesmo quando o envio falha (ver reportAttributedExpense, e a
-// mesma escolha na rede acima) — é decisão antiga e deliberada, de 04/set: a
-// marca registra que a linha FOI TRATADA, e sem ela o balão voltaria a cada 5
-// minutos. Quem devolve "false" aqui só está dizendo a verdade sobre o balão.
+// pro Bank Link. ATENÇÃO ao que isto NÃO muda: a data de REPORTED (reported_at) continua
+// gravada mesmo quando o envio falha (ela é a reserva, gravada ANTES do envio) — é
+// decisão antiga e deliberada, de 04/set: a data registra que a linha FOI TRATADA, e
+// sem ela o balão voltaria a cada 5 minutos. Quem devolve "false" aqui só está dizendo a verdade sobre o balão.
 //
 // TEXTO DE FORA NÃO ESCOLHE QUEM O APP MARCA (11/set/2026, ver lib/waMentions):
 // o destino aqui é SEMPRE grupo (ULTRAMSG_GROUP_ID), que é onde `mencoesDoTexto`
@@ -165,19 +200,22 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
 
 export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reported: string[] }> {
   const out: string[] = []
-  // Marcas paginadas (ver pageAll): marca fora da página = balão repetido.
-  const seen = await pageAll(() => db.from('stream_mail_moves').select('message_id').eq('from_addr', NET_FROM).order('message_id'))
-  const seenSet = new Set(seen.map((r: any) => r.message_id))
-  const mark = (key: string, label: string) => markReported(db, key, label)
-
+  // Só entra linha SEM reported_at (lib/reportedAt.ts). Toda linha que a rede olha sai daqui com data:
+  // reportada, ou tratada em silêncio (retroativo, dinheiro já anunciado).
   const sent = await recentSentBodies()
   const alreadySent = (amount: number) => sent.some((b) => b.includes(usd(amount)))
+  const anuncios = await anunciosDoBanco(db)
+  const claim = async (table: 'invoice_expenses' | 'invoice_incomes' | 'staff_expenses', ids: string[]) => {
+    const r = await claimReport(db, table, ids)
+    if (r.error) console.error('[report-net] reserva falhou:', r.error)
+    return r.claimed
+  }
 
   // UNIVERSAL (Márcio, 01/ago/2026): "ENTROU ou SAIU $? REPORT. Alterações,
   // atualizações ou criação de RETROATIVO? Nada de report — não entrou nem
   // saiu $, é só controle." O termômetro é a DATA DO DINHEIRO: pagamento dos
   // últimos dias = movimento real → reporta; data antiga = registro de
-  // histórico → marca em silêncio e cala.
+  // histórico → data em silêncio e cala.
   const RECENT_DAYS = 3
   const isRecentMoney = (d: string | null | undefined) => {
     if (!d) return false
@@ -187,7 +225,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
 
   // 1) invoice_expenses — regra do Márcio (30/jul): reporta SÓ QUANDO PAGA
   // (payment_date preenchido), nunca no cadastro nem na exclusão. Linhas não
-  // pagas ficam SEM marca — quando forem pagas, o report sai naquele momento.
+  // pagas ficam SEM data — quando forem pagas, o report sai naquele momento.
   // Quotes nunca reportam (lei das quotes + enchente US.044.2).
   // Filtro por updated_at, não created_at (buraco achado 01/ago): linha ANTIGA
   // que vira paga hoje é dinheiro saindo hoje — "TODO E QUALQUER DINHEIRO QUE
@@ -199,31 +237,36 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // invoice + (order_number || supplier+data), com o carro/cliente no título.
   // BALDE DO BANK LINK (AUTO-BOOK fase B, 4/set/2026): a pseudo-invoice
   // A ATRIBUIR (invoices.origin = 'BUCKET') carrega compra paga sem dono. Ela
-  // NUNCA reporta daqui e NUNCA é marcada: sem dono não há "a que invoice e
+  // NUNCA reporta daqui e NUNCA ganha data: sem dono não há "a que invoice e
   // carro se refere" — e a lei é sagrada. Quando a compra ganha CARRO, a linha
   // volta a entrar por updated_at já na invoice certa: se a rota do Bank Link
-  // já mandou o balão (reportAttributedExpense, compra recente) a marca está
-  // aqui e a rede cala; se não mandou (backlog), a rede trata como qualquer
-  // linha — reporta se o dinheiro é recente, senão marca em silêncio.
+  // já mandou o balão (reportAttributedExpense, compra recente) a linha já tem
+  // reported_at e a rede cala; se não mandou (backlog), a rede trata como
+  // qualquer linha — reporta se o dinheiro é recente, senão cala e data.
   // Leitura paginada (ver pageAll); a ordem por id desempata o created_at.
   const ie = await pageAll(() => db.from('invoice_expenses')
     .select('id, invoice_id, item, price, quantity, tax, extra, supplier, order_number, payment_date, created_at, invoices(invoice_code, is_quote, origin, rides(project_name, project_code), clients(name))')
-    .gte('updated_at', EPOCH).not('payment_date', 'is', null).order('created_at').order('id'))
+    .gte('updated_at', EPOCH).is('reported_at', null).not('payment_date', 'is', null).order('created_at').order('id'))
   const groups = new Map<string, any[]>()
   for (const e of ie as any[]) {
-    if (seenSet.has(`ern:ie:${e.id}`)) continue
     if (e.invoices?.is_quote) continue
-    if (e.invoices?.origin === 'BUCKET') continue   // antes do mark(): linha do balde nunca é marcada
+    if (e.invoices?.origin === 'BUCKET') continue   // antes da reserva: linha do balde nunca ganha data aqui
     const gk = `${e.invoice_id}|${e.order_number || `${e.supplier || ''}~${e.payment_date || ''}`}`
     const arr = groups.get(gk) || []; arr.push(e); groups.set(gk, arr)
   }
-  for (const rows of groups.values()) {
+  for (const todas of groups.values()) {
+    // Reserva primeiro: o balão fala só das linhas que ESTA rodada pegou.
+    const minhas = await claim('invoice_expenses', todas.map((e) => e.id))
+    const rows = todas.filter((e) => minhas.has(e.id))
+    if (!rows.length) continue
     const e0 = rows[0]
     const total = rows.reduce((s, e) => s + lineTotal(e), 0)
     const owner = ownerOf(e0.invoices)
     const head = `*EXPENSE PAID* ${e0.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`
     const label = `EXPENSE ${e0.invoices?.invoice_code || '—'} ${usd(total)} (${rows.length} itens)`
-    if (!alreadySent(total) && rows.some((e) => isRecentMoney(e.payment_date))) {
+    // Dinheiro que o banco já anunciou (ZELLE ENVIADO) não sai de novo: cala se TODA linha do balão já saiu por lá.
+    const anunciadas = rows.filter((e) => jaAnunciado(anuncios, 'OUT', lineTotal(e), e.payment_date)).length
+    if (!alreadySent(total) && anunciadas < rows.length && rows.some((e) => isRecentMoney(e.payment_date))) {
       // item, fornecedor e pedido vieram do e-mail da loja: peneirados DEPOIS do
       // corte, que é o texto que de fato vai pro grupo (ver semMarcacao).
       const names = rows.map((e) => semMarcacao(String(e.item || '').slice(0, 60)))
@@ -233,7 +276,6 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
       await sendReport([head, `${e0.payment_date || ''} — *${usd(total)}*`, srcLine, itemsLine].filter(Boolean).join('\n'))
       out.push(label)
     }
-    for (const e of rows) await mark(`ern:ie:${e.id}`, label)
   }
 
   // 2) invoice_incomes — mesma regra: só quando o dinheiro ENTROU.
@@ -241,38 +283,35 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // a data PREVISTA — quem marca "recebido" é paid_at. Previsões nunca reportam.
   const ip = await pageAll(() => db.from('invoice_incomes')
     .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote, rides(project_name, project_code), clients(name))')
-    .gte('updated_at', EPOCH).not('paid_at', 'is', null).order('created_at').order('id'))
+    .gte('updated_at', EPOCH).is('reported_at', null).not('paid_at', 'is', null).order('created_at').order('id'))
   for (const p of ip as any[]) {
-    const key = `ern:ip:${p.id}`
-    if (seenSet.has(key)) continue
     if (p.invoices?.is_quote) continue
+    if (!(await claim('invoice_incomes', [p.id])).has(p.id)) continue
     const owner = ownerOf(p.invoices)
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
-    const paidOn = String(p.paid_at || '').slice(0, 10) || p.payment_date || ''
-    if (!alreadySent(Number(p.amount)) && isRecentMoney(paidOn)) {
+    // Dia de Orlando da baixa (lei O RELÓGIO): paid_at é timestamptz.
+    const paidOn = (p.paid_at ? diaOrlando(p.paid_at) : '') || p.payment_date || ''
+    if (!alreadySent(Number(p.amount)) && !jaAnunciado(anuncios, 'IN', Number(p.amount), paidOn) && isRecentMoney(paidOn)) {
       // `description` de invoice_incomes é onde o MEMO de quem mandou o dinheiro
       // (Zelle) é gravado: texto de terceiro, peneirado antes de ir pro grupo.
       await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, semMarcacao(String(p.description || '').slice(0, 160))].join('\n'))
       out.push(label)
     }
-    await mark(key, label)
   }
 
   // 3) staff_expenses (seasons) — mesma regra: reporta só quando PAGA.
   const se = await pageAll(() => db.from('staff_expenses')
     .select('id, amount, payment_date, description, created_at, seasons(season_code, staff(name))')
-    .gte('updated_at', EPOCH).not('payment_date', 'is', null).order('created_at').order('id'))
+    .gte('updated_at', EPOCH).is('reported_at', null).not('payment_date', 'is', null).order('created_at').order('id'))
   for (const s of se as any[]) {
-    const key = `ern:se:${s.id}`
-    if (seenSet.has(key)) continue
+    if (!(await claim('staff_expenses', [s.id])).has(s.id)) continue
     const who = s.seasons?.staff?.name || '—'
     const label = `EXPENSE STAFF ${s.seasons?.season_code || ''} ${usd(s.amount)}`
-    if (!alreadySent(Number(s.amount)) && isRecentMoney(s.payment_date)) {
+    if (!alreadySent(Number(s.amount)) && !jaAnunciado(anuncios, 'OUT', Number(s.amount), s.payment_date) && isRecentMoney(s.payment_date)) {
       // A `description` da season é digitada por gente; peneirada como as outras.
       await sendReport([`*EXPENSE PAID — STAFF* ${s.seasons?.season_code || '—'} — ${who}`, `${s.payment_date || ''} — *${usd(s.amount)}*`, semMarcacao(String(s.description || '').slice(0, 160))].join('\n'))
       out.push(label)
     }
-    await mark(key, label)
   }
 
   return { reported: out }
@@ -284,14 +323,14 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
 // RECENTE — quem decide "recente" é a rota (ATTRIB_REPORT_DAYS pela data do
 // banco); aqui não se olha calendário. Monta o MESMO balão do EXPENSE PAID da
 // rede acima (cabeçalho com invoice e dono, data, valor, fornecedor/pedido,
-// item), manda pelo mesmo sendReport e grava a marca ern:ie:<row_id> — assim,
+// item), manda pelo mesmo sendReport e RESERVA a linha (reported_at) — assim,
 // quando a rede vir a linha entrar por updated_at já na invoice do carro, a
-// marca está lá e ela cala. Backlog (compra velha) NÃO passa por aqui: a rota
-// só grava a marca em silêncio (markAttributedExpenseSilently) e o grupo não
+// data está lá e ela cala. Backlog (compra velha) NÃO passa por aqui: a rota
+// só grava a data em silêncio (markAttributedExpenseSilently) e o grupo não
 // enche de balão de coisa antiga.
-// Idempotente: linha já marcada não manda de novo (retry/duplo clique é seguro).
-// A marca é gravada mesmo se o UltraMsg falhar — igual à rede: o report é
-// best-effort, a marca é o fato de que a atribuição foi tratada.
+// Idempotente: linha já com reported_at não manda de novo (retry/duplo clique é seguro).
+// A data é gravada ANTES do envio e fica mesmo se o UltraMsg falhar — igual à rede: o report é
+// best-effort, a data é o fato de que a atribuição foi tratada.
 //
 // Campos esperados (objetos simples — a rota passa o que já tem na mão):
 //   invoice: a invoice DESTINO (do carro). `invoice_code` obrigatório pro
@@ -302,8 +341,8 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
 //            quantity, tax, extra, payment_date. O valor é price×quantity+tax+extra.
 //   line:    a linha do banco; só `date` é lida, e só como reserva quando a
 //            linha não tem payment_date (no balde as duas são a data do banco).
-// Devolve { reported }: true = balão saiu; false = já estava marcada, UltraMsg
-// não configurado, ou o envio falhou (nos três casos a marca fica gravada).
+// Devolve { reported }: true = balão saiu; false = já tinha data, UltraMsg
+// não configurado, ou o envio falhou (nos três casos a data fica gravada).
 export type AttributedExpenseInput = {
   invoice: {
     invoice_code?: string | null
@@ -326,9 +365,9 @@ export type AttributedExpenseInput = {
 }
 
 export async function reportAttributedExpense(db: SupabaseClient, { invoice, row, line }: AttributedExpenseInput): Promise<{ reported: boolean }> {
-  const key = `ern:ie:${row.id}`
-  const { data: seen } = await db.from('stream_mail_moves').select('message_id').eq('from_addr', NET_FROM).eq('message_id', key).limit(1)
-  if (seen?.length) return { reported: false }
+  // A data de REPORTED é a reserva (lib/reportedAt.ts): linha que já tem data não sai de novo.
+  const { claimed } = await claimReport(db, 'invoice_expenses', [row.id])
+  if (!claimed.has(row.id)) return { reported: false }
   const total = lineTotal(row)
   const code = invoice?.invoice_code || '—'
   const owner = invoice?.owner || ownerOf(invoice)
@@ -339,17 +378,15 @@ export async function reportAttributedExpense(db: SupabaseClient, { invoice, row
   const srcLine = [semMarcacao(row.supplier), row.order_number ? `pedido ${semMarcacao(row.order_number)}` : ''].filter(Boolean).join(' — ')
   const itemLine = semMarcacao(String(row.item || '').slice(0, 60))
   const reported = await sendReport([head, `${date} — *${usd(total)}*`, srcLine, itemLine].filter(Boolean).join('\n'))
-  await markReported(db, key, `EXPENSE ${code} ${usd(total)} (atribuída · Bank Link)`)
   return { reported }
 }
 
 // Marca em silêncio — o caminho do BACKLOG na atribuição (compra velha ganha
 // dono: não entrou nem saiu dinheiro hoje, é só controle → sem balão). Grava a
-// mesma marca ern:ie:<row_id> pra rede não reportar a linha quando ela entrar
+// mesma data (reported_at) pra rede não reportar a linha quando ela entrar
 // por updated_at. Idempotente pelo mesmo motivo acima.
-export async function markAttributedExpenseSilently(db: SupabaseClient, rowId: string, label = 'EXPENSE (atribuída · Bank Link · backlog)'): Promise<void> {
-  const key = `ern:ie:${rowId}`
-  const { data: seen } = await db.from('stream_mail_moves').select('message_id').eq('from_addr', NET_FROM).eq('message_id', key).limit(1)
-  if (seen?.length) return
-  await markReported(db, key, label)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function markAttributedExpenseSilently(db: SupabaseClient, rowId: string, _label = 'EXPENSE (atribuída · Bank Link · backlog)'): Promise<void> {
+  const r = await claimReport(db, 'invoice_expenses', [rowId])
+  if (r.error) console.error('[report-net] silêncio da atribuição não gravou:', r.error)
 }

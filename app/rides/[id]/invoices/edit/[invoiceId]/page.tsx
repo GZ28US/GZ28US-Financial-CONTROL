@@ -21,6 +21,7 @@ import { pickedUpFromScan } from '@/lib/deliverStatus'
 import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
+import { reservarReport } from '@/lib/reportMark'
 
 // mirror_src (14/set/2026): o item é espelho da travessia US ⇄ BR — o US$ dele é o gravado na origem,
 // e a margem viva do editor NUNCA o reprecifica (lib/crossing.server.ts).
@@ -2909,20 +2910,20 @@ export default function EditInvoicePage() {
 
   // Fechou o diálogo (enviando ou recusando) = TODAS as linhas listadas foram
   // tratadas pela UI — a rede de segurança (expenseReportNet) não pode reenviar
-  // nem "corrigir" um NÃO do usuário. Fire-and-forget: falha aqui não trava a UI.
-  function muteReportNet(kind: 'ie' | 'ip', reports: Array<{ rowIds?: string[] }> | null) {
-    const keys = (reports || []).flatMap(r => (r.rowIds || []).map(id => `${kind}:${id}`))
-    if (keys.length === 0) return
-    void sessionHeaders().then(headers => fetch(`${BASE_PATH}/api/report-net/mute`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ keys }),
-    })).catch(() => {})
+  // nem "corrigir" um NÃO do usuário.
+  // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): a tela RESERVA as linhas antes de mandar (reported_at).
+  // Balão cujas linhas já tinham data NÃO sai — a rede de 5 minutos pode ter mandado enquanto o diálogo estava
+  // aberto, e o app não reporta o que já reportou. Balão sem linha salva (sem id) segue saindo como antes.
+  async function reservarDoDialogo<R extends { report: boolean; rowIds?: string[] }>(kind: 'ie' | 'ip', reports: R[] | null) {
+    const todas = reports || []
+    const reservadas = await reservarReport(kind, todas.flatMap(r => r.rowIds || []))
+    const pode = (r: R) => !(r.rowIds || []).length || (r.rowIds || []).some(id => reservadas.has(id))
+    return { chosen: todas.filter(r => r.report && pode(r)), jaSairam: todas.filter(r => r.report && !pode(r)).length }
   }
 
   async function sendIncomeReports() {
-    muteReportNet('ip', incomeReports)
-    const chosen = (incomeReports || []).filter(r => r.report)
     setSendingReports(true)
+    const { chosen, jaSairam } = await reservarDoDialogo('ip', incomeReports)
     let failures = 0
     const errors: string[] = []
     for (const inc of chosen) {
@@ -2948,6 +2949,7 @@ export default function EditInvoicePage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} income report(s) failed to send. The income was still saved.\n\nReason: ${errors.join(' | ')}`)
+    if (jaSairam > 0) alert(`${jaSairam} income report(s) were already REPORTED — not sent again.`)
     setIncomeReports(null)
     // Leave the editor only on the post-save flow; a PAID-toggle report keeps
     // the user editing (mirrors sendExpenseReports).
@@ -2958,9 +2960,8 @@ export default function EditInvoicePage() {
   }
 
   async function sendExpenseReports() {
-    muteReportNet('ie', expenseReports)
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    const { chosen, jaSairam } = await reservarDoDialogo('ie', expenseReports)
     let failures = 0
     const errors: string[] = []
     for (const exp of chosen) {
@@ -2986,6 +2987,7 @@ export default function EditInvoicePage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.\n\nReason: ${errors.join(' | ')}`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
     // Leave the editor only on the post-save flow; a PAID-toggle report keeps
     // the user editing.

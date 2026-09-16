@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { enviaUltra } from '@/lib/waSend.server'
 import { semMarcacao } from '@/lib/waMentions'
+import { claimReport } from '@/lib/reportedAt'
 
 // This cron runs server-side with NO user session. Under RLS the bare anon key
 // is blocked, so it talks to Supabase with the SERVICE-ROLE key (bypasses RLS).
@@ -15,8 +16,8 @@ const supabase = createClient(
 
 // Vercel cron hits this route once a day (see vercel.json). Authenticates via
 // the CRON_SECRET env var. Two passes:
-//   1) Active staff seasons → fire DAILY / WEEKLY / MONTHLY expense reports;
-//      records each send in expense_reports_sent so we never duplicate.
+//   1) Active staff seasons → DAILY / WEEKLY / MONTHLY rows that were PAID and
+//      never reported (reported_at IS NULL) get ONE report each — see below.
 //   2) invoice_incomes rows that are past-due (payment_date <= today) AND
 //      still UNPAID (paid_at IS NULL) AND not yet alerted (delayed_alert_sent_at
 //      IS NULL) → fire one ⚠ DELAYED PAYMENT WhatsApp alert each, then stamp
@@ -64,7 +65,6 @@ export async function GET(req: NextRequest) {
   }
 
   const today = todayStr()
-  const todayDate = new Date(today + 'T00:00:00')
 
   // ============================================================
   // PASS 1 — DAILY / WEEKLY / MONTHLY STAFF EXPENSE REPORTS
@@ -89,62 +89,48 @@ export async function GET(req: NextRequest) {
   let staffFailed = 0
   const staffLog: any[] = []
 
+  // O REPORT DA SEASON NÃO REPETE MAIS (16/set/2026 — Márcio: «o App não reporta mais coisa que já reportou»).
+  // Este passo nasceu quando cada season tinha UMA linha-modelo por tipo, e disparava a cada 7 (ou 30) dias com
+  // «Week N» e o total acumulado. Desde que o FUTURE FLOW gera uma linha por semana, ele passou a mandar, a cada
+  // 7 dias, um balão para CADA linha semanal da season — paga ou prevista, passada ou futura: a enxurrada de 17/08
+  // (dezenas de «Semanal (sexta …) — previsto») e a semana paga em 14/08 reportada de novo em 14/09. A trava de
+  // expense_reports_sent só olhava o próprio dia.
+  // Agora a régua é a da rede de reports (lib/expenseReportNet.server.ts) e a mesma data na linha
+  // (reported_at, lib/reportedAt.ts): só linha PAGA e ainda SEM data; RESERVA antes de mandar (a rede roda junto,
+  // às 15:00 UTC, e só manda quem reservou); dinheiro de mais de 3 dias ganha data em silêncio («retroativo é
+  // silêncio»); previsão nunca reporta.
+  const RECENT_DAYS = 3
+  const recente = (d: string | null | undefined) => {
+    if (!d) return false
+    const t = new Date(String(d).slice(0, 10) + 'T00:00:00Z').getTime()
+    return Number.isFinite(t) && Date.now() - t < RECENT_DAYS * 86400e3
+  }
+
   for (const season of activeSeasons) {
     const { data: expenses } = await supabase
       .from('staff_expenses')
-      .select('id, type, description, amount, source, origin')
+      .select('id, type, description, amount, source, origin, payment_date')
       .eq('season_id', season.id)
       .in('type', ['DAILY', 'WEEKLY', 'MONTHLY'])
+      .not('payment_date', 'is', null)
+      .is('reported_at', null)
 
     if (!expenses || expenses.length === 0) continue
-
-    const startDate = new Date(season.date_entry + 'T00:00:00')
-    const diffMs = todayDate.getTime() - startDate.getTime()
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-    if (diffDays < 1) continue // need at least 1 full day elapsed
 
     const { data: staff } = await supabase.from('staff').select('name').eq('id', season.staff_id).single()
     const staffName = staff?.name || ''
 
     for (const exp of expenses) {
-      let shouldFire = false
-      let periodLabel = ''
-      let multiplier = 0
-
-      if (exp.type === 'DAILY') {
-        shouldFire = true
-        periodLabel = `Day ${diffDays}`
-        multiplier = diffDays
-      } else if (exp.type === 'WEEKLY' && diffDays % 7 === 0) {
-        const w = diffDays / 7
-        shouldFire = true
-        periodLabel = `Week ${w}`
-        multiplier = w
-      } else if (exp.type === 'MONTHLY' && diffDays % 30 === 0) {
-        const m = diffDays / 30
-        shouldFire = true
-        periodLabel = `Month ${m}`
-        multiplier = m
-      }
-
-      if (!shouldFire) { staffSkipped++; continue }
-
-      // Skip if we already sent a report for this expense today.
-      const { data: existing } = await supabase
-        .from('expense_reports_sent')
-        .select('id')
-        .eq('expense_id', exp.id)
-        .eq('report_date', today)
-        .maybeSingle()
-      if (existing) { staffSkipped++; continue }
+      const { claimed, error: claimErr } = await claimReport(supabase, 'staff_expenses', [exp.id])
+      if (claimErr) { staffFailed++; staffLog.push({ expense_id: exp.id, error: claimErr }); continue }
+      if (!claimed.has(exp.id)) { staffSkipped++; continue }          // outro robô já tratou
+      if (!recente(exp.payment_date)) { staffSkipped++; continue }     // pago há mais de 3 dias: data em silêncio
 
       const amount = Number(exp.amount) || 0
-      const runningTotal = amount * multiplier
-
       const lines: string[] = [
         `*EXPENSE — STAFF — ${exp.type}*`,
         `${season.season_code}${staffName ? ` — ${staffName}` : ''}`,
-        `${periodLabel} — ${formatDate(today)} — *${formatUSD(amount)}*`,
+        `Paid ${formatDate(String(exp.payment_date).slice(0, 10))} — *${formatUSD(amount)}*`,
       ]
       // `description` e `source` são texto livre gravado por gente (e, no caso do
       // staff travel, montado a partir do e-mail da companhia aérea). O destino
@@ -153,22 +139,10 @@ export async function GET(req: NextRequest) {
       if (exp.description) lines.push(semMarcacao(exp.description))
       if (exp.origin === 'PERSONAL') lines.push('PERSONAL')
       if (exp.source) lines.push(semMarcacao(exp.source))
-      lines.push('')
-      lines.push(`Running total: ${formatUSD(runningTotal)}`)
 
-      const caption = lines.join('\n')
-
-      const { ok, detail } = await sendWhatsApp(caption)
-      if (ok) {
-        await supabase.from('expense_reports_sent').insert([{
-          expense_id: exp.id,
-          report_date: today,
-        }])
-        staffSent++
-      } else {
-        staffFailed++
-        staffLog.push({ expense_id: exp.id, error: detail })
-      }
+      const { ok, detail } = await sendWhatsApp(lines.join('\n'))
+      if (ok) staffSent++
+      else { staffFailed++; staffLog.push({ expense_id: exp.id, error: detail }) }
     }
   }
 

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
 import PaymentFields, { defaultPayment, paymentFromRow, payerToRow, HOUSE_PAYER, type PaymentInfo } from '@/components/PaymentFields'
 import { formatUSD, BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -55,6 +56,7 @@ type ExpenseReport = {
   origin: string
   items: ExpenseReportItem[]
   report: boolean
+  marks?: ReportMarks
 }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
@@ -318,7 +320,7 @@ export default function ExpensesPage() {
     if (!scannedPurchase) return
     const total = scannedPurchase.items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0)
 
-    const { error } = await supabase.from('staff_expenses').insert([{
+    const { data: novas, error } = await supabase.from('staff_expenses').insert([{
       season_id: seasonID,
       type: scannedPurchase.type || 'SINGLE',
       description: scannedPurchase.description || null,
@@ -330,7 +332,7 @@ export default function ExpensesPage() {
       // Linha NOVA: PAID TO nasce GZ28US, escondido (Márcio, 11/set). O scan não pergunta
       // quem pagou — isso nasce no RECORD PAYMENT, onde o PAID FROM aparece.
       paid_to: HOUSE_PAYER,
-    }])
+    }]).select('id')
     if (error) { alert(error.message); return }
 
     // Queue the optional WhatsApp report.
@@ -343,6 +345,7 @@ export default function ExpensesPage() {
       origin: scannedPurchase.origin,
       items: scannedPurchase.items.map(it => ({ item: it.description, amount: it.amount, quantity: '1' })),
       report: true,
+      marks: [{ kind: 'se', ids: (novas || []).map((r: { id: string }) => r.id) }],
     }
 
     setScannedPurchase(null)
@@ -378,8 +381,10 @@ export default function ExpensesPage() {
   }
 
   async function sendExpenseReports() {
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): reserva antes de mandar; balão cujas linhas já tinham
+    // data não sai de novo — o app não reporta o que já reportou.
+    const { chosen, jaSairam } = await filtrarJaReportados(expenseReports)
     let failures = 0
     for (const exp of chosen) {
       const caption = buildExpenseCaption(exp)
@@ -402,6 +407,7 @@ export default function ExpensesPage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
   }
 

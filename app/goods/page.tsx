@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
@@ -102,6 +103,7 @@ type ExpenseReport = {
   receipt_url: string
   items: ExpenseReportItem[]
   report: boolean
+  marks?: ReportMarks
 }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
@@ -657,13 +659,14 @@ export default function GoodsPage() {
     // Sales tax + shipping land as extra cost lines (assets_expenses) on the first good
     // of the purchase, carrying the same supplier/source/date.
     const firstGoodId = insertedGoods?.[0]?.id
+    let extrasIds: string[] = []
     if (firstGoodId) {
       const extraLines = [
         { description: 'Sales Tax', amount: parseFloat(scannedPurchase.tax) || 0 },
         { description: 'Shipping', amount: parseFloat(scannedPurchase.shipping) || 0 },
       ].filter(x => x.amount > 0)
       if (extraLines.length > 0) {
-        await supabase.from('assets_expenses').insert(extraLines.map(x => ({
+        const { data: extrasIns } = await supabase.from('assets_expenses').insert(extraLines.map(x => ({
           good_id: firstGoodId,
           description: x.description,
           amount: x.amount,
@@ -682,7 +685,8 @@ export default function GoodsPage() {
           // assets_expenses.order_number existe desde a migration de 29/ago:
           // tax/frete pertencem ao MESMO pedido da compra.
           order_number: scannedPurchase.orderNumber || null,
-        })))
+        }))).select('id')
+        extrasIds = (extrasIns || []).map((r: { id: string }) => r.id)
       }
     }
 
@@ -693,6 +697,8 @@ export default function GoodsPage() {
       receipt_url: scannedPurchase.receiptUrl,
       items: scannedPurchase.items.map(it => ({ item: it.description, amount: it.amount, quantity: it.quantity })),
       report: true,
+      // O imposto e o frete do mesmo pedido saem no mesmo balão: as duas linhas ficam REPORTED junto.
+      marks: [{ kind: 'as', ids: (insertedGoods || []).map((r: { id: string }) => r.id) }, { kind: 'ae', ids: extrasIds }],
     }
 
     setScannedPurchase(null)
@@ -723,8 +729,10 @@ export default function GoodsPage() {
   }
 
   async function sendExpenseReports() {
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): reserva antes de mandar; balão cujas linhas já tinham
+    // data não sai de novo — o app não reporta o que já reportou.
+    const { chosen, jaSairam } = await filtrarJaReportados(expenseReports)
     let failures = 0
     for (const exp of chosen) {
       const caption = buildExpenseCaption(exp)
@@ -747,6 +755,7 @@ export default function GoodsPage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The good was still saved.`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
   }
 

@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import PaymentFields, { defaultPayment, paymentToRow, type PaymentInfo } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
+import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 
@@ -22,6 +23,7 @@ type ExpenseReport = {
   origin: string
   amount: string
   report: boolean
+  marks?: ReportMarks
 }
 
 function getTodayString() {
@@ -115,7 +117,7 @@ export default function NewExpensePage() {
     // PAID FROM escolhe (GZ28US/GZ28BR); PAID TO nasce GZ28US escondido (Márcio, 11/set).
     const paymentCols = paymentToRow({ ...payment, paid: type === 'SINGLE' && payment.paid }, 'staff_expenses', type === 'SINGLE' ? expenseDate : null)
 
-    const { error } = await supabase.from('staff_expenses').insert([{
+    const { data: novas, error } = await supabase.from('staff_expenses').insert([{
       season_id: seasonID,
       type,
       description: description || null,
@@ -129,7 +131,7 @@ export default function NewExpensePage() {
       paid_via: payment.method,
       expense_date: type === 'SINGLE' ? expenseDate : null,
       receipt_url: receiptUrls.length > 0 ? JSON.stringify(receiptUrls) : null,
-    }])
+    }]).select('id')
 
     if (error) { alert(error.message); return }
 
@@ -143,6 +145,7 @@ export default function NewExpensePage() {
       origin,
       amount,
       report: true,
+      marks: [{ kind: 'se', ids: (novas || []).map((r: { id: string }) => r.id) }],
     }
     setExpenseReports([report])
   }
@@ -164,8 +167,10 @@ export default function NewExpensePage() {
   }
 
   async function sendExpenseReports() {
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): reserva antes de mandar; balão cujas linhas já tinham
+    // data não sai de novo — o app não reporta o que já reportou.
+    const { chosen, jaSairam } = await filtrarJaReportados(expenseReports)
     let failures = 0
     for (const exp of chosen) {
       const caption = buildExpenseCaption(exp)
@@ -188,6 +193,7 @@ export default function NewExpensePage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The expense was still saved.`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
     router.push(`/staff/${staffId}/seasons/${seasonID}/expenses`)
   }

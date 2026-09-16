@@ -7,6 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow, HOUSE_PAYER, PaidFromSelect } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
+import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -41,6 +42,7 @@ type ExpenseReport = {
   receipt_url: string
   items: ExpenseReportItem[]
   report: boolean
+  marks?: ReportMarks
 }
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
@@ -242,8 +244,9 @@ export default function NewGoodPage() {
     }]).select().single()
     if (error || !good) { alert(error?.message || 'Error saving good'); return }
 
+    let extrasIds: string[] = []
     if (expenses.length > 0) {
-      const { error: e } = await supabase.from('assets_expenses').insert(expenses.map(ex => ({
+      const { data: extrasIns, error: e } = await supabase.from('assets_expenses').insert(expenses.map(ex => ({
         good_id: good.id,
         description: ex.description,
         amount: parseFloat(ex.amount) || 0,
@@ -264,8 +267,9 @@ export default function NewGoodPage() {
         tracking_number: ex.tracking_number.trim() || null,
         carrier: ex.carrier.trim() || null,
         receipt_url: ex.receipt_urls.length > 0 ? JSON.stringify(ex.receipt_urls) : null,
-      })))
+      }))).select('id')
       if (e) { alert(e.message); return }
+      extrasIds = (extrasIns || []).map((r: { id: string }) => r.id)
     }
 
     // Build the WhatsApp report queue: one entry for the main good purchase,
@@ -278,15 +282,17 @@ export default function NewGoodPage() {
         receipt_url: goodReceiptUrls[0] || '',
         items: [{ item: description, amount: String(unitPrice), quantity: String(qty || 1) }],
         report: true,
+        marks: [{ kind: 'as', ids: [good.id] }],
       })
     }
-    expenses.forEach(ex => {
+    expenses.forEach((ex, i) => {
       pending.push({
         supplier: ex.supplier.trim(),
         date: ex.expense_date,
         receipt_url: ex.receipt_urls[0] || '',
         items: [{ item: ex.description, amount: ex.amount, quantity: '1' }],
         report: true,
+        marks: [{ kind: 'ae', ids: extrasIds[i] ? [extrasIds[i]] : [] }],
       })
     })
 
@@ -321,8 +327,10 @@ export default function NewGoodPage() {
   }
 
   async function sendExpenseReports() {
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): reserva antes de mandar; balão cujas linhas já tinham
+    // data não sai de novo — o app não reporta o que já reportou.
+    const { chosen, jaSairam } = await filtrarJaReportados(expenseReports)
     let failures = 0
     for (const exp of chosen) {
       const caption = buildExpenseCaption(exp)
@@ -345,6 +353,7 @@ export default function NewGoodPage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The good was still saved.`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
     router.push('/goods')
   }

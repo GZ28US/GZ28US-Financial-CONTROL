@@ -235,7 +235,9 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
     if (!/regions\.com$/i.test(from)) continue
     const hit = parseZelle(String(m.subject || ''), m.body?.content || '')
     if (!hit) continue
-    hit.when = String(m.receivedDateTime || runStart).slice(0, 10)
+    // O DIA É O DE ORLANDO (lei O RELÓGIO, 16/set/2026): receivedDateTime vem em UTC, e o recorte cru jogava para o dia
+    // seguinte todo Zelle chegado depois das 20h — o do Wolff (15/09 22:41) foi lançado em 16/09.
+    hit.when = new Date(m.receivedDateTime || runStart).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
     if (await alreadyBooked(db, hit)) continue
 
     if (hit.direction === 'IN') {
@@ -259,6 +261,9 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
           // Meio-dia de Orlando pela mesma razão do resto do app: data não
           // escorrega de fuso.
           paid_at: `${hit.when}T12:00:00-04:00`,
+          // O balão «ZELLE RECEBIDO — LANÇADO» logo abaixo É o report desta renda: ela nasce REPORTED (lib/reportedAt.ts),
+          // e a rede de reports não manda um INCOME PAID do mesmo dinheiro.
+          reported_at: new Date().toISOString(),
         })
         // A PENDENTE QUE ESTE DINHEIRO QUITA MORRE AQUI — e só quando bate ao
         // centavo. Deixar as duas faz a invoice mostrar o dobro recebido; apagar

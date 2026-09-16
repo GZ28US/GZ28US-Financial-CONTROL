@@ -10,6 +10,7 @@ import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, payerT
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
+import { reservarReport } from '@/lib/reportMark'
 
 // One app's payment history — every charge since the subscription, grouped by
 // month, always showing the NEXT upcoming month too (the scheduled charge).
@@ -28,7 +29,7 @@ type AppSupplier = {
   payment_day_1: number | null
   amount_1: number | null
 }
-type AppExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
+type AppExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null; reported_at?: string | null }
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
@@ -130,7 +131,12 @@ export default function AppViewPage() {
 
   async function sendRowReport(r: AppExpense) {
     if (!s) return
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): o botão não manda de novo o que já saiu — nem o que o
+    // robô dos recibos (lib/appsMail.server.ts) já reportou. Reserva antes de mandar.
+    if (r.reported_at) { setSendStatus(`Already REPORTED on ${fmtDate(new Date(r.reported_at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }))} — not sent again.`); return }
     setSendingId(r.id); setSendStatus('')
+    const reservada = await reservarReport('fc', [r.id])
+    if (!reservada.has(r.id)) { setSendingId(null); setSendStatus('Already REPORTED — not sent again.'); load(); return }
     const body = [
       `💵 *APP EXPENSE — ${s.description || s.company || '—'}*`,
       s.company && s.company !== s.description ? s.company : null,
@@ -143,7 +149,7 @@ export default function AppViewPage() {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ body }) })
       const d = await res.json().catch(() => ({}))
       setSendStatus(d.ok ? '✓ Sent to the report group.' : 'Could not send.')
-    } catch { setSendStatus('Could not send.') } finally { setSendingId(null) }
+    } catch { setSendStatus('Could not send.') } finally { setSendingId(null); load() }
   }
 
   const td = todayYmd()

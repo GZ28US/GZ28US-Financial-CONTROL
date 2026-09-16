@@ -7,6 +7,7 @@ import DatePicker from '@/components/DatePicker'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import PaymentFields, { type PaymentInfo, defaultPayment, paymentToRow } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
+import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
 import { mirrorEnsureSupplier } from '@/lib/suppliersMirror'
 import PartPicker from '@/components/PartPicker'
 import { BASE_PATH } from '@/lib/utils'
@@ -24,6 +25,7 @@ type ExpenseReport = {
   receipt_url: string
   items: ExpenseReportItem[]
   report: boolean
+  marks?: ReportMarks
 }
 
 function isNumeric(v: string) { return v === '' || /^\d*\.?\d*$/.test(v) }
@@ -168,7 +170,7 @@ export default function NewInputPage() {
     if (!description) { alert('Please enter a description'); return }
     await ensureSupplier(supplier)
 
-    const { error } = await supabase.from(table).insert([{
+    const { data: novas, error } = await supabase.from(table).insert([{
       description, category,
       part_id: partId || null,
       quantity: qty || 1,
@@ -194,7 +196,7 @@ export default function NewInputPage() {
       // SUPPLIES e ESTOQUE não têm escolha de pagador (Márcio, 11/set): PAID FROM e PAID
       // TO nascem GZ28US, escondidos — o paymentToRow grava pela régua da tabela.
       ...paymentToRow({ ...payment, paid: isValidDate(purchaseDate) }, table, purchaseDate),
-    }])
+    }]).select('id')
     if (error) { alert(error.message); return }
 
     // Queue the optional WhatsApp report for this input.
@@ -206,6 +208,7 @@ export default function NewInputPage() {
         receipt_url: receiptUrls[0] || '',
         items: [{ item: description, amount: String(unitPrice), quantity: String(qty || 1) }],
         report: true,
+        marks: [{ kind: table === 'inventory' ? 'iv' : 'in', ids: (novas || []).map((r: { id: string }) => r.id) }],
       }
       setExpenseReports([report])
       return
@@ -237,8 +240,10 @@ export default function NewInputPage() {
   }
 
   async function sendExpenseReports() {
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): reserva antes de mandar; balão cujas linhas já tinham
+    // data não sai de novo — o app não reporta o que já reportou.
+    const { chosen, jaSairam } = await filtrarJaReportados(expenseReports)
     let failures = 0
     for (const exp of chosen) {
       const caption = buildExpenseCaption(exp)
@@ -261,6 +266,7 @@ export default function NewInputPage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The input was still saved.`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
     router.push(listHref())
   }

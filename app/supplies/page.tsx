@@ -15,6 +15,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
 import { hiddenPayers, fillHiddenPayers } from '@/lib/payerRule'
 import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -61,6 +62,7 @@ type ExpenseReport = {
   receipt_url: string
   items: { item: string; amount: string; quantity: string }[]
   report: boolean
+  marks?: ReportMarks
 }
 type DuplicateInfo = { title: string; details: string; proceed: () => void }
 
@@ -340,7 +342,7 @@ export default function InputsPage() {
   async function confirmScanned() {
     if (!scanned) return
     const groupId = generateUUID()
-    const { error } = await supabase.from('inputs').insert(
+    const { data: novas, error } = await supabase.from('inputs').insert(
       scanned.items.map(item => ({
         description: item.description,
         category: 'CONSUMPTION',
@@ -370,7 +372,7 @@ export default function InputsPage() {
         // nenhum dos dois e virava linha paga CEGA.
         ...hiddenPayers('inputs', null, true),
       }))
-    )
+    ).select('id')
     if (error) { alert(error.message); return }
     setExpenseReports([{
       supplier: scanned.supplier,
@@ -378,6 +380,7 @@ export default function InputsPage() {
       receipt_url: scanned.receiptUrl,
       items: scanned.items.map(it => ({ item: it.description, amount: it.amount, quantity: it.quantity })),
       report: true,
+      marks: [{ kind: 'in', ids: (novas || []).map((r: { id: string }) => r.id) }],
     }])
     setScanned(null)
     load()
@@ -400,8 +403,10 @@ export default function InputsPage() {
   }
 
   async function sendReports() {
-    const chosen = (expenseReports || []).filter(r => r.report)
     setSendingReports(true)
+    // REPORTED NA LINHA (16/set/2026, lib/reportMark.ts): reserva antes de mandar; balão cujas linhas já tinham
+    // data não sai de novo — o app não reporta o que já reportou.
+    const { chosen, jaSairam } = await filtrarJaReportados(expenseReports)
     let failures = 0
     for (const exp of chosen) {
       const payload: any = { body: buildCaption(exp) }
@@ -418,6 +423,7 @@ export default function InputsPage() {
     }
     setSendingReports(false)
     if (failures > 0) alert(`${failures} expense report(s) failed to send. The purchase was still saved.`)
+    if (jaSairam > 0) alert(`${jaSairam} expense report(s) were already REPORTED — not sent again.`)
     setExpenseReports(null)
   }
 
