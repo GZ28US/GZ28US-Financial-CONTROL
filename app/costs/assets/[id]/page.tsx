@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
-import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow, payerToRow } from '@/components/PaymentFields'
+import PaymentFields, { type PaymentInfo, defaultPayment, paymentFromRow, paymentToRow, payerToRow, fixedCostPayerTable } from '@/components/PaymentFields'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -22,6 +22,12 @@ import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 // A row with no payment_date is a bill still OPEN — that is exactly what HOME and
 // FUTURE FLOW read (`payment_date is null`), and PAYMENTS reads the paid ones. So
 // registering the instalment here is all it takes for it to show up in the reports.
+//
+// MARKETING PAGO PELO BR (Márcio, 16/set/2026, pela sessão Auto Book: «o que for de Vegas, ponha em Marketing, SEMA 2025»).
+// Custo fixo não escolhe pagador — MENOS o de MARKETING (lib/payerRule.ts · fixed_cost_marketing): aqui o PAID FROM aparece
+// e aceita GZ28BR. Com GZ28BR, a linha pede o R$ que o BR pagou de verdade (amount_brl, a fatura C6) e atravessa para uma
+// 085.N do fornecedor no app do BR (lib/crossing.server.ts, chave US:fixed:<id>, cron de hora em hora); o R$ gravado
+// prevalece — vazio, o motor carimba pela regra do app.
 
 type AssetSupplier = {
   id: string
@@ -34,11 +40,17 @@ type AssetSupplier = {
   date_entry: string | null
   cost_type: string | null
 }
-type AssetExpense = { id: string; description: string | null; amount: number; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
+type AssetExpense = { id: string; description: string | null; amount: number; amount_brl?: number | null; source: string | null; expense_date: string | null; payment_date: string | null; receipt_url: string | null; payment_method?: string | null; paid_from?: string | null; paid_to?: string | null }
 
 function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
 function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+// R$ só vale com PAID FROM GZ28BR; com outro pagador a coluna fica vazia.
+function brlFor(paidFrom: string, raw: string): number | null {
+  if (paidFrom !== 'GZ28BR') return null
+  const n = parseFloat(String(raw).replace(',', '.'))
+  return Number.isFinite(n) && n !== 0 ? n : null
+}
 function daysBetween(fromYmd: string, toYmd: string) { return Math.max(0, Math.floor((new Date(toYmd + 'T00:00:00').getTime() - new Date(fromYmd + 'T00:00:00').getTime()) / 86400000)) }
 
 export default function AssetSupplierViewPage() {
@@ -57,6 +69,7 @@ export default function AssetSupplierViewPage() {
   // Universal payment block — PAID FROM also feeds the legacy `source` column.
   const [payPayment, setPayPayment] = useState<PaymentInfo>(defaultPayment())
   const [payReceipt, setPayReceipt] = useState('')
+  const [payBrl, setPayBrl] = useState('')
   const [savingPay, setSavingPay] = useState(false)
 
   // ADD EXPENSE modal
@@ -65,6 +78,7 @@ export default function AssetSupplierViewPage() {
   const [addAmount, setAddAmount] = useState('')
   const [addDate, setAddDate] = useState('')
   const [addPayment, setAddPayment] = useState<PaymentInfo>(defaultPayment())
+  const [addBrl, setAddBrl] = useState('')
   const [savingAdd, setSavingAdd] = useState(false)
 
   useEffect(() => { load() }, [id])
@@ -80,7 +94,7 @@ export default function AssetSupplierViewPage() {
 
   function openAdd() {
     setAddDesc(s?.description || s?.company || '')
-    setAddAmount(''); setAddDate(todayYmd()); setAddPayment(defaultPayment())
+    setAddAmount(''); setAddDate(todayYmd()); setAddPayment(defaultPayment()); setAddBrl('')
     setAdding(true)
   }
 
@@ -89,6 +103,7 @@ export default function AssetSupplierViewPage() {
   // OPEN — open is what reaches HOME and FUTURE FLOW.
   async function saveAdd() {
     setSavingAdd(true)
+    const payerTable = fixedCostPayerTable(s?.cost_type)
     const { error } = await supabase.from('fixed_cost_expenses').insert({
       supplier_id: id,
       type: 'SINGLE',
@@ -96,9 +111,11 @@ export default function AssetSupplierViewPage() {
       amount: parseFloat(addAmount) || 0,
       // Parcela NOVA de custo fixo nasce com os dois pagadores GZ28US, escondidos
       // (Márcio, 11/set) — o paymentToRow grava pela régua da tabela; o SOURCE legado vai junto.
-      source: DEFAULT_SOURCE, // legacy write-through
+      // No MARKETING o PAID FROM é escolha (GZ28US ou GZ28BR) e o SOURCE espelha a escolha.
+      source: payerTable === 'fixed_cost_marketing' ? (addPayment.paidFrom || DEFAULT_SOURCE) : DEFAULT_SOURCE, // legacy write-through
+      amount_brl: payerTable === 'fixed_cost_marketing' ? brlFor(addPayment.paidFrom, addBrl) : null,
       expense_date: isValidDate(addDate) ? addDate : null,
-      ...paymentToRow(addPayment, 'fixed_cost_expenses', addDate),
+      ...paymentToRow(addPayment, payerTable, addDate),
     })
     setSavingAdd(false)
     if (error) { alert(error.message); return }
@@ -119,6 +136,7 @@ export default function AssetSupplierViewPage() {
     // não aparece mais (os dois pagadores são GZ28US, escondidos).
     setPayPayment(paymentFromRow(r))
     setPayReceipt(r.receipt_url || '')
+    setPayBrl(r.amount_brl != null ? String(r.amount_brl) : '')
   }
 
   async function handleScanForRow(r: AssetExpense, file: File) {
@@ -142,7 +160,7 @@ export default function AssetSupplierViewPage() {
         if (t > 0) amt = t.toFixed(2)
         if (/^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || ''))) dt = String(parsed.date)
       }
-      setPaying(r); setPayDate(dt); setPayAmount(amt); setPayPayment(paymentFromRow(r)); setPayReceipt(receiptUrl)
+      setPaying(r); setPayDate(dt); setPayAmount(amt); setPayPayment(paymentFromRow(r)); setPayReceipt(receiptUrl); setPayBrl(r.amount_brl != null ? String(r.amount_brl) : '')
     } catch (err) {
       console.error(err); alert('Failed to scan receipt. Please try again.')
     } finally {
@@ -155,14 +173,17 @@ export default function AssetSupplierViewPage() {
     setSavingPay(true)
     // PAID FROM e PAID TO de custo fixo são GZ28US, escondidos (Márcio, 11/set): gravam
     // quando o pagamento nasce aqui (+ PAY); no EDIT PAY de um pagamento que já existia
-    // ficam como estão — o SOURCE legado acompanha o PAID FROM.
-    const payer = payerToRow(payPayment, 'fixed_cost_expenses', isValidDate(payDate))
+    // ficam como estão — o SOURCE legado acompanha o PAID FROM. No MARKETING o PAID FROM é
+    // escolha (16/set) e o R$ acompanha: com GZ28US ele é apagado.
+    const payerTable = fixedCostPayerTable(s?.cost_type)
+    const payer = payerToRow(payPayment, payerTable, isValidDate(payDate))
     const { error } = await supabase.from('fixed_cost_expenses').update({
       payment_date: isValidDate(payDate) ? payDate : null,
       amount: parseFloat(payAmount) || 0,
       ...(payer.paid_from !== undefined ? { source: payer.paid_from || DEFAULT_SOURCE } : {}), // legacy write-through
       payment_method: payPayment.method || null,
       ...payer,
+      ...(payerTable === 'fixed_cost_marketing' ? { amount_brl: brlFor(payPayment.paidFrom, payBrl) } : {}),
       receipt_url: payReceipt || null,
     }).eq('id', paying.id)
     setSavingPay(false)
@@ -182,6 +203,18 @@ export default function AssetSupplierViewPage() {
   if (!s) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Not found.</p></main>
 
   const isAsset = s.cost_type === 'ASSET'
+  const payerTable = fixedCostPayerTable(s.cost_type)
+  // O R$ real do BR — só no marketing e só com PAID FROM GZ28BR.
+  const brlField = (value: string, onChange: (v: string) => void) => (
+    <div className="w-48">
+      <label className="block mb-1 text-xs text-gray-400">PAID BY GZ28BR (R$)</label>
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
+        <input type="text" inputMode="decimal" value={value} onChange={(e) => { if (/^-?\d*[.,]?\d*$/.test(e.target.value)) onChange(e.target.value) }} className={`${modalInput} pl-10`} placeholder="0.00" />
+      </div>
+      <p className="mt-1 text-xs text-gray-500">The real R$ on the BR bill. Empty = the app converts at the day&apos;s rate.</p>
+    </div>
+  )
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -222,7 +255,8 @@ export default function AssetSupplierViewPage() {
             </div>
             <DatePicker label="EXPENSE DATE (due date)" value={addDate} onChange={setAddDate} compact />
             {/* UNIVERSAL PAYMENT BLOCK — PAID defaults ON; payment date = expense date */}
-            <PaymentFields value={addPayment} onChange={setAddPayment} table="fixed_cost_expenses" />
+            <PaymentFields value={addPayment} onChange={setAddPayment} table={payerTable} />
+            {payerTable === 'fixed_cost_marketing' && addPayment.paidFrom === 'GZ28BR' && brlField(addBrl, setAddBrl)}
             <p className="text-xs text-gray-500">Toggle NOT PAID and the bill stays OPEN — it shows up on HOME and in the Future Flow until you record the payment.</p>
             <button onClick={saveAdd} disabled={savingAdd} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{savingAdd ? 'Saving…' : 'SAVE EXPENSE'}</button>
           </div>
@@ -247,7 +281,8 @@ export default function AssetSupplierViewPage() {
               </div>
             </div>
             {/* UNIVERSAL PAYMENT BLOCK — recording a payment is PAID by definition */}
-            <PaymentFields value={payPayment} onChange={setPayPayment} table="fixed_cost_expenses" hidePaidToggle />
+            <PaymentFields value={payPayment} onChange={setPayPayment} table={payerTable} hidePaidToggle />
+            {payerTable === 'fixed_cost_marketing' && payPayment.paidFrom === 'GZ28BR' && brlField(payBrl, setPayBrl)}
             <DatePicker label="PAYMENT DATE" value={payDate} onChange={setPayDate} compact />
             {payReceipt && <a href={payReceipt} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-400 hover:text-blue-300 text-sm">📎 Receipt attached</a>}
             <button onClick={savePayment} disabled={savingPay} className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-60 px-6 py-3 rounded-2xl font-bold text-lg">{savingPay ? 'Saving…' : 'SAVE PAYMENT'}</button>
@@ -303,6 +338,8 @@ export default function AssetSupplierViewPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <span className="text-2xl font-bold">{formatUSD(Number(p.amount) || 0)}</span>
+                    {Number(p.amount_brl) ? <span className="text-sm text-gray-400">R$ {Number(p.amount_brl).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> : null}
+                    {String(p.paid_from || '').toUpperCase() === 'GZ28BR' && <span className="px-3 py-1 rounded-full text-xs font-bold bg-sky-900 text-sky-200">PAID BY GZ28BR</span>}
                     {paid ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-800 text-green-300">PAID</span>
                       : overdue ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-900 text-red-300">OVERDUE ({late} {late === 1 ? 'day' : 'days'})</span>
                       : <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-900 text-orange-300">PENDING{soon != null ? ` (in ${soon} ${soon === 1 ? 'day' : 'days'})` : ''}</span>}

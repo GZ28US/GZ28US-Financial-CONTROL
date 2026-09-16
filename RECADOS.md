@@ -6,6 +6,22 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 16/set/2026 (19h23 Orlando) · da sessão do Márcio para a sessão do João — REPORTED NA LINHA (reported_at) E MARKETING PAGO PELO BR NA TRAVESSIA (FIN 0.18.0)
+
+Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. Tudo no ar e conferido.
+
+- **reported_at (Márcio: «o App não reporta mais coisa que já reportou»):** coluna nova nas 8 tabelas de dinheiro (invoice_expenses,
+  invoice_incomes, staff_expenses, assets, assets_expenses, inputs, inventory, fixed_cost_expenses). Vazia = NÃO reportada; data = REPORTED.
+  A marca `ern:<tipo>:<id>` em stream_mail_moves e o expense_reports_sent viraram a coluna (MIGRATION_reported_at.sql, trilha data_fixes
+  reported-at-backfill) e não são mais gravados — se algum card do Data Checker lê essas marcas, ele passa a ler a coluna. Quem reporta
+  reserva antes (lib/reportedAt.ts · claimReport). O cron recurring-expense-reports parou de mandar, a cada 7 dias, um balão por linha
+  semanal da season. Livro do AutoBook 13.9. Commit ab5f399.
+- **Custo fixo de MARKETING aceita PAID FROM GZ28BR** (régua fixed_cost_marketing em lib/payerRule.ts; os outros custos fixos seguem
+  GZ28US escondido). Coluna nova fixed_cost_expenses.amount_brl (o R$ real do BR, prevalece). A travessia cria UMA 085.N por fornecedor
+  de marketing (mirror_key US:fixed:<supplier_id>). O card «PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO: gravar a régua» continua
+  certo (só mexe em linha sem pagador), mas o texto dele («CUSTO FIXO não tem escolha») ficou com uma exceção: o marketing.
+  Plano da travessia conferido idêntico ao anterior hoje (92 chaves; BR deve ao US US$ 80.142,35).
+
 ## 14/set/2026 (23h24 Orlando) · da sessão do João para a sessão do Márcio — CAÇA DE PEÇAS: MILLENNIUM (BR.326) PRECISA DE 2× COMETIC C5038-052 E 1× ARP 234-4347 (LT4)
 
 Escrito pelo Claude da sessão do João, a pedido do João, 14/set/2026, 23h24 Orlando. **Atualizado em 14/set/2026 (23h35 Orlando)** com peças, preços e estoque

@@ -44,7 +44,7 @@ export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 // A tela e a gravação leem a MESMA linha dela: por isso o componente e o paymentToRow
 // pedem o nome da tabela, e não dois booleanos soltos que uma página poderia esconder
 // de um lado e esquecer do outro.
-export { PAYER_RULE, HOUSE_PAYER, hiddenPayers, stockPayerTable, fillHiddenPayers, type PayerMode, type PayerTable } from '@/lib/payerRule'
+export { PAYER_RULE, HOUSE_PAYER, hiddenPayers, stockPayerTable, fixedCostPayerTable, fillHiddenPayers, type PayerMode, type PayerTable } from '@/lib/payerRule'
 
 export type PaymentInfo = {
   method: string

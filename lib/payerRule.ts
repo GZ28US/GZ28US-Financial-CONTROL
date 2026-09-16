@@ -11,6 +11,10 @@
 //   · nas incomes é ao contrário: o PAID TO escolhe e o PAID FROM não existe (a coluna
 //     caiu na onda 9). 'none' = nunca vai no payload.
 // Em inputs, inventory e fixed_cost_expenses não há escolha: os dois são GZ28US, escondidos.
+// EXCEÇÃO (Márcio, 16/set/2026, pela sessão Auto Book): o custo fixo de MARKETING abre o PAID FROM GZ28BR — «o que for de
+// Vegas, ponha em Marketing, SEMA 2025», e passagem/estadia do SEMA 2025 foi paga pelo BR. A régua desse fornecedor é
+// fixed_cost_marketing (mesma tabela do banco, fixed_cost_expenses; quem escolhe é fixedCostPayerTable pelo cost_type).
+// A linha GZ28BR atravessa para uma 085.N por fornecedor de marketing (lib/crossing.server.ts, chave US:fixed:<id>).
 // ESTOQUE DOADO não é compra: peça doada não tem pagador nenhum (inventory_donated).
 // SEM CHECK no banco, de propósito: «qualquer empresa pode pagar pra qualquer empresa, o
 // importante é o Flow reportar» — a regra mora aqui.
@@ -27,12 +31,17 @@ export const PAYER_RULE = {
   inventory: { paidFrom: 'house', paidTo: 'house' },
   inventory_donated: { paidFrom: 'none', paidTo: 'none' },
   fixed_cost_expenses: { paidFrom: 'house', paidTo: 'house' },
+  fixed_cost_marketing: { paidFrom: 'choice', paidTo: 'house' },
 } as const satisfies Record<string, { paidFrom: PayerMode; paidTo: PayerMode }>
 export type PayerTable = keyof typeof PAYER_RULE
 
 // A linha de estoque escolhe a régua pela ORIGEM: doada não tem pagador.
 export const stockPayerTable = (sourceType: string | null | undefined): PayerTable =>
   sourceType === 'DONATED' ? 'inventory_donated' : 'inventory'
+// A parcela de custo fixo escolhe a régua pelo TIPO do fornecedor: só MARKETING tem PAID FROM à mostra.
+// Não é nome de tabela do banco — quem grava continua escrevendo em fixed_cost_expenses.
+export const fixedCostPayerTable = (costType: string | null | undefined): PayerTable =>
+  String(costType || '').toUpperCase() === 'MARKETING' ? 'fixed_cost_marketing' : 'fixed_cost_expenses'
 
 const blank = (v: unknown) => !String(v ?? '').trim()
 // O whoPaid (auditPayer/closeScore) só lê do SOURCE os valores GZ28US/GZ28BR/REGIONS; texto de cartão («Visa ••••7666») não é pagador.
@@ -73,7 +82,7 @@ export function hiddenPayers(
 // (ou numa linha nova). Estoque DOADO fica de fora pela origem. Devolve o erro, se houver
 // — o pagamento já foi gravado; o escondido que falhar é aviso, não desfaz nada.
 type Db = { from: (table: string) => any }   // eslint-disable-line @typescript-eslint/no-explicit-any
-export async function fillHiddenPayers(db: Db, table: Exclude<PayerTable, 'inventory_donated' | 'invoice_incomes'>, ids: (string | null | undefined)[]): Promise<string | null> {
+export async function fillHiddenPayers(db: Db, table: Exclude<PayerTable, 'inventory_donated' | 'invoice_incomes' | 'fixed_cost_marketing'>, ids: (string | null | undefined)[]): Promise<string | null> {
   const list = [...new Set(ids.filter((x): x is string => !!x))]
   if (!list.length) return null
   const rule: { paidFrom: PayerMode; paidTo: PayerMode } = PAYER_RULE[table]
