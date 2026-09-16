@@ -56,7 +56,7 @@ export type Regra = {
 
 export type Etapa = { id: string; titulo: string; resumo: string; regras: Regra[] }
 
-export const LIVRO_ATUALIZADO = '2026-09-13'
+export const LIVRO_ATUALIZADO = '2026-09-16'
 
 // ═══ A SEQUÊNCIA — O CAMINHO DO E-MAIL DE COMPRA ATÉ A LINHA NO APP ═══════════
 export const SEQUENCIA: Etapa[] = [
@@ -159,6 +159,10 @@ export const SEQUENCIA: Etapa[] = [
         fala: 'este e HPVida tem que ser processados no app à partir de agora também, são contas reais',
         onde: 'marketing_senders (os 4 remetentes com active = false, sem a exceção das travas) · lançamento no app BR ainda sem robô',
         nota: 'Substitui a regra de 12/09 («apague sempre»), que caiu em 13/09 por ordem do Márcio. A App development tirou do apagar sempre boleto.notredamesp@hapvida.com.br, comunicacao@contato.hapvidandi.com.br, ccg@contato.comunicacaoccg.com.br e contato@pagoufacil.com.br (trilha em data_fixes, check_key hapvida-conta-real); a trava de palavra e a de anexo voltam a proteger o boleto. Entre 10 e 13/09 o robô mandou 6 avisos do pagoufacil para Itens Excluídos da galpaoz28, nenhum deles boleto. comunicado.importante@intermedica.com.br nunca esteve na lista (10 e-mails de 2023–2024 numa pasta). Referência 09/2026: mensalidade R$ 4.600,85 + coparticipação R$ 208,62. Como lançar (app BR, folha da Galpão — ver marli-health-plan-payroll) é decisão a fechar com o Márcio.' },
+      { id: '3.9', estado: 'NO AR', desde: '16/09/2026',
+        texto: 'Loja online de concessionária (plataforma RevolutionParts, remetente @emails.revolutionparts.com): o fornecedor é a LOJA — o nome antes dos dois pontos no assunto («Mopar.com National eStore: Order #…»), ou o nome do remetente. Sem nenhum dos dois, fica «RevolutionParts», nunca o pedaço do domínio. E em qualquer domínio, «emails.» é prefixo de envio, não nome de fornecedor.',
+        onde: 'lib/autoBookMail.server.ts · vendorOf · lojaRevolution',
+        nota: 'Caso Mopar.com National eStore, pedido 1055505 (14/09 23:28 Orlando, US$ 801,43, um ECM 68434939AC): a dúvida d37b4b91 nasceu com o fornecedor «Emails». Achado pela Staff Cronogram e consertado pela App development em 16/09. Medido nas 34 linhas da fila: só essa muda.' },
     ],
   },
   {
@@ -196,6 +200,10 @@ export const SEQUENCIA: Etapa[] = [
       { id: '4.9', estado: 'À MÃO', desde: '13/09/2026',
         texto: 'Antes de cadastrar custo fixo a partir de um e-mail, abre o anexo: cobrança única — multa rescisória, taxa, acordo — não é mensalidade. Mensalidade só nasce com dois sinais de recorrência (contrato, duas faturas seguidas, a palavra «mensalidade»).',
         nota: 'Caso Emive (BR, 28/07): o boleto «RECEITA MULTA RESCISORIA ALARME» de R$ 1.311,88 virou fixo MENSAL sem ninguém abrir o PDF, com 8 parcelas fantasma (R$ 10,5 mil no Future Flow). Corrigido em 13/09: paga uma vez, em 11/08, R$ 1.446,59 com juros.' },
+      { id: '4.10', estado: 'NO AR', desde: '16/09/2026',
+        texto: 'Valor tem de ser dinheiro: o número termina em dígito e não vem colado em letra — «68434939AC» é part number, e o ponto final da frase não entra no número. Depois de rótulo fraco («Total» solto), número sem moeda e sem centavos também não é valor (cabeçalho de tabela, quantidade). «Amount Charged/Authorized» é rótulo forte.',
+        onde: 'lib/autoBookMail.server.ts · ROTULO · parseMoney',
+        nota: 'Caso Mopar.com National eStore 1055505 (dúvida d37b4b91): o «Total» do cabeçalho «Part Number Part Name Price Quantity Total» leu o part number da 1ª linha e a pergunta saiu «USD 68434939»; o total de verdade, US$ 801,43, estava duas vezes no e-mail («Total: $801.43» e «Amount Charged/Authorized: $801.43»). Na bancada do conserto apareceu um furo pior e calado: «Order total: $150.00.», com o ponto final da frase, era lido 15.000 — com rótulo FORTE, o que autoriza lançamento. Os dois consertados em 16/09 (App development, relato da Staff Cronogram). Medido nas 34 linhas da fila: só a d37b4b91 muda.' },
     ],
   },
   {

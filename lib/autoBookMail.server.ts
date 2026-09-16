@@ -100,7 +100,14 @@ export type AutoBookMailResult = {
 // "total" solta, que aparece em subtotal, total de itens e rodapé de marketing.
 // Só rótulo forte autoriza LANÇAMENTO automático; fraco vira pergunta.
 const FORTE = /(order total|grand total|total paid|amount paid|amount charged|you paid|total charged|payment total|order amount|total do pedido|valor total|valor pago|total pago)/i
-const ROTULO = /(order total|grand total|total paid|amount paid|amount charged|you paid|total charged|payment total|order amount|total do pedido|valor total|valor pago|total pago|subtotal|total)\s*[:\-—]?\s*(R\$|US\$|\$|USD|BRL)?\s*([0-9][0-9.,]{0,13})/gi
+// O NÚMERO TEM DE SER NÚMERO (16/set/2026). Tabela de itens escreve o cabeçalho
+// «Part Number Part Name Price Quantity Total» e logo depois o part number da 1ª
+// linha, «68434939AC» — e o «Total» do cabeçalho lia 68434939 como valor (dúvida
+// d37b4b91, Mopar.com National eStore, US$ 801,43 de verdade). Por isso o número
+// termina em dígito (ponto final de frase fica de fora) e não pode estar colado em
+// letra nem em outro dígito. «Amount Charged/Authorized» é o rótulo forte da
+// RevolutionParts, a plataforma das lojas online de concessionária.
+const ROTULO = /(order total|grand total|total paid|amount paid|amount charged(?:\s*\/\s*authori[sz]ed)?|you paid|total charged|payment total|order amount|total do pedido|valor total|valor pago|total pago|subtotal|total)\s*[:\-—]?\s*(R\$|US\$|\$|USD|BRL)?\s*([0-9](?:[0-9.,]{0,12}[0-9])?)(?![0-9A-Za-z])/gi
 const COBRANCA = /\b(payment (of|received|sent)|we charged|charged to your|your card (was )?charged|invoice paid|fatura paga|pagamento (recebido|efetuado|aprovado)|compra aprovada)\b/i
 
 // "1,234.56" e "1.234,56" chegam do mesmo parser: o ÚLTIMO separador manda.
@@ -138,6 +145,10 @@ export function parseMoney(texto: string): { amount: number; currency: string; s
     // é um total de verdade e a resposta certa a ele é "não gera linha". Zero
     // de rótulo fraco é lixo de rodapé ("Total: 0 items") e não conta.
     if (!(n > 0) && !strong) continue
+    // Rótulo FRACO sem moeda e sem centavos não é dinheiro: «Total 68434939» de
+    // cabeçalho de tabela é part number, «Total 3» é quantidade. O forte segue
+    // valendo sem símbolo («Order total 150»).
+    if (!strong && !sym && !/[.,][0-9]{1,2}$/.test(m[3] || '')) continue
     const currency = /R\$|BRL/i.test(sym) ? 'BRL' : 'USD'
     // O SUBTOTAL É O PIOR DOS FRACOS, E ERA ELE QUE GANHAVA (09/set/2026).
     // O desempate entre rótulos fracos era "o MAIOR valor, porque o total é o
@@ -187,6 +198,21 @@ const DOM_VENDOR: Record<string, string> = {
 const ehDominio = (dom: string, base: string) => dom === base || dom.endsWith('.' + base)
 export const ehPayPalMsg = (msg: MailMsg) => /paypal\./i.test(msg.fromAddr)
 export const ehLojaShopify = (msg: MailMsg) => ehDominio((msg.fromAddr.split('@')[1] || '').toLowerCase(), 'shopifyemail.com')
+//   • REVOLUTIONPARTS é a plataforma das lojas online de concessionária (16/set/2026).
+//     A carta sai de <hash>@emails.revolutionparts.com e o domínio virava o
+//     fornecedor «Emails» (dúvida d37b4b91). A loja está no ASSUNTO, antes dos dois
+//     pontos — «Mopar.com National eStore: Order #1055505 Placed» — e no nome do
+//     remetente; sem nenhum dos dois fica o nome da plataforma, nunca «Emails».
+export const ehLojaRevolution = (msg: MailMsg) => ehDominio((msg.fromAddr.split('@')[1] || '').toLowerCase(), 'revolutionparts.com')
+export function lojaRevolution(msg: MailMsg): string {
+  const doAssunto = String(msg.subject || '').match(/^\s*(.{2,60}?)\s*:\s*(order|pedido)\b/i)?.[1]
+  const doRemetente = String(msg.from || '').replace(/["']/g, '').trim()
+  for (const bruto of [doAssunto, doRemetente]) {
+    const nome = nomeSemSufixo(bruto || '')
+    if (nome.length >= 2 && !/@|^(no-?reply|orders?|emails?)$/i.test(nome)) return nome.slice(0, 40)
+  }
+  return 'RevolutionParts'
+}
 
 // O corpo chega com TODOS os espaços colapsados em um só (streamMail.server.ts
 // troca `\s+` por ' '), então não existe "linha" para ler: o que sobra é
@@ -241,8 +267,9 @@ export function vendorOf(msg: MailMsg): string {
     const loja = nomeSemSufixo(String(msg.from || '').replace(/["']/g, ''))
     if (loja.length >= 2) return loja.slice(0, 40)
   }
+  if (ehLojaRevolution(msg)) return lojaRevolution(msg)
   for (const [k, v] of Object.entries(DOM_VENDOR)) if (ehDominio(dom, k)) return v
-  const base = dom.replace(/^(mail|email|no-?reply|orders?|transaction|info|news|e|m|t)\./, '').split('.')[0]
+  const base = dom.replace(/^(mails?|emails?|no-?reply|orders?|transaction|info|news|e|m|t)\./, '').split('.')[0]
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : (msg.from || msg.fromAddr).slice(0, 40)
 }
 
