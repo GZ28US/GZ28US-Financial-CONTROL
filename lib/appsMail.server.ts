@@ -27,7 +27,9 @@ const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const G = 'https://graph.microsoft.com/v1.0'
 
 // ── Apelidos: fornecedor do recibo → nome do app + domínios extras ──────────
-const APP_ALIASES: { match: RegExp; app: string; domains?: string[] }[] = [
+// `periodicity`: como o app NASCE quando o robô o cria (padrão MONTHLY). `soNome`: o app só é achado pelo NOME —
+// nunca pelo domínio do remetente, que ele divide com outro app do mesmo fornecedor.
+const APP_ALIASES: { match: RegExp; app: string; domains?: string[]; periodicity?: string; soNome?: boolean }[] = [
   { match: /anthropic/i, app: 'Claude', domains: ['anthropic.com', 'claude.com'] },
   { match: /midjourney/i, app: 'Midjourney', domains: ['midjourney.com'] },
   { match: /supabase/i, app: 'Supabase', domains: ['supabase.com', 'supabase.io'] },
@@ -48,6 +50,10 @@ const APP_ALIASES: { match: RegExp; app: string; domains?: string[] }[] = [
   { match: /autoauth/i, app: 'AutoAuth', domains: ['autoauth.com'] },
   // O NordVPN cobra como Lagosec Inc. e escreve do nordaccount.com.
   { match: /nordvpn|nord security|lagosec|nordaccount/i, app: 'NordVPN', domains: ['nordaccount.com', 'nordvpn.com'] },
+  // MICROSOFT 365 PERSONAL (16/set/2026, pela sessão Auto Book): o Márcio assinou o Personal no US (gz28us@hotmail, PayPal,
+  // US$ 99,99 por ano, renova em 15/09/2027). É OUTRO app — o Family (galpaoz28) está encerrado desde 28/07. Vem ANTES do
+  // Family (o apelido do Family pega qualquer «microsoft 365») e só casa pelo nome: o domínio microsoft.com é dos dois.
+  { match: /microsoft 365 personal/i, app: 'Microsoft 365 Personal', domains: [], periodicity: 'ANNUAL', soNome: true },
   { match: /microsoft 365|microsoft do brasil/i, app: 'Microsoft 365 Family', domains: ['microsoft.com'] },
   // CorelDRAW é faturado pelo revendedor Cleverbridge, em reais.
   { match: /coreldraw|corel/i, app: 'CorelDRAW', domains: ['cleverbridge.com'] },
@@ -143,8 +149,9 @@ function classify(subject: string, from: string): Kind {
     return { kind: 'receipt', vendor: aliasName(s) || 'Cleverbridge', receiptNo: (s.match(/refer[êe]ncia\s*(\d+)/i) || [])[1] || null }
   }
 
-  // Microsoft: "Sua compra do Microsoft 365 Family foi processada".
-  m = s.match(/sua compra d[oa]\s+(.+?)\s+foi processada/i)
+  // Microsoft: "Sua compra do Microsoft 365 Family foi processada" — e, em inglês (16/set/2026, o Personal da caixa
+  // gz28us@hotmail), "Your purchase of Microsoft 365 Personal has been processed".
+  m = s.match(/sua compra d[oa]\s+(.+?)\s+foi processada/i) || s.match(/your purchase of\s+(.+?)\s+has been processed/i)
   if (m) return { kind: 'receipt', vendor: m[1].trim(), receiptNo: null }
 
   // CANCELAMENTO (ordem 27/jul: "any activity of a bought app goes to this page
@@ -189,6 +196,9 @@ function parseAmount(text: string): number | null {
     const m = text.match(p)
     if (m) { const v = parseFloat(m[1].replace(/,/g, '')); if (v > 0) return v }
   }
+  // Dólar escrito com o código (16/set/2026): a Microsoft em inglês diz "We've charged USD 99.99 to PayPal" — sem cifrão.
+  const usd = text.match(/\bUSD\s?([\d,]+\.\d{2})\b/)
+  if (usd) { const v = parseFloat(usd[1].replace(/,/g, '')); if (v > 0) return v }
   // Reais: "R$ 1.600,00" / "BRL 599.00" — milhar com ponto e decimal com vírgula.
   const br = text.match(/(?:R\$|BRL)\s?([\d.]+,\d{2}|[\d,]+\.\d{2})/i)
   if (br) {
@@ -201,8 +211,8 @@ function parseAmount(text: string): number | null {
   return null
 }
 
-function appNameFor(vendor: string, from: string): { app: string; domains: string[] } {
-  for (const a of APP_ALIASES) if (a.match.test(vendor) || a.match.test(from)) return { app: a.app, domains: a.domains || [senderDomain(from)].filter(Boolean) }
+function appNameFor(vendor: string, from: string): { app: string; domains: string[]; periodicity?: string } {
+  for (const a of APP_ALIASES) if (a.match.test(vendor) || a.match.test(from)) return { app: a.app, domains: a.domains || [senderDomain(from)].filter(Boolean), periodicity: a.periodicity }
   const dom = senderDomain(from)
   // Sem apelido: nome cru do recibo (ou o domínio) — o Márcio renomeia no EDIT se quiser.
   return { app: vendor || dom || 'Unknown App', domains: [dom].filter(Boolean) }
@@ -214,14 +224,17 @@ async function loadApps(db: SupabaseClient): Promise<AppRow[]> {
   return (data as AppRow[]) || []
 }
 
+// NOME PRIMEIRO, EM TODOS (16/set/2026). A busca era app por app, com os três critérios juntos: um app anterior na lista que
+// só tinha o DOMÍNIO em comum ganhava do app de nome exato que vinha depois (Microsoft 365 Family × Personal, os dois
+// em microsoft.com). Agora: nome exato em todos; depois empresa; e só então domínio — que o app `soNome` nunca usa.
 function matchApp(apps: AppRow[], app: string, vendor: string, dom: string): AppRow | null {
   const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '')
-  for (const a of apps) {
-    if (norm(a.description || '') === norm(app)) return a
-    if (vendor && norm(a.company || '') === norm(vendor)) return a
-    if (dom && (a.mail_match || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean).includes(dom)) return a
-  }
-  return null
+  const porNome = apps.find(a => norm(a.description || '') === norm(app))
+  if (porNome) return porNome
+  const porEmpresa = vendor ? apps.find(a => norm(a.company || '') === norm(vendor)) : undefined
+  if (porEmpresa) return porEmpresa
+  if (APP_ALIASES.some(a => a.app === app && a.soNome)) return null
+  return (dom && apps.find(a => (a.mail_match || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean).includes(dom))) || null
 }
 
 async function rememberDomains(db: SupabaseClient, row: AppRow, domains: string[]): Promise<void> {
@@ -309,7 +322,7 @@ const SEM_VALOR_FROM = 'apps-sem-valor'
 async function registerReceipt(
   db: SupabaseClient, apps: AppRow[], info: ReceiptInfo, out: AppsSweepResult, notifyEach: boolean,
 ): Promise<{ row: AppRow | null; registered: boolean; keep?: boolean }> {
-  const { app: appName, domains } = appNameFor(info.vendor, info.from)
+  const { app: appName, domains, periodicity } = appNameFor(info.vendor, info.from)
   let row = matchApp(apps, appName, info.vendor || '', senderDomain(info.from))
 
   // Dedup: id da mensagem já visto; nº do recibo já registrado (mesmo vindo de
@@ -374,7 +387,7 @@ async function registerReceipt(
       email: 'gz28us@gmail.com',
       preferred_contact: 'Email',
       cost_type: 'APP',
-      periodicity: 'MONTHLY',
+      periodicity: periodicity || 'MONTHLY',
       date_entry: info.payDate,
       payment_day_1: Number(info.payDate.slice(8, 10)),
       amount_1: amount,
