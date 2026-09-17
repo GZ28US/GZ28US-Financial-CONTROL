@@ -81,7 +81,7 @@ select m.fixed_id, '1414abb3-37f3-4843-8267-2ab0d61f1c06', 'SINGLE',
          || coalesce(' · ' || nullif(s.supplier, ''), '') || coalesce(' · pago: ' || nullif(s.payment_method, ''), '')
          || ' — movida da season em 16/09/2026',
        s.amount, s.amount_brl, 'GZ28BR', 'GZ28BR', 'GZ28US', coalesce(s.expense_date, s.payment_date), s.payment_date,
-       s.receipt_url, 'CARD', s.order_number, s.season_id, coalesce(s.reported_at, now())
+       s.receipt_url, 'CARD', s.order_number, null, coalesce(s.reported_at, now())   -- season_id NULO: a FK de fixed_cost_expenses.season_id é fixed_cost_seasons (não seasons); quem viajou e a season ficam na descrição (Auto Book, 16/09 19:52)
   from public.staff_expenses s
   join mapa_sema m on m.staff_id = s.id
   left join public.seasons se on se.id = s.season_id
