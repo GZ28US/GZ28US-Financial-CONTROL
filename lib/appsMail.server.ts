@@ -708,9 +708,17 @@ async function outlookSweep(db: SupabaseClient, slot: number, apps: AppRow[], ou
       for (const m of r.value || []) if (!seen.has(m.id)) { seen.add(m.id); msgs.push(m) }
     }
   } else {
+    // A JANELA INTEIRA, DA MAIS NOVA PARA A MAIS VELHA (16/set/2026). Sem $orderby o Graph devolvia as 100 MAIS ANTIGAS
+    // dos 3 dias: medido na caixa gz28us@hotmail, 195 mensagens na janela e as 100 devolvidas iam de 13/09 20:19 a
+    // 15/09 12:50 — o recibo do Microsoft 365 Personal (16/09 17:23) nunca entrava, calado. Agora a lista vem em ordem
+    // decrescente e segue o @odata.nextLink até o fim da janela (teto de 2.000 só para não estourar os 300 s da Vercel).
     const since = new Date(Date.now() - 3 * 86_400_000).toISOString()
-    const r = await (await fetch(`${G}/me/messages?$filter=receivedDateTime ge ${since}&$top=100&${SELECT}`, { headers: oh(token) })).json()
-    for (const m of r.value || []) msgs.push(m)
+    let url: string | null = `${G}/me/messages?$filter=receivedDateTime ge ${since}&$orderby=receivedDateTime desc&$top=250&${SELECT}`
+    while (url && msgs.length < 2000) {
+      const r: any = await (await fetch(url, { headers: oh(token) })).json()
+      for (const m of r.value || []) msgs.push(m)
+      url = r['@odata.nextLink'] || null
+    }
   }
 
   for (const m of msgs) {
