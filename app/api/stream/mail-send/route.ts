@@ -103,6 +103,9 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ error: 'token expirado' }, { status: 502 })
 
   const rec = (list: string[]) => list.map((address) => ({ emailAddress: { address } }))
+  // cc NORMALIZADO igual ao caminho do Gmail: string virava .map de string e quebrava
+  // a rota com 500. Aqui vinha `b.cc || []` cru — array funcionava, string não.
+  const cc: string[] = Array.isArray(b.cc) ? b.cc : b.cc ? [b.cc] : []
   const atts = (b.attachments || []).map((a: any) => ({
     '@odata.type': '#microsoft.graph.fileAttachment',
     name: a.name,
@@ -118,7 +121,7 @@ export async function POST(req: NextRequest) {
 
     const patch = await fetch(`${G}/me/messages/${draft.id}`, {
       method: 'PATCH', headers: gh(token),
-      body: JSON.stringify({ toRecipients: rec(to), ccRecipients: rec(b.cc || []), body: { contentType: 'HTML', content: b.body } }),
+      body: JSON.stringify({ toRecipients: rec(to), ccRecipients: rec(cc), body: { contentType: 'HTML', content: b.body } }),
     })
     if (!patch.ok) return NextResponse.json({ error: (await patch.text()).slice(0, 300) }, { status: 502 })
 
@@ -129,7 +132,7 @@ export async function POST(req: NextRequest) {
 
     const sent = await fetch(`${G}/me/messages/${draft.id}/send`, { method: 'POST', headers: gh(token) })
     if (!sent.ok) return NextResponse.json({ error: (await sent.text()).slice(0, 300) }, { status: 502 })
-    return NextResponse.json({ ok: true, account: auth.account, threaded: true, attachments: atts.length })
+    return NextResponse.json({ ok: true, account: auth.account, threaded: true, attachments: atts.length, to, cc })
   }
 
   // Mensagem nova
@@ -140,12 +143,12 @@ export async function POST(req: NextRequest) {
         subject: b.subject,
         body: { contentType: 'HTML', content: b.body },
         toRecipients: rec(to),
-        ccRecipients: rec(b.cc || []),
+        ccRecipients: rec(cc),
         attachments: atts,
       },
       saveToSentItems: true,
     }),
   })
   if (!r.ok) return NextResponse.json({ error: (await r.text()).slice(0, 400) }, { status: 502 })
-  return NextResponse.json({ ok: true, account: auth.account, threaded: false, attachments: atts.length })
+  return NextResponse.json({ ok: true, account: auth.account, threaded: false, attachments: atts.length, to, cc })
 }

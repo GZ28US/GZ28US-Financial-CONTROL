@@ -49,6 +49,12 @@ const slim = (m: any) => ({
   received: m.receivedDateTime || m.sentDateTime || null,
   from: m.from?.emailAddress?.address || null,
   to: (m.toRecipients || []).map((r: any) => r.emailAddress?.address).filter(Boolean),
+  // CC SEMPRE PRESENTE (23/set/2026). Faltava no $select E aqui, então TODA releitura
+  // devolvia cc undefined — inclusive a de mensagem que FOI enviada com cópia. A rodada
+  // do e-mail leu isso como «o mail-send ignora o cc» e passou a mandar cópia separada;
+  // o defeito estava na leitura. Array vazio quando não há cópia, nunca undefined:
+  // undefined não distingue «sem cópia» de «não perguntei».
+  cc: (m.ccRecipients || []).map((r: any) => r.emailAddress?.address).filter(Boolean),
   subject: m.subject || '',
   isRead: m.isRead,
   folderId: m.parentFolderId || null,
@@ -68,13 +74,22 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
   const GH = { Authorization: `Bearer ${tk.access_token}` }
   const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
   const hdr = (m: any, name: string) => (m.payload?.headers || []).find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || null
+  // Cabeçalho de destinatário é LISTA separada por vírgula: «Fulano <a@x>, b@y».
+  // O código antigo tratava o header inteiro como um endereço só, então e-mail com
+  // dois destinatários virava uma string torta. Aqui cada endereço vira um item.
+  const enderecos = (v: string | null): string[] => (v || '')
+    .split(',')
+    .map((x) => x.trim().replace(/^.*<|>.*$/g, '').trim())
+    .filter(Boolean)
   const meta = async (id: string) => {
-    const m = await (await fetch(`${API}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`, { headers: GH })).json()
+    const m = await (await fetch(`${API}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`, { headers: GH })).json()
     return {
       id: m.id,
       received: m.internalDate ? new Date(+m.internalDate).toISOString() : null,
       from: (hdr(m, 'From') || '').replace(/^.*<|>.*$/g, '') || hdr(m, 'From'),
-      to: [(hdr(m, 'To') || '').replace(/^.*<|>.*$/g, '')].filter(Boolean),
+      to: enderecos(hdr(m, 'To')),
+      // Mesmo contrato do Graph: array vazio quando não há cópia, nunca undefined.
+      cc: enderecos(hdr(m, 'Cc')),
       subject: hdr(m, 'Subject') || '',
       isRead: !(m.labelIds || []).includes('UNREAD'),
       folderId: (m.labelIds || []).filter((l: string) => !['UNREAD', 'IMPORTANT', 'CATEGORY_PERSONAL'].includes(l)).join(','),
@@ -303,7 +318,7 @@ export async function GET(req: NextRequest) {
     if (!alvo.ok) return NextResponse.json({ error: alvo.motivo, account: auth.account, validFolders: alvo.validas }, { status: 400 })
     const folder = alvo.folder
     const top = Math.min(100, parseInt(p.get('limit') || '25') || 25)
-    const r = await fetch(`${G}/me/mailFolders/${encodeURIComponent(folder)}/messages?$top=${top}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId&$orderby=receivedDateTime desc`, { headers: gh(token) })
+    const r = await fetch(`${G}/me/mailFolders/${encodeURIComponent(folder)}/messages?$top=${top}&$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId&$orderby=receivedDateTime desc`, { headers: gh(token) })
     const data = await r.json().catch(() => null)
     // Recusa do Graph por causa do PEDIDO (pasta que a caixa não tem, id torto)
     // é 400/404 lá e passa a ser 400 aqui; throttle e token caído seguem 502
@@ -347,7 +362,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'phrase=1 é só para texto puro: tire o operador (from:, subject:, received:) do q, ou repita sem phrase=1', q: termo }, { status: 400 })
     }
     const expressaoDeBusca = querFrase ? `"\\"${termo}\\""` : `"${termo}"`
-    const r = await fetch(`${G}/me/messages?$search=${encodeURIComponent(expressaoDeBusca)}&$top=${Math.min(100, parseInt(p.get('limit') || '25') || 25)}&$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId`, { headers: gh(token) })
+    const r = await fetch(`${G}/me/messages?$search=${encodeURIComponent(expressaoDeBusca)}&$top=${Math.min(100, parseInt(p.get('limit') || '25') || 25)}&$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId`, { headers: gh(token) })
     const data = await r.json().catch(() => null)
     // Termo que o KQL não engole (400) é culpa de quem chamou; throttle e token
     // caído continuam 502 (ver `culpaDoChamador`) — o 429 morde justamente esta
@@ -384,7 +399,7 @@ export async function GET(req: NextRequest) {
   if (op === 'msg') {
     const id = p.get('id')
     if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
-    const r = await fetch(`${G}/me/messages/${encodeURIComponent(id)}?$select=id,subject,from,toRecipients,receivedDateTime,isRead,parentFolderId,body,hasAttachments`, { headers: gh(token) })
+    const r = await fetch(`${G}/me/messages/${encodeURIComponent(id)}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,parentFolderId,body,hasAttachments`, { headers: gh(token) })
     const m = await r.json().catch(() => null)
     if (!m?.id) return NextResponse.json({ error: m?.error?.message || 'not found' }, { status: 404 })
     const text = String(m.body?.content || '').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim()
