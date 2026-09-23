@@ -478,6 +478,10 @@ export const SEQUENCIA: Etapa[] = [
       { id: '11.6', estado: 'À MÃO', desde: '04/08/2026',
         texto: 'Processar inclui os ENVIADOS: e-mail que mandamos sobre a compra vai para a mesma pasta da thread.',
         fala: 'PROCESS means all emails, not only the incoming ones!' },
+      { id: '11.7', estado: 'NO AR', desde: '17/09/2026',
+        texto: 'O robô só tira e-mail da CAIXA DE ENTRADA. Carta que já está em outra pasta foi guardada por alguém e fica onde está.',
+        onde: 'lib/autoBookMail.server.ts · arquiva',
+        nota: 'O leitor lê a caixa inteira. Em 16–17/09 o robô levou duas vezes para «Purchases» as cartas da United HGCVN5 que a rodada de e-mail tinha guardado em «Businesses/Trips/Bruno Guerreiro», e repetia o move a cada hora.' },
     ],
   },
   {
@@ -656,6 +660,11 @@ export const SEQUENCIA: Etapa[] = [
       { id: '14.26', estado: 'À MÃO', desde: '14/09/2026',
         texto: 'Loja com conta online se lê na fonte. Amazon: a página de pagamentos dá data, cartão, valor e pedido; o Order Details do pedido dá o item e se foi devolvido — pedido devolvido inteiro vira par +/− no mesmo lugar (a cobrança sai do balde por rematch), devolução parcial é um negativo por estorno. AutoZone: AutoZone Pro › Transaction History › View mostra a nota com loja, itens e às vezes o carro (numa aba de tela grande; a tela estreita não abre o PDF); devolução é nota RETURN com a nota original. Duas linhas do app com o MESMO arquivo de recibo são uma compra só.',
         nota: 'Casos de 14/09: 45 linhas da Amazon (fita, presilhas, cooler, ração dos gatos e conexões de vácuo devolvidas) · AutoZone 204,19 Panthera, 107,30 WorkTruck, retentores 8,58 × 2 (lojas 3812 e 6731 no mesmo dia), porcas 189 e kits Z23 devolvidos · Muffler Man 27,96: «2026 carry out» e «Welding» com o mesmo JPEG.' },
+      { id: '14.27', estado: 'FURO', desde: '23/09/2026',
+        texto: 'Peça que vai para o ESTOQUE entra em UMA linha com a QUANTIDADE, nunca em N linhas de quantidade 1. A nota diz «24 × US$ 17,32» — então é uma linha com quantity 24 e unit_price 17,32, não 24 linhas de 1. Vale para inventory, inputs e assets: a quantidade é campo, não é número de linhas. Mesma peça, mesmo preço, mesmo pedido e mesma data = MESMA LINHA. Preço diferente ou pedido diferente = linha separada, porque aí é compra diferente.',
+        fala: 'foi o AutoBook que salvou as 2 caixas de óleo inteiras no estoque, corrija pra que isso não aconteça mais · several lines of the same item with 1 as quantity, the right way is one row with the proper quantity',
+        onde: 'inventory (category STOCK) · FROM STOCK no editor de invoice agrupa na exibição desde 23/09 (commit c423565), mas o conserto é não criar as linhas',
+        nota: 'Caso que ensinou, 23/09/2026: as 2 caixas de óleo Red Line 5W40 da AutoZone (nota 02484269649 de 18/09, 24 × US$ 17,32 = US$ 415,68) entraram como 24 linhas de quantidade 1, todas no mesmo purchase_group e com a MESMA nota dizendo «24 ×». O Márcio viu no FROM STOCK: 24 cartões idênticos, cada um dizendo «Available: 1». O valor total ficou certo, a contagem ficou certa — o que ficou errado é a forma, e ela infla o estoque a cada compra. As 24 linhas NÃO foram apagadas (cada uma tem seu histórico); a tela agrupa. Antes de inserir estoque: se a nota diz N × preço, é UMA linha com N.' },
     ],
   },
 ]
