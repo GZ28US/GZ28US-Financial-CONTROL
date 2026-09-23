@@ -126,6 +126,51 @@ type StockItem = {
   // deve viajar como order number de compra.
   order_number: string | null
 }
+
+// UMA PEÇA, VÁRIOS LOTES (Márcio, 23/set/2026: «several lines of the same item with 1 as
+// quantity, the right way is one row with the proper quantity»).
+// O estoque guarda LOTE, não saldo: uma compra de 24 quartos de óleo virou 24 linhas de
+// quantidade 1 na tabela inventory (pedido 02484269649, AutoZone, 18/09). A tela mostrava as 24.
+// Aqui elas viram UMA, com o saldo somado — e o consumo desce lote a lote, do mais antigo
+// para o mais novo, para o histórico de cada lote continuar existindo.
+// A chave junta só o que é REALMENTE a mesma coisa: mesma peça, mesma origem, mesmo preço,
+// MESMO PEDIDO e mesma data. Preço ou pedido diferentes seguem em linhas separadas — pedido
+// é sagrado e não se mistura ([[order-number-law]]), e preço diferente é custo diferente.
+type StockGroup = {
+  key: string
+  description: string
+  quantity: number
+  unit_price: number
+  supplier: string | null
+  purchase_date: string | null
+  source_type: string | null
+  order_number: string | null
+  lots: StockItem[]
+}
+function groupStock(items: StockItem[]): StockGroup[] {
+  const by = new Map<string, StockGroup>()
+  for (const it of items) {
+    const key = [it.description, it.supplier ?? '', it.source_type ?? '', it.unit_price, it.order_number ?? '', it.purchase_date ?? ''].join('\u241F')
+    const at = by.get(key)
+    if (at) { at.quantity += Number(it.quantity) || 0; at.lots.push(it); continue }
+    by.set(key, {
+      key,
+      description: it.description,
+      quantity: Number(it.quantity) || 0,
+      unit_price: it.unit_price,
+      supplier: it.supplier,
+      purchase_date: it.purchase_date,
+      source_type: it.source_type,
+      order_number: it.order_number,
+      lots: [it],
+    })
+  }
+  // FIFO: dentro do grupo, o lote mais antigo sai primeiro (id como desempate estável).
+  for (const g of by.values()) {
+    g.lots.sort((a, b) => String(a.purchase_date || '').localeCompare(String(b.purchase_date || '')) || a.id.localeCompare(b.id))
+  }
+  return [...by.values()]
+}
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
 type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
 // rowIds: DB ids das linhas por trás do report — no fechamento do diálogo TODAS
@@ -893,8 +938,8 @@ export default function EditInvoicePage() {
     setShowStockModal(true)
   }
 
-  async function applyStockItem(item: StockItem) {
-    const qty = parseFloat(stockQtyInput[item.id] || '1') || 1
+  async function applyStockItem(item: StockGroup) {
+    const qty = parseFloat(stockQtyInput[item.key] || '1') || 1
     if (qty > item.quantity) { alert(`Only ${item.quantity} available`); return }
     const rideName = projectCode + (projectName ? ` — ${projectName}` : '')
     // DONATED stock costs the receiving car NOTHING (user law 22/aug/2026): OUR COST = 0;
@@ -934,11 +979,22 @@ export default function EditInvoicePage() {
     } else {
       const updated = [...expenses]; updated[stockTarget as number] = { ...updated[stockTarget as number], ...expense }; setExpenses(updated)
     }
-    const { data: inputData } = await supabase.from('inventory').select('notes').eq('id', item.id).single()
-    const existingNote = inputData?.notes || ''
-    const usageNote = `Used ${qty} in ${rideName || ownerLabel()}`
-    const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
-    await supabase.from('inventory').update({ quantity: item.quantity - qty, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', item.id)
+    // BAIXA LOTE A LOTE, do mais antigo para o mais novo: o grupo é só a soma na tela, o
+    // saldo continua morando em cada linha do inventory. Tirar tudo de um lote só deixaria
+    // os outros com saldo fantasma.
+    let restante = qty
+    for (const lote of item.lots) {
+      if (restante <= 0) break
+      const tem = Number(lote.quantity) || 0
+      if (tem <= 0) continue
+      const tira = Math.min(tem, restante)
+      const { data: inputData } = await supabase.from('inventory').select('notes').eq('id', lote.id).single()
+      const existingNote = inputData?.notes || ''
+      const usageNote = `Used ${tira} in ${rideName || ownerLabel()}`
+      const updatedNotes = existingNote ? `${existingNote}\n${usageNote}` : usageNote
+      await supabase.from('inventory').update({ quantity: tem - tira, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', lote.id)
+      restante -= tira
+    }
     setShowStockModal(false)
   }
 
@@ -3057,18 +3113,21 @@ export default function EditInvoicePage() {
             ) : (
               <div className="overflow-y-auto space-y-3 flex-1">
                 {(() => {
-                  const list = stockItems.filter(item => partMatches(stockSearch, item.description, item.supplier, (item as any).order_number))
+                  const list = groupStock(stockItems.filter(item => partMatches(stockSearch, item.description, item.supplier, item.order_number)))
                   if (list.length === 0) return <p className="text-gray-400 text-lg">No matches.</p>
                   return list.map(item => (
-                  <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
+                  <div key={item.key} className="bg-gray-800 border border-gray-700 rounded-2xl p-4 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-base font-bold truncate" title={item.description}>{item.description}</p>
                       {item.source_type === 'DONATED' && item.supplier && <p className="text-sm text-orange-400">DONATED by {item.supplier}</p>}
                       {item.supplier && item.source_type !== 'DONATED' && <p className="text-sm text-gray-400">{item.supplier}</p>}
-                      <p className="text-sm text-gray-400">Available: {item.quantity} — {item.source_type === 'DONATED' ? `MSRP ${formatUSD(item.unit_price)} · our cost $0` : `${formatUSD(item.unit_price)} each`}</p>
+                      <p className="text-sm text-gray-400">
+                        Available: {item.quantity} — {item.source_type === 'DONATED' ? `MSRP ${formatUSD(item.unit_price)} · our cost $0` : `${formatUSD(item.unit_price)} each`}
+                        {item.lots.length > 1 ? ` · ${item.lots.length} lotes` : ''}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <input type="text" inputMode="decimal" placeholder="Qty" value={stockQtyInput[item.id] || ''} onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.id]: e.target.value }))} className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center" />
+                      <input type="text" inputMode="decimal" placeholder="Qty" value={stockQtyInput[item.key] || ''} onChange={(e) => setStockQtyInput(prev => ({ ...prev, [item.key]: e.target.value }))} className="bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-base w-20 text-center" />
                       <button onClick={() => applyStockItem(item)} className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded-xl font-bold text-sm">USE</button>
                     </div>
                   </div>
