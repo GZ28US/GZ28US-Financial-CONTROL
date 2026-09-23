@@ -131,6 +131,13 @@ const comandos = comandosDe(semComentario)
 //   2. APAGAR PEDE DUAS CHAVES: `drop table`, `drop schema`, `truncate` e `delete`
 //      sem `where` exigem --eu-sei-que-apaga E um arquivo ROLLBACK_*.sql do lado.
 //      Migration de dinheiro sem volta escrita não roda.
+//   3. TABELA NOVA EM `public` SEM GRANT NÃO PASSA. Em 30/10/2026 a Supabase para de
+//      dar acesso automático da Data API às tabelas novas de `public` nos projetos que
+//      já existem (changelog 45329 — em projeto novo já é assim desde 30/05). Tabela
+//      sem GRANT fica MUDA para o supabase-js: volta "permission denied", igualzinho
+//      ao sintoma de RLS mal configurada — erro que se caça no lugar errado. As
+//      tabelas que já existem não mudam. Tabela interna, de propósito fora da Data
+//      API, passa --sem-api.
 const PROIBIDO = [
   [/\balter\s+system\b/i, 'alter system — configuração do servidor é do painel, não daqui'],
   [/\b(create|alter|drop)\s+role\b/i, 'mexer em ROLE (papel de acesso) é configuração de segurança: quem faz é o Márcio, no painel'],
@@ -193,6 +200,36 @@ if (apagaOque.length) {
     console.log(`   ✓ ROLLBACK_${base} existe do lado — a volta está escrita.`)
   }
 }
+// O FREIO DA TABELA MUDA: quem cria tabela em `public` diz quem pode lê-la.
+// Em 30/10/2026 a Supabase para de expor tabela nova à Data API sozinha (changelog
+// 45329; nos projetos novos já é assim desde 30/05). Sem GRANT, o supabase-js recebe
+// "permission denied" — sintoma idêntico a RLS mal configurada, e é aí que se perde
+// a tarde. As tabelas que já existem não mudam.
+const criadas = [...new Set(
+  [...varrido.matchAll(/\bcreate\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?("?\w+"?)/gi)]
+    .map(m => m[1].replace(/"/g, ''))
+)]
+const semGrant = criadas.filter(t => {
+  const re = new RegExp('\\bgrant\\b[\\s\\S]{0,200}?\\bon\\s+(?:table\\s+)?(?:public\\.)?"?' + t + '"?\\b', 'i')
+  return !re.test(varrido)
+})
+if (semGrant.length && !tem('sem-api')) {
+  const linhas = []
+  for (const t of semGrant) {
+    linhas.push('  grant select, insert, update, delete on public.' + t + ' to authenticated;')
+    linhas.push('  grant select, insert, update, delete on public.' + t + ' to service_role;')
+  }
+  morre([
+    'este SQL cria tabela em `public` sem GRANT: ' + semGrant.join(', ') + '.',
+    'A partir de 30/10/2026 a Supabase nao expoe mais tabela nova a Data API sozinha,',
+    'e sem GRANT o supabase-js recebe "permission denied" — parece bug de RLS, e nao e.',
+    'Ponha os GRANTs na MESMA migration que cria a tabela:',
+    ...linhas,
+    'Use `to anon` SO se a tabela tiver de ser lida SEM login — e confira a RLS antes.',
+    'Se a tabela e interna e nao deve aparecer na Data API, passe --sem-api.',
+  ].join('\n    '))
+}
+
 if (escreve && !temTransacao) {
   console.log('\n   ⚠ Este arquivo escreve e NÃO tem begin/commit: se um comando falhar no meio,')
   console.log('     o que passou antes fica. Seguindo porque você confirmou.\n')
