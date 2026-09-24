@@ -756,6 +756,11 @@ export const OUTRAS_BOCAS: Etapa[] = [
         fala: 'As compras do BR vc vai encontrar nos grupos COMPRAS e FINANCEIRO',
         onde: 'espelho whatsapp_messages (banco US): «GZ28 Tpec - COMPRAS» e «GZ28 Tad - FINANCEIRO», só a linha canônica (duplicate_of nulo) · financeiro_inbox',
         nota: 'O e-mail da NF-e do Mercado Livre não traz o valor; o valor sai do Pix no FINANCEIRO. O recibo da Uber traz o trajeto, e é o trajeto que casa com a legenda no COMPRAS.' },
+      { id: 'C.8', estado: 'À MÃO', desde: '24/09/2026',
+        texto: 'Os grupos PRINCIPAIS são três: FINANCEIRO, CONTAS e COMPRAS. Os grupos dos TIMES (os chats «GZ28BR T…», um por time do STAFF) também são lidos. O histórico completo dos três principais está exportado na pasta Volante do GZ28BR — é consulta e prova, não lançamento retroativo.',
+        fala: 'The FINANCEIRO, CONTAS and COMPRAS groups are the MAIN ONES! The Team Groups (search the app for them), should be read too! FINANCEIRO, CONTAS and COMPRAS exported to VOLANTE at GZ28BR folder.',
+        onde: 'espelho whatsapp_messages (banco US): «GZ28 Tad - FINANCEIRO», «GZ28 Tad - CONTAS», «GZ28 Tpec - COMPRAS» e os «GZ28BR T…» · Dropbox/000 - GZ28BR/Volante/*.zip',
+        nota: 'Hoje o robô (financeiro_inbox) só lê o FINANCEIRO. CONTAS e os grupos dos times ainda não têm leitor automático.' },
     ],
   },
 ]
