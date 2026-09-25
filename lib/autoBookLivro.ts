@@ -670,7 +670,7 @@ export const SEQUENCIA: Etapa[] = [
         texto: 'Posto pago na BOMBA (MCC 5542 no extrato — «automated fuel dispenser») é SEMPRE combustível, sem pergunta: casa com a foto da bomba de um carro se houver (14.24), senão vai para o combustível da frota. Nunca vira cigarro, comida ou pessoal. É o outro lado da 14.14: caixa da loja (5541) pergunta; bomba (5542) não.',
         fala: 'se foi na bomba é sempre combustível, registre isso nas regras do AutoBook no app',
         onde: 'lib/bankReconcile.server.ts — mccKlass/classify (hoje 5541 e 5542 caem juntos em FUEL) · regra def:fuel',
-        nota: 'Hoje o motor não separa bomba de caixa: 5541, 5542 e a pfc TRANSPORTATION_GAS viram o mesmo FUEL, e um casamento EXACT pode levar uma linha de bomba para pessoal. Medido em 25/09 na Wawa 5205: gasolina do WorkTruck 129,70 (21/09) = 5542, certo; mas 78,21 (18/09) = 5542 e está casada como cigarro pessoal do Márcio (AUTO · EXACT) — contradiz esta regra, a conferir com ele. Comidas do time e cigarros saem 5541.' },
+        nota: 'Hoje o motor não separa bomba de caixa: 5541, 5542 e a pfc TRANSPORTATION_GAS viram o mesmo FUEL, e um casamento EXACT pode levar uma linha de bomba para pessoal. Medido em 25/09 na Wawa 5205: gasolina do WorkTruck 129,70 (21/09) = 5542, certo; e 78,21 (18/09) = 5542 estava casada como cigarro pessoal do Márcio (AUTO · EXACT) — ele conferiu em 25/09: era combustível do RAMbo. Movida para US.011.1 e recasada; a regra valeu até contra a lembrança dele. Comidas do time e cigarros saem 5541.' },
     ],
   },
 ]
