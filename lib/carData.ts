@@ -994,6 +994,80 @@ Object.assign(specialEditions, {
   '2026-ESCALADE-V-6.2 V8 SC': ['None', 'ESV'],
 })
 
+// ── Cadillac Escalade — todas as gerações (1999–2026) ──────────────────────────
+// Márcio, 25/set/2026 (via Parts Chasing 2): «create all Escalades in the apps».
+// Até aqui o catálogo só tinha o ESCALADE-V (2023+, bloco acima). Este bloco cobre
+// o Escalade regular, geração a geração. Convenções da casa, iguais ao resto do arquivo:
+//   · VERSÃO = acabamento + motor («Platinum 6.2 V8»); sem acabamento, só o motor.
+//   · ESV (entre-eixos longo) e EXT (caçamba) são EDIÇÃO ESPECIAL do ESCALADE, não modelo
+//     próprio — exatamente como o Escalade-V ESV já está (lei das edições especiais).
+//     Platinum também é edição quando era pacote sobre a linha (GMT800/GMT900); vira
+//     acabamento com nome próprio a partir de 2015, quando a Cadillac passou a vender assim.
+//   · Não existe MY 2001: a GMT800 estreou como 2002.
+//   · O Hybrid (2009–2013) leva o 6.0 próprio; o EXT acabou em 2013; o diesel 3.0 vai de
+//     2021 a 2024. O ESCALADE-V continua modelo à parte.
+// Cores: paleta principal de fábrica de cada geração — código de tinta que faltar entra aqui.
+const escaladeGmt400Colors = ['Sable Black', 'White Diamond', 'Light Pewter Metallic', 'Sandalwood Metallic', 'Dark Bronzemist Metallic']
+const escaladeGmt800Colors = ['Sable Black', 'White Diamond', 'Quicksilver', 'Light Platinum', 'Sandstone', 'Blue Chip', 'Cashmere']
+const escaladeGmt900Colors = ['Black Raven', 'White Diamond Tricoat', 'Radiant Silver Metallic', 'Gold Mist Metallic', 'Quicksilver Metallic', 'Infrared', 'Cocoa Metallic', 'Galaxy Gray Metallic', 'Sapphire Blue Metallic', 'Crystal Red Tintcoat']
+const escaladeK2xlColors = ['Black Raven', 'Crystal White Tricoat', 'Radiant Silver Metallic', 'Silver Coast Metallic', 'Dark Granite Metallic', 'Red Passion Tintcoat', 'Dark Adriatic Blue Metallic', 'Bronze Dune Metallic', 'Satin Steel Metallic', 'Shadow Metallic']
+const escaladeT1xxColors = ['Black Raven', 'Crystal White Tricoat', 'Satin Steel Metallic', 'Dark Moon Blue Metallic', 'Galactic Gray Metallic', 'Mahogany Metallic', 'Infrared Tintcoat', 'Radiant Silver Metallic', 'Latte Metallic', 'Midnight Steel Metallic', 'Argent Silver Metallic', 'Garnet Metallic']
+function escaladeColorsFor(year: number): string[] {
+  if (year >= 2021) return escaladeT1xxColors
+  if (year >= 2015) return escaladeK2xlColors
+  if (year >= 2007) return escaladeGmt900Colors
+  if (year >= 2002) return escaladeGmt800Colors
+  return escaladeGmt400Colors
+}
+// Versões por ano-modelo, geração a geração.
+function escaladeVersionsFor(y: number): string[] {
+  if (y >= 2021) {
+    const v6 = ['Luxury 6.2 V8', 'Premium Luxury 6.2 V8', 'Sport 6.2 V8', 'Premium Luxury Platinum 6.2 V8', 'Sport Platinum 6.2 V8']
+    const d3 = y <= 2024 ? ['Luxury 3.0 Diesel', 'Premium Luxury 3.0 Diesel', 'Sport 3.0 Diesel', 'Premium Luxury Platinum 3.0 Diesel', 'Sport Platinum 3.0 Diesel'] : []
+    return [...v6, ...d3]
+  }
+  if (y >= 2017) return ['6.2 V8', 'Luxury 6.2 V8', 'Premium Luxury 6.2 V8', 'Platinum 6.2 V8']
+  if (y >= 2015) return ['6.2 V8', 'Luxury 6.2 V8', 'Premium 6.2 V8', 'Platinum 6.2 V8']
+  if (y >= 2007) return y >= 2009 && y <= 2013 ? ['6.2 V8', 'Hybrid 6.0 V8'] : ['6.2 V8']
+  if (y >= 2002) return ['5.3 V8', '6.0 V8']
+  return ['5.7 V8']
+}
+// Edições por versão e ano. ESV/EXT/Platinum só onde existiram de fato.
+function escaladeEditionsFor(y: number, version: string): string[] {
+  if (y >= 2015) {
+    const sport = y >= 2019 && y <= 2020 && (version.startsWith('Luxury') || version.startsWith('Premium Luxury')) ? ['Sport'] : []
+    return ['None', 'ESV', ...sport]
+  }
+  if (y >= 2007) {
+    if (version.startsWith('Hybrid')) return ['None', 'Platinum']
+    return ['None', 'ESV', ...(y <= 2013 ? ['EXT'] : []), ...(y >= 2008 ? ['Platinum'] : [])]
+  }
+  if (y >= 2002) {
+    if (version.startsWith('5.3')) return ['None']
+    return ['None', ...(y >= 2003 ? ['ESV'] : []), 'EXT', ...(y >= 2004 ? ['Platinum'] : [])]
+  }
+  return ['None']
+}
+const escaladeYears = [1999, 2000, ...Array.from({ length: 25 }, (_, i) => 2002 + i)] // 2002–2026, sem 2001
+for (const y of escaladeYears) {
+  if (!years.includes(y)) years.push(y)
+  manufacturersByYear[y] = manufacturersByYear[y] || []
+  if (!manufacturersByYear[y].includes('GM')) manufacturersByYear[y].push('GM')
+  brandsByManufacturerAndYear['GM'] = brandsByManufacturerAndYear['GM'] || {}
+  brandsByManufacturerAndYear['GM'][y] = brandsByManufacturerAndYear['GM'][y] || []
+  if (!brandsByManufacturerAndYear['GM'][y].includes('CADILLAC')) brandsByManufacturerAndYear['GM'][y].push('CADILLAC')
+  modelsByBrandAndYear['CADILLAC'] = modelsByBrandAndYear['CADILLAC'] || {}
+  modelsByBrandAndYear['CADILLAC'][y] = modelsByBrandAndYear['CADILLAC'][y] || []
+  // ESCALADE entra ANTES do ESCALADE-V na lista do ano, que é a ordem natural do picker.
+  if (!modelsByBrandAndYear['CADILLAC'][y].includes('ESCALADE')) modelsByBrandAndYear['CADILLAC'][y].unshift('ESCALADE')
+  versionsByModelAndYear['ESCALADE'] = versionsByModelAndYear['ESCALADE'] || {}
+  versionsByModelAndYear['ESCALADE'][y] = escaladeVersionsFor(y)
+  for (const v of escaladeVersionsFor(y)) specialEditions[`${y}-ESCALADE-${v}`] = escaladeEditionsFor(y, v)
+}
+years.sort((a, b) => a - b)
+// União de todas as versões, para o objeto plano `carData` lá embaixo.
+const escaladeAllVersions = [...new Set(escaladeYears.flatMap(escaladeVersionsFor))]
+
 // ── RAM 1500, 5th gen "DT" — the V8 range (2019–2024 + 2026) ───────────────────
 // Every trim here is the 5.7L HEMI (395 hp, eTorque optional), named with the
 // engine like the rest of the file. The TRX (6.2L supercharged, 702 hp) is already
@@ -1913,6 +1987,7 @@ export function getAvailableColors(year: number, brand: string, model: string, v
   if (model === 'MUSTANG' && mustangColorsByYear[year]) return mustangColorsByYear[year]
   if (model === 'CTS-V') return ctsV2Colors
   if (model === 'ESCALADE-V') return escaladeVColors
+  if (model === 'ESCALADE') return escaladeColorsFor(year)
   if (model === 'AVALANCHE') return avalancheGen2Colors
   if (model === 'ECLIPSE') return eclipse2gColors
   if (model === 'DURANGO' && year === 2026) return durangoColors2026
@@ -1990,7 +2065,7 @@ carData['GM']['CHEVROLET']['CORVETTE'] = [...new Set([
   ...(carData['GM']['CHEVROLET']['CORVETTE'] || []),
   ...Object.values(versionsByModelAndYear['CORVETTE']).flat(),
 ])]
-carData['GM']['CADILLAC'] = { 'CTS-V': ['CTS-V 6.2 V8 SC'], 'ESCALADE-V': ['6.2 V8 SC'] }
+carData['GM']['CADILLAC'] = { 'CTS-V': ['CTS-V 6.2 V8 SC'], 'ESCALADE': escaladeAllVersions, 'ESCALADE-V': ['6.2 V8 SC'] }
 // Jeep Grand Cherokee flat list = union of every Hemi year's versions.
 carData['MOPAR']['JEEP'] = { 'GRAND CHEROKEE': [...new Set(Object.values(versionsByModelAndYear['GRAND CHEROKEE']).flat())] }
 

@@ -119,6 +119,21 @@ export function transmissionOptionsFor(
   }
   if (b === 'CHEVROLET' && m === 'OPALA') return ['Manual4', 'Manual3', 'Auto3']
   if (b === 'CHEVROLET' && m === 'D20') return ['Manual5']
+  // ---- CADILLAC ESCALADE, todas as gerações (25/set/2026) ----
+  // Uma caixa por geração, nunca escolha: 4L60E na GMT400; na GMT800 o 5.3 leva 4L60E e o
+  // 6.0 a 4L65E reforçada; 6L80 na GMT900 e no primeiro ano da K2XL (2015); 8L90 em
+  // 2016–2017; 10L80 de 2018 em diante — inclusive o diesel 3.0 e o Escalade-V.
+  // O Hybrid (2009–2013) usa a 2ML70 de dois modos, que não é caixa de marchas.
+  if (b === 'CADILLAC' && m === 'ESCALADE-V') return ['GM10L80 (Auto10)']
+  if (b === 'CADILLAC' && m === 'ESCALADE') {
+    if (has('HYBRID')) return ['GM2ML70 (Hybrid EVT)']
+    if (y >= 2018) return ['GM10L80 (Auto10)']
+    if (y >= 2016) return ['GM8L90 (Auto8)']
+    if (y >= 2007) return ['GM6L80 (Auto6)']
+    if (y >= 2002) return has('5.3') ? ['GM4L60E (Auto4)'] : ['GM4L65E (Auto4)']
+    if (y >= 1999) return ['GM4L60E (Auto4)']
+    return []
+  }
   if (b === 'CADILLAC' && m.includes('CTS-V')) return y >= 2009 && y <= 2015 ? ['GM6L90 (Auto6)', 'TR6060 (Manual6)'] : []
 
   // ---- FORD ----
