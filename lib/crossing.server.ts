@@ -275,7 +275,7 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     lerTudo(b.br, 'BR', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, us_invoice_id, usd_rate, service, florida_taxes, import_margin, global_discount, hiring_date, created_at' + x('BR.invoices')),
     lerTudo(b.br, 'BR', 'rides', 'id, project_code, project_name'),
     lerTudo(b.br, 'BR', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, amount_usd, payment_date, expense_date, due_date, paid_from, paid_to, source, order_number, part_number, position, us_expense_id, cancel_status' + x('BR.invoice_expenses')),
-    lerTudo(b.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, base_cost, unit_price_usd, position, payment_date' + x('BR.invoice_parts')),
+    lerTudo(b.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, unit_price_usd, position, payment_date' + x('BR.invoice_parts')),
     lerTudo(b.br, 'BR', 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, paid_to, paid_from, description, source' + x('BR.invoice_payments')),
     lerTudo(b.br, 'BR', 'invoice_services', 'id, invoice_id, price'),
     lerTudo(b.br, 'BR', 'expenses', 'id, season_id, staff_id, type, amount, expense_date, payment_date, paid, description, supplier, source, origin, paid_from, paid_to, order_number' + x('BR.expenses')),
@@ -1470,7 +1470,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     for (const x of faltaParte) {
       // O R$ é o que JÁ está gravado na despesa espelhada — nunca carimbado de novo.
       const lineBrl = r2(brlBR(x.e)), src = srcDe(x.f)
-      const parte = { invoice_id: ALVO, description: x.f.item, unit_price: r2(lineBrl / x.f.q), base_cost: r2(lineBrl / x.f.q), unit_price_usd: r2(x.f.usd / x.f.q), quantity: x.f.q, payment_date: x.f.dia, position: ++posP, mirror_src: src }
+      const parte = { invoice_id: ALVO, description: x.f.item, unit_price: r2(lineBrl / x.f.q), unit_price_usd: r2(x.f.usd / x.f.q), quantity: x.f.q, payment_date: x.f.dia, position: ++posP, mirror_src: src }
       novasPartes.push(parte)
       m.op({ tipo: 'criar_linha', banco: 'BR', tabela: 'invoice_parts', mirror_src: src, direcao: 3, papel: 'item', usd: x.f.usd, brl: lineBrl, rotulo: `item ${x.f.item.slice(0, 50)} (a rodada anterior parou antes dele)`, campos: parte,
         confere: [confere('US', x.f.tabela, x.f.linha, colsFonte3(x.f.tabela)), confere('BR', 'invoice_expenses', x.e, [...COLS.espelho])] })
@@ -1492,7 +1492,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
         source: 'GZ28BR', paid_from: 'GZ28BR', paid_to: 'GZ28BR', item_discount: 0, position: ++pos, order_number: f.order, part_number: f.part,
         us_expense_id: f.tabela === 'invoice_expenses' ? f.linha.id : null, mirror_src: src,
       } })
-      const parte = { invoice_id: ALVO, description: f.item, unit_price: r2(lineBrl / f.q), base_cost: r2(lineBrl / f.q), unit_price_usd: r2(lineUsd / f.q), quantity: f.q, payment_date: f.dia, position: ++posP, mirror_src: src }
+      const parte = { invoice_id: ALVO, description: f.item, unit_price: r2(lineBrl / f.q), unit_price_usd: r2(lineUsd / f.q), quantity: f.q, payment_date: f.dia, position: ++posP, mirror_src: src }
       novasPartes.push(parte)
       m.op({ tipo: 'criar_linha', banco: 'BR', tabela: 'invoice_parts', mirror_src: src, direcao: 3, papel: 'item', usd: lineUsd, brl: lineBrl, rotulo: `item ${f.item.slice(0, 50)}`, campos: parte, confere: conf3 })
     }
