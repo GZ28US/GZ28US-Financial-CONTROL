@@ -201,12 +201,15 @@ async function googleAccessToken(auth: MailAuth): Promise<string | null> {
 // `id` entrou em 07/set/2026: sem ele nao da para ARQUIVAR o que o robo resolveu, e
 // o e-mail processado ficava eternamente na caixa dele ("porque tem tanto email da
 // sua pauta ainda na minha caixa?"). E opcional porque quem so le texto nao precisa.
-export type MailMsg = { id?: string; subject: string; from: string; fromAddr: string; received: string; text: string }
+// `folderId` entrou em 17/set/2026: `/me/messages` lê a caixa INTEIRA, não só a
+// inbox, e quem arquiva precisa saber onde a carta está para não desfazer o
+// arquivamento de outra mão (ver `arquiva` em autoBookMail.server.ts).
+export type MailMsg = { id?: string; folderId?: string; subject: string; from: string; fromAddr: string; received: string; text: string }
 
 export async function fetchRecentMessages(accessToken: string, sinceIso: string): Promise<MailMsg[]> {
   const q = new URLSearchParams({
     $top: '50',
-    $select: 'id,subject,from,receivedDateTime,body',
+    $select: 'id,parentFolderId,subject,from,receivedDateTime,body',
     $filter: `receivedDateTime ge ${sinceIso}`,
     $orderby: 'receivedDateTime desc',
   })
@@ -217,6 +220,7 @@ export async function fetchRecentMessages(accessToken: string, sinceIso: string)
   if (!Array.isArray(data?.value)) return []
   return data.value.map((m: any) => ({
     id: String(m.id || ''),
+    folderId: String(m.parentFolderId || ''),
     subject: String(m.subject || ''),
     from: String(m.from?.emailAddress?.name || ''),
     fromAddr: String(m.from?.emailAddress?.address || '').toLowerCase(),
@@ -504,6 +508,13 @@ export async function folderMap(accessToken: string): Promise<Map<string, string
   const top = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders?$top=100`, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
   for (const f of (top?.value || [])) out.set(String(f.displayName || '').trim().toLowerCase(), String(f.id))
   return out
+}
+
+// O id da INBOX pelo nome bem-conhecido do Graph — numa caixa em português o
+// displayName é "Caixa de Entrada", e o `folderMap` acima não a acharia por "inbox".
+export async function inboxFolderId(accessToken: string): Promise<string | null> {
+  const f = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=id`, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
+  return f?.id ? String(f.id) : null
 }
 
 export async function moveMessage(accessToken: string, messageId: string, folderId: string): Promise<boolean> {

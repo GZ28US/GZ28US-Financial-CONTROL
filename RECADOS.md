@@ -6,6 +6,17 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 24/set/2026 (14h15 Orlando) · da App Development 2 para a AUTO BOOK — ESTOQUE: UMA LINHA COM A QUANTIDADE, NÃO 24 LINHAS DE 1 (a memória «estoque-linha-por-unidade» foi CORRIGIDA)
+
+Escrito pela sessão App Development 2 (Márcio), 24/set/2026, 14h15 Orlando. É AVISO de regra decidida por ele, não pedido.
+
+- **O que aconteceu em 23/set:** a Auto Book ouviu «individual bottles, not the full box» e gravou os óleos Red Line como **24 linhas de quantity 1** por fatura (48 no total), com «frasco N/24» na descrição (trilha `oleo-frasco-a-frasco`), às 10:57 Orlando. Às **10:58** o Márcio mandou a tela do FROM STOCK para esta sessão: *«several lines of the same item with 1 as quantity, the right way is one row with the proper quantity. Fix it.»* Depois: *«seguem várias linhas com 1 unidade só, corrija isso logo, pelo amor de Deus»* e *«comprado BULK e vendido individualmente, tem que guardar no inventory individualmente na quantidade certa, não em bulk»*.
+- **Leitura que ele confirmou:** «individual bottles» é a UNIDADE (quarto, não caixa) — não o número de linhas. **Uma linha por peça, `quantity` = N, `unit_price` da unidade.** Mesma peça + preço + pedido + data = mesma linha. **Nunca numerar unidade na descrição** («frasco 3/24»): vira N peças diferentes e nenhuma tela junta.
+- **Está no LIVRO como 14.27** (`lib/autoBookLivro.ts`, commits `791cd44` → `bfe0d40`), com as três frases dele no `fala`.
+- **O dado já foi consolidado:** 48 linhas → 2 (5W40 e 5W50, 24 cada), trilhas `estoque-bulk-uma-linha` e `estoque-unidade-numerada`, ROLLBACKs ao lado. Em 24/set o 5W40 já está em 16: **8 quartos saíram pelo FROM STOCK baixando a quantidade** — o modelo funciona. O FROM STOCK também agrupa lotes iguais na tela (commit `c423565`).
+- **A memória `estoque-linha-por-unidade.md` foi REESCRITA** por esta sessão com a regra final e a cronologia; a linha do índice também. Se a Auto Book tiver algo dele mais NOVO que 23/set dizendo o contrário, é ele quem desempata — mas hoje a ordem mais recente é a de cima.
+- **Não reparta de novo** as linhas do óleo, e não aplique «frasco N/M» em compra nova. Injector Dynamics 2600cc (pedido 122017) ficam como estão: 3 linhas reais (dois preços, uma já gasta no DarkAngel).
+
 ## 16/set/2026 (19h23 Orlando) · da sessão do Márcio para a sessão do João — REPORTED NA LINHA (reported_at) E MARKETING PAGO PELO BR NA TRAVESSIA (FIN 0.18.0)
 
 Escrito pelo Claude da sessão do Márcio. É INFORMAÇÃO. Tudo no ar e conferido.

@@ -22,6 +22,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { waSafeTarget } from '@/lib/waSelfGuard.server'
 import { enviaUltra } from '@/lib/waSend.server'
 import { semMarcacao } from '@/lib/waMentions'
+import { US_CLIENT_GZ28BR } from '@/lib/crossingBalance'
 
 const G = 'https://graph.microsoft.com/v1.0'
 const SIGNATURE = 'Sent by GZ28US Control App®'
@@ -88,15 +89,44 @@ export function parseZelle(subject: string, body: string): Hit | null {
   return null
 }
 
-// Já lançado? O número de confirmação vive na descrição do pagamento (entrada)
-// ou na linha de despesa (saída) — é a impressão digital do Zelle.
+// Já lançado? O número de confirmação é a impressão digital do Zelle, e ele pode
+// estar em QUALQUER tabela de dinheiro, não só nas duas de invoice (17/set/2026):
+// venda de credencial do SEMA é despesa NEGATIVA em fixed_cost_expenses, reembolso
+// de staff mora na folha. Procurar só em invoice_incomes/invoice_expenses deixava
+// o resto invisível e o robô lançava de novo.
+const ONDE_MORA_O_CONF: Array<[string, string]> = [
+  ['invoice_incomes', 'description'], ['invoice_expenses', 'item'], ['fixed_cost_expenses', 'description'],
+  ['staff_expenses', 'description'], ['assets_expenses', 'description'], ['assets', 'description'],
+  ['inputs', 'description'], ['inventory', 'description'],
+]
 async function alreadyBooked(db: SupabaseClient, hit: Hit): Promise<boolean> {
-  if (hit.direction === 'IN') {
-    const { data } = await db.from('invoice_incomes').select('id').ilike('description', `%${hit.conf}%`).limit(1)
+  const achou = await Promise.all(ONDE_MORA_O_CONF.map(async ([tabela, coluna]) => {
+    const { data } = await db.from(tabela).select('id').ilike(coluna, `%${hit.conf}%`).limit(1)
     return !!data?.length
+  }))
+  return achou.some(Boolean)
+}
+
+// ── ENTRADA JÁ LANÇADA À MÃO COMO DESPESA NEGATIVA (17/set/2026) ───────────
+// Caso Wolff Rapchan: o Zelle de US$ 100 (15/set, credencial do SEMA) foi lançado
+// à mão às 22:38 como −100 no custo fixo do SEMA, com a confirmação DO BANCO DELE
+// — o número do Regions só chega no aviso. Às 22:41 este robô não achou o conf e
+// lançou os mesmos US$ 100 como renda. A segunda impressão digital é a da casa:
+// linha NEGATIVA de mesmo valor, paga a ±2 dias, com o nome de quem mandou na
+// descrição. Bateu → não lança; avisa onde está e pede o conf na linha.
+const NEGATIVAS = ['fixed_cost_expenses', 'staff_expenses', 'assets_expenses']
+async function negativaJaLancada(db: SupabaseClient, hit: Hit): Promise<{ tabela: string; descricao: string } | null> {
+  const words = hit.party.trim().split(/\s+/).filter(w => w.length > 2).map(w => w.toUpperCase())
+  if (!words.length) return null
+  const dia = (n: number) => { const d = new Date(`${hit.when}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+  for (const tabela of NEGATIVAS) {
+    const { data } = await db.from(tabela).select('description, amount, payment_date')
+      .gte('amount', -hit.amount - 0.005).lte('amount', -hit.amount + 0.005)
+      .gte('payment_date', dia(-2)).lte('payment_date', dia(2))
+    const linha = (data || []).find(r => words.every(w => String(r.description || '').toUpperCase().includes(w)))
+    if (linha) return { tabela, descricao: String(linha.description || '') }
   }
-  const { data } = await db.from('invoice_expenses').select('id').ilike('item', `%${hit.conf}%`).limit(1)
-  return !!data?.length
+  return null
 }
 
 // ── O DESTINO DE UMA ENTRADA — O VALOR MANDA (Márcio, 08/set/2026) ─────────
@@ -169,7 +199,14 @@ async function destinoPorValor(db: SupabaseClient, clientId: string, amount: num
   return null
 }
 
-async function targetInvoice(db: SupabaseClient, party: string, amount: number): Promise<Destino | null> {
+// ── NUNCA NUMA SHOPPING INVOICE (17/set/2026) ──────────────────────────────
+// As 006.N (cliente GZ28BR) são a conta corrente BR×US e quem escreve renda nelas
+// é o motor da travessia, a partir do app do BR. O palpite «mesmo remetente, mesma
+// invoice» pôs dinheiro de terceiro na 006.37 (Wolff, que tinha um Zelle antigo
+// lá) e mexeu na conta entre as empresas. Destino numa 006.N não é destino: vira
+// pergunta.
+type Recusado = { recusado: string }
+async function targetInvoice(db: SupabaseClient, party: string, amount: number): Promise<Destino | Recusado | null> {
   const words = party.trim().split(/\s+/).filter(w => w.length > 2)
   if (!words.length) return null
 
@@ -177,6 +214,7 @@ async function targetInvoice(db: SupabaseClient, party: string, amount: number):
   const norm = (s: string) => String(s || '').toUpperCase()
   const client = (clients || []).find(c => words.every(w => norm(c.name).includes(norm(w))))
     || (clients || []).find(c => norm(c.name).includes(norm(words[0])) && words.length === 1)
+  if (client && String(client.id) === US_CLIENT_GZ28BR) return { recusado: 'o remetente casa com o cliente GZ28BR, e shopping invoice (006.N) é da travessia' }
   if (client) {
     // O VALOR PRIMEIRO — a dívida em aberto diz a invoice melhor que a data.
     const porValor = await destinoPorValor(db, String(client.id), amount)
@@ -193,7 +231,8 @@ async function targetInvoice(db: SupabaseClient, party: string, amount: number):
   const { data } = await db.from('invoice_incomes').select('invoice_id, payment_date').ilike('description', `%${words[0]}%`).not('invoice_id', 'is', null).order('payment_date', { ascending: false }).limit(1)
   const invoice_id = data?.[0]?.invoice_id
   if (!invoice_id) return null
-  const { data: inv } = await db.from('invoices').select('invoice_code').eq('id', invoice_id).limit(1)
+  const { data: inv } = await db.from('invoices').select('invoice_code, client_id').eq('id', invoice_id).limit(1)
+  if (String(inv?.[0]?.client_id || '') === US_CLIENT_GZ28BR) return { recusado: `o último pagamento deste remetente está na ${inv?.[0]?.invoice_code || '006.N'}, shopping invoice do GZ28BR, e ali quem lança é a travessia` }
   return { invoice_id, code: inv?.[0]?.invoice_code || '?', via: 'PALPITE: historico' }
 }
 
@@ -241,7 +280,14 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
     if (await alreadyBooked(db, hit)) continue
 
     if (hit.direction === 'IN') {
-      const target = await targetInvoice(db, hit.party, hit.amount)
+      const negativa = await negativaJaLancada(db, hit)
+      if (negativa) {
+        pending.push(`${hit.party} $${hit.amount} (já lançado em ${negativa.tabela})`)
+        await wa(MARCIO_US, `💰 *ZELLE RECEBIDO — JÁ ESTAVA LANÇADO*\n$${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nConf ${hit.conf} · Regions •9336\n\nNão lancei: já existe a linha negativa de mesmo valor em ${negativa.tabela} — "${semMarcacao(negativa.descricao.slice(0, 120))}". Falta só escrever o conf ${hit.conf} nela.`)
+        continue
+      }
+      const alvo = await targetInvoice(db, hit.party, hit.amount)
+      const target = alvo && !('recusado' in alvo) ? alvo : null
       if (target) {
         const recibo = await guardaComprovante(db, target.invoice_id, hit, String(m.body?.content || ''))
         await db.from('invoice_incomes').insert({
@@ -276,7 +322,7 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
         await wa(MARCIO_US, `💰 *ZELLE RECEBIDO — LANÇADO*\n$${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nInvoice ${target.code}\n${nota}\nConf ${hit.conf} · Regions •9336${recibo ? '\n📎 comprovante anexado' : '\n⚠️ sem comprovante anexado'}`)
       } else {
         pending.push(`${hit.party} $${hit.amount}`)
-        await wa(MARCIO_US, `⚠️ *ZELLE RECEBIDO — SEM DESTINO*\n$${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nConf ${hit.conf} · Regions •9336\n\nPrimeiro pagamento deste remetente — me diga a invoice e eu lanço.`)
+        await wa(MARCIO_US, `⚠️ *ZELLE RECEBIDO — SEM DESTINO*\n$${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nConf ${hit.conf} · Regions •9336\n\n${alvo && 'recusado' in alvo ? `Não lancei sozinho: ${alvo.recusado}.` : 'Primeiro pagamento deste remetente.'} Me diga a invoice e eu lanço.`)
       }
     } else {
       pending.push(`OUT ${hit.party} $${hit.amount}`)
