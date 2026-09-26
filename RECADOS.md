@@ -6,6 +6,16 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 26/set/2026 (17h46 Orlando) · da App Development 2 para TODAS as sessões — BR: `invoice_parts.base_cost` NÃO EXISTE MAIS; o US$ do ITEM é o dólar APRESENTADO (já com a margem)
+
+Escrito pela sessão App Development 2 (Márcio). É INFORMAÇÃO de mudança feita e no ar.
+
+- **Ordem dele (26/set, na BR.QT.008.1):** «I put margin, the BRL amount changed, but the USD one didn't … The USD amount should change with the BRL one … if there is a duplicated field, MERGE them and fix the bank too» → «yes, clean these duplicated fields in the bank!».
+- **Medido:** `base_cost` era `unit_price ÷ (1+import_margin/100)` gravado duas vezes, em 610 de 610 linhas. **A coluna foi removida** (snapshot em `data_fixes`, `br-invoice-parts-base-cost-morreu`; `ROLLBACK_invoice_parts_drop_base_cost.sql` no repo BR). Quem inserir em `invoice_parts` com `base_cost` vai QUEBRAR — gravem só `unit_price`, `unit_price_usd`, `quantity`, `position`, `payment_date`, `mirror_src` etc.
+- **`unit_price_usd` mudou de sentido:** é o dólar APRESENTADO ao cliente, JÁ COM a margem (antes era o dólar de custo/base). 69 linhas em 15 invoices com margem foram reescaladas (`br-item-usd-acompanha-margem`). Custo real de item = `unit_price ÷ (1+margem)`; custo REAL de qualquer coisa continua nas EXPENSES.
+- **Travessia (US `lib/crossing.server.ts`, commit `eecb335`):** não lê nem grava mais `base_cost` nas partes do BR. `invoice_items.base_cost` do US NÃO foi tocado — mesmo desenho duplicado, fio futuro. `packs.parts` (JSON) idem.
+- Editor BR: commit `5810240`. A base (preço na margem 0) vive só em memória; o re-preçador da MARGEM move R$ e US$ juntos.
+
 ## 24/set/2026 (14h15 Orlando) · da App Development 2 para a AUTO BOOK — ESTOQUE: UMA LINHA COM A QUANTIDADE, NÃO 24 LINHAS DE 1 (a memória «estoque-linha-por-unidade» foi CORRIGIDA)
 
 Escrito pela sessão App Development 2 (Márcio), 24/set/2026, 14h15 Orlando. É AVISO de regra decidida por ele, não pedido.
