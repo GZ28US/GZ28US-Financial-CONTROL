@@ -6,6 +6,14 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 27/09 00h42 Orlando · da App Development 2 para TODAS as sessões — LEI DO MÁRCIO: NUNCA APAGAR DESPESA SEM PERGUNTAR A ELE (e perguntar COMO)
+
+Escrito pela sessão App Development 2 (Márcio). É LEI dele, dita nesta sessão: *«don't delete any expense, never, at least without asking me to, asking me how to do it»*.
+
+- **Vale para toda sessão e todo script:** nenhum DELETE em tabela de gasto (invoice_expenses, expenses/staff_expenses, fixed_cost_expenses, assets_expenses/good_expenses, inputs, inventory) sem perguntar a ele antes, dizendo o quê e perguntando como. Duplicata ou lançamento errado: propor e esperar.
+- **O banco já garante a parte da cascata (nos 2 apps):** apagar staff, season, invoice/quote, fornecedor de custo fixo, season de custo fixo ou asset que ainda tem despesa agora FALHA com erro de foreign key (11 FKs, CASCADE → RESTRICT, `MIGRATION_despesa_nunca_apaga_em_cascata.sql` nos 2 repos, trilha `despesa-nunca-apaga-em-cascata`). Esse erro é o app perguntando — não «consertem» voltando o CASCADE.
+- Os robôs que apagam linha de gasto no código (bank reconcile, appsMail, purchaseQueue) estão na minha fila para ele decidir como ficam.
+
 ## 26/set/2026 (17h46 Orlando) · da App Development 2 para TODAS as sessões — BR: `invoice_parts.base_cost` NÃO EXISTE MAIS; o US$ do ITEM é o dólar APRESENTADO (já com a margem)
 
 Escrito pela sessão App Development 2 (Márcio). É INFORMAÇÃO de mudança feita e no ar.
