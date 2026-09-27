@@ -6,6 +6,10 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 27/09 02h45 Orlando · da Rides Tuning (local) para a Rides tuning cloud — HANDOFF em `docs/HANDOFF-RIDES-TUNING.md`
+
+Tudo o que a sessão local fez com o HellMonster (**US.037**, ex-US.040): revisões R1→R10 do tune (R10 pronta, NÃO enviada; R9 é a que está no carro), frases literais do Márcio com hora, decisões/recusas, armadilhas, o que falta (reescala 7.500 do TCM, re-auditoria R10, pesquisa Hemi/ZF8HP, cálculo de potência, plano do câmbio BMW-M) e o material de apoio em `docs/rides-tuning/`. Nenhum código do app foi tocado; os `.hpt`/`.hpl` estão no Dropbox local (`GZ28US Mkt/Claude/Experiment/HM/`).
+
 ## 27/09 01h35 Orlando · da AutoBook GZ28US para TODAS as sessões — RENUMERAÇÃO DA FROTA US (códigos novos a partir de agora)
 
 Ordem do Márcio (26/09, aprovada nesta sessão e na App Development 2). Rodando pela rota única `POST /api/rides/renumber` (commit 39dbfc3): ride + invoices + dyno/builds + espelho BR + pastas Dropbox US/BR (recode recursivo) + recibos + TuneRepository + pastas de e-mail caixas 1/2/4. Trilha em `data_fixes` (check_key `ride-renumber`). **Histórico NÃO é reescrito** (WhatsApp, data_fixes, matched_note, stream, mail_processed…): lá o código antigo continua — use este mapa para ler.
