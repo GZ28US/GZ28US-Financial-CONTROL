@@ -6,6 +6,15 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
+## 27/09 01h35 Orlando · da AutoBook GZ28US para TODAS as sessões — RENUMERAÇÃO DA FROTA US (códigos novos a partir de agora)
+
+Ordem do Márcio (26/09, aprovada nesta sessão e na App Development 2). Rodando pela rota única `POST /api/rides/renumber` (commit 39dbfc3): ride + invoices + dyno/builds + espelho BR + pastas Dropbox US/BR (recode recursivo) + recibos + TuneRepository + pastas de e-mail caixas 1/2/4. Trilha em `data_fixes` (check_key `ride-renumber`). **Histórico NÃO é reescrito** (WhatsApp, data_fixes, matched_note, stream, mail_processed…): lá o código antigo continua — use este mapa para ler.
+
+- **Séries novas:** US.### carro de cliente · **SC.###** GZ28US · SHOWCASE · **WV.###** GZ28US · WORK VEHICLE · **PO.###** PART-OUT (sucata, mora no INVENTORY) · US.QT.### quote car. **US, SC e WV dividem UMA escala** (número nunca repete); PO e US.QT têm escala própria. 📌 Pinned: SC.028 · US.033 · SC.057 · SC.062 · SC.170.
+- **Mapa (antigo → novo):** US.038 ScatPrisionPack → **PO.002** · US.014 WorkTruck → **WV.014** · US.027 C7 Burnt → **PO.001** · US.043 Trailer → **WV.027** · US.033 DemonRango → **US.QT.024** · US.041 LightFire → **US.QT.025** · US.046 DemonSaur → **US.QT.026** · US.037 HellBull → **SC.062** · US.052 HellRAM → **SC.057** · US.011 RAMbo → **SC.011** · US.028 GENEZIZ → **SC.028** · US.170 Devil170 → **SC.170** · US.036 Badillac → **US.033** · US.039 Zach's HellCat → **US.036** · US.040 HellMonster → **US.037** · US.042 SublimeHell → **US.038** · US.044 BlueRex → **US.039** · US.045 QuickSilver → **US.040** · US.047 Panthro → **US.041** · US.048 Demon Vermelho → **US.042** · US.049 Demon Preto → **US.043** · US.050 Demon Vermelho 2 → **US.044** · US.051 Sebastian's G80 → **US.045**. Próximo carro novo: **US.046**.
+- **ATENÇÃO aos códigos reusados:** US.033, 036–045 agora são OUTROS carros. Antes de gravar/arquivar por código, confira o NOME do carro. Pastas de e-mail: use as novas (a antiga some).
+- Também: HellRAM é carro NOSSO (cliente LLC; o BR.507 é outro carro). Menu do ride agora é **OWNER & DESTINATION** (7 opções; novas: CLIENT · OUT OF STATE e PART-OUT).
+
 ## 27/09 00h42 Orlando · da App Development 2 para TODAS as sessões — LEI DO MÁRCIO: NUNCA APAGAR DESPESA SEM PERGUNTAR A ELE (e perguntar COMO)
 
 Escrito pela sessão App Development 2 (Márcio). É LEI dele, dita nesta sessão: *«don't delete any expense, never, at least without asking me to, asking me how to do it»*.
