@@ -6,7 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { filtrarJaReportados, type ReportMarks } from '@/lib/reportMark'
-import { BASE_PATH } from '@/lib/utils'
+import { BASE_PATH, carDestiny } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { DEFAULT_SOURCE, matchSource } from '@/components/SourceSelect'
@@ -324,7 +324,7 @@ export default function GoodsPage() {
       const rideInvIds = new Set(rideInvs.map((i: any) => i.id))
       const rideNotes = (notesData || []).filter((n: any) => rideInvIds.has(n.invoice_id)).map((n: any) => ({ id: n.id, note: n.note }))
       return {
-        id: r.id, code: r.project_code || '—', name: r.project_name || '',
+        id: r.id, code: r.project_code || '—', name: r.project_name || '', pinned: !!r.pinned,
         invoiceId: rideInvs.length ? rideInvs[0].id : null,
         notes: rideNotes,
         spec: [r.year, r.brand || r.manufacturer, r.model, r.version].filter(Boolean).join(' '),
@@ -1089,8 +1089,8 @@ export default function GoodsPage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
                       <h2 className="text-2xl font-bold">{car.name || car.code}</h2>
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">{car.code}</span>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${car.scope === 'OWN' ? 'bg-blue-900 text-blue-200' : 'bg-teal-900 text-teal-200'}`}>{car.scope === 'OWN' ? 'NOSSO' : 'FERRAMENTA'}</span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">{car.code}{(car as any).pinned ? ' 📌' : ''}</span>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${car.scope === 'OWN' ? 'bg-blue-900 text-blue-200' : 'bg-teal-900 text-teal-200'}`}>{carDestiny(car.scope)?.badge || car.scope}</span>
                       {car.titleTransferred
                         ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-900 text-green-200">TÍTULO OK</span>
                         : <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-900 text-amber-200">TÍTULO PENDENTE</span>}

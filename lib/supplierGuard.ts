@@ -51,7 +51,7 @@
 // 196 rides): a regra pega EXATAMENTE 1 nome — "Dodge Charger Presidiário", o
 // carro que vazou — e nenhum fornecedor legítimo.
 
-const RIDE_CODE = /^\s*(US|BR)\s*\.\s*\d+/i
+const RIDE_CODE = /^\s*(US\s*\.\s*QT|US|BR|SC|WV|PO|SHP|GM)\s*\.\s*\d+/i
 
 // Normalização única de nome: sem acento, minúsculo, pontuação vira espaço.
 // "Dodge Charger Presidiário" e "DODGE-CHARGER  PRESIDIARIO" viram a mesma coisa.

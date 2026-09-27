@@ -488,15 +488,22 @@ export async function fetchInbox(accessToken: string): Promise<InboxMsg[]> {
 }
 
 // "Rides / US.0XX - Name" → map project_code → folder id.
+// SÉRIES (27/set/2026): SC/WV/PO/US.QT/SHP também são pasta de carro — sem isso o
+// e-mail de um SC.011 virava DÚVIDA «sem pasta». E a lista PAGINA: «Rides» tem mais
+// de 100 filhas (79 em 27/09 e crescendo), e o $top=100 cortava as de baixo.
 export async function rideFolderMap(accessToken: string): Promise<Map<string, { id: string; name: string }>> {
   const out = new Map<string, { id: string; name: string }>()
   const top = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders?$top=100`, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
   const rides = (top?.value || []).find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
   if (!rides) return out
-  const kids = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders?$top=100`, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
-  for (const f of kids?.value || []) {
-    const m = String(f.displayName || '').match(/^(US\.\d+)\b/i)
-    if (m) out.set(m[1].toUpperCase(), { id: f.id, name: f.displayName })
+  let next: string | null = `https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders?$top=100`
+  while (next) {
+    const kids: any = await fetch(next, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
+    for (const f of kids?.value || []) {
+      const m = String(f.displayName || '').match(/^((?:US\.QT|US|SC|WV|PO|SHP)\.\d+)(?!\d)/i)
+      if (m) out.set(m[1].toUpperCase(), { id: f.id, name: f.displayName })
+    }
+    next = kids?.['@odata.nextLink'] || null
   }
   return out
 }
@@ -632,7 +639,7 @@ export const normOrder = (s: string | null | undefined): string =>
 // INTERNA no campo order_number (US.016.1, US.040.3). Isso NUNCA é pedido de
 // fornecedor: não casa e-mail, não entra em índice nenhum do rastreio.
 export const isInternalOrderCode = (s: string | null | undefined): boolean =>
-  /^(US|BR)\.\d+/i.test(String(s || '').trim())
+  /^(?:US\.QT|US|BR|SC|WV|PO|SHP|GM)\.\d+/i.test(String(s || '').trim())
 
 // 6 linhas reais têm 2-3 rastreios enfiados no MESMO campo tracking_number
 // ("1Z…136, 1Z…550 (UPS), 875552855742 (FedEx)"). O campo nunca é reescrito

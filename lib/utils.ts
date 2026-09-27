@@ -302,62 +302,74 @@ export function flowClientLabel(name: string | null | undefined): string {
   return n
 }
 
-// ── CAR DESTINY (rides.title_scope) ─────────────────────────────────────────
-// One field answers two questions at once: WHO OWNS the car, and WHO HANDLES
-// its paperwork. Ownership is what the financial statements run on — a client's
-// car parked in our name is never our asset, no matter whose name is on the
-// title — while the docs flag is what drives the plate and insurance watches.
+// ── OWNER & DESTINATION (rides.title_scope) ──────────────────────────────────
+// One field answers two questions at once: WHO OWNS the car, and WHERE IT GOES.
+// Ownership is what the financial statements run on — a client's car parked in
+// our name is never our asset, no matter whose name is on the title — while the
+// docs flag is what drives the plate and insurance watches.
 //
-//   USA     American client's own car — never in our name, we only work on it
-//   EXPORT  GZ28 EXPORT — client's car, in OUR name until WE ship it to
-//           Brazil. The ONLY case where the LLC holds title to a car that
-//           isn't ours.
-//   CLIENT  3RD PARTY EXPORT — an outside exporter ships the car; title and
-//           docs are theirs. (Legacy fleet: Sidney Penna era.)
+// Renamed from CAR DESTINY to OWNER & DESTINATION on 27/set/2026 (pedido da
+// AutoBook GZ28US, aprovado pelo Márcio: «everything»), with two new values:
+//
+//   USA           CLIENT · FLORIDA — client's car that stays in Florida
+//   OUT_OF_STATE  CLIENT · OUT OF STATE — client's car, leaves FL by carrier (NEW)
+//   CLIENT        EXPORT · BOUGHT BY EXPORTER — titled to the exporter, they ship it
+//   EXPORT        EXPORT · BOUGHT BY GZ28US — we bought it, the endorsed title goes
+//                 to the exporter. The ONLY case where the LLC holds title to a car
+//                 that isn't ours.
 //   Export law: BOTH export kinds require DELIVERY MILES — admission_mileage
 //   under 100 mi. A used car cannot legally enter Brazil.
-//   OWN     ours — the showcase & marketing fleet (Devil170, GENEZIZ, HellBull)
-//   TOOL    ours — a vehicle or rig that works for the shop (RAMbo, the trailer)
-//   DONOR   bought to PART-OUT (C7 Burnt, ScatPrisionPack) — a carcass that
-//           becomes parts inventory, never a job, never fleet. May belong to
-//           GZ28BR; who paid shows up in the GZ-FLOW as usual.
+//   OWN           GZ28US · SHOWCASE — our showcase & marketing car (code SC.###)
+//   TOOL          GZ28US · WORK VEHICLE — our service truck, trailer or rig (WV.###)
+//   PART_OUT      PART-OUT — scrap car, no title, parted out for sale (PO.###, NEW;
+//                 replaces the DONOR value eliminated on 27/ago/2026)
 //
-// USA used to mean "GZ28US fleet" and was carrying our own cars; OWN and TOOL
-// took that job on 19/aug/2026 so the balance sheet can tell the two apart.
+// Where each one lives: USA / OUT_OF_STATE / CLIENT / EXPORT in RIDES; OWN and
+// TOOL in the FLEET (inside ASSETS); PART_OUT in INVENTORY (PART-OUT section).
+// A ride with no destination stays in RIDES — a new quote is born that way.
 // A legacy 'DEALER' value still exists on one ride and renders as OWNER HANDLES.
+// The code series that follow the destination live in lib/rideCodes.ts.
 export const CAR_DESTINY = [
-  { value: 'USA',    badge: 'USA CLIENT',   cls: 'bg-blue-900 text-blue-300',
-    option: "USA CLIENT — American client's own car; never in our name, we only work on it" },
-  { value: 'EXPORT', badge: 'GZ28 EXPORT',  cls: 'bg-purple-900 text-purple-300',
-    option: "GZ28 EXPORT — client's car, in GZ28US' name until WE ship it to Brazil" },
-  { value: 'CLIENT', badge: '3RD PARTY EXPORT', cls: 'bg-fuchsia-900 text-fuchsia-300',
-    option: '3RD PARTY EXPORT — an outside exporter ships the car; their docs, their freight' },
-  { value: 'OWN',    badge: 'GZ28US OWN',   cls: 'bg-amber-900 text-amber-300',
-    option: 'GZ28US OWN — our showcase & marketing fleet (an asset, not a job)' },
-  { value: 'TOOL',   badge: 'GZ28US TOOL',  cls: 'bg-emerald-900 text-emerald-300',
-    option: 'GZ28US TOOL — our service vehicle or rig (depreciates like equipment)' },
-  // DONOR — PART-OUT foi ELIMINADO (Márcio, 27/ago/2026): "o 6o não existe
-  // mais". Os dois carros que estavam assim — ScatPrisionPack US.038 e C7 Burnt
-  // US.027 — viraram GZ28US OWN por decisão dele, sem impacto nenhum no
-  // Balanço: os dois tinham zero despesa lançada.
-  //
-  // Onde cada destino aparece agora: USA / EXPORT / CLIENT vivem na tela de
-  // RIDES; OWN e TOOL vivem no FLEET, dentro de ASSETS. Ride sem destino
-  // escolhido continua em RIDES — quote nova nasce assim.
+  { value: 'USA',          badge: 'CLIENT · FLORIDA',            cls: 'bg-blue-900 text-blue-300',
+    option: "CLIENT · FLORIDA — Client's car that stays in Florida" },
+  { value: 'OUT_OF_STATE', badge: 'CLIENT · OUT OF STATE',       cls: 'bg-sky-900 text-sky-300',
+    option: "CLIENT · OUT OF STATE — Client's car, leaves Florida by carrier" },
+  { value: 'CLIENT',       badge: 'EXPORT · BOUGHT BY EXPORTER', cls: 'bg-fuchsia-900 text-fuchsia-300',
+    option: 'EXPORT · BOUGHT BY EXPORTER — Titled to the exporter, they ship it' },
+  { value: 'EXPORT',       badge: 'EXPORT · BOUGHT BY GZ28US',   cls: 'bg-purple-900 text-purple-300',
+    option: 'EXPORT · BOUGHT BY GZ28US — We bought it, the endorsed title goes to the exporter' },
+  { value: 'OWN',          badge: 'GZ28US · SHOWCASE',           cls: 'bg-amber-900 text-amber-300',
+    option: 'GZ28US · SHOWCASE — Our showcase & marketing car' },
+  { value: 'TOOL',         badge: 'GZ28US · WORK VEHICLE',       cls: 'bg-emerald-900 text-emerald-300',
+    option: 'GZ28US · WORK VEHICLE — Our service truck, trailer or rig' },
+  { value: 'PART_OUT',     badge: 'PART-OUT',                    cls: 'bg-stone-700 text-stone-200',
+    option: 'PART-OUT — Scrap car, no title, parted out for sale' },
 ] as const
 
 export function carDestiny(scope: string | null | undefined) {
   return CAR_DESTINY.find(d => d.value === scope) || null
 }
 
-// Ours, therefore on our balance sheet: OWN as a marketing-fleet asset, TOOL as
-// depreciable equipment. Everything else belongs to a client and stays off it.
-export const isOurCar = (scope: string | null | undefined) => scope === 'OWN' || scope === 'TOOL'
+// Ours, therefore off the client ledgers (no A/R, no advances, no FL tax): OWN as
+// a marketing-fleet asset, TOOL as depreciable equipment, PART_OUT as a carcass
+// that becomes parts inventory. Everything else belongs to a client.
+export const isOurCar = (scope: string | null | undefined) => scope === 'OWN' || scope === 'TOOL' || scope === 'PART_OUT'
 
-// Cars on OUR policy — only the ones we actually own. Client cars carry the
-// client's insurance (USA/CLIENT are never even in our name), and EXPORT has no
-// FL title or registration: the endorsed title just ships to the exporter.
-export const insuresCar = isOurCar
+// FLEET = the cars we keep and drive: showcase + work vehicle. PART_OUT is ours
+// but lives in INVENTORY, never in the FLEET.
+export const isFleetCar = (scope: string | null | undefined) => scope === 'OWN' || scope === 'TOOL'
+
+// Where the car shows up in the app.
+export const carHome = (scope: string | null | undefined): 'RIDES' | 'FLEET' | 'INVENTORY' =>
+  scope === 'PART_OUT' ? 'INVENTORY' : isFleetCar(scope) ? 'FLEET' : 'RIDES'
+
+// Client destinations that are never in our name (the title stays the client's).
+export const isClientTitledCar = (scope: string | null | undefined) => scope === 'USA' || scope === 'OUT_OF_STATE' || scope === 'CLIENT'
+
+// Cars on OUR policy — only the ones we actually own AND drive. Client cars carry
+// the client's insurance, EXPORT has no FL title or registration (the endorsed
+// title just ships to the exporter), and a PART_OUT carcass has no title at all.
+export const insuresCar = (scope: string | null | undefined) => scope === 'OWN' || scope === 'TOOL'
 
 // Selo de prioridade de uma DUTY: 0 (mais alta) → 4, depois StandBy. Vive aqui
 // porque agora três telas mostram duty — a invoice, o quadro /duties e o PACK

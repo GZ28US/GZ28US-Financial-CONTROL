@@ -52,7 +52,7 @@ export default function DrePage() {
     for (const inv of d.invoices) {
       const t = invoiceTotals(d, inv)
       const rscope = rideScope(d, inv)
-      const ours = rscope === 'OWN' || rscope === 'TOOL' || rscope === 'DONOR'
+      const ours = rscope === 'OWN' || rscope === 'TOOL' || rscope === 'DONOR' || rscope === 'PART_OUT'
       // Carro nosso (OWN/TOOL) não fatura pra ninguém — linha de preço em
       // invoice nossa é display, não receita. Só o custo entra (as-booked).
       if (!ours) { parts += t.parts; services += t.services; flTax += t.flTax; discount += t.discount }
@@ -156,7 +156,7 @@ export default function DrePage() {
     const partsL: CompRow[] = [], svcL: CompRow[] = [], taxL: CompRow[] = [], discL: CompRow[] = [], costL: CompRow[] = []
     for (const inv of d.invoices) {
       const rscope2 = rideScope(d, inv)
-      const ours = rscope2 === 'OWN' || rscope2 === 'TOOL' || rscope2 === 'DONOR'
+      const ours = rscope2 === 'OWN' || rscope2 === 'TOOL' || rscope2 === 'DONOR' || rscope2 === 'PART_OUT'
       if (ours) continue
       const t = invoiceTotals(d, inv)
       const mm = invoiceMeta(d, inv.id)
@@ -227,7 +227,7 @@ export default function DrePage() {
     let openJobs = 0, noDate = 0
     for (const inv of d.invoices) {
       const rscope2 = rideScope(d, inv)
-      if (rscope2 === 'OWN' || rscope2 === 'TOOL' || rscope2 === 'DONOR') continue
+      if (rscope2 === 'OWN' || rscope2 === 'TOOL' || rscope2 === 'DONOR' || rscope2 === 'PART_OUT') continue
       const rd = recognitionDate(d, inv)
       if (!rd) { if (inv.live_status === 'CLOSED') noDate++; else openJobs++; continue }
       if (inv.live_status !== 'CLOSED') { openJobs++; continue }

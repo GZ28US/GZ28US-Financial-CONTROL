@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js'
 import { supplierDirectoryFrom, matchSupplier } from '@/lib/supplierMatch'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { ROOTS, sanitize, dbxAccessToken, dbx, nomeNu, findFolderByCode, SUBFOLDERS, ensureSubfolders } from '@/lib/dropboxRides.server'
 
 // RIDE FOLDER SYNC — keeps the physical Dropbox ride folders in step with the
 // system: every ride create / rename / renumber updates the folder via the
@@ -24,76 +25,6 @@ import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 // older nicknames); if none exists it self-heals by creating the folder.
 
 export const maxDuration = 60
-
-const ROOTS: Record<string, string> = {
-  US: '/001 - GZ28US/GZ28US Rides',
-  BR: '/000 - GZ28BR/GZ28BR Rides',
-}
-
-// Windows-invalid filename characters can't exist in Dropbox names that need
-// to sync to the PC; also collapse whitespace.
-// O PONTO FINAL TAMBÉM NÃO EXISTE no Windows: uma pasta chamada "...Campo Grande."
-// nasce no Dropbox mas chega ao PC como "...Campo Grande_", e aí nuvem e disco
-// carregam nomes diferentes para sempre (visto na BR.539.1, 08/set/2026).
-const sanitize = (s: string) => (s || '').replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '')
-
-async function dbxAccessToken(): Promise<string> {
-  const res = await fetch('https://api.dropbox.com/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: process.env.DROPBOX_REFRESH_TOKEN || '',
-      client_id: process.env.DROPBOX_APP_KEY || '',
-      client_secret: process.env.DROPBOX_APP_SECRET || '',
-    }).toString(),
-  })
-  const j = await res.json()
-  if (!j.access_token) throw new Error('Dropbox auth failed: ' + JSON.stringify(j).slice(0, 200))
-  return j.access_token
-}
-
-async function dbx(token: string, endpoint: string, body: unknown): Promise<any> {
-  const res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const text = await res.text()
-  let data: any = {}
-  try { data = JSON.parse(text) } catch { /* not json */ }
-  return { ok: res.ok, status: res.status, data, text }
-}
-
-// Uma pasta só é do carro quando o CÓDIGO **e** o NOME batem.
-// O caso que ensinou (06/set/2026): o Badillac era US.030, virou US.036, e a pasta
-// velha "US.030 - Badillac" ficou para trás com o número colado. Procurando só pelo
-// número, o app achou ela e gravou o BoneStock e a BuildSheet do DRACULA — o US.030
-// de verdade — dentro da pasta do Badillac; o Dracula ficou sem os seus.
-// Nome que contradiz o ride não serve: é melhor criar a pasta certa do que escrever
-// na pasta de outro carro. Sem `name`, o número volta a mandar (chamadas antigas).
-const nomeNu = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-async function findFolderByCode(token: string, root: string, code: string, name?: string): Promise<string | null> {
-  const alvo = nomeNu(name || '')
-  let soCodigo: string | null = null
-  let cursor: string | null = null
-  do {
-    const r: any = cursor
-      ? await dbx(token, 'files/list_folder/continue', { cursor })
-      : await dbx(token, 'files/list_folder', { path: root, recursive: false, limit: 1000 })
-    if (!r.ok) throw new Error('list_folder failed: ' + r.text.slice(0, 200))
-    for (const e of r.data.entries || []) {
-      if (e['.tag'] !== 'folder') continue
-      if (e.name === code) return e.name                       // "US.030" pelado: é dele
-      if (!e.name.startsWith(code + ' ')) continue
-      const dela = nomeNu(e.name.slice(code.length).replace(/^\s*-\s*/, ''))
-      if (alvo && dela === alvo) return e.name                 // código E nome batem
-      if (!soCodigo) soCodigo = e.name                         // só o número bate — suspeita
-    }
-    cursor = r.data.has_more ? r.data.cursor : null
-  } while (cursor)
-  return alvo ? null : soCodigo
-}
 
 // Find LEGACY-format folders for a ride — "317 - HeartBeat" or "GZ28BR.317 - HeartBeat"
 // (pre-system naming, no zone prefix). Adoption requires BOTH the number AND the
@@ -153,10 +84,6 @@ async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ 
 // As três etiquetas de OS que o app carimba no nome do tune. "BoneStock" só fica
 // no carro que não teve atualização de OS (lei do Márcio, 06/set/2026).
 const OS_TAGS = ['BoneStock', 'Demon170 Converted Stock', 'Other OS Converted Stock']
-// "Invoices" guarda uma pasta POR INVOICE do carro ("US.021.1 - <nome>"), e dentro
-// dela os recibos das expenses daquela invoice. Purchases continua existindo para o
-// que é do carro mas não se sabe de qual invoice (Márcio, 08/set/2026).
-const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation', 'Invoices']
 // A pasta de uma invoice: código + nome (o `service` da invoice; sem ele, o nome do
 // carro). É o mesmo formato da pasta do ride, um nível abaixo.
 const invoiceFolderName = (code: string, name: string) => sanitize(`${code}${name ? ' - ' + name : ''}`)
@@ -199,18 +126,6 @@ async function listaArquivos(token: string, path: string): Promise<{ name: strin
     cursor = r.data.has_more ? r.data.cursor : null
   } while (cursor)
   return out
-}
-
-// A pasta de triagem tem nome POR ZONA — Screening nos rides US, Volante nos BR —
-// derivado do path, então qualquer um dos apps nomeia certo mexendo na outra zona.
-async function ensureSubfolders(token: string, folderPath: string) {
-  const subs = [...SUBFOLDERS, folderPath.startsWith(ROOTS.BR) ? 'Volante' : 'Screening']
-  for (const sub of subs) {
-    const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
-    if (!r.ok && !r.text.includes('conflict')) {
-      console.error('[ride-folder] subfolder create failed', { path: `${folderPath}/${sub}`, err: r.text.slice(0, 200) })
-    }
-  }
 }
 
 // MAIL FOLDER SYNC — the gz28us@hotmail mailbox mirrors the ride archive under

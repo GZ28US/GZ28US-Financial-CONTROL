@@ -17,6 +17,9 @@ type Tab = typeof TABS[number]
 // Quem manda aqui é o prefixo do project_code, que é a identidade do carro.
 const SCOPES = ['ALL', 'US', 'BR'] as const
 type Scope = typeof SCOPES[number]
+// A zona do carro pelo código: BR.### e GM.### são do app BR; o resto (US, SC, WV, PO,
+// US.QT, SHP) é do app US.
+const zonaDoCodigo = (c: string): 'US' | 'BR' => (/^(BR|GM)\./i.test(c) ? 'BR' : 'US')
 
 // ── O DIALETO DA CASA É O DO APP DO US ───────────────────────────────────────
 // A tela de dyno do ride US fala UMA língua: potência corrigida STD, torque em lb·ft,
@@ -160,7 +163,8 @@ export default function PerformancePage() {
         .map(toLocalDialect)
 
       const codes = [...new Set(pulls.map((p) => String(p.ride_code)))]
-      const usCodes = codes.filter((c) => c.startsWith('US.'))
+      // SÉRIES (27/set/2026): SC/WV/PO/US.QT moram no app US como o US.### — só BR/GM são do BR.
+      const usCodes = codes.filter((c) => zonaDoCodigo(c) === 'US')
       const brCodes = codes.filter((c) => c.startsWith('BR.'))
 
       // O apelido do carro exige os DOIS bancos: o app US só guarda rides US. Os do BR
@@ -229,8 +233,8 @@ export default function PerformancePage() {
 
   useEffect(() => { load() }, [])
 
-  const shown = entries.filter((e) => scope === 'ALL' || e.code.startsWith(`${scope}.`))
-  const countFor = (s: Scope) => entries.filter((e) => s === 'ALL' || e.code.startsWith(`${s}.`)).length
+  const shown = entries.filter((e) => scope === 'ALL' || zonaDoCodigo(e.code) === scope)
+  const countFor = (s: Scope) => entries.filter((e) => s === 'ALL' || zonaDoCodigo(e.code) === s).length
   const settled = !loading && !err
   // ── O QUE ESTA PÁGINA PODE E NÃO PODE AFIRMAR SOBRE CORREÇÃO ─────────────────
   // No dialeto do US não existe coluna de fator pra virar traço, nem metade "sem

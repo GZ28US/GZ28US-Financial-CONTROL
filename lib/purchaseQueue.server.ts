@@ -161,7 +161,7 @@ function parseDestination(raw: string, allowRide: boolean): string | null {
 
 async function resolveInvoice(db: SupabaseClient, term: string): Promise<{ id: string; code: string } | null> {
   const t = term.trim()
-  const m = t.match(/^(US\.\d+)(\.\d+)?$/i)
+  const m = t.match(/^((?:US\.QT|US|SC|WV|PO|SHP)\.\d+)(\.\d+)?$/i)
   if (m?.[2]) { // código de invoice exato (US.019.2)
     const { data } = await db.from('invoices').select('id, invoice_code').ilike('invoice_code', t).limit(1)
     if (data?.[0]) return { id: data[0].id, code: data[0].invoice_code }

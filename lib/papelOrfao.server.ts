@@ -206,7 +206,7 @@ export async function papeisOrfaos(maxPaginas = 40): Promise<VarreduraPapel> {
         // O código da invoice sai da PASTA, nunca do nome do arquivo — é
         // justamente o nome que está sob suspeita aqui.
         const daPasta = path.split('/').slice(0, -1)
-          .map(s => s.match(/^([A-Za-z]{2}\.\d+\.\d+)/)?.[1]).filter(Boolean).pop()
+          .map(s => s.match(/^((?:US\.QT|[A-Za-z]{2,3})\.\d+\.\d+)/)?.[1]).filter(Boolean).pop()
         if (!lido || !daPasta) continue
         const codigo = daPasta.toUpperCase()
         out.vistos++

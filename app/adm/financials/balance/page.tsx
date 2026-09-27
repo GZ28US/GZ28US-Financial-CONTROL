@@ -75,7 +75,9 @@ export default function BalancePage() {
       const scope = rideScope(d, inv)
       // DONOR entra no guard: crédito de peça puxada do doador não é
       // adiantamento de cliente, e doador não gera A/R.
-      const ours = scope === 'OWN' || scope === 'TOOL'
+      // PART_OUT (27/set/2026): carcaça nossa desmontada pra vender peça — o dinheiro
+      // que entra dela é venda de peça, nunca adiantamento de cliente (caso ScatPrisionPack).
+      const ours = scope === 'OWN' || scope === 'TOOL' || scope === 'PART_OUT'
       // Carro nosso não gera A/R, adiantamento nem FL tax — ninguém nos deve
       // pelo nosso próprio carro; linha de preço em invoice nossa é display.
       if (!ours) {
@@ -88,6 +90,7 @@ export default function BalancePage() {
       }
       if (scope === 'OWN') fleetOwn += t.cost
       else if (scope === 'TOOL') fleetTool += t.cost
+      else if (scope === 'PART_OUT') donorCost += t.cost
       // Carro EXPORTED embarcou: trabalho entregue, custo não é mais obra
       // em andamento — fica no CPV as-booked, fora do WIP.
       else if (inv.live_status !== 'CLOSED' && !(inv.ride_id && d.rides.get(inv.ride_id)?.exported)) {
@@ -263,7 +266,7 @@ export default function BalancePage() {
             ['Estoque (comprado + doado)', m.stockPurch + m.stockDon],
             ['Equipamento', m.equip],
             ['Veículos de serviço (TOOL)', m.fleetTool],
-            ['Doadores (part-out)', m.donorCost],
+            ['Part-out (carcaças para peça)', m.donorCost],
           ]} />
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">

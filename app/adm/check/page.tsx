@@ -343,7 +343,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
   }
 
-  // 2 · Rides sem CAR DESTINY. Quotes e vitrine SHOP ficam fora de propósito.
+  // 2 · Rides sem OWNER & DESTINATION. Quotes e vitrine SHOP ficam fora de propósito.
   {
     const items: Item[] = []
     d.rides.forEach((r: any) => {
@@ -386,7 +386,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       const flags: string[] = []
       if ((scope === 'OWN' || scope === 'TOOL') && (billed > 0.005 || received > 0.005))
         flags.push(`carro NOSSO com faturamento de cliente (${usd(billed)} faturado, ${usd(received)} recebido)`)
-      if (scope === 'USA' && carBuy > 0)
+      if ((scope === 'USA' || scope === 'OUT_OF_STATE') && carBuy > 0)
         flags.push(`a LLC comprou o carro (${usd(carBuy)}) num carro de cliente americano — devia ser GZ28 EXPORT ou OWN?`)
       if (scope === 'EXPORT' && client?.country === 'USA')
         flags.push('GZ28 EXPORT com cliente dos EUA — vai exportar mesmo?')
@@ -412,7 +412,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
     })
     checks.push({
       group: 'RIDES', key: 'destiny-review', title: 'Destino do carro: os dados discordam entre si', blocks: 'a classificação do carro no Balanço e no DRE fica em dúvida',
-      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA a LLC nunca comprou; exportação (GZ28 ou 3RD PARTY) exige ADMISSION MILEAGE abaixo de 100 mi — DELIVERY MILES; DONOR pode ter crédito de peça puxada, isso é normal. Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
+      why: 'Cruza cada destino com o dinheiro e com a lei: carro OWN/TOOL não fatura cliente; carro USA a LLC nunca comprou; exportação (GZ28 ou 3RD PARTY) exige ADMISSION MILEAGE abaixo de 100 mi — DELIVERY MILES; PART-OUT pode ter venda de peça, isso é normal; CLIENT · OUT OF STATE (carro de cliente que sai da Flórida de cegonha) é normal com cliente de outro estado. Cliente brasileiro com carro nos EUA é normal — muitos têm residência. Zero aqui = a classificação passou.',
       items,
     })
   }

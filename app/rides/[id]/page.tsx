@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, clientSpeaksPortuguese } from '@/lib/utils'
+import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, isClientTitledCar, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
@@ -412,7 +412,7 @@ export default function ViewRidePage() {
       {/* Standard: title + action buttons on the top line, filters/badges below. */}
       <div className="mb-8">
         <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
-          <h1 className="text-4xl font-bold">{ride.project_code}{ride.project_name ? ` — ${ride.project_name}` : ''}</h1>
+          <h1 className="text-4xl font-bold">{ride.project_code}{(ride as any).pinned ? ' 📌' : ''}{ride.project_name ? ` — ${ride.project_name}` : ''}</h1>
           <div className="flex gap-3 flex-wrap justify-end">
             {/* Pedir foto ao "cliente" de um carro NOSSO não faz sentido: o
                 cliente seria a própria LLC. Some junto com a seção CLIENT. */}
@@ -495,7 +495,7 @@ export default function ViewRidePage() {
         </div>
 
         {/* TITLE & DOCS — who OWNS this car and who handles its paperwork (US-only).
-            The five destinies live in lib/utils CAR_DESTINY. USA / CLIENT are an
+            The seven destinations live in lib/utils CAR_DESTINY (OWNER & DESTINATION, 27/set/2026). USA / CLIENT are an
             American client's own car — never in our name, nothing tracked. EXPORT is
             the ONLY in-our-name-but-not-ours case (until it ships; Alcatraz exception:
             a dealership may have charged the taxes and transferred anyway). OWN and
@@ -505,7 +505,7 @@ export default function ViewRidePage() {
             <label className="block mb-3 text-lg font-bold">TITLE &amp; DOCS</label>
             <div className={sectionClass}>
               <div className={rowClass}>
-                <span className={labelClass}>CAR DESTINY</span>
+                <span className={labelClass}>OWNER &amp; DESTINATION</span>
                 <span className="flex items-center gap-2">
                   <span className={`px-3 py-1 rounded-full text-sm font-bold ${carDestiny(ride.title_scope)?.cls || 'bg-gray-700 text-gray-300'}`}>
                     {carDestiny(ride.title_scope)?.badge || 'OWNER HANDLES'}
@@ -522,7 +522,7 @@ export default function ViewRidePage() {
                   </span>
                 </div>
               )}
-              {ride.title_scope !== 'CLIENT' && ride.title_scope !== 'USA' && (
+              {!isClientTitledCar(ride.title_scope) && ride.title_scope !== 'PART_OUT' && (
                 <div className={rowClass}>
                   <span className={labelClass}>TITLE</span>
                   <span className="font-bold">

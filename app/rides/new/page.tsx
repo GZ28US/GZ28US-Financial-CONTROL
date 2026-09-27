@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { BASE_PATH, clientCode } from '@/lib/utils'
+import { nextFreeCode } from '@/lib/rideCodes'
 import DatePicker from '@/components/DatePicker'
 import {
   years,
@@ -102,15 +103,10 @@ export default function NewRidePage() {
       // new ride up behind it — new rides keep filling the sequence (…035, 036).
       // The prefix must match EXACTLY: "US.007" belongs to US, "US.QT.007" to US.QT,
       // and neither may read the other's numbers.
-      const seq = new RegExp(`^${wantPrefix.replace(/\./g, '\\.')}\\.(\\d+)$`)
-      const used = new Set<number>()
-      for (const r of (rideData || [])) {
-        const m = r.project_code?.match(seq)
-        if (m) used.add(parseInt(m[1], 10))
-      }
-      let nextNum = 1
-      while (used.has(nextNum)) nextNum++
-      setProjectCode(`${wantPrefix}.${pad3(nextNum)}`)
+      // SÉRIES (27/set/2026, lib/rideCodes): US, SC e WV dividem UMA escala — o número
+      // de um SC.170 nunca vira US.170. US.QT e SHP têm escala própria. Pinned ocupa o
+      // número dele como qualquer outro carro, então nunca é sugerido.
+      setProjectCode(nextFreeCode((rideData || []).map((r: any) => r.project_code), wantPrefix))
     } catch (e) {
       console.error('Code generation failed', e)
       setProjectCode(`${wantPrefix}.${pad3(1)}`)
@@ -302,12 +298,7 @@ export default function NewRidePage() {
       // free number instead of showing the raw constraint name.
       if (/duplicate key|rides_project_code_key/i.test(error.message)) {
         const { data: taken } = await supabase.from('rides').select('project_code').not('project_code', 'is', null)
-        const seq = new RegExp(`^${(isShop ? 'SHP' : isQuote ? 'US.QT' : 'US').replace(/\./g, '\\.')}\\.(\\d+)$`)
-        const used = new Set<number>()
-        for (const r of (taken || [])) { const m = r.project_code?.match(seq); if (m) used.add(parseInt(m[1], 10)) }
-        let free = 1
-        while (used.has(free)) free++
-        const suggestion = `${isShop ? 'SHP' : isQuote ? 'US.QT' : 'US'}.${pad3(free)}`
+        const suggestion = nextFreeCode((taken || []).map((r: any) => r.project_code), isShop ? 'SHP' : isQuote ? 'US.QT' : 'US')
         setProjectCode(suggestion)
         alert(`O código ${projectCode.trim()} já está em uso por outro ride.\n\nJá troquei para ${suggestion}, que está livre. Confira e salve de novo.`)
         return

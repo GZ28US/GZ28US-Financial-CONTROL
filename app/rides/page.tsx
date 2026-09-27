@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
+import { isOurCar } from '@/lib/utils'
 
 type Ride = {
   id: string
@@ -115,8 +116,9 @@ export default function RidesPage() {
     // com invoices, despesas, streams e duties intactos — muda a TELA onde ela
     // aparece. title_scope OWN (nosso) e TOOL (ferramenta de trabalho: o RAMbo
     // e o trailer) são o critério, o mesmo que o financeiro já usa em isOurRide.
+    // PART_OUT (27/set/2026) também sai: carcaça de peça mora no INVENTORY.
     const ridesData = (data || []).filter((r: any) => {
-      if (r.title_scope === 'OWN' || r.title_scope === 'TOOL') return false
+      if (isOurCar(r.title_scope)) return false
       const modeOk = m === 'shop' ? r.origin === 'SHOP' : r.origin !== 'SHOP' && (!!r.is_quote === (m === 'quote'))
       return modeOk && (!c || r.client_id === c || (soldDates[r.id] && r.client_id !== c))
     })
@@ -368,7 +370,7 @@ export default function RidesPage() {
               <div className="flex flex-1 items-center justify-between p-6 gap-6">
                 <div>
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
-                    <h2 className="text-2xl font-bold">{ride.project_code} — {ride.project_name}</h2>
+                    <h2 className="text-2xl font-bold">{ride.project_code}{(ride as any).pinned ? ' 📌' : ''} — {ride.project_name}</h2>
                     {/* SOLD — this client's era ended (ownership transfer); shows only on a client-filtered list */}
                     {clientParam && soldByRide[ride.id] && (ride as any).client_id !== clientParam && (
                       <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">SOLD {new Date(soldByRide[ride.id] + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>

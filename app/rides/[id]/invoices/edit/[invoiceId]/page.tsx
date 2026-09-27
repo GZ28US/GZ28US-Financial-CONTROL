@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
+import { nextFreeCode } from '@/lib/rideCodes'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { enrollParts, normPN } from '@/lib/partsDb'
 import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } from '@/lib/laborCost'
@@ -2521,11 +2522,8 @@ export default function EditInvoicePage() {
     const { data: pr } = await supabase.from('rides').select('project_code').eq('is_quote', false).not('project_code', 'is', null)
     // Lowest UNUSED number (not max+1), so a deliberately high / pinned code
     // (e.g. a themed US.170) doesn't drag converted quotes up behind it.
-    const usedNums = new Set<number>()
-    for (const r of (pr || [])) { const m = r.project_code?.match(/\.(\d+)$/); if (m) usedNums.add(parseInt(m[1], 10)) }
-    let nextN = 1
-    while (usedNums.has(nextN)) nextN++
-    const newRideCode = `${CODE_PREFIX}.${pad3(nextN)}`
+    // SÉRIES (27/set/2026, lib/rideCodes): US, SC e WV dividem a escala — PO, US.QT e SHP não.
+    const newRideCode = nextFreeCode((pr || []).map((r: any) => r.project_code), CODE_PREFIX as 'US')
     const oldRideCode = ride.project_code || ''
     await supabase.from('rides').update({ project_code: newRideCode, is_quote: false }).eq('id', ride.id)
     // Dropbox folder sync: the freshly converted PROJECT gets its physical folder.

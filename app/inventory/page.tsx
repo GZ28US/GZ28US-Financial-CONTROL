@@ -129,11 +129,16 @@ export default function InventoryPage() {
   } | null>(null)
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateInfo | null>(null)
   const [expenseReports, setExpenseReports] = useState<ExpenseReport[] | null>(null)
+  // PART-OUT (27/set/2026): o carro-carcaça (rides.title_scope PART_OUT, código PO.###)
+  // mora aqui, não em RIDES nem no FLEET — ele É estoque de peça.
+  const [partOut, setPartOut] = useState<{ id: string; project_code: string; project_name: string | null; year: number | null; brand: string | null; model: string | null; pinned: boolean | null }[]>([])
   const [sendingReports, setSendingReports] = useState(false)
 
   useEffect(() => { load() }, [])
 
   async function load() {
+    void supabase.from('rides').select('id, project_code, project_name, year, brand, model, pinned').eq('title_scope', 'PART_OUT').order('project_code')
+      .then(({ data }) => setPartOut((data || []) as any))
     const { data, error } = await supabase
       .from('inventory')
       .select('*')
@@ -579,6 +584,22 @@ export default function InventoryPage() {
         <span className="text-gray-600">·</span>
         <span className="text-lg font-bold text-amber-300">Sold: {soldRows.length}</span>
       </div>
+
+      {partOut.length > 0 && (
+        <div className="bg-gray-900 border border-stone-600 rounded-3xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-1">PART-OUT ({partOut.length})</h2>
+          <p className="text-gray-400 mb-4">Carcaças sem título, desmontadas para vender peça. Cada uma continua com o seu ride, invoices e despesas.</p>
+          <div className="space-y-2">
+            {partOut.map(c => (
+              <Link key={c.id} href={`/rides/${c.id}`} className="flex items-center gap-3 flex-wrap bg-gray-800 hover:bg-gray-700 rounded-2xl px-5 py-3">
+                <span className="px-3 py-1 rounded-full text-sm font-bold bg-stone-700 text-stone-200">{c.project_code}{c.pinned ? ' 📌' : ''}</span>
+                <span className="text-lg font-bold">{c.project_name || '—'}</span>
+                <span className="text-gray-400">{[c.year, c.brand, c.model].filter(Boolean).join(' ')}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>

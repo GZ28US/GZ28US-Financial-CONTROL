@@ -5,7 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { BASE_PATH, CAR_DESTINY, insuresCar, isOurCar } from '@/lib/utils'
+import { BASE_PATH, CAR_DESTINY, insuresCar, isOurCar, carHome } from '@/lib/utils'
+import { codeForScope, checkRideCode, parseRideCode, scaleOf } from '@/lib/rideCodes'
 import DatePicker from '@/components/DatePicker'
 import { plateStatus } from '@/lib/plateExpiry'
 import {
@@ -65,6 +66,14 @@ export default function EditRidePage() {
   // it DID get transferred with taxes paid, e.g. a dealership sale — Alcatraz);
   // CLIENT = an American client's own car, the owner handles the paperwork.
   const [titleScope, setTitleScope] = useState('')
+  // SÉRIES DE CÓDIGO (27/set/2026): o código segue o destino — US cliente, SC showcase,
+  // WV work vehicle, PO part-out (lib/rideCodes). Guardamos o código ORIGINAL para que
+  // ir e voltar entre destinos sempre recalcule a partir dele, e todos os códigos da
+  // casa para achar o próximo número livre. Pinned: o número nunca é realocado.
+  const [originalCode, setOriginalCode] = useState('')
+  const [originalName, setOriginalName] = useState('')
+  const [allCodes, setAllCodes] = useState<string[]>([])
+  const [pinned, setPinned] = useState(false)
   const [titleTransferred, setTitleTransferred] = useState(false)
   // Milhagem de ENTRADA na GZ28. DELIVERY MILES = < 100 mi = pode exportar
   // (GZ28 EXPORT ou 3RD PARTY EXPORT); >= 100 = usado = não exporta. Lei do 0km.
@@ -104,6 +113,10 @@ export default function EditRidePage() {
     if (clientsRes.data) setClients((clientsRes.data as any[]).filter(c => !!c.is_quote === !!r.is_quote) as Client[])
     setProjectCode(r.project_code || '')
     setProjectName(r.project_name || '')
+    setOriginalCode(r.project_code || '')
+    setOriginalName(r.project_name || '')
+    setPinned(!!r.pinned)
+    void supabase.from('rides').select('project_code').then(({ data }) => setAllCodes((data || []).map((x: any) => String(x.project_code || '')).filter(Boolean)))
     void loadTuneStatus(r.project_code || '')
     setClientId(r.client_id || '')
     setYear(r.year ? String(r.year) : '')
@@ -269,6 +282,18 @@ export default function EditRidePage() {
   // Factory transmission options for the currently selected car (empty = unknown → no picker).
   const transmissionOptions = transmissionOptionsFor(year, brand, model, version, bodyStyleValue)
 
+  // Trocar o destino troca o código: US/SC/WV mantêm o número e trocam o prefixo;
+  // entrar ou sair de PART-OUT pega o próximo número livre da outra escala.
+  function mudaDestino(scope: string) {
+    const r = codeForScope(originalCode, scope, allCodes, pinned)
+    if (r.code === null) { alert(r.why || 'Não dá pra trocar o código deste carro sozinho.'); return }
+    setTitleScope(scope)
+    // Só mexe no código se ele ainda é o original (ou um que o próprio destino deu):
+    // código digitado à mão pelo usuário não é atropelado.
+    const atualEhAutomatico = projectCode === originalCode || !!parseRideCode(projectCode)
+    if (atualEhAutomatico) setProjectCode(r.code)
+  }
+
   async function saveChanges() {
     if (!projectCode.trim()) { alert('Please enter a project code'); return }
     setSaving(true)
@@ -284,9 +309,20 @@ export default function EditRidePage() {
     const oldCode = cur?.project_code || ''
     const oldName = cur?.project_name || ''
 
+    // O CÓDIGO passa pela regra das séries ANTES de qualquer gravação.
+    if (newCode !== oldCode) {
+      const erro = checkRideCode(newCode, allCodes, oldCode)
+      if (erro) { setSaving(false); alert(erro); return }
+      const po = parseRideCode(oldCode), pn = parseRideCode(newCode)
+      if (pinned && (!po || !pn || po.num !== pn.num || scaleOf(po.prefix) !== scaleOf(pn.prefix))) {
+        setSaving(false); alert(`${oldCode} está PINNED — o número dele nunca é realocado.`); return
+      }
+    }
+
+    // Código e nome NÃO vão neste update: quem troca é a rota única /api/rides/renumber
+    // (banco US e BR, invoices, dyno, pastas do Dropbox, recibos, acervo de tune e
+    // pastas de e-mail), que confere tudo antes e para no primeiro erro.
     const { error } = await supabase.from('rides').update({
-      project_code: newCode,
-      project_name: projectName || null,
       client_id: clientId || null,
       year: yearNum || null,
       manufacturer: manufacturer || null,
@@ -315,86 +351,25 @@ export default function EditRidePage() {
 
     if (error) { setSaving(false); alert(error.message); return }
 
-    // The invoice code always carries the car's code: when the ride code changes,
-    // re-code every invoice on this ride (e.g. US.522.1 -> US.517.1).
-    if (oldCode && oldCode !== newCode) {
-      const { data: invs } = await supabase.from('invoices').select('id, invoice_code').eq('ride_id', rideId)
-      for (const inv of (invs || [])) {
-        if (inv.invoice_code?.startsWith(oldCode + '.')) {
-          await supabase.from('invoices').update({ invoice_code: newCode + inv.invoice_code.slice(oldCode.length) }).eq('id', inv.id)
-        }
-      }
-    }
-
-    // Shared Performance DataBank (dyno pulls + build sheets, keyed by ride
-    // code in the US project): the rows follow a renumbered code.
-    if (oldCode && oldCode !== newCode) {
-      await supabase.from('dyno_pulls').update({ ride_code: newCode }).eq('ride_code', oldCode)
-      await supabase.from('ride_build_sheets').update({ ride_code: newCode }).eq('ride_code', oldCode)
-      await supabase.from('ride_builds').update({ ride_code: newCode }).eq('ride_code', oldCode)
-    }
-
-    // COMMON cars live in BOTH apps under the SAME code (e.g. US.038). A rename
-    // here renames the BR system too: code, name and the BR invoices that carry
-    // the code. Self-gating — if BR has no ride with this code, nothing happens.
-    // NO SERVIDOR (11/set/2026): /api/br-mirror/ride-rename, com a chave de serviço
-    // do BR. O cliente `supabaseBR` anon daqui lia null pelo RLS — o carro "não era
-    // comum", nada era renomeado no BR e ninguém ficava sabendo. Agora a falha fala.
-    let isCommonCar = false
-    // A PASTA BR DO DROPBOX SEGUE O RIDE DO BR, não a existência dele: se o ride do
-    // BR não foi renomeado (código duplicado lá, UPDATE recusado), renomear a pasta
-    // deixaria pasta e ride com códigos diferentes.
-    let brRideRenamed = false
-    try {
-      const res = await fetch(`${BASE_PATH}/api/br-mirror/ride-rename`, {
-        method: 'POST', headers: await sessionHeaders(),
-        body: JSON.stringify({ usRideId: rideId, oldCode }),
-      })
-      const data = await res.json().catch(() => null)
-      isCommonCar = !!data?.common
-      brRideRenamed = data?.ok ? isCommonCar : !!data?.rideRenamed
-      if (!res.ok || !data?.ok) {
-        alert((isCommonCar
-          ? 'Warning: this car also exists in the BR app but the rename could not be fully synced there — check it in the BR app.\n'
-          : 'Warning: the BR app could not be checked for this car, so if it also exists there it was NOT renamed — check the BR app.\n')
-          + (data?.error || `HTTP ${res.status}`))
-      }
-    } catch (e) {
-      alert('Warning: the BR app could not be reached (no answer from the app server) — if this car also exists in the BR app, rename it there manually.\n' + String(e))
-    }
-
-    // Dropbox folder sync: the physical ride folder follows every rename /
-    // renumber ("OLDCODE - x" -> "NEWCODE - NewName"). Common cars also update
-    // their folder in the BR archive. Non-blocking.
-    const folderFails: string[] = []
-    for (const zone of brRideRenamed ? ['US', 'BR'] : ['US']) {
-      try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, {
-          method: 'POST',
-          headers: await sessionHeaders(),
-          body: JSON.stringify({ action: 'rename', zone, oldCode, oldName, newCode, name: projectName || '' }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok || data.error) folderFails.push(`${zone}: ${data.error || `HTTP ${res.status}`}`)
-      } catch (e) { folderFails.push(`${zone}: ${String(e)}`) }
-    }
-    if (folderFails.length) alert('Ride saved, but the Dropbox folder sync failed —\n' + folderFails.join('\n'))
-
-    // O NOME DO CARRO DENTRO DOS ARQUIVOS SEGUE O RIDE (Márcio, 06/set/2026).
-    // Roda DEPOIS do rename da pasta, de propósito: o retag procura a pasta pelo
-    // código NOVO. Cobre a HB Tuning do carro (BoneStock Tune, BuildSheet PDF) e o
-    // BoneStock TuneRepository das DUAS zonas — lá o nome é a única identidade.
     if (oldCode !== newCode || oldName !== (projectName || '')) {
-      for (const zone of ['US', 'BR']) {
-        try {
-          await fetch(`${BASE_PATH}/api/ride-folder`, {
-            method: 'POST', headers: await sessionHeaders(),
-            body: JSON.stringify({ action: 'retag', zone, code: newCode, oldCode, oldName, newCode, newName: projectName || '', rootFolder: 'BoneStock TuneRepository' }),
-          })
-        } catch { /* não-fatal: o arquivo re-sincroniza com o nome novo no próximo save do tune */ }
+      try {
+        const res = await fetch(`${BASE_PATH}/api/rides/renumber`, {
+          method: 'POST', headers: await sessionHeaders(),
+          body: JSON.stringify({ rideId, newCode, newName: projectName || '' }),
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok || !j.ok) {
+          const motivo = j.bloqueios ? j.bloqueios.join('\n') : j.falhouEm ? `Parou em «${j.falhouEm}»: ${JSON.stringify((j.passos || []).slice(-1)[0]?.detalhe || '').slice(0, 300)}` : (j.error || `HTTP ${res.status}`)
+          alert((res.status === 409 ? 'O resto foi salvo, mas o CÓDIGO/NOME não mudou — nada foi alterado nele:\n' : 'O resto foi salvo, mas a troca de código/nome parou no meio:\n') + motivo)
+          setSaving(false)
+          return
+        }
+      } catch (e) {
+        alert('O resto foi salvo, mas a rota de troca de código/nome não respondeu: ' + String(e))
+        setSaving(false)
+        return
       }
     }
-
     setSaving(false)
     router.push(`/rides/${rideId}`)
   }
@@ -420,7 +395,7 @@ export default function EditRidePage() {
       <div className="grid grid-cols-1 gap-5 max-w-2xl">
 
         <div>
-          <label className="block mb-2 text-lg font-bold">PROJECT CODE</label>
+          <label className="block mb-2 text-lg font-bold">PROJECT CODE{pinned ? ' 📌 PINNED' : ''}</label>
           <input type="text" value={projectCode} onChange={(e) => setProjectCode(e.target.value)} className={inputClass} placeholder="e.g. US.001" />
         </div>
 
@@ -542,12 +517,12 @@ export default function EditRidePage() {
         {/* TITLE & DOCS — who handles this car's paperwork. */}
         <div className="border-t border-gray-800 pt-5 mt-2">
           <h2 className="text-2xl font-bold mb-4">TITLE &amp; DOCS</h2>
-          <label className="block mb-2 text-lg font-bold">CAR DESTINY</label>
+          <label className="block mb-2 text-lg font-bold">OWNER &amp; DESTINATION</label>
           {/* A lista depende de ONDE o carro vive (Márcio, 27/ago/2026): carro do
               FLEET só escolhe entre os dois destinos de frota; carro de RIDES só
               entre os três de cliente. Misturar as duas listas era oferecer, num
               carro nosso, "carro do cliente americano". */}
-          <select value={titleScope} onChange={(e) => setTitleScope(e.target.value)} className={selectClass}>
+          <select value={titleScope} onChange={(e) => mudaDestino(e.target.value)} className={selectClass}>
             <option value="">— Not set —</option>
             {CAR_DESTINY.filter(d => isOurCar(titleScope) ? isOurCar(d.value) : !isOurCar(d.value))
               .map(d => <option key={d.value} value={d.value}>{d.option}</option>)}
@@ -558,17 +533,20 @@ export default function EditRidePage() {
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             {isOurCar(titleScope) ? (
               <>
-                <button type="button" onClick={() => setTitleScope('')} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">MOVE TO RIDES</button>
-                <span className="text-sm text-gray-400">Este carro está no FLEET. Movê-lo devolve a escolha aos destinos de cliente.</span>
+                <button type="button" onClick={() => mudaDestino('')} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">MOVE TO RIDES</button>
+                <span className="text-sm text-gray-400">Este carro é nosso ({carHome(titleScope)}). Movê-lo devolve a escolha aos destinos de cliente.</span>
               </>
             ) : (
               <>
-                <button type="button" onClick={() => setTitleScope('OWN')} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">MOVE TO FLEET</button>
-                <span className="text-sm text-gray-400">Passa a ser carro nosso e sai da lista de RIDES.</span>
+                <button type="button" onClick={() => mudaDestino('OWN')} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">MOVE TO FLEET</button>
+                <span className="text-sm text-gray-400">Passa a ser carro nosso (SHOWCASE, WORK VEHICLE ou PART-OUT) e sai da lista de RIDES.</span>
               </>
             )}
           </div>
 
+          {projectCode !== originalCode && (
+            <p className="mt-3 text-amber-300 font-bold">Código: {originalCode} → {projectCode}{pinned ? ' 📌' : ''} — o app troca pastas, invoices e e-mails ao salvar.</p>
+          )}
           <div className="mt-4">
             <label className="block mb-2 text-lg font-bold">ADMISSION MILEAGE (mi)</label>
             <input type="text" inputMode="decimal" value={admissionMileage}

@@ -52,7 +52,7 @@ async function resolveDestination(db: SupabaseClient, answer: string): Promise<D
   if (/pessoal|personal|casa/.test(s)) return { label: 'PESSOAL (Márcio)', app: 'US' }
 
   // Código de invoice (US.026.1 / BR.472.1 / 047.1) -> a invoice manda no destino.
-  const invMatch = raw.match(/\b((?:US|BR)\.\d{3}(?:\.\d+)?|\d{3}\.\d+)\b/i)
+  const invMatch = raw.match(/\b((?:US\.QT|US|BR|SC|WV|PO|SHP)\.\d{3}(?:\.\d+)?|\d{3}\.\d+)\b/i)
   if (invMatch) {
     const code = invMatch[1].toUpperCase()
     const { data: inv } = await db.from('invoices').select('invoice_code, ride_id').ilike('invoice_code', `${code}%`).limit(1)

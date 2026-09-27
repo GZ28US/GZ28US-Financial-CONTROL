@@ -139,12 +139,12 @@ export function leCaminho(path: string): { rideCode: string; rideName: string; i
   const seg = path.split('/').filter(Boolean)
   const i = seg.findIndex(s => /^(GZ28US|GZ28BR) Rides$/i.test(s))
   if (i < 0 || !seg[i + 1]) return null
-  const mr = seg[i + 1].match(/^([A-Za-z]{2}\.\d+)\s*-?\s*(.*)$/)
+  const mr = seg[i + 1].match(/^((?:US\.QT|[A-Za-z]{2,3})\.\d+)\s*-?\s*(.*)$/)
   if (!mr) return null
   const file = seg[seg.length - 1]
   let invoiceCode: string | null = null
   for (const s of seg.slice(i + 2)) {
-    const mi = s.match(/^([A-Za-z]{2}\.\d+\.\d+)/)
+    const mi = s.match(/^((?:US\.QT|[A-Za-z]{2,3})\.\d+\.\d+)/)
     if (mi) { invoiceCode = mi[1].toUpperCase(); break }
   }
   return { rideCode: mr[1].toUpperCase(), rideName: mr[2].trim(), invoiceCode, file }

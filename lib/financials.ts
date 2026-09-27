@@ -246,12 +246,13 @@ export function invoiceTotals(d: FinData, inv: any) {
   return { parts, services, flTax, discount, grand, cost, received }
 }
 
-// Dono do carro (CAR DESTINY): OWN/TOOL são NOSSOS — o custo deles é frota/
-// imobilizado, nunca WIP de projeto. O resto é carro de cliente.
+// Dono do carro (OWNER & DESTINATION): OWN/TOOL são NOSSOS — o custo deles é frota/
+// imobilizado, nunca WIP de projeto. PART_OUT (27/set/2026) também é nosso: carcaça
+// que vira estoque de peça. O resto é carro de cliente.
 export const rideScope = (d: FinData, inv: any): string | null =>
   (inv?.ride_id && d.rides.get(inv.ride_id)?.title_scope) || null
 export const isOurRide = (d: FinData, inv: any) => {
-  const s = rideScope(d, inv); return s === 'OWN' || s === 'TOOL'
+  const s = rideScope(d, inv); return s === 'OWN' || s === 'TOOL' || s === 'PART_OUT'
 }
 
 // Rótulo e link de uma invoice (padrão do gz-flow: rides/<id>/invoices/<id>).
