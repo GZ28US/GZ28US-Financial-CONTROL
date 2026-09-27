@@ -101,7 +101,8 @@ const G = 'https://graph.microsoft.com/v1.0'
 // `suspens` virou alvo estreito ("suspended"/"conta suspensa"), porque suspensão
 // é PEÇA no nosso vocabulário, não sinal de conta bloqueada.
 // +nº de pedido com hífen (111-9605878-5792209), que escapava da trava numérica.
-const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|\b\d{3}-\d{7}-\d{7}\b|\baprovad|\bapproved\b|\bcharged\b|\bsuspended\b|conta suspensa|account suspension|cancel|c[oó]digo|verification code|senha|password|2fa|refund|estorno|reembolso|invoice|fatura|boleto|nota fiscal|contrato|\bassinad|\bsignature\b|\bsigned\b|candidat|vaga de|check-?in|reserva confirmada|itiner|shipped|entregue|delivered|tracking|rastreio/i
+// + ACESSO À CONTA (26/set/2026): «new device», «security alert», «sign-in» nunca morrem como marketing.
+const HARD_STOP = /#\s?\d{4,}|\bPO-\d|1Z[0-9A-Z]{10,}|\b\d{10,22}\b|\b\d{3}-\d{7}-\d{7}\b|\baprovad|\bapproved\b|\bcharged\b|\bsuspended\b|conta suspensa|account suspension|cancel|c[oó]digo|verification code|senha|password|2fa|new device|novo dispositivo|security alert|alerta de seguran|new sign.?in|unusual (sign.?in|activity)|sign.?in (attempt|alert|confirmation)|refund|estorno|reembolso|invoice|fatura|boleto|nota fiscal|contrato|\bassinad|\bsignature\b|\bsigned\b|candidat|vaga de|check-?in|reserva confirmada|itiner|shipped|entregue|delivered|tracking|rastreio/i
 
 // OS DOIS FREIOS (11/set/2026), que vieram junto com a leitura da pasta inteira.
 // LISTAR ficou completo e é barato; AGIR é que custa — cada mensagem de remetente

@@ -101,6 +101,18 @@ const DESPACHANTE_FROM = /autotagsandtitle/i
 // K&G / O-1A (caso 03/ago: pacote ASSINATURA FORMULÁRIOS varrido da caixa): tudo
 // dos advogados de imigração fica na caixa de entrada até o Márcio dar destino.
 const KG_FROM = /guerra\.law|kravitz/i
+// ── ACESSO À CONTA FICA NA ENTRADA ATÉ SER LIDO (Márcio, 26/set/2026: «yes» a «should
+// security alerts and verification codes stay in the inbox until you read them?»).
+// Caso: o «Login on New Device» da Regions (26/09) foi pro Arquivo Morto NÃO LIDO 15 min
+// depois de chegar — só não passou batido porque a rodada de e-mail estava rodando — e
+// código de verificação era APAGADO aos 15 min, podendo morrer antes do uso. Vale para
+// toda caixa Graph varrida aqui, ANTES da regra do slot e sem esperar os 15 min:
+// NÃO LIDO → fica (e se caiu no lixo eletrônico, volta pra entrada); LIDO → a regra do
+// slot decide como antes (código lido some, alerta lido vai pro Arquivo Morto).
+const ACESSO_SUBJ = /verification code|c[óo]digo de (verifica|seguran|acesso)|one[- ]?time (code|pass)|\b2fa\b|security (alert|code|notice)|alerta de seguran|sign.?in (confirmation|attempt|alert|activity)|new sign.?in|unusual (sign.?in|activity)|new device|novo dispositivo|novo acesso|password (reset|change)|redefini..o de senha|senha (alterada|redefinida)|\bID verification\b|verify your (identity|account)/i
+const ACESSO_FROM = /alert\.regions\.com|accountprotection\.microsoft\.com|account-security|no-?reply@accounts\.google\.com/i
+export const ehAcessoDeConta = (subj: string, from: string): boolean => ACESSO_SUBJ.test(subj) || ACESSO_FROM.test(from)
+
 function ruleSlot1(subj: string, from: string): string | null {
   if (ESIGN_FROM.test(from) || ESIGN_SUBJ.test(subj)) return 'KEEP'
   if (DESPACHANTE_FROM.test(from)) return 'KEEP'
@@ -150,11 +162,22 @@ async function zeroGraph(db: SupabaseClient, account: string, rule: (s: string, 
   const boxes = ['inbox', 'junkemail']
   const msgs: any[] = []
   for (const box of boxes) {
-    const r = await fetch(`${G}/me/mailFolders/${box}/messages?$top=25&$select=id,subject,from,receivedDateTime`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
-    for (const m of r?.value || []) msgs.push(m)
+    const r = await fetch(`${G}/me/mailFolders/${box}/messages?$top=25&$select=id,subject,from,receivedDateTime,isRead`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    for (const m of r?.value || []) msgs.push({ ...m, _box: box })
   }
   const cutoff = Date.now() - GRACE_MIN * 60_000
   for (const m of msgs) {
+    // ACESSO À CONTA (26/set/2026): não lido fica à vista, antes de qualquer regra e sem esperar os 15 min.
+    const subjA = String(m.subject || ''), fromA = String(m.from?.emailAddress?.address || '')
+    if (m.isRead !== true && ehAcessoDeConta(subjA, fromA)) {
+      if (m._box === 'junkemail') {
+        const mv = await fetch(`${G}/me/messages/${encodeURIComponent(m.id)}/move`, {
+          method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'inbox' }),
+        })
+        if (mv.ok) out.push(`${account}: ACESSO lixo→entrada ${subjA.slice(0, 40)}`)
+      }
+      continue
+    }
     if (new Date(m.receivedDateTime).getTime() > cutoff) continue // recente demais — outros sweeps ainda vão agir
     // LEI (Márcio, 04/ago/2026): e-mail SEM regra = NÃO PROCESSADO ⇒ FICA NA
     // INBOX à vista, como pendência. Nada de TRIAGEM escondendo trabalho —
