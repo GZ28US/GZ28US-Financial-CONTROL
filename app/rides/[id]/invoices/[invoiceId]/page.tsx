@@ -339,7 +339,13 @@ export default function ViewInvoicePage() {
         ? `\n🗓 PROMISED TO: *${formatDate(invoice.expected_conclusion_date)}*` : ''
       const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}${promisedLine}`
       const markupLine = `MarkUp: *${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%*`
-      const clientCaption = invoice.is_quote ? `${head}\n\nAt your disposal for any questions.` : head
+      // CLIENTE vê só o VALOR EM ABERTO (Márcio, 30/09/2026: «Substitua o Grand Total somente pelo
+      // valor em aberto… msgs pro cliente both apps»): Grand Total − incomes QUITADAS (paid_at).
+      // Parcela agendada sem paid_at conta como aberta. Quote não tem pagamento: fica o total.
+      // O grupo REPORTS continua com o Grand Total.
+      const openBalance = Math.max(0, grandTotal - totalPaid)
+      const clientHead = invoice.is_quote ? head : head.replace(`Grand Total: *${formatUSD(grandTotal)}*`, `Open balance: *${formatUSD(openBalance)}*`)
+      const clientCaption = invoice.is_quote ? `${head}\n\nAt your disposal for any questions.` : clientHead
       const groupCaption = invoice.is_quote ? `${head}\n${markupLine}` : head
 
       // GZ28US Control App REPORTS — WhatsApp document to the default reports group
