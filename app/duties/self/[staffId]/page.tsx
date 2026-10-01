@@ -30,6 +30,9 @@ type Duty = {
   time_started_at: string | null
   work_started_at: string | null
   work_ended_at: string | null
+  // DUTY COMPARTILHADA (01/10/2026): os outros homens que também podem pegar esta duty.
+  // Vazio = duty só dele. No START ela vira só dele (duty_take) e some da lista dos outros.
+  sharedWith: string[]
 }
 
 const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, 'STANDBY': 5 }
@@ -83,7 +86,7 @@ export default function StaffDutySelfPage() {
     try { localStorage.setItem(manobrasKey, JSON.stringify(next)) } catch {}
   }
   // The synthetic Duty shape lets MANOBRAS ride the same report/log pipeline.
-  const manobrasDuty = (s: ManobrasState): Duty => ({ id: 'MANOBRAS', description: MANOBRAS_DESC, done: false, priority: '1', invoiceCode: '—', carLabel: '', time_seconds: s.seconds, time_started_at: s.startedAt, work_started_at: s.workStartedAt, work_ended_at: null })
+  const manobrasDuty = (s: ManobrasState): Duty => ({ id: 'MANOBRAS', description: MANOBRAS_DESC, done: false, priority: '1', invoiceCode: '—', carLabel: '', time_seconds: s.seconds, time_started_at: s.startedAt, work_started_at: s.workStartedAt, work_ended_at: null, sharedWith: [] })
 
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get('max')
@@ -110,6 +113,7 @@ export default function StaffDutySelfPage() {
       time_started_at: d.time_started_at || null,
       work_started_at: d.work_started_at || null,
       work_ended_at: d.work_ended_at || null,
+      sharedWith: Array.isArray(d.shared_with) ? d.shared_with.map(String) : [],
     })))
     setLoading(false)
   }
@@ -157,6 +161,12 @@ export default function StaffDutySelfPage() {
   async function startDuty(d: Duty) {
     if (busyRef.current) return; busyRef.current = true
     try {
+      // Duty compartilhada: o 1º START é quem pega. Se outro pegou antes, avisa e recarrega.
+      if (!d.work_started_at && d.sharedWith.length) {
+        const { data: peguei, error: eT } = await supabase.rpc('duty_take', { p_id: d.id, p_staff_id: staffId })
+        if (eT) { alert(eT.message); return }
+        if (!peguei) { alert('Outro colega já começou esta tarefa — ela saiu da sua lista.'); await load(); return }
+      }
       const nowIso = new Date().toISOString()
       const resumed = !!d.work_started_at
       const othersRunning = duties.filter(x => x.id !== d.id && x.time_started_at)
@@ -168,7 +178,7 @@ export default function StaffDutySelfPage() {
       const { error } = await supabase.rpc('duty_self_update', { p_id: d.id, p_time_seconds: Number(d.time_seconds) || 0, p_time_started_at: nowIso, p_work_started_at: d.work_started_at || nowIso, p_work_ended_at: null, p_done: d.done })
       if (error) { alert(error.message); return }
       setDuties(duties.map(x => {
-        if (x.id === d.id) return { ...x, time_started_at: nowIso, work_started_at: x.work_started_at || nowIso, work_ended_at: null }
+        if (x.id === d.id) return { ...x, time_started_at: nowIso, work_started_at: x.work_started_at || nowIso, work_ended_at: null, sharedWith: [] }
         if (othersRunning.some(r => r.id === x.id) && x.time_started_at) return { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null }
         return x
       }))
@@ -311,6 +321,7 @@ export default function StaffDutySelfPage() {
                   <p className="font-bold text-base leading-tight">{d.description}</p>
                 </div>
                 <p className="text-sm text-gray-400 mt-1">{d.invoiceCode}{d.carLabel ? ` · ${d.carLabel}` : ''}</p>
+                {d.sharedWith.length > 0 && <p className="text-sm text-sky-300 mt-1">👥 Também com {d.sharedWith.join(', ')} — quem der START primeiro fica com ela.</p>}
                 {(running || d.time_seconds > 0) && (
                   <p className={`text-sm mt-1 font-bold ${running ? 'text-amber-400' : 'text-gray-400'}`}>⏱ {fmtDur(secsNow)}{running ? ' · running' : ' · paused'}</p>
                 )}

@@ -12,6 +12,9 @@ import { sessionHeaders } from '@/lib/sessionHeaders'
 type Duty = {
   id: string
   staff_id: string | null
+  // DUTY COMPARTILHADA (Márcio, 01/10/2026): os OUTROS homens que também podem pegar a duty
+  // enquanto ninguém deu START. O 1º START é de quem apertou (RPC duty_take) e a lista some.
+  shared_staff_ids: string[]
   description: string
   done: boolean
   priority: string
@@ -114,7 +117,7 @@ export default function StaffDutiesPage() {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'TODO' | 'DONE'>('TODO')
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; staff_id: string; priority: string }>({ order: '', description: '', staff_id: '', priority: '1' })
+  const [editingDuty, setEditingDuty] = useState<{ order: string; description: string; staff_id: string; priority: string; shared?: string[] }>({ order: '', description: '', staff_id: '', priority: '1' })
   // SEND WHATSAPP popups: the per-member duties-list send (asks up to which
   // priority) and the START/PAUSE/DONE notification. Every duties message goes
   // ONLY to the staff group, with the member @marked in the text.
@@ -168,6 +171,7 @@ export default function StaffDutiesPage() {
       return {
         id: d.id,
         staff_id: d.staff_id,
+        shared_staff_ids: Array.isArray(d.shared_staff_ids) ? d.shared_staff_ids.map(String) : [],
         description: d.description || '',
         done: !!d.done,
         priority: String(d.priority || '1'),
@@ -247,12 +251,14 @@ export default function StaffDutiesPage() {
 
   // The member's open duties list, ordered by priority, cut at the chosen
   // priority (StandBy = include everything).
+  // A duty é DESTE homem: ele é o dono, ou ela está compartilhada com ele e ninguém deu START.
+  const isFor = (d: Duty, staffId: string) => d.staff_id === staffId || (!d.work_started_at && !d.done && d.shared_staff_ids.includes(staffId))
   function buildListBody(staffId: string, name: string, maxPriority: string): string | null {
     // P0 THROUGH P3 always go to the member (Márcio, 02/ago/2026) — the cut can
     // narrow P4/StandBy, never below Priority 3.
     const maxRank = Math.max(DUTY_PRIORITY_RANK[maxPriority] ?? DUTY_PRIORITY_RANK['4'], DUTY_PRIORITY_RANK['3'])
     const rows = duties
-      .filter(d => d.staff_id === staffId && !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank)
+      .filter(d => isFor(d, staffId) && !d.done && (DUTY_PRIORITY_RANK[d.priority] ?? 0) <= maxRank)
       .sort(dutyOrder)
     if (!rows.length) return null
     const lines = rows.map((d, i) =>
@@ -296,16 +302,17 @@ export default function StaffDutiesPage() {
   function startEdit(d: Duty) {
     const order = dutyOrderOf(d.description)
     setEditingId(d.id)
-    setEditingDuty({ order, description: order ? stripDutyOrder(d.description) : d.description, staff_id: d.staff_id || '', priority: d.priority || '1' })
+    setEditingDuty({ order, description: order ? stripDutyOrder(d.description) : d.description, staff_id: d.staff_id || '', priority: d.priority || '1', shared: d.work_started_at ? [] : d.shared_staff_ids })
   }
   async function saveEdit() {
     if (!editingId) return
     if (!editingDuty.description.trim()) { alert('Enter the duty description'); return }
     if (!editingDuty.staff_id) { alert('Pick the STAFF member who will execute it'); return }
     const desc = withDutyOrder(editingDuty.order, editingDuty.description)
-    const { error } = await supabase.from('invoice_duties').update({ description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority }).eq('id', editingId)
+    const shared = (editingDuty.shared || []).filter(x => x && x !== editingDuty.staff_id)
+    const { error } = await supabase.from('invoice_duties').update({ description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority, shared_staff_ids: shared.length ? shared : null }).eq('id', editingId)
     if (error) { alert(error.message); return }
-    setDuties(duties.map(d => d.id === editingId ? { ...d, description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority } : d))
+    setDuties(duties.map(d => d.id === editingId ? { ...d, description: desc, staff_id: editingDuty.staff_id, priority: editingDuty.priority, shared_staff_ids: shared } : d))
     setEditingId(null)
   }
   async function removeDuty(d: Duty) {
@@ -329,7 +336,15 @@ export default function StaffDutiesPage() {
   // DONE banks it, stamps the end time and marks the duty done.
   const segSeconds = (startedAt: string) => Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
 
-  async function startDuty(d: Duty) {
+  async function startDuty(d0: Duty, quem?: string) {
+    let d = d0
+    // Duty compartilhada: o START dado na lista de um homem passa a duty pra ele (atômico no banco).
+    if (!d.work_started_at && d.shared_staff_ids.length && quem && quem !== 'none') {
+      const { data: peguei, error: eT } = await supabase.rpc('duty_take', { p_id: d.id, p_staff_id: quem })
+      if (eT) { alert(eT.message); return }
+      if (!peguei) { alert('Outro homem já começou esta duty.'); await load(); return }
+      d = { ...d, staff_id: quem, shared_staff_ids: [] }
+    }
     const nowIso = new Date().toISOString()
     const othersRunning = duties.filter(x => x.id !== d.id && x.staff_id === d.staff_id && x.time_started_at)
     for (const r of othersRunning) {
@@ -340,7 +355,7 @@ export default function StaffDutiesPage() {
     const { error } = await supabase.from('invoice_duties').update({ time_started_at: nowIso, work_started_at: d.work_started_at || nowIso, work_ended_at: null }).eq('id', d.id)
     if (error) { alert(error.message); return }
     setDuties(duties.map(x => {
-      if (x.id === d.id) return { ...x, time_started_at: nowIso, work_started_at: x.work_started_at || nowIso, work_ended_at: null }
+      if (x.id === d.id) return { ...x, staff_id: d.staff_id, shared_staff_ids: d.shared_staff_ids, time_started_at: nowIso, work_started_at: x.work_started_at || nowIso, work_ended_at: null }
       if (othersRunning.some(r => r.id === x.id) && x.time_started_at) return { ...x, time_seconds: (Number(x.time_seconds) || 0) + segSeconds(x.time_started_at), time_started_at: null }
       return x
     }))
@@ -385,8 +400,8 @@ export default function StaffDutiesPage() {
   const byPriority = (a: Duty, b: Duty) => dutyOrder(a, b)
   const groups: { key: string; name: string; rows: Duty[]; todoCount: number; doneCount: number }[] = []
   for (const s of staffList) {
-    const rows = visible.filter(d => d.staff_id === s.id).sort(byPriority)
-    const all = duties.filter(d => d.staff_id === s.id)
+    const rows = visible.filter(d => isFor(d, s.id)).sort(byPriority)
+    const all = duties.filter(d => isFor(d, s.id))
     if (rows.length) groups.push({ key: s.id, name: s.name, rows, todoCount: all.filter(d => !d.done).length, doneCount: all.filter(d => d.done).length })
   }
   const unassigned = visible.filter(d => !d.staff_id || !staffList.some(s => s.id === d.staff_id)).sort(byPriority)
@@ -470,6 +485,13 @@ export default function StaffDutiesPage() {
                           <option value="STANDBY">Block StandBy</option>
                         </select>
                       </div>
+                      <div className="flex gap-2 flex-wrap items-center">
+                        <span className="text-sm text-gray-400 font-bold">ALSO (quem der START primeiro fica com ela):</span>
+                        {staffList.filter(s => s.id !== editingDuty.staff_id).map(s => {
+                          const on = (editingDuty.shared || []).includes(s.id)
+                          return <button key={s.id} type="button" onClick={() => setEditingDuty({ ...editingDuty, shared: on ? (editingDuty.shared || []).filter(x => x !== s.id) : [...(editingDuty.shared || []), s.id] })} className={`px-3 py-1 rounded-full text-sm font-bold ${on ? 'bg-sky-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>{on ? '✓ ' : ''}{s.name}</button>
+                        })}
+                      </div>
                       <div className="flex gap-3">
                         <button onClick={saveEdit} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                         <button onClick={() => setEditingId(null)} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -487,6 +509,9 @@ export default function StaffDutiesPage() {
                           <a href={`${BASE_PATH}${d.href}`} className="text-gray-500 hover:text-blue-400 hover:underline">{d.invoiceCode}</a>
                           {d.carLabel ? ` · ${d.carLabel}` : ''}
                         </p>
+                        {!d.work_started_at && d.shared_staff_ids.length > 0 && (
+                          <p className="text-sm text-sky-300">👥 Compartilhada: {[d.staff_id, ...d.shared_staff_ids].filter(Boolean).map(x => staffNameOf(x)).join(' · ')} — quem der START primeiro fica com ela</p>
+                        )}
                         {(d.time_started_at || d.time_seconds > 0 || d.work_started_at) && (() => {
                           // PREVISTO × REALIZADO: o saldo só aparece quando há previsto
                           // gravado. Verde = sobrou tempo, vermelho = estourou.
@@ -511,7 +536,7 @@ export default function StaffDutiesPage() {
                       </div>
                       <div className="flex gap-2 shrink-0 flex-wrap justify-end">
                         {!d.done && !d.time_started_at && (
-                          <button onClick={() => startDuty(d)} className="bg-emerald-700 hover:bg-emerald-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">▶ START</button>
+                          <button onClick={() => startDuty(d, g.key)} className="bg-emerald-700 hover:bg-emerald-600 px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap">▶ START</button>
                         )}
                         {d.time_started_at ? (
                           <>
