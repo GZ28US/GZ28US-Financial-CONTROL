@@ -447,6 +447,8 @@ export type Op =
   | { tipo: 'pendente_criar'; banco: Banco; tabela: string; mirror_src: string; campos: Row; rotulo: string }
   | { tipo: 'pendente_atualizar'; banco: Banco; tabela: string; id: string; de: number; para: number; mirror_src: string; rotulo: string }
   | { tipo: 'pendente_apagar'; banco: Banco; tabela: string; id: string; de: number; mirror_src: string; rotulo: string }
+  // ESPELHO ÓRFÃO (01/10/2026): a renda do BR que originou esta renda do US não existe mais — a cópia sai junto.
+  | { tipo: 'espelho_apagar'; banco: Banco; tabela: string; id: string; de: number; mirror_src: string; origem_id: string; rotulo: string }
 
 // Uma linha relida no banco antes de gravar: se qualquer campo mudou desde o plano, a chave não grava.
 export type Conferencia = { banco: Banco; tabela: string; id: string; campos: Record<string, string | number | null> }
@@ -486,7 +488,7 @@ export type ChavePlano = {
   pares: Par[]
   sem_par: SemPar[]
   // itens_usd / itens_brl: o que os ITENS novos cobrariam na shopping invoice (na 006.N já com o +10%).
-  numeros: { linhas_criar: number; linhas_vincular: number; usd_criar: number; brl_criar: number; itens_usd: number; itens_brl: number; rendas_criar: number; renda_usd: number; renda_brl: number; carimbos: number; pendente_de: number | null; pendente_para: number | null }
+  numeros: { linhas_criar: number; linhas_vincular: number; usd_criar: number; brl_criar: number; itens_usd: number; itens_brl: number; rendas_criar: number; renda_usd: number; renda_brl: number; renda_sai_usd: number; carimbos: number; pendente_de: number | null; pendente_para: number | null }
   impressao: string
 }
 // O DINHEIRO PARADO (auditoria de 14/set/2026): cada chave travada, com o que ela gravaria se o dono
@@ -497,6 +499,8 @@ export type Bloqueada = {
   mirror_key: string; origem: string; alvo: string | null; banco_alvo: Banco; direcoes: Direcao[]
   alvo_ja_na_manchete: boolean     // a shopping invoice-alvo já existe: as linhas dela JÁ contam no ANTES
   itens_usd: number; itens_brl: number; despesas_usd: number; despesas_brl: number; rendas_usd: number; rendas_brl: number
+  // espelho órfão que SAIRIA junto (já conta no ANTES): o recebido muda em rendas_usd − rendas_saem_usd, não em rendas_usd.
+  rendas_saem_usd: number
   motivos: string[]
 }
 export type Excluido = { direcao: Direcao; banco: Banco; tabela: string; id: string; documento: string; rotulo: string; usd: number | null; brl: number | null; motivo: string }
@@ -516,7 +520,7 @@ export type Plano = {
   correcoes_b: CorrecaoB[]
   manchete: {
     antes: Manchete; depois: Manchete
-    bloqueadas: { chaves: Bloqueada[]; total: { itens_usd: number; despesas_usd: number; rendas_usd: number; rendas_brl: number } }
+    bloqueadas: { chaves: Bloqueada[]; total: { itens_usd: number; despesas_usd: number; rendas_usd: number; rendas_brl: number; rendas_saem_usd: number } }
   }
 }
 
@@ -526,7 +530,7 @@ class Montador {
     this.c = {
       mirror_key, direcoes: [], banco_alvo, origem, alvo: { id: null, codigo: null, como: null }, primeira_data: null, status: 'nada',
       ops: [], conflitos: [], avisos: [], pares: [], sem_par: [],
-      numeros: { linhas_criar: 0, linhas_vincular: 0, usd_criar: 0, brl_criar: 0, itens_usd: 0, itens_brl: 0, rendas_criar: 0, renda_usd: 0, renda_brl: 0, carimbos: 0, pendente_de: null, pendente_para: null },
+      numeros: { linhas_criar: 0, linhas_vincular: 0, usd_criar: 0, brl_criar: 0, itens_usd: 0, itens_brl: 0, rendas_criar: 0, renda_usd: 0, renda_brl: 0, renda_sai_usd: 0, carimbos: 0, pendente_de: null, pendente_para: null },
       impressao: '',
     }
   }
@@ -544,10 +548,11 @@ class Montador {
     }
     if (o.tipo === 'vincular_linha') n.linhas_vincular++
     if (o.tipo === 'carimbo') n.carimbos++
+    if (o.tipo === 'espelho_apagar') n.renda_sai_usd = r2(n.renda_sai_usd + o.de)
   }
   fechar(): ChavePlano {
     const c = this.c
-    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'criar_linha', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
+    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'espelho_apagar', 'criar_linha', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
     const PAPEL = { despesa: 0, item: 1, renda: 2 } as const
     c.ops.sort((a, b) => ORDEM.indexOf(a.tipo) - ORDEM.indexOf(b.tipo) || (a.tipo === 'criar_linha' && b.tipo === 'criar_linha' ? PAPEL[a.papel] - PAPEL[b.papel] : 0))
     if (c.conflitos.length) { c.status = 'conflito'; c.ops = [] }
@@ -984,16 +989,41 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
         guarda: { amount: p.amount ?? null, paid_to: p.paid_to ?? null }, confere: conf2 })
     }
 
+    // ── ESPELHO ÓRFÃO DA DIREÇÃO 2 (Márcio, 01/10/2026 — «este efeito cascata é sagrado») ──
+    // Renda do US com mirror_src «BR:invoice_payments:<id>» cuja origem NÃO EXISTE MAIS no BR: a renda foi removida
+    // (ou removida e escaneada de novo, como na BR.537.1 — a 006.36 ficou com US$ 11.157,09 em dobro). Até aqui o motor
+    // ignorava o órfão e ele seguia contando como recebido. Agora a cópia sai com a origem; na escrita a origem é relida
+    // (tem de continuar ausente) e renda com elo de banco não sai — vira conflito já no plano. Origem que EXISTE mas deixou de
+    // atravessar (PAID TO trocado, baixa desfeita) é decisão humana: só avisa.
+    const idsPagBR = new Set(foto.br.pagamentos.map(x => String(x.id)))
+    const orfas = alvo ? R.filter(r => r.invoice_id === alvo!.id && String(r.mirror_src || '').startsWith('BR:invoice_payments:')) : []
+    const orfasIds = new Set<string>()
+    for (const r of orfas) {
+      const origem = String(r.mirror_src).slice('BR:invoice_payments:'.length)
+      if (idsPagBR.has(origem)) {
+        if (!P2.some(x => String(x.id) === origem)) m.aviso(`a renda ${String(r.id).slice(0, 8)} (US$ ${num(r.amount)}) espelha uma renda do BR que não atravessa mais (PAID TO ou baixa mudou) — conferir`)
+        continue
+      }
+      // Casada com o Regions: o depósito existe e a renda que o explicava sumiu do BR — quem decide é o dono. Conflito
+      // JÁ NO PLANO (a chave inteira para e aparece no dinheiro parado), não na escrita rodada após rodada.
+      if (foto.us.ponteirosBanco.has(`invoice_incomes:${r.id}`) || foto.us.ponteirosBanco.has(`invoice_payments:${r.id}`)) {
+        m.conflito(`a renda ${String(r.id).slice(0, 8)} (US$ ${num(r.amount)}) espelha uma renda do BR que não existe mais, mas está casada com um depósito do Regions — desfaça o casamento ou diga a qual renda do BR ela pertence; nada sai`)
+        continue
+      }
+      orfasIds.add(String(r.id))
+      m.op({ tipo: 'espelho_apagar', banco: 'US', tabela: 'invoice_incomes', id: String(r.id), de: num(r.amount), mirror_src: String(r.mirror_src), origem_id: origem, rotulo: `renda US$ ${num(r.amount)} sai: a renda do BR ${origem.slice(0, 8)} que ela espelhava não existe mais` })
+    }
+
     // ── o Pending balance: grand total − o que já entrou ──
-    if (!alvo && !S.length && !P2.length) { chaves.push(m.fechar()); continue }
+    if (!alvo && !S.length && !P2.length && !orfasIds.size) { chaves.push(m.fechar()); continue }
     const alvoInv = alvo || { florida_taxes: 0, global_discount: null }
     const itensDepois = [...(alvo ? I.filter(i => i.invoice_id === alvo!.id) : []), ...novosItens]
     const servicos = alvo ? foto.us.servicos.filter(s => s.invoice_id === alvo!.id) : []
     const grand = grandTotal(itensDepois, servicos, alvoInv, linhaItem)
-    const recebido = [...(alvo ? R.filter(p => p.invoice_id === alvo!.id && p.paid_at) : []), ...novasRendas].reduce((s, p) => s + num(p.amount), 0)
+    const recebido = [...(alvo ? R.filter(p => p.invoice_id === alvo!.id && p.paid_at && !orfasIds.has(String(p.id))) : []), ...novasRendas].reduce((s, p) => s + num(p.amount), 0)
     planejarPendente(m, {
       banco: 'US', tabela: 'invoice_incomes', key, moeda: 'US$', tol: TOL, elo: 'br_payment_id',
-      rendasAlvo: alvo ? R.filter(p => p.invoice_id === alvo!.id) : [], grand, recebido, novas: novasRendas.length,
+      rendasAlvo: alvo ? R.filter(p => p.invoice_id === alvo!.id && !orfasIds.has(String(p.id))) : [], grand, recebido, novas: novasRendas.length,
       ligadoAoBanco: id => foto.us.ponteirosBanco.has(`invoice_incomes:${id}`) || foto.us.ponteirosBanco.has(`invoice_payments:${id}`),
       camposNovo: valor => ({ invoice_id: ALVO, amount: valor, paid_at: null, payment_date: addDias(latest || hojeEm('America/New_York'), 30), source: null, description: 'Pending balance', paid_to: 'GZ28US', mirror_src: `pendente:${key}` }),
     })
@@ -1626,11 +1656,11 @@ export function dinheiroParado(chaves: ChavePlano[]): Plano['manchete']['bloquea
     alvo_ja_na_manchete: !!c.alvo.id,
     itens_usd: c.numeros.itens_usd, itens_brl: c.numeros.itens_brl,
     despesas_usd: c.numeros.usd_criar, despesas_brl: c.numeros.brl_criar,
-    rendas_usd: c.numeros.renda_usd, rendas_brl: c.numeros.renda_brl,
+    rendas_usd: c.numeros.renda_usd, rendas_brl: c.numeros.renda_brl, rendas_saem_usd: c.numeros.renda_sai_usd,
     motivos: c.conflitos.slice(0, 5),
   }))
   const soma = (f: (b: Bloqueada) => number) => r2(lista.reduce((s, b) => s + f(b), 0))
-  return { chaves: lista, total: { itens_usd: soma(b => b.itens_usd), despesas_usd: soma(b => b.despesas_usd), rendas_usd: soma(b => b.rendas_usd), rendas_brl: soma(b => b.rendas_brl) } }
+  return { chaves: lista, total: { itens_usd: soma(b => b.itens_usd), despesas_usd: soma(b => b.despesas_usd), rendas_usd: soma(b => b.rendas_usd), rendas_brl: soma(b => b.rendas_brl), rendas_saem_usd: soma(b => b.rendas_saem_usd) } }
 }
 
 // A foto como ficaria depois do plano (só chaves criar/atualizar) — para a manchete do DEPOIS.
@@ -1651,7 +1681,7 @@ export function simular(foto: Foto, chaves: ChavePlano[]): Foto {
       else if (o.tipo === 'vincular_linha') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, mirror_src: o.mirror_src, ...(o.elo ? { [o.elo.campo]: o.elo.valor } : {}) } : r)) }
       else if (o.tipo === 'carimbo') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, [o.campo]: o.valor } : r)) }
       else if (o.tipo === 'pendente_atualizar') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, amount: o.para, mirror_src: o.mirror_src } : r)) }
-      else if (o.tipo === 'pendente_apagar') { const t = tab(o.banco, o.tabela); t.set(t.get().filter(r => r.id !== o.id)) }
+      else if (o.tipo === 'pendente_apagar' || o.tipo === 'espelho_apagar') { const t = tab(o.banco, o.tabela); t.set(t.get().filter(r => r.id !== o.id)) }
     }
   }
   return f
@@ -2040,6 +2070,25 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
         if (data?.length !== 1) throw new ErroTravessia('conflict', `o Pending balance ${o.id} mudou (baixa, valor ou elo) antes da escrita`)
         escritas++
         await trilha(o.banco, o.tabela, o.id, 'amount', o.de, o.para, o.rotulo)
+      } else if (o.tipo === 'espelho_apagar') {
+        // A origem tem de continuar AUSENTE agora (não só no plano): renda devolvida no meio do caminho fica.
+        const { data: ainda, error: eA } = await b.br.from('invoice_payments').select('id').eq('id', o.origem_id).maybeSingle()
+        if (eA) throw new ErroTravessia('db', `reler a renda do BR ${o.origem_id}: ${eA.message}`)
+        if (ainda) throw new ErroTravessia('conflict', `a renda do BR ${o.origem_id} existe de novo — o espelho ${o.id} fica`)
+        const [{ data: q1, error: f1 }, { data: q2, error: f2 }] = await Promise.all([
+          db.from('bank_transactions').select('id').eq('matched_table', 'invoice_incomes').eq('matched_id', o.id).neq('match_status', 'REMOVED').limit(1),
+          db.from('bank_transactions').select('id').contains('matched_members', JSON.stringify([{ id: o.id }])).neq('match_status', 'REMOVED').limit(1),
+        ])
+        if (f1 || f2) throw new ErroTravessia('db', `conferir elo de banco da renda ${o.id}: ${(f1 || f2)!.message}`)
+        if (q1?.length || q2?.length) throw new ErroTravessia('conflict', `a renda ${o.id} (espelho de uma renda do BR que sumiu) está casada com o Regions — desfaça o casamento antes; nada saiu`)
+        const { data: antes, error: eAntes } = await db.from(o.tabela).select('*').eq('id', o.id).maybeSingle()
+        if (eAntes) throw new ErroTravessia('db', `ler a renda ${o.id} antes de apagar: ${eAntes.message}`)
+        if (!antes) throw new ErroTravessia('conflict', `a renda ${o.id} sumiu antes de sair`)
+        await trilha(o.banco, o.tabela, o.id, '(espelho órfão apagado)', JSON.stringify(antes), null, o.rotulo)
+        const { data, error } = await db.from(o.tabela).delete().eq('id', o.id).eq('mirror_src', o.mirror_src).eq('amount', o.de).select('id')
+        if (error) throw falhaDe(`apagar espelho ${o.id}: ${error.message}`, error)
+        if (data?.length !== 1) throw new ErroTravessia('conflict', `a renda ${o.id} mudou (valor ou elo) antes de sair — a trilha registrou a tentativa, nada saiu`)
+        escritas++
       } else if (o.tipo === 'pendente_apagar') {
         if (o.banco === 'US') {
           const [{ data: p1, error: e1 }, { data: p2, error: e2 }] = await Promise.all([
