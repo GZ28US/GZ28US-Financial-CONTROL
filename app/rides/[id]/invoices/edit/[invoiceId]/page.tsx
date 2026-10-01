@@ -206,7 +206,8 @@ function isSignedNumeric(v: string) { return v === '' || v === '-' || /^-?\d*\.?
 function houseFromPayee(payee: any, docIsBRL: boolean): string {
   if (docIsBRL) return 'GZ28BR'
   const n = String(payee || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-  if (/GZ28s*BR|GALPAOs*Z28|GALPAOZ28|LTDA/.test(n)) return 'GZ28BR'
+  // As barras invertidas tinham sumido ("GZ28s*BR"): «GZ28 BR» com espaço não casava. 01/10/2026.
+  if (/GZ28\s*BR|GALPAO\s*Z28|GALPAOZ28|COMERCIO\s*E\s*SERVICOS|LTDA/.test(n)) return 'GZ28BR'
   return 'GZ28US'
 }
 

@@ -180,6 +180,9 @@ Rules:
           source: allowedSources.includes(src) ? src : '',
           date: typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '',
           payer: String(p.payer || '').trim(),
+          // O RECEBEDOR (01/10/2026): o prompt já pedia, mas a normalização jogava fora — a tela decidia a casa
+          // só pela moeda. É ele que denuncia um dólar que caiu na conta do Brasil.
+          payee: String(p.payee || '').trim(),
         }
       }).filter((p: any) => p.amount !== '')
 
