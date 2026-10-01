@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 import { isOurCar } from '@/lib/utils'
+import { maisRecente, msAtividade, atividadeDasInvoices, rotuloAtividade } from '@/lib/ultimaAtividade'
 
 type Ride = {
   id: string
@@ -147,12 +148,13 @@ export default function RidesPage() {
       }
 
       // Performance (dyno) activity also counts toward the ride's recency.
-      const { data: dynoRows } = await supabase
+      // O dyno se liga ao ride por ride_code (= project_code); ride_id quase nunca vem preenchido (01/10/2026).
+      const { data: dynoRows } = ride.project_code ? await supabase
         .from('dyno_pulls')
         .select('created_at')
-        .eq('ride_id', ride.id)
+        .eq('ride_code', ride.project_code)
         .order('created_at', { ascending: false })
-        .limit(1)
+        .limit(1) : { data: null }
       if (dynoRows?.[0]?.created_at) timestamps.push(dynoRows[0].created_at)
 
       // Most recent invoice (by created_at) drives the status + feed balloons
@@ -169,16 +171,9 @@ export default function RidesPage() {
       let sumExpensesGlobal = 0
 
       if (invoiceIds.length > 0) {
-        const tables = ['invoice_incomes', 'invoice_expenses', 'invoice_items', 'invoice_services', 'invoice_notes']
-        for (const table of tables) {
-          const { data: rows } = await supabase
-            .from(table)
-            .select('created_at')
-            .in('invoice_id', invoiceIds)
-            .order('created_at', { ascending: false })
-            .limit(1)
-          if (rows?.[0]?.created_at) timestamps.push(rows[0].created_at)
-        }
+        // «last activity 1st» (01/10/2026): renda, despesa, item, serviço e nota de TODAS as invoices do ride,
+        // criado OU alterado — o helper faz a mesma consulta limit-1 por tabela, agora por updated_at.
+        timestamps.push(await atividadeDasInvoices(invoiceIds))
 
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_incomes').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
@@ -241,7 +236,7 @@ export default function RidesPage() {
       const currentProfitPct = sumExpensesPaid > 0 ? (currentProfit / sumExpensesPaid) * 100 : 0
       const finalProfitPct = sumExpensesGlobal > 0 ? (finalProfit / sumExpensesGlobal) * 100 : 0
 
-      const latest = timestamps.filter(Boolean).sort().reverse()[0] || ''
+      const latest = maisRecente(...timestamps)
       return {
         ...ride,
         _latestActivity: latest,
@@ -257,7 +252,9 @@ export default function RidesPage() {
       }
     }))
 
-    ridesWithActivity.sort((a, b) => b._latestActivity.localeCompare(a._latestActivity))
+    // «last activity 1st» (01/10/2026): mais nova primeiro, em milissegundos — texto ordenava errado
+    // carimbos com fuso/precisão diferentes. Pinned não tem ordem própria aqui (só o 📌).
+    ridesWithActivity.sort((a, b) => msAtividade(b._latestActivity) - msAtividade(a._latestActivity))
     setRides(ridesWithActivity as any)
     setLoading(false)
   }
@@ -392,6 +389,7 @@ export default function RidesPage() {
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
                   {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}
                   <p className="text-lg text-gray-400">{ride.color}</p>
+                  {rotuloAtividade(ride._latestActivity) && <p className="text-sm text-gray-500">{rotuloAtividade(ride._latestActivity)}</p>}
                   <div className="flex gap-3 mt-3 flex-wrap">
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${ride._currentProfit < 0 ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
                       CURRENT CASH FLOW: {formatUSD(ride._currentProfit)} / {ride._currentProfitPct.toFixed(1)}%

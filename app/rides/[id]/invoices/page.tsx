@@ -7,6 +7,8 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, clientCode } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
+// «last activity 1st» (01/10/2026): régua única de última atividade, a mesma das listas de clientes e rides.
+import { maisRecente, msAtividade, rotuloAtividade } from '@/lib/ultimaAtividade'
 
 type Invoice = {
   id: string
@@ -38,15 +40,11 @@ type InvoiceStats = {
   grandTotal: number
   expensesTotalPaid: number
   expensesTotalGlobal: number
-  // ISO da última mexida: a invoice ou qualquer renda/despesa/item/serviço dela (criado ou alterado).
+  // ISO da última mexida: a invoice ou qualquer renda/despesa/item/serviço/nota dela (criado ou alterado).
   lastActivity: string
 }
 
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
-
-// Última atividade em hora de Orlando — o banco devolve UTC; colar cru adianta 4h e vira o dia à noite.
-const fmtAtividade = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
-const maisRecente = (...xs: (string | null | undefined)[]) => xs.reduce<string>((m, x) => (x && new Date(x).getTime() > new Date(m || 0).getTime() ? x : m), '')
 
 // Status ladder (first match wins). PRE-DELIVERED fires when the delivery date is
 // filled but the conclusion date isn't — the car was handed back before the work
@@ -169,12 +167,14 @@ export default function InvoicesPage() {
 
     const statsMap: Record<string, InvoiceStats> = {}
     await Promise.all(invoiceList.map(async (invoice) => {
-      const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
+      const [paymentsRes, expensesRes, partsRes, servicesRes, notesRes] = await Promise.all([
         supabase.from('invoice_incomes').select('amount, payment_date, paid_at, created_at, updated_at').eq('invoice_id', invoice.id),
         // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
         supabase.from('invoice_expenses').select('price, quantity, payment_date, tax, extra, order_number, cancel_status, created_at, updated_at').eq('invoice_id', invoice.id),
         supabase.from('invoice_items').select('unit_price, quantity, cancel_status, created_at, updated_at').eq('invoice_id', invoice.id),
         supabase.from('invoice_services').select('price, created_at, updated_at').eq('invoice_id', invoice.id),
+        // Nota também é mexida (01/10/2026, «last activity 1st»): só os carimbos, não entra em conta nenhuma.
+        supabase.from('invoice_notes').select('created_at, updated_at').eq('invoice_id', invoice.id),
       ])
 
       const partsVivos = soOQueConta(partsRes.data || [], valorItem, () => invoice.id)
@@ -210,7 +210,7 @@ export default function InvoicesPage() {
       const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
 
       // Última atividade (01/10/2026): a renda que atravessou do BR hoje sobe a 006.N antiga para o topo.
-      const filhos = [...(paymentsRes.data || []), ...(expensesRes.data || []), ...(partsRes.data || []), ...(servicesRes.data || [])] as any[]
+      const filhos = [...(paymentsRes.data || []), ...(expensesRes.data || []), ...(partsRes.data || []), ...(servicesRes.data || []), ...(notesRes.data || [])] as any[]
       const lastActivity = maisRecente(invoice.created_at, invoice.updated_at, ...filhos.flatMap(r => [r.created_at, r.updated_at]))
 
       statsMap[invoice.id] = { paymentsBalance, expensesBalance, currentProfit, currentProfitPct, finalProfit, finalProfitPct, grandTotal, expensesTotalPaid, expensesTotalGlobal, lastActivity }
@@ -254,7 +254,8 @@ export default function InvoicesPage() {
   const aggFinalPct = agg.sumExpGlobal > 0 ? (agg.finalProfit / agg.sumExpGlobal) * 100 : 0
   const readyCount = readyInvoices.length
   // «last activity 1st» (Márcio, 01/10/2026): a invoice mexida por último vem primeiro.
-  const atividade = (inv: Invoice) => new Date(stats[inv.id]?.lastActivity || inv.updated_at || inv.created_at || 0).getTime()
+  // Milissegundos pela régua de lib/ultimaAtividade.ts (nunca texto); sem stats ainda, a própria invoice.
+  const atividade = (inv: Invoice) => msAtividade(stats[inv.id]?.lastActivity || maisRecente(inv.created_at, inv.updated_at))
   const invoicesOrdenadas = [...invoices].sort((a, b) => atividade(b) - atividade(a))
 
   return (
@@ -340,7 +341,7 @@ export default function InvoicesPage() {
                   <p className="text-lg font-bold text-gray-200">{s ? formatUSD(s.grandTotal) : '—'}</p>
                   <p className="text-lg text-gray-400">{formatDate(invoice.hiring_date)}{invoice.delivery_date ? ` — Delivery: ${formatDate(invoice.delivery_date)}` : ''}</p>
                   {invoice.mileage && <p className="text-lg text-gray-400">{Number(invoice.mileage).toLocaleString('en-US')} mi</p>}
-                  {s?.lastActivity && <p className="text-sm text-gray-500">Last activity: {fmtAtividade.format(new Date(s.lastActivity))} (Orlando)</p>}
+                  {s && rotuloAtividade(s.lastActivity) && <p className="text-sm text-gray-500">{rotuloAtividade(s.lastActivity)}</p>}
 
                   {s && (
                     <div className="flex gap-3 mt-3 flex-wrap">

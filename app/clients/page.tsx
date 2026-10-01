@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { clientCode, formatPhone } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
+import { maisRecente, msAtividade, atividadeDasInvoices, rotuloAtividade } from '@/lib/ultimaAtividade'
 
 type Client = {
   id: string
@@ -57,7 +58,7 @@ export default function ClientsPage() {
 
     const withStats = await Promise.all(clientList.map(async (client) => {
       // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
-      const { data: ridesOwned } = await supabase.from('rides').select('id, created_at, updated_at').eq('client_id', client.id)
+      const { data: ridesOwned } = await supabase.from('rides').select('id, project_code, created_at, updated_at').eq('client_id', client.id)
       const rideIds = (ridesOwned || []).map(r => r.id)
 
       const orParts: string[] = [`client_id.eq.${client.id}`]
@@ -70,6 +71,18 @@ export default function ClientsPage() {
 
       const invoiceList = invoices || []
       const invoiceIds = invoiceList.map(i => i.id)
+
+      // ÚLTIMA ATIVIDADE (01/10/2026 — «last activity 1st»): o que mexeu DENTRO de TODAS as invoices (quote e não
+      // report-ready inclusos) + o dyno mais recente dos rides do cliente. Disparado já, em paralelo com o dinheiro.
+      const atividadeDentroP = atividadeDasInvoices(invoiceIds)
+      // dyno_pulls se liga ao ride por ride_code (= rides.project_code), não por ride_id (quase sempre vazio).
+      const ultimoDynoP = (async () => {
+        const codes = (ridesOwned || []).map(r => r.project_code).filter(Boolean)
+        if (codes.length === 0) return ''
+        const { data } = await supabase.from('dyno_pulls').select('created_at').in('ride_code', codes)
+          .order('created_at', { ascending: false }).limit(1)
+        return ((data || [])[0] as { created_at?: string | null } | undefined)?.created_at || ''
+      })()
 
       let currentProfit = 0
       let finalProfit = 0
@@ -140,14 +153,16 @@ export default function ClientsPage() {
       const currentProfitPct = sumExpensesPaid > 0 ? (currentProfit / sumExpensesPaid) * 100 : 0
       const finalProfitPct = sumExpensesGlobal > 0 ? (finalProfit / sumExpensesGlobal) * 100 : 0
 
-      // Activity = newest of: client created/edited, any ride created/edited, any invoice created/edited.
-      const times: number[] = []
-      const pushTime = (v: any) => { if (v) { const t = new Date(v).getTime(); if (!isNaN(t)) times.push(t) } }
-      pushTime(client.created_at)
-      pushTime(client.updated_at)
-      for (const r of (ridesOwned || [])) { pushTime(r.created_at); pushTime(r.updated_at) }
-      for (const inv of invoiceList) { pushTime((inv as any).created_at); pushTime((inv as any).updated_at) }
-      const activityTime = times.length > 0 ? Math.max(...times) : 0
+      // Atividade (01/10/2026 — «last activity 1st») = a mais nova entre: cliente, rides dele, TODAS as invoices dele
+      // (criadas/alteradas), cada linha dentro delas (renda, despesa, item, serviço, nota) e o dyno dos rides.
+      const [atividadeDentro, ultimoDyno] = await Promise.all([atividadeDentroP, ultimoDynoP])
+      const lastActivity = maisRecente(
+        client.created_at, client.updated_at,
+        ...(ridesOwned || []).flatMap(r => [r.created_at, r.updated_at]),
+        ...invoiceList.flatMap((inv: any) => [inv.created_at, inv.updated_at]),
+        atividadeDentro, ultimoDyno,
+      )
+      const activityTime = msAtividade(lastActivity)
 
       // Badges reflect the most recently touched invoice across this client's rides + shopping.
       const latestInv = [...invoiceList].sort((a: any, b: any) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')))[0] as any
@@ -157,6 +172,7 @@ export default function ClientsPage() {
         _liveStatus: latestInv?.live_status ?? null,
         _feedStatus: latestInv?.feed_status ?? null,
         _activityTime: activityTime,
+        _lastActivity: lastActivity,
         _currentProfit: currentProfit,
         _currentProfitPct: currentProfitPct,
         _finalProfit: finalProfit,
@@ -166,8 +182,8 @@ export default function ClientsPage() {
       }
     }))
 
-    // Most recently active clients first.
-    withStats.sort((a, b) => b._activityTime - a._activityTime)
+    // Mais recente primeiro, em milissegundos (01/10/2026 — «last activity 1st»); a busca filtra esta ordem.
+    withStats.sort((a, b) => msAtividade(b._lastActivity) - msAtividade(a._lastActivity))
 
     setClients(withStats)
     setLoading(false)
@@ -225,6 +241,7 @@ export default function ClientsPage() {
                 <p className="text-lg text-gray-400">{formatPhone(client.phone, client.country)}</p>
                 <p className="text-lg text-gray-400">{[client.city, client.state, client.zip].filter(Boolean).join(', ')}</p>
                 {client.country && <p className="text-lg text-gray-400">{client.country}</p>}
+                {rotuloAtividade(client._lastActivity) && <p className="text-sm text-gray-500">{rotuloAtividade(client._lastActivity)}</p>}
 
                 {client._hasInvoices && (
                   <div className="flex gap-3 mt-3 flex-wrap">
