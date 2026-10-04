@@ -72,7 +72,10 @@ export default function EditPackPage() {
   const [kindSupported, setKindSupported] = useState(false)
   const [status, setStatus] = useState('DRAFT')
   const [cars, setCars] = useState<Car[]>([])
-  const locked = status === 'CLOSED'
+  // GZ28 SHOP LOCKED (Márcio, 04/10/2026): pack da vitrine da loja — só a sessão Parts & Packs mexe (o banco recusa a
+  // escrita do app). Aqui a tela inteira fica só-leitura, como um CLOSED que não reabre.
+  const [shopLocked, setShopLocked] = useState(false)
+  const locked = status === 'CLOSED' || shopLocked
 
   const [bMan, setBMan] = useState(''); const [bBrand, setBBrand] = useState('')
   const [bModel, setBModel] = useState(''); const [bVersion, setBVersion] = useState('')
@@ -191,6 +194,7 @@ export default function EditPackPage() {
     setKind(data.kind || 'PACK')
     setKindSupported(data.kind !== undefined)
     setStatus(data.status || 'DRAFT')
+    setShopLocked(!!data.shop_locked)
     setCars(Array.isArray(data.cars) ? data.cars.map((c: any) => ({
       manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
       years: Array.isArray(c.years) ? c.years.map(Number) : (c.year != null && c.year !== '' ? [Number(c.year)] : []),
@@ -631,6 +635,7 @@ export default function EditPackPage() {
 
   // ---- Save ----
   async function save(nextStatus?: string) {
+    if (shopLocked) return   // travado: nada sai daqui (e o banco recusaria)
     if (saving) return
     if (!name.trim()) { alert('Give the package a name.'); return }
     setSaving(true)
@@ -711,7 +716,7 @@ export default function EditPackPage() {
       )}
 
       <div className="flex items-center gap-3 mb-8 flex-wrap">
-        <h1 className="text-4xl font-bold">EDIT PACK</h1>
+        <h1 className="text-4xl font-bold">{shopLocked ? 'PACK' : 'EDIT PACK'}{shopLocked && <span className="ml-4 align-middle px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span>}</h1>
         <span className={`px-3 py-1 rounded-full text-sm font-bold ${locked ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{locked ? 'CLOSED — locked' : 'DRAFT'}</span>
       </div>
 
@@ -1236,7 +1241,9 @@ export default function EditPackPage() {
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             <button type="button" onClick={() => window.history.back()} className="text-gray-400 text-xl">Cancel</button>
-            {locked ? (
+            {shopLocked ? (
+              <p className="flex-1 text-gray-400 text-lg">🔒 GZ28 SHOP LOCKED — this pack is edited only through the Parts &amp; Packs session.</p>
+            ) : locked ? (
               <button onClick={() => save('DRAFT')} disabled={saving} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-6 py-4 rounded-2xl text-xl font-bold">REOPEN (back to DRAFT)</button>
             ) : (
               <>

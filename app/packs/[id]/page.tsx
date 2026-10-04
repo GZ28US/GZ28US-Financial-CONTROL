@@ -71,7 +71,8 @@ export default function ViewPackPage() {
           <h1 className="text-4xl font-bold">{pack.name || '—'}</h1>
           <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
         </div>
-        <Link href={`/packs/edit/${pack.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
+        {/* GZ28 SHOP LOCKED (04/10/2026): pack da vitrine da loja não se edita pelo app. */}
+        {pack.shop_locked ? <span className="px-4 py-3 rounded-2xl font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span> : <Link href={`/packs/edit/${pack.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>}
       </div>
       <p className="text-lg text-gray-400 mb-8">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
 

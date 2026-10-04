@@ -61,7 +61,7 @@ export default function BlueprintsPage() {
         all('invoice_services', 'invoice_id, description'),
         all('invoice_duties', 'id, invoice_id, description, priority, done, time_seconds'),
         all('duty_events', 'duty_id, action, at'),
-        all('packs', 'id, name, status, zone, platform, duties', q => q.eq('zone', 'US')),
+        all('packs', 'id, name, status, zone, platform, duties, shop_locked', q => q.eq('zone', 'US')),
       ])
       setRaw({ invoices, invParts, invServices, invDuties, dutyEvents, packs })
       const { data, error } = await supabase.from('blueprint_candidates').select('*').order('created_at', { ascending: false })
@@ -83,7 +83,8 @@ export default function BlueprintsPage() {
     for (const f of mined) for (const v of f.vocabulary) s.add(v.canonical)
     return [...s].sort()
   }, [mined])
-  const emptyPacks = useMemo(() => (raw?.packs || []).filter((p: any) => !Array.isArray(p.duties) || p.duties.length === 0), [raw])
+  // Pack GZ28 SHOP LOCKED fica fora: o app não escreve nele (04/10/2026) — só a sessão Parts & Packs.
+  const emptyPacks = useMemo(() => (raw?.packs || []).filter((p: any) => !p.shop_locked && (!Array.isArray(p.duties) || p.duties.length === 0)), [raw])
 
   const logEvent = (candidate_id: string | null, action: string, detail: any) =>
     supabase.from('blueprint_events').insert({ candidate_id, action, detail })

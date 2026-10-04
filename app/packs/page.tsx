@@ -62,7 +62,9 @@ export default function PacksPage() {
   async function duplicatePack(p: any) {
     if (duplicatingId) return
     setDuplicatingId(p.id)
-    const { id, created_at, updated_at, ...rest } = p
+    // GZ28 SHOP LOCKED (04/10/2026): a marca não viaja na cópia — a cópia é um pack livre (o banco recusa insert com ela).
+    const { id, created_at, updated_at, shop_locked, ...rest } = p
+    void shop_locked
     const row = { ...rest, name: `${p.name || 'Pack'} (copy)`, status: 'DRAFT' }
     const { data, error } = await supabase.from('packs').insert([row]).select('id').single()
     if (error || !data) { alert(error?.message || 'Could not duplicate the package.'); setDuplicatingId(null); return }
@@ -218,6 +220,7 @@ export default function PacksPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-1 flex-wrap">
                             <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
+                            {p.shop_locked && <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span>}
                             <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">{formatUSD(packGrandTotal(p))}</span>
                             <span className="text-sm text-gray-500">{p.name}</span>
                           </div>
@@ -225,8 +228,8 @@ export default function PacksPage() {
                         </div>
                         <div className="flex gap-3 flex-wrap shrink-0">
                           <Link href={`/packs/${p.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
-                          <Link href={`/packs/edit/${p.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                          <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                          {!p.shop_locked && <Link href={`/packs/edit/${p.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>}
+                          {!p.shop_locked && <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>}
                           {closed && <button onClick={() => duplicatePack(p)} disabled={duplicatingId === p.id} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-black px-5 py-3 rounded-2xl font-bold">{duplicatingId === p.id ? 'DUPLICATING…' : '⧉ DUPLICATE'}</button>}
                         </div>
                       </div>
@@ -252,6 +255,7 @@ export default function PacksPage() {
                     {kindBadge(p)}
                     {platOf(p) && <span className="px-3 py-1 rounded-full text-sm font-bold bg-sky-900 text-sky-300">{platOf(p)}</span>}
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
+                    {p.shop_locked && <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span>}
                     <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">GRAND TOTAL: {formatUSD(packGrandTotal(p))}</span>
                   </div>
                   <p className="text-lg text-gray-400">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
@@ -259,8 +263,8 @@ export default function PacksPage() {
                 <div className="flex gap-3 flex-wrap shrink-0">
                   {closed && <button onClick={() => duplicatePack(p)} disabled={duplicatingId === p.id} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-black px-5 py-3 rounded-2xl font-bold">{duplicatingId === p.id ? 'DUPLICATING…' : '⧉ DUPLICATE'}</button>}
                   <Link href={`/packs/${p.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
-                  <Link href={`/packs/edit/${p.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
-                  <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
+                  {!p.shop_locked && <Link href={`/packs/edit/${p.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>}
+                  {!p.shop_locked && <button onClick={() => setConfirmId(p.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>}
                 </div>
               </div>
             )
