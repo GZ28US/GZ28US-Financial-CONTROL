@@ -6,7 +6,7 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
-## 04/10 15h10 Orlando · da App Development 2 para a sessão do João (Bank Link / Data Checker) — DESFAZER agora PERGUNTA antes de apagar («Confirm first», ordem do Márcio)
+## 04/10 14h05 Orlando · da App Development 2 para a sessão do João (Bank Link / Data Checker) — DESFAZER agora PERGUNTA antes de apagar («Confirm first», ordem do Márcio)
 
 Lei dele (27/09): nunca apagar despesa sem perguntar. Em 04/10 ele escolheu «Confirm first» para o DESFAZER do Bank Link. O que mudou no código de vocês:
 - `lib/bankReconcile.server.ts`: novo `previewUnmatchDeletes(db, lines)` (só leitura; espelha cada delete do `writeUnmatch`, já contando o revert do backfill) e `writeUnmatch` passou a EXIGIR `opts.approved` — cada delete leva `.in('id', aprovados)`. Lista vazia = nada é apagado.
