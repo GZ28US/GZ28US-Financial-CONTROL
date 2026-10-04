@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { previewUnmatchDeletes } from '@/lib/bankReconcile.server'
+import { previewUnmatchDeletes, type UnmatchVictim } from '@/lib/bankReconcile.server'
 import { pedeConfirmacao, mesmaLista, chavesDe } from '@/lib/bankUndoGate.server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
@@ -1246,16 +1246,42 @@ export async function POST(req: NextRequest) {
       } else {
         // ESTOQUE/SUPPLIES/FIXO/DIVIDIDA: nasce uma linha nova no balde, o ponteiro
         // volta pra ela, e os destinos (marcador + elo) morrem; adotada volta pelo backfill.
+        // «CONFIRM FIRST» (Márcio, 04/10/2026 — «Yes, list them first»): antes de escrever qualquer coisa, a lista dos destinos
+        // «atribuída · Bank Link» que este DESATRIBUIR apaga (espelho dos 5 deletes abaixo, com o revert do custo fixo adotado
+        // já contado). Sem o sim da tela (a mesma lista de volta) só pergunta; com o sim, cada delete é limitado aos ids mostrados.
+        const victims: UnmatchVictim[] = []
+        {
+          const n2 = (x: unknown) => Math.round((Number(x) || 0) * 100) / 100
+          const pv = (table: string, r: any, label: unknown, amount: number, where: string) => victims.push({ key: table + ':' + r.id, table, id: String(r.id), label: String(label || '—').slice(0, 160), amount, where })
+          const rd = async (table: string, f: (q: any) => any): Promise<any[]> => { const { data, error } = await f((db.from(table) as any).select('*')); if (error) throw new Error('prévia do DESATRIBUIR · ' + table + ': ' + error.message); return data || [] }
+          const tag = '%' + MARKER_ASSIGNED + '%'
+          for (const r of await rd('inputs', q => q.eq('purchase_group', line.id).ilike('description', tag))) pv('inputs', r, r.description, n2((Number(r.unit_price) || 0) * (Number(r.quantity) || 1)), 'Supplies' + (r.category ? ' · ' + r.category : ''))
+          for (const r of await rd('inventory', q => q.eq('purchase_group', line.id).ilike('description', tag))) pv('inventory', r, r.description, n2((Number(r.unit_price) || 0) * (Number(r.quantity) || 1)), 'Stock')
+          const parts = await rd('invoice_expenses', q => q.eq('purchase_group', line.id).ilike('item', tag).neq('invoice_id', bucketId))
+          if (parts.length) {
+            const { data: invs } = await db.from('invoices').select('id, invoice_code').in('id', [...new Set(parts.map((r: any) => String(r.invoice_id)))])
+            const code = new Map<string, string>((invs || []).map((i: any) => [String(i.id), String(i.invoice_code || '')]))
+            for (const r of parts) pv('invoice_expenses', r, [r.supplier, r.item].filter(Boolean).join(' · '), n2((Number(r.price) || 0) * (Number(r.quantity) || 1) + (Number(r.tax) || 0) + (Number(r.extra) || 0)), code.get(String(r.invoice_id)) || 'invoice')
+          }
+          for (const r of await rd('fixed_cost_expenses', q => q.eq('bank_transaction_id', line.id).ilike('description', tag))) {
+            // O backfill do custo fixo volta ANTES do delete (a adotada solta o elo / recupera a descrição): conta o estado depois.
+            const depois = (f: string) => { let v = r[f]; for (const x of bf) if (x.t === 'fixed_cost_expenses' && String(x.id) === String(r.id) && x.f === f && x.v != null && v != null && String(v) === String(x.v)) v = x.o ?? null; return v }
+            if (String(depois('bank_transaction_id') ?? '') === String(line.id) && String(depois('description') ?? '').toLowerCase().includes(MARKER_ASSIGNED.toLowerCase())) pv('fixed_cost_expenses', r, r.description, n2(r.amount), 'Fixed cost')
+          }
+          for (const r of await rd('staff_expenses', q => q.eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', tag))) pv('staff_expenses', r, r.description, n2(r.amount), 'Season / staff · PERSONAL')
+        }
+        if (victims.length && !mesmaLista(body.confirm_delete, victims)) return pedeConfirmacao(victims, chavesDe(victims), { acao: 'DESATRIBUIR', nota: 'A compra volta pro balde em UMA linha — o dinheiro continua lançado.' })
+        const only = (q: any, table: string) => { const ids = victims.filter(v => v.table === table).map(v => v.id); return q.in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']) }
         const made = await createBucketRow(db, line, dir)
         supplierBack = made.supplier
         const { data: ok } = await db.from('bank_transactions').update({ matched_table: 'invoice_expenses', matched_id: made.id, reviewed_at: null, match_batch: null, backfill: null, matched_note: ('A ATRIBUIR (devolvida) · ' + made.supplier).slice(0, 150) })
           .eq('id', line.id).eq('match_status', 'MATCHED').eq('matched_table', line.matched_table).eq('matched_id', line.matched_id).not('reviewed_at', 'is', null).select('id')
         if (!ok || !ok.length) { await db.from('invoice_expenses').delete().eq('id', made.id).eq('invoice_id', bucketId); throw new Error('linha do banco já decidida — recarregue') }
         for (const x of bf) { if (x.t === 'fixed_cost_expenses') { const q1: any = db.from('fixed_cost_expenses'); const { data: r } = await q1.update({ [x.f]: x.o ?? null }).eq('id', x.id).eq(x.f, x.v).select('id'); if (r && r.length) changed.push(x.f + '→' + (x.o ?? 'null')) } }
-        const del = async (table: string, col: string, f: (q: any) => any, msg: string) => { const q0: any = (db.from(table) as any).delete().eq('purchase_group', line.id).ilike(col, '%' + MARKER_ASSIGNED + '%'); const { data: r } = await f(q0).select('id'); if (r && r.length) changed.push(msg + (r.length > 1 ? ' ×' + r.length : '')) }
+        const del = async (table: string, col: string, f: (q: any) => any, msg: string) => { const q0: any = (db.from(table) as any).delete().eq('purchase_group', line.id).ilike(col, '%' + MARKER_ASSIGNED + '%'); const { data: r } = await only(f(q0), table).select('id'); if (r && r.length) changed.push(msg + (r.length > 1 ? ' ×' + r.length : '')) }
         await del('inputs', 'description', q => q, 'insumo apagado'); await del('inventory', 'description', q => q, 'estoque apagado'); await del('invoice_expenses', 'item', q => q.neq('invoice_id', bucketId), 'parte apagada')
-        { const { data: r } = await db.from('fixed_cost_expenses').delete().eq('bank_transaction_id', line.id).ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('custo fixo apagado') }
-        { const { data: r } = await db.from('staff_expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%' + MARKER_ASSIGNED + '%').select('id'); if (r && r.length) changed.push('despesa pessoal apagada') }
+        { const { data: r } = await only(db.from('fixed_cost_expenses').delete().eq('bank_transaction_id', line.id).ilike('description', '%' + MARKER_ASSIGNED + '%'), 'fixed_cost_expenses').select('id'); if (r && r.length) changed.push('custo fixo apagado') }
+        { const { data: r } = await only(db.from('staff_expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%' + MARKER_ASSIGNED + '%'), 'staff_expenses').select('id'); if (r && r.length) changed.push('despesa pessoal apagada') }
         await logMatchEvent(db, line, 'MATCH', { matched_table: 'invoice_expenses', matched_id: made.id, note: 'DESATRIBUÍDA · ' + made.supplier, engine: ENGINE_BUCKET })
       }
       await fixRow(line, 'unassign', String(line.matched_table), 'A ATRIBUIR', ('DESATRIBUIR · ' + line.date + ' · ' + (line.merchant || line.name || '') + (changed.length ? ' → ' + changed.join(', ') : '')))

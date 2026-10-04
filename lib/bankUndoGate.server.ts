@@ -18,10 +18,12 @@ const grupos = (victims: UnmatchVictim[]) => {
   return [...m.values()].map(g => ({ ...g, total: Math.round(g.total * 100) / 100 })).sort((a, b) => b.count - a.count).slice(0, 60)
 }
 
-export function pedeConfirmacao(victims: UnmatchVictim[], confirm: true | string[]) {
+// `acao`/`nota`: o DESATRIBUIR usa o mesmo portão com o nome dele e a nota de que o dinheiro volta pro balde.
+export function pedeConfirmacao(victims: UnmatchVictim[], confirm: true | string[], extra: { acao?: string; nota?: string } = {}) {
   const total = Math.round(victims.reduce((s, v) => s + (v.amount || 0), 0) * 100) / 100
   return NextResponse.json({
-    error: `CONFIRMAR — o DESFAZER apaga ${victims.length} lançamento(s) criado(s) pelo Bank Link`,
+    error: `CONFIRMAR — o ${extra.acao || 'DESFAZER'} apaga ${victims.length} lançamento(s) criado(s) pelo Bank Link`,
+    action_label: extra.acao || 'DESFAZER', note: extra.nota || null,
     needs_confirm: true,
     will_delete: victims.slice(0, 40), will_delete_count: victims.length, will_delete_total: total,
     // Lista longa (DESFAZER LOTE tem centenas): TODA linha entra na conta por destino — nada sai sem aparecer ao menos aqui.

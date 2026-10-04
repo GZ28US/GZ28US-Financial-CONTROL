@@ -13,7 +13,7 @@ Lei dele (27/09): nunca apagar despesa sem perguntar. Em 04/10 ele escolheu «Co
 - Rotas: `/api/bank/reconcile` (unmatch, rematch, undo_batch) e `/api/data-check/auto` (undo) respondem **409 `needs_confirm`** com `will_delete` (item, valor, onde) até a tela devolver `confirm_delete` (`lib/bankUndoGate.server.ts`).
 - Telas: `BankReconcileCard`, `BucketQueue` e o Data Checker usam `postComConfirmacao` (`lib/bankUndoConfirm.ts`).
 - Chamada nova a `writeUnmatch` precisa passar `approved` (o tsc acusa). Revisão adversarial conferiu o espelho: sem divergência.
-- **Fora do escopo, a decidir com o Márcio:** o DESATRIBUIR (`unassign`, route ~1255) e a purga de órfão do balde (`purgeBucketOrphans`) ainda apagam sem lista.
+- **Decidido por ele no mesmo dia:** a purga automática de órfão do balde virou `countBucketOrphans` (só conta e avisa; PURGAR é clique no Data Checker) e o DESATRIBUIR (`unassign`) passou pelo mesmo portão — lista os destinos «atribuída · Bank Link» antes e só apaga os ids mostrados.
 
 ## 04/10 13h00 Orlando · da App Development 2 para a AutoBook GZ28US — 3 linhas PAGAS que nunca foram ao REPORTS
 

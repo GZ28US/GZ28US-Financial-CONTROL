@@ -3,7 +3,7 @@
 // e que o DESFAZER apagaria (lib/bankUndoGate.server.ts). Aqui a tela mostra a lista e, com o sim, repete o pedido
 // com `confirm_delete`. Sem o sim, NADA foi escrito.
 type WillDelete = { key: string; table: string; label: string; amount: number | null; where: string | null }
-type NeedsConfirm = { needs_confirm?: boolean; will_delete?: WillDelete[]; will_delete_count?: number; will_delete_total?: number; will_delete_groups?: { where: string; count: number; total: number }[]; confirm_delete?: unknown }
+type NeedsConfirm = { needs_confirm?: boolean; will_delete?: WillDelete[]; will_delete_count?: number; will_delete_total?: number; will_delete_groups?: { where: string; count: number; total: number }[]; confirm_delete?: unknown; action_label?: string; note?: string | null }
 
 const usd = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -18,12 +18,13 @@ export function textoDoQueApaga(d: NeedsConfirm): string {
     if ((d.will_delete_groups || []).length > 25) linhas.push(`• … e mais ${(d.will_delete_groups || []).length - 25} destino(s)`)
   }
   return [
-    `DESFAZER vai APAGAR ${n} lançamento(s) criado(s) pelo Bank Link${d.will_delete_total ? ' — ' + usd(d.will_delete_total) + ' no total' : ''}:`,
+    `${d.action_label || 'DESFAZER'} vai APAGAR ${n} lançamento(s) criado(s) pelo Bank Link${d.will_delete_total ? ' — ' + usd(d.will_delete_total) + ' no total' : ''}:`,
     '',
     ...linhas,
     '',
-    'Lançamento digitado por gente NÃO é apagado (só é solto).',
-    'OK = apagar e desfazer · Cancelar = não mexe em nada',
+    ...(d.note ? [d.note] : []),
+    'Lançamento digitado por gente NÃO é apagado.',
+    'OK = apagar e seguir · Cancelar = não mexe em nada',
   ].join('\n')
 }
 
