@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { carLabel } from '@/lib/carData'
+import { loadCarGroups, packCarLabels, type CarGroup } from '@/lib/carGroups'
 import { dutyPriorityBadge } from '@/lib/utils'
 
 const money = (n: any) => (n == null || n === '' ? '—' : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
@@ -17,6 +18,9 @@ export default function ViewPackPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { if (id) load(id) }, [id])
+  // Pack que carrega um CAR GROUP inteiro mostra o NOME do grupo, não a lista de carros (Márcio, 04/10/2026).
+  const [carGroups, setCarGroups] = useState<CarGroup[]>([])
+  useEffect(() => { loadCarGroups(supabase).then(setCarGroups).catch(() => setCarGroups([])) }, [])
 
   async function load(packId: string) {
     const { data } = await supabase.from('packs').select('*').eq('id', packId).maybeSingle()
@@ -74,7 +78,7 @@ export default function ViewPackPage() {
         {/* GZ28 SHOP LOCKED (04/10/2026): pack da vitrine da loja não se edita pelo app. */}
         {pack.shop_locked ? <span className="px-4 py-3 rounded-2xl font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span> : <Link href={`/packs/edit/${pack.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>}
       </div>
-      <p className="text-lg text-gray-400 mb-8">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
+      <p className="text-lg text-gray-400 mb-8">{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
 
       <div className="grid grid-cols-1 gap-6 max-w-4xl">
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">

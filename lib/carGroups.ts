@@ -36,3 +36,23 @@ export function addGroupCars(cars: GroupCar[], group: CarGroup): GroupCar[] {
   }
   return out
 }
+
+// «If it's a group, show the Group name, not the cars» (Márcio, 04/10/2026): os rótulos dos carros de um pack. Quando o
+// pack carrega TODOS os carros de um grupo, com os mesmos anos, o nome do grupo entra no lugar deles; carro que sobrar
+// (fora de grupo, ou com ano diferente do grupo) sai com o rótulo normal.
+export function packCarLabels(cars: any[], groups: CarGroup[], carLabel: (c: any) => string): string[] {
+  const list = (Array.isArray(cars) ? cars : []).map((c, i) => ({ i, c: carOf(c), raw: c }))
+  const nrm = (s: string) => s.trim().toLowerCase()
+  const igual = (a: GroupCar, b: GroupCar) => nrm(a.manufacturer) === nrm(b.manufacturer) && nrm(a.brand) === nrm(b.brand) && nrm(a.model) === nrm(b.model) && nrm(a.version) === nrm(b.version) && a.years.join(',') === b.years.join(',')
+  const usados = new Set<number>()
+  const out: { at: number; text: string }[] = []
+  for (const g of groups) {
+    if (!g.cars.length) continue
+    const achados = g.cars.map(gc => list.find(x => !usados.has(x.i) && igual(x.c, gc)))
+    if (achados.some(x => !x)) continue
+    for (const x of achados) usados.add(x!.i)
+    out.push({ at: Math.min(...achados.map(x => x!.i)), text: g.name })
+  }
+  for (const x of list) if (!usados.has(x.i)) { const t = carLabel(x.raw); if (t) out.push({ at: x.i, text: t }) }
+  return out.sort((a, b) => a.at - b.at).map(o => o.text)
+}

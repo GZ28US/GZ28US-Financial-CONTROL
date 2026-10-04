@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD, partMatches } from '@/lib/utils'
 import { carLabel } from '@/lib/carData'
+import { loadCarGroups, packCarLabels, type CarGroup } from '@/lib/carGroups'
 
 // A pack's GRAND TOTAL = the QUOTE price: parts + services, less the global
 // discount. Florida tax is EXCLUDED — quotes are sold tax-exclusive (it's added
@@ -43,6 +44,10 @@ export default function PacksPage() {
   const [search, setSearch] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
+
+  // Pack que carrega um CAR GROUP inteiro mostra o NOME do grupo, não a lista de carros (Márcio, 04/10/2026).
+  const [carGroups, setCarGroups] = useState<CarGroup[]>([])
+  useEffect(() => { loadCarGroups(supabase).then(setCarGroups).catch(() => setCarGroups([])) }, [])
 
   useEffect(() => { load() }, [])
 
@@ -96,7 +101,7 @@ export default function PacksPage() {
   // Search matches the pack NAME and any of its CARS (same token engine as the Parts DB).
   const filtered = rows.filter((p) => (filter === 'ALL' || (p.status || 'DRAFT') === filter)
     && (platFilter == null || (platOf(p) || 'SEM PLATFORM') === platFilter)
-    && partMatches(search, p.name, ...(Array.isArray(p.cars) ? p.cars.map(carLabel) : [])))
+    && partMatches(search, p.name, ...(Array.isArray(p.cars) ? [...p.cars.map(carLabel), ...packCarLabels(p.cars, carGroups, carLabel)] : [])))
   const chip = (active: boolean) => `px-4 py-2 rounded-2xl font-bold text-sm ${active ? 'bg-white text-black' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`
 
   // ESPÉCIES (João, 26/ago: "add-on não é um pack, é um serviço opcional"):
@@ -224,7 +229,7 @@ export default function PacksPage() {
                             <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">{formatUSD(packGrandTotal(p))}</span>
                             <span className="text-sm text-gray-500">{p.name}</span>
                           </div>
-                          <p className="text-lg text-gray-400">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
+                          <p className="text-lg text-gray-400">{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
                         </div>
                         <div className="flex gap-3 flex-wrap shrink-0">
                           <Link href={`/packs/${p.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
@@ -258,7 +263,7 @@ export default function PacksPage() {
                     {p.shop_locked && <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span>}
                     <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">GRAND TOTAL: {formatUSD(packGrandTotal(p))}</span>
                   </div>
-                  <p className="text-lg text-gray-400">{cars.length ? cars.map(carLabel).filter(Boolean).join('  ·  ') : 'No cars selected'}</p>
+                  <p className="text-lg text-gray-400">{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
                   {closed && <button onClick={() => duplicatePack(p)} disabled={duplicatingId === p.id} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-black px-5 py-3 rounded-2xl font-bold">{duplicatingId === p.id ? 'DUPLICATING…' : '⧉ DUPLICATE'}</button>}
