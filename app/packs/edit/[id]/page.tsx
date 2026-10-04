@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
 import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } from '@/lib/laborCost'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
+import { loadCarGroups, addGroupCars, type CarGroup } from '@/lib/carGroups'
 import { normPN } from '@/lib/partsDb'
 
 // FULL pack editor — a standalone page that mirrors the invoice editor's item
@@ -264,6 +265,10 @@ export default function EditPackPage() {
     setCars(prev => [...prev, { manufacturer: bMan, brand: bBrand, model: bModel, version: bVersion, years: [...bYears].sort((a, b) => a - b) }])
     setBMan(''); setBBrand(''); setBModel(''); setBVersion(''); setBYears([])
   }
+  // CAR GROUPS (04/10/2026): os grupos de compatibilidade de build do banco; clicar num adiciona os carros dele.
+  const [carGroups, setCarGroups] = useState<CarGroup[]>([])
+  useEffect(() => { loadCarGroups(supabase).then(setCarGroups).catch(() => setCarGroups([])) }, [])
+  function pickGroup(g: CarGroup) { setCars(prev => addGroupCars(prev, g)); setBMan(''); setBBrand(''); setBModel(''); setBVersion(''); setBYears([]) }
 
   // ---- Supplier discount (display only) ----
   function supplierInfo(nm: string | undefined | null): { discount: number; type: 'FIXED' | 'VARIABLE' } | null {
@@ -728,6 +733,18 @@ export default function EditPackPage() {
           {!locked && (
             <div className="bg-gray-900/50 border border-gray-800 rounded-3xl p-5 space-y-4">
               <div><p className="mb-2 text-sm text-gray-400 font-bold">MANUFACTURER</p><div className="flex gap-2 flex-wrap">{MANUFACTURERS.map(m => <button key={m} onClick={() => pickMan(m)} className={chip(bMan === m)}>{m}</button>)}</div></div>
+              {/* GROUPS — compatibilidade de build (Márcio, 04/10/2026): escolhido o fabricante, os grupos dele vêm ANTES do brand;
+                  um clique põe todos os carros do grupo na lista. Sem grupo para o fabricante, a linha não aparece. */}
+              {bMan && carGroups.some(g => g.manufacturer === bMan) && (
+                <div>
+                  <p className="mb-2 text-sm text-gray-400 font-bold">GROUPS <span className="font-normal text-gray-500">— same build · one click adds every car of the group</span></p>
+                  <div className="flex gap-2 flex-wrap">
+                    {carGroups.filter(g => g.manufacturer === bMan).map(g => (
+                      <button key={g.id} onClick={() => pickGroup(g)} title={g.cars.map(c => carLabel(c)).join('\n')} className="px-4 py-2 rounded-2xl font-bold text-sm bg-amber-600 hover:bg-amber-500 text-black">{g.name} <span className="font-normal">· {g.cars.length} car{g.cars.length === 1 ? '' : 's'}</span></button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {bMan && <div><p className="mb-2 text-sm text-gray-400 font-bold">BRAND</p><div className="flex gap-2 flex-wrap">{brandsFor(bMan).map(b => <button key={b} onClick={() => pickBrand(b)} className={chip(bBrand === b)}>{b}</button>)}</div></div>}
               {bBrand && <div><p className="mb-2 text-sm text-gray-400 font-bold">MODEL</p><div className="flex gap-2 flex-wrap">{modelsFor(bMan, bBrand).map(mo => <button key={mo} onClick={() => pickModel(mo)} className={chip(bModel === mo)}>{mo}</button>)}</div></div>}
               {bModel && <div><p className="mb-2 text-sm text-gray-400 font-bold">VERSION</p><div className="flex gap-2 flex-wrap">{versionsFor(bMan, bBrand, bModel).map(v => <button key={v} onClick={() => pickVersion(v)} className={chip(bVersion === v)}>{v}</button>)}</div></div>}

@@ -2016,7 +2016,8 @@ export const carData: Record<string, Record<string, Record<string, string[]>>> =
       MAGNUM: ['R/T 5.7', 'SRT8 6.1'],
     },
     RAM: {
-      1500: ['1500 5.7', '1500 Rebel 5.7', 'TRX 6.2 SC'],
+      // 'TRX SRT 6.2 SC' (2027) já estava no mapa por ano, mas faltava aqui — o seletor de carro dos packs lê ESTA lista (04/10/2026).
+      1500: ['1500 5.7', '1500 Rebel 5.7', 'TRX 6.2 SC', 'TRX SRT 6.2 SC'],
     },
   },
   GM: {

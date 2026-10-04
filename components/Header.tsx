@@ -57,6 +57,7 @@ const MENU: MenuItem[] = [
       ['/inventory', 'INVENTORY'],
       ['/parts', 'PARTS DB'],
       ['/packs', 'PACKS DB'],
+      ['/packs/groups', 'CAR GROUPS'],
       ['/packs/blueprints', 'BLUEPRINTS'],
       ['/suppliers', 'SUPPLIERS'],
       ['/stream', 'STREAM'],
