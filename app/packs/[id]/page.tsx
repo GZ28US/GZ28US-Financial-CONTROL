@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { carLabel } from '@/lib/carData'
 import { loadCarGroups, packCarLabels, type CarGroup } from '@/lib/carGroups'
 import { dutyPriorityBadge } from '@/lib/utils'
+import { HOUSE_HOURLY_USD, sumEstimatedSeconds } from '@/lib/laborCost'
 
 const money = (n: any) => (n == null || n === '' ? '—' : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
 
@@ -62,8 +63,16 @@ export default function ViewPackPage() {
   const partsAndServicesTotal = partsSubTotal + floridaTaxesAmount + servicesTotal
   const grandTotal = partsAndServicesTotal - partsAndServicesTotal * (num(pack.global_discount) / 100)
   const expensesTotalGlobal = floridaTaxesAmount + expenses.reduce((s: number, e: any) => s + expAmount(e) * (num(e.quantity) || 1) + (num(e.tax) + num(e.extra)) * expRatio(e), 0)
-  const finalProfit = grandTotal - expensesTotalGlobal
-  const finalProfitPct = expensesTotalGlobal > 0 ? (finalProfit / expensesTotalGlobal) * 100 : 0
+  // STAFF COST (Márcio, 04/10/2026: «the staff costs should be considered in this math, as expense… always USD 15 per hour»):
+  // horas previstas das duties × a hora da casa (lib/laborCost.ts). É CALCULADO a cada abertura — não existe linha de mão de
+  // obra gravada no pack (a fonte é a duty), por isso aparece também em pack GZ28 SHOP LOCKED. Entra no custo e no markup,
+  // como já entrava no editor; esta tela VIEW deixava de fora e mostrava markup maior que o real.
+  const staffHours = sumEstimatedSeconds(duties) / 3600
+  const staffCost = staffHours * HOUSE_HOURLY_USD
+  const totalCost = expensesTotalGlobal + staffCost
+  const finalProfit = grandTotal - totalCost
+  const finalProfitPct = totalCost > 0 ? (finalProfit / totalCost) * 100 : 0
+  const hrs = (secs: unknown) => { const h = (Number(secs) || 0) / 3600; return h > 0 ? `${Number.isInteger(h) ? h : h.toFixed(1)}h` : '' }
   const profitColor = finalProfit < 0 ? 'text-red-500' : 'text-blue-400'
 
   return (
@@ -164,9 +173,16 @@ export default function ViewPackPage() {
                 <p key={i}>
                   <span className={`px-2 py-0.5 mr-2 rounded-full text-xs font-bold ${dutyPriorityBadge(String(d.priority || '1')).cls}`}>{dutyPriorityBadge(String(d.priority || '1')).label}</span>
                   {d.description}
+                  {hrs(d.estimated_seconds) && <span className="ml-2 text-sm text-gray-500 tabular-nums">· {hrs(d.estimated_seconds)}</span>}
                 </p>
               ))}
             </div>
+            {staffHours > 0 && (
+              <div className="mt-4 pt-3 border-t border-gray-800 flex items-center justify-between gap-4 flex-wrap">
+                <span className="text-sm font-bold text-gray-400">👤 STAFF COST · {hrs(staffHours * 3600)} × {money(HOUSE_HOURLY_USD)}/h</span>
+                <span className="text-lg font-bold text-gray-100 tabular-nums">{money(staffCost)}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -183,7 +199,9 @@ export default function ViewPackPage() {
       {/* PROFIT DASH — fixed footer, always visible */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-gray-700 px-6 py-3 flex items-center justify-between gap-x-8 gap-y-2 flex-wrap">
         <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">GRAND TOTAL</span><span className="text-xl font-bold">{money(grandTotal)}</span></div>
-        <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">COST</span><span className="text-xl font-bold">{money(expensesTotalGlobal)}</span></div>
+        <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">EXPENSES</span><span className="text-lg font-bold text-gray-300">{money(expensesTotalGlobal)}</span></div>
+        <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">STAFF COST{staffHours > 0 ? ` (${hrs(staffHours * 3600)})` : ''}</span><span className="text-lg font-bold text-gray-300">{money(staffCost)}</span></div>
+        <div className="flex items-baseline gap-2"><span className="text-xs text-gray-400 font-bold">COST</span><span className="text-xl font-bold">{money(totalCost)}</span></div>
         <div className="flex items-baseline gap-2"><span className="text-sm font-bold text-gray-200">MARKUP</span><span className={`text-2xl font-bold ${profitColor}`}>{money(finalProfit)} / {finalProfitPct.toFixed(1)}%</span></div>
       </div>
     </main>

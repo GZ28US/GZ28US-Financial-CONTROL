@@ -1173,14 +1173,13 @@ export default function EditPackPage() {
                       <span className="w-20 shrink-0 text-right text-base font-bold text-gray-100 tabular-nums">{fmtDutyEst(totalSecs)}</span>
                       {!locked && <span className="shrink-0 w-[8.5rem]" />}
                     </div>
-                    {/* O QUE ESSAS HORAS CUSTAM, à taxa do membro fixo da casa. A
-                        taxa é lida da season corrente dele — não existe cópia aqui.
-                        SEMPRE EM DÓLAR — o R$ da season é a âncora do cálculo, mas
-                        na tela tudo é dólar. */}
+                    {/* STAFF COST — o que essas horas custam à HORA DA CASA (US$ 15, lib/laborCost.ts;
+                        Márcio 31/ago e 04/10/2026: «always USD 15 per hour»). Calculado, não gravado no
+                        pack; entra no custo e no markup. */}
                     {labor && (
                       <div className="flex items-center justify-between gap-4 px-4 py-2 bg-gray-800/40 border-t border-gray-700">
                         <span className="text-sm text-gray-400 flex-1 truncate" title={`${labor.name} — ${formatUSD(labor.hourly)} per hour`}>
-                          👤 LABOR · {labor.name} · {formatUSD(labor.hourly)}/h
+                          👤 STAFF COST · {Number.isInteger(hours) ? hours : hours.toFixed(1)}h × {formatUSD(labor.hourly)}/h
                         </span>
                         <span className="w-28 shrink-0 text-right text-sm font-bold text-gray-200 tabular-nums">{formatUSD(labor.hourly * hours)}</span>
                         {!locked && <span className="shrink-0 w-[8.5rem]" />}
