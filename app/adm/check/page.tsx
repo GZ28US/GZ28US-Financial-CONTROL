@@ -23,6 +23,7 @@ import BankReconcileCard, { sessionHeaders } from '@/components/BankReconcileCar
 import { PAID_FROM_OPTIONS } from '@/components/PaymentFields'
 import { HOUSE_PAYER, PAYER_RULE, fillHiddenPayers } from '@/lib/payerRule'
 import { paidNoBank, type PnbRow } from '@/lib/paidNoBank'
+import { postComConfirmacao } from '@/lib/bankUndoConfirm'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, CAR_DESTINY, formatShortDate } from '@/lib/utils'
 import { loadFinancials, invoiceTotals, invoiceMeta, ledgerTotals, expLine, qtyLine, FinData } from '@/lib/financials'
@@ -2557,8 +2558,9 @@ export default function DataCheckPage() {
         const body = fix.kind === 'match' ? (fix.wire != null ? { action: 'match_wire', bank_id: fix.bankId, row_id: fix.rowId, engine: 'AUTO' } : { action: 'match', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId, engine: 'AUTO', note: 'valor exato + nome + linha única (Data Checker)' })
           : fix.kind === 'dismiss' ? { action: 'dismiss', check_key: fix.checkKey, row_id: fix.rowId, table: check.key, label: item.label.slice(0, 120), reason: value || 'visto, está certo' }
           : { action: 'undo', fix_id: fix.fixId }
-        const r = await fetch(url, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
-        const j = await r.json().catch(() => ({}))
+        // «CONFIRM FIRST» (04/10/2026): o DESFAZER do card verde pergunta antes de apagar o que o Bank Link criou.
+        const { r, d: j, cancelled } = await postComConfirmacao(url, await sessionHeaders(), body)
+        if (cancelled) return
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
         // CASAR clicado aqui nasce visto (engine AUTO) e não passa por «casadas a conferir»: a trilha «AUTO ·» é o que põe o DESFAZER no card verde (DC 1.51.0 — a mesma do AUTO-RUN).
         if (fix.kind === 'match' && fix.wire == null) await supabase.from('data_fixes').insert({ check_key: check.key, table_name: 'bank_transactions', row_id: fix.bankId, field: 'match_status', old_value: 'NEW', new_value: 'MATCHED', label: ('AUTO · ' + (CERTAIN_PROOF[check.key] || 'prova') + ' · ' + item.label).slice(0, 200) }).then(() => undefined, () => undefined)
@@ -2584,8 +2586,9 @@ export default function DataCheckPage() {
       setSaving(true)
       try {
         const body = fix.kind === 'unlink' ? { action: 'unlink_expense', row_id: fix.rowId } : fix.kind === 'adopt' ? { action: 'adopt_scheduled', bank_id: fix.bankId, row_id: fix.rowId } : fix.kind === 'purge' ? { action: 'purge_orphan', table: fix.table, row_id: fix.rowId } : fix.kind === 'unmatch' ? { action: 'unmatch', bank_id: fix.bankId } : { action: 'rematch', bank_id: fix.bankId, table: fix.table, row_id: fix.rowId }
-        const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
-        const j = await r.json().catch(() => ({}))
+        // «CONFIRM FIRST» (04/10/2026): DESFAZER / TROCAR mostram o que o Bank Link criou e vai sair — «não» não escreve nada.
+        const { r, d: j, cancelled } = await postComConfirmacao(`${BASE_PATH}/api/bank/reconcile`, await sessionHeaders(), body)
+        if (cancelled) return
         if (!r.ok) { alert(j.error || `Falhou (${r.status})`); return }
         setDone(prev => new Set(prev).add(fix.rowId + '|' + fix.field))
         setFixing(null); setFixValue('')

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { previewUnmatchDeletes } from '@/lib/bankReconcile.server'
+import { pedeConfirmacao, mesmaLista, chavesDe } from '@/lib/bankUndoGate.server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
 import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixable, mixedNet, mixedFromPool, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill, type Pool, type Cand } from '@/lib/bankReconcile.server'
@@ -1377,10 +1379,27 @@ export async function POST(req: NextRequest) {
       const { data: rows, error } = await db.from('bank_transactions').select('id, date, amount, name, merchant, match_status, matched_table, matched_id, match_engine, match_rule, backfill, reviewed_at, match_batch').eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER', 'IGNORED']).order('date').limit(200)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       const { count: totalInBatch } = await db.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('match_batch', batch).in('match_status', ['MATCHED', 'TRANSFER', 'IGNORED'])
+      // «CONFIRM FIRST» (Márcio, 04/10/2026): sem o sim, a rota mostra o que a rodada INTEIRA apagaria (todas as fatias) e não
+      // escreve nada. Com o sim (`confirm_delete: true`), cada fatia só apaga o que a prévia DELA lista (writeUnmatch · approved).
+      let aprovados: Awaited<ReturnType<typeof previewUnmatchDeletes>>
+      try {
+        if (body.confirm_delete !== true) {
+          const todas: any[] = []
+          for (let from = 0; ; from += 1000) {
+            const { data: pg, error: ePg } = await db.from('bank_transactions').select('id, match_status, matched_table, matched_id, match_engine, backfill').eq('match_batch', batch).eq('match_status', 'MATCHED').order('id').range(from, from + 999)
+            if (ePg) return NextResponse.json({ error: ePg.message }, { status: 500 })
+            todas.push(...(pg || [])); if (!pg || pg.length < 1000) break
+          }
+          const vs = [...(await previewUnmatchDeletes(db, todas)).values()].flat()
+          if (vs.length) return pedeConfirmacao(vs, true)
+        }
+        // Sem o sim, NADA é apagado nesta fatia (lista vazia); sobra aparece na afirmação logo abaixo, nunca some sem ser vista.
+        aprovados = body.confirm_delete === true ? await previewUnmatchDeletes(db, rows || []) : new Map()
+      } catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 }) }
       let n = 0; const errors: string[] = []; const fixes: any[] = []; const undone: string[] = []
       for (const r of rows || []) {
         try {
-          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false, refuse: false }); n++; undone.push(String(r.id))   // DESFAZER LOTE é rollback, não juízo: sem memória de recusa
+          const changed: string[] = []; await writeUnmatch(db, r, changed, { unlearn: false, refuse: false, approved: aprovados.get(String(r.id)) || [] }); n++; undone.push(String(r.id))   // DESFAZER LOTE é rollback, não juízo: sem memória de recusa
           await logMatchEvent(db, r, 'UNMATCH', { batch })
           fixes.push({ check_key: 'bank-auto', table_name: 'bank_transactions', row_id: r.id, field: 'match_status', old_value: r.match_status, new_value: 'NEW', label: (`DESFAZER LOTE · ${r.date} · ${r.merchant || r.name || ''} · ${num(r.amount)}` + (changed.length ? ' → ' + changed.join(', ') : '')).slice(0, 200) })
         } catch (e) { errors.push(`${r.date} ${r.merchant || r.name}: ` + String((e as Error).message || e)) }
@@ -1400,7 +1419,7 @@ export async function POST(req: NextRequest) {
       }
       for (let i = 0; i < fixes.length; i += 100) await db.from('data_fixes').insert(fixes.slice(i, i + 100)).then(() => undefined, () => undefined)
       const remaining = Math.max(0, (totalInBatch || 0) - n)
-      return NextResponse.json({ ok: true, undone: n, errors, remaining })
+      return NextResponse.json({ ok: true, undone: n, errors, remaining, ...(body.confirm_delete === true ? { confirmed_delete: true } : {}) })
     }
     if (action === 'review_all') {
       // OK TODOS: só tarifas (FEE) — o que o motor EXACT casou passa linha a linha.
@@ -1472,7 +1491,10 @@ export async function POST(req: NextRequest) {
       if (!autoMatch) learned = await learnFromMatch(db, cur, cand)   // máquina não ensina regra: aprender é decisão de gente
     }
     if (action === 'unmatch') {
-      await writeUnmatch(db, line, changed, { unlearn: true, refuse: true }); status = 'NEW'
+      // «CONFIRM FIRST»: o que este DESFAZER apagaria — sem o sim da tela (a mesma lista de volta), só pergunta.
+      const victims = (await previewUnmatchDeletes(db, [line])).get(String(line.id)) || []
+      if (victims.length && !mesmaLista(body.confirm_delete, victims)) return pedeConfirmacao(victims, chavesDe(victims))
+      await writeUnmatch(db, line, changed, { unlearn: true, refuse: true, approved: victims }); status = 'NEW'
       await logMatchEvent(db, line, 'UNMATCH', {})
     } else if (action === 'rematch') {
       // TROCAR (Data Checker · DUPLA): desfaz o lançamento do motor e casa a linha
@@ -1488,7 +1510,10 @@ export async function POST(req: NextRequest) {
         const c0 = acharCandidato(arr0, table, rowId)
         if (!c0 || Math.abs(c0.amount - Math.abs(num(line.amount))) >= 0.011) return NextResponse.json({ error: 'registro humano não vale mais (já casado, valor mudou ou direção errada) — recarregue' }, { status: 409 })
       }
-      await writeUnmatch(db, line, changed, { unlearn: false, refuse: true })   // o lançamento do motor não era esse: a máquina não o refaz
+      // «CONFIRM FIRST»: o TROCAR desfaz o lançamento do motor — mostra o que sai antes de trocar.
+      const victims = (await previewUnmatchDeletes(db, [line])).get(String(line.id)) || []
+      if (victims.length && !mesmaLista(body.confirm_delete, victims)) return pedeConfirmacao(victims, chavesDe(victims))
+      await writeUnmatch(db, line, changed, { unlearn: false, refuse: true, approved: victims })   // o lançamento do motor não era esse: a máquina não o refaz
       await logMatchEvent(db, line, 'UNMATCH', { note: 'REMATCH · troca por registro humano' })
       const { data: fresh } = await db.from('bank_transactions').select(LINE_SEL).eq('id', bankId).maybeSingle()
       await humanMatch(fresh || { ...line, match_status: 'NEW' })

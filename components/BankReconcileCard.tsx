@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import { BL_STAGE, BL_VERSION } from '@/lib/blVersion'
+import { postComConfirmacao } from '@/lib/bankUndoConfirm'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // Nível do candidato (BL 1.5.0): PAR = valor + perto + nome ou tipo de compra; LONGE = valor + nome, longe; COINCIDENCIA = só valor.
@@ -239,14 +240,16 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
   }
 
   async function post(body: Record<string, unknown>) {
-    const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(body) })
-    const d = await r.json().catch(() => ({}))
+    // «CONFIRM FIRST» (04/10/2026): o DESFAZER pergunta antes de apagar o que o Bank Link criou — «não» não escreve nada.
+    const { r, d, cancelled } = await postComConfirmacao(`${BASE_PATH}/api/bank/reconcile`, await sessionHeaders(), body)
+    if (cancelled) throw Object.assign(new Error('cancelado'), { cancelled: true })
     if (d && d.learned) { setLearnMsg(String(d.learned)); setTimeout(() => setLearnMsg(null), 15000) }   // memória de comerciante (BL 0.8.0)
     if (!r.ok) throw Object.assign(new Error(d.error || `Falhou (${r.status})`), { status: r.status, needs_migration: !!d.needs_migration })
     return d
   }
   const fail = (e: unknown) => {
-    const err = e as Error & { status?: number; needs_migration?: boolean }
+    const err = e as Error & { status?: number; needs_migration?: boolean; cancelled?: boolean }
+    if (err.cancelled) return err   // a pessoa disse não na confirmação: nada foi escrito, nada a avisar
     if (err.needs_migration) setNeedsMigration(true)
     alert(err.status ? err.message : 'Sem resposta do servidor — confira antes de repetir. ' + err.message)
     return err
@@ -333,7 +336,9 @@ export default function BankReconcileCard({ mode = 'questions', onCount }: { mod
     try {
       // Em fatias de 200 (rodadas da fase B têm centenas de linhas): repete enquanto sobrar.
       let undone = 0; const errs: string[] = []
-      for (let guard = 0; guard < 30; guard++) { const d = await post({ action: 'undo_batch', batch: b.batch }); undone += d.undone || 0; errs.push(...(d.errors || [])); setProgress(`${undone} desfeitas…`); if (!d.remaining || !d.undone) break }
+      // O sim da confirmação vale para as fatias seguintes da MESMA rodada (a rota devolve confirmed_delete).
+      let sim: unknown = undefined
+      for (let guard = 0; guard < 30; guard++) { const d = await post({ action: 'undo_batch', batch: b.batch, ...(sim !== undefined ? { confirm_delete: sim } : {}) }); if (d.confirmed_delete) sim = true; undone += d.undone || 0; errs.push(...(d.errors || [])); setProgress(`${undone} desfeitas…`); if (!d.remaining || !d.undone) break }
       if (errs.length) alert('Desfeitas ' + undone + ', com erro: ' + errs.slice(0, 8).join(' | '))
     }
     catch (e) { fail(e) } finally { setProgress(''); unlock('undo_' + b.batch); await load() }

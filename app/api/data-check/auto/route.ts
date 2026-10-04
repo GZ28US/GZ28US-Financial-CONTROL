@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
-import { writeUnmatch, logMatchEvent } from '@/lib/bankReconcile.server'
+import { writeUnmatch, logMatchEvent, previewUnmatchDeletes, type UnmatchVictim } from '@/lib/bankReconcile.server'
+import { pedeConfirmacao, mesmaLista, chavesDe } from '@/lib/bankUndoGate.server'
 import { tabelaAtual } from '@/lib/tableRenames'
 
 // O APP PREENCHEU SOZINHO — a memória do Data Checker autossuficiente (DC 1.44.0, João, 8/set/2026:
@@ -71,7 +72,12 @@ export async function POST(req: NextRequest) {
       const { data: line } = await db.from('bank_transactions').select('*').eq('id', rowId).maybeSingle()
       if (!line || line.match_status !== 'MATCHED') return NextResponse.json({ error: 'a linha já não está casada — nada a desfazer' }, { status: 409 })
       if (!/^AUTO ·/.test(String(line.matched_note || ''))) return NextResponse.json({ error: 'este casamento foi feito por gente, não pelo app — o card verde só desfaz o que o app fez (adoção feita por gente: DESFAZER em «casadas a conferir» no Bank Link; MATCH à mão nasce visto e não tem DESFAZER na tela)' }, { status: 409 })
-      try { await writeUnmatch(db, line, changed, { unlearn: false, refuse: true }); await logMatchEvent(db, line, 'UNMATCH', { note: 'DESFAZER · Data Checker (card verde)' }) }
+      // «CONFIRM FIRST» (Márcio, 04/10/2026): o que este DESFAZER apagaria — sem o sim da tela, só pergunta.
+      let victims: UnmatchVictim[] = []
+      try { victims = (await previewUnmatchDeletes(db, [line])).get(String(line.id)) || [] }
+      catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 500 }) }
+      if (victims.length && !mesmaLista(b.confirm_delete, victims)) return pedeConfirmacao(victims, chavesDe(victims))
+      try { await writeUnmatch(db, line, changed, { unlearn: false, refuse: true, approved: victims }); await logMatchEvent(db, line, 'UNMATCH', { note: 'DESFAZER · Data Checker (card verde)' }) }
       catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 200) }, { status: 409 }) }
       // ADOÇÃO desfeita: a memória do Data Checker também diz NÃO — o AUTO-RUN pula 'bank-drift|<id da agendada>' (a mesma chave
       // da dispensa). DESFEITO não esconde o item; só impede a máquina de adotar de novo. A deriva não mostra mais o par recusado: gente casa à mão pela Conciliação.

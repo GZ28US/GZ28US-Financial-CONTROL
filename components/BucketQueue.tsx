@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
+import { postComConfirmacao } from '@/lib/bankUndoConfirm'
 
 const usd = (v: number) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 async function headers(): Promise<Record<string, string>> {
@@ -89,13 +90,14 @@ export default function BucketQueue({ onCount, embedded }: { onCount?: (n: numbe
   }, [])
 
   async function post(body: Record<string, unknown>) {
-    const r = await fetch(`${BASE_PATH}/api/bank/reconcile`, { method: 'POST', headers: await headers(), body: JSON.stringify(body) })
-    const j = await r.json().catch(() => ({}))
+    // «CONFIRM FIRST» (04/10/2026): DESFAZER / TROCAR mostram o que o Bank Link criou e vai sair — «não» não escreve nada.
+    const { r, d: j, cancelled } = await postComConfirmacao(`${BASE_PATH}/api/bank/reconcile`, await headers(), body)
+    if (cancelled) throw Object.assign(new Error('cancelado'), { cancelled: true })
     if (!r.ok) throw new Error(j.error || `Falhou (${r.status})`)
     if (j.learned) { setMsg('memória de comerciante: ' + j.learned); setTimeout(() => setMsg(null), 8000) }
     return j
   }
-  const fail = (e: unknown) => alert(String((e as Error).message || e))
+  const fail = (e: unknown) => { if ((e as { cancelled?: boolean })?.cancelled) return; alert(String((e as Error).message || e)) }
 
   async function assign(row: Row, dest: 'CAR' | 'STOCK' | 'SUPPLIES' | 'FIXO' | 'PERSONAL', extra: Record<string, unknown> = {}) {
     if (anyBusy || !row.bank_id) return

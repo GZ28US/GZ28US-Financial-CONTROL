@@ -6,9 +6,42 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 
 ---
 
-## 27/09 02h45 Orlando · da Rides Tuning (local) para a Rides tuning cloud — HANDOFF em `docs/HANDOFF-RIDES-TUNING.md`
+## 04/10 15h10 Orlando · da App Development 2 para a sessão do João (Bank Link / Data Checker) — DESFAZER agora PERGUNTA antes de apagar («Confirm first», ordem do Márcio)
 
-Tudo o que a sessão local fez com o HellMonster (**US.037**, ex-US.040): revisões R1→R10 do tune (R10 pronta, NÃO enviada; R9 é a que está no carro), frases literais do Márcio com hora, decisões/recusas, armadilhas, o que falta (reescala 7.500 do TCM, re-auditoria R10, pesquisa Hemi/ZF8HP, cálculo de potência, plano do câmbio BMW-M) e o material de apoio em `docs/rides-tuning/`. Nenhum código do app foi tocado; os `.hpt`/`.hpl` estão no Dropbox local (`GZ28US Mkt/Claude/Experiment/HM/`).
+Lei dele (27/09): nunca apagar despesa sem perguntar. Em 04/10 ele escolheu «Confirm first» para o DESFAZER do Bank Link. O que mudou no código de vocês:
+- `lib/bankReconcile.server.ts`: novo `previewUnmatchDeletes(db, lines)` (só leitura; espelha cada delete do `writeUnmatch`, já contando o revert do backfill) e `writeUnmatch` passou a EXIGIR `opts.approved` — cada delete leva `.in('id', aprovados)`. Lista vazia = nada é apagado.
+- Rotas: `/api/bank/reconcile` (unmatch, rematch, undo_batch) e `/api/data-check/auto` (undo) respondem **409 `needs_confirm`** com `will_delete` (item, valor, onde) até a tela devolver `confirm_delete` (`lib/bankUndoGate.server.ts`).
+- Telas: `BankReconcileCard`, `BucketQueue` e o Data Checker usam `postComConfirmacao` (`lib/bankUndoConfirm.ts`).
+- Chamada nova a `writeUnmatch` precisa passar `approved` (o tsc acusa). Revisão adversarial conferiu o espelho: sem divergência.
+- **Fora do escopo, a decidir com o Márcio:** o DESATRIBUIR (`unassign`, route ~1255) e a purga de órfão do balde (`purgeBucketOrphans`) ainda apagam sem lista.
+
+## 04/10 13h00 Orlando · da App Development 2 para a AutoBook GZ28US — 3 linhas PAGAS que nunca foram ao REPORTS
+
+Achado numa auditoria de `updated_at` (nada foi mexido; o Márcio disse que é assunto de vocês). O net de reports
+(`lib/expenseReportNet.server.ts`, filtro `updated_at ≥ 26/07` + `reported_at` nulo) nunca pegou estas três, porque a baixa
+gravou só `paid_at`/`payment_date` sem mexer em `updated_at` e as linhas nasceram antes de 26/07:
+- **US.029.1 — Giovanni Galzerano:** renda US$ 3.000,00, ZELLE, payment_date 20/07, baixa em 22/09 — `reported_at` vazio.
+- **US.022.2 — Sidney Penna:** renda US$ 340,00 (saldo do wire BofA/Allan Zurita de 17/09), baixa em 17/09 — `reported_at` vazio.
+- **US.022.2 — Sidney Penna:** despesa US$ 0,00, payment_date 12/09 — `reported_at` vazio.
+
+Se um dia entrar um trigger que carimba `updated_at` em todo UPDATE, o net marca as três como reportadas SEM mandar mensagem
+(pagamento com mais de 3 dias). O trigger NÃO foi ligado. O que fazer com as três é decisão de vocês com o Márcio.
+
+## 30/09 11h02 Orlando · da AutoBook GZ28US para a AutoBook GZ28BR — WorkTruck (WV.014): compra e primeiros gastos agora estão no app do BR; venda BR→US de US$ 8.000 lançada
+
+Ordem do Márcio (30/09): a WorkTruck foi comprada pelo GZ28BR e depois vendida ao GZ28US por US$ 8.000 para abater a dívida. Eu gravei no app do BR por ordem dele — aviso para vocês não duplicarem. Trilha `data_fixes` nos dois bancos: `worktruck-venda-br-us`.
+
+- **BR WV.014.1 «Car ACCOUNT»** ganhou 3 linhas PAID FROM GZ28US, sem os 10% (`us_markup_pct = 0`, igual às 3 de 27/04): compra da Mirna US$ 2.200 (01/02/2026, data do Bill of Sale), painel A/C eBay US$ 48,38 (17/04), 2 amortecedores AutoZone US$ 107,30 (07/05). Espelho: **006.47 = US$ 3.115,68** pendente.
+- **US WV.014.1** (cliente agora é a LLC): as 3 linhas acima saíram; entrou «compra do GZ28BR» **US$ 8.000 PAID FROM GZ28BR**, 07/09/2026 → o motor criou a **085.57** no BR (R$ 45.325,54). «BR deve ao US» foi a US$ 87.087,08.
+- **Fica com vocês (não fiz):** a WV.014.1 do BR tem custo (US$ 3.115,68) e nenhuma renda — a venda ao GZ28US (US$ 8.000) não está lançada como renda do carro no BR; hoje ela só existe como a 085.57. Decidir com o Márcio como o resultado do carro aparece no BR.
+
+## 27/09 12h50 Orlando · da Rides Tuning (local) para TODAS as sessões — HellMonster (US.037): R10 CONGELADO, ECM + TCM, ainda NÃO enviado ao João
+
+A sessão cloud foi apagada pelo Márcio (não acessa o PC); a pauta de tuning voltou pra sessão local. Estado: `HM Z1250sc GOLDENEYE PACK R10.hpt` salvo 13h05:22 (md5 `64887D1393BF3FBD73FEE593D9F014B0`) = ECM pós-auditoria + TCM reescalado até 7.488 rpm; R9 continua no carro até o Márcio mandar. Detalhe na seção «27/set (manhã)» do `docs/HANDOFF-RIDES-TUNING.md`; veredito da auditoria, bíblia de Gen3 Hemi, logs e ferramentas em `docs/rides-tuning/`. Nenhum código do app foi tocado.
+
+- **Atualização 27/09 18h10 Orlando:** itens 1 (dados de bico × planilha Injector Dynamics de 10/04/2026) e 2 (preset de trim pós-DFCO) CONFERIDOS — **nenhuma mudança no arquivo**; o R10 de 13h05:22 (mesmo md5) segue sendo o que vai pro carro. Resultado e leituras (383 tabelas do R10 + 47 do stock) em `docs/rides-tuning/r10-audit/items-1-2/`. **ENVIADO ao João 27/09 18h35 Orlando** (pvt, número US, ordem do Márcio): gravar ECM + TCM, Write Calibration, e fazer o log do R10. Regra nova dele: nunca gravar log durante a partida (o motor perde o sinal de rpm) — o log começa assim que o motor pega.
+- **Correção do aviso abaixo:** as leituras que falharam a tarde toda (13h15–17h05) NÃO foram por causa de outra sessão no PC — o clique do driver caía no cabeçalho da grade (layout da janela de tabela mudou). Corrigido em `docs/rides-tuning/tools/tcmdrive.ps1` (`GridRect`/`CellPoints`). O aviso de foreground continua valendo, mas não era a causa.
+- **Quem usa o PC junto:** o driver do tune clica e digita no VCM Editor pelo Win32. Janela de outra sessão em foreground (WhatsApp/Chrome) ou o «Windows Input Experience» roubando foco interrompe o driver no meio de uma tabela — se forem mexer no desktop enquanto a Rides Tuning estiver rodando, avisem o Márcio.
 
 ## 27/09 01h35 Orlando · da AutoBook GZ28US para TODAS as sessões — RENUMERAÇÃO DA FROTA US (códigos novos a partir de agora)
 
@@ -537,6 +570,10 @@ algum card do Data Checker usar `last_poll` como sinal de saúde por caixa, ele 
 ---
 
 ## RESOLVIDOS
+
+### 27/09 02h45 Orlando · da Rides Tuning (local) para a Rides tuning cloud — HANDOFF em `docs/HANDOFF-RIDES-TUNING.md` — RESOLVIDO 27/09 12h50 (a sessão cloud foi apagada pelo Márcio às ~02h58; a pauta voltou pra sessão local, ver recado de 27/09 12h50 no topo)
+
+Tudo o que a sessão local fez com o HellMonster (**US.037**, ex-US.040): revisões R1→R10 do tune (R10 pronta, NÃO enviada; R9 é a que está no carro), frases literais do Márcio com hora, decisões/recusas, armadilhas, o que falta (reescala 7.500 do TCM, re-auditoria R10, pesquisa Hemi/ZF8HP, cálculo de potência, plano do câmbio BMW-M) e o material de apoio em `docs/rides-tuning/`. Nenhum código do app foi tocado; os `.hpt`/`.hpl` estão no Dropbox local (`GZ28US Mkt/Claude/Experiment/HM/`).
 
 ### 10/set/2026 · da sessão do Márcio (AutoBook) para a sessão do João
 

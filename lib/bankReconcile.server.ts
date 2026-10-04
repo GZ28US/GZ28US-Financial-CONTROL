@@ -1488,6 +1488,124 @@ async function bookAssessment(db: any, l: any, home: AssessmentHome, batch: stri
   return rowId
 }
 
+// ── O QUE O DESFAZER VAI APAGAR — «CONFIRM FIRST» (Márcio, 04/10/2026; lei «nunca apagar despesa sem perguntar») ──
+// O DESFAZER de um casamento apaga os lançamentos que o PRÓPRIO Bank Link criou para ele (marcador «Bank Link)» +
+// elo com a linha do banco). Até aqui apagava no clique. Agora:
+//   1. previewUnmatchDeletes() diz, SEM escrever nada, quais linhas sairiam — espelho de cada delete do writeUnmatch,
+//      já contando o que o revert do backfill muda antes (a agendada adotada é solta, a atribuída volta ao balde);
+//   2. a rota devolve 409 needs_confirm com a lista, a tela mostra item/valor/onde e a pessoa confirma;
+//   3. writeUnmatch() recebe `approved` e CADA delete leva `.in('id', aprovados)` — nada fora do que foi mostrado sai.
+//      Se a prévia deixar passar uma linha, ela FICA (sobra visível), nunca some sem aviso.
+export type UnmatchVictim = { key: string; table: string; id: string; label: string; amount: number | null; where: string | null }
+const NIL_UUID = '00000000-0000-0000-0000-000000000000'
+
+export async function previewUnmatchDeletes(db: any, lines: any[]): Promise<Map<string, UnmatchVictim[]>> {
+  const out = new Map<string, UnmatchVictim[]>()
+  for (const l of lines || []) if (l && l.id) out.set(String(l.id), [])
+  const live = (lines || []).filter(l => l && l.match_status === 'MATCHED' && l.matched_table && l.matched_id)
+  if (!live.length) return out
+  const byId = new Map<string, any>(live.map(l => [String(l.id), l]))
+  const eng = (l: any) => String(l.match_engine), tab = (l: any) => String(l.matched_table)
+  const rec = (l: any): Backfill[] => (Array.isArray(l.backfill) ? (l.backfill as Backfill[]).map(b => ({ ...b, t: tabelaAtual(b.t) })) : [])
+  // O valor da coluna DEPOIS do revert do backfill desta linha (o DESFAZER reverte antes de apagar, e só quando o valor ainda é o gravado).
+  const after = (l: any, table: string, row: any, f: string) => {
+    let v = row[f]
+    for (const b of rec(l)) if (b.t === table && String(b.id) === String(row.id) && b.f === f && b.v != null && v != null && String(v) === String(b.v)) v = b.o === undefined ? null : b.o
+    return v
+  }
+  const has = (text: unknown, marker: string) => String(text ?? '').toLowerCase().includes(marker.toLowerCase())
+  const n2 = (x: unknown) => Math.round((Number(x) || 0) * 100) / 100
+  const seen = new Set<string>()
+  const add = (l: any, table: string, row: any, label: string, amount: number | null, where: string | null) => {
+    const key = table + ':' + row.id
+    if (seen.has(l.id + '|' + key)) return
+    seen.add(l.id + '|' + key)
+    out.get(String(l.id))!.push({ key, table, id: String(row.id), label: String(label || '—').slice(0, 160), amount, where })
+  }
+  const chunks = <T,>(a: T[], n = 100) => { const r: T[][] = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r }
+  const read = async (table: string, f: (q: any) => any): Promise<any[]> => {
+    const { data, error } = await f(db.from(table).select('*'))
+    if (error) throw new Error('prévia do DESFAZER · ' + table + ': ' + error.message)
+    return data || []
+  }
+  const fixedAmt = (r: any) => n2(r.amount), inputAmt = (r: any) => n2((Number(r.unit_price) || 0) * (Number(r.quantity) || 1))
+  const ieAmt = (r: any) => n2((Number(r.price) || 0) * (Number(r.quantity) || 1) + (Number(r.tax) || 0) + (Number(r.extra) || 0))
+  const ieRows: { l: any; r: any }[] = []
+
+  // ── por matched_id (o lançamento que a regra / a tarifa / a pergunta criou) ──
+  const pick = (ok: (l: any) => boolean) => live.filter(ok)
+  const fxL = pick(l => ['FEE', 'RULE', 'LEARN'].includes(eng(l)) && tab(l) === 'fixed_cost_expenses')
+  for (const c of chunks(fxL)) {
+    const rows = await read('fixed_cost_expenses', q => q.in('id', c.map(l => l.matched_id)).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%'))
+    for (const r of rows) for (const l of c.filter(x => String(x.matched_id) === String(r.id))) {
+      const d = after(l, 'fixed_cost_expenses', r, 'description')
+      if (String(after(l, 'fixed_cost_expenses', r, 'bank_transaction_id') ?? '') === String(l.id) && has(d, 'Bank Link)') && !has(d, 'agendada)')) add(l, 'fixed_cost_expenses', r, r.description, fixedAmt(r), 'Fixed cost')
+    }
+  }
+  const inL = pick(l => ['RULE', 'LEARN'].includes(eng(l)) && tab(l) === 'inputs')
+  for (const c of chunks(inL)) {
+    const rows = await read('inputs', q => q.in('id', c.map(l => l.matched_id)).ilike('description', '%' + MARKER_CREATED + '%'))
+    for (const r of rows) for (const l of c.filter(x => String(x.matched_id) === String(r.id))) {
+      if (String(r.order_number ?? '') === ('bank:' + l.id).slice(0, 120) && has(after(l, 'inputs', r, 'description'), MARKER_CREATED)) add(l, 'inputs', r, r.description, inputAmt(r), 'Supplies' + (r.category ? ' · ' + r.category : ''))
+    }
+  }
+  const feeIe = pick(l => eng(l) === 'FEE' && tab(l) === 'invoice_expenses')
+  for (const c of chunks(feeIe)) {
+    const rows = await read('invoice_expenses', q => q.in('id', c.map(l => l.matched_id)).ilike('item', '%repasse (auto Bank Link)%'))
+    for (const r of rows) for (const l of c.filter(x => String(x.matched_id) === String(r.id))) ieRows.push({ l, r })
+  }
+  const feeSt = pick(l => eng(l) === 'FEE' && tab(l) === 'staff_expenses')
+  for (const c of chunks(feeSt)) {
+    const rows = await read('staff_expenses', q => q.in('id', c.map(l => l.matched_id)).ilike('description', '%' + MARKER_REPASSE + '%'))
+    for (const r of rows) for (const l of c.filter(x => String(x.matched_id) === String(r.id))) {
+      if (String(after(l, 'staff_expenses', r, 'payment_reference') ?? '') === 'bank:' + l.id && has(after(l, 'staff_expenses', r, 'description'), MARKER_REPASSE)) add(l, 'staff_expenses', r, r.description, n2(r.amount), 'Season / staff')
+    }
+  }
+  const perSt = pick(l => tab(l) === 'staff_expenses' && eng(l) !== ENGINE_BUCKET)
+  for (const c of chunks(perSt)) {
+    const rows = await read('staff_expenses', q => q.in('id', c.map(l => l.matched_id)).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'))
+    for (const r of rows) for (const l of c.filter(x => String(x.matched_id) === String(r.id))) {
+      if (String(after(l, 'staff_expenses', r, 'payment_reference') ?? '') === 'bank:' + l.id && has(after(l, 'staff_expenses', r, 'description'), 'Bank Link)')) add(l, 'staff_expenses', r, r.description, n2(r.amount), 'Season / staff · PERSONAL')
+    }
+  }
+
+  // ── BALDE (fase B): tudo que a linha criou ou moveu, em todas as casas ──
+  const bkL = pick(l => eng(l) === ENGINE_BUCKET)
+  if (bkL.length) {
+    const bucketId = await bucketInvoiceId(db)
+    for (const c of chunks(bkL)) {
+      const ids = c.map(l => String(l.id))
+      for (const r of await read('invoice_expenses', q => q.in('purchase_group', ids).ilike('item', '%Bank Link)%'))) {
+        const l = byId.get(String(r.purchase_group)); if (!l) continue
+        const inv = after(l, 'invoice_expenses', r, 'invoice_id')
+        if (inv != null && String(inv) === String(bucketId)) ieRows.push({ l, r })                                   // compra do balde
+        else if (inv != null && tab(l) === 'purchase_group' && has(r.item, MARKER_ASSIGNED)) ieRows.push({ l, r })   // parte dividida
+      }
+      for (const r of await read('staff_expenses', q => q.in('payment_reference', ids.map(i => 'bank:' + i)).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'))) {
+        const l = byId.get(String(r.payment_reference || '').slice(5)); if (!l) continue
+        if (String(after(l, 'staff_expenses', r, 'payment_reference') ?? '') === 'bank:' + l.id) add(l, 'staff_expenses', r, r.description, n2(r.amount), 'Season / staff · PERSONAL')
+      }
+      for (const r of await read('inputs', q => q.in('purchase_group', ids).ilike('description', '%Bank Link)%'))) { const l = byId.get(String(r.purchase_group)); if (l) add(l, 'inputs', r, r.description, inputAmt(r), 'Supplies' + (r.category ? ' · ' + r.category : '')) }
+      for (const r of await read('inventory', q => q.in('purchase_group', ids).ilike('description', '%Bank Link)%'))) { const l = byId.get(String(r.purchase_group)); if (l) add(l, 'inventory', r, r.description, inputAmt(r), 'Stock') }
+      for (const r of await read('fixed_cost_expenses', q => q.in('bank_transaction_id', ids).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%'))) {
+        const l = byId.get(String(r.bank_transaction_id)); if (!l) continue
+        const d = after(l, 'fixed_cost_expenses', r, 'description')
+        if (String(after(l, 'fixed_cost_expenses', r, 'bank_transaction_id') ?? '') === String(l.id) && has(d, 'Bank Link)') && !has(d, 'agendada)')) add(l, 'fixed_cost_expenses', r, r.description, fixedAmt(r), 'Fixed cost')
+      }
+    }
+  }
+  // linhas de invoice: o «onde» é o código da invoice (uma leitura só)
+  if (ieRows.length) {
+    const codes = new Map<string, string>()
+    for (const c of chunks([...new Set(ieRows.map(x => String(x.r.invoice_id)).filter(Boolean))])) {
+      const { data } = await db.from('invoices').select('id, invoice_code, origin').in('id', c)
+      for (const i of data || []) codes.set(String(i.id), i.origin === 'BUCKET' ? 'A ATRIBUIR (balde)' : String(i.invoice_code || ''))
+    }
+    for (const { l, r } of ieRows) add(l, 'invoice_expenses', r, [r.supplier, r.item].filter(Boolean).join(' · '), ieAmt(r), codes.get(String(r.invoice_id)) || 'invoice')
+  }
+  return out
+}
+
 // DESFAZER: reverte só o que `backfill` diz que escrevemos (valor igual ⇒ ninguém
 // mexeu depois). Linha casada SEM registro (backfill NULL) não reverte data nenhuma:
 // a regra antiga de igualdade com a data do banco apagava a data que GENTE digitou (e
@@ -1501,7 +1619,11 @@ async function bookAssessment(db: any, l: any, home: AssessmentHome, batch: stri
 // antes, DESFAZER deixava a despesa criada por regra viva no DRE (risco #2).
 // opts.refuse é OBRIGATÓRIO (sem padrão): cada chamador decide se o DESFAZER é juízo («não é esse» — o par vira
 // memória de recusa que a máquina respeita) ou só rollback (DESFAZER LOTE).
-export async function writeUnmatch(db: any, line: any, changed: string[], opts: { unlearn?: boolean; refuse: boolean }) {
+// opts.approved é OBRIGATÓRIO (04/10/2026, «Confirm first»): as linhas que a prévia (previewUnmatchDeletes) listou e a pessoa
+// confirmou. Cada delete abaixo é limitado a elas — lista vazia = nada é apagado.
+export async function writeUnmatch(db: any, line: any, changed: string[], opts: { unlearn?: boolean; refuse: boolean; approved: UnmatchVictim[] }) {
+  const okIds = (table: string) => (opts.approved || []).filter(v => v.table === table).map(v => v.id)
+  const only = (q: any, table: string) => { const ids = okIds(table); return q.in('id', ids.length ? ids : [NIL_UUID]) }
   let bucketHandled = false
   // Linha MISTA sem os membros na cópia do chamador (a rota lê BSEL, que não traz a coluna): relê — o PAID FROM e a conferência
   // de data andam pelos membros. Nunca apaga membro: são registros de gente; o DESFAZER devolve só o que o casamento escreveu.
@@ -1549,12 +1671,12 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     if (['FEE', 'RULE', 'LEARN'].includes(String(line.match_engine)) && t === 'fixed_cost_expenses') {
       // Adotada já foi solta pelo revert acima (bank_transaction_id → null): o
       // .eq('bank_transaction_id') a poupa por construção; só a CRIADA morre.
-      const { data: r, error } = await db.from('fixed_cost_expenses').delete().eq('id', id).eq('bank_transaction_id', line.id).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%').select('id')
+      const { data: r, error } = await only(db.from('fixed_cost_expenses').delete().eq('id', id).eq('bank_transaction_id', line.id).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%'), 'fixed_cost_expenses').select('id')
       if (error) throw new Error('fixed_cost_expenses: ' + error.message)
       if (r && r.length) changed.push(line.match_engine === 'FEE' ? 'tarifa criada pelo motor apagada' : 'despesa criada por regra apagada')
     }
     if (['RULE', 'LEARN'].includes(String(line.match_engine)) && t === 'inputs') {
-      const { data: r, error } = await db.from('inputs').delete().eq('id', id).eq('order_number', ('bank:' + line.id).slice(0, 120)).ilike('description', '%' + MARKER_CREATED + '%').select('id')
+      const { data: r, error } = await only(db.from('inputs').delete().eq('id', id).eq('order_number', ('bank:' + line.id).slice(0, 120)).ilike('description', '%' + MARKER_CREATED + '%'), 'inputs').select('id')
       if (error) throw new Error('inputs: ' + error.message)
       if (r && r.length) changed.push('supply criado por regra apagado')
     }
@@ -1564,18 +1686,18 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       // voltou pelo backfill), partes divididas em invoices. Tudo ou nada.
       const bucketId = await bucketInvoiceId(db)
       const del = async (table: string, f: (q: any) => any, col: string, msg: string) => {
-        const { data: r, error } = await f(db.from(table).delete().eq('purchase_group', line.id).ilike(col, '%Bank Link)%')).select('id')
+        const { data: r, error } = await only(f(db.from(table).delete().eq('purchase_group', line.id).ilike(col, '%Bank Link)%')), table).select('id')
         if (error) throw new Error(table + ': ' + error.message)
         if (r && r.length) changed.push(msg + (r.length > 1 ? ' ×' + r.length : ''))
       }
       // Elo com o STREAM (PESCA fundida) morre junto com a linha apagada.
-      { const { data: ids } = await db.from('invoice_expenses').select('id').eq('purchase_group', line.id).ilike('item', '%Bank Link)%'); const list = (ids || []).map((x: any) => x.id); if (list.length) await db.from('part_stream_items').delete().eq('source_table', 'invoice_expenses').in('source_id', list).then(() => undefined, () => undefined) }
+      { const { data: ids } = await db.from('invoice_expenses').select('id').eq('purchase_group', line.id).ilike('item', '%Bank Link)%'); const okIe = new Set(okIds('invoice_expenses')); const list = (ids || []).map((x: any) => x.id).filter((x: string) => okIe.has(String(x))); if (list.length) await db.from('part_stream_items').delete().eq('source_table', 'invoice_expenses').in('source_id', list).then(() => undefined, () => undefined) }
       await del('invoice_expenses', q => q.eq('invoice_id', bucketId), 'item', 'compra do balde apagada')
-      { const { data: r, error } = await db.from('staff_expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id'); if (error) throw new Error('staff_expenses: ' + error.message); if (r && r.length) changed.push('despesa pessoal atribuída apagada') }
+      { const { data: r, error } = await only(db.from('staff_expenses').delete().eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'), 'staff_expenses').select('id'); if (error) throw new Error('staff_expenses: ' + error.message); if (r && r.length) changed.push('despesa pessoal atribuída apagada') }
       await del('inputs', q => q, 'description', 'insumo atribuído apagado')
       await del('inventory', q => q, 'description', 'estoque atribuído apagado')
       {
-        const { data: r, error } = await db.from('fixed_cost_expenses').delete().eq('bank_transaction_id', line.id).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%').select('id')
+        const { data: r, error } = await only(db.from('fixed_cost_expenses').delete().eq('bank_transaction_id', line.id).ilike('description', '%Bank Link)%').not('description', 'ilike', '%agendada)%'), 'fixed_cost_expenses').select('id')
         if (error) throw new Error('fixed_cost_expenses: ' + error.message)
         if (r && r.length) changed.push('custo fixo atribuído apagado')
       }
@@ -1586,13 +1708,13 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
       // REPASSE (João, 26/ago): a despesa de invoice que o motor criou pra tarifa
       // de wire morre junto — o marcador "(auto Bank Link)" no item garante que
       // NUNCA apagamos linha lançada por gente.
-      const { data: r, error } = await db.from('invoice_expenses').delete().eq('id', id).ilike('item', '%repasse (auto Bank Link)%').select('id')
+      const { data: r, error } = await only(db.from('invoice_expenses').delete().eq('id', id).ilike('item', '%repasse (auto Bank Link)%'), 'invoice_expenses').select('id')
       if (error) throw new Error('invoice_expenses: ' + error.message)
       if (r && r.length) changed.push('repasse criado pelo motor apagado')
     }
     if (line.match_engine === 'FEE' && t === 'staff_expenses') {
       // TARIFA INTERNACIONAL na season (BL 1.7.0): só a linha que o motor criou — marcador + elo desta linha do banco; a compra fica.
-      const { data: r, error } = await db.from('staff_expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).ilike('description', '%' + MARKER_REPASSE + '%').select('id')
+      const { data: r, error } = await only(db.from('staff_expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).ilike('description', '%' + MARKER_REPASSE + '%'), 'staff_expenses').select('id')
       if (error) throw new Error('staff_expenses: ' + error.message)
       if (r && r.length) changed.push('repasse da tarifa internacional apagado da season')
     }
@@ -1603,7 +1725,7 @@ export async function writeUnmatch(db: any, line: any, changed: string[], opts: 
     if ((t === 'expense_group' || t === MIXED_GROUP || (t === 'staff_expenses' && String(line.match_engine) === 'ADJUST')) && !(recorded || []).some((b: any) => b && b.t === 'staff_expenses' && b.f === 'bank_transaction_id') && !EXP_LINK_COL_MISSING) { const { data: r } = await db.from('staff_expenses').update({ bank_transaction_id: null }).eq('bank_transaction_id', line.id).select('id'); if (r && r.length) changed.push('elo da folha solto ×' + r.length + ' · valor/pagador NÃO revertidos (sem backfill gravado)') }
     let personalHandled = false
     if (t === 'staff_expenses' && !bucketHandled) {
-      const { data: r, error } = await db.from('staff_expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%').select('id')
+      const { data: r, error } = await only(db.from('staff_expenses').delete().eq('id', id).eq('payment_reference', 'bank:' + line.id).eq('origin', 'PERSONAL').ilike('description', '%Bank Link)%'), 'staff_expenses').select('id')
       if (error) throw new Error('staff_expenses: ' + error.message)
       if (r && r.length) { changed.push('despesa pessoal apagada'); personalHandled = true }
     }
