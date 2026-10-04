@@ -334,6 +334,47 @@ async function returnToBucket(db: SupabaseClient, rowId: string): Promise<boolea
   } catch { return true }   // na dúvida, NÃO apaga
 }
 
+// ── ERRADO MOVE, NUNCA APAGA (Márcio, 04/10/2026 — lei «nunca apagar despesa sem perguntar», escolha dele:
+// «Move, never delete»). Antes o ERRADO apagava a linha que a fila criou e criava outra no destino novo.
+//   • mesma tabela (carro → carro, INPUTS → INPUTS): ATUALIZA a própria linha — mesmo id, mesma história,
+//     a ponte item↔remessa (part_stream_items) continua valendo;
+//   • tabela diferente (carro ↔ INPUTS): NÃO move — devolve 'CROSS' e a resposta pede o ajuste à mão no app
+//     (recriar a linha perderia valor editado, recibo, datas e elo de banco — revisão de 04/10/2026);
+//   • IGNORA: dinheiro já lançado não some pela fila — a linha fica, e a resposta diz onde ela está para ele
+//     remover no app se quiser (ação dele).
+// Devolve o placed_ref novo, 'KEPT' (IGNORA), 'CROSS' (outra tabela) — nos dois nada é mexido — ou null (destino não resolveu).
+// OBS.: a fila inteira está MORTA desde 30/08/2026 (rota 410, ordem dele) — isto deixa o código inerte seguro se um dia voltar.
+async function moveQueued(db: SupabaseClient, row: StreamRow, refDest: string, refId: string, dest: string, out: string[], nature: string | null): Promise<string | null> {
+  const fromInputs = refDest.startsWith('INPUTS/')
+  const fromTable = fromInputs ? 'inputs' : 'invoice_expenses'
+  if (dest === 'IGNORE') return 'KEPT'
+  // mesma tabela: a própria linha muda de lugar
+  if (fromInputs && dest.startsWith('INPUTS/')) {
+    const category = dest.split('/')[1]
+    const { data: up, error } = await db.from('inputs').update({ category, updated_at: new Date().toISOString() }).eq('id', refId).select('id')
+    if (error || !up?.length) return null
+    const ref = `${dest}#${refId}`
+    await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, where_label: category }).eq('id', row.id)
+    out.push(`${keyOf(row)} → ${dest} (movida)`)
+    return ref
+  }
+  if (!fromInputs && dest.startsWith('RIDE:')) {
+    const inv = await resolveInvoice(db, dest.slice(5))
+    if (!inv) return null
+    const { data: up, error } = await db.from('invoice_expenses').update({ invoice_id: inv.id, updated_at: new Date().toISOString() }).eq('id', refId).select('id')
+    if (error || !up?.length) return null
+    const ref = `${inv.code}#${refId}`
+    await db.from('part_streams').update({ placement_status: 'PLACED', placed_ref: ref, invoice_id: inv.id, where_label: inv.code }).eq('id', row.id)
+    out.push(`${keyOf(row)} → ${inv.code} (movida)`)
+    return ref
+  }
+  // Tabela diferente (carro ↔ INPUTS): a fila NÃO move. A revisão de 04/10/2026 mostrou que recriar a linha pelo
+  // place() perderia o que ela carrega (valor editado, quantidade, tax/extra, recibo, datas, elo de banco) e que o
+  // elo de banco de INPUTS/purchase_group não é visível aqui. Fica tudo como está e a resposta pede o ajuste à mão.
+  void fromTable; void nature; void out
+  return 'CROSS'
+}
+
 export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: string[]; asked: number; answered: number }> {
   const placed: string[] = []
   let asked = 0, answered = 0
@@ -466,22 +507,24 @@ export async function runPurchaseQueue(db: SupabaseClient): Promise<{ placed: st
         if (dest.startsWith('RIDE:') && !(await resolveInvoice(db, dest.slice(5)))) { await wa(chat, `⚠️ Não achei carro/invoice viva pra "*${semMarcacao(dest.slice(5))}*" — nada foi mexido.`); await markSeen(mid, body, 'ERRADO-BAD-RIDE'); answered++; continue }
         const [refDest, refId] = String(row.placed_ref || '').split('#')
         if (!refId) { await wa(chat, `⚠️ ${keyOf(row)} foi lançada MANUALMENTE (não pela fila) — não mexo em lançamento manual. Ajusta no app e me avisa.`); await markSeen(mid, body, 'ERRADO-MANUAL'); answered++; continue }
-        // A ponte item↔remessa morre junto com a linha de dinheiro desfeita —
-        // sem isso part_stream_items apontaria para um id que não existe mais.
-        await db.from('part_stream_items').delete().eq('source_id', refId).then(() => undefined, () => undefined)
-        // Linha LIGADA AO BANCO (adotada do balde — fase B): dinheiro real da Regions,
-        // nunca se apaga. Volta pro balde (DESATRIBUIR) e o place() abaixo a adota de novo
-        // no destino certo, se for carro.
-        const bankLinked = refDest.startsWith('INPUTS/') ? false : await returnToBucket(db, refId)
-        if (!bankLinked) {
-          if (refDest.startsWith('INPUTS/')) await db.from('inputs').delete().eq('id', refId)
-          else await db.from('invoice_expenses').delete().eq('id', refId)
+        // IGNORA não apaga dinheiro (04/10/2026): a linha fica onde está e a resposta diz onde — remover é ação dele.
+        if (dest === 'IGNORE') {
+          await wa(chat, `⚠️ ${keyOf(row)} já está lançada em *${semMarcacao(refLabel(row.placed_ref || ''))}* — a fila não apaga dinheiro. Se não é da empresa, remova a linha no app.`)
+          await markSeen(mid, body, 'ERRADO-IGNORE-KEPT'); answered++; continue
         }
+        // Linha LIGADA AO BANCO (adotada do balde — fase B): dinheiro real da Regions, nunca se
+        // apaga. Volta pro balde (DESATRIBUIR) e o place() abaixo a adota de novo no destino certo.
+        const bankLinked = refDest.startsWith('INPUTS/') ? false : await returnToBucket(db, refId)
+        // Voltou pro balde: a ponte item↔remessa sai (o place() abaixo cria a do destino novo; sem isso ficariam duas).
+        if (bankLinked) await db.from('part_stream_items').delete().eq('source_table', 'invoice_expenses').eq('source_id', refId).then(() => undefined, () => undefined)
         // A natureza sobrevive à realocação quando a leitura foi desta rodada;
         // senão entra NULL (honesto) — realocar destino não muda o que a coisa É.
-        const ref = await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
-        await wa(chat, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} realocada: *${refLabel(ref)}*` : `⚠️ ${keyOf(row)}: desfeita, mas o novo destino falhou — segue na fila.`)
-        if (!ref || ref === 'NEEDS_VALUE') await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT', placed_ref: null }).eq('id', row.id)
+        const ref = bankLinked
+          ? await place(db, row, dest, placed, natureOf.get(row.id) ?? null)
+          : await moveQueued(db, row, refDest, refId, dest, placed, natureOf.get(row.id) ?? null)
+        if (ref === 'CROSS') { await wa(chat, `⚠️ ${keyOf(row)} está em *${semMarcacao(refLabel(row.placed_ref || ''))}* — mudar entre carro e INPUTS é à mão no app (a fila não recria nem apaga dinheiro). NADA foi mexido.`); await markSeen(mid, body, 'ERRADO-CROSS-KEPT'); answered++; continue }
+        await wa(chat, ref && ref !== 'NEEDS_VALUE' ? `↪️ ${keyOf(row)} movida: *${refLabel(ref)}*` : bankLinked ? `⚠️ ${keyOf(row)}: voltou pro balde, mas o novo destino falhou — segue na fila.` : `⚠️ ${keyOf(row)}: o novo destino não resolveu — NADA foi mexido, a linha segue em *${semMarcacao(refLabel(row.placed_ref || ''))}*.`)
+        if (bankLinked && (!ref || ref === 'NEEDS_VALUE')) await db.from('part_streams').update({ placement_status: 'NEEDS_PLACEMENT', placed_ref: null }).eq('id', row.id)
         await markSeen(mid, body, 'ERRADO-APPLIED'); answered++; continue
       }
 
