@@ -501,17 +501,24 @@ async function handleFailure(
 
 // Encerra o app na página: `date_conclusion` é o que vira o selo ENDED e tira o
 // custo da média mensal. Nunca reabre nem mexe no histórico de pagamentos — o
-// que foi pago continua pago, e a cobrança futura agendada é apagada porque
-// deixou de existir.
+// que foi pago continua pago.
+// AS COBRANÇAS FUTURAS FICAM (Márcio, 04/10/2026 — lei «nunca apagar despesa sem perguntar»; antes o robô apagava
+// todas as em aberto sozinho). O robô só CONTA as que vencem depois do fim e pergunta no STREAM, com o link da
+// página do app — lá elas aparecem em «APP ENDED — FUTURE CHARGES KEPT» e só ele remove (✕ ou REMOVE ALL).
 async function handleCancel(db: SupabaseClient, row: AppRow | null, appName: string, subject: string, date: string, out: AppsSweepResult, notifyEach: boolean): Promise<void> {
   if (!row) { out.errors.push(`cancel sem app cadastrado: ${appName} — ${subject}`); return }
   if (row.date_conclusion) return // já encerrado numa passada anterior
   const { error } = await db.from('fixed_cost_suppliers').update({ date_conclusion: date }).eq('id', row.id)
   if (error) { out.errors.push(`cancel ${appName}: ${error.message}`); return }
-  await db.from('fixed_cost_expenses').delete().eq('supplier_id', row.id).is('payment_date', null)
-  out.cancelled.push(`${row.description || appName} (${date})`)
+  const { data: futuras } = await db.from('fixed_cost_expenses').select('amount').eq('supplier_id', row.id).is('payment_date', null).gt('expense_date', date)
+  const n = (futuras || []).length
+  const total = (futuras || []).reduce((s: number, r: { amount: unknown }) => s + (Number(r.amount) || 0), 0)
+  out.cancelled.push(`${row.description || appName} (${date})${n ? ` — ${n} future charge(s) kept` : ''}`)
   if (notifyEach) {
-    await sendStreamWhatsApp(`🛑 *APP CANCELLED — ${semMarcacao(row.description || appName)}*\n${semMarcacao(subject)}\nEnded on ${fmtDate(date)} — it stops counting in the monthly cost.`)
+    const pergunta = n
+      ? `\n🗂 ${n} future charge(s) kept (${total.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}) — NOT deleted. Remove them if they won't be charged: https://www.gz28us.com/ca/costs/apps/${row.id}`
+      : ''
+    await sendStreamWhatsApp(`🛑 *APP CANCELLED — ${semMarcacao(row.description || appName)}*\n${semMarcacao(subject)}\nEnded on ${fmtDate(date)} — it stops counting in the monthly cost.${pergunta}`)
   }
 }
 

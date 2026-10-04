@@ -35,6 +35,8 @@ export default function AppsPage() {
   // supplier_id -> most recent charge activity (paid or scheduled) + distinct paid months.
   const [lastAct, setLastAct] = useState<Map<string, string>>(new Map())
   const [payMonths, setPayMonths] = useState<Map<string, number>>(new Map())
+  // Cobranças em aberto DEPOIS do fim de um app encerrado — o robô guarda e pergunta (04/10/2026).
+  const [kept, setKept] = useState<Map<string, number>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'ENDED'>('ALL')
@@ -59,6 +61,9 @@ export default function AppsPage() {
       const due = new Map<string, { date: string; amount: number; failed: boolean }>()
       const act = new Map<string, string>()
       const monthSets = new Map<string, Set<string>>()
+      // App ENCERRADO com cobrança em aberto depois do fim: o robô guarda e pergunta (04/10/2026).
+      const endOf = new Map(apps.map(a => [a.id, isValidDate(a.date_conclusion) ? (a.date_conclusion as string) : null]))
+      const keptN = new Map<string, number>()
       const td = todayYmd()
       for (const e of (exp || [])) {
         if (!e.supplier_id) continue
@@ -67,6 +72,8 @@ export default function AppsPage() {
           if (!monthSets.has(e.supplier_id)) monthSets.set(e.supplier_id, new Set())
           monthSets.get(e.supplier_id)!.add((e.payment_date as string).slice(0, 7))
         } else if (isValidDate(e.expense_date)) {
+          const fim = endOf.get(e.supplier_id)
+          if (fim && (e.expense_date as string) > fim) keptN.set(e.supplier_id, (keptN.get(e.supplier_id) || 0) + 1)
           const cur = due.get(e.supplier_id)
           // Linha em aberto com ⚠️ na descrição = cobrança RECUSADA pelo cartão
           // (o watcher grava assim), e a página mostra isso em vermelho.
@@ -80,6 +87,7 @@ export default function AppsPage() {
       setNextDue(due)
       setLastAct(act)
       setPayMonths(new Map([...monthSets].map(([k, v]) => [k, v.size])))
+      setKept(keptN)
     }
     setLoading(false)
   }
@@ -176,6 +184,7 @@ export default function AppsPage() {
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold group-hover:text-blue-400 transition">{r.description || r.company || '—'}</h2>
                     {ended && <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-300">ENDED</span>}
+                    {(kept.get(r.id) || 0) > 0 && <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-300">🛑 {kept.get(r.id)} FUTURE CHARGE{(kept.get(r.id) || 0) > 1 ? 'S' : ''} TO REVIEW</span>}
                   </div>
                   <p className="text-lg text-gray-400">
                     {[r.company && r.company !== r.description ? r.company : null, r.email].filter(Boolean).join('  ·  ') || '—'}

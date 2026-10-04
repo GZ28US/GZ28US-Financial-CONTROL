@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Header from '@/components/Header'
@@ -35,6 +35,8 @@ function isValidDate(d: string | null | undefined) { return !!d && /^\d{4}-\d{2}
 function fmtDate(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '' }
 function fmtMonthYear(mk: string) { const dt = new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1); return `${dt.toLocaleDateString('en-US', { month: 'short' })}, ${dt.getFullYear()}` }
 function dayOf(d: string | null | undefined) { return isValidDate(d) ? new Date(d + 'T00:00:00').getDate() : '' }
+// Valor especial do confirmId: o REMOVE ALL das cobranças guardadas de um app encerrado.
+const KEPT_ALL = '__kept_all__'
 function todayYmd() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 export default function AppViewPage() {
@@ -52,6 +54,8 @@ export default function AppViewPage() {
   const [savingPay, setSavingPay] = useState(false)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [sendStatus, setSendStatus] = useState('')
+  // Os ids das cobranças guardadas no momento do REMOVE ALL (a lista da tela, não uma busca nova).
+  const keptIdsRef = useRef<string[]>([])
 
   useEffect(() => { load() }, [id])
 
@@ -96,6 +100,14 @@ export default function AppViewPage() {
   }
 
   async function remove(eid: string) {
+    // REMOVE ALL das cobranças guardadas de um app encerrado (botão dele, com confirmação).
+    if (eid === KEPT_ALL) {
+      const ids = keptIdsRef.current
+      if (!ids.length) { setConfirmId(null); return }
+      const { error } = await supabase.from('fixed_cost_expenses').delete().in('id', ids).is('payment_date', null)
+      if (error) { alert(error.message); return }
+      setConfirmId(null); load(); return
+    }
     const { error } = await supabase.from('fixed_cost_expenses').delete().eq('id', eid)
     if (error) { alert(error.message); return }
     setConfirmId(null); load()
@@ -165,6 +177,12 @@ export default function AppViewPage() {
   const months = nextMonthKey ? allMonths.filter(mk => mk <= (nextMonthKey as string)) : allMonths
   const visibleCount = months.reduce((n, mk) => n + (byMonth.get(mk) || []).length, 0)
   const paidTotal = rows.filter(r => isValidDate(r.payment_date)).reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
+  // App ENCERRADO com cobrança em aberto DEPOIS do fim (04/10/2026): o robô do cancelamento não apaga mais — guarda e
+  // pergunta. Elas aparecem todas aqui (o histórico abaixo só mostra o próximo mês) e só o Márcio remove.
+  const ended = s && isValidDate(s.date_conclusion) ? (s.date_conclusion as string) : null
+  const kept = ended ? rows.filter(r => !isValidDate(r.payment_date) && isValidDate(r.expense_date) && (r.expense_date as string) > ended)
+    .sort((a, b) => String(a.expense_date).localeCompare(String(b.expense_date))) : []
+  const keptTotal = kept.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
 
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   if (!s) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Not found.</p></main>
@@ -176,8 +194,8 @@ export default function AppViewPage() {
       {confirmId && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
-            <h2 className="text-2xl font-bold mb-2">Remove Payment</h2>
-            <p className="text-gray-400 text-lg mb-8">Are you sure? This action cannot be undone.</p>
+            <h2 className="text-2xl font-bold mb-2">{confirmId === KEPT_ALL ? `Remove ${keptIdsRef.current.length} future charge(s)` : 'Remove Payment'}</h2>
+            <p className="text-gray-400 text-lg mb-8">{confirmId === KEPT_ALL ? 'The app ended — these unpaid charges after the end date will be deleted. ' : ''}Are you sure? This action cannot be undone.</p>
             <div className="flex gap-4">
               <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => remove(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
@@ -229,6 +247,26 @@ export default function AppViewPage() {
         </p>
         {isValidDate(s.date_entry) && <p className="text-xs text-gray-500 mt-1">Subscribed {fmtDate(s.date_entry)} → {isValidDate(s.date_conclusion) ? fmtDate(s.date_conclusion) : 'Active'}</p>}
       </div>
+
+      {kept.length > 0 && (
+        <div className="bg-red-950/40 border border-red-800 rounded-3xl p-6 max-w-3xl mb-8">
+          <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
+            <div>
+              <h2 className="text-xl font-bold text-red-300">🛑 APP ENDED {fmtDate(ended)} — {kept.length} FUTURE CHARGE{kept.length > 1 ? 'S' : ''} KEPT</h2>
+              <p className="text-sm text-gray-400">{formatUSD(keptTotal)} still scheduled after the end. The robot no longer deletes them — remove them if they won&apos;t be charged.</p>
+            </div>
+            <button onClick={() => { keptIdsRef.current = kept.map(k => k.id); setConfirmId(KEPT_ALL) }} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold">REMOVE ALL {kept.length}</button>
+          </div>
+          <div className="space-y-2">
+            {kept.map(k => (
+              <div key={k.id} className="flex items-center justify-between gap-3 bg-gray-900/60 rounded-xl px-3 py-2">
+                <span className="text-sm"><span className="font-bold">{formatUSD(Number(k.amount) || 0)}</span> <span className="text-gray-400">· due {fmtDate(k.expense_date)}</span>{k.description ? <span className="text-gray-500"> · {k.description}</span> : null}</span>
+                <button onClick={() => setConfirmId(k.id)} className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded-xl font-bold text-xs">✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex items-baseline gap-4 mb-6 flex-wrap">
         <h2 className="text-3xl font-bold">PAYMENTS ({visibleCount})</h2>
