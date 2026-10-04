@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
     if (!rowId) return NextResponse.json({ error: 'row_id required' }, { status: 400 })
     const { data: fx } = await db.from('data_fixes').select('id, old_value, new_value').eq('check_key', 'parts-category').eq('row_id', rowId).like('label', 'AUTO ·%').order('fixed_at', { ascending: false }).limit(1).maybeSingle()
     if (!fx) return NextResponse.json({ error: 'não foi o app que preencheu esta categoria' }, { status: 409 })
-    const { data: ok, error } = await db.from('parts_database').update({ category: fx.old_value ?? null }).eq('id', rowId).eq('category', fx.new_value).select('id')
+    const { data: ok, error } = await db.from('parts_database').update({ category: fx.old_value ?? null }).eq('id', rowId).eq('category', fx.new_value).eq('shop_locked', false).select('id')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     if (!ok || !ok.length) return NextResponse.json({ error: 'a categoria já mudou depois — nada desfeito' }, { status: 409 })
     await db.from('data_fixes').insert({ check_key: 'parts-category', table_name: 'parts_database', row_id: rowId, field: 'category', old_value: fx.new_value, new_value: fx.old_value ?? null, label: ('DESFEITO · o app tinha preenchido ' + fx.new_value + ' sozinho').slice(0, 200) }).then(() => undefined, () => undefined)
@@ -286,7 +286,7 @@ export async function POST(req: NextRequest) {
     for (const sp of spellings) await maybeTeachAlias(db, sup, sp)
     const linkId = String(b.link_part_id || '')
     if (linkId) {
-      const { data: r, error } = await db.from('parts_database').update({ supplier_id: sup.id }).eq('id', linkId).is('supplier_id', null).select('id, item, alias')
+      const { data: r, error } = await db.from('parts_database').update({ supplier_id: sup.id }).eq('id', linkId).is('supplier_id', null).eq('shop_locked', false).select('id, item, alias')
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       if (!r || !r.length) return NextResponse.json({ error: 'peça já linkada — recarregue', supplier: { id: sup.id, name: sup.name } }, { status: 409 })
       await db.from('data_fixes').insert({
@@ -338,7 +338,7 @@ export async function POST(req: NextRequest) {
     const db = bankDb()
     const { data: sup } = await db.from('suppliers').select('id, name').eq('id', supplierId).maybeSingle()
     if (!sup) return NextResponse.json({ error: 'fornecedor não encontrado' }, { status: 404 })
-    const { data: r, error } = await db.from('parts_database').update({ supplier_id: supplierId }).eq('id', partId2).is('supplier_id', null).select('id, item, alias')
+    const { data: r, error } = await db.from('parts_database').update({ supplier_id: supplierId }).eq('id', partId2).is('supplier_id', null).eq('shop_locked', false).select('id, item, alias')
     if (error) return NextResponse.json({ error: error.message, needs_migration: /supplier_id/.test(error.message) }, { status: 500 })
     if (!r || !r.length) return NextResponse.json({ error: 'peça já linkada — recarregue' }, { status: 409 })
     await db.from('data_fixes').insert({

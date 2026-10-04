@@ -76,7 +76,7 @@ export async function classifyParts(db: any, parts: any[], opts: { max?: number;
   for (const p of parts) {
     const up = String(p.category || '').toUpperCase()
     if (!p.category || VOCAB.has(p.category) || !VOCAB.has(up) || opts.dry || !fill || memo.has(String(p.id))) continue
-    const { data: ok } = await db.from('parts_database').update({ category: up }).eq('id', p.id).eq('category', p.category).select('id')
+    const { data: ok } = await db.from('parts_database').update({ category: up }).eq('id', p.id).eq('category', p.category).eq('shop_locked', false).select('id')   // GZ28 SHOP LOCKED fica fora (04/10/2026)
     if (!ok || !ok.length) continue
     await db.from('data_fixes').insert({ check_key: 'parts-category', table_name: 'parts_database', row_id: p.id, field: 'category', old_value: p.category, new_value: up, label: ('AUTO · identidade dura (mesma categoria, caixa diferente) · ' + partText(p)).slice(0, 200) }).then(() => undefined, () => undefined)
     p.category = up; res.filled++
@@ -94,7 +94,7 @@ export async function classifyParts(db: any, parts: any[], opts: { max?: number;
     const fresh = todo.includes(p)
     const ai = verdict.get(String(p.id)) ?? null
     if (!ai) { res.no_ai++; continue }
-    if (fresh && !opts.dry) { const { error } = await db.from('parts_database').update({ category_ai: ai, category_ai_at: new Date().toISOString() }).eq('id', p.id); if (error) { res.errors.push('category_ai: ' + error.message); continue } }
+    if (fresh && !opts.dry) { const { error } = await db.from('parts_database').update({ category_ai: ai, category_ai_at: new Date().toISOString() }).eq('id', p.id).eq('shop_locked', false); if (error) { res.errors.push('category_ai: ' + error.message); continue } }
     const kw = suggestCategory(partText(p))
     const t = tierFor(kw, ai)
     if (t.tier === 'NOT_PART') { res.not_part++; continue }
@@ -102,7 +102,7 @@ export async function classifyParts(db: any, parts: any[], opts: { max?: number;
     if (opts.dry || !fill) { res.filled++; continue }   // desligado: conta como «certa, pronta» sem gravar
     if (memo.has(String(p.id))) { res.asked++; continue }   // desfeita por gente: a máquina não refaz
     // Escrita guardada pelo valor atual (vazio ou fora do vocabulário): 0 linhas = alguém mexeu.
-    let q = db.from('parts_database').update({ category: t.certain }).eq('id', p.id)
+    let q = db.from('parts_database').update({ category: t.certain }).eq('id', p.id).eq('shop_locked', false)   // GZ28 SHOP LOCKED fica fora
     q = p.category ? q.eq('category', p.category) : q.is('category', null)
     const { data: ok, error } = await q.select('id')
     if (error) { res.errors.push('category: ' + error.message); continue }

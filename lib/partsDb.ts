@@ -145,7 +145,7 @@ export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'u
     // Sem `supplier` a exceção do cadeado não sabe se a nota é do MESMO
     // fornecedor e nunca dispara. É a doença do select coluna a coluna: a marca
     // existe no banco e quem lê não a pede.
-    .select('id, item, alias, part_number, source_type, unit_price, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, currency, locked_at, supplier')
+    .select('id, item, alias, part_number, source_type, unit_price, map_price, shipping, handling, weight_lbs, purchase_date, is_extra, currency, locked_at, supplier, shop_locked')
   const rows = data || []
   const keyOf = (r: any) => r.part_number ? normPN(r.part_number) : ('NAME:' + String(r.item || '').trim().toLowerCase())
   // Two part numbers are the SAME part when the normalized forms match exactly OR
@@ -269,6 +269,11 @@ export async function enrollOne(entrada: any): Promise<{ status: 'inserted' | 'u
     && !custoDerivado
   const mesmoFornecedor = !!row.supplier && !!existing.supplier
     && normSup(String(row.supplier)) === normSup(String(existing.supplier))
+
+  // GZ28 SHOP LOCKED (Márcio, 04/10/2026): peça da vitrine da loja — só a sessão Parts & Packs mexe (o banco recusa a
+  // escrita do app: trigger parts_shop_lock_guard). Aqui NEM a compra real do mesmo fornecedor entra: decisão dele no
+  // mesmo dia («Don't touch, stay silent») — a compra é lançada como sempre, a linha do Parts DB fica como está, sem aviso.
+  if (existing.shop_locked) return { status: 'kept', error: null }
 
   if (isLockedPart(existing)) {
     if (!(compraReal && mesmoFornecedor)) return { status: 'kept', error: null }

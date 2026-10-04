@@ -12,6 +12,8 @@ import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 
 type Part = {
   id: string
+  // GZ28 SHOP LOCKED (04/10/2026): peça da vitrine da loja — só a sessão Parts & Packs mexe; aqui não tem EDIT, REMOVE nem cadeado.
+  shop_locked?: boolean | null
   item: string
   part_number: string | null
   alias: string | null
@@ -657,7 +659,9 @@ export default function PartsPage() {
                   ) })()}
                 </div>
                 <div className="flex items-end gap-3 shrink-0">
-                  {isLockedPart(p) ? (
+                  {p.shop_locked ? (
+                    <span className="px-4 py-2 rounded-2xl text-sm font-bold bg-red-900 text-red-200" title="edited only through the Parts & Packs session">🔒 GZ28 SHOP LOCKED</span>
+                  ) : isLockedPart(p) ? (
                     <button onClick={() => toggleLock(p)} className="bg-purple-900 hover:bg-purple-800 border border-purple-700 px-4 py-2 rounded-2xl font-bold text-sm" title="editar exige destravar — fica na trilha">🔓 DESTRAVAR</button>
                   ) : (
                     <>
@@ -728,7 +732,9 @@ export default function PartsPage() {
                   </>
                 )}
               </div>
-              {isLockedPart(p) ? (
+              {p.shop_locked ? (
+              <div className="flex items-end gap-3 shrink-0"><span className="px-4 py-2 rounded-2xl text-sm font-bold bg-red-900 text-red-200" title="edited only through the Parts & Packs session">🔒 GZ28 SHOP LOCKED</span></div>
+              ) : isLockedPart(p) ? (
               <div className="flex items-end gap-3 shrink-0"><button onClick={() => toggleLock(p)} className="bg-purple-900 hover:bg-purple-800 border border-purple-700 px-4 py-2 rounded-2xl font-bold text-sm" title="editar exige destravar — fica na trilha">🔓 DESTRAVAR</button></div>
               ) : (
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
