@@ -2151,8 +2151,10 @@ export async function lastMatchMembersCount(db: any, bankId: string): Promise<nu
 }
 
 // Órfão do balde: linha no balde sem linha MATCHED apontando (por id ou grupo),
-// com mais de 10 min (janela das ações da fila). Apaga e registra. Esperado 0.
-export async function purgeBucketOrphans(db: any): Promise<number> {
+// com mais de 10 min (janela das ações da fila). Esperado 0.
+// NÃO APAGA MAIS SOZINHO (Márcio, 04/10/2026 — lei «nunca apagar despesa sem perguntar»): a rodada só CONTA os órfãos e
+// avisa; a linha fica e aparece no Data Checker (card AUTO-LINK · ÓRFÃO), onde o PURGAR é clique de gente.
+export async function countBucketOrphans(db: any): Promise<number> {
   const bucketId = await bucketInvoiceId(db)
   const cutoff = new Date(Date.now() - ORPHAN_GRACE_MIN * 60e3).toISOString()
   const rows = await fetchAll(db, 'invoice_expenses', 'id, purchase_group, item, price, payment_date', (q: any) => q.eq('invoice_id', bucketId).ilike('item', '%' + MARKER_BUCKET + '%').lt('created_at', cutoff))
@@ -2167,11 +2169,7 @@ export async function purgeBucketOrphans(db: any): Promise<number> {
     const { data: now } = await db.from('bank_transactions').select('id').eq('match_status', 'MATCHED').or('and(matched_table.eq.invoice_expenses,matched_id.eq.' + r.id + ')' + (r.purchase_group ? ',and(matched_table.eq.purchase_group,matched_id.eq.' + r.purchase_group + ')' : '')).limit(1)
     if (now && now.length) continue
     if ((await mixedLinesWith(db, 'invoice_expenses', String(r.id))).length) continue   // membro de casamento MISTO tem dono (BL 1.6.0)
-    const { data } = await db.from('invoice_expenses').delete().eq('id', r.id).eq('invoice_id', bucketId).ilike('item', '%' + MARKER_BUCKET + '%').select('id')
-    if (data && data.length) {
-      n++
-      await db.from('data_fixes').insert({ check_key: 'bank-bucket', table_name: 'invoice_expenses', row_id: r.id, field: 'PURGED', old_value: String(r.price), new_value: null, label: ('órfão do balde purgado · ' + (r.payment_date || '') + ' · ' + String(r.item || '')).slice(0, 200) }).then(() => undefined, () => undefined)
-    }
+    n++
   }
   return n
 }
@@ -2458,7 +2456,7 @@ export async function autoBook(db: any, opts: { trigger: 'cron' | 'webhook' | 'h
     // semeia as regras PADRÃO que faltam (chave estável; desligada nunca renasce).
     // Purga e semeadura são NOTAS da rodada, nunca erros (revisão: fornecedor
     // ambíguo viraria missão permanente no Data Checker; PADRÃO pulado tem item próprio).
-    try { const purged = await purgeBucketOrphans(db); if (purged) notes.push(`${purged} órfão(s) do balde purgado(s)`) } catch (e) { errors.push('purga do balde: ' + String((e as Error).message || e).slice(0, 160)) }
+    try { const orf = await countBucketOrphans(db); if (orf) notes.push(`${orf} órfão(s) no balde — NÃO apagados; decida no Data Checker (PURGAR)`) } catch (e) { errors.push('órfãos do balde: ' + String((e as Error).message || e).slice(0, 160)) }
     try { const ro = await reopenPaidAfterEnd(db); if (ro.reopened.length) notes.push(('reaberto(s), pago depois do fim: ' + ro.reopened.join(', ')).slice(0, 200)); if (ro.errors.length) notes.push(('reabertura falhou: ' + ro.errors.join(' · ')).slice(0, 200)) } catch (e) { notes.push('reabertura: ' + String((e as Error).message || e).slice(0, 120)) }
     try { const seeded = await seedDefaultRules(db); if (seeded.inserted.length) notes.push(seeded.inserted.length + ' PADRÃO semeado(s)'); if (seeded.skipped.length) notes.push(('PADRÃO pulado: ' + seeded.skipped.join(' · ')).slice(0, 160)); if (seeded.quiet.length) notes.push(('PADRÃO sem o que semear: ' + seeded.quiet.join(' · ')).slice(0, 160)) } catch (e) { notes.push('semeadura PADRÃO: ' + String((e as Error).message || e).slice(0, 120)) }
     await loadDbAliases(db)
