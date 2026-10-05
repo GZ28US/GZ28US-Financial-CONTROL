@@ -14,8 +14,11 @@ Regra do Márcio (05/10): «gz28 both hotmail and gmais should have US cars / ga
 - `mail-query op=mkdir` com nome de carro: cria DENTRO de `Rides` (o teste do código estava quebrado e criava na raiz — corrigido) e
   **responde 409 se o carro é da outra empresa** (ex.: `BR.538 - …` na caixa 1). Pasta que já existe continua sendo devolvida.
 - `mail-query op=folders` agora pagina até o fim — antes devolvia só 200 pastas por nível, e `Rides` da galpaoz28 tem 192.
-- Sobras que são decisão dele (nada foi apagado com mensagem dentro): caixa 1 tem 17 pastas BR (`BR.404 - EarthQuake` 9 msg, `BR.538 - RussianRoulette` 14 msg, 15 vazias);
-  caixa 2 tem 7 pastas US antigas (US.001, US.010, US.030, US.035, US.037, US.038 com 11 msg ao todo; US.045 vazia). Auditoria: `GET /ca/api/rides/mail-folders?dryRun=1` (x-read-key).
+- **01h41 — sobras resolvidas (ele: «Remove empty, move the mail»):** as 16 pastas vazias de carro da outra empresa saíram; as 34 mensagens das 8 pastas com e-mail
+  foram para a pasta do mesmo carro na caixa certa (BR.404 EarthQuake e BR.538 RussianRoulette → galpaoz28; US.001/010/030/035/037/038 → gz28us@hotmail), com data,
+  remetente e anexos; os ORIGINAIS estão no Arquivo morto da caixa de onde saíram (nada apagado). Hoje não há pasta de carro fora de casa em caixa nenhuma.
+  Se aparecer de novo: `POST /ca/api/rides/mail-folders {"action":"repatriate","dryRun":true}` mostra o plano. Auditoria: `GET …/mail-folders?dryRun=1` (x-read-key).
+- Ainda na caixa 1, decisão dele: `US.030.4 - Dracula` (1 msg), `US.020 - PowerTrade`, `SHP.002`, `SHP.003` (vazias).
 
 ## 04/10 14h05 Orlando · da App Development 2 para a sessão do João (Bank Link / Data Checker) — DESFAZER agora PERGUNTA antes de apagar («Confirm first», ordem do Márcio)
 
