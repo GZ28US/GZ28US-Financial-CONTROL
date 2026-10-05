@@ -370,6 +370,7 @@ export async function repatriateRideMail(
     return pai ? todas.filter(f => f.parentId === pai.id) : []
   }
   const tipo = (a: any) => String(a?.['@odata.type'] || '').split('.').pop() || 'anexo'
+  const comEndereco = (l: any) => (Array.isArray(l) ? l : []).filter((x: any) => String(x?.emailAddress?.address || '').includes('@'))
   const kb = (a: any) => Math.round(Number(a?.size) / 1024)
   let restam = opts.limit && opts.limit > 0 ? opts.limit : Infinity
 
@@ -442,7 +443,8 @@ export async function repatriateRideMail(
             else {
               const corpo: any = {
                 subject: m.subject ?? '', body: m.body, importance: m.importance || 'normal', categories: m.categories || [],
-                toRecipients: m.toRecipients || [], ccRecipients: m.ccRecipients || [], bccRecipients: m.bccRecipients || [], replyTo: m.replyTo || [],
+                // participante sem endereço (FedEx manda reply-to só com nome) faz o Graph recusar a mensagem inteira
+                toRecipients: comEndereco(m.toRecipients), ccRecipients: comEndereco(m.ccRecipients), bccRecipients: comEndereco(m.bccRecipients), replyTo: comEndereco(m.replyTo),
                 singleValueExtendedProperties: [
                   { id: 'Integer 0x0E07', value: '1' },                        // PR_MESSAGE_FLAGS = lida, e NÃO «não enviada» (rascunho)
                   { id: MARCA_ORIGEM, value: origem },
