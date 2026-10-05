@@ -370,7 +370,8 @@ export async function repatriateRideMail(
     return pai ? todas.filter(f => f.parentId === pai.id) : []
   }
   const tipo = (a: any) => String(a?.['@odata.type'] || '').split('.').pop() || 'anexo'
-  const comEndereco = (l: any) => (Array.isArray(l) ? l : []).filter((x: any) => String(x?.emailAddress?.address || '').includes('@'))
+  const ENDERECO = /^[^\s@<>"]+@[^\s@<>"]+$/
+  const comEndereco = (l: any) => (Array.isArray(l) ? l : []).filter((x: any) => ENDERECO.test(String(x?.emailAddress?.address || '').trim()))
   const kb = (a: any) => Math.round(Number(a?.size) / 1024)
   let restam = opts.limit && opts.limit > 0 ? opts.limit : Infinity
 
@@ -454,8 +455,10 @@ export async function repatriateRideMail(
               }
               if (m.from?.emailAddress?.address) corpo.from = m.from
               if (m.sender?.emailAddress?.address) corpo.sender = m.sender
-              const cr = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(destino.id)}/messages`, { method: 'POST', headers: HD, body: JSON.stringify(corpo) })
-              if (!cr.ok || !cr.j?.id) throw new Error(`criar a cópia: HTTP ${cr.status} ${JSON.stringify(cr.j?.error || {}).slice(0, 160)}`)
+              let cr = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(destino.id)}/messages`, { method: 'POST', headers: HD, body: JSON.stringify(corpo) })
+              // O Exchange às vezes recusa o reply-to mesmo com endereço (FedEx): reply-to é conveniência, não conteúdo — vai sem ele.
+              if (cr.status === 400 && /ReplyTo/i.test(String(cr.j?.error?.message || ''))) { delete corpo.replyTo; cr = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(destino.id)}/messages`, { method: 'POST', headers: HD, body: JSON.stringify(corpo) }) }
+              if (!cr.ok || !cr.j?.id) throw new Error(`criar a cópia: HTTP ${cr.status} ${JSON.stringify(cr.j?.error || {}).slice(0, 160)} · de ${JSON.stringify(m.from?.emailAddress || null)} · reply-to ${JSON.stringify(m.replyTo || []).slice(0, 160)}`)
               copiaId = String(cr.j.id)
               const desfaz = async (porque: string): Promise<never> => { await comFolego(`${GRAPH}/me/messages/${encodeURIComponent(copiaId)}`, { method: 'DELETE', headers: HD }); throw new Error(porque + ' — cópia desfeita, original intacto') }
               if (cr.j.isDraft) await desfaz('a cópia nasceu como rascunho')
