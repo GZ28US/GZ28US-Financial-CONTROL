@@ -3,6 +3,7 @@ import { readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken, mailProvider, listGmailIds } from '@/lib/streamMail.server'
 import { pastaDoProvedor, termoDeBuscaGraph } from '@/lib/mailFolders'
+import { CARA_DE_CODIGO, CAIXAS_DA_EMPRESA, empresaDaCaixa, empresaDoCodigo } from '@/lib/rideMailFolders.server'
 
 // Read-only mailbox queries for the assistant's daily sweeps — the service key
 // and Graph tokens stay server-side; callers authenticate with the same read
@@ -243,13 +244,18 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
     if (!name) return NextResponse.json({ error: 'missing name' }, { status: 400 })
     // PASTA DE CARRO NUNCA NA RAIZ (Márcio, 05/out/2026 — a pasta de e-mail do carro é sagrada): nome que começa com
     // código de carro («US.037 - HellMonster») é criado/achado DENTRO de Rides. Foi assim que nasceu pasta solta na raiz.
-    if (/^(US.QT|US|SC|WV|PO|SHP|BR).d/.test(name)) {
+    if (CARA_DE_CODIGO.test(name)) {
+      // CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (Márcio, 05/out/2026): US → gz28us hotmail + gmail; BR → galpaoz28 + gz28br.
+      // Pasta que JÁ existe é devolvida (sobra antiga ainda guarda e-mail até ele decidir); o que se recusa é NASCER uma nova fora de casa.
+      const caixa = Math.max(1, parseInt(p.get('slot') || '1') || 1), casa = empresaDaCaixa(caixa), dono = empresaDoCodigo(name)
+      const foraDeCasa = casa && casa !== dono ? NextResponse.json({ error: `«${name}» é carro do ${dono}: a pasta dele mora nas caixas ${CAIXAS_DA_EMPRESA[dono].join(' e ')}, não nesta (${auth.account}). Regra do Márcio de 05/out/2026 — cada caixa só tem os carros da sua empresa.` }, { status: 409 }) : null
       const exR = await (await fetch(`${API}/labels`, { headers: GH })).json()
       const full = 'Rides/' + name
       const cod = name.split(' ')[0]
       const hitR = (exR?.labels || []).find((l: any) => String(l.name).toLowerCase() === full.toLowerCase())
         || (exR?.labels || []).find((l: any) => { const n = String(l.name); return n.toLowerCase().startsWith('rides/') && (n.slice(6) === cod || n.slice(6).startsWith(cod + ' ')) })
       if (hitR) return NextResponse.json({ account: auth.account, provider: 'gmail', folder: { id: hitR.id, name: hitR.name }, existed: true })
+      if (foraDeCasa) return foraDeCasa
       const cR = await (await fetch(`${API}/labels`, { method: 'POST', headers: { ...GH, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: full, labelListVisibility: 'labelShow', messageListVisibility: 'show' }) })).json()
       if (!cR?.id) return NextResponse.json({ error: cR?.error?.message || 'mkdir failed' }, { status: 502 })
       return NextResponse.json({ account: auth.account, provider: 'gmail', folder: { id: cR.id, name: cR.name }, existed: false })
@@ -464,7 +470,11 @@ export async function GET(req: NextRequest) {
     // PASTA DE CARRO NUNCA NA RAIZ (Márcio, 05/out/2026 — sagrada): nome que começa com código de carro é criado/achado
     // DENTRO de Rides (a pasta deste código, se já existe, é a devolvida). Este op criava só na raiz, e foi assim que
     // «US.037 - HellMonster» nasceu fora de Rides nas caixas 1 e 2.
-    if (/^(US.QT|US|SC|WV|PO|SHP|BR).d/.test(name)) {
+    if (CARA_DE_CODIGO.test(name)) {
+      // CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (Márcio, 05/out/2026): US → gz28us hotmail + gmail; BR → galpaoz28 + gz28br.
+      // Pasta que JÁ existe é devolvida (sobra antiga ainda guarda e-mail até ele decidir); o que se recusa é NASCER uma nova fora de casa.
+      const caixa = Math.max(1, parseInt(p.get('slot') || '1') || 1), casa = empresaDaCaixa(caixa), dono = empresaDoCodigo(name)
+      const foraDeCasa = casa && casa !== dono ? NextResponse.json({ error: `«${name}» é carro do ${dono}: a pasta dele mora nas caixas ${CAIXAS_DA_EMPRESA[dono].join(' e ')}, não nesta (${auth.account}). Regra do Márcio de 05/out/2026 — cada caixa só tem os carros da sua empresa.` }, { status: 409 }) : null
       const rides = (ex?.value || []).find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
       if (rides) {
         const kids: any[] = []
@@ -473,10 +483,13 @@ export async function GET(req: NextRequest) {
         const cod = name.split(' ')[0]
         const hitR = kids.find(f => String(f.displayName).toLowerCase() === name.toLowerCase()) || kids.find(f => { const n = String(f.displayName); return n === cod || n.startsWith(cod + ' ') })
         if (hitR) return NextResponse.json({ account: auth.account, folder: { id: hitR.id, name: hitR.displayName, parent: 'Rides' }, existed: true })
+        if (foraDeCasa) return foraDeCasa
         const cR = await fetch(`${G}/me/mailFolders/${encodeURIComponent(rides.id)}/childFolders`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: name }) }).then(r => r.json()).catch(() => null)
         if (!cR?.id) return NextResponse.json({ error: cR?.error?.message || 'mkdir failed' }, { status: 502 })
         return NextResponse.json({ account: auth.account, folder: { id: cR.id, name: cR.displayName, parent: 'Rides' }, existed: false })
       }
+      // Caixa sem «Rides»: o caminho de baixo criaria na raiz — carro da outra empresa também não nasce lá.
+      if (foraDeCasa && !(ex?.value || []).some((f: any) => String(f.displayName).toLowerCase() === name.toLowerCase())) return foraDeCasa
     }
     const hit = (ex?.value || []).find((f: any) => String(f.displayName).toLowerCase() === name.toLowerCase())
     if (hit) return NextResponse.json({ account: auth.account, folder: { id: hit.id, name: hit.displayName }, existed: true })

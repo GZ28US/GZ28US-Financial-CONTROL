@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
   // 2h. A PASTA DE E-MAIL EXISTE? (Márcio, 05/out/2026 — sagrada). O passo acima só RENOMEIA pasta que já existia; quote
   // promovida a carro (US.QT.017 → US.047) nunca teve pasta e ficava sem. Quote e SHP continuam fora (decisão dele pendente).
   if (!/^(US\.QT|SHP)\./.test(newCode)) {
-    const garante = await ensureRideMailFolders(streamDb(), [{ code: newCode, name: newName }]).catch(e => [{ slot: 0, account: '', provider: '', ok: 0, created: [], renamed: [], conflicts: [], misplaced: [], extras: [], errors: [String((e as Error)?.message || e).slice(0, 200)] }])
+    const garante = await ensureRideMailFolders(streamDb(), [{ code: newCode, name: newName }]).catch(e => [{ slot: 0, account: '', provider: '', company: null, ok: 0, created: [], renamed: [], conflicts: [], misplaced: [], extras: [], foreign: [], errors: [String((e as Error)?.message || e).slice(0, 200)] }])
     const ruim = garante.filter(m => m.errors.length || m.conflicts.length)
     passos.push({ passo: 'e-mail (pasta do carro)', ok: !ruim.length, detalhe: garante.map(m => ({ slot: m.slot, conta: m.account, criadas: m.created, renomeadas: m.renamed, conflitos: m.conflicts, erros: m.errors })) })
   }

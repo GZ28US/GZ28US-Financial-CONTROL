@@ -33,9 +33,9 @@ export type MailSlotReport = {
   renamed: string[]; conflicts: string[]; errors: string[]; planned: string[]
 }
 
-async function graphAll(token: string): Promise<{ id: string; displayName: string; parentId: string | null; path: string }[]> {
+async function graphAll(token: string): Promise<{ id: string; displayName: string; parentId: string | null; path: string; itens: number }[]> {
   const H = { Authorization: `Bearer ${token}` }
-  const out: { id: string; displayName: string; parentId: string | null; path: string }[] = []
+  const out: { id: string; displayName: string; parentId: string | null; path: string; itens: number }[] = []
   const lerTodas = async (url: string) => {
     const itens: any[] = []
     let next: string | null = url
@@ -47,10 +47,10 @@ async function graphAll(token: string): Promise<{ id: string; displayName: strin
     }
     return itens
   }
-  const sel = '$top=100&$select=id,displayName,childFolderCount,parentFolderId'
+  const sel = '$top=100&$select=id,displayName,childFolderCount,parentFolderId,totalItemCount'
   let fila: { id: string; displayName: string; childFolderCount: number; path: string }[] =
     (await lerTodas(`https://graph.microsoft.com/v1.0/me/mailFolders?${sel}`)).map((f: any) => ({ ...f, path: f.displayName }))
-  for (const f of fila) out.push({ id: f.id, displayName: f.displayName, parentId: null, path: f.path })
+  for (const f of fila) out.push({ id: f.id, displayName: f.displayName, parentId: null, path: f.path, itens: Number((f as any).totalItemCount) || 0 })
   for (let nivel = 0; nivel < 4 && fila.length; nivel++) {
     const prox: typeof fila = []
     for (const f of fila) {
@@ -58,7 +58,7 @@ async function graphAll(token: string): Promise<{ id: string; displayName: strin
       const kids = await lerTodas(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(f.id)}/childFolders?${sel}`)
       for (const k of kids) {
         const path = `${f.path}/${k.displayName}`
-        out.push({ id: k.id, displayName: k.displayName, parentId: f.id, path })
+        out.push({ id: k.id, displayName: k.displayName, parentId: f.id, path, itens: Number(k.totalItemCount) || 0 })
         prox.push({ ...k, path })
       }
     }
@@ -70,7 +70,7 @@ async function graphAll(token: string): Promise<{ id: string; displayName: strin
 export async function renameRideMailFolders(
   db: SupabaseClient, a: { oldCode: string; oldName: string; newCode: string; newName: string; slots?: number[]; dryRun?: boolean },
 ): Promise<MailSlotReport[]> {
-  const slots = a.slots || [1, 2, 4]
+  const slots = a.slots || [1, 2, 3, 4]
   const out: MailSlotReport[] = []
   for (const slot of slots) {
     const rep: MailSlotReport = { slot, account: '', provider: '', renamed: [], conflicts: [], errors: [], planned: [] }
@@ -146,35 +146,64 @@ export async function renameRideMailFolders(
 //   • existe pasta com o MESMO código e OUTRO nome → conflito relatado, nada é criado (pode ser o carro antigo do código —
 //     quem decide é gente); com `prev` (rename vindo da tela) a pasta do nome antigo é a deste carro e é renomeada;
 //   • não existe → cria.
-// Nunca apaga, nunca move mensagem. `misplaced` e `extras` só RELATAM (pasta do carro na raiz; pasta com cara de código
-// em Rides que não é de nenhum carro passado) — limpar é decisão do Márcio.
+// Nunca apaga, nunca move mensagem. `misplaced`, `extras` e `foreign` só RELATAM (pasta do carro na raiz; pasta com cara
+// de código em Rides que não é de nenhum carro passado; pasta de carro da OUTRA empresa) — limpar é decisão do Márcio.
+//
+// ── CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (Márcio, 05/out/2026, horas depois da regra acima) ─────────────
+// «gz28 both hotmail and gmais should have US cars / galpaoz28 and gz28br should have BR cars / all by the app».
+// A primeira aplicação tinha posto os 53 carros do US também na caixa 2 (galpaoz28) — errado. Agora:
+//   • carro do US (US · SC · WV · PO) → caixas 1 (gz28us@hotmail) e 4 (gz28us@gmail);
+//   • carro do BR (BR · GM)           → caixas 2 (galpaoz28@hotmail) e 3 (gz28br@hotmail).
+// A empresa do carro é o CÓDIGO, não o banco onde a linha mora: US.004 ShakeDown existe nos dois apps e é do US.
+// Carro passado para uma caixa da outra empresa é simplesmente ignorado ali — nunca nasce pasta fora de casa.
+export type Empresa = 'US' | 'BR'
+export const CAIXAS_DA_EMPRESA: Record<Empresa, number[]> = { US: [1, 4], BR: [2, 3] }
+export const empresaDoCodigo = (code: string): Empresa => (/^(BR|GM)\./i.test(String(code || '').trim()) ? 'BR' : 'US')
+export const empresaDaCaixa = (slot: number): Empresa | null => (CAIXAS_DA_EMPRESA.US.includes(slot) ? 'US' : CAIXAS_DA_EMPRESA.BR.includes(slot) ? 'BR' : null)
+// Nome de pasta que começa com código de carro (a mesma régua vale para o mkdir do /api/stream/mail-query).
+export const CARA_DE_CODIGO = /^(US\.QT|BR\.QT|US|SC|WV|PO|SHP|BR|GM)\.\d/
 export type RideMailCar = { code: string; name: string; prev?: { code?: string; name?: string } }
 export type EnsureSlotReport = {
   slot: number; account: string; provider: string
-  ok: number; created: string[]; renamed: string[]; conflicts: string[]; misplaced: string[]; extras: string[]; errors: string[]
+  company: Empresa | null
+  ok: number; created: string[]; renamed: string[]; conflicts: string[]; misplaced: string[]; extras: string[]; foreign: string[]; errors: string[]
 }
 const limpa = (s: string) => String(s || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim()
 const alvoDe = (c: RideMailCar) => `${limpa(c.code)}${limpa(c.name) ? ' - ' + limpa(c.name) : ''}`
 // O nome começa com ESTE código (e não com US.030.4 quando o código é US.030)?
 const temCodigo = (dn: string, code: string) => new RegExp(`^${esc(code)}(?![\\d.])`).test(String(dn || '').trim()) || String(dn || '').trim() === code
-const CARA_DE_CODIGO = /^(US\.QT|US|SC|WV|PO|SHP)\.\d/
+// Graph e Gmail devolvem 429/503 quando a rajada é grande (a primeira carga do BR são ~185 pastas por caixa): espera o
+// que o servidor pedir (teto de 20 s) e tenta de novo, duas vezes. Erro de verdade passa direto.
+async function comFolego(url: string, init: RequestInit): Promise<Response> {
+  let r = await fetch(url, init)
+  for (let i = 0; i < 2 && (r.status === 429 || r.status === 503); i++) {
+    const espera = Math.min(20, Math.max(1, Number(r.headers.get('retry-after')) || 3 * (i + 1)))
+    await new Promise(ok => setTimeout(ok, espera * 1000))
+    r = await fetch(url, init)
+  }
+  return r
+}
 
 export async function ensureRideMailFolders(
   db: SupabaseClient, cars: RideMailCar[], opts: { slots?: number[]; dryRun?: boolean; audit?: boolean } = {},
 ): Promise<EnsureSlotReport[]> {
-  const slots = opts.slots || [1, 2, 4]
-  const out: EnsureSlotReport[] = []
-  for (const slot of slots) {
-    const rep: EnsureSlotReport = { slot, account: '', provider: '', ok: 0, created: [], renamed: [], conflicts: [], misplaced: [], extras: [], errors: [] }
-    out.push(rep)
+  // Sem `slots`: as caixas das empresas dos carros passados. Com `slots`: só essas — e cada uma só vê os carros dela.
+  const todos = cars
+  const slots = opts.slots || (['US', 'BR'] as Empresa[]).filter(e => todos.some(c => empresaDoCodigo(c.code) === e)).flatMap(e => CAIXAS_DA_EMPRESA[e])
+  const out: EnsureSlotReport[] = slots.map(slot => ({ slot, account: '', provider: '', company: empresaDaCaixa(slot), ok: 0, created: [], renamed: [], conflicts: [], misplaced: [], extras: [], foreign: [], errors: [] }))
+  // Uma caixa não espera a outra (contas diferentes, limites diferentes): a carga inteira cabe no tempo da rota.
+  await Promise.all(out.map(async rep => {
+    const slot = rep.slot
+    const cars = rep.company ? todos.filter(c => empresaDoCodigo(c.code) === rep.company) : todos
     try {
       const auth = await getMailAuth(db, slot)
-      if (!auth?.refresh_token) { rep.errors.push('caixa sem conexão (refresh_token)'); continue }
+      if (!auth?.refresh_token) { rep.errors.push('caixa sem conexão (refresh_token)'); return }
       rep.account = String(auth.account || '')
       rep.provider = mailProvider(auth)
       const token = await freshAccessToken(db, auth)
-      if (!token) { rep.errors.push('token não renovou'); continue }
+      if (!token) { rep.errors.push('token não renovou'); return }
       const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      const contagem = new Map<string, number>()   // id da pasta → mensagens (só o Graph conta na listagem)
 
       // As duas caixas falam línguas diferentes; daqui para baixo é uma só: `irmas` = as pastas dentro de Rides.
       let irmas: { id: string; nome: string }[] = []
@@ -185,15 +214,15 @@ export async function ensureRideMailFolders(
 
       if (rep.provider === 'gmail') {
         const r: any = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', { headers: H }).then(x => x.json()).catch(() => null)
-        if (!Array.isArray(r?.labels)) { rep.errors.push('Gmail labels falhou: ' + JSON.stringify(r?.error || r || {}).slice(0, 160)); continue }
+        if (!Array.isArray(r?.labels)) { rep.errors.push('Gmail labels falhou: ' + JSON.stringify(r?.error || r || {}).slice(0, 160)); return }
         const user = r.labels.filter((l: any) => l.type === 'user')
         const novaLabel = async (name: string) => {
-          const p = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', { method: 'POST', headers: H, body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }) })
+          const p = await comFolego('https://gmail.googleapis.com/gmail/v1/users/me/labels', { method: 'POST', headers: H, body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }) })
           return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
         }
         const pai = user.find((l: any) => String(l.name).toLowerCase() === 'rides')
         const prefixo = (pai ? String(pai.name) : 'Rides') + '/'
-        if (!pai && !opts.dryRun) { const e = await novaLabel('Rides'); if (e) { rep.errors.push('criar a label Rides: ' + e); continue } }
+        if (!pai && !opts.dryRun) { const e = await novaLabel('Rides'); if (e) { rep.errors.push('criar a label Rides: ' + e); return } }
         irmas = user.filter((l: any) => String(l.name).toLowerCase().startsWith('rides/') && !String(l.name).slice(6).includes('/')).map((l: any) => ({ id: String(l.id), nome: String(l.name).slice(6) }))
         raiz = user.filter((l: any) => !String(l.name).includes('/')).map((l: any) => ({ id: String(l.id), nome: String(l.name) }))
         criar = nome => novaLabel(prefixo + nome)
@@ -210,15 +239,16 @@ export async function ensureRideMailFolders(
           else {
             const p = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders', { method: 'POST', headers: H, body: JSON.stringify({ displayName: 'Rides' }) })
             const j: any = await p.json().catch(() => null)
-            if (!p.ok || !j?.id) { rep.errors.push('criar a pasta Rides: HTTP ' + p.status); continue }
+            if (!p.ok || !j?.id) { rep.errors.push('criar a pasta Rides: HTTP ' + p.status); return }
             paiId = String(j.id)
           }
         }
         const pid = paiId
         irmas = pid ? todas.filter(f => f.parentId === pid).map(f => ({ id: f.id, nome: String(f.displayName) })) : []
         raiz = todas.filter(f => !f.parentId).map(f => ({ id: f.id, nome: String(f.displayName) }))
+        for (const f of todas) contagem.set(f.id, f.itens)
         criar = async nome => {
-          const p = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(pid)}/childFolders`, { method: 'POST', headers: H, body: JSON.stringify({ displayName: nome }) })
+          const p = await comFolego(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(pid)}/childFolders`, { method: 'POST', headers: H, body: JSON.stringify({ displayName: nome }) })
           return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
         }
         renomear = async (id, nome) => {
@@ -273,10 +303,20 @@ export async function ensureRideMailFolders(
       }
       // Só relato: pasta do carro perdida na RAIZ, e (na auditoria da frota inteira) pasta com cara de código que não é de carro nenhum.
       for (const car of cars) { const code = limpa(car.code); for (const f of raiz) if (code && daPasta(f.nome, code, limpa(car.name))) rep.misplaced.push(`«${f.nome}» está na raiz, e o carro já tem pasta em Rides`) }
-      if (opts.audit) for (const f of irmas) if (!donas.has(f.id) && !f.id.startsWith('novo:') && CARA_DE_CODIGO.test(f.nome.trim())) rep.extras.push(`Rides/${f.nome}`)
+      // Na auditoria da frota inteira: pasta com cara de código que não é de carro nenhum desta caixa. Se o código é da
+      // OUTRA empresa, é `foreign` (está na caixa errada — com quantas mensagens, quando a caixa conta); senão, `extras`.
+      if (opts.audit) {
+        const sobra = (f: { id: string; nome: string }, onde: string) => {
+          const n = contagem.get(f.id)
+          const linha = `${onde}${f.nome}${n == null ? '' : n ? ` (${n} msg)` : ' (vazia)'}`
+          if (rep.company && empresaDoCodigo(f.nome) !== rep.company) rep.foreign.push(linha); else if (onde) rep.extras.push(linha)
+        }
+        for (const f of irmas) if (!donas.has(f.id) && !f.id.startsWith('novo:') && CARA_DE_CODIGO.test(f.nome.trim())) sobra(f, 'Rides/')
+        for (const f of raiz) if (CARA_DE_CODIGO.test(f.nome.trim())) sobra(f, '')
+      }
     } catch (e) {
       rep.errors.push(String((e as Error)?.message || e).slice(0, 200))
     }
-  }
+  }))
   return out
 }

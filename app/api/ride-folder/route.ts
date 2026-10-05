@@ -136,7 +136,7 @@ async function listaArquivos(token: string, path: string): Promise<{ name: strin
 async function syncMailFolder(action: 'create' | 'rename', code: string, name: string, oldCode?: string) {
   // QUOTE NÃO TEM PASTA DE E-MAIL (Márcio, 05/out/2026: «No folder for quotes»): a pasta nasce quando o carro vira real —
   // no rename/renumber da quote para US.###, que cai aqui embaixo ou no /api/rides/renumber, e no cron de hora em hora.
-  if (code.startsWith('US.QT.')) return
+  if (/^(US|BR)\.QT\./.test(code)) return
   try {
     const rep = await ensureRideMailFolders(streamDb(), [{ code, name, prev: action === 'rename' ? { code: oldCode || code } : undefined }])
     for (const s of rep) for (const e of [...s.errors, ...s.conflicts]) console.error('[ride-folder] pasta de e-mail · caixa', s.slot, '·', e)
